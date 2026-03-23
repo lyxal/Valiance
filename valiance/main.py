@@ -1,20 +1,16 @@
-import valiance.lexer as lexer
-
-
-def repl():
-    while True:
-        line = input(">>> ")
-        if line.strip() == "exit":
-            break
-        tokens = lexer.Lexer(line).scan_tokens()
-        for token in tokens:
-            print(token)
+from valiance.analysis import analyse
+import valiance.ast as ast
+from valiance.types import Number
 
 
 def main():
-    print("Welcome to the Valience REPL!")
-    print("Type 'exit' to quit.")
-    repl()
+    program: list[ast.AST] = [
+        ast.Number("1"),
+        ast.AssignVariable("x", Number()),
+        ast.String("This is a string"),
+        ast.AssignVariable("x", None),
+    ]
+    print(analyse(program))
 
 
 if __name__ == "__main__":
