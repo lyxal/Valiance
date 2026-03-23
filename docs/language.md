@@ -2620,14 +2620,23 @@ define bar => 2
 ## 23.2. Import Syntax
 
 ```
-import{
+import {
   module,
   module as alias,
-  module.[Component, Component],
-  module.[Component as Alias, Component],
-  module as alias.[Component, Component as Alias]
+  module.[Component],
+  module.[
+    Component,
+    Component as Alias,        #? aliased import
+    object X as Y,             #? trait implementation
+    hash(X),                   #? concrete overload by parameter type
+    hash(_+)                   #? generic overload using wildcard
+  ]
 }
 ```
+
+- `_` in an overload import means "any type." `_+` means "a list of any type," `_++` means "a rank-2 list of any type," and so on, consistent with the rest of the language.
+- Multiple components from the same module can be listed inside `[]`.
+- Single component imports do not require `[]`.
 
 ## 23.3. Module Resolution
 
@@ -2639,7 +2648,7 @@ There are four kinds of modules, distinguished by the shape of their import path
 - **Installed packages** - prefixed with `@`, e.g. `@somelib`. Resolved from the project's package directory.
 
 ```
-import{
+import {
   utils,                        #? local: ./utils.vlnc
   ~utils,                       #? local: <project root>/utils.vlnc
   std.lists,                    #? standard library
@@ -2648,23 +2657,59 @@ import{
 }
 ```
 
-- The compiler resolves imports in the order listed above. A name is only treated as an installed package if it is prefixed with `@`.
-
 ## 23.4. Re-exporting
 
 - Imported symbols are not visible to importers of the current module by default.
 - Prefix an import with `public` to re-export it:
 
 ```
-public import{
+public import {
   module.[Component]
 }
-#? Component is now importable from this module
 ```
 
 - This allows library authors to curate a public API from internal modules without exposing internal structure.
 
-## 23.5. Importing Objects
+## 23.5. Conflict Resolution
+
+- If two imported modules define the same overload for the same types, the compiler raises an error and requires explicit resolution.
+- Resolve by explicitly importing only the overload you want:
+
+```
+import {
+  @pkgA.[hash(String)],   #? explicitly choose pkgA's String overload
+  @pkgB.[hash(Number)]    #? and pkgB's Number overload
+}
+```
+
+- The same applies to trait implementations - if two modules define `object X as Y`, you must explicitly import the one you want:
+
+```
+import {
+  @pkgA.[object X as Y]   #? explicitly choose pkgA's implementation
+}
+```
+
+- If two modules define the same generic overload, use wildcard syntax to resolve:
+
+```
+import {
+  @pkgA.[hash(_+)]   #? pkgA's generic list overload
+}
+```
+
+- Alternatively, you can just import the whole namespace and use namespace access to disambiguate:
+
+```
+import {
+  @pkgA,
+  @pkgB
+}
+@pkgA.hash("string") #? pkgA's String overload
+@pkgB.hash("string") #? pkgB's String overload
+```
+
+## 23.6. Importing Objects
 
 - Importing an object as a component automatically imports all its object-friendly elements.
 - OFEs are not automatically imported if the object is namespace-accessed.
@@ -2679,20 +2724,20 @@ import{somemod}
 somemod.Y somemod.foo
 ```
 
-## 23.6. Tag Importing
+## 23.7. Tag Importing
 
-- Importing a tag imports all overlay rules and any elements associated via tag definitions. 
+- Importing a tag imports all overlay rules and any elements associated via tag definitions.
 - Elements that use the tag but are not associated via tag definitions are not imported.
 
 ```
 #? In sorted.vlnc:
 tag #sorted as computed
 define[T] #sorted min(:#sorted T+) => $[0]  #? will be imported
-define[T] max(:#sorted T+) => $.[-1]                 #? will not be imported
+define[T] max(:#sorted T+) => $.[-1]        #? will not be imported
 ```
 
 ```
-import{sorted.#sorted}
+import {sorted.#sorted}
 #? #sorted overlay rules imported
 #? min imported
 #? max not imported
