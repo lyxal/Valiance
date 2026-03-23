@@ -433,7 +433,7 @@ class Lexer:
             case ".":
                 self._add_token(TokenType.DOT, HEAD)
             case "#":
-                self._add_token(TokenType.HASH, HEAD)
+                self._scan_tag()
             case ";":
                 self._add_token(TokenType.SEMICOLON, HEAD)
             case "<":
@@ -748,7 +748,7 @@ class Lexer:
         :return: None
         """
         start_line, start_column = self.line, self.column
-
+        self._discard_()  # Remove the '#'
         value = ""
         if self._head_equals_("!"):  # Handle optional leading '!'
             value += self._advance()
