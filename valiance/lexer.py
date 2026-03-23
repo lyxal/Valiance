@@ -231,7 +231,7 @@ def unwrap_and_test(val: T | None, condition: Callable[[T], bool]) -> bool:
 
 class Lexer:
     """
-    Notice: A method starting with an underscore (_) does NOT
+    Notice: A method ending with an underscore (_) does NOT
     update the line and column numbers.
 
     Methods starting with `scan`, and are called directly by scan_tokens()
@@ -245,7 +245,7 @@ class Lexer:
         self.tokens: list[Token] = []
         self.line, self.column = 1, 1
 
-    def advance(self) -> str:
+    def _advance(self) -> str:
         """
         Pop the first character from the character list and return it.
 
@@ -262,7 +262,7 @@ class Lexer:
             self.column += 1
         return char
 
-    def add_token(self, type_: TokenType, value: str):
+    def _add_token(self, type_: TokenType, value: str):
         """
         Create a new token and add it to the token list.
 
@@ -278,7 +278,7 @@ class Lexer:
         self.characters = self.characters[len(value) :]
         self.column += len(value)
 
-    def _add_token(self, type_: TokenType, value: str, line: int, column: int):
+    def _add_token_(self, type_: TokenType, value: str, line: int, column: int):
         """
         Create a new token and add it to the token list.
 
@@ -297,7 +297,7 @@ class Lexer:
         token = Token(type_, value, line, column)
         self.tokens.append(token)
 
-    def _discard(self, n: int = 1):
+    def _discard_(self, n: int = 1):
         """
         Pop the first character from the character list without
         caring about its value.
@@ -308,16 +308,16 @@ class Lexer:
         for _ in range(n):
             self.characters.pop(0)
 
-    def _head_equals(self, string: str) -> bool:
+    def _head_equals_(self, string: str) -> bool:
         """
         Check if the start of the character list matches a given string.
 
         :param string: The string to compare against.
         :return: True if the start of the character list matches the string, False otherwise.
         """
-        return unwrap_and_test(self._peek(len(string)), lambda s: s == string)
+        return unwrap_and_test(self._peek_(len(string)), lambda s: s == string)
 
-    def _head_matches(self, pattern: str) -> bool:
+    def _head_matches_(self, pattern: str) -> bool:
         """
         Check if the start of the character list matches a given regex pattern.
 
@@ -333,7 +333,7 @@ class Lexer:
         mobj = pobj.match("".join(self.characters))
         return mobj is not None
 
-    def _peek(self, n: int = 1) -> str | None:
+    def _peek_(self, n: int = 1) -> str | None:
         """
         Peek at the first n characters in the character list.
 
@@ -344,7 +344,7 @@ class Lexer:
             return "".join(self.characters[:n])
         return None
 
-    def _scan_token_single(self) -> bool:
+    def _scan_token_single_(self) -> bool:
         """
         Scan a single token from the current position.
         Returns True if a token was scanned, False if nothing matched.
@@ -355,91 +355,91 @@ class Lexer:
         HEAD = self.characters[0]
         match HEAD:
             case " " | "\r" | "\t":
-                self._add_token(TokenType.WHITESPACE, HEAD, self.line, self.column)
-                self._discard()
+                self._add_token_(TokenType.WHITESPACE, HEAD, self.line, self.column)
+                self._discard_()
                 self.column += 1
             case "\n":
-                self.add_token(TokenType.NEWLINE, HEAD)
+                self._add_token(TokenType.NEWLINE, HEAD)
                 self.line += 1
                 self.column = 1
-            case _ if HEAD.isdecimal() or self._head_matches(r"-\d"):
-                self.scan_number()
-            case "=" if not self._head_equals("==") and not self._head_equals("=>"):
-                self.add_token(TokenType.EQUAL, "=")
-            case _ if self._head_equals(":="):
-                self.add_token(TokenType.AUG_ASSIGN, ":=")
+            case _ if HEAD.isdecimal() or self._head_matches_(r"-\d"):
+                self._scan_number()
+            case "=" if not self._head_equals_("==") and not self._head_equals_("=>"):
+                self._add_token(TokenType.EQUAL, "=")
+            case _ if self._head_equals_(":="):
+                self._add_token(TokenType.AUG_ASSIGN, ":=")
             case _ if HEAD in string.ascii_letters:
-                self.scan_element()
-            case "$" if not self._head_equals("$(") and not self._head_equals("$["):
-                self.add_token(TokenType.VARIABLE, HEAD)
-            case _ if self._head_equals("$("):
-                self.add_token(TokenType.MULTIPLE_ASSIGN, "$(")
-            case _ if self._head_equals("$["):
-                self.add_token(TokenType.DOLLAR_BRACKET, "$[")
+                self._scan_element()
+            case "$" if not self._head_equals_("$(") and not self._head_equals_("$["):
+                self._add_token(TokenType.VARIABLE, HEAD)
+            case _ if self._head_equals_("$("):
+                self._add_token(TokenType.MULTIPLE_ASSIGN, "$(")
+            case _ if self._head_equals_("$["):
+                self._add_token(TokenType.DOLLAR_BRACKET, "$[")
             case "(":
-                self.add_token(TokenType.L_PAREN, HEAD)
+                self._add_token(TokenType.L_PAREN, HEAD)
             case ")":
-                self.add_token(TokenType.R_PAREN, HEAD)
+                self._add_token(TokenType.R_PAREN, HEAD)
             case "[":
-                self.add_token(TokenType.L_BRACKET, HEAD)
+                self._add_token(TokenType.L_BRACKET, HEAD)
             case "]":
-                self.add_token(TokenType.R_BRACKET, HEAD)
+                self._add_token(TokenType.R_BRACKET, HEAD)
             case "{":
-                self.add_token(TokenType.L_BRACE, HEAD)
+                self._add_token(TokenType.L_BRACE, HEAD)
             case "}":
-                self.add_token(TokenType.R_BRACE, HEAD)
+                self._add_token(TokenType.R_BRACE, HEAD)
             case "|":
-                self.add_token(TokenType.PIPE, HEAD)
+                self._add_token(TokenType.PIPE, HEAD)
             case "&":
-                self.add_token(TokenType.AMPERSAND, HEAD)
+                self._add_token(TokenType.AMPERSAND, HEAD)
             case ",":
-                self.add_token(TokenType.COMMA, HEAD)
-            case _ if self._head_equals("->"):
-                self.add_token(TokenType.RETURN_ARROW, "->")
-            case _ if self._head_equals("=>"):
-                self.add_token(TokenType.ARROW, "=>")
-            case ":" if not self._head_equals("::") and not self._head_equals(":="):
-                self.add_token(TokenType.COLON, ":")
-            case _ if self._head_equals("::"):
-                self.add_token(TokenType.DOUBLE_COLON, "::")
+                self._add_token(TokenType.COMMA, HEAD)
+            case _ if self._head_equals_("->"):
+                self._add_token(TokenType.RETURN_ARROW, "->")
+            case _ if self._head_equals_("=>"):
+                self._add_token(TokenType.ARROW, "=>")
+            case ":" if not self._head_equals_("::") and not self._head_equals_(":="):
+                self._add_token(TokenType.COLON, ":")
+            case _ if self._head_equals_("::"):
+                self._add_token(TokenType.DOUBLE_COLON, "::")
             case "@":
-                self.scan_annotation()
-            case _ if self._head_equals(SINGLE_LINE_COMMENT):
+                self._scan_annotation()
+            case _ if self._head_equals_(SINGLE_LINE_COMMENT):
                 # Comment, discard until newline
                 while self.characters and self.characters[0] != "\n":
-                    self._discard()
-            case _ if self._head_equals(MULTILINE_COMMENT_START):
-                self._scan_multiline_comment()
+                    self._discard_()
+            case _ if self._head_equals_(MULTILINE_COMMENT_START):
+                self._scan_multiline_comment_()
             case "+":
-                self.add_token(TokenType.PLUS, HEAD)
+                self._add_token(TokenType.PLUS, HEAD)
             case "*":
-                self.add_token(TokenType.STAR, HEAD)
-            case _ if self._head_equals("?!"):
-                self.add_token(TokenType.QUESTION_BANG, "?!")
+                self._add_token(TokenType.STAR, HEAD)
+            case _ if self._head_equals_("?!"):
+                self._add_token(TokenType.QUESTION_BANG, "?!")
             case "?":
-                self.add_token(TokenType.QUESTION, HEAD)
+                self._add_token(TokenType.QUESTION, HEAD)
             case "~":
-                self.add_token(TokenType.TILDE, HEAD)
-            case _ if self._head_matches("==="):
-                self.add_token(TokenType.IDENTIFIER, "===")
-            case _ if self._head_matches("=="):
-                self.add_token(TokenType.IDENTIFIER, "==")
+                self._add_token(TokenType.TILDE, HEAD)
+            case _ if self._head_matches_("==="):
+                self._add_token(TokenType.IDENTIFIER, "===")
+            case _ if self._head_matches_("=="):
+                self._add_token(TokenType.IDENTIFIER, "==")
             case "_":
-                self.add_token(TokenType.UNDERSCORE, HEAD)
+                self._add_token(TokenType.UNDERSCORE, HEAD)
             case "'":
-                self.add_token(TokenType.TICK, HEAD)
-            case _ if self._head_equals("..."):
-                self.add_token(TokenType.ELLIPSIS, "...")
+                self._add_token(TokenType.TICK, HEAD)
+            case _ if self._head_equals_("..."):
+                self._add_token(TokenType.ELLIPSIS, "...")
             case ".":
-                self.add_token(TokenType.DOT, HEAD)
+                self._add_token(TokenType.DOT, HEAD)
             case "#":
-                self.add_token(TokenType.HASH, HEAD)
+                self._add_token(TokenType.HASH, HEAD)
             case ";":
-                self.add_token(TokenType.SEMICOLON, HEAD)
+                self._add_token(TokenType.SEMICOLON, HEAD)
             case "<":
-                self.add_token(TokenType.LT, HEAD)
+                self._add_token(TokenType.LT, HEAD)
             case ">":
-                self.add_token(TokenType.GT, HEAD)
+                self._add_token(TokenType.GT, HEAD)
             case _:
                 return False
         return True
@@ -448,32 +448,32 @@ class Lexer:
         while self.characters:
             HEAD = self.characters[0]
             if HEAD == '"':
-                self.scan_string_with_interpolation()
-            elif not self._scan_token_single():
+                self._scan_string_with_interpolation()
+            elif not self._scan_token_single_():
                 raise ValueError(
                     f'Unexpected character "{HEAD}" at line {self.line}, column {self.column}'
                 )
 
         return self.tokens + [Token(TokenType.EOF, "", self.line, self.column)]
 
-    def _scan_multiline_comment(self):
+    def _scan_multiline_comment_(self):
         """Helper to scan multiline comments."""
         start_line, start_column = self.line, self.column
-        while self.characters and not self._head_equals(MULTILINE_COMMENT_END):
-            self._discard()
+        while self.characters and not self._head_equals_(MULTILINE_COMMENT_END):
+            self._discard_()
             if self.characters and self.characters[0] == "\n":
                 self.line += 1
                 self.column = 1
             else:
                 self.column += 1
-        if self._head_equals(MULTILINE_COMMENT_END):
-            self._discard(len(MULTILINE_COMMENT_END))
+        if self._head_equals_(MULTILINE_COMMENT_END):
+            self._discard_(len(MULTILINE_COMMENT_END))
         else:
             raise ValueError(
                 f"Unterminated multiline comment starting at line {start_line}, column {start_column}"
             )
 
-    def scan_number(self):
+    def _scan_number(self):
         """
         Scan a number token from the character list.
         :return: None
@@ -481,38 +481,38 @@ class Lexer:
         start_line, start_column = self.line, self.column
 
         # Scan the real part of the number.
-        value = self.scan_decimal()
+        value = self._scan_decimal()
 
         # Scan the imaginary OR **10 part of the number, if it exists.
-        if self._head_equals("i") or self._head_equals("e"):
-            value += self.advance()
-            part = self.scan_decimal()
+        if self._head_equals_("i") or self._head_equals_("e"):
+            value += self._advance()
+            part = self._scan_decimal()
             if not part:
                 raise ValueError(
                     f"Invalid number format at line {self.line}, column {self.column}"
                 )
             value += part
 
-        self._add_token(TokenType.NUMBER, value, start_line, start_column)
+        self._add_token_(TokenType.NUMBER, value, start_line, start_column)
 
-    def scan_decimal(self) -> str:
+    def _scan_decimal(self) -> str:
         """
         Scan a decimal number from the character list.
         :return: The scanned decimal number as a string.
         """
 
         value = ""
-        if self._head_equals("-"):
-            value += self.advance()
+        if self._head_equals_("-"):
+            value += self._advance()
 
         # Get the integer part, ensuring that multiple leading zeros
         # are treated as different tokens.
-        value += self.scan_integer(separate_zeros=True)
+        value += self._scan_integer(separate_zeros=True)
 
         # Get the fractional part, if it exists.
-        if self._head_equals("."):
-            value += self.advance()
-            value += self.scan_integer(separate_zeros=False)
+        if self._head_equals_("."):
+            value += self._advance()
+            value += self._scan_integer(separate_zeros=False)
 
         if value.endswith("."):
             raise ValueError(
@@ -521,21 +521,21 @@ class Lexer:
 
         return value
 
-    def scan_integer(self, separate_zeros: bool) -> str:
+    def _scan_integer(self, separate_zeros: bool) -> str:
         """
         Scan an integer from the character list.
         :param separate_zeros: Whether to immediately stop scanning repeated '0's.
         :return: The scanned integer as a string.
         """
         value = ""
-        if separate_zeros and self._head_equals("0"):
-            value += self.advance()
+        if separate_zeros and self._head_equals_("0"):
+            value += self._advance()
             return value
-        while unwrap_and_test(self._peek(), lambda c: c in string.digits):
-            value += self.advance()
+        while unwrap_and_test(self._peek_(), lambda c: c in string.digits):
+            value += self._advance()
         return value
 
-    def scan_element(self):
+    def _scan_element(self):
         """
         Scan an element token from the character list.
         :return: None
@@ -544,36 +544,39 @@ class Lexer:
 
         value = ""
         while unwrap_and_test(
-            self._peek(), lambda c: c in string.ascii_letters + string.digits + "_!*&%-"
+            self._peek_(),
+            lambda c: c in string.ascii_letters + string.digits + "_!*&%-",
         ):
-            value += self.advance()
+            value += self._advance()
 
         if value in KEYWORD_TO_TOKEN:
             token_category = KEYWORD_TO_TOKEN[value]
         else:
             token_category = TokenType.IDENTIFIER
 
-        self._add_token(token_category, value, start_line, start_column)
+        self._add_token_(token_category, value, start_line, start_column)
 
-    def scan_identifier(self) -> str:
+    def _scan_identifier(self) -> str:
         """
         Scan a name identifier from the character list.
         :return: The scanned identifier as a string.
         """
 
-        if not unwrap_and_test(self._peek(), lambda c: c in string.ascii_letters + "_"):
+        if not unwrap_and_test(
+            self._peek_(), lambda c: c in string.ascii_letters + "_"
+        ):
             raise ValueError(
                 f"Invalid start of identifier at line {self.line}, column {self.column}"
             )
         value = ""
         while unwrap_and_test(
-            self._peek(),
+            self._peek_(),
             lambda c: c in string.ascii_letters + string.digits + "_",
         ):
-            value += self.advance()
+            value += self._advance()
         return value
 
-    def scan_string_with_interpolation(self):
+    def _scan_string_with_interpolation(self):
         """
         Scan a string literal with support for interpolation.
         Emits tokens in the form:
@@ -582,21 +585,21 @@ class Lexer:
         start_line, start_column = self.line, self.column
 
         # Emit STRING_START token
-        self._add_token(TokenType.STRING_START, '"', start_line, start_column)
-        self._discard()  # Discard the opening quote
+        self._add_token_(TokenType.STRING_START, '"', start_line, start_column)
+        self._discard_()  # Discard the opening quote
 
-        while self.characters and not self._head_equals('"'):
+        while self.characters and not self._head_equals_('"'):
             HEAD = self.characters[0]
 
             if HEAD == "\\":
                 # Handle escape sequences
-                self._scan_string_escape()
-            elif HEAD == "$" and self._is_interpolation_start():
+                self._scan_string_escape_()
+            elif HEAD == "$" and self._is_interpolation_start_():
                 # Handle interpolation: $identifier or ${expression}
-                self._scan_string_interpolation()
+                self._scan_string_interpolation_()
             else:
                 # Regular string content
-                self._scan_string_content()
+                self._scan_string_content_()
 
         if not self.characters:
             raise ValueError(
@@ -605,26 +608,26 @@ class Lexer:
 
         # Emit STRING_END token
         end_line, end_column = self.line, self.column
-        self._add_token(TokenType.STRING_END, '"', end_line, end_column)
-        self._discard()  # Discard the closing quote
+        self._add_token_(TokenType.STRING_END, '"', end_line, end_column)
+        self._discard_()  # Discard the closing quote
 
-    def _is_interpolation_start(self) -> bool:
+    def _is_interpolation_start_(self) -> bool:
         """Check if we're at the start of an interpolation ($ident or ${...)."""
-        if not self._head_equals("$"):
+        if not self._head_equals_("$"):
             return False
-        peek2 = self._peek(2)
+        peek2 = self._peek_(2)
         if not peek2 or len(peek2) < 2:
             return False
         next_char = peek2[1]
-        return next_char in string.ascii_letters + "_" or self._head_equals("${")
+        return next_char in string.ascii_letters + "_" or self._head_equals_("${")
 
-    def _scan_string_escape(self):
+    def _scan_string_escape_(self):
         """Scan an escape sequence inside a string."""
-        self._discard()
+        self._discard_()
         if not self.characters:
             raise ValueError("Unterminated escape sequence")
         escape_line, escape_column = self.line, self.column
-        ESCAPE_CHAR = self.advance()
+        ESCAPE_CHAR = self._advance()
         match ESCAPE_CHAR:
             case "n":
                 escape_value = "\n"
@@ -642,11 +645,11 @@ class Lexer:
                 raise ValueError(
                     f"Invalid escape sequence '\\{ESCAPE_CHAR}' at line {self.line}, column {self.column}"
                 )
-        self._add_token(
+        self._add_token_(
             TokenType.STRING_CONTENT, escape_value, escape_line, escape_column
         )
 
-    def _scan_string_content(self):
+    def _scan_string_content_(self):
         """Scan literal content inside a string until special character."""
         content_line, content_column = self.line, self.column
         content = ""
@@ -662,28 +665,28 @@ class Lexer:
         if (
             self.characters
             and self.characters[0] == "$"
-            and not self._is_interpolation_start()
+            and not self._is_interpolation_start_()
         ):
             if self.column < len(self.characters):
                 self.column += 1
             content += self.characters.pop(0)
 
         if content:
-            self._add_token(
+            self._add_token_(
                 TokenType.STRING_CONTENT, content, content_line, content_column
             )
 
-    def _scan_string_interpolation(self):
+    def _scan_string_interpolation_(self):
         """
         Scan interpolation inside a string: either $identifier or ${expression}
         """
         interp_line, interp_column = self.line, self.column
-        self._discard()  # Discard the '$'
+        self._discard_()  # Discard the '$'
 
-        if self._head_equals("{"):
+        if self._head_equals_("{"):
             # ${expression} - emit INTERP_START and scan tokens until }
-            self._add_token(TokenType.INTERP_START, "${", interp_line, interp_column)
-            self._discard()  # Discard the '{'
+            self._add_token_(TokenType.INTERP_START, "${", interp_line, interp_column)
+            self._discard_()  # Discard the '{'
 
             # Scan tokens inside the interpolation until we find the matching '}'
             brace_depth = 1
@@ -691,53 +694,55 @@ class Lexer:
                 if self.characters[0] == "}":
                     brace_depth -= 1
                     if brace_depth == 0:
-                        self._add_token(
+                        self._add_token_(
                             TokenType.INTERP_END, "}", self.line, self.column
                         )
-                        self._discard()
+                        self._discard_()
                         break
 
                 if self.characters[0] == "{":
                     brace_depth += 1
 
-                if not self._scan_token_single():
+                if not self._scan_token_single_():
                     raise ValueError(
                         f'Unexpected character "{self.characters[0]}" inside interpolation at line {self.line}, column {self.column}'
                     )
         else:
             # $identifier - emit INTERP_START, then the identifier token, then INTERP_END
-            self._add_token(TokenType.INTERP_START, "$", interp_line, interp_column)
+            self._add_token_(TokenType.INTERP_START, "$", interp_line, interp_column)
 
             # Scan the identifier
             ident_line, ident_column = self.line, self.column
-            if unwrap_and_test(self._peek(), lambda c: c in string.ascii_letters + "_"):
-                ident = self.scan_identifier()
-                self._add_token(TokenType.IDENTIFIER, ident, ident_line, ident_column)
+            if unwrap_and_test(
+                self._peek_(), lambda c: c in string.ascii_letters + "_"
+            ):
+                ident = self._scan_identifier()
+                self._add_token_(TokenType.IDENTIFIER, ident, ident_line, ident_column)
 
-            self._add_token(TokenType.INTERP_END, "", self.line, self.column)
+            self._add_token_(TokenType.INTERP_END, "", self.line, self.column)
 
-    def scan_annotation(self):
+    def _scan_annotation(self):
         """
         Scan an annotation token from the character list.
         :return: None
         """
         start_line, start_column = self.line, self.column
 
-        self._discard()  # Discard the '@' character
+        self._discard_()  # Discard the '@' character
 
         token_category = (
             TokenType.ELEMENT_ANNOTATION
-            if self._head_equals("@")
+            if self._head_equals_("@")
             else TokenType.STRUCTURE_ANNOTATION
         )
         if token_category == TokenType.ELEMENT_ANNOTATION:
-            self._discard()  # Discard the second '@' character for element annotations
+            self._discard_()  # Discard the second '@' character for element annotations
 
-        value = self.scan_identifier()
+        value = self._scan_identifier()
 
-        self._add_token(token_category, value, start_line, start_column)
+        self._add_token_(token_category, value, start_line, start_column)
 
-    def scan_tag(self):
+    def _scan_tag(self):
         """
         Scan a tag token from the character list.
         :return: None
@@ -745,17 +750,17 @@ class Lexer:
         start_line, start_column = self.line, self.column
 
         value = ""
-        if self._head_equals("!"):  # Handle optional leading '!'
-            value += self.advance()
+        if self._head_equals_("!"):  # Handle optional leading '!'
+            value += self._advance()
         while unwrap_and_test(
-            self._peek(),
+            self._peek_(),
             lambda c: c in string.ascii_letters + string.digits + "_",
         ):
-            value += self.advance()
+            value += self._advance()
         if not value:
             raise ValueError(f"Invalid tag at line {self.line}, column {self.column}")
         if value == "!":
             raise ValueError(
                 f"Missing tag name at line {self.line}, column {self.column}"
             )
-        self._add_token(TokenType.TAG_NAME, value, start_line, start_column)
+        self._add_token_(TokenType.TAG_NAME, value, start_line, start_column)
