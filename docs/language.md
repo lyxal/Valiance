@@ -252,7 +252,7 @@ dict{x: 3, y: 4}
 
 ```
 $counter = 5
-$counter := \+ 1
+$counter := ++
 ```
 
 ## 3.2. Constants
@@ -565,7 +565,7 @@ $double = createMultiplier(2)
 ```
 fn =>
   $x = 5
-  fn => $x \+ 1
+  fn => $x `+` 1
 end
 $wrapped = call(top)
 $x = 10
@@ -841,13 +841,13 @@ fork: (sum, length) /
 
 - If `:` is used, then _all_ function arguments must be specified. This ensures 0 ambiguity as to which function-typed parameters are being filled.
 
-## 8.2. The `\` Modifier
+## 8.2. The `` ` `` Modifier
 
-- `\` before an element name will make it take either the next value token, or the next element, and use it as its right-most  non-optional parameter.
+- Surrounding an element name in backticks (`` ` ``) will make it take either the next value token, or the next element, and use it as its right-most  non-optional parameter.
 - Note that the element must be either monadic or dyadic.
 
 ```
-3 \+ 4
+3 `+` 4
 #? Same as
 3 4 +
 #? Same as
@@ -855,12 +855,12 @@ fork: (sum, length) /
 ```
 
 ```
-range(2, 7) \union range(4, 7)
+range(2, 7) `union` range(4, 7)
 #? The entirety of range(4, 7) is used
 ```
 
 ```
-\not sorted?
+`not` sorted?
 #? Equivalent to
 sorted? not
 ```
@@ -950,16 +950,16 @@ end
 - A case describes what to match against one or more stack values, and consists of one or more case items separated by `,`. Each item corresponds to one stack position from the top down. All cases in a match block must have the same number of items.
 - A case item can be:
 	- Literal - an exact value: `10`, `"hello"`
-	- Condition - a predicate: `if \> 5`
+	- Condition - a predicate: ``if `>` 5``
 	- List pattern - a structural match: `[1, _, 3]`, `[1, $x = _, 3]`, `[1, ..., 3]`
-	- Type match - a type check with optional binding, destructuring, and guard: `as :Type`, `as x: Type`, `as :Obj(field)`, `as :Type if \> 5`
+	- Type match - a type check with optional binding, destructuring, and guard: `as :Type`, `as x: Type`, `as :Obj(field)`, ``as :Type if `>` 5``
 	- Wildcard - matches anything: `_`
 
 - Within a single item, `|` separates alternatives:
 
 ```
 3 | 4 => ...              #? literal alternatives
-if \> 5 | if \< 2 => ...  #? condition alternatives
+if `>` 5 | if `<` 2 => ...  #? condition alternatives
 ```
 
 - Examples:
@@ -967,7 +967,7 @@ if \> 5 | if \< 2 => ...  #? condition alternatives
 ```
 match =>
   10 => "The number was 10"
-  if \> 5 => "The number is bigger than 5"
+  if `>` 5 => "The number is bigger than 5"
   _ => "Too small"
 end
 ```
@@ -985,7 +985,7 @@ end
 match =>
   as :Type => "Type match"
   as x: OtherType => "Named type match"
-  as :Number if \> 5 => "Type match with guard"
+  as :Number if `>` 5 => "Type match with guard"
   as :Obj(param, param) => "Destructured object"
   as y => "Default named type match"
 end
@@ -1077,8 +1077,8 @@ if (1) => + else => /
 
 ```
 #? In practice, use a match statement
-if ($name \== "Bob") => println("You're Bob!")
-else if ($name \== "Jeff") => println("You're Jeff!")
+if ($name `==` "Bob") => println("You're Bob!")
+else if ($name `==` "Jeff") => println("You're Jeff!")
 else => println("No match")
 ```
 
@@ -1119,7 +1119,7 @@ end
 ```
 define find(ns: Number+, number: Number) -> Number? =>
   $ns foreach (n, ind) =>
-    if ($n \== $number) => break ($ind) end
+    if ($n `==` $number) => break ($ind) end
   end
 end
 ```
@@ -1145,14 +1145,14 @@ Examples
 
 ```
 $count = 0
-while ($count \< 10) =>
+while ($count `<` 10) =>
   println("Count is ${count}")
   $count := increment
 end
 
 #? Functionally equivalent to
 
-0 while (\< 10) =>
+0 while (10 <) =>
   println("Count is {top}")
   increment
 end
@@ -1172,7 +1172,7 @@ end
 - Named inputs can be referred to as variables.
 
 ```
-while (\> 0) -> (count: Number) =>
+while (`>` 0) -> (count: Number) =>
 
 end
 ```
@@ -1405,7 +1405,7 @@ object Foo =>
   define get => $x
 end
 
-define get(:Foo) => $x \+ 5
+define get(:Foo) => $x `+` 5
 
 Foo(10) get #? 15
 Foo(10) Foo::get #? 10
@@ -1562,11 +1562,11 @@ object Rectangle =>
 end
 
 object Rectangle as Shape =>
-  define getArea => self.width \* self.height
+  define getArea => self.width `*` self.height
 end
 
 object Circle as Shape =>
-  define getArea => self.radius squared \* 3.14
+  define getArea => self.radius squared `*` 3.14
 end
 ```
 
@@ -2003,7 +2003,7 @@ end
 ```
 tag #Vector3 as constructed
 define #Vector3(:Number+) =>
-  length \== 3
+  length `==` 3
 end
 
 [1, 2, 3] #Vector3 #? Valid
@@ -3194,7 +3194,7 @@ end
 cast n: Number -> FFI.int =>
   assert => $n inRange(-32_767, 32_767)
   $n as! FFI.int
-}
+end
 ```
 
 - Note that the ultimate conversion is just an `as!`
