@@ -1038,10 +1038,13 @@ end
 ### 10.4.1. `if`
 
 - It's an if statement, but only one branch.
-- Execute the branch if the top of the stack is truthy.
+- Execute the branch if the condition evaluates as truthy.
 - `if (cond) => code end`
 - `cond` must return `#boolean Number`
 - Return type is the top of the stack type of `code` but optionalised. `None` is returned if not executed.
+- `cond` peeks its arguments - in other words, it doesn't pop them.
+	- This is because if bodies quite commonly operate on the stack item they check.
+	- Saves extra `dup`s and `copy`s
 
 ```
 if (2 2 + 5 ==) => "Uh oh" end
@@ -1062,7 +1065,7 @@ else => println("Math is fine") #? This will hopefully be printed
 
 - Note that the `if` and `else` blocks must take the exact same parameters.
 	- If the `if` block takes `Number, Number`, then the `else` block must also take `Number, Number` (or have an overload set option)
-	- This restriction is for static analysis to be possible - just the number of arguments doesn't suffice. It can't be a union type nor a overload set either. `"boom" if (0) {halve} {length}`. `halve` not defined on string, but type of `length` _is_
+	- This restriction is for static analysis to be possible - just the number of arguments doesn't suffice. It can't be a union type nor a overload set either. `"boom" if (0) => halve else length`. `halve` not defined on string, but type of `length` _is_
 - However, if one block were `OverloadSet[(Number, Number) -> ..., (String, String) -> ...]` and the other were `Number, Number`, that would be fine.
 	- The `OverloadSet` would be inferred to be always resolved as `Number, Number`
 	- Two overload sets will be the intersection of the two. BUT the `OverloadSet` will then be used as the inferred type of the if statement.
