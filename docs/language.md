@@ -676,7 +676,10 @@ zip([[1], [2], [3]], [1]) == [[[1], [1]], [[2], [1]], [[3], [1]]]
   - While it would be possible to have a trimming/re-use/universal default fill option, these can lead to surprising results.
 - `[[1, 2], [3, 4, 5]] [[6, 7], [8, 9]] +` also raises a runtime error
   - The `[3, 4, 5]` does not have the same length as the `[8, 9]`
-- Length mismatch errors are raised as `Panic[String]`s.
+- Length mismatch errors are raised as `VectorisationFault`s.
+	- Note that `VectorisationFault`s cannot be raised using `panic`. This is the only such fault that can only be raised at runtime by the language.
+	- `VectorisationFault`s do not attach a `Panic` element tag.
+	- However, a `try/handle` can handle a `VectorisationFault`
 
 ## 7.1. Fine Grained Vectorisation Control
 
@@ -2620,23 +2623,26 @@ define bar => 2
 ## 23.2. Import Syntax
 
 ```
-import {
+import{
   module,
   module as alias,
   module.[Component],
   module.[
     Component,
-    Component as Alias,        #? aliased import
-    object X as Y,             #? trait implementation
-    hash(X),                   #? concrete overload by parameter type
-    hash(_+)                   #? generic overload using wildcard
+    Component as Alias,              #? aliased import
+    object X as Y,                   #? trait implementation
+    hash,                            #? all overloads
+    hash(String),                    #? specific concrete overload
+    hash(_+),                        #? specific generic overload
+    hash except [(String), (_+)],    #? all overloads except these
   ]
 }
 ```
 
-- `_` in an overload import means "any type." `_+` means "a list of any type," `_++` means "a rank-2 list of any type," and so on, consistent with the rest of the language.
-- Multiple components from the same module can be listed inside `[]`.
+- `_` in an overload signature means "any type." `_+` means "a list of any type," `_++` means "a rank-2 list of any type," and so on, consistent with the rest of the language.
+- Multiple components from the same module are listed inside `[]`.
 - Single component imports do not require `[]`.
+- `except` is only valid after a bare element name - `hash(String) except [...]` is a compile error since you are already importing a specific overload.
 
 ## 23.3. Module Resolution
 
@@ -2707,6 +2713,42 @@ import {
 }
 @pkgA.hash("string") #? pkgA's String overload
 @pkgB.hash("string") #? pkgB's String overload
+```
+
+### 23.5.1. Overload Exclusion
+
+- `except` imports all overloads of an element except those specified.
+- Syntax: `element except [overload, overload, ...]`
+- Each exclusion is an overload signature in `()` - the same syntax as selective overload imports.
+- `except` is only valid after a bare element name. Using it after a specific overload is a compile error:
+
+```
+hash except [(String)]       #? valid - all overloads except String
+hash(String) except [(_+)]   #? compile error - already specific
+```
+
+- Exclusions can be concrete or generic:
+
+```
+hash except [(String)]          #? exclude concrete String overload
+hash except [(_+)]              #? exclude generic list overload
+hash except [(String), (_+)]    #? exclude both
+```
+
+- If an excluded overload doesn't exist in the module, it is a compile error:
+
+```
+#? @somelib doesn't define hash(Number)
+hash except [(Number)]   #? compile error - nothing to exclude
+```
+
+- `except` interacts with conflict resolution - if after exclusions there are still conflicting overloads from two modules, the conflict error still applies:
+
+```
+import{
+  @pkgA.[hash except [(String)]],  #? still has hash(_+)
+  @pkgB.[hash except [(String)]]   #? still has hash(_+) - conflict!
+}
 ```
 
 ## 23.6. Importing Objects
