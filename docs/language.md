@@ -1452,7 +1452,7 @@ define ~<ObjectName> => ... end
 - Consider:
   
 ```
-import system
+import {system}
 object File =>
   private $handle: system.StreamHandle
   define File(filename: String) =>
