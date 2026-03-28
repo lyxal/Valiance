@@ -2346,7 +2346,26 @@ end
 
 - The calls to `@mustcall` elements must be provably called. This means that if a `@mustcall` element is called in a context where it may not be called, then the compiler will not consider that element as satisfying the `@mustcall` requirement.
   - This means that if a `@mustcall` element is called in a branch of an if statement (without an else statement that also calls such an element), or in a loop, then the compiler will not consider that element as satisfying the `@mustcall` requirement, because there are execution paths where that element is not called.
+ 
+## 19.10. `@commutative`
+- Sometimes, it can be useful to make elements type commutative.
+- For example, `get[T] (T+, Number)` could have an overload `get[T] (Number, T+)` that simply swaps the arguments before calling.
+- Doing so cuts down on the amount of stack juggling required.
+- But defining an overload for each and every overload combination is ceremonious.
+- The `@commutative` annotation automatically generates all possible overload permutations
+- For example:
 
+```
+@commutative define[T] get(xs: T+, ind: Number) => $xs[$ind]
+```
+
+- Will automatically create the overload
+
+```
+define[T] get(ind: Number, xs: T+) => swap get
+```
+
+- Note that normal overload resolution rules still apply.
 # 20. Multimethods
 - Standard overload resolution is static dispatch.
 - The chosen overload is selected solely based on statically known types.
