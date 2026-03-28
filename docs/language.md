@@ -1358,13 +1358,13 @@ object Person =>
   $name: String
   $age: Number
   define Person(name: String, age: Number) =>
-	self.name = $name
-    self.age = $age
+	$self.name = $name
+    $self.age = $age
   end
 end
 ```
 
-- However, that leads to noise like `self.name = $name`.
+- However, that leads to noise like `$self.name = $name`.
 - If no constructors are defined, then a default constructor will be created. This default constructor will have one parameter per field, in the order they are defined.
 
 ```
@@ -1408,10 +1408,10 @@ define greet(:Person) => println("Howdy, {$.name}!")
 ```
 object Foo =>
   $x: Number
-  define get => $x
+  define get => $self.x
 end
 
-define get(:Foo) => $x `+` 5
+define get(:Foo) => $.x `+` 5
 
 Foo(10) get #? 15
 Foo(10) Foo::get #? 10
@@ -1430,12 +1430,12 @@ Foo(10) Foo::get #? 10
 	- Also note that the implementation may actually use mutation under the hood if it is determined it is safe to do so. The end user never experiences mutation though.
 - This is consistent with the fact that writing to a variable only updates what is inside the variable box.
 
-## 12.4. `self`
+## 12.4. `$self`
 
-- Inside an object friendly element, `self` can be used to retrieve the object state as it was at the time of the element call.
-- `self $.member` and `self.member` are both valid.
-- `self $.member = <value>` and `self.member = <value>` are both valid. But only `self.member = <value>` will update what is returned by `self`.
-- Note that returning `self` is important if you want to chain object-friendly elements.
+- Inside an object friendly element, `$self` can be used to retrieve the object state as it was at the time of the element call.
+- `$self $.member` and `$self.member` are both valid.
+- `$self $.member = <value>` and `$self.member = <value>` are both valid. But only `$self.member = <value>` will update what is returned by `$self`.
+- Note that returning `$self` is important if you want to chain object-friendly elements.
 
 ## 12.5. Destructors
 
@@ -1458,10 +1458,10 @@ object File =>
   define File(filename: String) =>
     $handle = system.openFile($filename)
   end
-  define read -> String => system.readStream($handle, all = true)
-  define write(:String) => system.writeStream($handle, _)
-  define close => system.closeStream($handle)
-  define ~File => system.releaseHandle($handle)
+  define read -> String => system.readStream($self.handle, all = true)
+  define write(:String) => system.writeStream($self.handle, _)
+  define close => system.closeStream($self.handle)
+  define ~File => system.releaseHandle($self.handle)
 end
 ```
 
@@ -1498,7 +1498,7 @@ end
 object Transaction =>
   ...
   define pop =>
-    self commit
+    $self commit
   end
 end
 ```
@@ -1509,13 +1509,13 @@ end
 object Counter =>
   $count: #integer Number = 0
   define increment =>
-    self.count := 1 +
-    self
+    $self.count := 1 +
+    $self
   end
-  define decrement => self $.count := 1 -
+  define decrement => $self $.count := 1 -
   define reset =>
-    self.count = 0
-    self
+    $self.count = 0
+    $self
   end
 end
 
@@ -1545,7 +1545,7 @@ end
 trait Shape =>
   extend getArea -> Number
   define largerThan(other: Shape) =>
-    self $other both: getArea >
+    $self $other both: getArea >
   end
 end 
 ```
@@ -1568,11 +1568,11 @@ object Rectangle =>
 end
 
 object Rectangle as Shape =>
-  define getArea => self.width `*` self.height
+  define getArea => $self.width `*` $self.height
 end
 
 object Circle as Shape =>
-  define getArea => self.radius squared `*` 3.14
+  define getArea => $self.radius squared `*` 3.14
 end
 ```
 
@@ -1584,7 +1584,7 @@ end
 ```
 trait Logger => extend log(:String)
 trait ErrorReporter as Logger =>
-  define reportError(:String) => self log
+  define reportError(:String) => $self log
 end
 
 object ConsoleLogger => end
@@ -1620,12 +1620,12 @@ variant Shape =>
 
   Circle =>
     $radius: Number
-    define getArea => self.radius squared * 3.14
+    define getArea => $self.radius squared * 3.14
   end
   Rectangle =>
     $width: Number
     $height: Number
-    define getArea => self.width * self.height
+    define getArea => $self.width * $self.height
   end
 end
 ```
@@ -2201,7 +2201,7 @@ end
 
 ## 19.2. `@self`
 - A return convention annotation
-- Makes object friendly elements automatically return `self`, and inserts the object type into the element return types.
+- Makes object friendly elements automatically return `$self`, and inserts the object type into the element return types.
 	- Even if the return types are already specified.
 - Compare:
 
@@ -2209,14 +2209,14 @@ end
 object Counter =>
   $count = 0
   define increment =>
-    $count := ++
-    self
+    $self.count := ++
+    $self
   end
 end
 
 object Counter =>
   $count = 0
-  @self define increment => $count := ++
+  @self define increment => $self.count := ++
 end
 ```
 
@@ -3134,12 +3134,12 @@ object Counter =>
   private $handle: counter.Counter
   define Counter(value: Number) =>
     external => counter.counter_create($value as FFI.int)
-        $handle = top
+        $self.handle = top
   end
 
   @self define increment() =>
     #? Modifies `handle` in place
-    external => $handle counter.counter_inc
+    external => $self.handle counter.counter_inc
   end
 
   define get() -> Number => external => $handle counter.counter_get as Number
