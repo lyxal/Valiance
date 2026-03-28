@@ -38,7 +38,6 @@
 
 - Objects, not lists of characters
         - More convenient for string-focused operations
-        - No weird indexing problems arising from treating strings as a list of characters
         - No concern about string shape either.
 - UTF-8 encoded
 - Support for string interpolation
