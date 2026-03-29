@@ -1521,6 +1521,74 @@ end
 Counter increment increment $.count #? 2
 ```
 
+## 12.8. Shared State Objects
+- The base Valiance object-oriented story is suitable for 99% of use cases.
+- However, it is unable to represent objects that require shared mutable state.
+- For example, consider a rudimentary doubly linked list implementation:
+
+```
+object[T] Node =>
+  #? Members declared public for convenience.
+  public $previous: Node? = None
+  public $next: Node? = None
+  $value: T
+end
+
+object[T] DoublyLinkedList =>
+  $head: Node? = None
+  $tail: Node? = None
+
+  define append(item: T) =>
+    #? x <-- (temp) --> x
+    $temp = Node($item)
+    if ($tail empty?) =>
+      $self.head = $temp
+      $self.tail = $temp
+    else =>
+      $self.tail.next = $temp
+      $temp.previous = $self.tail #? Stores $self.tail in current state
+      $self.tail = $temp #? Does NOT update what $temp.previous refers to
+    end
+  end
+end
+```
+
+- As pointed out, `$temp.previous = $self.tail` creates an immutable copy of what is stored in `$self.tail` at that point in time.
+- Updating `$self.tail` in the next line does not update what is stored in `$temp.previous`
+- Thus, there is an extension to the object system. Prefixing an object name with `&` makes it a "shared-state object".
+- When an instance of a shared-state object is created, what you get back is not the object itself, but a *handle* to it. The actual object lives in a per-type, per-scope arena.
+- The actual object lives in an arena. There is one arena per shared-state object type, per scope. For example, if a scope creates three `&T` instances, all three live in the same arena - the `&T` arena for that scope. When the scope exits, the arena is dropped as a unit, freeing all instances at once, unless any handles to objects within it remain reachable outside the scope - in which case the arena escapes with them.
+- All operations on a handle operate on the underlying object in the arena. Handles can be freely copied and passed around - all handles to the same object always see the same data.
+- This is the key difference from normal objects. With normal objects, storing a reference to another object captures a snapshot of its value at that moment. With shared-state objects, storing a handle means "this object, whatever it currently contains." Updates to the object are immediately visible through any handle pointing to it, because the handle always refers to the same arena slot rather than a frozen copy.
+- Applying this to the linked list example:
+
+```
+object[T] &Node =>
+  #? Members declared public for convenience.
+  public $previous: &Node? = None
+  public $next: &Node? = None
+  $value: T
+end
+
+object[T] DoublyLinkedList =>
+  $head: &Node? = None
+  $tail: &Node? = None
+
+  define append(item: T) =>
+    $temp = &Node($item)
+    if ($tail empty?) =>
+      $self.head = $temp
+      $self.tail = $temp
+    else =>
+      $self.tail.next = $temp
+      $temp.previous = $self.tail #? Stores the handle stored in $self.tail
+      $self.tail = $temp #? $self.tail stores the handle in $temp
+    end
+  end
+end
+```
+
+- The only change between the original version and the shared-state object version is that the node class is now `&Node`. `$head` and `$tail` both hold handles that, whenever attributes of the handle need to be read/written, accesses the underlying `&Node` object.
 # 13. Traits
 - No object inheritance -> Reliance upon composition.
 - But! Sometimes, subtyping is very helpful
