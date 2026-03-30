@@ -2603,7 +2603,7 @@ end
 - For a result type input:
 	- If the input is okay: call a function on the input
 	- Otherwise, return the error
-- `?>` is most commonly called `flatmap` or `and_then` in other programming languages.
+- `&` is most commonly called `flatmap` or `and_then` in other programming languages.
 
 ## 21.4.2. `?`
 - `?` is an element defined for optionals as: If None, return None from the current function. Otherwise, unwrap.
