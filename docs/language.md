@@ -1429,6 +1429,12 @@ Foo(10) Foo::get #? 10
 	- Also note that the implementation may actually use mutation under the hood if it is determined it is safe to do so. The end user never experiences mutation though.
 - This is consistent with the fact that writing to a variable only updates what is inside the variable box.
 
+### 12.3.1. Member Access on Optional Values
+- If an object is an optional type (ie `Some[T] | None`), then `.` access is not safe.
+- `->`s can be used instead of `.`s to either access the member if the object is `Some` or otherwise push `None`
+- `$name->member`, `$->member`
+- For assignment, `$name->member = value` will write if `name` is `Some`. Otherwise, the assignment will be cancelled.
+
 ## 12.4. `$self`
 
 - Inside an object friendly element, `$self` can be used to retrieve the object state as it was at the time of the element call.
