@@ -38,7 +38,6 @@
 
 - Objects, not lists of characters
         - More convenient for string-focused operations
-        - No weird indexing problems arising from treating strings as a list of characters
         - No concern about string shape either.
 - UTF-8 encoded
 - Support for string interpolation
@@ -252,7 +251,7 @@ dict{x: 3, y: 4}
 
 ```
 $counter = 5
-$counter := \+ 1
+$counter := ++
 ```
 
 ## 3.2. Constants
@@ -565,7 +564,7 @@ $double = createMultiplier(2)
 ```
 fn =>
   $x = 5
-  fn => $x \+ 1
+  fn => $x `+` 1
 end
 $wrapped = call(top)
 $x = 10
@@ -676,7 +675,10 @@ zip([[1], [2], [3]], [1]) == [[[1], [1]], [[2], [1]], [[3], [1]]]
   - While it would be possible to have a trimming/re-use/universal default fill option, these can lead to surprising results.
 - `[[1, 2], [3, 4, 5]] [[6, 7], [8, 9]] +` also raises a runtime error
   - The `[3, 4, 5]` does not have the same length as the `[8, 9]`
-- Length mismatch errors are raised as `Panic[String]`s.
+- Length mismatch errors are raised as `VectorisationFault`s.
+	- Note that `VectorisationFault`s cannot be raised using `panic`. This is the only such fault that can only be raised at runtime by the language.
+	- `VectorisationFault`s do not attach a `Panic` element tag.
+	- However, a `try/handle` can handle a `VectorisationFault`
 
 ## 7.1. Fine Grained Vectorisation Control
 
@@ -841,12 +843,13 @@ fork: (sum, length) /
 
 - If `:` is used, then _all_ function arguments must be specified. This ensures 0 ambiguity as to which function-typed parameters are being filled.
 
-## 8.2. The `\` Modifier
+## 8.2. The `` ` `` Modifier
 
-- `\` before an element name will make it take either the next value token, or the next element, and use it as its right hand value. Note that the element must be dyadic.
+- Surrounding an element name in backticks (`` ` ``) will make it take either the next value token, or the next element, and use it as its right-most  non-optional parameter.
+- Note that the element must be either monadic or dyadic.
 
 ```
-3 \+ 4
+3 `+` 4
 #? Same as
 3 4 +
 #? Same as
@@ -854,9 +857,16 @@ fork: (sum, length) /
 ```
 
 ```
-range(2, 7) \union range(4, 7)
+range(2, 7) `union` range(4, 7)
 #? The entirety of range(4, 7) is used
 ```
+
+```
+`not` sorted?
+#? Equivalent to
+sorted? not
+```
+
 
 # 9. Indexing
 - `$[<index>]` will get the `index`th item from the top of the stack. 0-indexed.
@@ -942,16 +952,16 @@ end
 - A case describes what to match against one or more stack values, and consists of one or more case items separated by `,`. Each item corresponds to one stack position from the top down. All cases in a match block must have the same number of items.
 - A case item can be:
 	- Literal - an exact value: `10`, `"hello"`
-	- Condition - a predicate: `if \> 5`
+	- Condition - a predicate: ``if `>` 5``
 	- List pattern - a structural match: `[1, _, 3]`, `[1, $x = _, 3]`, `[1, ..., 3]`
-	- Type match - a type check with optional binding, destructuring, and guard: `as :Type`, `as x: Type`, `as :Obj(field)`, `as :Type if \> 5`
+	- Type match - a type check with optional binding, destructuring, and guard: `as :Type`, `as x: Type`, `as :Obj(field)`, ``as :Type if `>` 5``
 	- Wildcard - matches anything: `_`
 
 - Within a single item, `|` separates alternatives:
 
 ```
 3 | 4 => ...              #? literal alternatives
-if \> 5 | if \< 2 => ...  #? condition alternatives
+if `>` 5 | if `<` 2 => ...  #? condition alternatives
 ```
 
 - Examples:
@@ -959,7 +969,7 @@ if \> 5 | if \< 2 => ...  #? condition alternatives
 ```
 match =>
   10 => "The number was 10"
-  if \> 5 => "The number is bigger than 5"
+  if `>` 5 => "The number is bigger than 5"
   _ => "Too small"
 end
 ```
@@ -977,7 +987,7 @@ end
 match =>
   as :Type => "Type match"
   as x: OtherType => "Named type match"
-  as :Number if \> 5 => "Type match with guard"
+  as :Number if `>` 5 => "Type match with guard"
   as :Obj(param, param) => "Destructured object"
   as y => "Default named type match"
 end
@@ -1027,10 +1037,13 @@ end
 ### 10.4.1. `if`
 
 - It's an if statement, but only one branch.
-- Execute the branch if the top of the stack is truthy.
+- Execute the branch if the condition evaluates as truthy.
 - `if (cond) => code end`
 - `cond` must return `#boolean Number`
 - Return type is the top of the stack type of `code` but optionalised. `None` is returned if not executed.
+- `cond` peeks its arguments - in other words, it doesn't pop them.
+	- This is because if bodies quite commonly operate on the stack item they check.
+	- Saves extra `dup`s and `copy`s
 
 ```
 if (2 2 + 5 ==) => "Uh oh" end
@@ -1051,7 +1064,7 @@ else => println("Math is fine") #? This will hopefully be printed
 
 - Note that the `if` and `else` blocks must take the exact same parameters.
 	- If the `if` block takes `Number, Number`, then the `else` block must also take `Number, Number` (or have an overload set option)
-	- This restriction is for static analysis to be possible - just the number of arguments doesn't suffice. It can't be a union type nor a overload set either. `"boom" if (0) {halve} {length}`. `halve` not defined on string, but type of `length` _is_
+	- This restriction is for static analysis to be possible - just the number of arguments doesn't suffice. It can't be a union type nor a overload set either. `"boom" if (0) => halve else length`. `halve` not defined on string, but type of `length` _is_
 - However, if one block were `OverloadSet[(Number, Number) -> ..., (String, String) -> ...]` and the other were `Number, Number`, that would be fine.
 	- The `OverloadSet` would be inferred to be always resolved as `Number, Number`
 	- Two overload sets will be the intersection of the two. BUT the `OverloadSet` will then be used as the inferred type of the if statement.
@@ -1069,8 +1082,8 @@ if (1) => + else => /
 
 ```
 #? In practice, use a match statement
-if ($name \== "Bob") => println("You're Bob!")
-else if ($name \== "Jeff") => println("You're Jeff!")
+if ($name `==` "Bob") => println("You're Bob!")
+else if ($name `==` "Jeff") => println("You're Jeff!")
 else => println("No match")
 ```
 
@@ -1111,7 +1124,7 @@ end
 ```
 define find(ns: Number+, number: Number) -> Number? =>
   $ns foreach (n, ind) =>
-    if ($n \== $number) => break ($ind) end
+    if ($n `==` $number) => break ($ind) end
   end
 end
 ```
@@ -1137,14 +1150,14 @@ Examples
 
 ```
 $count = 0
-while ($count \< 10) =>
+while ($count `<` 10) =>
   println("Count is ${count}")
   $count := increment
 end
 
 #? Functionally equivalent to
 
-0 while (\< 10) =>
+0 while (10 <) =>
   println("Count is {top}")
   increment
 end
@@ -1164,7 +1177,7 @@ end
 - Named inputs can be referred to as variables.
 
 ```
-while (\> 0) -> (count: Number) =>
+while (`>` 0) -> (count: Number) =>
 
 end
 ```
@@ -1186,12 +1199,14 @@ end
 - The arity and multiplicity of `body` determines what values are used as state and what values are returned.
 	- If arity and multiplicity are both 1, then the value on the top of the stack is both state and what is generated each iteration.
 	- Otherwise, multiplicity must equal `arity + 1`
+		- If multiplicity > `arity + 1`, items after the (`arity + 1`)th item are discarded.
 	- The generated value will be the top of the stack. All other values will be used as state for the next iteration. Consequently, the state values must be compatible with the parameters expected by `body`
 - If a generated value is `None`, then that value will be skipped. To intentionally generate a `None`, it must be wrapped in a `Some`
 - The resulting list is tagged as `#infinite`
-    - Although unfold can generate finite lists,  it isn't always possible to tell whether it's actually finite. Therefore, all lists are marked infinite for safety, and you can always `#-infinite` if needed.
+    - Although unfold can generate finite lists,  it isn't always possible to tell whether it's actually finite. Therefore, all lists are marked infinite for safety, and you can always `#!infinite` if needed.
  - `condition` can be omitted to unfold infinitely.
- - `parameters` is optional. If specified, they define what is used for state, even if the arity would otherwise need more or less parameters. The returns must align with parameters if parameters are provided. 
+ - `parameters` is optional. If specified, they define what is used for state, even if the arity would otherwise need more or less parameters. The returns must align with parameters if parameters are provided.
+
 ## 10.8. `at`
 
 - A way to control vectorisation, applying a function `at` certain depths
@@ -1342,13 +1357,13 @@ object Person =>
   $name: String
   $age: Number
   define Person(name: String, age: Number) =>
-	self.name = $name
-    self.age = $age
+	$self.name = $name
+    $self.age = $age
   end
 end
 ```
 
-- However, that leads to noise like `self.name = $name`.
+- However, that leads to noise like `$self.name = $name`.
 - If no constructors are defined, then a default constructor will be created. This default constructor will have one parameter per field, in the order they are defined.
 
 ```
@@ -1392,10 +1407,10 @@ define greet(:Person) => println("Howdy, {$.name}!")
 ```
 object Foo =>
   $x: Number
-  define get => $x
+  define get => $self.x
 end
 
-define get(:Foo) => $x \+ 5
+define get(:Foo) => $.x `+` 5
 
 Foo(10) get #? 15
 Foo(10) Foo::get #? 10
@@ -1414,65 +1429,172 @@ Foo(10) Foo::get #? 10
 	- Also note that the implementation may actually use mutation under the hood if it is determined it is safe to do so. The end user never experiences mutation though.
 - This is consistent with the fact that writing to a variable only updates what is inside the variable box.
 
-## 12.4. `self`
+### 12.3.1. Member Access on Optional Values
+- If an object is an optional type (ie `Some[T] | None`), then `.` access is not safe.
+- `->`s can be used instead of `.`s to either access the member if the object is `Some` or otherwise push `None`
+- `$name->member`, `$->member`
+- For assignment, `$name->member = value` will write if `name` is `Some`. Otherwise, the assignment will be cancelled.
 
-- Inside an object friendly element, `self` can be used to retrieve the object state as it was at the time of the element call.
-- `self $.member` and `self.member` are both valid.
-- `self $.member = <value>` and `self.member = <value>` are both valid. But only `self.member = <value>` will update what is returned by `self`.
-- Note that returning `self` is important if you want to chain object-friendly elements.
+## 12.4. `$self`
+
+- Inside an object friendly element, `$self` can be used to retrieve the object state as it was at the time of the element call.
+- `$self $.member` and `$self.member` are both valid.
+- `$self $.member = <value>` and `$self.member = <value>` are both valid. But only `$self.member = <value>` will update what is returned by `$self`.
+- Note that returning `$self` is important if you want to chain object-friendly elements.
 
 ## 12.5. Destructors
 
-- First, a brief overview of memory system
-- Each scope has two reference stacks: the references it "owns", and the references it "keeps alive"
-- When an object is created in a scope, it is added to the references it "owns".
-- When a scope captures a reference from an outer scope, it adds the reference to the references it "keeps alive"
-- When a scope returns, any references being returned, including those stored in any "keep alive" stacks, are kept alive
-- Any references not being returned, nor included in any sub-"keep alive" stacks are freed.
-- In this way, a destructor is called when the object is not leaving a scope in any capacity.
+- A destructor is an element called automatically when an object is no longer reachable - that is, when its reference count hits zero.
 - Syntax:
-
+  
 ```
-define ~<ObjectName> => ... end 
+define ~<ObjectName> => ... end
 ```
 
-- Massively helpful for ensuring automatic clean up of resources
+- Destructors are intended for infallible, silent cleanup - releasing handles, freeing resources that cannot fail, etc.
+- The destructor of an object must not panic. That is, the destructor cannot call any elements that have the `Panic` tag. If cleanup may fail, use `@mustcall` instead to enforce explicit handling before the object goes out of scope.
+
 - Consider:
-
+  
 ```
-import system
+import {system}
 object File =>
   private $handle: system.StreamHandle
   define File(filename: String) =>
     $handle = system.openFile($filename)
   end
-  define read -> String => system.readStream($handle, all = true)
-  define write(:String) => system.writeStream($handle, _)
-  define ~File => system.closeStream($handle)
+  define read -> String => system.readStream($self.handle, all = true)
+  define write(:String) => system.writeStream($self.handle, _)
+  define close => system.closeStream($self.handle)
+  define ~File => system.releaseHandle($self.handle)
 end
 ```
 
-- The `~File` of a `File` object is called whenever that reference does not leave a scope in some capacity. 
+- Here, close handles the fallible cleanup - if enforcement is needed, `@mustcall` can be used to ensure it is called before the object goes out of scope. `~File` handles only the infallible release of the underlying handle.
 
-## 12.6. Object Example - `Counter`
+## 12.6. Objects, Stack Manipulation, and Memory Management
+
+- When `dup` is called on an object, it's reference count is incremented.
+- Note that `copy` calls `dup` for each reference to an item in the poststack.
+- `move` only calls `dup` if there is more than one reference to an item in the poststack.
+- If an object should not be allowed to be duplicated, then an object can define `dup` as an object friendly element with the `@error` annotation
+- For example:
+
+```
+object WriteFile =>
+  ...
+  @error("Writeable files cannot be duplicated")
+  define dup => end
+  ...
+end
+```
+
+- A compile error will be raised if an object marked as un-duplicatable is duplicated.
+- A `DuplicationFault` will be raised if an object marked as un-duplicatable ever has its reference count exceed 1. This is for cases where duplication may not be detectable by the compiler (e.g. duplication of a generic type or pushing a variable multiple times)
+
+- When `pop` is called on an object, the reference count for that object is decremented. If a `pop` would make the reference count reach 0, then the destructor is called.
+- `pop` will panic with a `CleanupFault` if an object would be destructed without any of its `@mustcall` obligations being met.
+- However, an element can define `pop` as an object friendly element with `@mustcall` elements. This element will only be called when the reference count reaches 0.
+- `pop` can be fallible, but will always call the destructor, even on panic.
+- Example:
+
+```
+@mustcall(all = ["commit"])
+object Transaction =>
+  ...
+  define pop =>
+    $self commit
+  end
+end
+```
+
+## 12.7. Object Example - `Counter`
 
 ```
 object Counter =>
   $count: #integer Number = 0
   define increment =>
-    self.count := 1 +
-    self
+    $self.count := 1 +
+    $self
   end
-  define decrement => self $.count := 1 -
+  define decrement => $self $.count := 1 -
   define reset =>
-    self.count = 0
-    self
+    $self.count = 0
+    $self
   end
 end
 
 Counter increment increment $.count #? 2
 ```
 
+## 12.8. Shared State Objects
+- The base Valiance object-oriented story is suitable for 99% of use cases.
+- However, it is unable to represent objects that require shared mutable state.
+- For example, consider a rudimentary doubly linked list implementation:
+
+```
+object[T] Node =>
+  #? Members declared public for convenience.
+  public $previous: Node? = None
+  public $next: Node? = None
+  $value: T
+end
+
+object[T] DoublyLinkedList =>
+  $head: Node? = None
+  $tail: Node? = None
+
+  define append(item: T) =>
+    #? x <-- (temp) --> x
+    $temp = Node($item)
+    if ($tail empty?) =>
+      $self.head = $temp
+      $self.tail = $temp
+    else =>
+      $self.tail.next = $temp
+      $temp.previous = $self.tail #? Stores $self.tail in current state
+      $self.tail = $temp #? Does NOT update what $temp.previous refers to
+    end
+  end
+end
+```
+
+- As pointed out, `$temp.previous = $self.tail` creates an immutable copy of what is stored in `$self.tail` at that point in time.
+- Updating `$self.tail` in the next line does not update what is stored in `$temp.previous`
+- Thus, there is an extension to the object system. Prefixing an object name with `&` makes it a "shared-state object".
+- When an instance of a shared-state object is created, what you get back is not the object itself, but a *handle* to it. The actual object lives in a per-type, per-scope arena.
+- The actual object lives in an arena. There is one arena per shared-state object type, per scope. For example, if a scope creates three `&T` instances, all three live in the same arena - the `&T` arena for that scope. When the scope exits, the arena is dropped as a unit, freeing all instances at once, unless any handles to objects within it remain reachable outside the scope - in which case the arena escapes with them.
+- All operations on a handle operate on the underlying object in the arena. Handles can be freely copied and passed around - all handles to the same object always see the same data.
+- This is the key difference from normal objects. With normal objects, storing a reference to another object captures a snapshot of its value at that moment. With shared-state objects, storing a handle means "this object, whatever it currently contains." Updates to the object are immediately visible through any handle pointing to it, because the handle always refers to the same arena slot rather than a frozen copy.
+- Applying this to the linked list example:
+
+```
+object[T] &Node =>
+  #? Members declared public for convenience.
+  public $previous: &Node? = None
+  public $next: &Node? = None
+  $value: T
+end
+
+object[T] DoublyLinkedList =>
+  $head: &Node? = None
+  $tail: &Node? = None
+
+  define append(item: T) =>
+    $temp = &Node($item)
+    if ($tail empty?) =>
+      $self.head = $temp
+      $self.tail = $temp
+    else =>
+      $self.tail.next = $temp
+      $temp.previous = $self.tail #? Stores the handle stored in $self.tail
+      $self.tail = $temp #? $self.tail stores the handle in $temp
+    end
+  end
+end
+```
+
+- The only change between the original version and the shared-state object version is that the node class is now `&Node`. `$head` and `$tail` both hold handles that, whenever attributes of the handle need to be read/written, accesses the underlying `&Node` object.
 # 13. Traits
 - No object inheritance -> Reliance upon composition.
 - But! Sometimes, subtyping is very helpful
@@ -1496,7 +1618,7 @@ end
 trait Shape =>
   extend getArea -> Number
   define largerThan(other: Shape) =>
-    self $other both: getArea >
+    $self $other both: getArea >
   end
 end 
 ```
@@ -1519,11 +1641,11 @@ object Rectangle =>
 end
 
 object Rectangle as Shape =>
-  define getArea => self.width \* self.height
+  define getArea => $self.width `*` $self.height
 end
 
 object Circle as Shape =>
-  define getArea => self.radius squared \* 3.14
+  define getArea => $self.radius squared `*` 3.14
 end
 ```
 
@@ -1535,7 +1657,7 @@ end
 ```
 trait Logger => extend log(:String)
 trait ErrorReporter as Logger =>
-  define reportError(:String) => self log
+  define reportError(:String) => $self log
 end
 
 object ConsoleLogger => end
@@ -1571,12 +1693,12 @@ variant Shape =>
 
   Circle =>
     $radius: Number
-    define getArea => self.radius squared * 3.14
+    define getArea => $self.radius squared * 3.14
   end
   Rectangle =>
     $width: Number
     $height: Number
-    define getArea => self.width * self.height
+    define getArea => $self.width * $self.height
   end
 end
 ```
@@ -1706,7 +1828,7 @@ solve(U[T], V[W]) = solve(T, W)
 solve(T+n, U+m) = T := U+(m-n)
 solve(T*n, U*m) = T := U*(m-n)
 solve(T~n, U~m) = T := U~(m-n)
-solve(T*n, U+m) = T := U*(n-1)
+solve(T*n, U+m) = T := U*(m-n)
 solve(T~n, U+m) = T := U~(m-n)
 solve(T~n, U*m) = T := U~(m-n)
 solve(T?, U?) = T := U
@@ -1897,7 +2019,7 @@ tag #A disjoint #B
 
 ```
 define +(:#sorted Number+, :Number vec) -> #sorted Number+ =>
-  dip: #-sorted #? To avoid infinite recursion
+  dip: #!sorted #? To avoid infinite recursion
   +
   #sorted
 end
@@ -1960,7 +2082,7 @@ end
 ```
 tag #Vector3 as constructed
 define #Vector3(:Number+) =>
-  length \== 3
+  length `==` 3
 end
 
 [1, 2, 3] #Vector3 #? Valid
@@ -2106,7 +2228,8 @@ unfold (...) => ... end println #? Compile Error!
         - Binding Conventions
                 - These add additional bindings to the current scope. For example `@recursive` adds `this`.
         - Resolution Conventions
-                - These change how certain compile time evaluations are resolved. I do not have an example of a resolution convention annotation at this moment.
+                - These change how certain compile time evaluations are resolved.
+                - For example, `@mustcall` makes it so that an element must be called on a value before that value goes out of scope.
         - Return Conventions
                 - These change how items from an element are returned. For example `@@tupled` wraps returns in a tuple. Note that such annotations are usually for things that are otherwise impractical to do from "first principles"
         - Invocation Conventions
@@ -2151,7 +2274,7 @@ end
 
 ## 19.2. `@self`
 - A return convention annotation
-- Makes object friendly elements automatically return `self`, and inserts the object type into the element return types.
+- Makes object friendly elements automatically return `$self`, and inserts the object type into the element return types.
 	- Even if the return types are already specified.
 - Compare:
 
@@ -2159,14 +2282,14 @@ end
 object Counter =>
   $count = 0
   define increment =>
-    $count := ++
-    self
+    $self.count := ++
+    $self
   end
 end
 
 object Counter =>
   $count = 0
-  @self define increment => $count := ++
+  @self define increment => $self.count := ++
 end
 ```
 
@@ -2251,13 +2374,72 @@ object DivisonByZeroError as Err =>
 end
 ```
 
-- Used on a Variant to automatically require that all subtypes be Err subtypes
+- Used on a Variant to automatically make all subtypes be Err subtypes
 
 ```
-@errType variant DBError => end
-@errType object ConnectionClosedError as DBError => end
+@errType variant DBError =>
+  object ConnectionClosedError => end
+end
 ```
 
+## 19.9. `@mustcall`
+
+_Note: The exact semantics of this annotation are still being determined.
+It is an open question as to whether this annotation is feasible_
+
+- On object definition, this annotation makes it so that a set of object-friendly methods must be called on an instance of the object before that instance goes out of scope.
+- This is helpful for ensuring that clean-up-time invariants are enforced before the object's destructor is called.
+- Two forms: `@mustcall(all = [<methods>])` and `@mustcall(any = [<methods>])`
+  - `all` means that all of the methods in the set must be called before the object goes out of scope. `any` means that at least one of the methods in the set must be called before the object goes out of scope.
+  - The methods in the set must be object-friendly methods defined on the object. If a method in the set is not object-friendly, or is not defined on the object, that's a compile error.
+  - Methods are specified as strings. 
+- For example:
+
+```
+@mustcall(any = ["commit", "rollback"])
+object DBTransaction =>
+  define commit => ...
+  define rollback => ...
+end
+```
+
+- When a `DBTransaction` instance goes out of scope, if neither `commit` nor `rollback` has been called on that instance, a compile error is raised.
+- Again, this requirement only applies to the scope where the object would no longer be kept alive. It is okay to return an object that has not been `@mustcall` handled.
+- Additionally, calling `@mustcall` elements in a scope where the object is returned does not impact the consideration of whether the methods have been called in the destruction scope.
+
+```
+define foo(:DBTransaction) =>
+  commit
+end
+
+define bar(:DBTransaction) =>
+  DBTransaction() foo #? mustcall not considered satisfied here
+  commit #? mustcall considered satisfied here
+end
+```
+
+- The calls to `@mustcall` elements must be provably called. This means that if a `@mustcall` element is called in a context where it may not be called, then the compiler will not consider that element as satisfying the `@mustcall` requirement.
+  - This means that if a `@mustcall` element is called in a branch of an if statement (without an else statement that also calls such an element), or in a loop, then the compiler will not consider that element as satisfying the `@mustcall` requirement, because there are execution paths where that element is not called.
+ 
+## 19.10. `@commutative`
+- Sometimes, it can be useful to make elements type commutative.
+- For example, `get[T] (T+, Number)` could have an overload `get[T] (Number, T+)` that simply swaps the arguments before calling.
+- Doing so cuts down on the amount of stack juggling required.
+- But defining an overload for each and every overload combination is ceremonious.
+- The `@commutative` annotation automatically generates all possible overload permutations
+- For example:
+
+```
+@commutative define[T] get(xs: T+, ind: Number) => $xs[$ind]
+```
+
+- Will automatically create the overload
+
+```
+define[T] get(ind: Number, xs: T+) => swap get
+```
+
+- Note that normal overload resolution rules still apply.
 # 20. Multimethods
 - Standard overload resolution is static dispatch.
 - The chosen overload is selected solely based on statically known types.
@@ -2421,7 +2603,7 @@ end
 - For a result type input:
 	- If the input is okay: call a function on the input
 	- Otherwise, return the error
-- `?>` is most commonly called `flatmap` or `and_then` in other programming languages.
+- `&` is most commonly called `flatmap` or `and_then` in other programming languages.
 
 ## 21.4.2. `?`
 - `?` is an element defined for optionals as: If None, return None from the current function. Otherwise, unwrap.
@@ -2539,11 +2721,23 @@ define bar => 2
 import{
   module,
   module as alias,
-  module.[Component, Component],
-  module.[Component as Alias, Component],
-  module as alias.[Component, Component as Alias]
+  module.[Component],
+  module.[
+    Component,
+    Component as Alias,              #? aliased import
+    object X as Y,                   #? trait implementation
+    hash,                            #? all overloads
+    hash(String),                    #? specific concrete overload
+    hash(_+),                        #? specific generic overload
+    hash except [(String), (_+)],    #? all overloads except these
+  ]
 }
 ```
+
+- `_` in an overload signature means "any type." `_+` means "a list of any type," `_++` means "a rank-2 list of any type," and so on, consistent with the rest of the language.
+- Multiple components from the same module are listed inside `[]`.
+- Single component imports do not require `[]`.
+- `except` is only valid after a bare element name - `hash(String) except [...]` is a compile error since you are already importing a specific overload.
 
 ## 23.3. Module Resolution
 
@@ -2555,7 +2749,7 @@ There are four kinds of modules, distinguished by the shape of their import path
 - **Installed packages** - prefixed with `@`, e.g. `@somelib`. Resolved from the project's package directory.
 
 ```
-import{
+import {
   utils,                        #? local: ./utils.vlnc
   ~utils,                       #? local: <project root>/utils.vlnc
   std.lists,                    #? standard library
@@ -2564,23 +2758,95 @@ import{
 }
 ```
 
-- The compiler resolves imports in the order listed above. A name is only treated as an installed package if it is prefixed with `@`.
-
 ## 23.4. Re-exporting
 
 - Imported symbols are not visible to importers of the current module by default.
 - Prefix an import with `public` to re-export it:
 
 ```
-public import{
+public import {
   module.[Component]
 }
-#? Component is now importable from this module
 ```
 
 - This allows library authors to curate a public API from internal modules without exposing internal structure.
 
-## 23.5. Importing Objects
+## 23.5. Conflict Resolution
+
+- If two imported modules define the same overload for the same types, the compiler raises an error and requires explicit resolution.
+- Resolve by explicitly importing only the overload you want:
+
+```
+import {
+  @pkgA.[hash(String)],   #? explicitly choose pkgA's String overload
+  @pkgB.[hash(Number)]    #? and pkgB's Number overload
+}
+```
+
+- The same applies to trait implementations - if two modules define `object X as Y`, you must explicitly import the one you want:
+
+```
+import {
+  @pkgA.[object X as Y]   #? explicitly choose pkgA's implementation
+}
+```
+
+- If two modules define the same generic overload, use wildcard syntax to resolve:
+
+```
+import {
+  @pkgA.[hash(_+)]   #? pkgA's generic list overload
+}
+```
+
+- Alternatively, you can just import the whole namespace and use namespace access to disambiguate:
+
+```
+import {
+  @pkgA,
+  @pkgB
+}
+@pkgA.hash("string") #? pkgA's String overload
+@pkgB.hash("string") #? pkgB's String overload
+```
+
+### 23.5.1. Overload Exclusion
+
+- `except` imports all overloads of an element except those specified.
+- Syntax: `element except [overload, overload, ...]`
+- Each exclusion is an overload signature in `()` - the same syntax as selective overload imports.
+- `except` is only valid after a bare element name. Using it after a specific overload is a compile error:
+
+```
+hash except [(String)]       #? valid - all overloads except String
+hash(String) except [(_+)]   #? compile error - already specific
+```
+
+- Exclusions can be concrete or generic:
+
+```
+hash except [(String)]          #? exclude concrete String overload
+hash except [(_+)]              #? exclude generic list overload
+hash except [(String), (_+)]    #? exclude both
+```
+
+- If an excluded overload doesn't exist in the module, it is a compile error:
+
+```
+#? @somelib doesn't define hash(Number)
+hash except [(Number)]   #? compile error - nothing to exclude
+```
+
+- `except` interacts with conflict resolution - if after exclusions there are still conflicting overloads from two modules, the conflict error still applies:
+
+```
+import{
+  @pkgA.[hash except [(String)]],  #? still has hash(_+)
+  @pkgB.[hash except [(String)]]   #? still has hash(_+) - conflict!
+}
+```
+
+## 23.6. Importing Objects
 
 - Importing an object as a component automatically imports all its object-friendly elements.
 - OFEs are not automatically imported if the object is namespace-accessed.
@@ -2595,20 +2861,20 @@ import{somemod}
 somemod.Y somemod.foo
 ```
 
-## 23.6. Tag Importing
+## 23.7. Tag Importing
 
-- Importing a tag imports all overlay rules and any elements associated via tag definitions. 
+- Importing a tag imports all overlay rules and any elements associated via tag definitions.
 - Elements that use the tag but are not associated via tag definitions are not imported.
 
 ```
 #? In sorted.vlnc:
 tag #sorted as computed
 define[T] #sorted min(:#sorted T+) => $[0]  #? will be imported
-define[T] max(:#sorted T+) => $.[-1]                 #? will not be imported
+define[T] max(:#sorted T+) => $.[-1]        #? will not be imported
 ```
 
 ```
-import{sorted.#sorted}
+import {sorted.#sorted}
 #? #sorted overlay rules imported
 #? min imported
 #? max not imported
@@ -2960,12 +3226,12 @@ object Counter =>
   private $handle: counter.Counter
   define Counter(value: Number) =>
     external => counter.counter_create($value as FFI.int)
-        $handle = top
+        $self.handle = top
   end
 
   @self define increment() =>
     #? Modifies `handle` in place
-    external => $handle counter.counter_inc
+    external => $self.handle counter.counter_inc
   end
 
   define get() -> Number => external => $handle counter.counter_get as Number
@@ -3110,7 +3376,7 @@ end
 cast n: Number -> FFI.int =>
   assert => $n inRange(-32_767, 32_767)
   $n as! FFI.int
-}
+end
 ```
 
 - Note that the ultimate conversion is just an `as!`
