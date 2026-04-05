@@ -1,6 +1,33 @@
-# 0. Definitions
+# 0. Syntax
 
-- A value token is a literal value - a number, string, tuple, or list - or a variable reference (`$name`).
+- Elements are parsed in "chains" in a left to right order.
+- Each element in a chain uses the result of the next element as its right most argument. That is to say, chains are executed right-to-left.
+- Chains are broken upon:
+	- Nilads (numbers, strings, variables, elements that start with `\`)
+	- Control flow structures
+	- `|>`
+	- Elements using element call syntax
+	- Newlines
+- Note that nilads are included in the chain they break. `fn`s are also included in the chain they break.
+- The key benefits of this is that you can write expressions as if they were infix.
+
+Some examples:
+
+```
+3 + 4 * 7
+```
+
+Is considered as
+
+```
+[3] [+ 4] [* 7]
+```
+
+Which equals
+
+```
+3 +(_, 4) *(_, 7)
+```
 
 # 1. Fundamentals
 - Stack based language. There's a top level stack where everything lives upon.
@@ -130,7 +157,7 @@ dict{x: 3, y: 4}
 - `dict.merge` will merge two dictionaries together
 
 ```
-dict{x: 3} dict{y: 4} dict.merge
+dict{x: 3} dict.merge dict{y: 4} 
 #? Roughly the same as
 dict{x: 3} dict.extend{y: 4}
 #? Same as
@@ -321,7 +348,7 @@ top [T] (T) -> T               | Push the top of the stack unchanged
 - The syntax for an element is:
 
 ```
-Element := ElementFirstChar {ElementChar}
+Element := ["\"] ElementFirstChar {ElementChar}
 ElementFirstChar := <A-Z>|<a-z>|"-"|"+"|"*"|"%"|"!"|"?"|"="|"/"|"<"|">"
 ElementChar := ElementFirstChar | <0-9>
 ```
@@ -338,7 +365,7 @@ ElementChar := ElementFirstChar | <0-9>
 
 ## 4.1. Element Call Syntax
 
-- Elements can always be called as-is in a postfix manner.
+- Elements can always be called as-is in chain order.
 - However, this isn't always the most readable thing
 	- `"This is a long string of things" println` kind of starts to lose focus.
 - This isn't a problem in mainstream programming languages where the majority of "things that do things" are functions. `()` usually wraps function arguments.
@@ -362,7 +389,7 @@ reduce([1, 2, 3], fn => + end) #? 6
 ```
 [1, 2, 3] reduce(fn => + end)
 #? Equivalent to
-[1, 2, 3] fn => + end reduce
+[1, 2, 3] reduce fn => + end
 ```
 
 - If arguments would pop from the stack, they do so left to right, and pop as many as needed. For example (assuming `double` pops 1 item, and `+` pops 2):
@@ -400,7 +427,7 @@ foo(double($a), +($b, $c))
 #? Same as
 "Hello World" split(" ")
 #? Which is just
-"Hello World" " " split
+"Hello World" split " "
 ```
 
 -  Arguments can consume stack items as needed.
@@ -409,7 +436,7 @@ foo(double($a), +($b, $c))
 ```
 6 7 +(double, halve)
 #? Same as
-6 double 7 halve +
+double 6 + halve 7
 #? Equals
 12 3.5 +
 15.5
@@ -541,10 +568,10 @@ $myfun(6, 7) #? 13
 - Examples:
 
 ```
-$singleArg = fn (:Number) => println println
+$singleArg = fn (:Number) => println |> println
 $singleArg(5) #? Prints "5" twice
 
-$doubleArg = fn (:Number, :Number) => println println println
+$doubleArg = fn (:Number, :Number) => println |> println |> println
 $doubleArg(6, 7) #? prints "6", "7", "6"
 ```
 
@@ -554,7 +581,7 @@ $doubleArg(6, 7) #? prints "6", "7", "6"
 
 ```
 $createMultiplier = fn (factor: Number) =>
-  fn (:Number) => $factor *
+  fn (:Number) => * $factor
 end
 
 $double = createMultiplier(2)
@@ -564,7 +591,7 @@ $double = createMultiplier(2)
 ```
 fn =>
   $x = 5
-  fn => $x `+` 1
+  fn => $x + 1
 end
 $wrapped = call(top)
 $x = 10
@@ -658,7 +685,7 @@ external("math.dll") define sqrt(:Number as FFI.float) -> FFI.float as Number =>
 - High level:
 
 ```
-[1, 2, 3] 4 + #? [5, 6, 7]
+[1, 2, 3] + 4 #? [5, 6, 7]
 ```
 
 - When one or more arguments to an element are of a higher rank than a parameter marked `vec`, those arguments are zipped together and the element applied to each combination. Arguments that have reached their expected rank are reused across all combinations. This process repeats until all `vec` parameters have received arguments at their expected rank. If no overload exists that can handle an argument at its given rank — either directly or through vectorisation — that is a compile error.
@@ -671,9 +698,9 @@ zip([[1], [2], [3]], [1]) == [[[1], [1]], [[2], [1]], [[3], [1]]]
 ```
 
 - When an element is applied to multiple array arguments, all arrays must have equal length at each corresponding dimension.
-- For example, `[1, 2, 3] [4, 5] +` is an error, because the `3` is unpaired.
+- For example, `[1, 2, 3] + [4, 5]` is an error, because the `3` is unpaired.
   - While it would be possible to have a trimming/re-use/universal default fill option, these can lead to surprising results.
-- `[[1, 2], [3, 4, 5]] [[6, 7], [8, 9]] +` also raises a runtime error
+- `[[1, 2], [3, 4, 5]] + [[6, 7], [8, 9]]` also raises a runtime error
   - The `[3, 4, 5]` does not have the same length as the `[8, 9]`
 - Length mismatch errors are raised as `VectorisationFault`s.
 	- Note that `VectorisationFault`s cannot be raised using `panic`. This is the only such fault that can only be raised at runtime by the language.
@@ -686,7 +713,7 @@ zip([[1], [2], [3]], [1]) == [[[1], [1]], [[2], [1]], [[3], [1]]]
 - Consider:
 
 ```
-[[1, 2], [3, 4]] [10, 20] +
+[[1, 2], [3, 4]] + [10, 20]
 ```
 
 - Pairwise results in:
@@ -811,7 +838,7 @@ extend: <selector>
 - For example:
 
 ```
-[1, 2, 3, 4] '+ reduce 
+[1, 2, 3, 4] '+ reduce
 ```
 
 - That can get majorly inconvenient and also has readability problems
@@ -820,13 +847,13 @@ extend: <selector>
 - You _could_ write:
 
 ```
-[1, 2, 3, 4] reduce('+)
+[1, 2, 3, 4] reduce '+
 #? or
-[1, 2, 3, 4] reduce(fn => +)
+[1, 2, 3, 4] reduce fn => +
 ```
 
 - But that, even by Valiance philosophical standards, is rather ceremonious.
-- `:` after an element allows you to specify that the next element should be automatically wrapped as a function argument.
+- `:` after an element allows you to specify that the next chain should be automatically wrapped as a function argument.
 - For example:
 
 ```
@@ -834,7 +861,7 @@ extend: <selector>
 #? No need for `fn => +`, `'+` or E.C.S or postfix application
 ```
 
-- If an element takes multiple function arguments, elements must be wrapped in `()` and separated by `,`.
+- If an element takes multiple function arguments, chains must be wrapped in `()` and separated by `,`.
 	- This ensure that the language grammar is not context-sensitive
 
 ```
@@ -842,30 +869,6 @@ fork: (sum, length) /
 ```
 
 - If `:` is used, then _all_ function arguments must be specified. This ensures 0 ambiguity as to which function-typed parameters are being filled.
-
-## 8.2. The `` ` `` Modifier
-
-- Surrounding an element name in backticks (`` ` ``) will make it take either the next value token, or the next element, and use it as its right-most  non-optional parameter.
-- Note that the element must be either monadic or dyadic.
-
-```
-3 `+` 4
-#? Same as
-3 4 +
-#? Same as
-+(3, 4)
-```
-
-```
-range(2, 7) `union` range(4, 7)
-#? The entirety of range(4, 7) is used
-```
-
-```
-`not` sorted?
-#? Equivalent to
-sorted? not
-```
 
 
 # 9. Indexing
@@ -911,7 +914,7 @@ $.name #? "Jeff"
 - Augmented assignment can be applied to an index
 
 ```
-$data[1] := 3 +
+$data[1] := + 3
 ```
 
 - This is not mutation. It is sugar for `updateBy($item, $index, $function)`
@@ -928,9 +931,9 @@ $data[1] := 3 +
 - All block-forming constructs in Valiance follow the same rule:
 
 ```
-<construct> => <code>  #? Single line — no `end` needed
+<construct> => <code>  #? Single line - no `end` needed
 <construct> =>
-  <code>  #? Multi line — `end` required
+  <code>  #? Multi line - `end` required
 end
 ```
 
@@ -952,16 +955,16 @@ end
 - A case describes what to match against one or more stack values, and consists of one or more case items separated by `,`. Each item corresponds to one stack position from the top down. All cases in a match block must have the same number of items.
 - A case item can be:
 	- Literal - an exact value: `10`, `"hello"`
-	- Condition - a predicate: ``if `>` 5``
+	- Condition - a predicate: ``if > 5``
 	- List pattern - a structural match: `[1, _, 3]`, `[1, $x = _, 3]`, `[1, ..., 3]`
-	- Type match - a type check with optional binding, destructuring, and guard: `as :Type`, `as x: Type`, `as :Obj(field)`, ``as :Type if `>` 5``
+	- Type match - a type check with optional binding, destructuring, and guard: `as :Type`, `as x: Type`, `as :Obj(field)`, ``as :Type if > 5``
 	- Wildcard - matches anything: `_`
 
 - Within a single item, `|` separates alternatives:
 
 ```
 3 | 4 => ...              #? literal alternatives
-if `>` 5 | if `<` 2 => ...  #? condition alternatives
+if > 5 | if < 2 => ...    #? condition alternatives
 ```
 
 - Examples:
@@ -969,7 +972,7 @@ if `>` 5 | if `<` 2 => ...  #? condition alternatives
 ```
 match =>
   10 => "The number was 10"
-  if `>` 5 => "The number is bigger than 5"
+  if > 5 => "The number is bigger than 5"
   _ => "Too small"
 end
 ```
@@ -987,7 +990,7 @@ end
 match =>
   as :Type => "Type match"
   as x: OtherType => "Named type match"
-  as :Number if `>` 5 => "Type match with guard"
+  as :Number if > 5 => "Type match with guard"
   as :Obj(param, param) => "Destructured object"
   as y => "Default named type match"
 end
@@ -997,7 +1000,7 @@ end
 match =>
   1, 2 => "Top of stack was 1 and then 2"
   3 | 4, 5 | 6 => "Top of stack was either 3 or 4, and then 5 or 6"
-  if 10 > | if 4 <, [1, 2, 3] => "Weird stack layout, but sure"
+  if > 10 | if < 4, [1, 2, 3] => "Weird stack layout, but sure"
   _, _ => "default case"
 end
 ```
@@ -1046,7 +1049,7 @@ end
 	- Saves extra `dup`s and `copy`s
 
 ```
-if (2 2 + 5 ==) => "Uh oh" end
+if (2 + 2 == 5) => "Uh oh" end
 #? String? - Will most likely be None
 ```
 
@@ -1058,7 +1061,7 @@ if (2 2 + 5 ==) => "Uh oh" end
 	- `if (<cond>) => <code> end else => <code> end` == `if (<cond>) => <code> else => <code> end`
 
 ```
-if (2 2 + 5 ==) => println("Math is broken")
+if (2 + 2 == 5) => println("Math is broken")
 else => println("Math is fine") #? This will hopefully be printed
 ```
 
@@ -1082,8 +1085,8 @@ if (1) => + else => /
 
 ```
 #? In practice, use a match statement
-if ($name `==` "Bob") => println("You're Bob!")
-else if ($name `==` "Jeff") => println("You're Jeff!")
+if ($name == "Bob") => println("You're Bob!")
+else if ($name == "Jeff") => println("You're Jeff!")
 else => println("No match")
 ```
 
@@ -1119,12 +1122,13 @@ end
   
 ### 10.5.1. `break`
 - While not a control flow structure, `break` has special syntax for terminating a loop early
-- `break (<values>)` will terminate a loop and push `values` to the stack.
+- `break <value>` will terminate a loop and push `value` to the stack
+- `break (<values>)` will terminate a loop and push all items in `values` to the stack.
 - If there are multiple breaks in a loop with differing multiplicities, then the breaks with fewer values will be padded with `None`s
 ```
 define find(ns: Number+, number: Number) -> Number? =>
   $ns foreach (n, ind) =>
-    if ($n `==` $number) => break ($ind) end
+    if ($n == $number) => break $ind
   end
 end
 ```
@@ -1150,14 +1154,14 @@ Examples
 
 ```
 $count = 0
-while ($count `<` 10) =>
+while ($count < 10) =>
   println("Count is ${count}")
   $count := increment
 end
 
 #? Functionally equivalent to
 
-0 while (10 <) =>
+0 while (< 10) =>
   println("Count is {top}")
   increment
 end
@@ -1177,7 +1181,7 @@ end
 - Named inputs can be referred to as variables.
 
 ```
-while (`>` 0) -> (count: Number) =>
+while (> 0) -> (count: Number) =>
 
 end
 ```
@@ -1248,14 +1252,14 @@ define[<generics>] <name>(<params>) -> <returns> => <code> end
 ```
 
 - `generics` is optional
-- `params` is optional
+- `params` is optional, but must contain at least one parameter if specified.
 - `returns` is optional
 
 - Example:
 
 ```
 define doubleAndAdd5(n: Number) =>
-  2 * 5 +
+  * 2 + 5
 end
 
 10 doubleAndAdd5 #? 25
@@ -1309,7 +1313,7 @@ _Note: this may change depending on what's easier or more efficient to implement
 
 ```
 $x = 5
-define foo => $x 3 *
+define foo => $x * 3
 $x = 10
 
 foo #? 15
@@ -1327,6 +1331,11 @@ define +(:Number vec, :Number vec) -> Number => ... end
 
 vecdefine +(:Number, :Number) -> Number => ... end
 ```
+
+## 11.5 Defining Nilads
+
+- Elements that take 0 parameters _must_ have a name that starts with `\`.
+- This ensures that the parser can reliably detect niladic elements. This is important for getting chain parsing correct.
 
 # 12. Objects
 
@@ -1399,6 +1408,8 @@ define greet(:Person) => println("Howdy, {$.name}!")
 - However, not all elements should be able to access the internals of an object. Especially given that access modifiers exist.
 - Therefore, there is a distinction between elements defined outside an object and elements defined inside an object.
 - Elements inside an object are termed "object friendly elements". Object friendly elements have full read and write access to all members of an object.
+- Note that the object is an implicit part of the element parameter list.
+	- The object becomes the leftmost parameter.
 - Elements outside of an object can only read `public` and `readable` members, and can only write to `public` members.
 - Note: elements defined outside of an object take priority over an object friendly element. This is because: a) a library author realistically is not defining such an element without good reason and b) a user of a library would be defining such a function to specifically overwrite the default element.
 - However, you can always access the original object friendly element using `<object name>::<method name>`. `name::element` will always refer to the object friendly element.
@@ -1410,7 +1421,7 @@ object Foo =>
   define get => $self.x
 end
 
-define get(:Foo) => $.x `+` 5
+define get(:Foo) => $.x + 5
 
 Foo(10) get #? 15
 Foo(10) Foo::get #? 10
@@ -1514,10 +1525,10 @@ end
 object Counter =>
   $count: #integer Number = 0
   define increment =>
-    $self.count := 1 +
+    $self.count := + 1
     $self
   end
-  define decrement => $self $.count := 1 -
+  define decrement => $self $.count := - 1
   define reset =>
     $self.count = 0
     $self
@@ -1618,7 +1629,7 @@ end
 trait Shape =>
   extend getArea -> Number
   define largerThan(other: Shape) =>
-    $self $other both: getArea >
+    $self $other |> both: getArea |> >
   end
 end 
 ```
@@ -1641,11 +1652,11 @@ object Rectangle =>
 end
 
 object Rectangle as Shape =>
-  define getArea => $self.width `*` $self.height
+  define getArea => $self.width * $self.height
 end
 
 object Circle as Shape =>
-  define getArea => $self.radius squared `*` 3.14
+  define getArea => squared $self.radius * 3.14
 end
 ```
 
@@ -1693,7 +1704,7 @@ variant Shape =>
 
   Circle =>
     $radius: Number
-    define getArea => $self.radius squared * 3.14
+    define getArea => squared $self.radius * 3.14
   end
   Rectangle =>
     $width: Number
@@ -2082,7 +2093,7 @@ end
 ```
 tag #Vector3 as constructed
 define #Vector3(:Number+) =>
-  length `==` 3
+  length == 3
 end
 
 [1, 2, 3] #Vector3 #? Valid
@@ -2244,7 +2255,7 @@ unfold (...) => ... end println #? Compile Error!
 $factorial = @recursive fn (:Number) =>
   match =>
     0 => 1,
-    _ => -- this *
+    _ => * this - 1
     #? `this` calls the fn
   end
 end
@@ -2274,7 +2285,7 @@ end
 
 ## 19.2. `@self`
 - A return convention annotation
-- Makes object friendly elements automatically return `$self`, and inserts the object type into the element return types.
+- Makes object friendly elements automatically return `$self`
 	- Even if the return types are already specified.
 - Compare:
 
@@ -2494,7 +2505,7 @@ end
 define eval(:Expr) =>
   match =>
     as :Val => $.n
-    as :Add => [$.left, $.right] eval sum
+    as :Add => sum eval [$.left, $.right]
   end
 end
 
@@ -2507,7 +2518,7 @@ end
 object Mul as Expr => end
 
 multi define eval(:Mul) =>
-  [$.left, $.right] eval product
+  [$.left, $.right] eval |> product
 end
 ```
 
@@ -2541,7 +2552,7 @@ end
 #? Function[Number, Number -> Result[Number, Error]]
 fn (x: Number, y: Number) =>
   if ($y 0 ==) => Error("y cannot be 0")
-  else => OK($x $y /) #? The OK is optional here.
+  else => OK($x / $y) #? The OK is optional here.
 end
 ```
 
@@ -2603,7 +2614,7 @@ end
 - For a result type input:
 	- If the input is okay: call a function on the input
 	- Otherwise, return the error
-- `?>` is most commonly called `flatmap` or `and_then` in other programming languages.
+- `&` is most commonly called `flatmap` or `and_then` in other programming languages.
 
 ## 21.4.2. `?`
 - `?` is an element defined for optionals as: If None, return None from the current function. Otherwise, unwrap.
@@ -2806,8 +2817,8 @@ import {
   @pkgA,
   @pkgB
 }
-@pkgA.hash("string") #? pkgA's String overload
-@pkgB.hash("string") #? pkgB's String overload
+pkgA.hash("string") #? pkgA's String overload
+pkgB.hash("string") #? pkgB's String overload
 ```
 
 ### 23.5.1. Overload Exclusion
