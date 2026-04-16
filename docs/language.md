@@ -29,6 +29,10 @@ Which equals
 3 +(_, 4) *(_, 7)
 ```
 
+## 0.1. Pulling in Values From Parent Stack
+
+- `_` in a chain acts as a substituion.
+
 # 1. Fundamentals
 - Stack based language. There's a top level stack where everything lives upon.
 - `#?` starts single line comment
@@ -135,7 +139,7 @@ $store.c #? 3
 
 - Normal dictionaries have static keys. Not good if you want computed keys.
 - `dyndict{...}` provides a hashmap where keys can be any value
-- Type = `DynDict[<keytype> -> <valuetype>]`
+- Type = `DynDict[<keytype>, <valuetype>]`
 
 ```
 dyndict{"a": 1, "b": 2, "c": 3}
@@ -187,7 +191,12 @@ dict{x: 3, y: 4}
   - No `Any` type, so list base type must be specified. Compile error to not do so.
   - `$name: Type = []`, use the `list[T]` element, or `[] as Type`
  
-## 1.7. Booleans
+## 1.7. Arrays
+
+- Also a core data type
+- Arrays are like lists except rectangular, always finite (to ensure rectangularity), and backed by actual arrays
+- `arr{}` syntax - same as lists, but `arr{`instead of `[` and `}` instead of `]`
+## 1.8. Booleans
 - Valiance does not actually have booleans. Instead, `0` is considered false, and all other numbers are considered true.
 - However, `#boolean Number` can be used as a type. This means that the number will always be 0 or 1 (enforced by tag validator). (Note: validator may or may not be dropped before full release)
 - The `true` element is an alias for pushing `1`
@@ -200,27 +209,35 @@ dict{x: 3, y: 4}
 	- Union (`T|U`) - either T or U
 	- Intersection (`T&U`) - two traits implemented
 	- Optional (`T?`) - a union of `Some[T]|None`. More on this later because there's more to the story than normal.
-	- Or a list type
+	- Or a list/array type
+
+## 2.1. List Types
 - Traditionally, lists are expressed as a composition of generics.
 	- `List<Int>` or `List<List<String>>`
 - In Valiance, given the fundamentalness of lists, a list type is expressed as a function of the "base" type of the list
 - A list is a type, followed by the rank of the list.
 	- This makes the list type a baked-in feature, rather than an otherwise after-thought construct.
-- `+` after a type represents 1 level of rank
+
+## 2.1.1. Exact List Rank
+- `+` after a type represents 1 level of list rank
 	- `Number+` is a rank-1 (flat) list of `Number`s.
 	- `Number++` is a rank-2 (list of lists) list of `Number`s
 	- `Number+++` is a rank-3 (list of lists of lists) list of `Number`s.
 	- This pattern gets unruly quick, so `Type+n`, where `n` is a positive non-0 integer, is the rank.
 		- `Number+3` == `Number+++`
 - Notably, `+` is the _exact_ rank of the list.
-	- Sometimes, the exact rank of a list is unknowable at compile time.
-	- However, a _minimum_ rank can be known at runtime. You can safely say "I don't know exactly what rank this is, but I know for a fact it's a list of at least a certain rank. May be more, but that's okay"
-- `*` after a type represents 1 level of minimum rank.
-	- `Number*` has a minimum rank of 1. It may end up being a `Number+5` at runtime, but `5 > 1`, so that's okay.
-	- `Number**` has a minimum rank of 2. It will never be a `Number+` at runtime, because `1 < 2`
-	- `Number*n`, where `n` is a positive non-0 integer, has a minimum rank of `n`. Like the exact rank type, `Number*3` == `Number***`
+
+## 2.1.2. Minimum List Rank
+- Sometimes, the exact rank of a list is unknowable at compile time.
+- However, a _minimum_ list rank can be known at runtime. You can safely say "I don't know exactly what rank this is, but I know for a fact it's a list of at least a certain rank. May be more, but that's okay"
+- `*` after a type represents 1 level of minimum list rank.
+	- `Number*` has a minimum list rank of 1. It may end up being a `Number+5` at runtime, but `5 > 1`, so that's okay.
+	- `Number**` has a minimum list rank of 2. It will never be a `Number+` at runtime, because `1 < 2`
+	- `Number*n`, where `n` is a positive non-0 integer, has a minimum rank of `n`. Like the exact list rank type, `Number*3` == `Number***`
 - A list with exact rank `n` can be passed where a list with minimum rank `m` is expected if `n >= m`.
 	- The opposite (passing minimum rank `m` where exact rank `n` is expected) is only true IF `m > n` AND the exact rank list is marked as accepting vectorisation.
+
+## 2.1.3. Rugged List Rank
 - Notably, `+` and `*` both imply a homogenous structure.
 	- A list can have any structure it wants at runtime, but it'll always be expressed as some ranked-list of either a single base type or a union type.
 	- This is inconvenient for wildly ragged lists.
@@ -232,13 +249,39 @@ dict{x: 3, y: 4}
 		- `[1, [[2, 3], 4], [[[5]]]` at runtime is always `(Number|(Number+|Number)+|Number+++)+`, but can be considered `Number~` for type checking purposes.
 - A list with exact rank `n` or minimum rank `m` can be passed where rugged rank `x` is expected, if `n >= x` (or `m >= x`).
 
-## 2.1. Type Casting
+## 2.2. Array Types
+
+### 2.2.1. Exact Array Rank
+- Just like lists, arrays have an exact rank type. `^` after a type represents 1 level of exact array rank.
+- An array with exact rank `n` can be used anywhere a list with exact rank `n` is expected. That is, you can pass a `T^n` where a `T+n` is expected.
+
+### 2.2.2. Minimum Array Rank
+- Just like lists, arrays have a miminum rank type. `>` after a type represents 1 level of minimum array rank.
+- An array with minimum rank `n` can be used anywhere a list with minimum rank `n` is expected. That is, you can pass a `T>n` where a `T*n` is expected.
+- There is no concept of rugged rank for arrays.
+
+## 2.3. Mixing Lists and Arrays
+
+- As stated, arrays can be passed anywhere lists are expected, given the relative ranks match.
+- However, some lists can also be passed anywhere an array is expected.
+- `T+n` can be treated as `T^n`
+- `T*n` can be treated as `T>n`
+- But! Doing so will generate a compile time warning AND perform a runtime check to make sure that the conversion is valid. Additionally, the list will not be reorganised as an array in memory.
+	- The above is not performed if the list type is known to have come from an array type.
+- `T~` can never be passed where an array type is expected.
+
+- Use list types for 99% of cases (`T+`, `T*`, `T~`)
+- Use array types if you really do need rectangularity. (`T^`, `T>`)
+
+
+## 2.4. Type Casting
 - A stack item with type `X` can be treated as type `Y` if and only if `X` makes sense as `Y`.
 	- That is, if `Y` is a trait implemented by `X` OR
-	- If `X` is a list type that could be flattened to `Y` (e.g. a `(Number|Number+)+` could be a `Number++` if there's no `Number`s, only `Number+`s).
+	- If `X` is a list type that could be flattened to `Y` (e.g. a `(Number|Number+)+` could be a `Number++` if there's no `Number`s, only `Number+`s) OR
+	- `X` is a collection type with exact rank being cast to minimum rank type `Y`. [This cast is only runtime checked if going from list to array.] [This cast is 0 cost if an array has been cast to a list and is being cast back to an array]
 - Two types of type casting:
-	- Safe - the conversion is checked at runtime. Only list casting will be checked - trait upcasting doesn't need to be checked.
-	- Unsafe - the conversion is not checked at runtime. This also only really applies to list casting. This is good for performance, but be careful that it is actually treatable as the intended type.
+	- Safe - the conversion is checked at runtime. Only collection casting will be checked - trait upcasting doesn't need to be checked.
+	- Unsafe - the conversion is not checked at runtime. This also only really applies to collection casting. This is good for performance, but be careful that it is actually treatable as the intended type.
 - Safe = `as Type`
 	- `[[1, 2, 3], [4, 5, 6]] as Number*`
 	- `Circle as Shape` (assuming trait `Shape` and `Circle` implements `Shape`)
@@ -246,7 +289,7 @@ dict{x: 3, y: 4}
 	- `[[1, 2, 3], [4, 5, 6]] as! Number*`
 	- Unsafe cast that is otherwise safe is a compile error (don't use `as!` where it isn't needed.)
 
-## 2.2. Optional Types
+## 2.5. Optional Types
 
 - The Valiance definition of `T?` is `Some[T] | None`
 - Notably, this definition allows for a meaningful definition of `T??` as `Some[T?] | None` or `Some[Some[T] | None] | None`.
@@ -677,8 +720,15 @@ external("math.dll") define sqrt(:Number as FFI.float) -> FFI.float as Number =>
 
 ## 6.8. Quick Functions
 
-- `'` before an element wraps that element in a function
-- `'element` == `fn => element`
+- `'` before an chain wraps that chain in a function
+- `'chain` == `fn => chain`
+- E.g.
+
+```
+[1, 2, 4, 5, 8] '< 5 filter
+#? Same as
+[1, 2, 4, 5, 8] filter fn => < 5
+```
 
 # 7. Vectorisation
 
@@ -706,6 +756,12 @@ zip([[1], [2], [3]], [1]) == [[[1], [1]], [[2], [1]], [[3], [1]]]
 	- Note that `VectorisationFault`s cannot be raised using `panic`. This is the only such fault that can only be raised at runtime by the language.
 	- `VectorisationFault`s do not attach a `Panic` element tag.
 	- However, a `try/handle` can handle a `VectorisationFault`
+ 
+### 7.0.1. Mixing Lists and Arrays
+
+- If all arguments in vectorisation are lists, then the output will be a list.
+- If all arguments in vectorisation are arrays, and the return type doesn't lose arrayness, then the output will be an array.
+- If there is a mix, then the result will be a list.
 
 ## 7.1. Fine Grained Vectorisation Control
 
@@ -738,7 +794,8 @@ But what if you want:
 fn (:Number+ vec, :Number+ vec) => +
 ```
 
-- But you can also specify how to treat a higher-ranked argument using element overload disambiguation syntax:
+- But this can lose array types - passing two `Number^`s to this function will result in a `Number+`, not a `Number^`
+- Thus you can also specify how to treat a higher-ranked argument using element overload disambiguation syntax:
 
 ```
 +[Number+, _]
@@ -1842,15 +1899,22 @@ solve(T~n, U~m) = T := U~(m-n)
 solve(T*n, U+m) = T := U*(m-n)
 solve(T~n, U+m) = T := U~(m-n)
 solve(T~n, U*m) = T := U~(m-n)
+solve(T^n, U^m) = T := U^(m-n)
+solve(T>n, U>m) = T := U>(m-n)
+solve(T+n, U^m) = T := U+(m-n) // List type takes precendence
+solve(T*n, U>m) = T := U*(m-n)
+solve(T*n, U^m) = T := U*(m-n)
 solve(T?, U?) = T := U
 solve(T?, U) = T := U
 ```
 
-Note that:
+Note that in unification:
 
 - `T+0` == `T atomic`
 - `T*0` == `T atomic | T*`
 - `T~0` == `T atomic | T~`
+- `T^0` == `T atomic`
+- `T>0` == `T atomic | T>`
 
 Additionally:
 
@@ -1862,7 +1926,9 @@ Additionally:
 ```
 combine(T, T) = T
 combine(T*n, T*m) = T*(min(n, m))
-combine(T*n, T+m) = T*(min(m, n))
+combine(T>n, T>m) = T>(min(n, m))
+combine(T*n, T+m) = T*(min(n, m))
+combine(T>n, T^m) = T>(min(n, m))
 combine(T+n, T vec) = T+n
 combine(T*n, T vec) = T*n
 combine(T~n, T vec) = T~n
