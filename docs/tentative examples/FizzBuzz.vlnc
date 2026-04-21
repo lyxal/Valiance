@@ -1,0 +1,14 @@
+#? Imperative Style
+range(1, 100) map: fn (n) =>
+  if divBy? 15 => println("FizzBuzz")
+  else if divBy? 5 => println("Buzz")
+  else if divBy? 3 => println("Fizz")
+  else => println($n)
+end
+
+#? Array Style
+range(1, 100) at (n)
+  divBy? [3, 5]
+  * ["Fizz", "Buzz"]
+  sum | or str($n)
+end

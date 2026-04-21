@@ -1,0 +1,20 @@
+define factorial(n: Number) -> Number =>
+  if ($n == 0) => 1
+  else => factorial($n - 1) * $n
+end
+
+@recursive
+define factorial2(n: Number) -> Number =>
+  if ($n == 0) => 1
+  else => $n - 1 | this | * $n
+end
+
+define factorial3(n: Number) -> Number =>
+  $res = 1
+  range(1, $n) foreach (x) =>
+    $res := * $x
+  end
+  $res
+end
+
+define factorial4(n: Number) -> Number => product range(1, $n)

@@ -5,7 +5,7 @@
 - Chains are broken upon:
 	- Nilads (numbers, strings, variables, elements that start with `\`)
 	- Control flow structures
-	- `|>`
+	- `|`
 	- Elements using element call syntax
 	- Newlines
 - Note that nilads are included in the chain they break. `fn`s are also included in the chain they break.
@@ -611,10 +611,10 @@ $myfun(6, 7) #? 13
 - Examples:
 
 ```
-$singleArg = fn (:Number) => println |> println
+$singleArg = fn (:Number) => println | println
 $singleArg(5) #? Prints "5" twice
 
-$doubleArg = fn (:Number, :Number) => println |> println |> println
+$doubleArg = fn (:Number, :Number) => println | println | println
 $doubleArg(6, 7) #? prints "6", "7", "6"
 ```
 
@@ -738,7 +738,7 @@ external("math.dll") define sqrt(:Number as FFI.float) -> FFI.float as Number =>
 [1, 2, 3] + 4 #? [5, 6, 7]
 ```
 
-- When one or more arguments to an element are of a higher rank than a parameter marked `vec`, those arguments are zipped together and the element applied to each combination. Arguments that have reached their expected rank are reused across all combinations. This process repeats until all `vec` parameters have received arguments at their expected rank. If no overload exists that can handle an argument at its given rank — either directly or through vectorisation — that is a compile error.
+- When one or more arguments to an element are of a higher rank than a parameter expects, those arguments are zipped together and the element applied to each combination. Arguments that have reached their expected rank are reused across all combinations. This process repeats until all parameters have received arguments at their expected rank. If no overload exists that can handle an argument at its given rank - either directly or through vectorisation - that is a compile error.
 
 - Examples of re-use:
 
@@ -791,7 +791,7 @@ But what if you want:
 - You might think to wrap `+` in a function with parameters:
 
 ```
-fn (:Number+ vec, :Number+ vec) => +
+fn (:Number+, :Number+) => +
 ```
 
 - But this can lose array types - passing two `Number^`s to this function will result in a `Number+`, not a `Number^`
@@ -801,21 +801,19 @@ fn (:Number+ vec, :Number+ vec) => +
 +[Number+, _]
 ```
 
-## 7.2. Enabling Vectorisation in an Overload
+## 7.2. Disabling Vectorisation in an Overload
 
-- By default, parameters do not vectorise. Marking a parameter with `vec` allows it to be used as a vectorisation target - arguments of a higher rank than expected will be zipped and the element applied to each combination.
-- `vec` is part of the parameter's type, not just an overload resolution hint. A function where all parameters are marked vec can be written as `VecFunction[...],` which is shorthand for `Function[T vec, U vec -> ...]` — they are exactly the same type.
-- Type inference propagates `vec` naturally - `fn => double` infers as `VecFunction[Number -> Number]` because double requires a `vec` parameter to type check.
-For example:
+- By default, parameters vectorise. Marking a parameter with `exact` prevents it from being used as a vectorisation target - arguments of a higher rank than expected will be a compile error.
+- `exact` is part of the parameter's type, not just an overload resolution hint. That is, it appears in the types in `Function[...]`.
 
 ```
-$myfun = fn (:Number) => double
-#? A Function[Number -> Number]
+$myfun = fn (:Number exact) => double
+#? A Function[Number exact -> Number]
 $myfun(10)        #? 20
 $myfun([1, 2, 3]) #? Compile error: No overload found
 
 $myfunvec = fn => double
-#? Inferred as VecFunction[Number -> Number]
+#? Inferred as Function[Number -> Number]
 $myfunvec(10)        #? 20
 $myfunvec([1, 2, 3]) #? [2, 4, 6]
 ```
@@ -1017,11 +1015,11 @@ end
 	- Type match - a type check with optional binding, destructuring, and guard: `as :Type`, `as x: Type`, `as :Obj(field)`, ``as :Type if > 5``
 	- Wildcard - matches anything: `_`
 
-- Within a single item, `|` separates alternatives:
+- Within a single item, `||` separates alternatives:
 
 ```
-3 | 4 => ...              #? literal alternatives
-if > 5 | if < 2 => ...    #? condition alternatives
+3 || 4 => ...              #? literal alternatives
+if > 5 || if < 2 => ...    #? condition alternatives
 ```
 
 - Examples:
@@ -1056,8 +1054,8 @@ end
 ```
 match =>
   1, 2 => "Top of stack was 1 and then 2"
-  3 | 4, 5 | 6 => "Top of stack was either 3 or 4, and then 5 or 6"
-  if > 10 | if < 4, [1, 2, 3] => "Weird stack layout, but sure"
+  3 || 4, 5 || 6 => "Top of stack was either 3 or 4, and then 5 or 6"
+  if > 10 || if < 4, [1, 2, 3] => "Weird stack layout, but sure"
   _, _ => "default case"
 end
 ```
@@ -1377,19 +1375,8 @@ foo #? 15
 #? NOT 30
 ```
 
-## 11.4. `vecdefine`
 
-- You can use `vecdefine` instead of `define` to mark all parameters as vectorising
-
-```
-define +(:Number vec, :Number vec) -> Number => ... end
-
-#? Can be written as
-
-vecdefine +(:Number, :Number) -> Number => ... end
-```
-
-## 11.5 Defining Nilads
+## 11.4 Defining Nilads
 
 - Elements that take 0 parameters _must_ have a name that starts with `\`.
 - This ensures that the parser can reliably detect niladic elements. This is important for getting chain parsing correct.
@@ -1446,8 +1433,6 @@ end
 "Jeff" 67 Person
 Person("Jeff", 67)
 ```
-
-- Note that a default constructor will have all parameters marked as `vec`. This is because vectorised object creation is a useful default if it is not overridden.
 
 ## 12.2. Object Friendly Elements
 - As stated, objects do not own any methods. Instead, elements are defined on objects and static dispatch handles message passing.
@@ -1686,7 +1671,7 @@ end
 trait Shape =>
   extend getArea -> Number
   define largerThan(other: Shape) =>
-    $self $other |> both: getArea |> >
+    $self $other | both: getArea | >
   end
 end 
 ```
@@ -1891,7 +1876,6 @@ _Note: subject to determination about whether this is 100% correct_
 
 ```
 solve(T, U) = T := U
-solve(T vec, U) = T := U vec
 solve(U[T], V[W]) = solve(T, W)
 solve(T+n, U+m) = T := U+(m-n)
 solve(T*n, U*m) = T := U*(m-n)
@@ -1919,7 +1903,6 @@ Note that in unification:
 Additionally:
 
 - Unification does not happen across unions. That is, `solve(T|X, U|V)` will not occur, nor give `T := U, X := V` or `T := V, U := X`. Unification also does not happen across intersections. This is because both union types and intersection types can be arbitrarily reordered, meaning that there is no one correct arrangement.
-- If a parameter is marked as `vec`, then the solved type will also be marked as `vec`. But not that `vec` marking will not be included in any return types, because `vec` is an input marker, not an actual type constraint.
 
 - Combine is roughly (no assumptions are made about `n` and `m`) (commutative):
 
@@ -1929,12 +1912,12 @@ combine(T*n, T*m) = T*(min(n, m))
 combine(T>n, T>m) = T>(min(n, m))
 combine(T*n, T+m) = T*(min(n, m))
 combine(T>n, T^m) = T>(min(n, m))
-combine(T+n, T vec) = T+n
-combine(T*n, T vec) = T*n
-combine(T~n, T vec) = T~n
-combine(T, T vec) = T vec
+combine(T+n, T) = T+n
+combine(T*n, T) = T*n
+combine(T~n, T) = T~n
 ```
 
+- `combine(T+n, T exact)` is not allowed.
 - After solving and combining, all types that do not participate in unification (eg union types, types marked as `atomic`) are verified for consistency with the unified type and the overload being applied.
 
 ## 16.3. Anonymous Generics in Function Types
@@ -2095,7 +2078,7 @@ tag #A disjoint #B
 - One would need to add the following extension:
 
 ```
-define +(:#sorted Number+, :Number vec) -> #sorted Number+ =>
+define +(:#sorted Number+, :Number) -> #sorted Number+ =>
   dip: #!sorted #? To avoid infinite recursion
   +
   #sorted
@@ -2117,8 +2100,8 @@ end
 ```
 tag #sorted as computed
 #sorted: + =>
-  (#sorted Number+, Number vec) -> #sorted Number+
-  (Number vec, #sorted Number) -> #sorted Number+
+  (#sorted Number+, Number) -> #sorted Number+
+  (Number, #sorted Number) -> #sorted Number+
   (#sorted Number+, #sorted Number+) -> #sorted Number+
 end
 #sorted: [T] filter => (#sorted T+, Function[T -> #boolean Number]) -> #sorted T+
@@ -2131,8 +2114,8 @@ end
 
 ```
 #sorted: (+, -, *, /) =>
-  (#sorted Number+, Number vec) -> #sorted Number+
-  (Number vec, #sorted Number) -> #sorted Number+
+  (#sorted Number+, Number) -> #sorted Number+
+  (Number, #sorted Number) -> #sorted Number+
   (#sorted Number+, #sorted Number+) -> #sorted Number+
 end
 ```
@@ -2584,7 +2567,7 @@ end
 object Mul as Expr => end
 
 multi define eval(:Mul) =>
-  [$.left, $.right] eval |> product
+  [$.left, $.right] eval | product
 end
 ```
 
