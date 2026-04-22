@@ -12,27 +12,11 @@ The defining features of Valiance are that it:
 
 Ultimately, Valiance acts to elevate array languages beyond rough sketches and algorithmatic prototypes. Valiance brings array languages to the software development table.
 
-For more information, check out the [working docs](docs/langdocs.md).
-
-## But Where's the Exact Specification?
-
-That, unfortunately, does not yet exist. I only just finished the rewrite of the language overview. I need time to actually write the specs.
+For more information, check out the [working docs](docs/language.md).
 
 ## But Where's the Code?
 
-Right now, I'm going for a python implementation of Valiance. I tried doing a scala project, but metals just wasn't playing nice. Additionally, while Valiance will need to be ported to something faster at some point, I think it's worth creating a quick and dirty proof of concept to demonstrate language features instead of going fast. 
-
-You can run the interpreter with
-
-```
-uv run valiance
-```
-
-or run the tests with
-
-```
-uv run pytest
-```
+Non-existant. One day, I'll actually get around to implementing it.
 
 ## License
 
