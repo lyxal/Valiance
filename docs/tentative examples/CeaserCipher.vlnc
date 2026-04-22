@@ -1,0 +1,5 @@
+define cipher(plaintext: String, shiftAmount: #integer Number) =>
+  import {string}
+  string.\Alphabet peek: rotate $shiftAmount
+  transliterate($plaintext, _, _)
+end

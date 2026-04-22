@@ -1,0 +1,1 @@
+define sumOfSquares(:Number+) -> Number => sum square

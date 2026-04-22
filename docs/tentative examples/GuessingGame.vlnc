@@ -1,0 +1,15 @@
+import {random}
+const $TARGET = random.between(1, 100)
+while (true) =>
+  input("Enter your guess! ")
+  parseInt match =>
+    as guess: Number =>
+      if ($guess < $TARGET) => println("Too small!")
+      else if ($guess > $TARGET) => println("Too big!")
+      else =>
+        println("Just right!")
+        break
+      end
+    _ => println("Input must be a number")
+  end
+end

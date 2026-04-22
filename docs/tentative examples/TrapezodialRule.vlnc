@@ -1,0 +1,14 @@
+define trapezoidal(
+  fn: Function[Number -> Number],
+  a: Number, 
+  b: Number, 
+  n: Number) 
+-> Number =>
+  $h = $a - $b / $n #? No operator precedence btw
+  
+  #? Get the sum of f(x1) to f(x_n-1)
+  $fsum = sum $f(range(1, $n - 1) * $h + $a)
+  
+  #? Final calculation
+  $h * sum [0.5 * $f($a), 0.5 * $f($b), $fsum]
+end
