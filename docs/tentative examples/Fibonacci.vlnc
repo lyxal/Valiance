@@ -1,0 +1,22 @@
+define fibonacci1(n: Number) =>
+  0 1 unfold => peek: +
+  $[$n]
+end
+
+@recursive
+define fibonacci2(n: Number) -> Number =>
+  if ($n == 0) => 0
+  else if ($n == 1) => 1
+  else => sum this [$n - 1, $n - 2]
+end
+
+define fibonacci3(n: Number) =>
+  $(prev, next) = 0, 1
+  $iterations = 0
+  
+  while ($iterations < $n) =>
+    $(prev, next) = $next, $prev + $next
+  end
+  
+  $next
+end

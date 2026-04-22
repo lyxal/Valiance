@@ -1,0 +1,9 @@
+define encode(:String) -> {Number, String}+ =>
+  groupConsecutive
+  map: ((length, first))
+end
+
+define decode(:{Number, String}+) -> String =>
+  map: fold: *
+  join ""
+end
