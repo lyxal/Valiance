@@ -1,55 +1,13 @@
-Given:
+If strategy =>
 
-```
-fn (original_inputs) -> original_outputs {elements}
-```
+1. condition_env = Environment(self.branches)
+2. post_condition_branches, condition_node = condition_env.analyse(node.condition)
+3. body_env = Environment(post_condition_branches)
+4. post_body_branches, body_node = body_env.analyse(node.body)
+5. post_body_branches.broadcast_push(Optional(body_env.output()))
+6. return <stuff>
 
-(Note, original_inputs may also be referred to as OI)
-(Note, original_outputs may also be referred to as OO)
+end
 
-define infer_type():
-  // If there are any annotations provided, store them as the expected overload
-  // If either is missing, then it'll be None
-
-  expected_overload = (OI -> OO)
-
-  // Store a set of all possible overloads (mappings of inputs -> type stack [TS])
-  overloads = {}
-
-  // Prefill with a mapping of the original inputs to an empty type stack (if OI non-empty)
-  if OI is not None: overloads.add((OI -> []))
-  else: overloads.add(([] -> []))
-
-  for Element in Elements:
-    overloads = overloads.filter(overload => overload.TS satisfies any Element.inputs)
-    if overloads is empty: Error("No overload of $Element supported")
-   
-    for candidate in overloads:
-      skip_specialisation = False
-      if length(candidate.TS) < Element.arity
-        if OI is not None: 
-          candidate.TS += OI.repeatingSlice(Element.arity - length(candidate.TS))
-        else:
-          for element_overload in Element:
-            new_candidate = candidate
-            new_candidate.inputs.prepend(element_overload - candidate.TS)
-            new_candidate.TS = element_overload.outputs
-            overloads.add(new_candidate)
-          overloads.remove(candidate)
-          skip_specialisation = True
-      if not skip_specialisation:
-        best = choose_best_overload(Element, candidate.TS)
-        candidate.TS = candidate.TS - best.inputs // Pop the inputs from the stack
-        candidate.TS += best.outputs // And push all the results
-  if expected_overload != (None -> None):
-    assert len(overloads) == 1 // should only contain 1 path
-    assert overloads[0].inputs == expected_overload.inputs and overloads[0].TS is a suffix of expected_overload.outputs
-    return {expected_overload}
-  else if expected_overloads.inputs == None:
-    overloads = overloads.filter(overload => overload.TS is a suffix of expected_overload.outputs)
-    assert len(overloads) >= 1
-    return overloads
-  else if expected_overload.outputs == None:
-    return overloads.map(overload => expected_overload.inputs -> overload.TS[-1])
-  else:
-    return overloads.map(overload => overload.inputs -> overload.TS[-1])
+"Where's the rest of the algorithm?"
+In my Joplin notes.
