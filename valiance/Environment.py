@@ -1,63 +1,77 @@
-from valiance.AST import ASTNode
-from valiance.Overload import Overload
-from valiance.Symbols import Name
-from valiance.VlncType import VType, Vlnc_ExactRankList, Vlnc_ListType, Vlnc_MinimumRankList, Vlnc_NamedType, Vlnc_OptionalType
+from valiance.Types import ExactRankParameter, IntersectionType, ListRankParameter, MinimumRankParameter, NamedType, OptionalTypeParameter, Symbol, Type, TypeParameter, UnionType
 
-
-class Branch:
-    def __init__(self, inputs: list[VType] | None):
-        self.__stack: list[VType] = []
-        self.__vars: dict[Name, VType] = {}
-        self.__inputs = inputs
-        self.__input_counter = 0 # Used for tracking the current input when doing input cycling.
-        self.__inferred_inputs: list[VType] = [] # Used for branches that do not have any inputs
-
-    def apply(self, overload_set: list[Overload]):
-        ...
 
 class Environment:
-    def __init__(self, branches: list[Branch] | None = None):
-        self.__branches = branches or []
-        self.__traits: dict[Name, list[Name]] = {}
+    def __init__(self):
+        self.traits: dict[Symbol, list[Symbol]] = {} # Mapping of Trait/Object -> Implemented Traits
 
-    def analyse(self, nodes: list[ASTNode]) -> tuple[list[Branch], list[ASTNode]]:
-        ...
+    def assignable(self, query: Type, to: Type):
+        print("Base match:", self.base_assignable(query, to))
+        print("Generics match:", self.generics_assignable(query.generics, to.generics))
+        print("Parameters match:", self.params_assignable(query.parameters, to.parameters))
+        return self.base_assignable(query, to) and self.generics_assignable(query.generics, to.generics) and self.params_assignable(query.parameters, to.parameters)
 
+    def base_assignable(self, query: Type, to: Type) -> bool:
+        print(f"Checking base assignability: {query} -> {to}")
+        match (query, to):
+            case (NamedType(qname), NamedType(tname)):
+                if qname == tname: return True
+                if to.name in self.traits.get(query.name, []): return True
+            case (NamedType(), IntersectionType(types)):
+                flattened_types = to.flatten().types
+                for t in flattened_types:
+                    if self.base_assignable(query, t):
+                        return True
+            case (NamedType(), UnionType(types)):
+                for t in types:
+                    if self.base_assignable(query, t):
+                        return True
+            case (_, _):
+                return query == to
+        return False
 
-    def subtypes(self, parent: VType, child: VType, env: Environment) -> bool:
-        if parent == child:
-            # Exact match is always a subtype
+    def generics_assignable(self, query: list[Type], to: list[Type]) -> bool:
+        if len(query) != len(to):
+            return False
+        for q, t in zip(query, to):
+            if not self.assignable(q, t):
+                return False
+        return True
+
+    def params_assignable(self, query: list[TypeParameter], to: list[TypeParameter]) -> bool:
+        if query == to:
             return True
 
-        match (parent, child):
-            case (Vlnc_NamedType(), Vlnc_NamedType()):
-                if parent.name != child.name:
-                    # If the names don't match, check if the child implements the parent as a trait
-                    # If not, then the child cannot be a subtype of the parent
-                    if not env.__traits.get(child.name, []):
+        for q, t in zip(query, to):
+            match (q, t):
+                # Check upstream rank subsumption.
+                case (ExactRankParameter(q_rank), ExactRankParameter(t_rank)):
+                    if q_rank != t_rank:
                         return False
-                # Check that all cooresponding generic parameters are in a subtype relationship
-                if len(parent.generics) != len(child.generics):
-                    return False # Differing number of generic parameters means they cannot be in a subtype relationship
-                return all(self.subtypes(p, c, env) for p, c in zip(parent.generics, child.generics))
-            case (Vlnc_ExactRankList(), Vlnc_ExactRankList()):
-                # This case exists to make the next case impossible to have child be exact rank list
-                # Ranks must match.
-                return self.subtypes(parent.base, child.base, env) and parent.rank == child.rank
-            case (Vlnc_ExactRankList(), Vlnc_ListType()):
-                # U+n :> T*m IF U :> T AND n >= m
-                return self.subtypes(parent.base, child.base, env) and parent.rank >= child.rank
-            case (Vlnc_MinimumRankList(), Vlnc_ExactRankList()):
-                # TODO: Evaluate whether this should ever be true.
-                return False
-            case (Vlnc_MinimumRankList(), Vlnc_ListType()):
-                # U*n :> T*m IF U :> T AND n >= m
-                return self.subtypes(parent.base, child.base, env) and parent.rank >= child.rank
-            case (Vlnc_ListType(), Vlnc_ListType()):
-                return self.subtypes(parent.base, child.base, env) and parent.rank >= child.rank
-            case (_, Vlnc_OptionalType()):
-                # T :> U? IF T :> U
-                return self.subtypes(parent, child.generics[0], env)
-            case _:
-                # No other cases are valid, so return False
-                return False
+                case (ExactRankParameter(q_rank), ListRankParameter(t_rank)):
+                    if q_rank > t_rank:
+                        return False
+                case (MinimumRankParameter(q_rank), ListRankParameter(t_rank)):
+                    if q_rank > t_rank:
+                        return False
+
+                # Immediately fail on downstream rank subsumption.
+                case (ListRankParameter(_), ExactRankParameter(_)):
+                    return False
+                case (ListRankParameter(q_rank), MinimumRankParameter(t_rank)):
+                    return False
+
+                # Default list rank check
+                case (ListRankParameter(q_rank), ListRankParameter(t_rank)):
+                    if q_rank > t_rank:
+                        return False
+
+                # Optional rank - ?n can be assigned to ?m if n <= m. ?n will be wrapped
+                # in (m - n) levels of Some[...] to match the target type.
+                case (OptionalTypeParameter(q_rank), OptionalTypeParameter(t_rank)):
+                    if q_rank > t_rank:
+                        return False
+                case (_, _):
+                    if q != t:
+                        return False
+        return True
