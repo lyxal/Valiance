@@ -8,6 +8,8 @@ The idea here is to have a normalised type representation based on:
 3. Any parameters (e.g Number+3 would have a parameter of ExactRankParameter(3))
 """
 
+
+
 @dataclass
 class Symbol:
     base: str
@@ -30,6 +32,16 @@ class Symbol:
 def make_symbol(name: str) -> Symbol:
     parts = name.split(".")
     return Symbol(parts[-1], [Symbol(part, []) for part in parts[:-1]])
+
+@dataclass
+class Tag:
+    name: Symbol
+
+    def __str__(self) -> str:
+        return f"#{self.name}"
+
+    def __hash__(self) -> int:
+        return hash(self.name)
 
 class TypeParameter:
     def __init__(self): ...
@@ -61,40 +73,55 @@ class OptionalTypeParameter(TypeParameter):
             return f"?{self.rank}"
 
 class Type:
-    def __init__(self, generics: list[Type], parameters: list[TypeParameter]):
-        self.base = self.__class__
-        self.generics = generics
+    def __init__(self, tags: set[Tag], parameters: list[TypeParameter]):
         self.parameters = parameters
+        self.tags = tags
 
     def is_base(self):
-        return not (self.generics or self.parameters)
+        return not self.parameters
 
     def __eq__(self, other: object):
         if not isinstance(other, Type):
             return False
-        return self.generics == other.generics and self.parameters == other.parameters
+        return self.__class__ == other.__class__ and self.parameters == other.parameters and self.tags == other.tags
+
+    def __str__(self) -> str:
+        generics_str = ""
+        parameters_str = ""
+        if self.parameters:
+            parameters_str = "".join(str(p) for p in self.parameters)
+            parameters_str = f"{parameters_str}"
+        return f"{self.__class__.__name__}{generics_str}{parameters_str}"
+
+class NamedType(Type):
+    __match_args__ = ("name",)
+    def __init__(self, name: Symbol, tags: set[Tag], generics: list[Type], parameters: list[TypeParameter]):
+        super().__init__(tags, parameters)
+        self.name = name
+        self.generics = generics
+
+    def __eq__(self, other: object):
+        if not isinstance(other, NamedType): return False
+        # Do not compare tags or parameters for equality since they are not part of the base type, but rather modifiers on the type. Only compare name and generics.
+        return self.name == other.name and self.generics == other.generics
+
+    def __hash__(self) -> int:
+        return hash((self.name, tuple(self.generics)))
 
     def __str__(self) -> str:
         generics_str = ""
         parameters_str = ""
         if self.generics:
-            generics_str = ", ".join(str(g) for g in self.generics)
-            generics_str = f"[{generics_str}]"
+            generics_str = "[" + ", ".join(str(g) for g in self.generics) + "]"
         if self.parameters:
             parameters_str = "".join(str(p) for p in self.parameters)
             parameters_str = f"{parameters_str}"
-        return f"{self.base.__name__}{generics_str}{parameters_str}"
-
-class NamedType(Type):
-    __match_args__ = ("name",)
-    def __init__(self, name: Symbol, generics: list[Type], parameters: list[TypeParameter]):
-        super().__init__(generics, parameters)
-        self.name = name
+        return f"{self.name}{generics_str}{parameters_str}"
 
 class IntersectionType(Type):
     __match_args__ = ("types",)
     def __init__(self, types: list[Type]):
-        super().__init__(self, [], [])
+        super().__init__(set(), [])
         self.types = types
 
     def flatten(self):
@@ -107,8 +134,22 @@ class IntersectionType(Type):
                 flattened_types.append(t)
         return IntersectionType(flattened_types)
 
+    def __eq__(self, other: object):
+        if not isinstance(other, IntersectionType): return False
+        return set(self.flatten().types) == set(other.flatten().types)
+
+    def __hash__(self) -> int:
+        return hash(frozenset(self.flatten().types))
+
 class UnionType(Type):
     __match_args__ = ("types",)
     def __init__(self, types: list[Type]):
-        super().__init__(self, [], [])
+        super().__init__(set(), [])
         self.types = types
+
+    def __eq__(self, other: object):
+        if not isinstance(other, UnionType): return False
+        return set(self.types) == set(other.types)
+
+    def __hash__(self) -> int:
+        return hash(frozenset(self.types))
