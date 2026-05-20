@@ -58,7 +58,7 @@ class MinimumRankParameter(ListRankParameter):
         return f"*{self.rank}"
 
 @dataclass
-class ExactRankParameter(ListRankParameter):
+class ExactRankParameter(MinimumRankParameter):
     def __str__(self) -> str:
         return f"+{self.rank}"
 
@@ -73,8 +73,8 @@ class OptionalTypeParameter(TypeParameter):
             return f"?{self.rank}"
 
 class Type:
-    def __init__(self, tags: set[Tag], parameters: list[TypeParameter]):
-        self.parameters = parameters
+    def __init__(self, tags: set[Tag]):
+        self.parameters: list[TypeParameter] = []
         self.tags = tags
 
     def is_base(self):
@@ -93,10 +93,36 @@ class Type:
             parameters_str = f"{parameters_str}"
         return f"{self.__class__.__name__}{generics_str}{parameters_str}"
 
+    def add_parameter(self, parameter: TypeParameter):
+        if not self.parameters:
+            self.parameters.append(parameter)
+        else:
+            if isinstance(parameter, OptionalTypeParameter) and isinstance(self.parameters[-1], OptionalTypeParameter):
+                # (X?n)?m == X?(n+m)
+                self.parameters[-1].rank = self.parameters[-1].rank + parameter.rank
+            elif isinstance(parameter, ListRankParameter) and isinstance(self.parameters[-1], ListRankParameter):
+                # Get the Lowest Common Ancestor
+                mro_parameter = parameter.__class__.mro()
+                mro_last = self.parameters[-1].__class__.mro()
+                lca = None
+                for c in mro_parameter:
+                    if c in mro_last:
+                        lca = c
+                        break
+                if lca is not None:
+                    # Then, create a new parameter of the LCA type with the maximum rank of the two parameters
+                    new_rank = parameter.rank + self.parameters[-1].rank
+                    new_parameter = lca(new_rank)
+                    self.parameters[-1] = new_parameter
+                else:
+                    self.parameters.append(parameter)
+            else:
+                self.parameters.append(parameter)
+
 class NamedType(Type):
     __match_args__ = ("name",)
-    def __init__(self, name: Symbol, tags: set[Tag], generics: list[Type], parameters: list[TypeParameter]):
-        super().__init__(tags, parameters)
+    def __init__(self, name: Symbol, tags: set[Tag], generics: list[Type]):
+        super().__init__(tags)
         self.name = name
         self.generics = generics
 
@@ -121,7 +147,7 @@ class NamedType(Type):
 class IntersectionType(Type):
     __match_args__ = ("types",)
     def __init__(self, types: list[Type]):
-        super().__init__(set(), [])
+        super().__init__(set())
         self.types = types
 
     def flatten(self):
@@ -144,7 +170,7 @@ class IntersectionType(Type):
 class UnionType(Type):
     __match_args__ = ("types",)
     def __init__(self, types: list[Type]):
-        super().__init__(set(), [])
+        super().__init__(set())
         self.types = types
 
     def __eq__(self, other: object):

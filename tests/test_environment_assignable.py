@@ -1,50 +1,20 @@
 import unittest
 
-from valiance.Environment import Environment
 from valiance.Types import (
     ExactRankParameter,
     IntersectionType,
     ListRankParameter,
     MinimumRankParameter,
-    NamedType,
     OptionalTypeParameter,
-    Tag,
     UnionType,
-    make_symbol,
 )
 
-
-def symbol(name: str):
-    return make_symbol(name)
-
-
-def tag(name: str) -> Tag:
-    return Tag(symbol(name))
-
-
-def named(
-    name: str,
-    *,
-    generics: list | None = None,
-    parameters: list | None = None,
-    tags: set | None = None,
-) -> NamedType:
-    return NamedType(
-        symbol(name),
-        tags or set(),
-        generics or [],
-        parameters or [],
-    )
+from tests.support import build_environment, named, tag
 
 
 class EnvironmentAssignableHarness(unittest.TestCase):
     def setUp(self) -> None:
-        self.env = Environment()
-        self.env.add_trait(symbol("Number"), [symbol("Comparable"), symbol("Printable")])
-        self.env.add_trait(symbol("Integer"), [symbol("Number"), symbol("Comparable"), symbol("Printable")])
-        self.env.add_trait(symbol("String"), [symbol("Comparable"), symbol("Printable")])
-        self.env.add_trait(symbol("Box"), [])
-        self.env.add_trait(symbol("ReadonlyBox"), [])
+        self.env = build_environment()
 
     def assert_assignable(self, source, target, expected: bool) -> None:
         self.assertEqual(

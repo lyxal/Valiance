@@ -14,6 +14,22 @@ Ultimately, Valiance acts to elevate array languages beyond rough sketches and a
 
 For more information, check out the [working docs](docs/language.md).
 
+## Testing
+
+Run the full test suite with:
+
+```powershell
+uv run python -m unittest discover -s tests -v
+```
+
+Run individual test modules with:
+
+```powershell
+uv run python -m unittest tests.test_environment_assignable -v
+uv run python -m unittest tests.test_environment_compatible -v
+uv run python -m unittest tests.test_types_simplification -v
+```
+
 ## But Where's the Code?
 
 Non-existant. One day, I'll actually get around to implementing it.

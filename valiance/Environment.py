@@ -137,3 +137,59 @@ class Environment:
                 return False
 
         return True
+
+    def compatible(self, _type: Type, _with: Type) -> bool:
+        """
+        Type T <T#, t, p> is compatible with U <U#, u, q> if
+        1. t <: u
+        2. forall i : (p_i compat q_i)
+        3. U# supset T#
+        """
+
+        if not self.base_assignable(_type, _with):
+            return False
+
+        if not _with.tags.issuperset(_type.tags):
+            return False
+
+        return self.parameters_compatible(_type.parameters, _with.parameters)
+
+
+    def parameters_compatible(self, p: list[TypeParameter], q: list[TypeParameter]) -> bool:
+        """
+        1. p compat q if p <: q
+        2. exact(n) compat exact(m) if n > m (vectorises)
+        3. exact(n) compat exactarr(m) if n > m (vectorises)
+        4. min(n) compat exact(m) if n >= m (potentially vectorises)
+        5. min(n) compat exactarr(m) if n >= m (potentially vectorises)
+        6. exactarr(n) compat exact(m) if n > m (vectorises)
+        7. exactarr(n) compat exactarr(m) if n > m (vectorises)
+        8. minarr(n) compat exact(m) if n >= m (potentially vectorises)
+        9. minarr(n) compat exactarr(m) if n >= m (potentially vectorises)
+        """
+
+        if self.parameters_assignable(p, q):
+            return True # Also covers the case of q having trailing optional.
+
+        if len(p) != len(q): # Compatibility must have same number of parameters (ignoring optional trailing)
+            return False
+
+        for pi, qi in zip(p, q):
+            if not self.parameters_assignable([pi], [qi]):
+                return False
+            elif isinstance(pi, ExactRankParameter) and isinstance(qi, ExactRankParameter):
+                if pi.rank < qi.rank:
+                    return False
+            elif isinstance(pi, ExactRankParameter) and isinstance(qi, ListRankParameter):
+                if pi.rank < qi.rank:
+                    return False
+            elif isinstance(pi, MinimumRankParameter) and isinstance(qi, ExactRankParameter):
+                if pi.rank < qi.rank:
+                    return False
+            elif isinstance(pi, MinimumRankParameter) and isinstance(qi, ListRankParameter):
+                if pi.rank < qi.rank:
+                    return False
+            elif type(pi) != type(qi):
+                return False
+
+        return True
