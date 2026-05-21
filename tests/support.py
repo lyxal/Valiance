@@ -1,4 +1,4 @@
-from valiance.Environment import Environment
+from valiance.Environment import Environment, ObjectDefinition, TraitDefinition
 from valiance.Types import NamedType, Tag, make_symbol
 
 
@@ -29,9 +29,18 @@ def named(
 
 def build_environment() -> Environment:
     env = Environment()
-    env.add_trait(symbol("Number"), [symbol("Comparable"), symbol("Printable")])
-    env.add_trait(symbol("Integer"), [symbol("Number"), symbol("Comparable"), symbol("Printable")])
-    env.add_trait(symbol("String"), [symbol("Comparable"), symbol("Printable")])
-    env.add_trait(symbol("Box"), [])
-    env.add_trait(symbol("ReadonlyBox"), [])
+
+    # Base Traits
+    env.add_trait(TraitDefinition(symbol("Comparable"), [], [], {}, {}))
+    env.add_trait(TraitDefinition(symbol("Printable"), [], [], {}, {}))
+
+    # Traits/Objects implementing others
+    env.add_trait(TraitDefinition(symbol("Number"), [], [named("Comparable"), named("Printable")], {}, {}))
+    env.add_object(ObjectDefinition(symbol("Integer"), {}, [], [named("Number"), named("Comparable"), named("Printable")], {}))
+    env.add_object(ObjectDefinition(symbol("String"), {}, [], [named("Comparable"), named("Printable")], {}))
+
+    # Generics
+    env.add_object(ObjectDefinition(symbol("Box"), {}, [symbol("T")], [], {}))
+    env.add_object(ObjectDefinition(symbol("ReadonlyBox"), {}, [symbol("T")], [], {}))
+
     return env

@@ -179,3 +179,17 @@ class UnionType(Type):
 
     def __hash__(self) -> int:
         return hash(frozenset(self.types))
+
+# Some pre-built named types that can be utilised in analysis
+class FunctionType(NamedType):
+    def __init__(self, input_type: Type, output_type: Type):
+        super().__init__(make_symbol("Function"), set(), [input_type, output_type])
+
+class SomeType(NamedType):
+    # Like "Some[T]", not just "oh yeah, it's some type, we don't know which one"
+    def __init__(self):
+        super().__init__(make_symbol("Some"), set(), [])
+
+class NoneType(NamedType):
+    def __init__(self):
+        super().__init__(make_symbol("None"), set(), [])

@@ -1,4 +1,5 @@
-from valiance.Types import ExactRankParameter, IntersectionType, ListRankParameter, MinimumRankParameter, NamedType, OptionalTypeParameter, Symbol, Type, TypeParameter, UnionType
+from dataclasses import dataclass
+from valiance.Types import ExactRankParameter, IntersectionType, ListRankParameter, MinimumRankParameter, NamedType, OptionalTypeParameter, Symbol, Type, TypeParameter, UnionType, make_symbol
 
 """
 A note on type notation:
@@ -10,12 +11,58 @@ union[...] represents a union type with parameters ...
 inter[...] represents an intersection type with parameters ...
 """
 
+@dataclass
+class TraitDefinition:
+    name: Symbol
+    generics: list[Symbol] # List of generic parameters for this trait
+    implements: list[NamedType] # List of traits this trait implements (i.e. supertraits)
+    required_elements: dict[Symbol, Type]
+    default_elements: dict[Symbol, Type]
+
+@dataclass
+class ObjectDefinition:
+    name: Symbol
+    fields: dict[Symbol, Type]
+    generics: list[Symbol] # List of generic parameters for this object
+    implements: list[NamedType] # List of traits this object implements
+    elements: dict[Symbol, Type]
+
 class Environment:
     def __init__(self):
-        self.traits: dict[Symbol, list[Symbol]] = {} # Mapping of Trait/Object -> Implemented Traits
+        self.traits: dict[Symbol, TraitDefinition] = {}
+        self.objects: dict[Symbol, ObjectDefinition] = {}
 
-    def add_trait(self, trait: Symbol, implements: list[Symbol]):
-        self.traits[trait] = implements
+        self.add_trait(TraitDefinition(make_symbol("Error"), [], [], {}, {}))
+        self.add_object(ObjectDefinition(make_symbol("Result"), {}, [make_symbol("T"), make_symbol("E")], [], {}))
+
+
+    def add_trait(self, trait_def: TraitDefinition):
+        self.traits[trait_def.name] = trait_def
+
+    def add_object(self, object_def: ObjectDefinition):
+        self.objects[object_def.name] = object_def
+
+    def add_implementation(self, object_name: Symbol, trait_name: NamedType):
+        if object_name in self.objects:
+            self.objects[object_name].implements.append(trait_name)
+        elif object_name in self.traits:
+            self.traits[object_name].implements.append(trait_name)
+        else:
+            raise ValueError(f"Neither object {object_name} nor trait {object_name} found in environment")
+
+    def _does_implement(self, implementer_name: Symbol, target_name: Symbol) -> bool:
+        """Helper to recursively check if a trait or object implements a target trait."""
+        if implementer_name in self.objects:
+            for impl in self.objects[implementer_name].implements:
+                if impl.name == target_name or self._does_implement(impl.name, target_name):
+                    return True
+
+        if implementer_name in self.traits:
+            for impl in self.traits[implementer_name].implements:
+                if impl.name == target_name or self._does_implement(impl.name, target_name):
+                    return True
+
+        return False
 
     def assignable(self, _type: Type, to: Type) -> bool:
         """
@@ -53,10 +100,10 @@ class Environment:
             if not t.generics and not u.generics:
                 if t.name == u.name:
                     return True
-                return t.name in self.traits and u.name in self.traits[t.name]
+                return self._does_implement(t.name, u.name)
             if t.generics and u.generics:
                 # Return if t's name equals or implements u's name, and t's generics are assignable to u's generics
-                if t.name == u.name or (t.name in self.traits and u.name in self.traits[t.name]):
+                if t.name == u.name or self._does_implement(t.name, u.name):
                     return all(self.assignable(tg, ug) for tg, ug in zip(t.generics, u.generics))
             return False
 
