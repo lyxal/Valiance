@@ -63,6 +63,17 @@ class ExactRankParameter(MinimumRankParameter):
         return f"+{self.rank}"
 
 @dataclass
+class MinimumArrayParameter(TypeParameter):
+    rank: int
+    def __str__(self) -> str:
+        return f">{self.rank}"
+
+@dataclass
+class ExactArrayParameter(MinimumArrayParameter):
+    def __str__(self) -> str:
+        return f"^{self.rank}"
+
+@dataclass
 class OptionalTypeParameter(TypeParameter):
     rank: int # Number of levels of nesting.
     def __post_init__(self):

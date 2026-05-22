@@ -240,3 +240,96 @@ class Environment:
                 return False
 
         return True
+
+    def more_specific_to(self, reference: Type, t: Type, u: Type) -> bool:
+        """
+        Type T<T#, t, p> is more specific to U<U#, u, q> with respect to reference type R<R#, r, r'> if
+
+        1. |T# inter R#| > |U# inter X#| or, if equal,
+        2. |t "traits shared with" r| > |u "traits shared with" r| or, if equal,
+        3. forall i: (p_i >_r'_i q_i)
+
+        Number of shared traits is defined as:
+
+        1. Exact Match => infinity shared traits
+        2. Exact Match after Generics => infinity shared traits
+        3. Intersection => 2 < n < N shared traits, where n is the number of traits in the intersection that are implemented by r, and N is the total number of traits in the intersection.
+        4. Single Trait Implementation => 1 shared trait
+        5. Union => 0 shared traits
+        """
+
+        # 1. Compare number of shared tags
+        reference_tags = reference.tags
+        t_shared_tags = len(t.tags.intersection(reference_tags))
+        u_shared_tags = len(u.tags.intersection(reference_tags))
+
+        if t_shared_tags > u_shared_tags:
+            return True
+        elif t_shared_tags < u_shared_tags:
+            return False
+
+        # 2. Compare number of shared traits
+        def count_shared_traits(type_: Type) -> float:
+            if isinstance(type_, NamedType) and isinstance(reference, NamedType):
+                if type_.name == reference.name:
+                    return float('inf')
+                elif self._does_implement(type_.name, reference.name):
+                    return float('inf')
+                else:
+                    return sum(1 for trait in self.traits.values() if self._does_implement(type_.name, trait.name) and self._does_implement(trait.name, reference.name))
+            elif isinstance(type_, IntersectionType):
+                return sum(count_shared_traits(ti) for ti in type_.types)
+            else:
+                return 0
+
+        t_shared_traits = count_shared_traits(t)
+        u_shared_traits = count_shared_traits(u)
+
+        if t_shared_traits > u_shared_traits:
+            return True
+        elif t_shared_traits < u_shared_traits:
+            return False
+
+        # 3. Compare parameters with respect to reference parameters
+        return self.parameters_more_specific_to(reference.parameters, t.parameters, u.parameters)
+
+
+    def parameters_more_specific_to(self, reference: list[TypeParameter], p: list[TypeParameter], q: list[TypeParameter]) -> bool:
+        """
+        If $r_i$ is a rank type:
+
+        $
+        exact(...) >_r_i exactarr(...) >_r_i min(...) >_r_i minarr(...) >_r_i rugged(...)
+        $
+
+        Lower rank for min/rugged rank/optional type is more specific.
+
+        Trailing optional is less specific to a guaranteed type than a non-optional type.
+        """
+
+        for pi, qi, ri in zip(p, q, reference):
+            if not self.parameters_compatible([pi], [qi]):
+                return False
+            elif isinstance(pi, ExactRankParameter) and isinstance(qi, ExactRankParameter):
+                if pi.rank > qi.rank:
+                    return True
+                elif pi.rank < qi.rank:
+                    return False
+            elif isinstance(pi, ExactRankParameter) and isinstance(qi, ListRankParameter):
+                if pi.rank > qi.rank:
+                    return True
+                elif pi.rank < qi.rank:
+                    return False
+            elif isinstance(pi, MinimumRankParameter) and isinstance(qi, ExactRankParameter):
+                if pi.rank > qi.rank:
+                    return True
+                elif pi.rank < qi.rank:
+                    return False
+            elif isinstance(pi, MinimumRankParameter) and isinstance(qi, ListRankParameter):
+                if pi.rank > qi.rank:
+                    return True
+                elif pi.rank < qi.rank:
+                    return False
+
+        # If all parameters are compatible but not more specific, then they are equally specific.
+        return False
