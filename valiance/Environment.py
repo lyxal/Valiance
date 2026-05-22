@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import enum
 from valiance.Types import ExactRankParameter, IntersectionType, ListRankParameter, MinimumRankParameter, NamedType, OptionalTypeParameter, Symbol, Type, TypeParameter, UnionType, make_symbol
 
 """
@@ -26,6 +27,11 @@ class ObjectDefinition:
     generics: list[Symbol] # List of generic parameters for this object
     implements: list[NamedType] # List of traits this object implements
     elements: dict[Symbol, Type]
+
+class TypeSpecificity(enum.Enum):
+        MORE_SPECIFIC = 1
+        LESS_SPECIFIC = 2
+        EQUIVALENT = 3
 
 class Environment:
     def __init__(self):
@@ -241,7 +247,9 @@ class Environment:
 
         return True
 
-    def more_specific_to(self, reference: Type, t: Type, u: Type) -> bool:
+
+
+    def more_specific_to(self, reference: Type, t: Type, u: Type) -> TypeSpecificity:
         """
         Type T<T#, t, p> is more specific to U<U#, u, q> with respect to reference type R<R#, r, r'> if
 
@@ -264,9 +272,9 @@ class Environment:
         u_shared_tags = len(u.tags.intersection(reference_tags))
 
         if t_shared_tags > u_shared_tags:
-            return True
+            return TypeSpecificity.MORE_SPECIFIC
         elif t_shared_tags < u_shared_tags:
-            return False
+            return TypeSpecificity.LESS_SPECIFIC
 
         # 2. Compare number of shared traits
         def count_shared_traits(type_: Type) -> float:
@@ -286,15 +294,15 @@ class Environment:
         u_shared_traits = count_shared_traits(u)
 
         if t_shared_traits > u_shared_traits:
-            return True
+            return TypeSpecificity.MORE_SPECIFIC
         elif t_shared_traits < u_shared_traits:
-            return False
+            return TypeSpecificity.LESS_SPECIFIC
+        else:
+            # 3. Compare parameters with respect to reference parameters
+            return self.parameters_more_specific_to(reference.parameters, t.parameters, u.parameters)
 
-        # 3. Compare parameters with respect to reference parameters
-        return self.parameters_more_specific_to(reference.parameters, t.parameters, u.parameters)
 
-
-    def parameters_more_specific_to(self, reference: list[TypeParameter], p: list[TypeParameter], q: list[TypeParameter]) -> bool:
+    def parameters_more_specific_to(self, reference: list[TypeParameter], p: list[TypeParameter], q: list[TypeParameter]) -> TypeSpecificity:
         """
         If $r_i$ is a rank type:
 
@@ -305,31 +313,43 @@ class Environment:
         Lower rank for min/rugged rank/optional type is more specific.
 
         Trailing optional is less specific to a guaranteed type than a non-optional type.
+
+        Note that pi and qi are always compatible, as specifity is only checked when multiple overloads
+        are deemed compatible. Thus, pi and qi are by definition compatible.
         """
 
-        for pi, qi, ri in zip(p, q, reference):
-            if not self.parameters_compatible([pi], [qi]):
-                return False
-            elif isinstance(pi, ExactRankParameter) and isinstance(qi, ExactRankParameter):
-                if pi.rank > qi.rank:
-                    return True
-                elif pi.rank < qi.rank:
-                    return False
-            elif isinstance(pi, ExactRankParameter) and isinstance(qi, ListRankParameter):
-                if pi.rank > qi.rank:
-                    return True
-                elif pi.rank < qi.rank:
-                    return False
-            elif isinstance(pi, MinimumRankParameter) and isinstance(qi, ExactRankParameter):
-                if pi.rank > qi.rank:
-                    return True
-                elif pi.rank < qi.rank:
-                    return False
-            elif isinstance(pi, MinimumRankParameter) and isinstance(qi, ListRankParameter):
-                if pi.rank > qi.rank:
-                    return True
-                elif pi.rank < qi.rank:
-                    return False
-
-        # If all parameters are compatible but not more specific, then they are equally specific.
-        return False
+        for pi, qi, ri in zip(p[::-1], q[::-1], reference[::-1]):
+            if isinstance(ri, ListRankParameter):
+                # These asserts are for the type checker. They're guaranteed to be ListRankParameters
+                # since otherwise they wouldn't be compatible.
+                assert isinstance(pi, ListRankParameter)
+                assert isinstance(qi, ListRankParameter)
+                ORDER = [ExactRankParameter, MinimumRankParameter, ListRankParameter]
+                pi_index = next(i for i, cls in enumerate(ORDER) if isinstance(pi, cls))
+                qi_index = next(i for i, cls in enumerate(ORDER) if isinstance(qi, cls))
+                if pi_index < qi_index:
+                    return TypeSpecificity.MORE_SPECIFIC
+                elif pi_index > qi_index:
+                    return TypeSpecificity.LESS_SPECIFIC
+                else:
+                    # If same rank type, lower rank is more specific
+                    if pi.rank < qi.rank:
+                        return TypeSpecificity.MORE_SPECIFIC
+                    elif pi.rank > qi.rank:
+                        return TypeSpecificity.LESS_SPECIFIC
+            elif isinstance(ri, OptionalTypeParameter):
+                # These asserts are for the type checker. They're guaranteed to be OptionalTypeParameters
+                # since otherwise they wouldn't be compatible.
+                assert isinstance(pi, OptionalTypeParameter)
+                assert isinstance(qi, OptionalTypeParameter)
+                if pi.rank < qi.rank:
+                    return TypeSpecificity.MORE_SPECIFIC
+                elif pi.rank > qi.rank:
+                    return TypeSpecificity.LESS_SPECIFIC
+        # If we get here, then all parameters are equally specific. However, if p has trailing optional parameters and q does not, then q is more specific.
+        if len(p) < len(q) and isinstance(q[-1], OptionalTypeParameter):
+            return TypeSpecificity.LESS_SPECIFIC
+        elif len(p) > len(q) and isinstance(p[-1], OptionalTypeParameter):
+            return TypeSpecificity.MORE_SPECIFIC
+        else:
+            return TypeSpecificity.EQUIVALENT # This will cause a compile error upstream. But it is not the job of this function to error.
