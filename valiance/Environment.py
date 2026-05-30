@@ -521,3 +521,28 @@ class Environment:
                 output.append(parameter)
 
         return output
+
+    def combine(self, left: Type, right: Type) -> Type:
+        """
+        `combine(T, U)` returns the most general type between two generic solutions.
+
+        Note that if a case is not listed below, the two types cannot be combined. Also note that `combine` is commutative.
+
+        1. $tbp("", "t", "p"), tbp("", "t", "p") -> tbp("", "t", "p")$
+        2. $tbp("", "t", min(n)), tbp("", "t", min(m)) -> tbp("", "t", min("min"(n, m)))$
+        3. $tbp("", "t", minarr(n)), tbp("", "t", minarr(m)) -> tbp("", "t", minarr("min"(n, m)))$
+        4. $tbp("", "t", min(n)), tbp("", "t", exact(m)) -> tbp("", "t", min("min"(n, m)))$
+        5. $tbp("", "t", minarr(n)), tbp("", "t", exactarr(m)) -> tbp("", "t", minarr("min"(n, m)))$
+        6. $tbp("", "t", exact(n)), tbp("", "t", exactarr(m)) -> tbp("", "t", exact("min"(n, m)))$
+        7. $tbp("", "t", min(n)), tbp("", "t", minarr(m)) -> tbp("", "t", min("min"(n, m)))$
+        8. $tbp("", "t", exact(n)), tbp("", "t", "") -> tbp("", "t", exact(n))$
+        9. $tbp("", "t", min(n)), tbp("", "t", "") -> tbp("", "t", min(n))$
+        10. $tbp("", "t", rugged(n)), tbp("", "t", "") -> tbp("", "t", rugged(n))$
+        11. $tbp("", "t", exactarr(n)), tbp("", "t", "") -> tbp("", "t", exactarr(n))$
+        12. $tbp("", "t", minarr(n)), tbp("", "t", "") -> tbp("", "t", minarr(n))$
+        """  # noqa: E501
+
+        # base = lowest common ancestor of left.base and right.base, relative to this
+        # env's trait set. Note that left.base may implement right.base
+
+        ...
