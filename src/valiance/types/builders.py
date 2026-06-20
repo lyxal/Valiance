@@ -4,27 +4,46 @@ from __future__ import annotations
 
 from typing import Callable, Iterable
 
-from valiance.types.model import Coll, Kind, Overload, Type
+from valiance.types.model import (
+    AtomicType,
+    CallSiteCheckedFunctionType,
+    Coll,
+    CollectionType,
+    ExactType,
+    FunctionType,
+    IntersectionType,
+    Kind,
+    NeverType,
+    NominalType,
+    NoneTypeNode,
+    Overload,
+    OverloadSetType,
+    TaggedType,
+    TupleType,
+    Type,
+    UnionType,
+    VarType,
+)
 
 
 def Never() -> Type:
     """Create the bottom type, assignable to every type."""
-    return Type(Kind.NEVER)
+    return NeverType()
 
 
 def NoneType() -> Type:
     """Create the ``None`` type."""
-    return Type(Kind.NONE)
+    return NoneTypeNode()
 
 
 def N(name: str, *args: Type) -> Type:
     """Create a nominal type, optionally with invariant generic arguments."""
-    return Type(Kind.NOMINAL, name=name, args=tuple(args))
+    return NominalType(name, tuple(args))
 
 
 def V(name: str) -> Type:
     """Create a generic type variable."""
-    return Type(Kind.VAR, name=name)
+    return VarType(name)
 
 
 def Some(inner: Type) -> Type:
@@ -39,52 +58,52 @@ def Result(ok: Type, err: Type) -> Type:
 
 def U(*types: Type) -> Type:
     """Create and normalize a union type."""
-    return normalize(Type(Kind.UNION, items=frozenset(types)))
+    return normalize(UnionType(frozenset(types)))
 
 
 def I(*types: Type) -> Type:
     """Create and normalize an intersection type."""
-    return normalize(Type(Kind.INTERSECTION, items=frozenset(types)))
+    return normalize(IntersectionType(frozenset(types)))
 
 
 def Tup(*types: Type) -> Type:
     """Create a fixed positional tuple type."""
-    return Type(Kind.TUPLE, params=tuple(types))
+    return TupleType(tuple(types))
 
 
 def C(coll_kind: str, base: Type, rank: int = 1) -> Type:
     """Create a collection type with a rank mode, base type, and rank."""
-    return Type(Kind.COLLECTION, coll_kind=coll_kind, base=base, rank=rank)
+    return CollectionType(coll_kind, base, rank)
 
 
 def Fn(params: Iterable[Type], returns: Iterable[Type]) -> Type:
     """Create a stack-effect function type."""
-    return Type(Kind.FUNCTION, params=tuple(params), returns=tuple(returns))
+    return FunctionType(tuple(params), tuple(returns))
 
 
 def Overloads(*overloads: Overload) -> Type:
     """Create an overloaded callable value from one or more signatures."""
-    return Type(Kind.OVERLOAD_SET, overloads=tuple(overloads))
+    return OverloadSetType(tuple(overloads))
 
 
 def Tagged(inner: Type, *tags: str) -> Type:
     """Create a tagged type, merging nested tag wrappers during normalization."""
-    return normalize(Type(Kind.TAGGED, tags=frozenset(tags), inner=inner))
+    return normalize(TaggedType(inner, frozenset(tags)))
 
 
 def Exact(inner: Type) -> Type:
     """Create a parameter wrapper that disables vectorisation for the inner type."""
-    return Type(Kind.EXACT, inner=inner)
+    return ExactType(inner)
 
 
 def Atomic(var: Type) -> Type:
     """Create an atomic-view marker for a type variable."""
-    return Type(Kind.ATOMIC, inner=var)
+    return AtomicType(var)
 
 
 def CSTC(checker: Callable[..., tuple[Type, ...] | None]) -> Type:
     """Create a call-site-checked function value backed by a checker callback."""
-    return Type(Kind.CSTC, checker=checker)
+    return CallSiteCheckedFunctionType(checker)
 
 
 def optional(inner: Type) -> Type:
@@ -136,7 +155,7 @@ def normalize(t: Type) -> Type:
             return Never()
         if len(flat) == 1:
             return next(iter(flat))
-        return Type(Kind.UNION, items=frozenset(flat))
+        return UnionType(frozenset(flat))
 
     if t.kind == Kind.INTERSECTION:
         flat: set[Type] = set()
@@ -148,7 +167,7 @@ def normalize(t: Type) -> Type:
                 flat.add(item)
         if len(flat) == 1:
             return next(iter(flat))
-        return Type(Kind.INTERSECTION, items=frozenset(flat))
+        return IntersectionType(frozenset(flat))
 
     if t.kind == Kind.COLLECTION:
         base = normalize(t.base)
@@ -156,29 +175,31 @@ def normalize(t: Type) -> Type:
             # Surface syntax can produce nested collection nodes, e.g.
             # Number++* parses as (Number+2)*. Collapse those into the weakest
             # rank mode that preserves the meaning: Number*3.
-            collapsed = collapse_nested_collection(t.coll_kind or "", base, t.rank or 0)
+            collapsed = collapse_nested_collection(t.coll_kind, base, t.rank)
             if collapsed is not None:
                 return collapsed
-        return Type(t.kind, coll_kind=t.coll_kind, base=base, rank=t.rank)
+        return CollectionType(t.coll_kind, base, t.rank)
 
     if t.kind == Kind.FUNCTION:
         return Fn((normalize(p) for p in t.params), (normalize(r) for r in t.returns))
 
     if t.kind == Kind.NOMINAL:
-        return N(t.name or "", *(normalize(a) for a in t.args))
+        return N(t.name, *(normalize(a) for a in t.args))
 
     if t.kind == Kind.TAGGED:
         inner = normalize(t.inner)
         if inner.kind == Kind.TAGGED:
             return Tagged(inner.inner, *(set(t.tags) | set(inner.tags)))
-        return Type(Kind.TAGGED, tags=t.tags, inner=inner)
+        return TaggedType(inner, t.tags)
 
     return t
 
 
-def collapse_nested_collection(outer_kind: str, inner: Type, outer_rank: int) -> Type | None:
+def collapse_nested_collection(
+    outer_kind: str, inner: Type, outer_rank: int
+) -> Type | None:
     """Collapse nested collection ranks when mixed rank modes have a clear form."""
-    total_rank = (inner.rank or 0) + outer_rank
+    total_rank = inner.rank + outer_rank
     inner_kind = inner.coll_kind
     if inner_kind == outer_kind:
         return C(outer_kind, inner.base, total_rank)
@@ -215,16 +236,17 @@ def same(a: Type, b: Type) -> bool:
     """Return canonical type equality without subtyping or compatibility."""
     return normalize(a) == normalize(b)
 
+
 def show(t: Type) -> str:
     """Render a type as compact user-facing syntax."""
     t = normalize(t)
     if t.kind in {Kind.NEVER, Kind.NONE}:
         return t.kind
     if t.kind == Kind.VAR:
-        return t.name or "?"
+        return t.name
     if t.kind == Kind.NOMINAL:
         if not t.args:
-            return t.name or "?"
+            return t.name
         return f"{t.name}[{', '.join(show(a) for a in t.args)}]"
     if t.kind == Kind.UNION:
         return " | ".join(sorted(show(i) for i in t.items))
@@ -247,7 +269,9 @@ def show(t: Type) -> str:
     if t.kind == Kind.TAGGED:
         return f"{' '.join(sorted(t.tags))} {show(t.inner)}"
     if t.kind == Kind.OVERLOAD_SET:
-        entries = ", ".join(show(Fn(overload.params, overload.returns)) for overload in t.overloads)
+        entries = ", ".join(
+            show(Fn(overload.params, overload.returns)) for overload in t.overloads
+        )
         return f"OverloadSet[{entries}]"
     if t.kind == Kind.CSTC:
         return "CallSiteCheckedFunction"

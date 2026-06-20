@@ -10,6 +10,7 @@ from valiance.types import (
     Context,
     Fn,
     I,
+    Kind,
     N,
     NoneType,
     Overload,
@@ -133,8 +134,8 @@ class Parser:
                 "^": Coll.ARRAY_EXACT,
                 ">": Coll.ARRAY_MIN,
             }[marker]
-            if base.coll_kind == kind:
-                base = C(kind, base.base, (base.rank or 0) + rank)
+            if base.kind == Kind.COLLECTION and base.coll_kind == kind:
+                base = C(kind, base.base, base.rank + rank)
             else:
                 base = C(kind, base, rank)
         return base

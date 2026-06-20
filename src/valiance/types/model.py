@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Callable
+from typing import Callable, ClassVar
 
 
 class Kind:
@@ -29,11 +29,11 @@ class Kind:
 class Coll:
     """String constants for collection rank modes."""
 
-    LIST_EXACT = "list_exact"      # T+n
-    LIST_MIN = "list_min"          # T*n
-    LIST_RUGGED = "list_rugged"    # T~n
-    ARRAY_EXACT = "array_exact"    # T^n
-    ARRAY_MIN = "array_min"        # T>n
+    LIST_EXACT = "list_exact"  # T+n
+    LIST_MIN = "list_min"  # T*n
+    LIST_RUGGED = "list_rugged"  # T~n
+    ARRAY_EXACT = "array_exact"  # T^n
+    ARRAY_MIN = "array_min"  # T>n
 
 
 class Specificity(IntEnum):
@@ -52,34 +52,133 @@ class Specificity(IntEnum):
     NO_MATCH = 10_000
 
 
-@dataclass(frozen=True)
 class Type:
-    """Canonical-ish immutable type node used by all type-system relations."""
+    """Base class for immutable type-system nodes."""
 
-    # This single dataclass represents all type nodes. Most fields are only
-    # meaningful for one or two kinds; keeping one compact node avoids a large
-    # class hierarchy while the compiler-facing API is still small.
-    kind: str
-    name: str | None = None
-    args: tuple["Type", ...] = ()
-    items: frozenset["Type"] = field(default_factory=frozenset)
-    coll_kind: str | None = None
-    base: "Type | None" = None
-    rank: int | None = None
-    params: tuple["Type", ...] = ()
-    returns: tuple["Type", ...] = ()
-    tags: frozenset[str] = field(default_factory=frozenset)
-    inner: "Type | None" = None
-    overloads: tuple["Overload", ...] = ()
-    checker: Callable[..., tuple["Type", ...] | None] | None = field(
-        default=None, compare=False, hash=False
-    )
+    kind: ClassVar[str]
 
     def __str__(self) -> str:
         """Render the type using the compact display syntax."""
         from valiance.types.builders import show
 
         return show(self)
+
+
+@dataclass(frozen=True)
+class NeverType(Type):
+    """The bottom type, assignable to every type."""
+
+    kind: ClassVar[str] = Kind.NEVER
+
+
+@dataclass(frozen=True)
+class NoneTypeNode(Type):
+    """The ``None`` type."""
+
+    kind: ClassVar[str] = Kind.NONE
+
+
+@dataclass(frozen=True)
+class NominalType(Type):
+    """A named type, optionally with invariant generic arguments."""
+
+    name: str
+    args: tuple[Type, ...] = ()
+    kind: ClassVar[str] = Kind.NOMINAL
+
+
+@dataclass(frozen=True)
+class VarType(Type):
+    """A generic type variable."""
+
+    name: str
+    kind: ClassVar[str] = Kind.VAR
+
+
+@dataclass(frozen=True)
+class UnionType(Type):
+    """A normalized-or-normalizable union type."""
+
+    items: frozenset[Type] = field(default_factory=frozenset[Type])
+    kind: ClassVar[str] = Kind.UNION
+
+
+@dataclass(frozen=True)
+class IntersectionType(Type):
+    """A normalized-or-normalizable intersection type."""
+
+    items: frozenset[Type] = field(default_factory=frozenset[Type])
+    kind: ClassVar[str] = Kind.INTERSECTION
+
+
+@dataclass(frozen=True)
+class TupleType(Type):
+    """A fixed positional tuple type."""
+
+    params: tuple[Type, ...] = ()
+    kind: ClassVar[str] = Kind.TUPLE
+
+
+@dataclass(frozen=True)
+class CollectionType(Type):
+    """A collection type with a rank mode, base type, and rank."""
+
+    coll_kind: str
+    base: Type
+    rank: int = 1
+    kind: ClassVar[str] = Kind.COLLECTION
+
+
+@dataclass(frozen=True)
+class FunctionType(Type):
+    """A stack-effect function type."""
+
+    params: tuple[Type, ...] = ()
+    returns: tuple[Type, ...] = ()
+    kind: ClassVar[str] = Kind.FUNCTION
+
+
+@dataclass(frozen=True)
+class OverloadSetType(Type):
+    """An overloaded callable value."""
+
+    overloads: tuple["Overload", ...] = ()
+    kind: ClassVar[str] = Kind.OVERLOAD_SET
+
+
+@dataclass(frozen=True)
+class TaggedType(Type):
+    """A type decorated with present or absent tag requirements."""
+
+    inner: Type
+    tags: frozenset[str] = field(default_factory=frozenset[str])
+    kind: ClassVar[str] = Kind.TAGGED
+
+
+@dataclass(frozen=True)
+class ExactType(Type):
+    """A parameter wrapper that disables vectorisation for the inner type."""
+
+    inner: Type
+    kind: ClassVar[str] = Kind.EXACT
+
+
+@dataclass(frozen=True)
+class AtomicType(Type):
+    """An atomic-view marker for a type variable."""
+
+    inner: Type
+    kind: ClassVar[str] = Kind.ATOMIC
+
+
+@dataclass(frozen=True)
+class CallSiteCheckedFunctionType(Type):
+    """A callable whose compatibility is decided by a callback."""
+
+    checker: Callable[..., tuple[Type, ...] | None] = field(
+        compare=False, hash=False
+    )
+    kind: ClassVar[str] = Kind.CSTC
 
 
 @dataclass(frozen=True)
@@ -133,10 +232,10 @@ class Context:
 
     # The parser/symbol-table layer owns declarations. Context only stores the
     # relationships that the relation functions need to answer questions.
-    trait_impls: dict[str, set[str]] = field(default_factory=dict)
-    trait_parents: dict[str, set[str]] = field(default_factory=dict)
-    variant_members: dict[str, str] = field(default_factory=dict)
-    unit_tags: set[str] = field(default_factory=set)
+    trait_impls: dict[str, set[str]] = field(default_factory=dict[str, set[str]])
+    trait_parents: dict[str, set[str]] = field(default_factory=dict[str, set[str]])
+    variant_members: dict[str, str] = field(default_factory=dict[str, str])
+    unit_tags: set[str] = field(default_factory=set[str])
 
     def implements(self, type_name: str, trait_name: str) -> bool:
         """Return whether a nominal type implements a trait, following parents."""

@@ -76,9 +76,9 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
         # the only nominal widening currently supported.
         if source.name == target.name and len(source.args) == len(target.args):
             return all(same(a, b) for a, b in zip(source.args, target.args))
-        if ctx.implements(source.name or "", target.name or ""):
+        if ctx.implements(source.name, target.name):
             return True
-        if ctx.variant_members.get(source.name or "") == target.name:
+        if ctx.variant_members.get(source.name) == target.name:
             return True
         if source.name in {"Integer", "Real"} and target.name == "Number":
             return True
@@ -99,13 +99,13 @@ def _collection_subtype(source: Type, target: Type, ctx: Context) -> bool:
     if source.coll_kind in {Coll.LIST_MIN, Coll.LIST_RUGGED} and target.coll_kind == Coll.LIST_EXACT:
         # A minimum/rugged list can satisfy an exact outer-list pattern if the
         # peeled remainder is exactly the expected element type.
-        if (source.rank or 0) >= (target.rank or 0):
-            remainder = _collection_remainder(source.coll_kind, source.base, (source.rank or 0) - (target.rank or 0))
+        if source.rank >= target.rank:
+            remainder = _collection_remainder(source.coll_kind, source.base, source.rank - target.rank)
             return same(remainder, target.base)
     if not same(source.base, target.base):
         return False
     sk, tk = source.coll_kind, target.coll_kind
-    sr, tr = source.rank or 0, target.rank or 0
+    sr, tr = source.rank, target.rank
 
     if sk == tk and sr == tr:
         return True
@@ -162,7 +162,7 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
         if p.kind == Kind.VAR:
             # Solving does not decide whether this is globally valid; it only
             # records what this one parameter says the generic must be.
-            add(p.name or "", a)
+            add(p.name, a)
             return True
         if same(p, a):
             return True
@@ -224,7 +224,7 @@ def _solve_collection(pattern: Type, actual: Type, add: Callable[[str, Type], No
         # This helper is only for patterns like T+. Non-generic collection
         # patterns are handled by normal compatibility.
         return same(pattern, actual)
-    n, m = pattern.rank or 0, actual.rank or 0
+    n, m = pattern.rank, actual.rank
     if m < n:
         return False
     diff = m - n
@@ -233,7 +233,7 @@ def _solve_collection(pattern: Type, actual: Type, add: Callable[[str, Type], No
 
     def bind_as(kind: str) -> bool:
         """Bind the pattern base variable to the peeled actual collection type."""
-        add(pattern.base.name or "", _collection_remainder(kind, base, diff))
+        add(pattern.base.name, _collection_remainder(kind, base, diff))
         return True
 
     if pk == Coll.LIST_EXACT and ak in {Coll.LIST_EXACT, Coll.ARRAY_EXACT}:
@@ -298,7 +298,7 @@ def _combine(a: Type, b: Type) -> Type | None:
 def _combine_collections(a: Type, b: Type) -> Type | None:
     """Merge two collection solutions using conservative rank widening."""
     ak, bk = a.coll_kind, b.coll_kind
-    ar, br = a.rank or 0, b.rank or 0
+    ar, br = a.rank, b.rank
     base = a.base
     if ak == bk == Coll.LIST_EXACT:
         return a if ar == br else None
@@ -358,9 +358,9 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
     """Replace type variables in ``t`` using a solved substitution map."""
     t = normalize(t)
     if t.kind == Kind.VAR:
-        return subst.get(t.name or "", t)
+        return subst.get(t.name, t)
     if t.kind == Kind.NOMINAL:
-        return N(t.name or "", *(_substitute(a, subst) for a in t.args))
+        return N(t.name, *(_substitute(a, subst) for a in t.args))
     if t.kind == Kind.UNION:
         return U(*(_substitute(i, subst) for i in t.items))
     if t.kind == Kind.INTERSECTION:
@@ -368,13 +368,13 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
     if t.kind == Kind.TUPLE:
         return Tup(*(_substitute(p, subst) for p in t.params))
     if t.kind == Kind.COLLECTION:
-        return normalize(C(t.coll_kind or "", _substitute(t.base, subst), t.rank or 0))
+        return normalize(C(t.coll_kind, _substitute(t.base, subst), t.rank))
     if t.kind == Kind.FUNCTION:
         return Fn((_substitute(p, subst) for p in t.params), (_substitute(r, subst) for r in t.returns))
     if t.kind == Kind.TAGGED:
         return Tagged(_substitute(t.inner, subst), *t.tags)
     if t.kind == Kind.ATOMIC and t.inner.kind == Kind.VAR:
-        solved = subst.get(t.inner.name or "")
+        solved = subst.get(t.inner.name)
         return _atomic_of(solved) if solved else t
     return t
 
@@ -433,8 +433,6 @@ def _callable_compatible(argument: Type, parameter: Type, ctx: Context) -> bool:
         matches = [o for o in argument.overloads if _overload_callable_compatible(o, parameter, ctx)]
         return len(matches) == 1 or bool(resolve_overload_result(argument.overloads, parameter.params, ctx))
     if argument.kind == Kind.CSTC:
-        if argument.checker is None:
-            return False
         result = argument.checker(parameter.params)
         return result is not None and len(result) == len(parameter.returns) and all(
             compatible(a, p, ctx) for a, p in zip(result, parameter.returns)
@@ -467,9 +465,9 @@ def _overload_result_for_args(overload: Overload, args: tuple[Type, ...], ctx: C
         if arg.kind != Kind.COLLECTION:
             continue
         if param.kind == Kind.COLLECTION:
-            excess = (arg.rank or 0) - (param.rank or 0)
+            excess = arg.rank - param.rank
         else:
-            excess = arg.rank or 0
+            excess = arg.rank
         if excess > vector_rank:
             vector_rank = excess
         if excess > 0:
@@ -494,7 +492,7 @@ def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:
     if argument.kind != Kind.COLLECTION:
         return False
     if parameter.kind == Kind.COLLECTION:
-        return same(argument.base, parameter.base) and (argument.rank or 0) > (parameter.rank or 0)
+        return same(argument.base, parameter.base) and argument.rank > parameter.rank
     return compatible(argument.base, parameter, ctx)
 
 
@@ -514,7 +512,7 @@ def _match_specificity(argument: Type, parameter: Type, ctx: Context | None = No
     if parameter.kind == Kind.INTERSECTION and compatible(argument, parameter, ctx):
         return Specificity.INTERSECTION
     if argument.kind == Kind.NOMINAL and parameter.kind == Kind.NOMINAL:
-        if ctx.implements(argument.name or "", parameter.name or ""):
+        if ctx.implements(argument.name, parameter.name):
             return Specificity.TRAIT
     if argument.kind == Kind.COLLECTION and parameter.kind == Kind.COLLECTION and _collection_subtype(argument, parameter, ctx):
         return Specificity.RANK
