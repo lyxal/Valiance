@@ -21,14 +21,28 @@ ResolvedOverload
 Use constructor helpers instead of building `Type(...)` manually:
 
 ```python
-from valiance.types import C, Coll, Fn, N, Overload, U, V, optional
+from valiance.types import (
+    ArrayExactType,
+    ArrayMinType,
+    C,
+    CollectionType,
+    Fn,
+    ListExactType,
+    ListMinType,
+    ListRuggedType,
+    N,
+    Overload,
+    U,
+    V,
+    optional,
+)
 
 Number = N("Number")
 String = N("String")
 T = V("T")
 
-number_list = C(Coll.LIST_EXACT, Number)
-number_matrix = C(Coll.LIST_EXACT, Number, 2)
+number_list = C(ListExactType, Number)
+number_matrix = C(ListExactType, Number, 2)
 maybe_number = optional(Number)
 number_or_string = U(Number, String)
 function_type = Fn((Number, Number), (Number,))
@@ -37,11 +51,22 @@ function_type = Fn((Number, Number), (Number,))
 Collection helpers:
 
 ```python
-C(Coll.LIST_EXACT, T)      # T+
-C(Coll.LIST_MIN, T)        # T*
-C(Coll.LIST_RUGGED, T)     # T~
-C(Coll.ARRAY_EXACT, T)     # T^
-C(Coll.ARRAY_MIN, T)       # T>
+C(ListExactType, T)        # T+
+C(ListMinType, T)          # T*
+C(ListRuggedType, T)       # T~
+C(ArrayExactType, T)       # T^
+C(ArrayMinType, T)         # T>
+```
+
+The collection shape is encoded in the class hierarchy. `ListExactType`,
+`ListMinType`, `ListRuggedType`, `ArrayExactType`, and `ArrayMinType` all
+subclass `CollectionType`, so compiler code can use `isinstance` checks when it
+needs to distinguish scalar and collection annotations.
+
+```python
+if isinstance(annotation_type, CollectionType):
+    element_type = annotation_type.base
+    rank = annotation_type.rank
 ```
 
 ## 2. Context
@@ -112,14 +137,14 @@ inspect the returned substitution:
 from valiance.types import apply_overload
 
 reduce = Overload(
-    (C(Coll.LIST_EXACT, V("T")), Fn((V("T"), V("T")), (V("T"),))),
+    (C(ListExactType, V("T")), Fn((V("T"), V("T")), (V("T"),))),
     (V("T"),),
 )
 
 applied = apply_overload(
     reduce,
     (
-        C(Coll.LIST_EXACT, Number, 2),
+        C(ListExactType, Number, 2),
         Fn((Number, Number), (Number,)),
     ),
     ctx,
@@ -188,12 +213,12 @@ For example:
 
 ```python
 reduce = Overload(
-    (C(Coll.LIST_EXACT, V("T")), Fn((V("T"), V("T")), (V("T"),))),
+    (C(ListExactType, V("T")), Fn((V("T"), V("T")), (V("T"),))),
     (V("T"),),
 )
 
 arg_types = (
-    C(Coll.LIST_EXACT, Number, 2),
+    C(ListExactType, Number, 2),
     Fn((Number, Number), (Number,)),
 )
 
@@ -265,8 +290,8 @@ from valiance.types import compatible
 
 actual = Fn((Number, Number), (Number,))
 expected = Fn(
-    (C(Coll.LIST_EXACT, Number), C(Coll.LIST_EXACT, Number)),
-    (C(Coll.LIST_EXACT, Number),),
+    (C(ListExactType, Number), C(ListExactType, Number)),
+    (C(ListExactType, Number),),
 )
 
 compatible(actual, expected, ctx)  # True
