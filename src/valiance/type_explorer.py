@@ -5,12 +5,15 @@ import shlex
 from dataclasses import dataclass
 
 from valiance.types import (
+    ArrayExactType,
+    ArrayMinType,
     C,
-    Coll,
     Context,
     Fn,
     I,
-    Kind,
+    ListExactType,
+    ListMinType,
+    ListRuggedType,
     N,
     NoneType,
     Overload,
@@ -128,13 +131,13 @@ class Parser:
             rank_text = self.read_digits()
             rank = int(rank_text) if rank_text else 1
             kind = {
-                "+": Coll.LIST_EXACT,
-                "*": Coll.LIST_MIN,
-                "~": Coll.LIST_RUGGED,
-                "^": Coll.ARRAY_EXACT,
-                ">": Coll.ARRAY_MIN,
+                "+": ListExactType,
+                "*": ListMinType,
+                "~": ListRuggedType,
+                "^": ArrayExactType,
+                ">": ArrayMinType,
             }[marker]
-            if base.kind == Kind.COLLECTION and base.coll_kind == kind:
+            if isinstance(base, kind):
                 base = C(kind, base.base, base.rank + rank)
             else:
                 base = C(kind, base, rank)
@@ -311,10 +314,10 @@ def default_overloads() -> dict[str, list[Overload]]:
             Overload((number, number), (number,)),
         ],
         "length": [
-            Overload((C(Coll.LIST_EXACT, V("T")),), (number,)),
+            Overload((C(ListExactType, V("T")),), (number,)),
         ],
         "head": [
-            Overload((C(Coll.LIST_EXACT, V("T")),), (V("T"),)),
+            Overload((C(ListExactType, V("T")),), (V("T"),)),
         ],
     }
 

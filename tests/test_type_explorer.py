@@ -1,7 +1,7 @@
 import unittest
 
 from valiance.type_explorer import command, parse_type
-from valiance.types import C, Coll, Fn, N, U, optional
+from valiance.types import ArrayMinType, C, Fn, ListExactType, N, U, optional
 
 
 Number = N("Number")
@@ -10,9 +10,9 @@ String = N("String")
 
 class TypeExplorerTests(unittest.TestCase):
     def test_parse_collection_ranks(self):
-        self.assertEqual(parse_type("Number++"), C(Coll.LIST_EXACT, Number, 2))
-        self.assertEqual(parse_type("Number+2"), C(Coll.LIST_EXACT, Number, 2))
-        self.assertEqual(parse_type("Number>2"), C(Coll.ARRAY_MIN, Number, 2))
+        self.assertEqual(parse_type("Number++"), C(ListExactType, Number, 2))
+        self.assertEqual(parse_type("Number+2"), C(ListExactType, Number, 2))
+        self.assertEqual(parse_type("Number>2"), C(ArrayMinType, Number, 2))
         self.assertEqual(str(parse_type("Number++*")), "Number*3")
         self.assertEqual(str(parse_type("Number+~")), "Number~2")
         self.assertEqual(str(parse_type("Number^^>")), "Number>3")
@@ -25,7 +25,7 @@ class TypeExplorerTests(unittest.TestCase):
     def test_parse_function(self):
         self.assertEqual(
             parse_type("Function[Number+, Number+ -> Number+]"),
-            Fn((C(Coll.LIST_EXACT, Number), C(Coll.LIST_EXACT, Number)), (C(Coll.LIST_EXACT, Number),)),
+            Fn((C(ListExactType, Number), C(ListExactType, Number)), (C(ListExactType, Number),)),
         )
 
     def test_commands(self):

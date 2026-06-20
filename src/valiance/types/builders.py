@@ -5,14 +5,17 @@ from __future__ import annotations
 from typing import Callable, Iterable
 
 from valiance.types.model import (
+    ArrayExactType,
+    ArrayMinType,
     AtomicType,
     CallSiteCheckedFunctionType,
-    Coll,
     CollectionType,
     ExactType,
     FunctionType,
     IntersectionType,
-    Kind,
+    ListExactType,
+    ListMinType,
+    ListRuggedType,
     NeverType,
     NominalType,
     NoneTypeNode,
@@ -24,6 +27,8 @@ from valiance.types.model import (
     UnionType,
     VarType,
 )
+
+CollectionClass = type[CollectionType]
 
 
 def Never() -> Type:
@@ -71,9 +76,9 @@ def Tup(*types: Type) -> Type:
     return TupleType(tuple(types))
 
 
-def C(coll_kind: str, base: Type, rank: int = 1) -> Type:
+def C(collection_type: CollectionClass, base: Type, rank: int = 1) -> Type:
     """Create a collection type with a rank mode, base type, and rank."""
-    return CollectionType(coll_kind, base, rank)
+    return collection_type(base, rank)
 
 
 def Fn(params: Iterable[Type], returns: Iterable[Type]) -> Type:
@@ -116,19 +121,25 @@ def optional(inner: Type) -> Type:
 def _is_optional(t: Type) -> bool:
     """Return whether a normalized type contains ``None`` as a union member."""
     t = normalize(t)
-    return t.kind == Kind.UNION and any(x.kind == Kind.NONE for x in t.items)
+    return isinstance(t, UnionType) and any(
+        isinstance(x, NoneTypeNode) for x in t.items
+    )
 
 
-def _optional_inner(t: Type) -> Type | None:
+def _optional_inner(t: UnionType) -> Type | None:
     """Return the non-None payload of an optional type, if it has one."""
-    t = normalize(t)
-    if not _is_optional(t):
+    normal = normalize(t)
+    if not _is_optional(normal):
         return None
     non_none: list[Type] = []
     for item in t.items:
-        if item.kind == Kind.NONE:
+        if isinstance(item, NoneTypeNode):
             continue
-        if item.kind == Kind.NOMINAL and item.name == "Some" and len(item.args) == 1:
+        if (
+            isinstance(item, NominalType)
+            and item.name == "Some"
+            and len(item.args) == 1
+        ):
             non_none.append(item.args[0])
         else:
             non_none.append(item)
@@ -139,15 +150,15 @@ def _optional_inner(t: Type) -> Type | None:
 
 def normalize(t: Type) -> Type:
     """Canonicalize unions, intersections, nested collections, and wrappers."""
-    if t.kind == Kind.UNION:
+    if isinstance(t, UnionType):
         # Flattening/deduplication means equality can stay structural. This is
         # also where Never disappears from ordinary unions.
         flat: set[Type] = set()
         for item in t.items:
             item = normalize(item)
-            if item.kind == Kind.NEVER:
+            if isinstance(item, NeverType):
                 continue
-            if item.kind == Kind.UNION:
+            if isinstance(item, UnionType):
                 flat.update(item.items)
             else:
                 flat.add(item)
@@ -157,11 +168,11 @@ def normalize(t: Type) -> Type:
             return next(iter(flat))
         return UnionType(frozenset(flat))
 
-    if t.kind == Kind.INTERSECTION:
+    if isinstance(t, IntersectionType):
         flat: set[Type] = set()
         for item in t.items:
             item = normalize(item)
-            if item.kind == Kind.INTERSECTION:
+            if isinstance(item, IntersectionType):
                 flat.update(item.items)
             else:
                 flat.add(item)
@@ -169,26 +180,26 @@ def normalize(t: Type) -> Type:
             return next(iter(flat))
         return IntersectionType(frozenset(flat))
 
-    if t.kind == Kind.COLLECTION:
+    if isinstance(t, CollectionType):
         base = normalize(t.base)
-        if base.kind == Kind.COLLECTION:
+        if isinstance(base, CollectionType):
             # Surface syntax can produce nested collection nodes, e.g.
             # Number++* parses as (Number+2)*. Collapse those into the weakest
             # rank mode that preserves the meaning: Number*3.
-            collapsed = collapse_nested_collection(t.coll_kind, base, t.rank)
+            collapsed = collapse_nested_collection(type(t), base, t.rank)
             if collapsed is not None:
                 return collapsed
-        return CollectionType(t.coll_kind, base, t.rank)
+        return type(t)(base, t.rank)
 
-    if t.kind == Kind.FUNCTION:
+    if isinstance(t, FunctionType):
         return Fn((normalize(p) for p in t.params), (normalize(r) for r in t.returns))
 
-    if t.kind == Kind.NOMINAL:
+    if isinstance(t, NominalType):
         return N(t.name, *(normalize(a) for a in t.args))
 
-    if t.kind == Kind.TAGGED:
+    if isinstance(t, TaggedType):
         inner = normalize(t.inner)
-        if inner.kind == Kind.TAGGED:
+        if isinstance(inner, TaggedType):
             return Tagged(inner.inner, *(set(t.tags) | set(inner.tags)))
         return TaggedType(inner, t.tags)
 
@@ -196,38 +207,38 @@ def normalize(t: Type) -> Type:
 
 
 def collapse_nested_collection(
-    outer_kind: str, inner: Type, outer_rank: int
+    outer_type: CollectionClass, inner: CollectionType, outer_rank: int
 ) -> Type | None:
     """Collapse nested collection ranks when mixed rank modes have a clear form."""
     total_rank = inner.rank + outer_rank
-    inner_kind = inner.coll_kind
-    if inner_kind == outer_kind:
-        return C(outer_kind, inner.base, total_rank)
+    inner_type = type(inner)
+    if inner_type is outer_type:
+        return C(outer_type, inner.base, total_rank)
 
-    list_like = {Coll.LIST_EXACT, Coll.LIST_MIN, Coll.LIST_RUGGED}
-    array_like = {Coll.ARRAY_EXACT, Coll.ARRAY_MIN}
+    list_like = (ListExactType, ListMinType, ListRuggedType)
+    array_like = (ArrayExactType, ArrayMinType)
 
-    if inner_kind in list_like and outer_kind in list_like:
+    if issubclass(inner_type, list_like) and issubclass(outer_type, list_like):
         # Within list ranks, rugged is weakest, then minimum, then exact.
-        if Coll.LIST_RUGGED in {inner_kind, outer_kind}:
-            return C(Coll.LIST_RUGGED, inner.base, total_rank)
-        if Coll.LIST_MIN in {inner_kind, outer_kind}:
-            return C(Coll.LIST_MIN, inner.base, total_rank)
-        return C(Coll.LIST_EXACT, inner.base, total_rank)
+        if ListRuggedType in {inner_type, outer_type}:
+            return C(ListRuggedType, inner.base, total_rank)
+        if ListMinType in {inner_type, outer_type}:
+            return C(ListMinType, inner.base, total_rank)
+        return C(ListExactType, inner.base, total_rank)
 
-    if inner_kind in array_like and outer_kind in array_like:
-        if Coll.ARRAY_MIN in {inner_kind, outer_kind}:
-            return C(Coll.ARRAY_MIN, inner.base, total_rank)
-        return C(Coll.ARRAY_EXACT, inner.base, total_rank)
+    if issubclass(inner_type, array_like) and issubclass(outer_type, array_like):
+        if ArrayMinType in {inner_type, outer_type}:
+            return C(ArrayMinType, inner.base, total_rank)
+        return C(ArrayExactType, inner.base, total_rank)
 
-    if inner_kind in array_like and outer_kind in list_like:
+    if issubclass(inner_type, array_like) and issubclass(outer_type, list_like):
         # Arrays can be treated as lists, but once a list wrapper is involved
         # the result is list-shaped rather than array-shaped.
-        if outer_kind == Coll.LIST_RUGGED:
-            return C(Coll.LIST_RUGGED, inner.base, total_rank)
-        if outer_kind == Coll.LIST_MIN or inner_kind == Coll.ARRAY_MIN:
-            return C(Coll.LIST_MIN, inner.base, total_rank)
-        return C(Coll.LIST_EXACT, inner.base, total_rank)
+        if outer_type is ListRuggedType:
+            return C(ListRuggedType, inner.base, total_rank)
+        if outer_type is ListMinType or inner_type is ArrayMinType:
+            return C(ListMinType, inner.base, total_rank)
+        return C(ListExactType, inner.base, total_rank)
 
     return None
 
@@ -240,39 +251,41 @@ def same(a: Type, b: Type) -> bool:
 def show(t: Type) -> str:
     """Render a type as compact user-facing syntax."""
     t = normalize(t)
-    if t.kind in {Kind.NEVER, Kind.NONE}:
-        return t.kind
-    if t.kind == Kind.VAR:
+    if isinstance(t, NeverType):
+        return "Never"
+    if isinstance(t, NoneTypeNode):
+        return "None"
+    if isinstance(t, VarType):
         return t.name
-    if t.kind == Kind.NOMINAL:
+    if isinstance(t, NominalType):
         if not t.args:
             return t.name
         return f"{t.name}[{', '.join(show(a) for a in t.args)}]"
-    if t.kind == Kind.UNION:
+    if isinstance(t, UnionType):
         return " | ".join(sorted(show(i) for i in t.items))
-    if t.kind == Kind.INTERSECTION:
+    if isinstance(t, IntersectionType):
         return " & ".join(sorted(show(i) for i in t.items))
-    if t.kind == Kind.TUPLE:
+    if isinstance(t, TupleType):
         return "{" + ", ".join(show(p) for p in t.params) + "}"
-    if t.kind == Kind.COLLECTION:
+    if isinstance(t, CollectionType):
         suffix = {
-            Coll.LIST_EXACT: "+",
-            Coll.LIST_MIN: "*",
-            Coll.LIST_RUGGED: "~",
-            Coll.ARRAY_EXACT: "^",
-            Coll.ARRAY_MIN: ">",
-        }[t.coll_kind]
+            ListExactType: "+",
+            ListMinType: "*",
+            ListRuggedType: "~",
+            ArrayExactType: "^",
+            ArrayMinType: ">",
+        }[type(t)]
         rank = "" if t.rank == 1 else str(t.rank)
         return f"{show(t.base)}{suffix}{rank}"
-    if t.kind == Kind.FUNCTION:
+    if isinstance(t, FunctionType):
         return f"Function[{', '.join(show(p) for p in t.params)} -> {', '.join(show(r) for r in t.returns)}]"
-    if t.kind == Kind.TAGGED:
+    if isinstance(t, TaggedType):
         return f"{' '.join(sorted(t.tags))} {show(t.inner)}"
-    if t.kind == Kind.OVERLOAD_SET:
+    if isinstance(t, OverloadSetType):
         entries = ", ".join(
             show(Fn(overload.params, overload.returns)) for overload in t.overloads
         )
         return f"OverloadSet[{entries}]"
-    if t.kind == Kind.CSTC:
+    if isinstance(t, CallSiteCheckedFunctionType):
         return "CallSiteCheckedFunction"
-    return t.kind
+    return type(t).__name__

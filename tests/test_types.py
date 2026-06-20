@@ -2,9 +2,9 @@ import unittest
 
 from valiance.types import (
     C,
-    Coll,
     Context,
     Fn,
+    ListExactType,
     N,
     NoneType,
     Overload,
@@ -33,14 +33,14 @@ String = N("String")
 
 class TypeLibraryTests(unittest.TestCase):
     def test_assignment_does_not_vectorise(self):
-        self.assertFalse(assignable(C(Coll.LIST_EXACT, Number), Number))
-        self.assertTrue(compatible(C(Coll.LIST_EXACT, Number), Number))
+        self.assertFalse(assignable(C(ListExactType, Number), Number))
+        self.assertTrue(compatible(C(ListExactType, Number), Number))
 
     def test_nested_list_solves_reduce_t_as_list(self):
-        constraints = _solve(C(Coll.LIST_EXACT, V("T")), C(Coll.LIST_EXACT, Number, 2))
+        constraints = _solve(C(ListExactType, V("T")), C(ListExactType, Number, 2))
         self.assertIsNotNone(constraints)
         t = _combine_all(constraints["T"])
-        self.assertEqual(t, C(Coll.LIST_EXACT, Number))
+        self.assertEqual(t, C(ListExactType, Number))
 
     def test_optional_none_does_not_solve_type_var(self):
         constraints = _solve(optional(V("T")), NoneType())
@@ -57,32 +57,32 @@ class TypeLibraryTests(unittest.TestCase):
 
     def test_reduce_accepts_plus_via_vectorised_function_compatibility(self):
         plus = Overloads(Overload((Number, Number), (Number,)))
-        expected = Fn((C(Coll.LIST_EXACT, Number), C(Coll.LIST_EXACT, Number)), (C(Coll.LIST_EXACT, Number),))
+        expected = Fn((C(ListExactType, Number), C(ListExactType, Number)), (C(ListExactType, Number),))
         self.assertTrue(compatible(plus, expected))
 
     def test_reduce_signature_substitution(self):
-        xs_type = C(Coll.LIST_EXACT, Number, 2)
-        constraints = _solve(C(Coll.LIST_EXACT, V("T")), xs_type)
+        xs_type = C(ListExactType, Number, 2)
+        constraints = _solve(C(ListExactType, V("T")), xs_type)
         subst = {"T": _combine_all(constraints["T"])}
         function_param = _substitute(Fn((V("T"), V("T")), (V("T"),)), subst)
         self.assertEqual(
             function_param,
-            Fn((C(Coll.LIST_EXACT, Number), C(Coll.LIST_EXACT, Number)), (C(Coll.LIST_EXACT, Number),)),
+            Fn((C(ListExactType, Number), C(ListExactType, Number)), (C(ListExactType, Number),)),
         )
 
     def test_apply_overload_reports_substitution_and_actual_returns(self):
         reduce = Overload(
-            (C(Coll.LIST_EXACT, V("T")), Fn((V("T"), V("T")), (V("T"),))),
+            (C(ListExactType, V("T")), Fn((V("T"), V("T")), (V("T"),))),
             (V("T"),),
         )
         applied = apply_overload(
             reduce,
-            (C(Coll.LIST_EXACT, Number, 2), Fn((Number, Number), (Number,))),
+            (C(ListExactType, Number, 2), Fn((Number, Number), (Number,))),
         )
         self.assertIsNotNone(applied)
-        self.assertEqual(applied.substitution["T"], C(Coll.LIST_EXACT, Number))
-        self.assertEqual(applied.params[0], C(Coll.LIST_EXACT, Number, 2))
-        self.assertEqual(applied.returns, (C(Coll.LIST_EXACT, Number),))
+        self.assertEqual(applied.substitution["T"], C(ListExactType, Number))
+        self.assertEqual(applied.params[0], C(ListExactType, Number, 2))
+        self.assertEqual(applied.returns, (C(ListExactType, Number),))
 
     def test_apply_overload_to_stack_can_infer_missing_inputs(self):
         plus = Overload((Number, Number), (Number,))

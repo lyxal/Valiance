@@ -4,36 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Callable, ClassVar
-
-
-class Kind:
-    """String constants for every internal type node kind."""
-
-    NEVER = "Never"
-    NONE = "None"
-    NOMINAL = "Nominal"
-    VAR = "Var"
-    UNION = "Union"
-    INTERSECTION = "Intersection"
-    TUPLE = "Tuple"
-    COLLECTION = "Collection"
-    FUNCTION = "Function"
-    OVERLOAD_SET = "OverloadSet"
-    TAGGED = "Tagged"
-    EXACT = "Exact"
-    ATOMIC = "Atomic"
-    CSTC = "CallSiteCheckedFunction"
-
-
-class Coll:
-    """String constants for collection rank modes."""
-
-    LIST_EXACT = "list_exact"  # T+n
-    LIST_MIN = "list_min"  # T*n
-    LIST_RUGGED = "list_rugged"  # T~n
-    ARRAY_EXACT = "array_exact"  # T^n
-    ARRAY_MIN = "array_min"  # T>n
+from typing import Callable
 
 
 class Specificity(IntEnum):
@@ -55,8 +26,6 @@ class Specificity(IntEnum):
 class Type:
     """Base class for immutable type-system nodes."""
 
-    kind: ClassVar[str]
-
     def __str__(self) -> str:
         """Render the type using the compact display syntax."""
         from valiance.types.builders import show
@@ -68,14 +37,10 @@ class Type:
 class NeverType(Type):
     """The bottom type, assignable to every type."""
 
-    kind: ClassVar[str] = Kind.NEVER
-
 
 @dataclass(frozen=True)
 class NoneTypeNode(Type):
     """The ``None`` type."""
-
-    kind: ClassVar[str] = Kind.NONE
 
 
 @dataclass(frozen=True)
@@ -84,7 +49,6 @@ class NominalType(Type):
 
     name: str
     args: tuple[Type, ...] = ()
-    kind: ClassVar[str] = Kind.NOMINAL
 
 
 @dataclass(frozen=True)
@@ -92,7 +56,6 @@ class VarType(Type):
     """A generic type variable."""
 
     name: str
-    kind: ClassVar[str] = Kind.VAR
 
 
 @dataclass(frozen=True)
@@ -100,7 +63,6 @@ class UnionType(Type):
     """A normalized-or-normalizable union type."""
 
     items: frozenset[Type] = field(default_factory=frozenset[Type])
-    kind: ClassVar[str] = Kind.UNION
 
 
 @dataclass(frozen=True)
@@ -108,7 +70,6 @@ class IntersectionType(Type):
     """A normalized-or-normalizable intersection type."""
 
     items: frozenset[Type] = field(default_factory=frozenset[Type])
-    kind: ClassVar[str] = Kind.INTERSECTION
 
 
 @dataclass(frozen=True)
@@ -116,17 +77,39 @@ class TupleType(Type):
     """A fixed positional tuple type."""
 
     params: tuple[Type, ...] = ()
-    kind: ClassVar[str] = Kind.TUPLE
 
 
 @dataclass(frozen=True)
 class CollectionType(Type):
-    """A collection type with a rank mode, base type, and rank."""
+    """Base class for collection types with a base type and rank."""
 
-    coll_kind: str
     base: Type
     rank: int = 1
-    kind: ClassVar[str] = Kind.COLLECTION
+
+
+@dataclass(frozen=True)
+class ListExactType(CollectionType):
+    """A list with exactly the specified rank."""
+
+
+@dataclass(frozen=True)
+class ListMinType(CollectionType):
+    """A list with at least the specified rank."""
+
+
+@dataclass(frozen=True)
+class ListRuggedType(CollectionType):
+    """A rugged list with at least the specified rank."""
+
+
+@dataclass(frozen=True)
+class ArrayExactType(CollectionType):
+    """An array with exactly the specified rank."""
+
+
+@dataclass(frozen=True)
+class ArrayMinType(CollectionType):
+    """An array with at least the specified rank."""
 
 
 @dataclass(frozen=True)
@@ -135,7 +118,6 @@ class FunctionType(Type):
 
     params: tuple[Type, ...] = ()
     returns: tuple[Type, ...] = ()
-    kind: ClassVar[str] = Kind.FUNCTION
 
 
 @dataclass(frozen=True)
@@ -143,7 +125,6 @@ class OverloadSetType(Type):
     """An overloaded callable value."""
 
     overloads: tuple["Overload", ...] = ()
-    kind: ClassVar[str] = Kind.OVERLOAD_SET
 
 
 @dataclass(frozen=True)
@@ -152,7 +133,6 @@ class TaggedType(Type):
 
     inner: Type
     tags: frozenset[str] = field(default_factory=frozenset[str])
-    kind: ClassVar[str] = Kind.TAGGED
 
 
 @dataclass(frozen=True)
@@ -160,7 +140,6 @@ class ExactType(Type):
     """A parameter wrapper that disables vectorisation for the inner type."""
 
     inner: Type
-    kind: ClassVar[str] = Kind.EXACT
 
 
 @dataclass(frozen=True)
@@ -168,7 +147,6 @@ class AtomicType(Type):
     """An atomic-view marker for a type variable."""
 
     inner: Type
-    kind: ClassVar[str] = Kind.ATOMIC
 
 
 @dataclass(frozen=True)
@@ -178,7 +156,6 @@ class CallSiteCheckedFunctionType(Type):
     checker: Callable[..., tuple[Type, ...] | None] = field(
         compare=False, hash=False
     )
-    kind: ClassVar[str] = Kind.CSTC
 
 
 @dataclass(frozen=True)
