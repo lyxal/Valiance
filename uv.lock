@@ -15,9 +15,13 @@ wheels = [
 name = "valiance"
 version = "0.1.0"
 source = { editable = "." }
-dependencies = [
+
+[package.dev-dependencies]
+dev = [
     { name = "isort" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "isort", specifier = ">=8.0.1" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "isort", specifier = ">=8.0.1" }]
