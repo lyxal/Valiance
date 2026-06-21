@@ -20,12 +20,12 @@ from valiance.types import (
     Overloads,
     Tagged,
     Type,
+    TypeStack,
     U,
     V,
     _combine_all,
     _match_specificity,
     _solve,
-    apply_overload_to_stack,
     assignable,
     compatible,
     optional,
@@ -335,7 +335,7 @@ class InferState:
     """One REPL-only branch of toy function-body inference."""
 
     inputs: tuple[Type, ...]
-    stack: tuple[Type, ...]
+    stack: TypeStack
 
 
 def command(line: str) -> str:
@@ -482,17 +482,17 @@ def parse_infer_body(rest: str) -> list[str]:
 
 def infer_function(tokens: list[str]) -> Type | None:
     """Infer simple REPL token bodies using the library stack-application API."""
-    states = {InferState((), ())}
+    states = {InferState((), TypeStack())}
     for token in tokens:
         literal = literal_type(token)
         next_states: set[InferState] = set()
         if literal is not None:
             for state in states:
-                next_states.add(InferState(state.inputs, state.stack + (literal,)))
+                next_states.add(InferState(state.inputs, state.stack.push(literal)))
         elif token in OVERLOADS:
             for state in states:
                 for overload in OVERLOADS[token]:
-                    applied = apply_overload_to_stack(overload, state.stack, CTX, infer_missing=True)
+                    applied = state.stack.apply_one(overload, CTX, infer_missing=True)
                     if applied is not None:
                         next_states.add(InferState(state.inputs + applied.inputs, applied.stack))
         else:
@@ -502,7 +502,7 @@ def infer_function(tokens: list[str]) -> Type | None:
         states = next_states
 
     inferred = sorted(
-        (Overload(state.inputs, state.stack) for state in states),
+        (Overload(state.inputs, state.stack.items) for state in states),
         key=lambda overload: str(Fn(overload.params, overload.returns)),
     )
     if not inferred:

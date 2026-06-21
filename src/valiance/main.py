@@ -1,18 +1,16 @@
 from __future__ import annotations
 
+from valiance.analysis import analyser
+from valiance.asts import ASTNode, NumberLiteralNode, ElementNode
+
 
 def main():
-    while True:
-        try:
-            command = input("Enter a command: ")
-            if command.lower() == "exit":
-                print("Exiting the program.")
-                break
-            else:
-                print(f"You entered: {command}")
-        except KeyboardInterrupt:
-            print("\nProgram interrupted. Exiting.")
-            break
+    program: list[ASTNode] = [
+        NumberLiteralNode("67"),
+        NumberLiteralNode("42"),
+        ElementNode("+"),
+    ]
+    print(analyser.analyse(program))
 
 
 if __name__ == "__main__":

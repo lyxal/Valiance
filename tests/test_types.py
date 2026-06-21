@@ -11,6 +11,7 @@ from valiance.types import (
     Overloads,
     Specificity,
     U,
+    TypeStack,
     V,
     _combine_all,
     _match_specificity,
@@ -18,6 +19,7 @@ from valiance.types import (
     _substitute,
     apply_overload,
     apply_overload_to_stack,
+    apply_overloads_to_stack,
     assignable,
     compatible,
     merge_stacks,
@@ -86,22 +88,67 @@ class TypeLibraryTests(unittest.TestCase):
 
     def test_apply_overload_to_stack_can_infer_missing_inputs(self):
         plus = Overload((Number, Number), (Number,))
-        applied = apply_overload_to_stack(plus, (), infer_missing=True)
+        applied = apply_overload_to_stack(plus, TypeStack(), infer_missing=True)
         self.assertIsNotNone(applied)
         self.assertEqual(applied.inputs, (Number, Number))
-        self.assertEqual(applied.stack, (Number,))
+        self.assertEqual(applied.stack, TypeStack((Number,)))
 
     def test_apply_overload_to_stack_requires_inputs_without_inference(self):
         plus = Overload((Number, Number), (Number,))
-        self.assertIsNone(apply_overload_to_stack(plus, (Number,), infer_missing=False))
-        applied = apply_overload_to_stack(plus, (Number, Number), infer_missing=False)
+        self.assertIsNone(
+            apply_overload_to_stack(
+                plus,
+                TypeStack((Number,)),
+                infer_missing=False,
+            )
+        )
+        applied = apply_overload_to_stack(
+            plus,
+            TypeStack((Number, Number)),
+            infer_missing=False,
+        )
         self.assertIsNotNone(applied)
-        self.assertEqual(applied.stack, (Number,))
+        self.assertEqual(applied.stack, TypeStack((Number,)))
+
+    def test_apply_overloads_to_stack_chooses_and_updates_stack(self):
+        plus_number = Overload((Number, Number), (Number,))
+        plus_string = Overload((String, String), (String,))
+        applied = apply_overloads_to_stack(
+            (plus_number, plus_string),
+            TypeStack((String, String)),
+        )
+        self.assertIsNotNone(applied)
+        self.assertIs(applied.overload, plus_string)
+        self.assertEqual(applied.stack, TypeStack((String,)))
+
+    def test_apply_overloads_to_stack_reports_ambiguity(self):
+        left = Overload((Number, U(Number, String)), (Number,))
+        right = Overload((U(Number, String), Number), (Number,))
+        self.assertIsNone(
+            apply_overloads_to_stack(
+                (left, right),
+                TypeStack((Number, Number)),
+            )
+        )
 
     def test_merge_types_and_stacks(self):
         self.assertEqual(merge_types(Number, String), U(Number, String))
-        self.assertEqual(merge_stacks((Number,), ()), (optional(Number),))
-        self.assertEqual(merge_stacks((Number,), (String,)), (U(Number, String),))
+        self.assertEqual(
+            merge_stacks(TypeStack((Number,)), TypeStack()),
+            TypeStack((optional(Number),)),
+        )
+        self.assertEqual(
+            merge_stacks(TypeStack((Number,)), TypeStack((String,))),
+            TypeStack((U(Number, String),)),
+        )
+
+    def test_type_stack_methods(self):
+        plus = Overload((Number, Number), (Number,))
+        stack = TypeStack().push(Number).push(Number)
+        applied = stack.apply_one(plus)
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.stack, TypeStack((Number,)))
+        self.assertEqual(stack.merge(TypeStack()), TypeStack((optional(Number), optional(Number))))
 
     def test_concrete_overload_beats_union_overload(self):
         concrete = Overload((Number,), (Number,))

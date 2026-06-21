@@ -44,6 +44,7 @@ from valiance.types.model import (
     TaggedType,
     TupleType,
     Type,
+    TypeStack,
     UnionType,
     VarType,
 )
@@ -361,15 +362,18 @@ def merge_types(a: Type, b: Type) -> Type:
     return U(a, b)
 
 
-def merge_stacks(a: tuple[Type, ...], b: tuple[Type, ...]) -> tuple[Type, ...]:
+def merge_stacks(
+    a: TypeStack,
+    b: TypeStack,
+) -> TypeStack:
     """Merge two branch stacks pairwise, padding shorter stacks with ``None``."""
     # Padding on the left treats missing values as absent lower stack outputs.
     # For branch result stacks this gives the same optional-padding behaviour
     # as the language design.
     length = max(len(a), len(b))
-    left = (NoneType(),) * (length - len(a)) + a
-    right = (NoneType(),) * (length - len(b)) + b
-    return tuple(merge_types(x, y) for x, y in zip(left, right))
+    left = (NoneType(),) * (length - len(a)) + a.items
+    right = (NoneType(),) * (length - len(b)) + b.items
+    return TypeStack(tuple(merge_types(x, y) for x, y in zip(left, right)))
 
 
 def _substitute(t: Type, subst: dict[str, Type]) -> Type:
@@ -592,7 +596,7 @@ def apply_overload(overload: Overload, args: tuple[Type, ...], ctx: Context | No
 
 def apply_overload_to_stack(
     overload: Overload,
-    stack: tuple[Type, ...],
+    stack: TypeStack,
     ctx: Context | None = None,
     *,
     infer_missing: bool = False,
@@ -605,8 +609,8 @@ def apply_overload_to_stack(
 
     available_count = min(len(stack), arity)
     missing_count = arity - available_count
-    available = stack[-available_count:] if available_count else ()
-    remaining_stack = stack[:-available_count] if available_count else stack
+    available = stack.items[-available_count:] if available_count else ()
+    remaining_stack = stack.items[:-available_count] if available_count else stack.items
 
     if infer_missing:
         # During definition-site inference, missing stack values become inferred
@@ -622,7 +626,7 @@ def apply_overload_to_stack(
         return None
 
     solved_inputs = tuple(_substitute(param, applied.substitution) for param in inputs)
-    new_stack = remaining_stack + applied.actual_returns
+    new_stack = TypeStack(remaining_stack).push(*applied.actual_returns)
     return StackApplication(
         overload=overload,
         substitution=applied.substitution,
@@ -633,6 +637,33 @@ def apply_overload_to_stack(
         actual_returns=applied.actual_returns,
         scores=applied.scores,
     )
+
+
+def apply_overloads_to_stack(
+    overloads: Iterable[Overload],
+    stack: TypeStack,
+    ctx: Context | None = None,
+    *,
+    infer_missing: bool = False,
+) -> StackApplication | None:
+    """Choose and apply one overload candidate to a stack."""
+    ctx = ctx or Context()
+    candidates: list[StackApplication] = []
+    for overload in overloads:
+        applied = apply_overload_to_stack(
+            overload,
+            stack,
+            ctx,
+            infer_missing=infer_missing,
+        )
+        if applied is not None:
+            candidates.append(applied)
+
+    winners = []
+    for candidate in candidates:
+        if not any(_dominates(other.scores, candidate.scores) for other in candidates):
+            winners.append(candidate)
+    return winners[0] if len(winners) == 1 else None
 
 
 def resolve_overload_result(

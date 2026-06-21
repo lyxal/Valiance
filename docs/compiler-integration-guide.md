@@ -13,6 +13,7 @@ The most important values are:
 
 ```python
 Type
+TypeStack
 Overload
 Context
 ResolvedOverload
@@ -32,6 +33,7 @@ from valiance.types import (
     ListRuggedType,
     N,
     Overload,
+    TypeStack,
     U,
     V,
     optional,
@@ -46,6 +48,7 @@ number_matrix = C(ListExactType, Number, 2)
 maybe_number = optional(Number)
 number_or_string = U(Number, String)
 function_type = Fn((Number, Number), (Number,))
+empty_stack = TypeStack()
 ```
 
 Collection helpers:
@@ -237,48 +240,50 @@ act as `Function[Number+, Number+ -> Number+]` through vectorisation.
 
 ## 7. Stack Expression Checking
 
-Your compiler should own AST walking and stack simulation. For each element call:
+Your compiler should own AST walking and stack simulation, but it should not
+manually pop and push argument slices. Use the stack application helpers so
+arity checks, overload choice, generic substitution, and vectorised returns stay
+in one place.
 
 ```python
-visible_args = stack[-arity:]
-result = resolve_overload_result(element_overloads, visible_args, ctx)
+from valiance.types import TypeStack
 
-if result is None:
+stack = TypeStack()
+
+applied = stack.apply(element_overloads, ctx)
+
+if applied is None:
     error("no matching overload")
 
-stack = stack[:-arity] + list(result.returns)
+stack = applied.stack
 ```
 
-For generic overloads, use `result.returns`, not `result.overload.returns`.
-
-For vectorised concrete calls, `apply_overload` exposes the actual return stack:
+`applied` also gives you the resolved details for diagnostics:
 
 ```python
-from valiance.types import apply_overload
-
-applied = apply_overload(result.overload, tuple(visible_args), ctx)
-returns = applied.actual_returns
+applied.overload        # raw overload
+applied.substitution   # solved generics, e.g. {"T": Number+}
+applied.params         # instantiated parameter types
+applied.returns        # declared returns after substitution
+applied.actual_returns # returns after vectorisation/call adaptation
+applied.scores         # specificity vector
 ```
 
-For stack-based checking and definition-site inference, use
-`apply_overload_to_stack`:
+If the compiler has already selected a single overload, use `apply_one`:
 
 ```python
-from valiance.types import apply_overload_to_stack
-
 # Normal checking: stack must already contain enough values.
-applied = apply_overload_to_stack(plus_overload, stack, ctx)
+applied = stack.apply_one(plus_overload, ctx)
 
 # Inference: missing values are added to the function input list.
-applied = apply_overload_to_stack(
+applied = TypeStack().apply_one(
     plus_overload,
-    stack=(),
     ctx=ctx,
     infer_missing=True,
 )
 
 applied.inputs  # (Number, Number)
-applied.stack   # (Number,)
+applied.stack   # stack with Number on top
 ```
 
 ## 8. Function Compatibility
@@ -306,17 +311,16 @@ Definition-site inference should live in your AST analysis layer. The type
 system library provides the primitive you need for element calls:
 
 ```python
-from valiance.types import apply_overload_to_stack
+from valiance.types import TypeStack
 
-applied = apply_overload_to_stack(
+applied = TypeStack().apply_one(
     Overload((Number, Number), (Number,)),
-    stack=(),
     ctx=ctx,
     infer_missing=True,
 )
 
 applied.inputs  # (Number, Number)
-applied.stack   # (Number,)
+applied.stack   # stack with Number on top
 ```
 
 Each AST node can transform a set of stack states. For an element call, try each
@@ -338,9 +342,8 @@ Recommended order:
    - stack-check the body
    - register resulting `Overload`
 6. For each call:
-   - collect argument types from the stack
-   - call `resolve_overload_result`
-   - apply `result.returns` to the stack
+   - call `stack.apply(element_overloads, ctx)`
+   - replace the current stack with `applied.stack`
 7. For assignments/returns:
    - call `assignable`
 8. For diagnostics:
@@ -351,16 +354,16 @@ Recommended order:
 Use `merge_types` and `merge_stacks` when joining branches:
 
 ```python
-from valiance.types import merge_types, merge_stacks
+from valiance.types import TypeStack, merge_types, merge_stacks
 
 merge_types(Number, String)
 # Number | String
 
-merge_stacks((Number,), ())
-# Number?
+merge_stacks(TypeStack((Number,)), TypeStack())
+# stack with Number? on top
 
-merge_stacks((Number,), (String,))
-# Number | String
+merge_stacks(TypeStack((Number,)), TypeStack((String,)))
+# stack with Number | String on top
 ```
 
 `merge_stacks` pads the shorter stack with `None` before merging, matching the
