@@ -16,6 +16,14 @@ class TypedNode:
 
 
 @dataclass(frozen=True)
+class FunctionParam:
+    """A function literal parameter annotation."""
+
+    name: str | None = None
+    typ: Type | None = None
+
+
+@dataclass(frozen=True)
 class NumberLiteralNode(ASTNode):
     """A numeric literal."""
 
@@ -27,3 +35,12 @@ class ElementNode(ASTNode):
     """An element, such as an operator or function name."""
 
     name: str
+
+
+@dataclass(frozen=True)
+class FunctionNode(ASTNode):
+    """A function literal."""
+
+    params: tuple[FunctionParam, ...] = ()
+    body: tuple[ASTNode, ...] = ()
+    returns: tuple[Type, ...] | None = None

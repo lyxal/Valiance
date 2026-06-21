@@ -4,4 +4,11 @@ from __future__ import annotations
 
 from .model import *
 
-__all__ = ["ASTNode", "NumberLiteralNode", "TypedNode", "ElementNode"]
+__all__ = [
+    "ASTNode",
+    "ElementNode",
+    "FunctionNode",
+    "FunctionParam",
+    "NumberLiteralNode",
+    "TypedNode",
+]
