@@ -32,22 +32,10 @@ uv run python -m unittest tests.test_type_explorer -v
 
 ## Current Code
 
-The repository currently contains the Valiance types library and a small
-command-line type-system explorer. The language implementation itself is still
-being designed.
-
-Import the types library with:
-
-```python
-from valiance.types import N, C, Coll, assignable, compatible
-```
-
 The package entry point is available as:
 
 ```powershell
 uv run valiance
-uv run valiance types
-uv run valiance-types
 ```
 
 ## License

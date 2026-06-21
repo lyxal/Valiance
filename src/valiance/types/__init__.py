@@ -25,7 +25,13 @@ from valiance.types.builders import (
     show,
 )
 from valiance.types.context import Context
-from valiance.types.environment import Environment
+from valiance.types.environment import (
+    AppliedElement,
+    Environment,
+    EnvironmentApplyResult,
+    NoMatchingOverload,
+    UnknownElement,
+)
 from valiance.types.nodes import (
     AppliedOverload,
     ArrayExactType,
@@ -72,6 +78,7 @@ from valiance.types.default_types import Number, String
 
 __all__ = [
     "AppliedOverload",
+    "AppliedElement",
     "ArrayExactType",
     "ArrayMinType",
     "Atomic",
@@ -82,6 +89,7 @@ __all__ = [
     "CollectionType",
     "Context",
     "Environment",
+    "EnvironmentApplyResult",
     "Exact",
     "ExactType",
     "Fn",
@@ -94,6 +102,7 @@ __all__ = [
     "N",
     "Never",
     "NeverType",
+    "NoMatchingOverload",
     "NominalType",
     "NoneType",
     "NoneTypeNode",
@@ -114,6 +123,7 @@ __all__ = [
     "Type",
     "TypeStack",
     "U",
+    "UnknownElement",
     "UnionType",
     "V",
     "VarType",

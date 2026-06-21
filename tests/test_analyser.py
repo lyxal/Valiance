@@ -2,7 +2,14 @@ import unittest
 
 from valiance.analysis import analyse
 from valiance.asts import ElementNode, NumberLiteralNode
-from valiance.types import Environment, N, Overload
+from valiance.types import (
+    Environment,
+    NoMatchingOverload,
+    N,
+    Overload,
+    TypeStack,
+    UnknownElement,
+)
 
 
 Number = N("Number")
@@ -38,6 +45,13 @@ class AnalyserTests(unittest.TestCase):
     def test_unknown_element_is_untyped(self):
         typed = analyse([ElementNode("missing")], Environment())
         self.assertIsNone(typed[0].typ)
+
+    def test_environment_distinguishes_unknown_from_no_matching_overload(self):
+        env = Environment()
+        self.assertIsInstance(env.apply("missing", TypeStack()), UnknownElement)
+
+        env.define_overload("+", Overload((Number, Number), (Number,)))
+        self.assertIsInstance(env.apply("+", TypeStack((Number,))), NoMatchingOverload)
 
 
 if __name__ == "__main__":

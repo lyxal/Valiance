@@ -26,6 +26,7 @@ Use constructor helpers instead of building `Type(...)` manually:
 from valiance.types import (
     ArrayExactType,
     ArrayMinType,
+    AppliedElement,
     C,
     CollectionType,
     Environment,
@@ -34,9 +35,11 @@ from valiance.types import (
     ListMinType,
     ListRuggedType,
     N,
+    NoMatchingOverload,
     Overload,
     TypeStack,
     U,
+    UnknownElement,
     V,
     optional,
 )
@@ -107,11 +110,13 @@ For stack-based element checking, ask the environment to apply the named
 overload set:
 
 ```python
-applied = env.apply("+", stack)
-if applied is None:
-    error("no matching overload")
-
-stack = applied.stack
+match env.apply("+", stack):
+    case AppliedElement(application):
+        stack = application.stack
+    case UnknownElement():
+        error("unknown element")
+    case NoMatchingOverload():
+        error("no matching overload")
 ```
 
 `Context` stores relationships the type checker needs:
@@ -302,23 +307,24 @@ from valiance.types import TypeStack
 
 stack = TypeStack()
 
-applied = env.apply(element_name, stack)
-
-if applied is None:
-    error("no matching overload")
-
-stack = applied.stack
+match env.apply(element_name, stack):
+    case AppliedElement(application):
+        stack = application.stack
+    case UnknownElement():
+        error("unknown element")
+    case NoMatchingOverload():
+        error("no matching overload")
 ```
 
-`applied` also gives you the resolved details for diagnostics:
+`application` also gives you the resolved details for diagnostics:
 
 ```python
-applied.overload        # raw overload
-applied.substitution   # solved generics, e.g. {"T": Number+}
-applied.params         # instantiated parameter types
-applied.returns        # declared returns after substitution
-applied.actual_returns # returns after vectorisation/call adaptation
-applied.scores         # specificity vector
+application.overload        # raw overload
+application.substitution   # solved generics, e.g. {"T": Number+}
+application.params         # instantiated parameter types
+application.returns        # declared returns after substitution
+application.actual_returns # returns after vectorisation/call adaptation
+application.scores         # specificity vector
 ```
 
 If the compiler has already selected overload candidates, use `stack.apply`.

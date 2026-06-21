@@ -24,7 +24,7 @@ class TypeStack:
     def __len__(self) -> int:
         return len(self.items)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int):
         return self.items[index]
 
     def __bool__(self) -> bool:

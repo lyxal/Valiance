@@ -7,7 +7,7 @@ def analyse(
     program: list[ASTNode], env: T.Environment | None = None
 ) -> list[TypedNode]:
     env = env or default_environment()
-    stack = T.TypeStack()
+    stack: T.TypeStack = T.TypeStack()
     typed_program: list[TypedNode] = []
     for node in program:
         match node:
@@ -15,12 +15,20 @@ def analyse(
                 typed_program.append(TypedNode(node, T.Number))
                 stack = stack.push(T.Number)
             case ElementNode(name):
-                applied = env.apply(name, stack)
-                if applied is None:
-                    typed_program.append(TypedNode(node, None))
-                    continue
-                typed_program.append(TypedNode(node, _element_result_type(applied)))
-                stack = applied.stack
+                match env.apply(name, stack):
+                    case T.AppliedElement(application):
+                        typed_program.append(
+                            TypedNode(node, _element_result_type(application))
+                        )
+                        stack = application.stack
+                    case T.UnknownElement():
+                        print(f"Error: unknown element '{name}'")
+                        typed_program.append(TypedNode(node, None))
+                    case T.NoMatchingOverload():
+                        print(
+                            f"Error: no overloads for element '{name}' match the given arguments"
+                        )
+                        typed_program.append(TypedNode(node, None))
             case _:
                 typed_program.append(TypedNode(node, None))
     return typed_program

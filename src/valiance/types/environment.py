@@ -9,6 +9,33 @@ from valiance.types.nodes import Overload, OverloadSetType, Type
 from valiance.types.stack import StackApplication, TypeStack
 
 
+class EnvironmentApplyResult:
+    """Base class for applying a named environment entry to a stack."""
+
+
+@dataclass(frozen=True)
+class AppliedElement(EnvironmentApplyResult):
+    """A named overload set matched the stack and produced an application."""
+
+    application: StackApplication
+
+
+@dataclass(frozen=True)
+class UnknownElement(EnvironmentApplyResult):
+    """No overload set exists for the requested element name."""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class NoMatchingOverload(EnvironmentApplyResult):
+    """An overload set exists, but none of its overloads matched the stack."""
+
+    name: str
+    overloads: tuple[Overload, ...]
+    stack: TypeStack
+
+
 @dataclass
 class Environment:
     """Compiler-facing registry for symbols and type relationship facts."""
@@ -66,13 +93,16 @@ class Environment:
         stack: TypeStack,
         *,
         infer_missing: bool = False,
-    ) -> StackApplication | None:
+    ) -> EnvironmentApplyResult:
         """Resolve and apply a named overload set to ``stack``."""
+        if name not in self.overloads:
+            return UnknownElement(name)
         overloads = self.overloads_for(name)
-        if not overloads:
-            return None
-        return stack.apply(
+        applied = stack.apply(
             overloads,
             self.context,
             infer_missing=infer_missing,
         )
+        if applied is None:
+            return NoMatchingOverload(name, overloads, stack)
+        return AppliedElement(applied)
