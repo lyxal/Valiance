@@ -13,6 +13,7 @@ from valiance.types import (
     C,
     Environment,
     Fn,
+    FunctionType,
     ListExactType,
     N,
     Never,
@@ -193,6 +194,20 @@ class AnalyserTests(unittest.TestCase):
             ],
             [[Number], [String]],
         )
+
+    def test_overloaded_function_node_drops_never_returning_overloads(self):
+        typed = analyse([FunctionNode(body=(ElementNode("+"), ElementNode("/")))])
+
+        match typed[0].typ:
+            case FunctionType(returns=returns):
+                self.assertNotIn(Never(), returns)
+            case overload_set:
+                self.assertTrue(
+                    all(
+                        not any(ret == Never() for ret in overload.returns)
+                        for overload in overload_set.overloads
+                    )
+                )
 
     def test_function_empty_params_do_not_infer_missing_inputs(self):
         env = Environment()

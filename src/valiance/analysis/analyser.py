@@ -105,6 +105,13 @@ def analyse_function_details(
         signature = T.Overload(final_state.inputs, returns)
         signatures.setdefault(signature, branch.typed_body)
 
+    if len(signatures) > 1:
+        signatures = {
+            signature: body
+            for signature, body in signatures.items()
+            if not _has_never_return(signature)
+        }
+
     if not signatures:
         return None
 
@@ -311,6 +318,10 @@ def _returns_result_type(returns: tuple[T.Type, ...]) -> T.Type | None:
     if len(returns) == 1:
         return returns[0]
     return None
+
+
+def _has_never_return(overload: T.Overload) -> bool:
+    return any(isinstance(T.normalize(ret), T.NeverType) for ret in overload.returns)
 
 
 def _param_type(param: FunctionParam, index: int) -> T.Type:

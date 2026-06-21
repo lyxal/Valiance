@@ -10,7 +10,7 @@ def main():
             params=None,
             body=(
                 ElementNode(name="+"),
-                ElementNode(name="+"),
+                ElementNode(name="/"),
             ),
             returns=None,  # type: ignore
         )

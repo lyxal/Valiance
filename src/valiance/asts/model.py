@@ -44,6 +44,13 @@ class NumberLiteralNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class StringLiteralNode(ASTNode):
+    """A string literal"""
+
+    value: str
+
+
+@dataclass(frozen=True)
 class ElementNode(ASTNode):
     """An element, such as an operator or function name."""
 
