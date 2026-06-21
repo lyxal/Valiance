@@ -118,59 +118,59 @@ $brainrot = "6 7"
 {Number..., String...} -> A tuple of 0 or more Numbers, followed by 0 or more Strings
 ```
 
-## 1.4. Dictionaries
+## 1.4. Anonymous Records
 
   - Stores of `key->value` pairs.
-  - `dict{...}`
+  - `record{...}`
   - Items can be retrieved, if they are in the dictionary, by indexing by key.
   - Effectively anonymous objects
   - Basically hashmaps with bareword keys.
- - Type = `dict[<name>: <ValueType>...]`
+ - Type = `record[<name>: <ValueType>...]`
 - Example:
 
 ```
-$store = dict{a: 1, b: 2, c: 3}
-#? dict[a: Number, b: Number, c: Number]
+$store = record{a: 1, b: 2, c: 3}
+#? record[a: Number, b: Number, c: Number]
 $store.a #? 1
 $store.c #? 3
 ```
 
-### 1.4.1. Dynamic Dictionaries
+### 1.4.1. Dictionaries
 
-- Normal dictionaries have static keys. Not good if you want computed keys.
-- `dyndict{...}` provides a hashmap where keys can be any value
-- Type = `DynDict[<keytype>, <valuetype>]`
-
-```
-dyndict{"a": 1, "b": 2, "c": 3}
-#? dyndict[String -> Number]
-```
-
-### 1.4.2. Merging Dictionaries
-
-- `dyndict`s can be merged using elements. This is because keys are determined at runtime.
-- `dict`s need special syntax:
-- `dict.extend{...}` will add the keys in `{}` to a `dict` on the top of the stack.
+- Records have static keys. Not good if you want computed keys.
+- `dict{...}` provides a hashmap where keys can be any value
+- Type = `Dict[<keytype>, <valuetype>]`
 
 ```
-dict{x: 3} dict.extend{y: 4}
+dict{"a": 1, "b": 2, "c": 3}
+#? dict[String -> Number]
+```
+
+### 1.4.2. Merging Records
+
+- `dict`s can be merged using elements. This is because keys are determined at runtime.
+- `record`s need special syntax:
+- `record.extend{...}` will add the keys in `{}` to a `record` on the top of the stack.
+
+```
+record{x: 3} record.extend{y: 4}
 #? Same as
-dict{x: 3, y: 4}
+record{x: 3, y: 4}
 ```
 
 - `dict.merge` will merge two dictionaries together
 
 ```
-dict{x: 3} dict.merge dict{y: 4} 
+record{x: 3} record.merge record{y: 4} 
 #? Roughly the same as
-dict{x: 3} dict.extend{y: 4}
+record{x: 3} record.extend{y: 4}
 #? Same as
-dict{x: 3, y: 4}
+record{x: 3, y: 4}
 ```
 
-- `dict.extend` will compile error if any key already exists.
-- `dict.merge` will overwrite existing keys in the left hand dictionary.
-- Keys in a dict can be updated using `$.key = value`
+- `record.extend` will compile error if any key already exists.
+- `record.merge` will overwrite existing keys in the left hand dictionary.
+- Keys in a record can be updated using `$.key = value`
 
 ## 1.5. None
 - A value representing the absence of any other values.
@@ -951,16 +951,16 @@ fork: (sum, length) /
 #? [[9, 2], [1, 4]]
 ```
 
-- Dynamic Dictionary access too
+-  Dictionary access too
 
 ```
-dyndict{"name": "Jeff", "age": 12} $["name"] #? "Jeff"
+dict{"name": "Jeff", "age": 12} $["name"] #? "Jeff"
 ```
 
-- Such indexing obviously isn't needed with normal dictionaries
+- Such indexing obviously isn't needed with records
 
 ```
-dict{name: "Jeff", age: 12}
+record{name: "Jeff", age: 12}
 #? Just use
 $.name #? "Jeff" 
 ```
