@@ -8,8 +8,10 @@ from valiance.asts import (
     ASTNode,
     ElementNode,
     FunctionNode,
+    FunctionOverloadTyping,
     FunctionParam,
     NumberLiteralNode,
+    TypedFunctionNode,
     TypedNode,
 )
 
@@ -22,6 +24,30 @@ class AnalysisState:
     stack: T.TypeStack
 
 
+@dataclass(frozen=True)
+class AnalysisBranch:
+    """One possible typed body and stack state during block analysis."""
+
+    state: AnalysisState
+    typed_body: tuple[TypedNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class NodeAnalysis:
+    """Result of analysing one AST node on one branch."""
+
+    typed_node: TypedNode
+    state: AnalysisState | None
+
+
+@dataclass(frozen=True)
+class FunctionAnalysis:
+    """Typed function literal result, including per-overload typed bodies."""
+
+    typ: T.Type
+    overloads: tuple[FunctionOverloadTyping, ...]
+
+
 def analyse(
     program: list[ASTNode], env: T.Environment | None = None
 ) -> list[TypedNode]:
@@ -29,8 +55,14 @@ def analyse(
     state = AnalysisState((), T.TypeStack())
     typed_program: list[TypedNode] = []
     for node in program:
-        typ, state = analyse_node(node, state, env, infer_missing=False)
-        typed_program.append(TypedNode(node, typ))
+        results = _analyse_node_results(node, state, env, infer_missing=False)
+        if len(results) == 1:
+            result = next(iter(results))
+            typed_program.append(result.typed_node)
+            state = result.state
+        else:
+            typed_program.append(TypedNode(node, None))
+            state = None
         if state is None:
             state = AnalysisState((), T.TypeStack())
     return typed_program
@@ -38,6 +70,15 @@ def analyse(
 
 def analyse_function(node: FunctionNode, env: T.Environment) -> T.Type | None:
     """Infer the stack-effect type of a function literal."""
+    result = analyse_function_details(node, env)
+    return None if result is None else result.typ
+
+
+def analyse_function_details(
+    node: FunctionNode,
+    env: T.Environment,
+) -> FunctionAnalysis | None:
+    """Infer a function literal and keep typed bodies for each overload."""
     infer_params = node.params is None
     params = (
         ()
@@ -45,14 +86,15 @@ def analyse_function(node: FunctionNode, env: T.Environment) -> T.Type | None:
         else tuple(_param_type(param, index) for index, param in enumerate(node.params))
     )
     state = AnalysisState(params, T.TypeStack(params))
-    final_states = analyse_block(
+    final_branches = analyse_typed_block(
         node.body,
-        {state},
+        {AnalysisBranch(state)},
         env,
         infer_missing=infer_params,
     )
-    signatures: set[T.Overload] = set()
-    for final_state in final_states:
+    signatures: dict[T.Overload, tuple[TypedNode, ...]] = {}
+    for branch in final_branches:
+        final_state = branch.state
         if node.returns is not None:
             expected = T.TypeStack(node.returns)
             if not _stack_assignable(final_state.stack, expected, env.context):
@@ -60,7 +102,8 @@ def analyse_function(node: FunctionNode, env: T.Environment) -> T.Type | None:
             returns = node.returns
         else:
             returns = final_state.stack.items
-        signatures.add(T.Overload(final_state.inputs, returns))
+        signature = T.Overload(final_state.inputs, returns)
+        signatures.setdefault(signature, branch.typed_body)
 
     if not signatures:
         return None
@@ -71,10 +114,19 @@ def analyse_function(node: FunctionNode, env: T.Environment) -> T.Type | None:
             key=lambda overload: T.show(T.Fn(overload.params, overload.returns)),
         )
     )
+    overload_typings = tuple(
+        FunctionOverloadTyping(
+            T.Fn(signature.params, signature.returns),
+            signatures[signature],
+        )
+        for signature in ordered
+    )
     if len(ordered) == 1:
         signature = ordered[0]
-        return T.Fn(signature.params, signature.returns)
-    return T.Overloads(*ordered)
+        typ = T.Fn(signature.params, signature.returns)
+    else:
+        typ = T.Overloads(*ordered)
+    return FunctionAnalysis(typ, overload_typings)
 
 
 def analyse_block(
@@ -85,21 +137,44 @@ def analyse_block(
     infer_missing: bool,
 ) -> set[AnalysisState]:
     """Analyse a sequence of nodes as stack-state transformations."""
+    branches = analyse_typed_block(
+        nodes,
+        {AnalysisBranch(state) for state in states},
+        env,
+        infer_missing=infer_missing,
+    )
+    return {branch.state for branch in branches}
+
+
+def analyse_typed_block(
+    nodes: tuple[ASTNode, ...],
+    branches: set[AnalysisBranch],
+    env: T.Environment,
+    *,
+    infer_missing: bool,
+) -> set[AnalysisBranch]:
+    """Analyse a sequence of nodes as typed branch transformations."""
     for node in nodes:
-        next_states: set[AnalysisState] = set()
-        for state in states:
-            next_states.update(
-                _analyse_node_states(
-                    node,
-                    state,
-                    env,
-                    infer_missing=infer_missing,
+        next_branches: set[AnalysisBranch] = set()
+        for branch in branches:
+            for result in _analyse_node_results(
+                node,
+                branch.state,
+                env,
+                infer_missing=infer_missing,
+            ):
+                if result.state is None:
+                    continue
+                next_branches.add(
+                    AnalysisBranch(
+                        result.state,
+                        branch.typed_body + (result.typed_node,),
+                    )
                 )
-            )
-        states = next_states
-        if not states:
+        branches = next_branches
+        if not branches:
             return set()
-    return states
+    return branches
 
 
 def analyse_node(
@@ -117,7 +192,40 @@ def analyse_node(
     )
     if len(results) != 1:
         return None, None
-    return next(iter(results))
+    result = next(iter(results))
+    return result.typed_node.typ, result.state
+
+
+def _analyse_node_results(
+    node: ASTNode,
+    state: AnalysisState,
+    env: T.Environment,
+    *,
+    infer_missing: bool,
+) -> set[NodeAnalysis]:
+    match node:
+        case NumberLiteralNode(_):
+            return {
+                NodeAnalysis(
+                    TypedNode(node, T.Number),
+                    AnalysisState(state.inputs, state.stack.push(T.Number)),
+                )
+            }
+        case ElementNode():
+            return _analyse_element(node, state, env, infer_missing=infer_missing)
+        case FunctionNode():
+            result = analyse_function_details(node, env)
+            if result is None:
+                return {NodeAnalysis(TypedNode(node, None), None)}
+            typed_node = TypedFunctionNode(node, result.typ, result.overloads)
+            return {
+                NodeAnalysis(
+                    typed_node,
+                    AnalysisState(state.inputs, state.stack.push(result.typ)),
+                )
+            }
+        case _:
+            return {NodeAnalysis(TypedNode(node, None), state)}
 
 
 def _analyse_node_states(
@@ -128,50 +236,30 @@ def _analyse_node_states(
     infer_missing: bool,
 ) -> set[AnalysisState]:
     return {
-        next_state
-        for _, next_state in _analyse_node_results(
+        result.state
+        for result in _analyse_node_results(
             node,
             state,
             env,
             infer_missing=infer_missing,
         )
-        if next_state is not None
+        if result.state is not None
     }
 
 
-def _analyse_node_results(
-    node: ASTNode,
-    state: AnalysisState,
-    env: T.Environment,
-    *,
-    infer_missing: bool,
-) -> set[tuple[T.Type | None, AnalysisState | None]]:
-    match node:
-        case NumberLiteralNode(_):
-            return {(T.Number, AnalysisState(state.inputs, state.stack.push(T.Number)))}
-        case ElementNode(name):
-            return _analyse_element(name, state, env, infer_missing=infer_missing)
-        case FunctionNode():
-            typ = analyse_function(node, env)
-            if typ is None:
-                return {(None, None)}
-            return {(typ, AnalysisState(state.inputs, state.stack.push(typ)))}
-        case _:
-            return {(None, state)}
-
-
 def _analyse_element(
-    name: str,
+    node: ElementNode,
     state: AnalysisState,
     env: T.Environment,
     *,
     infer_missing: bool,
-) -> set[tuple[T.Type | None, AnalysisState | None]]:
+) -> set[NodeAnalysis]:
+    name = node.name
     if infer_missing:
         overloads = env.overloads_for(name)
         if not overloads:
             print(f"Error: unknown element '{name}'")
-            return {(None, None)}
+            return {NodeAnalysis(TypedNode(node, None), None)}
         applications = T.apply_overload_candidates_to_stack(
             overloads,
             state.stack,
@@ -180,8 +268,11 @@ def _analyse_element(
         )
         if applications:
             return {
-                (
-                    _returns_result_type(application.actual_returns),
+                NodeAnalysis(
+                    TypedNode(
+                        node,
+                        _returns_result_type(application.actual_returns),
+                    ),
                     AnalysisState(
                         state.inputs + application.inputs,
                         application.stack,
@@ -196,14 +287,24 @@ def _analyse_element(
                 state.inputs + application.inputs,
                 application.stack,
             )
-            return {(_returns_result_type(application.actual_returns), next_state)}
+            return {
+                NodeAnalysis(
+                    TypedNode(node, _returns_result_type(application.actual_returns)),
+                    next_state,
+                )
+            }
         case T.UnknownElement():
             print(f"Error: unknown element '{name}'")
-            return {(None, None)}
+            return {NodeAnalysis(TypedNode(node, None), None)}
         case T.NoMatchingOverload() as result:
             print(f"Error: no overloads for element '{name}' match the given arguments")
             next_state = AnalysisState(state.inputs, result.stack)
-            return {(_returns_result_type(result.actual_returns), next_state)}
+            return {
+                NodeAnalysis(
+                    TypedNode(node, _returns_result_type(result.actual_returns)),
+                    next_state,
+                )
+            }
 
 
 def _returns_result_type(returns: tuple[T.Type, ...]) -> T.Type | None:

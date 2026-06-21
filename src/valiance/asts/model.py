@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 from valiance.types import Type
@@ -13,6 +15,17 @@ class ASTNode:
 class TypedNode:
     node: ASTNode
     typ: Type | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionOverloadTyping:
+    typ: Type
+    body: tuple[TypedNode, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TypedFunctionNode(TypedNode):
+    overloads: tuple[FunctionOverloadTyping, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,10 @@ def main():
     program: list[ASTNode] = [
         FunctionNode(
             params=None,
-            body=(ElementNode(name="+"),),
+            body=(
+                ElementNode(name="+"),
+                ElementNode(name="+"),
+            ),
             returns=None,  # type: ignore
         )
     ]

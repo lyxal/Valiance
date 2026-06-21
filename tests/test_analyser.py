@@ -1,7 +1,13 @@
 import unittest
 
 from valiance.analysis import analyse, analyse_function
-from valiance.asts import ElementNode, FunctionNode, FunctionParam, NumberLiteralNode
+from valiance.asts import (
+    ElementNode,
+    FunctionNode,
+    FunctionParam,
+    NumberLiteralNode,
+    TypedFunctionNode,
+)
 from valiance.types import (
     Environment,
     Fn,
@@ -103,6 +109,26 @@ class AnalyserTests(unittest.TestCase):
                 Overload((Number, Number), (Number,)),
                 Overload((String, String), (String,)),
             ),
+        )
+
+    def test_overloaded_function_node_keeps_typed_body_per_overload(self):
+        typed = analyse([FunctionNode(body=(ElementNode("+"),))])
+        function = typed[0]
+
+        self.assertIsInstance(function, TypedFunctionNode)
+        self.assertEqual(
+            [overload.typ for overload in function.overloads],
+            [
+                Fn((Number, Number), (Number,)),
+                Fn((String, String), (String,)),
+            ],
+        )
+        self.assertEqual(
+            [
+                [body_node.typ for body_node in overload.body]
+                for overload in function.overloads
+            ],
+            [[Number], [String]],
         )
 
     def test_function_empty_params_do_not_infer_missing_inputs(self):

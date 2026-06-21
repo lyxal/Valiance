@@ -428,6 +428,29 @@ A known element with no matching overload should still advance using the
 keeps inference AST-aware without putting AST logic into the type-system
 library.
 
+When a function literal infers multiple overloads, the typed AST should retain
+the typed body for each overload. `analyse` returns a `TypedFunctionNode` for
+function literals; its `typ` is the outer function type or overload set, and
+`overloads` stores each inferred function type with the body typed under that
+branch.
+
+```python
+from valiance.asts import TypedFunctionNode
+
+typed = analyse([FunctionNode(body=(ElementNode("+"),))])
+fn_node = typed[0]
+
+if isinstance(fn_node, TypedFunctionNode):
+    fn_node.typ
+    # OverloadSet[Function[Number, Number -> Number], ...]
+
+    for overload in fn_node.overloads:
+        overload.typ
+        # Function[Number, Number -> Number]
+        overload.body
+        # typed nodes for this specific overload branch
+```
+
 ## 10. Suggested Compiler Pipeline
 
 Recommended order:
