@@ -555,10 +555,13 @@ def apply_overload(overload: Overload, args: tuple[Type, ...], ctx: Context | No
         return None
 
     constraints: dict[str, list[Type]] = {}
+    deferred_function_args: list[tuple[FunctionType, FunctionType]] = []
     for param, arg in zip(overload.params, args):
         if isinstance(param, FunctionType) and isinstance(arg, (FunctionType, OverloadSetType, CallSiteCheckedFunctionType)):
             # Defer function argument solving. Other parameters should usually
             # determine T before we ask whether this callable fits Function[T].
+            if isinstance(arg, FunctionType):
+                deferred_function_args.append((param, arg))
             continue
         result = _solve(param, arg)
         if result is None:
@@ -569,6 +572,23 @@ def apply_overload(overload: Overload, args: tuple[Type, ...], ctx: Context | No
             constraints.setdefault(key, []).extend(values)
 
     substitution: dict[str, Type] = {}
+    for key, values in constraints.items():
+        combined = _combine_all(values)
+        if combined is None:
+            return None
+        substitution[key] = combined
+
+    for param, arg in deferred_function_args:
+        substituted_param = _substitute(param, substitution)
+        if not _contains_type_var(substituted_param):
+            continue
+        result = _solve(substituted_param, arg)
+        if result is None:
+            return None
+        for key, values in result.items():
+            constraints.setdefault(key, []).extend(values)
+
+    substitution = {}
     for key, values in constraints.items():
         combined = _combine_all(values)
         if combined is None:

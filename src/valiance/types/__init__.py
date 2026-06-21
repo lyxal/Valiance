@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """Public import surface for the Valiance types library."""
 
+from __future__ import annotations
+
 from valiance.types.builders import (
+    CSTC,
     Atomic,
     C,
-    CSTC,
     Exact,
     Fn,
     I,
@@ -25,11 +25,14 @@ from valiance.types.builders import (
     show,
 )
 from valiance.types.context import Context
+from valiance.types.default_types import Number, String
 from valiance.types.environment import (
     AppliedElement,
     Environment,
     EnvironmentApplyResult,
     NoMatchingOverload,
+    ObjectAttribute,
+    ObjectDefinition,
     UnknownElement,
 )
 from valiance.types.nodes import (
@@ -58,7 +61,6 @@ from valiance.types.nodes import (
     UnionType,
     VarType,
 )
-from valiance.types.stack import StackApplication, TypeStack
 from valiance.types.relations import (
     _combine_all,
     _match_specificity,
@@ -74,8 +76,7 @@ from valiance.types.relations import (
     merge_types,
     resolve_overload_result,
 )
-
-from valiance.types.default_types import Number, String
+from valiance.types.stack import StackApplication, TypeStack
 
 __all__ = [
     "AppliedOverload",
@@ -108,6 +109,8 @@ __all__ = [
     "NoneType",
     "NoneTypeNode",
     "Number",
+    "ObjectAttribute",
+    "ObjectDefinition",
     "Overload",
     "OverloadSetType",
     "Overloads",

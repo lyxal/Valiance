@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Compiler-facing environment for symbols and relationship facts."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 
@@ -38,6 +38,29 @@ class NoMatchingOverload(EnvironmentApplyResult):
     actual_returns: tuple[Type, ...]
 
 
+@dataclass(frozen=True)
+class ObjectAttribute:
+    """One typed attribute declared on an object type."""
+
+    name: str
+    typ: Type
+
+
+@dataclass(frozen=True)
+class ObjectDefinition:
+    """The structural facts known about one object type in scope."""
+
+    name: str
+    attributes: tuple[ObjectAttribute, ...] = ()
+
+    def attribute_type(self, name: str) -> Type | None:
+        """Return an attribute's type, if the object declares it."""
+        for attribute in self.attributes:
+            if attribute.name == name:
+                return attribute.typ
+        return None
+
+
 @dataclass
 class Environment:
     """Compiler-facing registry for symbols and type relationship facts."""
@@ -47,6 +70,9 @@ class Environment:
     overloads: dict[str, list[Overload]] = field(
         default_factory=dict[str, list[Overload]]
     )
+    objects: dict[str, ObjectDefinition] = field(
+        default_factory=dict[str, ObjectDefinition]
+    )
 
     def define_variable(self, name: str, typ: Type) -> None:
         """Register or replace a named variable/value type."""
@@ -55,6 +81,40 @@ class Environment:
     def lookup_variable(self, name: str) -> Type | None:
         """Return a named variable/value type, if one exists."""
         return self.variables.get(name)
+
+    def define_object(
+        self,
+        name: str,
+        attributes: tuple[ObjectAttribute, ...] = (),
+    ) -> None:
+        """Register or replace an object type visible in this environment."""
+        seen: set[str] = set()
+        for attribute in attributes:
+            if attribute.name in seen:
+                raise ValueError(
+                    f"object {name!r} declares attribute {attribute.name!r} twice"
+                )
+            seen.add(attribute.name)
+        self.objects[name] = ObjectDefinition(name, attributes)
+
+    def lookup_object(self, name: str) -> ObjectDefinition | None:
+        """Return an object definition, if one exists in scope."""
+        return self.objects.get(name)
+
+    def object_exists(self, name: str) -> bool:
+        """Return whether an object type exists in scope."""
+        return name in self.objects
+
+    def lookup_attribute(self, object_name: str, attribute_name: str) -> Type | None:
+        """Return the declared type of ``object_name.attribute_name``."""
+        definition = self.lookup_object(object_name)
+        if definition is None:
+            return None
+        return definition.attribute_type(attribute_name)
+
+    def has_attribute(self, object_name: str, attribute_name: str) -> bool:
+        """Return whether an object declares the requested attribute."""
+        return self.lookup_attribute(object_name, attribute_name) is not None
 
     def define_overload(self, name: str, overload: Overload) -> None:
         """Append one overload to a named overload set."""

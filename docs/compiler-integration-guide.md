@@ -36,6 +36,7 @@ from valiance.types import (
     ListRuggedType,
     N,
     NoMatchingOverload,
+    ObjectAttribute,
     Overload,
     TypeStack,
     U,
@@ -98,12 +99,39 @@ from valiance.types import Environment, N, Overload
 env = Environment()
 env.define_variable("x", N("Number"))
 env.define_overload("+", Overload((N("Number"), N("Number")), (N("Number"),)))
+env.define_object(
+    "Foo",
+    (
+        ObjectAttribute("bar", N("Bax")),
+        ObjectAttribute("name", N("String")),
+    ),
+)
 
 env.lookup_variable("x")
 # Number
 
 env.overloads_for("+")
 # overload candidates for +
+
+env.lookup_object("Foo")
+# object definition for Foo
+
+env.lookup_attribute("Foo", "bar")
+# Bax
+```
+
+Object definitions store type-shape facts for object types in scope. Use them
+for questions like "does object `Foo` exist?" and "what is the type of
+`Foo.bar`?". Object methods and object-friendly elements should still be stored
+as overloads, because they participate in normal element dispatch.
+
+```python
+if not env.object_exists("Foo"):
+    error("unknown object type")
+
+attribute_type = env.lookup_attribute("Foo", "bar")
+if attribute_type is None:
+    error("Foo has no attribute bar")
 ```
 
 For stack-based element checking, ask the environment to apply the named

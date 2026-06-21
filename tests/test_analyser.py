@@ -1,6 +1,6 @@
 import unittest
 
-from valiance.analysis import analyse, analyse_function
+from valiance.analysis import analyse, analyse_function, default_environment
 from valiance.asts import (
     ElementNode,
     FunctionNode,
@@ -9,11 +9,15 @@ from valiance.asts import (
     TypedFunctionNode,
 )
 from valiance.types import (
+    AppliedElement,
+    C,
     Environment,
     Fn,
+    ListExactType,
     N,
     Never,
     NoMatchingOverload,
+    ObjectAttribute,
     Overload,
     Overloads,
     TypeStack,
@@ -35,6 +39,35 @@ class AnalyserTests(unittest.TestCase):
         )
 
         self.assertEqual([node.typ for node in typed], [Number, Number, Number])
+
+    def test_default_environment_includes_generic_reduce_and_map(self):
+        env = default_environment()
+        reduce_result = env.apply(
+            "/",
+            TypeStack(
+                (
+                    C(ListExactType, Number),
+                    Fn((Number, Number), (Number,)),
+                )
+            ),
+        )
+        self.assertIsInstance(reduce_result, AppliedElement)
+        self.assertEqual(reduce_result.application.stack, TypeStack((Number,)))
+
+        map_result = env.apply(
+            "map",
+            TypeStack(
+                (
+                    C(ListExactType, Number),
+                    Fn((Number,), (String,)),
+                )
+            ),
+        )
+        self.assertIsInstance(map_result, AppliedElement)
+        self.assertEqual(
+            map_result.application.stack,
+            TypeStack((C(ListExactType, String),)),
+        )
 
     def test_element_uses_environment_overloads_and_updates_stack(self):
         env = Environment()
@@ -91,6 +124,36 @@ class AnalyserTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             env.define_overload("op", Overload((Number,), (Number, Number)))
+
+    def test_environment_tracks_object_attributes(self):
+        env = Environment()
+
+        env.define_object(
+            "Foo",
+            (
+                ObjectAttribute("bar", N("Bax")),
+                ObjectAttribute("name", String),
+            ),
+        )
+
+        self.assertTrue(env.object_exists("Foo"))
+        self.assertFalse(env.object_exists("Missing"))
+        self.assertEqual(env.lookup_attribute("Foo", "bar"), N("Bax"))
+        self.assertTrue(env.has_attribute("Foo", "name"))
+        self.assertFalse(env.has_attribute("Foo", "missing"))
+        self.assertIsNone(env.lookup_attribute("Missing", "bar"))
+
+    def test_object_attributes_cannot_be_declared_twice(self):
+        env = Environment()
+
+        with self.assertRaises(ValueError):
+            env.define_object(
+                "Foo",
+                (
+                    ObjectAttribute("bar", Number),
+                    ObjectAttribute("bar", String),
+                ),
+            )
 
     def test_function_infers_missing_inputs(self):
         env = Environment()
