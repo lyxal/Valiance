@@ -4,11 +4,11 @@ import os
 import shlex
 from dataclasses import dataclass
 
+from valiance.analysis.builtins import default_environment
 from valiance.types import (
     ArrayExactType,
     ArrayMinType,
     C,
-    Context,
     Fn,
     I,
     ListExactType,
@@ -242,7 +242,7 @@ class Parser:
 
 
 def parse_type(text: str) -> Type:
-    special = DEFAULT_VALUES.get(text.strip())
+    special = ENV.value_type(text.strip())
     if special is not None:
         return special
     return Parser(text).parse()
@@ -302,32 +302,7 @@ def format_constraints(constraints: dict[str, list[Type]]) -> str:
     return "\n".join(lines)
 
 
-def default_overloads() -> dict[str, list[Overload]]:
-    number = N("Number")
-    string = N("String")
-    return {
-        "+": [
-            Overload((number, number), (number,)),
-            Overload((string, string), (string,)),
-        ],
-        "/": [
-            Overload((number, number), (number,)),
-        ],
-        "length": [
-            Overload((C(ListExactType, V("T")),), (number,)),
-        ],
-        "head": [
-            Overload((C(ListExactType, V("T")),), (V("T"),)),
-        ],
-    }
-
-
-OVERLOADS = default_overloads()
-DEFAULT_VALUES = {
-    "+": Overloads(*OVERLOADS["+"]),
-    "/": Overloads(*OVERLOADS["/"]),
-}
-CTX = Context(trait_impls={"Integer": {"Number"}, "Real": {"Number"}})
+ENV = default_environment()
 
 
 @dataclass(frozen=True)
@@ -357,13 +332,13 @@ def command(line: str) -> str:
 
     if name == "assignable":
         left, right = split_arrow(rest, "->")
-        return str(assignable(parse_type(left), parse_type(right), CTX))
+        return str(assignable(parse_type(left), parse_type(right), ENV.context))
 
     if name == "compatible":
         left, right = split_arrow(rest, "->")
         arg = parse_type(left)
         param = parse_type(right)
-        return f"{compatible(arg, param, CTX)}\nspecificity: {_match_specificity(arg, param, CTX).name}"
+        return f"{compatible(arg, param, ENV.context)}\nspecificity: {_match_specificity(arg, param, ENV.context).name}"
 
     if name == "solve":
         left, right = split_arrow(rest, "<-")
@@ -383,18 +358,17 @@ def command(line: str) -> str:
     if name == "defover":
         over_name, params, returns = parse_overload_definition(rest)
         overload = Overload(tuple(parse_type_list(params)), tuple(parse_type_list(returns)))
-        OVERLOADS.setdefault(over_name, []).append(overload)
-        DEFAULT_VALUES[over_name] = Overloads(*OVERLOADS[over_name])
-        return f"defined {over_name} overload #{len(OVERLOADS[over_name])}"
+        ENV.define_overload(over_name, overload)
+        return f"defined {over_name} overload #{len(ENV.overloads_for(over_name))}"
 
     if name == "impl":
         type_name, trait_name = parse_two_names(rest, "impl <type> <trait>")
-        CTX.trait_impls.setdefault(type_name, set()).add(trait_name)
+        ENV.add_trait_impl(type_name, trait_name)
         return f"{type_name} implements {trait_name}"
 
     if name == "trait":
         trait_name, parent_name = parse_two_names(rest, "trait <trait> <parent>")
-        CTX.trait_parents.setdefault(trait_name, set()).add(parent_name)
+        ENV.add_trait_parent(trait_name, parent_name)
         return f"{trait_name} implements {parent_name}"
 
     if name == "traits":
@@ -403,18 +377,18 @@ def command(line: str) -> str:
     if name == "overloads":
         target = rest.strip()
         if target:
-            return format_overload_set(target, OVERLOADS.get(target, []))
-        if not OVERLOADS:
+            return format_overload_set(target, ENV.overloads_for(target))
+        if not ENV.overloads:
             return "no overloads defined"
-        return "\n\n".join(format_overload_set(key, value) for key, value in sorted(OVERLOADS.items()))
+        return "\n\n".join(format_overload_set(key, value) for key, value in sorted(ENV.overloads.items()))
 
     if name == "overload":
         over_name, args = parse_call(rest)
-        overloads = OVERLOADS.get(over_name)
+        overloads = ENV.overloads_for(over_name)
         if not overloads:
             return f"unknown overload set {over_name!r}"
         parsed_args = tuple(parse_type_list(args))
-        chosen = resolve_overload_result(overloads, parsed_args, CTX)
+        chosen = resolve_overload_result(overloads, parsed_args, ENV.context)
         if chosen is None:
             return "no unique overload"
         return format_resolved_overload(chosen)
@@ -457,10 +431,10 @@ def parse_two_names(rest: str, usage: str) -> tuple[str, str]:
 
 def format_traits() -> str:
     lines: list[str] = []
-    for type_name, traits in sorted(CTX.trait_impls.items()):
+    for type_name, traits in sorted(ENV.context.trait_impls.items()):
         for trait_name in sorted(traits):
             lines.append(f"{type_name} implements {trait_name}")
-    for trait_name, parents in sorted(CTX.trait_parents.items()):
+    for trait_name, parents in sorted(ENV.context.trait_parents.items()):
         for parent_name in sorted(parents):
             lines.append(f"trait {trait_name} implements {parent_name}")
     return "\n".join(lines) if lines else "no trait declarations"
@@ -489,10 +463,10 @@ def infer_function(tokens: list[str]) -> Type | None:
         if literal is not None:
             for state in states:
                 next_states.add(InferState(state.inputs, state.stack.push(literal)))
-        elif token in OVERLOADS:
+        elif ENV.overloads_for(token):
             for state in states:
-                for overload in OVERLOADS[token]:
-                    applied = state.stack.apply_one(overload, CTX, infer_missing=True)
+                for overload in ENV.overloads_for(token):
+                    applied = state.stack.apply_one(overload, ENV.context, infer_missing=True)
                     if applied is not None:
                         next_states.add(InferState(state.inputs + applied.inputs, applied.stack))
         else:

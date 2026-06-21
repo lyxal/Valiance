@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Callable, Iterable
 
-from valiance.types.model import (
+from valiance.types.nodes import (
     ArrayExactType,
     ArrayMinType,
     AtomicType,

@@ -19,14 +19,14 @@ from valiance.types.builders import (
     optional,
     same,
 )
-from valiance.types.model import (
+from valiance.types.context import Context
+from valiance.types.nodes import (
     AppliedOverload,
     ArrayExactType,
     ArrayMinType,
     AtomicType,
     CallSiteCheckedFunctionType,
     CollectionType,
-    Context,
     ExactType,
     FunctionType,
     IntersectionType,
@@ -40,14 +40,13 @@ from valiance.types.model import (
     OverloadSetType,
     ResolvedOverload,
     Specificity,
-    StackApplication,
     TaggedType,
     TupleType,
     Type,
-    TypeStack,
     UnionType,
     VarType,
 )
+from valiance.types.stack import StackApplication, TypeStack
 
 CollectionClass = type[CollectionType]
 

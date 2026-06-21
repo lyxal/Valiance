@@ -24,14 +24,15 @@ from valiance.types.builders import (
     same,
     show,
 )
-from valiance.types.model import (
+from valiance.types.context import Context
+from valiance.types.environment import Environment
+from valiance.types.nodes import (
     AppliedOverload,
     ArrayExactType,
     ArrayMinType,
     AtomicType,
     CallSiteCheckedFunctionType,
     CollectionType,
-    Context,
     ExactType,
     FunctionType,
     IntersectionType,
@@ -45,14 +46,13 @@ from valiance.types.model import (
     OverloadSetType,
     ResolvedOverload,
     Specificity,
-    StackApplication,
     TaggedType,
     TupleType,
     Type,
-    TypeStack,
     UnionType,
     VarType,
 )
+from valiance.types.stack import StackApplication, TypeStack
 from valiance.types.relations import (
     _combine_all,
     _match_specificity,
@@ -68,6 +68,8 @@ from valiance.types.relations import (
     resolve_overload_result,
 )
 
+from valiance.types.default_types import Number, String
+
 __all__ = [
     "AppliedOverload",
     "ArrayExactType",
@@ -79,6 +81,7 @@ __all__ = [
     "CallSiteCheckedFunctionType",
     "CollectionType",
     "Context",
+    "Environment",
     "Exact",
     "ExactType",
     "Fn",
@@ -94,11 +97,13 @@ __all__ = [
     "NominalType",
     "NoneType",
     "NoneTypeNode",
+    "Number",
     "Overload",
     "OverloadSetType",
     "Overloads",
     "ResolvedOverload",
     "Result",
+    "String",
     "Some",
     "Specificity",
     "StackApplication",

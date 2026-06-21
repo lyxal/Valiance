@@ -14,6 +14,7 @@ The most important values are:
 ```python
 Type
 TypeStack
+Environment
 Overload
 Context
 ResolvedOverload
@@ -27,6 +28,7 @@ from valiance.types import (
     ArrayMinType,
     C,
     CollectionType,
+    Environment,
     Fn,
     ListExactType,
     ListMinType,
@@ -49,6 +51,7 @@ maybe_number = optional(Number)
 number_or_string = U(Number, String)
 function_type = Fn((Number, Number), (Number,))
 empty_stack = TypeStack()
+env = Environment()
 ```
 
 Collection helpers:
@@ -72,18 +75,67 @@ if isinstance(annotation_type, CollectionType):
     rank = annotation_type.rank
 ```
 
-## 2. Context
+## 2. Environment And Context
+
+`Environment` is the compiler-facing registry for named things. Built-in
+language elements live in `valiance.analysis.builtins`, which constructs the
+standard environment:
+
+```python
+from valiance.analysis import default_environment
+
+env = default_environment()
+```
+
+For focused tests or custom compiler phases, you can still build one manually:
+
+```python
+from valiance.types import Environment, N, Overload
+
+env = Environment()
+env.define_variable("x", N("Number"))
+env.define_overload("+", Overload((N("Number"), N("Number")), (N("Number"),)))
+
+env.lookup_variable("x")
+# Number
+
+env.overloads_for("+")
+# overload candidates for +
+```
+
+For stack-based element checking, ask the environment to apply the named
+overload set:
+
+```python
+applied = env.apply("+", stack)
+if applied is None:
+    error("no matching overload")
+
+stack = applied.stack
+```
 
 `Context` stores relationships the type checker needs:
 
 ```python
-from valiance.types import Context
+from valiance.types import Context, Environment
 
 ctx = Context()
 ctx.trait_impls.setdefault("Circle", set()).add("Shape")
 ctx.trait_parents.setdefault("Logger", set()).add("Resource")
 ctx.variant_members["SomeMember"] = "SomeVariant"
 ctx.unit_tags.add("km")
+```
+
+Every `Environment` owns a `Context` as `env.context`. You can either build a
+context directly for low-level relation calls, or populate it through
+environment helpers:
+
+```python
+env = Environment()
+env.add_trait_impl("Circle", "Shape")
+env.add_trait_parent("Logger", "Resource")
+env.add_variant_member("SomeMember", "SomeVariant")
+env.add_unit_tag("km")
 ```
 
 Keep one context per module/checking session, or layer contexts if your compiler
@@ -241,16 +293,16 @@ act as `Function[Number+, Number+ -> Number+]` through vectorisation.
 ## 7. Stack Expression Checking
 
 Your compiler should own AST walking and stack simulation, but it should not
-manually pop and push argument slices. Use the stack application helpers so
-arity checks, overload choice, generic substitution, and vectorised returns stay
-in one place.
+manually pop and push argument slices. Use the environment or stack application
+helpers so arity checks, overload choice, generic substitution, and vectorised
+returns stay in one place.
 
 ```python
 from valiance.types import TypeStack
 
 stack = TypeStack()
 
-applied = stack.apply(element_overloads, ctx)
+applied = env.apply(element_name, stack)
 
 if applied is None:
     error("no matching overload")
@@ -269,10 +321,14 @@ applied.actual_returns # returns after vectorisation/call adaptation
 applied.scores         # specificity vector
 ```
 
-If the compiler has already selected a single overload, use `apply_one`:
+If the compiler has already selected overload candidates, use `stack.apply`.
+If it has already selected one overload, use `stack.apply_one`:
 
 ```python
-# Normal checking: stack must already contain enough values.
+# Normal checking against a candidate set.
+applied = stack.apply(element_overloads, env.context)
+
+# Normal checking against one known overload.
 applied = stack.apply_one(plus_overload, ctx)
 
 # Inference: missing values are added to the function input list.
@@ -333,16 +389,16 @@ logic into the type-system library.
 Recommended order:
 
 1. Parse source into AST.
-2. Build symbol tables for variables, elements, overloads, objects, traits, and tags.
+2. Start from `default_environment()` and layer imported/module symbols on top.
 3. Convert parsed type annotations into `Type` values.
-4. Build a `Context` from imported trait/tag/variant information.
+4. Add imported trait/tag/variant relationships to `env.context`.
 5. For each definition:
    - check explicit parameter and return types
    - infer missing parameter types if supported
    - stack-check the body
    - register resulting `Overload`
 6. For each call:
-   - call `stack.apply(element_overloads, ctx)`
+   - call `env.apply(element_name, stack)`
    - replace the current stack with `applied.stack`
 7. For assignments/returns:
    - call `assignable`
