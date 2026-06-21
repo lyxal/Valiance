@@ -520,6 +520,147 @@ merge_stacks(TypeStack((Number,)), TypeStack((String,)))
 `merge_stacks` pads the shorter stack with `None` before merging, matching the
 optional-padding rule used by branch joins.
 
+Your AST analyser should treat control-flow nodes as transformations over a set
+of possible branch states. The type library only supplies the stack and type
+merge primitives; your compiler decides what each AST node means.
+
+One possible AST shape:
+
+```python
+@dataclass(frozen=True)
+class IfNode(ASTNode):
+    condition: tuple[ASTNode, ...]
+    then_body: tuple[ASTNode, ...]
+    else_body: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class WhileNode(ASTNode):
+    condition: tuple[ASTNode, ...]
+    body: tuple[ASTNode, ...]
+```
+
+For an `IfNode`, analyse the condition first. Require it to leave a `Bool` on
+top of the stack, pop that condition value, then analyse both branches from the
+same post-condition state. Merge every pair of surviving branch stacks.
+
+```python
+Bool = N("Bool")
+
+
+def analyse_if(node: IfNode, state: AnalysisState, env: Environment):
+    condition_states = analyse_block(
+        node.condition,
+        {state},
+        env,
+        infer_missing=False,
+    )
+
+    branch_inputs: set[AnalysisState] = set()
+    for condition_state in condition_states:
+        stack = condition_state.stack
+        if not stack or not assignable(stack[-1], Bool, env.context):
+            error("if condition must leave Bool on the stack")
+            continue
+        branch_inputs.add(
+            AnalysisState(
+                condition_state.inputs,
+                TypeStack(stack.items[:-1]),
+            )
+        )
+
+    then_states = analyse_block(
+        node.then_body,
+        branch_inputs,
+        env,
+        infer_missing=False,
+    )
+    else_states = analyse_block(
+        node.else_body,
+        branch_inputs,
+        env,
+        infer_missing=False,
+    )
+
+    merged: set[AnalysisState] = set()
+    for left in then_states:
+        for right in else_states:
+            if left.inputs != right.inputs:
+                error("branches inferred different function inputs")
+                continue
+            merged.add(
+                AnalysisState(
+                    left.inputs,
+                    merge_stacks(left.stack, right.stack),
+                )
+            )
+    return merged
+```
+
+For example, if one branch leaves `Number` and the other leaves nothing, the
+merged stack has `Number?` in that position. If one branch leaves `Number` and
+the other leaves `String`, the merged stack has `Number | String`.
+
+For a `WhileNode`, the condition and body may run zero or more times, so do not
+type it as "condition once, body once". Instead, check that one iteration is a
+valid loop transform and merge the before-loop stack with the after-body stack
+to approximate the zero-or-more result.
+
+```python
+def analyse_while(node: WhileNode, state: AnalysisState, env: Environment):
+    condition_states = analyse_block(
+        node.condition,
+        {state},
+        env,
+        infer_missing=False,
+    )
+
+    body_inputs: set[AnalysisState] = set()
+    for condition_state in condition_states:
+        stack = condition_state.stack
+        if not stack or not assignable(stack[-1], Bool, env.context):
+            error("while condition must leave Bool on the stack")
+            continue
+        body_inputs.add(
+            AnalysisState(
+                condition_state.inputs,
+                TypeStack(stack.items[:-1]),
+            )
+        )
+
+    body_outputs = analyse_block(
+        node.body,
+        body_inputs,
+        env,
+        infer_missing=False,
+    )
+
+    outputs: set[AnalysisState] = {state}
+    for body_output in body_outputs:
+        if body_output.inputs != state.inputs:
+            error("loop body inferred different function inputs")
+            continue
+        outputs.add(
+            AnalysisState(
+                state.inputs,
+                merge_stacks(state.stack, body_output.stack),
+            )
+        )
+    return outputs
+```
+
+That simple `while` rule is conservative and useful as a first pass. Later, you
+can refine it into a fixed-point loop:
+
+1. Start with the state before the loop.
+2. Analyse condition and body from the current approximation.
+3. Merge the old approximation with the body output.
+4. Repeat until the stack stops changing, or report an error if it keeps
+   widening beyond a compiler limit.
+
+The important rule is that the condition's `Bool` is a control value, not a
+normal branch result. Pop it before analysing the branch or body.
+
 ## 12. Error Reporting
 
 Useful error details:
