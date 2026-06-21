@@ -5,13 +5,14 @@ from valiance.asts import ElementNode, FunctionNode, FunctionParam, NumberLitera
 from valiance.types import (
     Environment,
     Fn,
-    NoMatchingOverload,
     N,
+    Never,
+    NoMatchingOverload,
     Overload,
+    Overloads,
     TypeStack,
     UnknownElement,
 )
-
 
 Number = N("Number")
 String = N("String")
@@ -55,6 +56,36 @@ class AnalyserTests(unittest.TestCase):
         env.define_overload("+", Overload((Number, Number), (Number,)))
         self.assertIsInstance(env.apply("+", TypeStack((Number,))), NoMatchingOverload)
 
+    def test_no_matching_overload_applies_failed_stack_shape(self):
+        env = Environment()
+        env.define_overload("+", Overload((Number, Number), (Number,)))
+
+        result = env.apply("+", TypeStack((String, String)))
+
+        self.assertIsInstance(result, NoMatchingOverload)
+        self.assertEqual(result.stack, TypeStack((Never(),)))
+        self.assertEqual(result.params, (Number, Number))
+        self.assertEqual(result.actual_returns, (Never(),))
+
+    def test_no_matching_overload_pops_expected_inputs_on_underflow(self):
+        env = Environment()
+        env.define_overload("+", Overload((Number, Number), (Number,)))
+
+        result = env.apply("+", TypeStack((Number,)))
+
+        self.assertIsInstance(result, NoMatchingOverload)
+        self.assertEqual(result.stack, TypeStack((Never(),)))
+
+    def test_overload_sets_require_fixed_shape(self):
+        env = Environment()
+        env.define_overload("op", Overload((Number,), (Number,)))
+
+        with self.assertRaises(ValueError):
+            env.define_overload("op", Overload((Number, Number), (Number,)))
+
+        with self.assertRaises(ValueError):
+            env.define_overload("op", Overload((Number,), (Number, Number)))
+
     def test_function_infers_missing_inputs(self):
         env = Environment()
         env.define_overload("+", Overload((Number, Number), (Number,)))
@@ -62,6 +93,33 @@ class AnalyserTests(unittest.TestCase):
         typ = analyse_function(FunctionNode(body=(ElementNode("+"),)), env)
 
         self.assertEqual(typ, Fn((Number, Number), (Number,)))
+
+    def test_function_infers_overload_set_when_missing_inputs_are_ambiguous(self):
+        typed = analyse([FunctionNode(body=(ElementNode("+"),))])
+
+        self.assertEqual(
+            typed[0].typ,
+            Overloads(
+                Overload((Number, Number), (Number,)),
+                Overload((String, String), (String,)),
+            ),
+        )
+
+    def test_function_empty_params_do_not_infer_missing_inputs(self):
+        env = Environment()
+        env.define_overload("+", Overload((Number, Number), (Number,)))
+
+        typ = analyse_function(FunctionNode(params=(), body=(ElementNode("+"),)), env)
+
+        self.assertEqual(typ, Fn((), (Never(),)))
+
+    def test_function_empty_params_can_return_literal(self):
+        typ = analyse_function(
+            FunctionNode(params=(), body=(NumberLiteralNode("1"),)),
+            Environment(),
+        )
+
+        self.assertEqual(typ, Fn((), (Number,)))
 
     def test_function_uses_explicit_params(self):
         env = Environment()

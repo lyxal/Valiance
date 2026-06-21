@@ -115,7 +115,8 @@ match env.apply("+", stack):
         stack = application.stack
     case UnknownElement():
         error("unknown element")
-    case NoMatchingOverload():
+    case NoMatchingOverload() as result:
+        stack = result.stack
         error("no matching overload")
 ```
 
@@ -312,7 +313,8 @@ match env.apply(element_name, stack):
         stack = application.stack
     case UnknownElement():
         error("unknown element")
-    case NoMatchingOverload():
+    case NoMatchingOverload() as result:
+        stack = result.stack
         error("no matching overload")
 ```
 
@@ -325,6 +327,22 @@ application.params         # instantiated parameter types
 application.returns        # declared returns after substitution
 application.actual_returns # returns after vectorisation/call adaptation
 application.scores         # specificity vector
+```
+
+`UnknownElement` means the element name is not defined at all. `NoMatchingOverload`
+means the name is defined, but none of its overloads accept the current argument
+types. Overload sets deliberately have one fixed input arity and one fixed return
+count across all candidates, so a failed match still has a deterministic stack
+effect: it pops the expected number of inputs and pushes `Never` once for each
+return value.
+
+```python
+match env.apply(element_name, stack):
+    case NoMatchingOverload() as result:
+        result.params         # fixed parameter shape for the element
+        result.actual_returns # (Never, ...) with the fixed return count
+        stack = result.stack  # failed stack transition already applied
+        error("no matching overload")
 ```
 
 If the compiler has already selected overload candidates, use `stack.apply`.
@@ -385,10 +403,30 @@ applied.inputs  # (Number, Number)
 applied.stack   # stack with Number on top
 ```
 
+Function literals distinguish omitted params from explicit empty params:
+
+```python
+FunctionNode(params=None, body=(ElementNode("+"),))
+# fn => + end
+# missing stack inputs are inferred
+
+FunctionNode(params=(), body=(ElementNode("+"),))
+# fn () => + end
+# no missing stack inputs are inferred; a known failed + consumes its fixed
+# inputs and returns Never
+```
+
 Each AST node can transform a set of stack states. For an element call, try each
 candidate overload with `infer_missing=True`; successful applications become
-the next possible states. This keeps inference AST-aware without putting AST
-logic into the type-system library.
+the next possible states. If multiple candidates survive because there were not
+enough concrete input types to choose one, keep those branch states. A function
+literal with several final stack effects should infer an `OverloadSet` of
+function signatures rather than reporting a failed overload.
+
+A known element with no matching overload should still advance using the
+`NoMatchingOverload.stack`, while an unknown element should drop that path. This
+keeps inference AST-aware without putting AST logic into the type-system
+library.
 
 ## 10. Suggested Compiler Pipeline
 

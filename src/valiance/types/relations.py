@@ -646,6 +646,23 @@ def apply_overloads_to_stack(
     infer_missing: bool = False,
 ) -> StackApplication | None:
     """Choose and apply one overload candidate to a stack."""
+    winners = apply_overload_candidates_to_stack(
+        overloads,
+        stack,
+        ctx,
+        infer_missing=infer_missing,
+    )
+    return winners[0] if len(winners) == 1 else None
+
+
+def apply_overload_candidates_to_stack(
+    overloads: Iterable[Overload],
+    stack: TypeStack,
+    ctx: Context | None = None,
+    *,
+    infer_missing: bool = False,
+) -> tuple[StackApplication, ...]:
+    """Return all non-dominated overload candidates for a stack application."""
     ctx = ctx or Context()
     candidates: list[StackApplication] = []
     for overload in overloads:
@@ -662,7 +679,7 @@ def apply_overloads_to_stack(
     for candidate in candidates:
         if not any(_dominates(other.scores, candidate.scores) for other in candidates):
             winners.append(candidate)
-    return winners[0] if len(winners) == 1 else None
+    return tuple(winners)
 
 
 def resolve_overload_result(

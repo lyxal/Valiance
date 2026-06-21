@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from valiance.types.context import Context
-from valiance.types.nodes import Overload, OverloadSetType, Type
+from valiance.types.nodes import NeverType, Overload, OverloadSetType, Type
 from valiance.types.stack import StackApplication, TypeStack
 
 
@@ -29,11 +29,13 @@ class UnknownElement(EnvironmentApplyResult):
 
 @dataclass(frozen=True)
 class NoMatchingOverload(EnvironmentApplyResult):
-    """An overload set exists, but none of its overloads matched the stack."""
+    """A known overload set failed, but still has a fixed stack effect."""
 
     name: str
     overloads: tuple[Overload, ...]
     stack: TypeStack
+    params: tuple[Type, ...]
+    actual_returns: tuple[Type, ...]
 
 
 @dataclass
@@ -56,7 +58,21 @@ class Environment:
 
     def define_overload(self, name: str, overload: Overload) -> None:
         """Append one overload to a named overload set."""
-        self.overloads.setdefault(name, []).append(overload)
+        candidates = self.overloads.setdefault(name, [])
+        if candidates:
+            expected_arity = len(candidates[0].params)
+            expected_returns = len(candidates[0].returns)
+            if len(overload.params) != expected_arity:
+                raise ValueError(
+                    f"overloads for {name!r} must all take {expected_arity} "
+                    f"inputs, got {len(overload.params)}"
+                )
+            if len(overload.returns) != expected_returns:
+                raise ValueError(
+                    f"overloads for {name!r} must all return {expected_returns} "
+                    f"values, got {len(overload.returns)}"
+                )
+        candidates.append(overload)
 
     def overloads_for(self, name: str) -> tuple[Overload, ...]:
         """Return the overload candidates registered for ``name``."""
@@ -104,5 +120,22 @@ class Environment:
             infer_missing=infer_missing,
         )
         if applied is None:
-            return NoMatchingOverload(name, overloads, stack)
+            params, actual_returns = _failed_application_shape(overloads)
+            remaining = stack.items if not params else stack.items[: -len(params)]
+            return NoMatchingOverload(
+                name,
+                overloads,
+                TypeStack(remaining + actual_returns),
+                params,
+                actual_returns,
+            )
         return AppliedElement(applied)
+
+
+def _failed_application_shape(
+    overloads: tuple[Overload, ...],
+) -> tuple[tuple[Type, ...], tuple[Type, ...]]:
+    """Return the fixed stack shape for a failed known overload set."""
+    params = overloads[0].params
+    return_count = len(overloads[0].returns)
+    return params, tuple(NeverType() for _ in range(return_count))

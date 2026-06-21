@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from valiance.analysis import analyser
-from valiance.asts import ASTNode, NumberLiteralNode, ElementNode
+from valiance.asts import *
 
 
 def main():
     program: list[ASTNode] = [
-        NumberLiteralNode("67"),
-        NumberLiteralNode("42"),
-        ElementNode("+"),
+        FunctionNode(
+            params=None,
+            body=(ElementNode(name="+"),),
+            returns=None,  # type: ignore
+        )
     ]
     print(analyser.analyse(program))
 

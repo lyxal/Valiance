@@ -41,6 +41,6 @@ class ElementNode(ASTNode):
 class FunctionNode(ASTNode):
     """A function literal."""
 
-    params: tuple[FunctionParam, ...] = ()
+    params: tuple[FunctionParam, ...] | None = None
     body: tuple[ASTNode, ...] = ()
     returns: tuple[Type, ...] | None = None
