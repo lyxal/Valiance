@@ -661,6 +661,9 @@ can refine it into a fixed-point loop:
 The important rule is that the condition's `Bool` is a control value, not a
 normal branch result. Pop it before analysing the branch or body.
 
+For a fuller explanation of adding AST nodes to the analyser, including typed
+child bodies and inference behaviour, see `docs/analyser-extension-guide.md`.
+
 ## 12. Error Reporting
 
 Useful error details:
