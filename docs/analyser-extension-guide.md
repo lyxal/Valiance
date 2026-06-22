@@ -210,16 +210,17 @@ environment frame they were given. That lets them write variables in the current
 function scope instead of creating a new function-local scope.
 
 For short-lived bindings such as loop variables, use
-`env.temporary_variable(name, typ)`. It writes to the current frame for the
-duration of the block and then restores the previous local binding, or removes
-the variable if it did not exist before.
+`env.define_temporary_variable(name, typ)` and then
+`env.drop_local_variable(name)`. Temporary variables cannot replace an existing
+local binding; choose a fresh loop variable name or report a compile error.
 
 ```python
-with self.env.temporary_variable("item", Number):
-    self.typed_block(body, branches)
+self.env.define_temporary_variable("item", Number)
+body_branches = self.typed_block(body, branches)
+self.env.drop_local_variable("item")
 
 self.env.lookup_local_variable("item")
-# restored or removed
+# None
 ```
 
 ## Typed AST Contract
@@ -282,6 +283,23 @@ for branch in branches:
 Control-flow nodes and function literals usually need `typed_block`.
 Tiny stack-only checks can use `block`.
 
+For conditions, use `condition_branches`. It analyses the condition block with
+the current inference mode, requires a control type such as `Bool`, pops that
+control value, and returns branch inputs ready for the body.
+
+```python
+condition_inputs = self.condition_branches(node.condition, state, Bool)
+```
+
+So a condition can still contribute inferred function inputs. The analyser just
+hides the repetitive "check top of stack, then pop Bool" ceremony.
+
+Conditions are all-or-nothing. If analysis finds several possible condition
+paths, every surviving path must leave a non-`Never` value assignable to the
+control type. If one path leaves `Bool` and another leaves `Number`, the whole
+condition is rejected. Filtering out the bad path would make the control-flow
+node unsound.
+
 ## If Nodes
 
 An `IfNode` should analyse its condition, require a `Bool`, pop that control
@@ -308,33 +326,15 @@ def _if(
     node: IfNode,
     state: AnalysisState,
 ) -> set[NodeAnalysis]:
-    condition_branches = self.typed_block(
-        node.condition,
-        {AnalysisBranch(state)},
-    )
-
     results: set[NodeAnalysis] = set()
-    for branch in condition_branches:
-        stack = branch.state.stack
-        if not stack or not assignable(stack[-1], Bool, self.env.context):
-            error("if condition must leave Bool on the stack")
-            continue
+    condition_inputs = self.condition_branches(node.condition, state, Bool)
+    if not condition_inputs:
+        error("if condition must leave Bool on the stack")
+        return results
 
-        branch_input = AnalysisBranch(
-            AnalysisState(
-                branch.state.inputs,
-                TypeStack(stack.items[:-1]),
-            )
-        )
-
-        then_branches = self.typed_block(
-            node.then_body,
-            {branch_input},
-        )
-        else_branches = self.typed_block(
-            node.else_body,
-            {branch_input},
-        )
+    for condition in condition_inputs:
+        then_branches = self.typed_block(node.then_body, {condition})
+        else_branches = self.typed_block(node.else_body, {condition})
 
         for left in then_branches:
             for right in else_branches:
@@ -350,7 +350,7 @@ def _if(
                 typed_if = TypedIfNode(
                     node=node,
                     typ=None,
-                    condition=branch.typed_body,
+                    condition=condition.typed_body,
                     then_body=left.typed_body,
                     else_body=right.typed_body,
                 )
@@ -362,8 +362,10 @@ def _if(
 The exact `TypedIfNode` shape is up to your AST model. The important part is
 that the branch bodies remain typed.
 
-The condition's `Bool` is not a normal result. It is a control value. Pop it
-before analysing branch bodies.
+The condition's `Bool` is not a normal result. It is a control value.
+`condition_branches` pops it before analysing branch bodies. If the condition
+contains overloaded or inference-sensitive code, those inferred inputs are
+preserved in the returned branch inputs.
 
 ## While Nodes
 
@@ -388,28 +390,16 @@ def _while(
     node: WhileNode,
     state: AnalysisState,
 ) -> set[NodeAnalysis]:
-    condition_branches = self.typed_block(
-        node.condition,
-        {AnalysisBranch(state)},
-    )
-
     results: set[NodeAnalysis] = set()
-    for branch in condition_branches:
-        stack = branch.state.stack
-        if not stack or not assignable(stack[-1], Bool, self.env.context):
-            error("while condition must leave Bool on the stack")
-            continue
+    condition_inputs = self.condition_branches(node.condition, state, Bool)
+    if not condition_inputs:
+        error("while condition must leave Bool on the stack")
+        return results
 
-        body_input = AnalysisBranch(
-            AnalysisState(
-                branch.state.inputs,
-                TypeStack(stack.items[:-1]),
-            )
-        )
-
+    for condition in condition_inputs:
         body_outputs = self.typed_block(
             node.body,
-            {body_input},
+            {condition},
         )
 
         for body_output in body_outputs:
@@ -425,7 +415,7 @@ def _while(
             typed_while = TypedWhileNode(
                 node=node,
                 typ=None,
-                condition=branch.typed_body,
+                condition=condition.typed_body,
                 body=body_output.typed_body,
             )
             results.add(NodeAnalysis(typed_while, merged_state))
@@ -501,11 +491,12 @@ def _foreach(
             TypeStack(stack.items[:-1]),
         )
 
-        with self.env.temporary_variable(node.item_name, item_type):
-            body_branches = self.typed_block(
-                node.body,
-                {AnalysisBranch(body_state)},
-            )
+        self.env.define_temporary_variable(node.item_name, item_type)
+        body_branches = self.typed_block(
+            node.body,
+            {AnalysisBranch(body_state)},
+        )
+        self.env.drop_local_variable(node.item_name)
 
         for body_branch in body_branches:
             if body_branch.state.inputs != branch.state.inputs:

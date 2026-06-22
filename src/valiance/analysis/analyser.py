@@ -134,6 +134,58 @@ class Analyser:
                 return set()
         return current
 
+    def block_one(
+        self,
+        nodes: tuple[ASTNode, ...],
+        state: AnalysisState,
+    ) -> AnalysisState | None:
+        """Analyse a block when exactly one output state is expected."""
+        branch = self.typed_block_one(nodes, AnalysisBranch(state))
+        return None if branch is None else branch.state
+
+    def typed_block_one(
+        self,
+        nodes: tuple[ASTNode, ...],
+        branch: AnalysisBranch,
+    ) -> AnalysisBranch | None:
+        """Analyse a block when exactly one typed output branch is expected."""
+        branches = self.typed_block(nodes, {branch})
+        if len(branches) != 1:
+            return None
+        return next(iter(branches))
+
+    def condition_branches(
+        self,
+        nodes: tuple[ASTNode, ...],
+        state: AnalysisState,
+        condition_type: T.Type,
+    ) -> set[AnalysisBranch]:
+        """Analyse a condition block and pop its control value."""
+        branches = self.typed_block(nodes, {AnalysisBranch(state)})
+        results: set[AnalysisBranch] = set()
+        for branch in branches:
+            stack = branch.state.stack
+            if (
+                not stack
+                or _is_never(stack[-1])
+                or not T.assignable(
+                    stack[-1],
+                    condition_type,
+                    self.env.context,
+                )
+            ):
+                return set()
+            results.add(
+                AnalysisBranch(
+                    AnalysisState(
+                        branch.state.inputs,
+                        T.TypeStack(stack.items[:-1]),
+                    ),
+                    branch.typed_body,
+                )
+            )
+        return results
+
     def analyse_node(
         self,
         node: ASTNode,
@@ -385,6 +437,10 @@ def _returns_result_type(returns: tuple[T.Type, ...]) -> T.Type | None:
 
 def _has_never_return(overload: T.Overload) -> bool:
     return any(isinstance(T.normalize(ret), T.NeverType) for ret in overload.returns)
+
+
+def _is_never(t: T.Type) -> bool:
+    return isinstance(T.normalize(t), T.NeverType)
 
 
 def _param_type(param: FunctionParam, index: int) -> T.Type:

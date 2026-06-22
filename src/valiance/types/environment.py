@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from valiance.types.context import Context
@@ -97,19 +95,15 @@ class Environment:
             return self.parent.lookup_variable(name)
         return None
 
-    @contextmanager
-    def temporary_variable(self, name: str, typ: Type) -> Iterator[None]:
-        """Temporarily bind a variable in this frame, then restore it."""
-        missing = object()
-        previous = self.variables.get(name, missing)
+    def define_temporary_variable(self, name: str, typ: Type) -> None:
+        """Bind a short-lived variable in this frame."""
+        if name in self.variables:
+            raise ValueError(f"temporary variable {name!r} already exists")
         self.variables[name] = typ
-        try:
-            yield
-        finally:
-            if previous is missing:
-                del self.variables[name]
-            else:
-                self.variables[name] = previous
+
+    def drop_local_variable(self, name: str) -> None:
+        """Remove a variable from this frame, if present."""
+        self.variables.pop(name, None)
 
     def define_object(
         self,

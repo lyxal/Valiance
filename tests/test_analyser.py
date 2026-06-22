@@ -1,6 +1,12 @@
 import unittest
 
-from valiance.analysis import analyse, analyse_function, default_environment
+from valiance.analysis import (
+    Analyser,
+    AnalysisState,
+    analyse,
+    analyse_function,
+    default_environment,
+)
 from valiance.asts import (
     ElementNode,
     FunctionNode,
@@ -27,6 +33,7 @@ from valiance.types import (
 
 Number = N("Number")
 String = N("String")
+Bool = N("Bool")
 
 
 class AnalyserTests(unittest.TestCase):
@@ -171,19 +178,57 @@ class AnalyserTests(unittest.TestCase):
         self.assertEqual(child.overloads_for("+"), env.overloads_for("+"))
         self.assertEqual(child.lookup_attribute("Foo", "bar"), String)
 
-    def test_temporary_variable_restores_current_scope_binding(self):
+    def test_temporary_variable_is_dropped_from_current_scope(self):
+        env = Environment()
+
+        env.define_temporary_variable("loop_item", Number)
+        self.assertEqual(env.lookup_local_variable("loop_item"), Number)
+        env.drop_local_variable("loop_item")
+        self.assertIsNone(env.lookup_local_variable("loop_item"))
+
+    def test_temporary_variable_cannot_replace_local_binding(self):
         env = Environment()
         env.define_variable("item", String)
 
-        with env.temporary_variable("item", Number):
-            self.assertEqual(env.lookup_local_variable("item"), Number)
+        with self.assertRaises(ValueError):
+            env.define_temporary_variable("item", Number)
 
-        self.assertEqual(env.lookup_local_variable("item"), String)
+    def test_analyser_can_expect_one_block_result(self):
+        analyser = Analyser(Environment())
+        state = analyser.block_one(
+            (NumberLiteralNode("1"),),
+            AnalysisState((), TypeStack()),
+        )
 
-        with env.temporary_variable("loop_item", Number):
-            self.assertEqual(env.lookup_local_variable("loop_item"), Number)
+        self.assertEqual(state, AnalysisState((), TypeStack((Number,))))
 
-        self.assertIsNone(env.lookup_local_variable("loop_item"))
+    def test_condition_branches_pop_control_value(self):
+        analyser = Analyser(Environment())
+
+        branches = analyser.condition_branches(
+            (NumberLiteralNode("1"),),
+            AnalysisState((), TypeStack()),
+            Number,
+        )
+
+        self.assertEqual(len(branches), 1)
+        branch = next(iter(branches))
+        self.assertEqual(branch.state, AnalysisState((), TypeStack()))
+        self.assertEqual([node.typ for node in branch.typed_body], [Number])
+
+    def test_condition_branches_reject_any_non_bool_path(self):
+        env = Environment()
+        env.define_overload("cond", Overload((), (Bool,)))
+        env.define_overload("cond", Overload((), (Number,)))
+        analyser = Analyser(env, infer_missing=True)
+
+        branches = analyser.condition_branches(
+            (ElementNode("cond"),),
+            AnalysisState((), TypeStack()),
+            Bool,
+        )
+
+        self.assertEqual(branches, set())
 
     def test_object_attributes_cannot_be_declared_twice(self):
         env = Environment()
