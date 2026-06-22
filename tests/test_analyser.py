@@ -144,6 +144,33 @@ class AnalyserTests(unittest.TestCase):
         self.assertFalse(env.has_attribute("Foo", "missing"))
         self.assertIsNone(env.lookup_attribute("Missing", "bar"))
 
+    def test_child_scope_reads_outer_variables_but_writes_locally(self):
+        env = Environment()
+        env.define_variable("x", Number)
+
+        child = env.child_scope()
+
+        self.assertEqual(child.lookup_variable("x"), Number)
+        self.assertIsNone(child.lookup_local_variable("x"))
+
+        child.define_variable("x", String)
+        child.define_variable("y", Number)
+
+        self.assertEqual(child.lookup_variable("x"), String)
+        self.assertEqual(env.lookup_variable("x"), Number)
+        self.assertEqual(child.lookup_variable("y"), Number)
+        self.assertIsNone(env.lookup_variable("y"))
+
+    def test_child_scope_reads_outer_overloads_and_objects(self):
+        env = Environment()
+        env.define_overload("+", Overload((Number, Number), (Number,)))
+        env.define_object("Foo", (ObjectAttribute("bar", String),))
+
+        child = env.child_scope()
+
+        self.assertEqual(child.overloads_for("+"), env.overloads_for("+"))
+        self.assertEqual(child.lookup_attribute("Foo", "bar"), String)
+
     def test_object_attributes_cannot_be_declared_twice(self):
         env = Environment()
 

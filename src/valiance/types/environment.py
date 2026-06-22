@@ -66,6 +66,7 @@ class Environment:
     """Compiler-facing registry for symbols and type relationship facts."""
 
     context: Context = field(default_factory=Context)
+    parent: Environment | None = None
     variables: dict[str, Type] = field(default_factory=dict[str, Type])
     overloads: dict[str, list[Overload]] = field(
         default_factory=dict[str, list[Overload]]
@@ -75,12 +76,24 @@ class Environment:
     )
 
     def define_variable(self, name: str, typ: Type) -> None:
-        """Register or replace a named variable/value type."""
+        """Register or replace a variable in this environment frame."""
         self.variables[name] = typ
 
-    def lookup_variable(self, name: str) -> Type | None:
-        """Return a named variable/value type, if one exists."""
+    def child_scope(self) -> Environment:
+        """Return a child frame that can read this environment."""
+        return Environment(context=self.context, parent=self)
+
+    def lookup_local_variable(self, name: str) -> Type | None:
+        """Return a variable from this frame only."""
         return self.variables.get(name)
+
+    def lookup_variable(self, name: str) -> Type | None:
+        """Return a named variable/value type from this frame or an outer one."""
+        if name in self.variables:
+            return self.variables[name]
+        if self.parent is not None:
+            return self.parent.lookup_variable(name)
+        return None
 
     def define_object(
         self,
@@ -99,11 +112,15 @@ class Environment:
 
     def lookup_object(self, name: str) -> ObjectDefinition | None:
         """Return an object definition, if one exists in scope."""
-        return self.objects.get(name)
+        if name in self.objects:
+            return self.objects[name]
+        if self.parent is not None:
+            return self.parent.lookup_object(name)
+        return None
 
     def object_exists(self, name: str) -> bool:
         """Return whether an object type exists in scope."""
-        return name in self.objects
+        return self.lookup_object(name) is not None
 
     def lookup_attribute(self, object_name: str, attribute_name: str) -> Type | None:
         """Return the declared type of ``object_name.attribute_name``."""
@@ -136,12 +153,16 @@ class Environment:
 
     def overloads_for(self, name: str) -> tuple[Overload, ...]:
         """Return the overload candidates registered for ``name``."""
-        return tuple(self.overloads.get(name, ()))
+        local = tuple(self.overloads.get(name, ()))
+        if self.parent is None:
+            return local
+        return local + self.parent.overloads_for(name)
 
     def value_type(self, name: str) -> Type | None:
         """Return the type of a named value or overload set."""
-        if name in self.variables:
-            return self.variables[name]
+        variable = self.lookup_variable(name)
+        if variable is not None:
+            return variable
         overloads = self.overloads_for(name)
         if overloads:
             return OverloadSetType(overloads)
@@ -171,9 +192,9 @@ class Environment:
         infer_missing: bool = False,
     ) -> EnvironmentApplyResult:
         """Resolve and apply a named overload set to ``stack``."""
-        if name not in self.overloads:
-            return UnknownElement(name)
         overloads = self.overloads_for(name)
+        if not overloads:
+            return UnknownElement(name)
         applied = stack.apply(
             overloads,
             self.context,

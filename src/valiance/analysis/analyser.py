@@ -79,17 +79,22 @@ def analyse_function_details(
     env: T.Environment,
 ) -> FunctionAnalysis | None:
     """Infer a function literal and keep typed bodies for each overload."""
+    function_env = env.child_scope()
     infer_params = node.params is None
     params = (
         ()
         if node.params is None
         else tuple(_param_type(param, index) for index, param in enumerate(node.params))
     )
+    if node.params is not None:
+        for param, typ in zip(node.params, params, strict=True):
+            if param.name is not None:
+                function_env.define_variable(param.name, typ)
     state = AnalysisState(params, T.TypeStack(params))
     final_branches = analyse_typed_block(
         node.body,
         {AnalysisBranch(state)},
-        env,
+        function_env,
         infer_missing=infer_params,
     )
     signatures: dict[T.Overload, tuple[TypedNode, ...]] = {}
@@ -97,7 +102,7 @@ def analyse_function_details(
         final_state = branch.state
         if node.returns is not None:
             expected = T.TypeStack(node.returns)
-            if not _stack_assignable(final_state.stack, expected, env.context):
+            if not _stack_assignable(final_state.stack, expected, function_env.context):
                 continue
             returns = node.returns
         else:

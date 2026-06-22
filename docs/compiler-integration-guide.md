@@ -134,6 +134,25 @@ if attribute_type is None:
     error("Foo has no attribute bar")
 ```
 
+Variable scopes are represented by environment frames. `lookup_variable` reads
+from the current frame and then outer frames. `define_variable` writes only to
+the current frame. Use `env.child_scope()` when entering a function literal, so
+the function can read outer variables but cannot overwrite them.
+
+```python
+outer = Environment()
+outer.define_variable("x", Number)
+
+function_env = outer.child_scope()
+function_env.lookup_variable("x")
+# Number
+
+function_env.define_variable("x", String)
+
+outer.lookup_variable("x")
+# Number
+```
+
 For stack-based element checking, ask the environment to apply the named
 overload set:
 

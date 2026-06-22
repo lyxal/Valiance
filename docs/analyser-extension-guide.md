@@ -136,6 +136,55 @@ Function[String, String -> String]
 When adding a new callable or stack-consuming node, decide whether it should use
 the same `infer_missing` behaviour. Most ordinary element-like nodes should.
 
+## Variable Scope
+
+Variables are scoped through `Environment` frames.
+
+Use `env.lookup_variable(name)` for reads. It checks the current frame first,
+then walks outward through parent frames.
+
+Use `env.define_variable(name, typ)` for writes. It writes only to the current
+frame.
+
+Use `env.child_scope()` when entering a function literal. The child scope can
+read variables, overloads, and object definitions from the outer environment,
+but variable writes stay local to the function.
+
+```python
+outer = Environment()
+outer.define_variable("x", Number)
+
+inner = outer.child_scope()
+inner.lookup_variable("x")
+# Number
+
+inner.define_variable("x", String)
+
+inner.lookup_variable("x")
+# String
+
+outer.lookup_variable("x")
+# Number
+```
+
+This is the rule you want for function literals:
+
+```python
+def analyse_function_details(node: FunctionNode, env: Environment):
+    function_env = env.child_scope()
+    ...
+    final_branches = analyse_typed_block(
+        node.body,
+        {AnalysisBranch(initial_state)},
+        function_env,
+        infer_missing=infer_params,
+    )
+```
+
+Nodes such as `IfNode` and `WhileNode` should normally keep using the
+environment frame they were given. That lets them write variables in the current
+function scope instead of creating a new function-local scope.
+
 ## Typed AST Contract
 
 Always return typed nodes from new analyser helpers.
