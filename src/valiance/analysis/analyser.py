@@ -92,8 +92,7 @@ class Analyser:
             ()
             if node.params is None
             else tuple(
-                _param_type(param, index)
-                for index, param in enumerate(node.params)
+                _param_type(param, index) for index, param in enumerate(node.params)
             )
         )
         if node.params is not None:
@@ -227,6 +226,8 @@ class Analyser:
                         result.actual_returns,
                     )
                 }
+            case _:
+                return {NodeAnalysis(TypedNode(node, None), None)}
 
     def _infer_element_candidates(
         self,
