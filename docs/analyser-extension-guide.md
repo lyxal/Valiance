@@ -7,6 +7,11 @@ The analyser is deliberately small. It does not own parsing, syntax lowering,
 or the whole compiler pipeline. Its job is to take AST nodes, an `Environment`,
 and an input stack state, then return typed AST nodes and output stack states.
 
+The implementation is centred on an `Analyser` session object. The session owns
+the current `Environment` and the current inference mode, so individual node
+handlers do not need to keep threading `env` and `infer_missing` through every
+call.
+
 ## Core Records
 
 The analyser works with three small records.
@@ -43,19 +48,36 @@ class AnalysisBranch:
 `AnalysisBranch` is used inside block and function analysis. It carries both
 the current stack state and the typed AST nodes produced along that path.
 
+## The Session
+
+Create an analyser when you want to analyse a top-level program or a nested
+block:
+
+```python
+analyser = Analyser(env)
+typed_program = analyser.analyse(program)
+```
+
+For function literals, the analyser creates a child session with a child
+environment frame:
+
+```python
+function_analyser = Analyser(function_env, infer_missing=infer_params)
+final_branches = function_analyser.typed_block(
+    node.body,
+    {AnalysisBranch(initial_state)},
+)
+```
+
+That means most node helpers only need `self`, `node`, and `state`.
+
 ## The Dispatcher
 
-Add new node behaviour in `_analyse_node_results`. That function is the main
+Add new node behaviour in `Analyser.node_results`. That method is the main
 dispatcher for AST node analysis.
 
 ```python
-def _analyse_node_results(
-    node: ASTNode,
-    state: AnalysisState,
-    env: Environment,
-    *,
-    infer_missing: bool,
-) -> set[NodeAnalysis]:
+def node_results(self, node: ASTNode, state: AnalysisState) -> set[NodeAnalysis]:
     match node:
         case NumberLiteralNode(_):
             ...
@@ -64,9 +86,9 @@ def _analyse_node_results(
         case FunctionNode():
             ...
         case IfNode():
-            return _analyse_if(node, state, env, infer_missing=infer_missing)
+            return self._if(node, state)
         case WhileNode():
-            return _analyse_while(node, state, env, infer_missing=infer_missing)
+            return self._while(node, state)
         case _:
             return {NodeAnalysis(TypedNode(node, None), state)}
 ```
@@ -83,7 +105,8 @@ A literal usually pushes one known type onto the stack and returns one
 String = N("String")
 
 
-def _analyse_string_literal(
+def _string_literal(
+    self,
     node: StringLiteralNode,
     state: AnalysisState,
 ) -> set[NodeAnalysis]:
@@ -98,7 +121,7 @@ Then add the dispatcher case:
 
 ```python
 case StringLiteralNode():
-    return _analyse_string_literal(node, state)
+    return self._string_literal(node, state)
 ```
 
 This kind of node normally does not care about `infer_missing`, because it never
@@ -113,16 +136,16 @@ function parameters.
 The current element analyser follows this shape:
 
 ```python
-if infer_missing:
+if self.infer_missing:
     applications = apply_overload_candidates_to_stack(
         overloads,
         state.stack,
-        env.context,
+        self.env.context,
         infer_missing=True,
     )
     return one NodeAnalysis for each viable application
 
-result = env.apply(name, state.stack, infer_missing=False)
+result = self.env.apply(name, state.stack, infer_missing=False)
 return one NodeAnalysis for the chosen application or failed known application
 ```
 
@@ -170,14 +193,15 @@ outer.lookup_variable("x")
 This is the rule you want for function literals:
 
 ```python
-def analyse_function_details(node: FunctionNode, env: Environment):
-    function_env = env.child_scope()
+def analyse_function_details(self, node: FunctionNode):
+    function_env = self.env.child_scope()
     ...
-    final_branches = analyse_typed_block(
-        node.body,
-        {AnalysisBranch(initial_state)},
+    final_branches = Analyser(
         function_env,
         infer_missing=infer_params,
+    ).typed_block(
+        node.body,
+        {AnalysisBranch(initial_state)},
     )
 ```
 
@@ -191,10 +215,10 @@ duration of the block and then restores the previous local binding, or removes
 the variable if it did not exist before.
 
 ```python
-with env.temporary_variable("item", Number):
-    analyse_typed_block(body, branches, env, infer_missing=infer_missing)
+with self.env.temporary_variable("item", Number):
+    self.typed_block(body, branches)
 
-env.lookup_local_variable("item")
+self.env.lookup_local_variable("item")
 # restored or removed
 ```
 
@@ -233,25 +257,21 @@ typed children.
 
 ## Block Analysis
 
-Use `analyse_block` when you only need final stack states.
+Use `Analyser.block` when you only need final stack states.
 
 ```python
-final_states = analyse_block(
+final_states = analyser.block(
     body_nodes,
     {initial_state},
-    env,
-    infer_missing=infer_missing,
 )
 ```
 
-Use `analyse_typed_block` when you also need the typed body nodes.
+Use `Analyser.typed_block` when you also need the typed body nodes.
 
 ```python
-branches = analyse_typed_block(
+branches = analyser.typed_block(
     body_nodes,
     {AnalysisBranch(initial_state)},
-    env,
-    infer_missing=infer_missing,
 )
 
 for branch in branches:
@@ -259,8 +279,8 @@ for branch in branches:
     branch.typed_body
 ```
 
-Control-flow nodes and function literals usually need `analyse_typed_block`.
-Tiny stack-only checks can use `analyse_block`.
+Control-flow nodes and function literals usually need `typed_block`.
+Tiny stack-only checks can use `block`.
 
 ## If Nodes
 
@@ -283,24 +303,20 @@ Helper shape:
 Bool = N("Bool")
 
 
-def _analyse_if(
+def _if(
+    self,
     node: IfNode,
     state: AnalysisState,
-    env: Environment,
-    *,
-    infer_missing: bool,
 ) -> set[NodeAnalysis]:
-    condition_branches = analyse_typed_block(
+    condition_branches = self.typed_block(
         node.condition,
         {AnalysisBranch(state)},
-        env,
-        infer_missing=infer_missing,
     )
 
     results: set[NodeAnalysis] = set()
     for branch in condition_branches:
         stack = branch.state.stack
-        if not stack or not assignable(stack[-1], Bool, env.context):
+        if not stack or not assignable(stack[-1], Bool, self.env.context):
             error("if condition must leave Bool on the stack")
             continue
 
@@ -311,17 +327,13 @@ def _analyse_if(
             )
         )
 
-        then_branches = analyse_typed_block(
+        then_branches = self.typed_block(
             node.then_body,
             {branch_input},
-            env,
-            infer_missing=infer_missing,
         )
-        else_branches = analyse_typed_block(
+        else_branches = self.typed_block(
             node.else_body,
             {branch_input},
-            env,
-            infer_missing=infer_missing,
         )
 
         for left in then_branches:
@@ -371,24 +383,20 @@ class WhileNode(ASTNode):
 Simple first-pass helper:
 
 ```python
-def _analyse_while(
+def _while(
+    self,
     node: WhileNode,
     state: AnalysisState,
-    env: Environment,
-    *,
-    infer_missing: bool,
 ) -> set[NodeAnalysis]:
-    condition_branches = analyse_typed_block(
+    condition_branches = self.typed_block(
         node.condition,
         {AnalysisBranch(state)},
-        env,
-        infer_missing=infer_missing,
     )
 
     results: set[NodeAnalysis] = set()
     for branch in condition_branches:
         stack = branch.state.stack
-        if not stack or not assignable(stack[-1], Bool, env.context):
+        if not stack or not assignable(stack[-1], Bool, self.env.context):
             error("while condition must leave Bool on the stack")
             continue
 
@@ -399,11 +407,9 @@ def _analyse_while(
             )
         )
 
-        body_outputs = analyse_typed_block(
+        body_outputs = self.typed_block(
             node.body,
             {body_input},
-            env,
-            infer_missing=infer_missing,
         )
 
         for body_output in body_outputs:
@@ -468,18 +474,14 @@ rank can leave either an atomic item or another collection at runtime.
 Sketch:
 
 ```python
-def _analyse_foreach(
+def _foreach(
+    self,
     node: ForEachNode,
     state: AnalysisState,
-    env: Environment,
-    *,
-    infer_missing: bool,
 ) -> set[NodeAnalysis]:
-    iterable_branches = analyse_typed_block(
+    iterable_branches = self.typed_block(
         node.iterable,
         {AnalysisBranch(state)},
-        env,
-        infer_missing=infer_missing,
     )
 
     results: set[NodeAnalysis] = set()
@@ -499,12 +501,10 @@ def _analyse_foreach(
             TypeStack(stack.items[:-1]),
         )
 
-        with env.temporary_variable(node.item_name, item_type):
-            body_branches = analyse_typed_block(
+        with self.env.temporary_variable(node.item_name, item_type):
+            body_branches = self.typed_block(
                 node.body,
                 {AnalysisBranch(body_state)},
-                env,
-                infer_missing=infer_missing,
             )
 
         for body_branch in body_branches:
@@ -556,8 +556,9 @@ That means:
 - inferred signatures with `Never` returns are filtered out when other valid
   signatures exist
 
-Thread `infer_missing` through nested node helpers unless the node has a good
-reason to reset inference. Most nodes should preserve it.
+Nested node helpers use the same analyser session, so they automatically
+preserve `self.infer_missing`. Create a child `Analyser` only when the language
+semantics really enter a new inference mode, such as a function literal.
 
 ## Handling Errors
 
@@ -576,9 +577,9 @@ candidate.
 
 1. Add the AST dataclass.
 2. Add a typed AST dataclass if the node has typed children.
-3. Add a `case` in `_analyse_node_results`.
-4. Write a helper returning `set[NodeAnalysis]`.
+3. Add a `case` in `Analyser.node_results`.
+4. Write an `Analyser` method returning `set[NodeAnalysis]`.
 5. Decide whether the node pushes, pops, merges, or only validates the stack.
-6. Thread `infer_missing` into nested analysis.
-7. Preserve typed child nodes with `analyse_typed_block` when needed.
+6. Use `self.typed_block` for nested bodies.
+7. Preserve typed child nodes with `typed_block` when needed.
 8. Add tests for ordinary checking and function-literal inference.

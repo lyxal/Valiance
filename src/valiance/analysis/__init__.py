@@ -1,4 +1,5 @@
 from valiance.analysis.analyser import (
+    Analyser,
     AnalysisBranch,
     AnalysisState,
     FunctionAnalysis,
@@ -15,6 +16,7 @@ from valiance.analysis.builtins import default_environment
 __all__ = [
     "AnalysisBranch",
     "AnalysisState",
+    "Analyser",
     "FunctionAnalysis",
     "NodeAnalysis",
     "analyse",
