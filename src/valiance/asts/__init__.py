@@ -9,6 +9,7 @@ from valiance.asts.model import (
     FunctionOverloadTyping,
     FunctionParam,
     NumberLiteralNode,
+    StringLiteralNode,
     TypedFunctionNode,
     TypedNode,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "FunctionNode",
     "FunctionParam",
     "NumberLiteralNode",
+    "StringLiteralNode",
     "TypedFunctionNode",
     "TypedNode",
 ]

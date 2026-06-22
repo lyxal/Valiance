@@ -1,13 +1,21 @@
-If strategy =>
+Branch-centric analyser sketch
 
-1. condition_env = Environment(self.branches)
-2. post_condition_branches, condition_node = condition_env.analyse(node.condition)
-3. body_env = Environment(post_condition_branches)
-4. post_body_branches, body_node = body_env.analyse(node.body)
-5. post_body_branches.broadcast_push(Optional(body_env.output()))
-6. return <stuff>
+Everything is a BranchSet transformation now.
 
-end
+If strategy:
 
-"Where's the rest of the algorithm?"
-In my Joplin notes.
+1. incoming = BranchSet.one(branch)
+2. condition = analyser.analyse_block(incoming, node.condition)
+3. condition = condition.require_stack_top_assignable(Bool, env.context)
+4. body_inputs = condition.pop_stack_top()
+5. then_outputs = analyser.analyse_block(body_inputs, node.then_body)
+6. else_outputs = analyser.analyse_block(body_inputs, node.else_body)
+7. join output stacks with merge_stacks(...)
+8. join variables against the variables that existed before the if
+9. append a typed IfNode containing typed condition/then/else bodies
+
+Important rule:
+
+If any possible condition branch is not Bool, the whole condition is invalid.
+Do not filter down to the Bool branch, because the discarded branch was still a
+possible path.

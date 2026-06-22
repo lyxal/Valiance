@@ -67,7 +67,6 @@ class Environment:
 
     context: Context = field(default_factory=Context)
     parent: Environment | None = None
-    variables: dict[str, Type] = field(default_factory=dict[str, Type])
     overloads: dict[str, list[Overload]] = field(
         default_factory=dict[str, list[Overload]]
     )
@@ -75,35 +74,9 @@ class Environment:
         default_factory=dict[str, ObjectDefinition]
     )
 
-    def define_variable(self, name: str, typ: Type) -> None:
-        """Register or replace a variable in this environment frame."""
-        self.variables[name] = typ
-
     def child_scope(self) -> Environment:
         """Return a child frame that can read this environment."""
         return Environment(context=self.context, parent=self)
-
-    def lookup_local_variable(self, name: str) -> Type | None:
-        """Return a variable from this frame only."""
-        return self.variables.get(name)
-
-    def lookup_variable(self, name: str) -> Type | None:
-        """Return a named variable/value type from this frame or an outer one."""
-        if name in self.variables:
-            return self.variables[name]
-        if self.parent is not None:
-            return self.parent.lookup_variable(name)
-        return None
-
-    def define_temporary_variable(self, name: str, typ: Type) -> None:
-        """Bind a short-lived variable in this frame."""
-        if name in self.variables:
-            raise ValueError(f"temporary variable {name!r} already exists")
-        self.variables[name] = typ
-
-    def drop_local_variable(self, name: str) -> None:
-        """Remove a variable from this frame, if present."""
-        self.variables.pop(name, None)
 
     def define_object(
         self,
@@ -169,10 +142,7 @@ class Environment:
         return local + self.parent.overloads_for(name)
 
     def value_type(self, name: str) -> Type | None:
-        """Return the type of a named value or overload set."""
-        variable = self.lookup_variable(name)
-        if variable is not None:
-            return variable
+        """Return the overload-set type of a named callable value."""
         overloads = self.overloads_for(name)
         if overloads:
             return OverloadSetType(overloads)

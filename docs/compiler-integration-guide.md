@@ -97,7 +97,6 @@ For focused tests or custom compiler phases, you can still build one manually:
 from valiance.types import Environment, N, Overload
 
 env = Environment()
-env.define_variable("x", N("Number"))
 env.define_overload("+", Overload((N("Number"), N("Number")), (N("Number"),)))
 env.define_object(
     "Foo",
@@ -106,9 +105,6 @@ env.define_object(
         ObjectAttribute("name", N("String")),
     ),
 )
-
-env.lookup_variable("x")
-# Number
 
 env.overloads_for("+")
 # overload candidates for +
@@ -134,24 +130,25 @@ if attribute_type is None:
     error("Foo has no attribute bar")
 ```
 
-Variable scopes are represented by environment frames. `lookup_variable` reads
-from the current frame and then outer frames. `define_variable` writes only to
-the current frame. Use `env.child_scope()` when entering a function literal, so
-the function can read outer variables but cannot overwrite them.
+Branch-dependent variables are not stored in `Environment`. They live in the
+analyser's `BranchVariables`, because a variable type may differ per overload or
+control-flow branch. Use the environment for facts that are stable across
+branches: overloads, objects, traits, variants, tags, and built-ins.
 
 ```python
-outer = Environment()
-outer.define_variable("x", Number)
-
-function_env = outer.child_scope()
-function_env.lookup_variable("x")
+variables = branch.variables
+variables.read("x")
 # Number
 
-function_env.define_variable("x", String)
-
-outer.lookup_variable("x")
-# Number
+variables, diagnostic = variables.write("x", String)
+if diagnostic is not None:
+    error(diagnostic)
 ```
+
+Writes to function parameters are rejected. Writes to captured outer variables
+create local shadows in the current function branch. Block-local variables, such
+as loop variables, are added to `BranchVariables.block_locals` and dropped when
+the block joins.
 
 For stack-based element checking, ask the environment to apply the named
 overload set:
@@ -345,8 +342,13 @@ act as `Function[Number+, Number+ -> Number+]` through vectorisation.
 
 ## 7. Stack Expression Checking
 
-Your compiler should own AST walking and stack simulation, but it should not
-manually pop and push argument slices. Use the environment or stack application
+Your compiler should own AST walking, but it should not manually pop and push
+argument slices. If you use `valiance.analysis.Analyser`, element calls are
+handled as branch transformations: the branch sources arguments from its stack,
+from definition-site inference, or from explicit-parameter cycling, then applies
+the overload and pushes the return types.
+
+For lower-level stack-only checks, use the environment or stack application
 helpers so arity checks, overload choice, generic substitution, and vectorised
 returns stay in one place.
 
@@ -402,7 +404,7 @@ applied = stack.apply(element_overloads, env.context)
 # Normal checking against one known overload.
 applied = stack.apply_one(plus_overload, ctx)
 
-# Inference: missing values are added to the function input list.
+# Low-level inference primitive: missing values are reported as inputs.
 applied = TypeStack().apply_one(
     plus_overload,
     ctx=ctx,
@@ -434,20 +436,16 @@ is expected.
 
 ## 9. Definition-Site Inference
 
-Definition-site inference should live in your AST analysis layer. The type
-system library provides the primitive you need for element calls:
+Definition-site inference lives in the AST analysis layer. The analyser treats
+every block as a branch-set transformation:
 
 ```python
-from valiance.types import TypeStack
+from valiance.analysis import AnalysisBranch, BranchSet, InputMode
 
-applied = TypeStack().apply_one(
-    Overload((Number, Number), (Number,)),
-    ctx=ctx,
-    infer_missing=True,
+initial = BranchSet.one(
+    AnalysisBranch(input_mode=InputMode.INFER_INPUTS)
 )
-
-applied.inputs  # (Number, Number)
-applied.stack   # stack with Number on top
+final = analyser.analyse_block(initial, function_body)
 ```
 
 Function literals distinguish omitted params from explicit empty params:
@@ -455,25 +453,29 @@ Function literals distinguish omitted params from explicit empty params:
 ```python
 FunctionNode(params=None, body=(ElementNode("+"),))
 # fn => + end
-# missing stack inputs are inferred
+# missing stack inputs are inferred; ambiguous overloads become branches
 
 FunctionNode(params=(), body=(ElementNode("+"),))
 # fn () => + end
-# no missing stack inputs are inferred; a known failed + consumes its fixed
-# inputs and returns Never
+# no missing stack inputs are inferred; underflow is an error
+
+FunctionNode(
+    params=(FunctionParam("x", Number), FunctionParam("y", Number)),
+    body=(ElementNode("+"), ElementNode("+")),
+)
+# explicit non-empty params may be cycled on stack underflow
 ```
 
-Each AST node can transform a set of stack states. For an element call, try each
-candidate overload with `infer_missing=True`; successful applications become
-the next possible states. If multiple candidates survive because there were not
-enough concrete input types to choose one, keep those branch states. A function
-literal with several final stack effects should infer an `OverloadSet` of
-function signatures rather than reporting a failed overload.
+Each AST node transforms a `BranchSet`. For an element call, the analyser tries
+each candidate overload against each incoming branch. Successful applications
+become the next branches. If multiple candidates survive because there were not
+enough concrete input types to choose one, keep those branches. A function
+literal with several final stack effects infers an `OverloadSet` of function
+signatures.
 
-A known element with no matching overload should still advance using the
-`NoMatchingOverload.stack`, while an unknown element should drop that path. This
-keeps inference AST-aware without putting AST logic into the type-system
-library.
+Top-level underflow, niladic underflow, unknown elements, and no viable overload
+drop the affected branch and emit diagnostics. Branch filtering is sound for
+overload candidates, but not for control-flow conditions; see the next section.
 
 When a function literal infers multiple overloads, the typed AST should retain
 the typed body for each overload. `analyse` returns a `TypedFunctionNode` for
@@ -521,7 +523,7 @@ Recommended order:
 
 ## 11. Control-Flow Merging
 
-Use `merge_types` and `merge_stacks` when joining branches:
+Use `merge_types` and `merge_stacks` when joining branch stacks:
 
 ```python
 from valiance.types import TypeStack, merge_types, merge_stacks
@@ -539,9 +541,9 @@ merge_stacks(TypeStack((Number,)), TypeStack((String,)))
 `merge_stacks` pads the shorter stack with `None` before merging, matching the
 optional-padding rule used by branch joins.
 
-Your AST analyser should treat control-flow nodes as transformations over a set
-of possible branch states. The type library only supplies the stack and type
-merge primitives; your compiler decides what each AST node means.
+Your AST analyser should treat control-flow nodes as transformations over a
+`BranchSet`. The type library supplies stack and type merge primitives; the
+analyser supplies general branch-set validation and block driving.
 
 One possible AST shape:
 
@@ -559,110 +561,64 @@ class WhileNode(ASTNode):
     body: tuple[ASTNode, ...]
 ```
 
-For an `IfNode`, analyse the condition first. Require it to leave a `Bool` on
-top of the stack, pop that condition value, then analyse both branches from the
-same post-condition state. Merge every pair of surviving branch stacks.
+For an `IfNode`, analyse the condition first. Require every condition branch to
+leave a non-`Never` `Bool` on top of the stack, pop that condition value, then
+analyse both branches from the same post-condition branch set. Merge every pair
+of surviving branch stacks and variables.
 
 ```python
 Bool = N("Bool")
 
 
-def analyse_if(node: IfNode, state: AnalysisState, env: Environment):
-    condition_states = analyse_block(
-        node.condition,
-        {state},
-        env,
-        infer_missing=False,
-    )
+def analyse_if(node: IfNode, branch: AnalysisBranch, analyser: Analyser):
+    incoming = BranchSet.one(branch)
+    condition = analyser.analyse_block(incoming, node.condition)
+    condition = condition.require_stack_top_assignable(Bool, analyser.env.context)
+    if not condition:
+        error("if condition must leave Bool")
+        return set()
 
-    branch_inputs: set[AnalysisState] = set()
-    for condition_state in condition_states:
-        stack = condition_state.stack
-        if not stack or not assignable(stack[-1], Bool, env.context):
-            error("if condition must leave Bool on the stack")
-            continue
-        branch_inputs.add(
-            AnalysisState(
-                condition_state.inputs,
-                TypeStack(stack.items[:-1]),
-            )
-        )
+    body_inputs = condition.pop_stack_top()
+    then_outputs = analyser.analyse_block(body_inputs, node.then_body)
+    else_outputs = analyser.analyse_block(body_inputs, node.else_body)
 
-    then_states = analyse_block(
-        node.then_body,
-        branch_inputs,
-        env,
-        infer_missing=False,
-    )
-    else_states = analyse_block(
-        node.else_body,
-        branch_inputs,
-        env,
-        infer_missing=False,
-    )
-
-    merged: set[AnalysisState] = set()
-    for left in then_states:
-        for right in else_states:
+    outputs: set[AnalysisBranch] = set()
+    for left in then_outputs:
+        for right in else_outputs:
             if left.inputs != right.inputs:
                 error("branches inferred different function inputs")
                 continue
-            merged.add(
-                AnalysisState(
-                    left.inputs,
-                    merge_stacks(left.stack, right.stack),
+            outputs.add(
+                branch.with_stack(
+                    merge_stacks(left.stack, right.stack, analyser.env.context)
                 )
             )
-    return merged
+    return outputs
 ```
 
 For example, if one branch leaves `Number` and the other leaves nothing, the
 merged stack has `Number?` in that position. If one branch leaves `Number` and
 the other leaves `String`, the merged stack has `Number | String`.
 
-For a `WhileNode`, the condition and body may run zero or more times, so do not
-type it as "condition once, body once". Instead, check that one iteration is a
-valid loop transform and merge the before-loop stack with the after-body stack
-to approximate the zero-or-more result.
+For a `WhileNode`, the condition and body may run zero or more times. Check that
+one iteration is a valid loop transform and merge the before-loop branch with
+the after-body branch to approximate the zero-or-more result.
 
 ```python
-def analyse_while(node: WhileNode, state: AnalysisState, env: Environment):
-    condition_states = analyse_block(
-        node.condition,
-        {state},
-        env,
-        infer_missing=False,
-    )
+def analyse_while(node: WhileNode, branch: AnalysisBranch, analyser: Analyser):
+    condition = analyser.analyse_block(BranchSet.one(branch), node.condition)
+    condition = condition.require_stack_top_assignable(Bool, analyser.env.context)
+    if not condition:
+        error("while condition must leave Bool")
+        return set()
 
-    body_inputs: set[AnalysisState] = set()
-    for condition_state in condition_states:
-        stack = condition_state.stack
-        if not stack or not assignable(stack[-1], Bool, env.context):
-            error("while condition must leave Bool on the stack")
-            continue
-        body_inputs.add(
-            AnalysisState(
-                condition_state.inputs,
-                TypeStack(stack.items[:-1]),
-            )
-        )
+    body_outputs = analyser.analyse_block(condition.pop_stack_top(), node.body)
 
-    body_outputs = analyse_block(
-        node.body,
-        body_inputs,
-        env,
-        infer_missing=False,
-    )
-
-    outputs: set[AnalysisState] = {state}
+    outputs: set[AnalysisBranch] = {branch}
     for body_output in body_outputs:
-        if body_output.inputs != state.inputs:
-            error("loop body inferred different function inputs")
-            continue
         outputs.add(
-            AnalysisState(
-                state.inputs,
-                merge_stacks(state.stack, body_output.stack),
+            branch.with_stack(
+                merge_stacks(branch.stack, body_output.stack, analyser.env.context)
             )
         )
     return outputs
@@ -683,7 +639,7 @@ normal branch result. Pop it before analysing the branch or body.
 For a fuller explanation of adding AST nodes to the analyser, including typed
 child bodies and inference behaviour, see `docs/analyser-extension-guide.md`.
 That guide also covers `ForEachNode`-style loop variables with
-`env.temporary_variable(...)` and iterable item typing with
+`BranchVariables.with_block_local(...)` and iterable item typing with
 `collection_item_type(...)`.
 
 ## 12. Error Reporting

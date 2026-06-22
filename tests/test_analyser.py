@@ -2,7 +2,10 @@ import unittest
 
 from valiance.analysis import (
     Analyser,
-    AnalysisState,
+    AnalysisBranch,
+    BranchSet,
+    BranchVariables,
+    InputMode,
     analyse,
     analyse_function,
     default_environment,
@@ -151,23 +154,6 @@ class AnalyserTests(unittest.TestCase):
         self.assertFalse(env.has_attribute("Foo", "missing"))
         self.assertIsNone(env.lookup_attribute("Missing", "bar"))
 
-    def test_child_scope_reads_outer_variables_but_writes_locally(self):
-        env = Environment()
-        env.define_variable("x", Number)
-
-        child = env.child_scope()
-
-        self.assertEqual(child.lookup_variable("x"), Number)
-        self.assertIsNone(child.lookup_local_variable("x"))
-
-        child.define_variable("x", String)
-        child.define_variable("y", Number)
-
-        self.assertEqual(child.lookup_variable("x"), String)
-        self.assertEqual(env.lookup_variable("x"), Number)
-        self.assertEqual(child.lookup_variable("y"), Number)
-        self.assertIsNone(env.lookup_variable("y"))
-
     def test_child_scope_reads_outer_overloads_and_objects(self):
         env = Environment()
         env.define_overload("+", Overload((Number, Number), (Number,)))
@@ -178,57 +164,43 @@ class AnalyserTests(unittest.TestCase):
         self.assertEqual(child.overloads_for("+"), env.overloads_for("+"))
         self.assertEqual(child.lookup_attribute("Foo", "bar"), String)
 
-    def test_temporary_variable_is_dropped_from_current_scope(self):
-        env = Environment()
-
-        env.define_temporary_variable("loop_item", Number)
-        self.assertEqual(env.lookup_local_variable("loop_item"), Number)
-        env.drop_local_variable("loop_item")
-        self.assertIsNone(env.lookup_local_variable("loop_item"))
-
-    def test_temporary_variable_cannot_replace_local_binding(self):
-        env = Environment()
-        env.define_variable("item", String)
-
-        with self.assertRaises(ValueError):
-            env.define_temporary_variable("item", Number)
-
-    def test_analyser_can_expect_one_block_result(self):
+    def test_analyser_can_analyse_one_branch_block(self):
         analyser = Analyser(Environment())
-        state = analyser.block_one(
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch()),
             (NumberLiteralNode("1"),),
-            AnalysisState((), TypeStack()),
-        )
-
-        self.assertEqual(state, AnalysisState((), TypeStack((Number,))))
-
-    def test_condition_branches_pop_control_value(self):
-        analyser = Analyser(Environment())
-
-        branches = analyser.condition_branches(
-            (NumberLiteralNode("1"),),
-            AnalysisState((), TypeStack()),
-            Number,
         )
 
         self.assertEqual(len(branches), 1)
+        self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
+
+    def test_branch_set_condition_validation_pops_control_value(self):
+        analyser = Analyser(Environment())
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch()),
+            (NumberLiteralNode("1"),),
+        )
+        branches = branches.require_stack_top_assignable(Number, analyser.env.context)
+        branches = branches.pop_stack_top()
+
+        self.assertEqual(len(branches), 1)
         branch = next(iter(branches))
-        self.assertEqual(branch.state, AnalysisState((), TypeStack()))
+        self.assertEqual(branch.stack, TypeStack())
         self.assertEqual([node.typ for node in branch.typed_body], [Number])
 
-    def test_condition_branches_reject_any_non_bool_path(self):
+    def test_branch_set_condition_validation_rejects_any_non_bool_path(self):
         env = Environment()
         env.define_overload("cond", Overload((), (Bool,)))
         env.define_overload("cond", Overload((), (Number,)))
-        analyser = Analyser(env, infer_missing=True)
-
-        branches = analyser.condition_branches(
+        analyser = Analyser(env)
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(input_mode=InputMode.INFER_INPUTS)),
             (ElementNode("cond"),),
-            AnalysisState((), TypeStack()),
-            Bool,
         )
+        branches = branches.require_stack_top_assignable(Bool, env.context)
 
-        self.assertEqual(branches, set())
+        self.assertEqual(len(branches), 0)
 
     def test_object_attributes_cannot_be_declared_twice(self):
         env = Environment()
@@ -301,7 +273,7 @@ class AnalyserTests(unittest.TestCase):
 
         typ = analyse_function(FunctionNode(params=(), body=(ElementNode("+"),)), env)
 
-        self.assertEqual(typ, Fn((), (Never(),)))
+        self.assertIsNone(typ)
 
     def test_function_empty_params_can_return_literal(self):
         typ = analyse_function(
@@ -325,6 +297,56 @@ class AnalyserTests(unittest.TestCase):
         typ = analyse_function(node, env)
 
         self.assertEqual(typ, Fn((Number, Number), (Number,)))
+
+    def test_explicit_non_niladic_function_cycles_params_on_underflow(self):
+        env = Environment()
+        env.define_overload("+", Overload((Number, Number), (Number,)))
+        node = FunctionNode(
+            params=(
+                FunctionParam("x", Number),
+                FunctionParam("y", Number),
+            ),
+            body=(ElementNode("+"), ElementNode("+")),
+        )
+
+        typ = analyse_function(node, env)
+
+        self.assertEqual(typ, Fn((Number, Number), (Number,)))
+
+    def test_branch_variables_are_branch_local(self):
+        number_vars = BranchVariables()
+        string_vars = BranchVariables()
+
+        number_vars, number_error = number_vars.write("x", Number)
+        string_vars, string_error = string_vars.write("x", String)
+
+        self.assertIsNone(number_error)
+        self.assertIsNone(string_error)
+        self.assertEqual(number_vars.read("x"), Number)
+        self.assertEqual(string_vars.read("x"), String)
+
+    def test_branch_variables_reject_parameter_writes(self):
+        variables = BranchVariables(parameters=(("x", Number),))
+
+        updated, diagnostic = variables.write("x", String)
+
+        self.assertIsNone(updated)
+        self.assertEqual(diagnostic, "cannot assign to read-only parameter 'x'")
+
+    def test_branch_variables_shadow_captures_on_write(self):
+        variables = BranchVariables(captures=(("x", Number),))
+
+        updated, diagnostic = variables.write("x", String)
+
+        self.assertIsNone(diagnostic)
+        self.assertEqual(updated.read("x"), String)
+        self.assertEqual(updated.captures, (("x", Number),))
+
+    def test_branch_variables_drop_block_locals(self):
+        variables = BranchVariables().with_block_local("item", Number)
+
+        self.assertEqual(variables.read("item"), Number)
+        self.assertIsNone(variables.drop_block_locals().read("item"))
 
     def test_function_return_annotation_must_match(self):
         env = Environment()
