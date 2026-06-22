@@ -293,6 +293,14 @@ def _collection_remainder(collection_type: CollectionClass, base: Type, rank: in
     return base
 
 
+def collection_item_type(t: Type) -> Type | None:
+    """Return the type produced by iterating one rank of a collection."""
+    t = normalize(t)
+    if not isinstance(t, CollectionType):
+        return None
+    return _collection_remainder(type(t), t.base, t.rank - 1)
+
+
 def _combine(a: Type, b: Type) -> Type | None:
     """Merge two candidate generic solutions into a shared solution."""
     a, b = normalize(a), normalize(b)

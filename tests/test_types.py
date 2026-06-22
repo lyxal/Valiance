@@ -5,13 +5,14 @@ from valiance.types import (
     Context,
     Fn,
     ListExactType,
+    ListMinType,
     N,
     NoneType,
     Overload,
     Overloads,
     Specificity,
-    U,
     TypeStack,
+    U,
     V,
     _combine_all,
     _match_specificity,
@@ -21,13 +22,13 @@ from valiance.types import (
     apply_overload_to_stack,
     apply_overloads_to_stack,
     assignable,
+    collection_item_type,
     compatible,
     merge_stacks,
     merge_types,
     optional,
     resolve_overload_result,
 )
-
 
 Number = N("Number")
 String = N("String")
@@ -44,6 +45,18 @@ class TypeLibraryTests(unittest.TestCase):
         t = _combine_all(constraints["T"])
         self.assertEqual(t, C(ListExactType, Number))
 
+    def test_collection_item_type_peels_one_rank(self):
+        self.assertEqual(collection_item_type(C(ListExactType, Number)), Number)
+        self.assertEqual(
+            collection_item_type(C(ListExactType, Number, 2)),
+            C(ListExactType, Number),
+        )
+        self.assertEqual(
+            collection_item_type(C(ListMinType, Number)),
+            U(Number, C(ListMinType, Number)),
+        )
+        self.assertIsNone(collection_item_type(Number))
+
     def test_optional_none_does_not_solve_type_var(self):
         constraints = _solve(optional(V("T")), NoneType())
         self.assertEqual(constraints, {})
@@ -59,7 +72,10 @@ class TypeLibraryTests(unittest.TestCase):
 
     def test_reduce_accepts_plus_via_vectorised_function_compatibility(self):
         plus = Overloads(Overload((Number, Number), (Number,)))
-        expected = Fn((C(ListExactType, Number), C(ListExactType, Number)), (C(ListExactType, Number),))
+        expected = Fn(
+            (C(ListExactType, Number), C(ListExactType, Number)),
+            (C(ListExactType, Number),),
+        )
         self.assertTrue(compatible(plus, expected))
 
     def test_reduce_signature_substitution(self):
@@ -69,7 +85,10 @@ class TypeLibraryTests(unittest.TestCase):
         function_param = _substitute(Fn((V("T"), V("T")), (V("T"),)), subst)
         self.assertEqual(
             function_param,
-            Fn((C(ListExactType, Number), C(ListExactType, Number)), (C(ListExactType, Number),)),
+            Fn(
+                (C(ListExactType, Number), C(ListExactType, Number)),
+                (C(ListExactType, Number),),
+            ),
         )
 
     def test_apply_overload_reports_substitution_and_actual_returns(self):
@@ -148,7 +167,10 @@ class TypeLibraryTests(unittest.TestCase):
         applied = stack.apply_one(plus)
         self.assertIsNotNone(applied)
         self.assertEqual(applied.stack, TypeStack((Number,)))
-        self.assertEqual(stack.merge(TypeStack()), TypeStack((optional(Number), optional(Number))))
+        self.assertEqual(
+            stack.merge(TypeStack()),
+            TypeStack((optional(Number), optional(Number))),
+        )
 
     def test_concrete_overload_beats_union_overload(self):
         concrete = Overload((Number,), (Number,))
@@ -165,7 +187,10 @@ class TypeLibraryTests(unittest.TestCase):
     def test_trait_specificity(self):
         ctx = Context(trait_impls={"Circle": {"Shape"}})
         self.assertTrue(compatible(N("Circle"), N("Shape"), ctx))
-        self.assertEqual(_match_specificity(N("Circle"), N("Shape"), ctx), Specificity.TRAIT)
+        self.assertEqual(
+            _match_specificity(N("Circle"), N("Shape"), ctx),
+            Specificity.TRAIT,
+        )
 
 
 if __name__ == "__main__":

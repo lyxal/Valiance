@@ -171,6 +171,20 @@ class AnalyserTests(unittest.TestCase):
         self.assertEqual(child.overloads_for("+"), env.overloads_for("+"))
         self.assertEqual(child.lookup_attribute("Foo", "bar"), String)
 
+    def test_temporary_variable_restores_current_scope_binding(self):
+        env = Environment()
+        env.define_variable("item", String)
+
+        with env.temporary_variable("item", Number):
+            self.assertEqual(env.lookup_local_variable("item"), Number)
+
+        self.assertEqual(env.lookup_local_variable("item"), String)
+
+        with env.temporary_variable("loop_item", Number):
+            self.assertEqual(env.lookup_local_variable("loop_item"), Number)
+
+        self.assertIsNone(env.lookup_local_variable("loop_item"))
+
     def test_object_attributes_cannot_be_declared_twice(self):
         env = Environment()
 

@@ -682,6 +682,9 @@ normal branch result. Pop it before analysing the branch or body.
 
 For a fuller explanation of adding AST nodes to the analyser, including typed
 child bodies and inference behaviour, see `docs/analyser-extension-guide.md`.
+That guide also covers `ForEachNode`-style loop variables with
+`env.temporary_variable(...)` and iterable item typing with
+`collection_item_type(...)`.
 
 ## 12. Error Reporting
 

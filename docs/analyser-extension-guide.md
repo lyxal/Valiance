@@ -185,6 +185,19 @@ Nodes such as `IfNode` and `WhileNode` should normally keep using the
 environment frame they were given. That lets them write variables in the current
 function scope instead of creating a new function-local scope.
 
+For short-lived bindings such as loop variables, use
+`env.temporary_variable(name, typ)`. It writes to the current frame for the
+duration of the block and then restores the previous local binding, or removes
+the variable if it did not exist before.
+
+```python
+with env.temporary_variable("item", Number):
+    analyse_typed_block(body, branches, env, infer_missing=infer_missing)
+
+env.lookup_local_variable("item")
+# restored or removed
+```
+
 ## Typed AST Contract
 
 Always return typed nodes from new analyser helpers.
@@ -421,6 +434,105 @@ That sketch is conservative. Later, replace it with a fixed-point loop:
 3. Merge the old approximation with the body output.
 4. Repeat until the state stops changing.
 5. Report an error if it keeps widening beyond a compiler limit.
+
+## ForEach Nodes
+
+A `ForEachNode` usually needs two special behaviours:
+
+1. derive the item type from the iterable collection
+2. bind a loop variable only for the loop body
+
+Possible AST shape:
+
+```python
+@dataclass(frozen=True)
+class ForEachNode(ASTNode):
+    item_name: str
+    iterable: tuple[ASTNode, ...]
+    body: tuple[ASTNode, ...]
+```
+
+Use `collection_item_type` to peel one collection rank:
+
+```python
+collection_item_type(Number+)
+# Number
+
+collection_item_type(Number++)
+# Number+
+```
+
+Minimum/rugged collection ranks may produce a union because peeling all known
+rank can leave either an atomic item or another collection at runtime.
+
+Sketch:
+
+```python
+def _analyse_foreach(
+    node: ForEachNode,
+    state: AnalysisState,
+    env: Environment,
+    *,
+    infer_missing: bool,
+) -> set[NodeAnalysis]:
+    iterable_branches = analyse_typed_block(
+        node.iterable,
+        {AnalysisBranch(state)},
+        env,
+        infer_missing=infer_missing,
+    )
+
+    results: set[NodeAnalysis] = set()
+    for branch in iterable_branches:
+        stack = branch.state.stack
+        if not stack:
+            error("foreach iterable must leave a collection on the stack")
+            continue
+
+        item_type = collection_item_type(stack[-1])
+        if item_type is None:
+            error("foreach requires a collection")
+            continue
+
+        body_state = AnalysisState(
+            branch.state.inputs,
+            TypeStack(stack.items[:-1]),
+        )
+
+        with env.temporary_variable(node.item_name, item_type):
+            body_branches = analyse_typed_block(
+                node.body,
+                {AnalysisBranch(body_state)},
+                env,
+                infer_missing=infer_missing,
+            )
+
+        for body_branch in body_branches:
+            if body_branch.state.inputs != branch.state.inputs:
+                error("foreach body inferred different function inputs")
+                continue
+
+            merged_state = AnalysisState(
+                branch.state.inputs,
+                merge_stacks(body_state.stack, body_branch.state.stack),
+            )
+
+            typed_foreach = TypedForEachNode(
+                node=node,
+                typ=None,
+                iterable=branch.typed_body,
+                body=body_branch.typed_body,
+                item_type=item_type,
+            )
+            results.add(NodeAnalysis(typed_foreach, merged_state))
+
+    return results
+```
+
+That merge treats the loop as zero-or-more iterations. The loop variable is
+visible while the body is analysed, and gone afterwards. Because the same
+environment frame is used, body nodes can still write to variables in the
+current function scope.
 
 ## Inference Rules
 
