@@ -8,11 +8,14 @@ from valiance.asts.nodes import (
     FunctionNode,
     FunctionOverloadTyping,
     FunctionParam,
+    GetVariableNode,
     NumberLiteralNode,
+    SetVariableNode,
     StringLiteralNode,
     TypedFunctionNode,
     TypedNode,
 )
+from valiance.symbols import Symbol
 
 __all__ = [
     "ASTNode",
@@ -20,8 +23,11 @@ __all__ = [
     "FunctionOverloadTyping",
     "FunctionNode",
     "FunctionParam",
+    "GetVariableNode",
     "NumberLiteralNode",
+    "SetVariableNode",
     "StringLiteralNode",
+    "Symbol",
     "TypedFunctionNode",
     "TypedNode",
 ]

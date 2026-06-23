@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
 
+from valiance.symbols import Symbol
+
 
 class Specificity(IntEnum):
     """Ordered match categories used to compare overload candidates."""
@@ -47,7 +49,7 @@ class NoneTypeNode(Type):
 class NominalType(Type):
     """A named type, optionally with invariant generic arguments."""
 
-    name: str
+    name: Symbol
     args: tuple[Type, ...] = ()
 
 

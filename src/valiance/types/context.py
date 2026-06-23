@@ -1,8 +1,10 @@
-from __future__ import annotations
-
 """Type relationship facts used by relation checks."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+
+from valiance.symbols import Symbol
 
 
 @dataclass
@@ -11,14 +13,20 @@ class Context:
 
     # The parser/symbol-table layer owns declarations. Context only stores the
     # relationships that the relation functions need to answer questions.
-    trait_impls: dict[str, set[str]] = field(default_factory=dict[str, set[str]])
-    trait_parents: dict[str, set[str]] = field(default_factory=dict[str, set[str]])
-    variant_members: dict[str, str] = field(default_factory=dict[str, str])
+    trait_impls: dict[Symbol, set[Symbol]] = field(
+        default_factory=dict[Symbol, set[Symbol]]
+    )
+    trait_parents: dict[Symbol, set[Symbol]] = field(
+        default_factory=dict[Symbol, set[Symbol]]
+    )
+    variant_members: dict[Symbol, Symbol] = field(
+        default_factory=dict[Symbol, Symbol]
+    )
     unit_tags: set[str] = field(default_factory=set[str])
 
-    def implements(self, type_name: str, trait_name: str) -> bool:
+    def implements(self, type_name: Symbol, trait_name: Symbol) -> bool:
         """Return whether a nominal type implements a trait, following parents."""
-        seen: set[str] = set()
+        seen: set[Symbol] = set()
         pending = list(self.trait_impls.get(type_name, set()))
         if type_name == trait_name:
             return True

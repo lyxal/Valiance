@@ -44,10 +44,17 @@ from valiance.types import (
     V,
     optional,
 )
+from valiance.symbols import Symbol
 
-Number = N("Number")
-String = N("String")
+NumberName = Symbol("Number")
+StringName = Symbol("String")
+Number = N(NumberName)
+String = N(StringName)
 T = V("T")
+Plus = Symbol("+")
+Foo = Symbol("Foo")
+Bar = Symbol("bar")
+Name = Symbol("name")
 
 number_list = C(ListExactType, Number)
 number_matrix = C(ListExactType, Number, 2)
@@ -94,25 +101,34 @@ env = default_environment()
 For focused tests or custom compiler phases, you can still build one manually:
 
 ```python
+from valiance.symbols import Symbol
 from valiance.types import Environment, N, Overload
 
 env = Environment()
-env.define_overload("+", Overload((N("Number"), N("Number")), (N("Number"),)))
+Plus = Symbol("+")
+Foo = Symbol("Foo")
+Bar = Symbol("bar")
+Name = Symbol("name")
+
+NumberName = Symbol("Number")
+StringName = Symbol("String")
+Bax = Symbol("Bax")
+env.define_overload(Plus, Overload((N(NumberName), N(NumberName)), (N(NumberName),)))
 env.define_object(
-    "Foo",
+    Foo,
     (
-        ObjectAttribute("bar", N("Bax")),
-        ObjectAttribute("name", N("String")),
+        ObjectAttribute(Bar, N(Bax)),
+        ObjectAttribute(Name, N(StringName)),
     ),
 )
 
-env.overloads_for("+")
+env.overloads_for(Plus)
 # overload candidates for +
 
-env.lookup_object("Foo")
+env.lookup_object(Foo)
 # object definition for Foo
 
-env.lookup_attribute("Foo", "bar")
+env.lookup_attribute(Foo, Bar)
 # Bax
 ```
 
@@ -122,10 +138,10 @@ for questions like "does object `Foo` exist?" and "what is the type of
 as overloads, because they participate in normal element dispatch.
 
 ```python
-if not env.object_exists("Foo"):
+if not env.object_exists(Foo):
     error("unknown object type")
 
-attribute_type = env.lookup_attribute("Foo", "bar")
+attribute_type = env.lookup_attribute(Foo, Bar)
 if attribute_type is None:
     error("Foo has no attribute bar")
 ```
@@ -137,10 +153,10 @@ branches: overloads, objects, traits, variants, tags, and built-ins.
 
 ```python
 variables = branch.variables
-variables.read("x")
+variables.read(Symbol("x"))
 # Number
 
-variables, diagnostic = variables.write("x", String)
+variables, diagnostic = variables.write(Symbol("x"), String)
 if diagnostic is not None:
     error(diagnostic)
 ```
@@ -170,9 +186,16 @@ match env.apply("+", stack):
 from valiance.types import Context, Environment
 
 ctx = Context()
-ctx.trait_impls.setdefault("Circle", set()).add("Shape")
-ctx.trait_parents.setdefault("Logger", set()).add("Resource")
-ctx.variant_members["SomeMember"] = "SomeVariant"
+Circle = Symbol("Circle")
+Shape = Symbol("Shape")
+Logger = Symbol("Logger")
+Resource = Symbol("Resource")
+SomeMember = Symbol("SomeMember")
+SomeVariant = Symbol("SomeVariant")
+
+ctx.trait_impls.setdefault(Circle, set()).add(Shape)
+ctx.trait_parents.setdefault(Logger, set()).add(Resource)
+ctx.variant_members[SomeMember] = SomeVariant
 ctx.unit_tags.add("km")
 ```
 
@@ -182,9 +205,9 @@ environment helpers:
 
 ```python
 env = Environment()
-env.add_trait_impl("Circle", "Shape")
-env.add_trait_parent("Logger", "Resource")
-env.add_variant_member("SomeMember", "SomeVariant")
+env.add_trait_impl(Circle, Shape)
+env.add_trait_parent(Logger, Resource)
+env.add_variant_member(SomeMember, SomeVariant)
 env.add_unit_tag("km")
 ```
 
@@ -451,17 +474,21 @@ final = analyser.analyse_block(initial, function_body)
 Function literals distinguish omitted params from explicit empty params:
 
 ```python
-FunctionNode(params=None, body=(ElementNode("+"),))
+Plus = Symbol("+")
+X = Symbol("x")
+Y = Symbol("y")
+
+FunctionNode(params=None, body=(ElementNode(Plus),))
 # fn => + end
 # missing stack inputs are inferred; ambiguous overloads become branches
 
-FunctionNode(params=(), body=(ElementNode("+"),))
+FunctionNode(params=(), body=(ElementNode(Plus),))
 # fn () => + end
 # no missing stack inputs are inferred; underflow is an error
 
 FunctionNode(
-    params=(FunctionParam("x", Number), FunctionParam("y", Number)),
-    body=(ElementNode("+"), ElementNode("+")),
+    params=(FunctionParam(X, Number), FunctionParam(Y, Number)),
+    body=(ElementNode(Plus), ElementNode(Plus)),
 )
 # explicit non-empty params may be cycled on stack underflow
 ```
@@ -486,7 +513,7 @@ branch.
 ```python
 from valiance.asts import TypedFunctionNode
 
-typed = analyse([FunctionNode(body=(ElementNode("+"),))])
+typed = analyse([FunctionNode(body=(ElementNode(Plus),))])
 fn_node = typed[0]
 
 if isinstance(fn_node, TypedFunctionNode):
@@ -567,7 +594,7 @@ analyse both branches from the same post-condition branch set. Merge every pair
 of surviving branch stacks and variables.
 
 ```python
-Bool = N("Bool")
+Bool = N(Symbol("Bool"))
 
 
 def analyse_if(node: IfNode, branch: AnalysisBranch, analyser: Analyser):

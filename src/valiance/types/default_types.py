@@ -1,4 +1,5 @@
+from valiance.symbols import Symbol
 from valiance.types.builders import N
 
-Number = N("Number")
-String = N("String")
+Number = N(Symbol("Number"))
+String = N(Symbol("String"))

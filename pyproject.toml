@@ -12,7 +12,6 @@ dev = [
 
 [project.scripts]
 valiance = "valiance.main:main"
-valiance-types = "valiance.type_explorer:main"
 
 [build-system]
 requires = ["hatchling"]

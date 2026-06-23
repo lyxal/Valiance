@@ -3,19 +3,29 @@
 from __future__ import annotations
 
 import valiance.types as T
+from valiance.symbols import Symbol
 
 
 def default_environment() -> T.Environment:
     """Build an environment populated with Valiance's built-in elements."""
     env = T.Environment()
-    env.add_trait_impl("Integer", "Number")
-    env.add_trait_impl("Real", "Number")
+    integer = Symbol("Integer")
+    number = Symbol("Number")
+    real = Symbol("Real")
+    env.add_trait_impl(integer, number)
+    env.add_trait_impl(real, number)
 
-    env.define_overload("+", T.Overload((T.Number, T.Number), (T.Number,)))
-    env.define_overload("+", T.Overload((T.String, T.String), (T.String,)))
-    env.define_overload("/", T.Overload((T.Number, T.Number), (T.Number,)))
+    plus = Symbol("+")
+    slash = Symbol("/")
+    map_symbol = Symbol("map")
+    length = Symbol("length")
+    head = Symbol("head")
+
+    env.define_overload(plus, T.Overload((T.Number, T.Number), (T.Number,)))
+    env.define_overload(plus, T.Overload((T.String, T.String), (T.String,)))
+    env.define_overload(slash, T.Overload((T.Number, T.Number), (T.Number,)))
     env.define_overload(
-        "/",
+        slash,
         T.Overload(
             (
                 T.C(T.ListExactType, T.V("T")),
@@ -25,7 +35,7 @@ def default_environment() -> T.Environment:
         ),
     )
     env.define_overload(
-        "map",
+        map_symbol,
         T.Overload(
             (
                 T.C(T.ListExactType, T.V("T")),
@@ -35,11 +45,11 @@ def default_environment() -> T.Environment:
         ),
     )
     env.define_overload(
-        "length",
+        length,
         T.Overload((T.C(T.ListExactType, T.V("T")),), (T.Number,)),
     )
     env.define_overload(
-        "head",
+        head,
         T.Overload((T.C(T.ListExactType, T.V("T")),), (T.V("T"),)),
     )
     return env

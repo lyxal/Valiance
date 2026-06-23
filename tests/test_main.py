@@ -13,7 +13,7 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertIn("usage: valiance", output.getvalue())
-        self.assertIn("types", output.getvalue())
+        self.assertIn("analyse-demo", output.getvalue())
 
 
 if __name__ == "__main__":

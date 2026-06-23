@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
+from valiance.symbols import Symbol
 from valiance.types.nodes import (
     ArrayExactType,
     ArrayMinType,
@@ -29,6 +30,8 @@ from valiance.types.nodes import (
 )
 
 CollectionClass = type[CollectionType]
+SOME = Symbol("Some")
+RESULT = Symbol("Result")
 
 
 def Never() -> Type:
@@ -41,7 +44,7 @@ def NoneType() -> Type:
     return NoneTypeNode()
 
 
-def N(name: str, *args: Type) -> Type:
+def N(name: Symbol, *args: Type) -> Type:
     """Create a nominal type, optionally with invariant generic arguments."""
     return NominalType(name, tuple(args))
 
@@ -53,12 +56,12 @@ def V(name: str) -> Type:
 
 def Some(inner: Type) -> Type:
     """Create the explicit ``Some[T]`` wrapper used by optional types."""
-    return N("Some", inner)
+    return N(SOME, inner)
 
 
 def Result(ok: Type, err: Type) -> Type:
     """Create a nominal ``Result[ok, err]`` type."""
-    return N("Result", ok, err)
+    return N(RESULT, ok, err)
 
 
 def U(*types: Type) -> Type:
@@ -137,7 +140,7 @@ def _optional_inner(t: UnionType) -> Type | None:
             continue
         if (
             isinstance(item, NominalType)
-            and item.name == "Some"
+            and item.name == SOME
             and len(item.args) == 1
         ):
             non_none.append(item.args[0])
@@ -259,7 +262,7 @@ def show(t: Type) -> str:
         return t.name
     if isinstance(t, NominalType):
         if not t.args:
-            return t.name
+            return str(t.name)
         return f"{t.name}[{', '.join(show(a) for a in t.args)}]"
     if isinstance(t, UnionType):
         return " | ".join(sorted(show(i) for i in t.items))

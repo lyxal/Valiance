@@ -1,5 +1,6 @@
 import unittest
 
+from valiance.symbols import Symbol
 from valiance.types import (
     C,
     Context,
@@ -30,11 +31,23 @@ from valiance.types import (
     resolve_overload_result,
 )
 
-Number = N("Number")
-String = N("String")
+NUMBER = Symbol("Number")
+STRING = Symbol("String")
+CIRCLE = Symbol("Circle")
+SHAPE = Symbol("Shape")
+
+Number = N(NUMBER)
+String = N(STRING)
 
 
 class TypeLibraryTests(unittest.TestCase):
+    def test_symbols_have_value_equality_and_hashing(self):
+        left = Symbol("Number")
+        right = Symbol("Number")
+
+        self.assertEqual(left, right)
+        self.assertEqual({left: Number}[right], Number)
+
     def test_assignment_does_not_vectorise(self):
         self.assertFalse(assignable(C(ListExactType, Number), Number))
         self.assertTrue(compatible(C(ListExactType, Number), Number))
@@ -185,10 +198,10 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertIsNone(resolve_overload_result((left, right), (Number, Number)))
 
     def test_trait_specificity(self):
-        ctx = Context(trait_impls={"Circle": {"Shape"}})
-        self.assertTrue(compatible(N("Circle"), N("Shape"), ctx))
+        ctx = Context(trait_impls={CIRCLE: {SHAPE}})
+        self.assertTrue(compatible(N(CIRCLE), N(SHAPE), ctx))
         self.assertEqual(
-            _match_specificity(N("Circle"), N("Shape"), ctx),
+            _match_specificity(N(CIRCLE), N(SHAPE), ctx),
             Specificity.TRAIT,
         )
 

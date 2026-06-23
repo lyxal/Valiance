@@ -27,7 +27,6 @@ Run individual test modules with:
 ```powershell
 uv run python -m unittest tests.test_main -v
 uv run python -m unittest tests.test_types -v
-uv run python -m unittest tests.test_type_explorer -v
 ```
 
 ## Current Code

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
+from valiance.symbols import Symbol
 from valiance.types.builders import (
     C,
     Fn,
@@ -49,6 +50,9 @@ from valiance.types.nodes import (
 from valiance.types.stack import StackApplication, TypeStack
 
 CollectionClass = type[CollectionType]
+INTEGER = Symbol("Integer")
+NUMBER = Symbol("Number")
+REAL = Symbol("Real")
 
 
 def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
@@ -98,7 +102,7 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
             return True
         if ctx.variant_members.get(source.name) == target.name:
             return True
-        if source.name in {"Integer", "Real"} and target.name == "Number":
+        if source.name in {INTEGER, REAL} and target.name == NUMBER:
             return True
 
     if isinstance(source, TupleType) and isinstance(target, TupleType):

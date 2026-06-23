@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from valiance.symbols import Symbol
 from valiance.types.context import Context
 from valiance.types.nodes import NeverType, Overload, OverloadSetType, Type
 from valiance.types.stack import StackApplication, TypeStack
@@ -24,14 +25,14 @@ class AppliedElement(EnvironmentApplyResult):
 class UnknownElement(EnvironmentApplyResult):
     """No overload set exists for the requested element name."""
 
-    name: str
+    name: Symbol
 
 
 @dataclass(frozen=True)
 class NoMatchingOverload(EnvironmentApplyResult):
     """A known overload set failed, but still has a fixed stack effect."""
 
-    name: str
+    name: Symbol
     overloads: tuple[Overload, ...]
     stack: TypeStack
     params: tuple[Type, ...]
@@ -42,7 +43,7 @@ class NoMatchingOverload(EnvironmentApplyResult):
 class ObjectAttribute:
     """One typed attribute declared on an object type."""
 
-    name: str
+    name: Symbol
     typ: Type
 
 
@@ -50,10 +51,10 @@ class ObjectAttribute:
 class ObjectDefinition:
     """The structural facts known about one object type in scope."""
 
-    name: str
+    name: Symbol
     attributes: tuple[ObjectAttribute, ...] = ()
 
-    def attribute_type(self, name: str) -> Type | None:
+    def attribute_type(self, name: Symbol) -> Type | None:
         """Return an attribute's type, if the object declares it."""
         for attribute in self.attributes:
             if attribute.name == name:
@@ -67,11 +68,11 @@ class Environment:
 
     context: Context = field(default_factory=Context)
     parent: Environment | None = None
-    overloads: dict[str, list[Overload]] = field(
-        default_factory=dict[str, list[Overload]]
+    overloads: dict[Symbol, list[Overload]] = field(
+        default_factory=dict[Symbol, list[Overload]]
     )
-    objects: dict[str, ObjectDefinition] = field(
-        default_factory=dict[str, ObjectDefinition]
+    objects: dict[Symbol, ObjectDefinition] = field(
+        default_factory=dict[Symbol, ObjectDefinition]
     )
 
     def child_scope(self) -> Environment:
@@ -80,11 +81,11 @@ class Environment:
 
     def define_object(
         self,
-        name: str,
+        name: Symbol,
         attributes: tuple[ObjectAttribute, ...] = (),
     ) -> None:
         """Register or replace an object type visible in this environment."""
-        seen: set[str] = set()
+        seen: set[Symbol] = set()
         for attribute in attributes:
             if attribute.name in seen:
                 raise ValueError(
@@ -93,7 +94,7 @@ class Environment:
             seen.add(attribute.name)
         self.objects[name] = ObjectDefinition(name, attributes)
 
-    def lookup_object(self, name: str) -> ObjectDefinition | None:
+    def lookup_object(self, name: Symbol) -> ObjectDefinition | None:
         """Return an object definition, if one exists in scope."""
         if name in self.objects:
             return self.objects[name]
@@ -101,22 +102,26 @@ class Environment:
             return self.parent.lookup_object(name)
         return None
 
-    def object_exists(self, name: str) -> bool:
+    def object_exists(self, name: Symbol) -> bool:
         """Return whether an object type exists in scope."""
         return self.lookup_object(name) is not None
 
-    def lookup_attribute(self, object_name: str, attribute_name: str) -> Type | None:
+    def lookup_attribute(
+        self,
+        object_name: Symbol,
+        attribute_name: Symbol,
+    ) -> Type | None:
         """Return the declared type of ``object_name.attribute_name``."""
         definition = self.lookup_object(object_name)
         if definition is None:
             return None
         return definition.attribute_type(attribute_name)
 
-    def has_attribute(self, object_name: str, attribute_name: str) -> bool:
+    def has_attribute(self, object_name: Symbol, attribute_name: Symbol) -> bool:
         """Return whether an object declares the requested attribute."""
         return self.lookup_attribute(object_name, attribute_name) is not None
 
-    def define_overload(self, name: str, overload: Overload) -> None:
+    def define_overload(self, name: Symbol, overload: Overload) -> None:
         """Append one overload to a named overload set."""
         candidates = self.overloads.setdefault(name, [])
         if candidates:
@@ -134,29 +139,29 @@ class Environment:
                 )
         candidates.append(overload)
 
-    def overloads_for(self, name: str) -> tuple[Overload, ...]:
+    def overloads_for(self, name: Symbol) -> tuple[Overload, ...]:
         """Return the overload candidates registered for ``name``."""
         local = tuple(self.overloads.get(name, ()))
         if self.parent is None:
             return local
         return local + self.parent.overloads_for(name)
 
-    def value_type(self, name: str) -> Type | None:
+    def value_type(self, name: Symbol) -> Type | None:
         """Return the overload-set type of a named callable value."""
         overloads = self.overloads_for(name)
         if overloads:
             return OverloadSetType(overloads)
         return None
 
-    def add_trait_impl(self, type_name: str, trait_name: str) -> None:
+    def add_trait_impl(self, type_name: Symbol, trait_name: Symbol) -> None:
         """Record that a concrete type implements a trait."""
         self.context.trait_impls.setdefault(type_name, set()).add(trait_name)
 
-    def add_trait_parent(self, trait_name: str, parent_name: str) -> None:
+    def add_trait_parent(self, trait_name: Symbol, parent_name: Symbol) -> None:
         """Record that one trait implies another trait."""
         self.context.trait_parents.setdefault(trait_name, set()).add(parent_name)
 
-    def add_variant_member(self, member_name: str, variant_name: str) -> None:
+    def add_variant_member(self, member_name: Symbol, variant_name: Symbol) -> None:
         """Record that a nominal type belongs to a variant."""
         self.context.variant_members[member_name] = variant_name
 
@@ -166,7 +171,7 @@ class Environment:
 
     def apply(
         self,
-        name: str,
+        name: Symbol,
         stack: TypeStack,
         *,
         infer_missing: bool = False,

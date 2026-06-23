@@ -18,6 +18,7 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedNode,
 )
+from valiance.symbols import Symbol
 
 _branch_ids = count(1)
 
@@ -39,15 +40,15 @@ class BranchVariables:
     This record owns values whose types can differ between analysis branches.
     """
 
-    function_locals: tuple[tuple[str, T.Type], ...] = ()
-    parameters: tuple[tuple[str, T.Type], ...] = ()
-    captures: tuple[tuple[str, T.Type], ...] = ()
-    block_locals: tuple[tuple[str, T.Type], ...] = ()
+    function_locals: tuple[tuple[Symbol, T.Type], ...] = ()
+    parameters: tuple[tuple[Symbol, T.Type], ...] = ()
+    captures: tuple[tuple[Symbol, T.Type], ...] = ()
+    block_locals: tuple[tuple[Symbol, T.Type], ...] = ()
 
     @classmethod
     def from_parameters(
         cls,
-        params: tuple[tuple[str, T.Type], ...],
+        params: tuple[tuple[Symbol, T.Type], ...],
         *,
         captures: BranchVariables | None = None,
     ) -> BranchVariables:
@@ -55,9 +56,9 @@ class BranchVariables:
         captured = () if captures is None else captures.visible_items()
         return cls(parameters=_sorted_items(params), captures=_sorted_items(captured))
 
-    def visible_items(self) -> tuple[tuple[str, T.Type], ...]:
+    def visible_items(self) -> tuple[tuple[Symbol, T.Type], ...]:
         """Return all currently readable variables, inner names first."""
-        result: dict[str, T.Type] = {}
+        result: dict[Symbol, T.Type] = {}
         for name, typ in reversed(self.captures):
             result.setdefault(name, typ)
         for name, typ in reversed(self.parameters):
@@ -68,7 +69,7 @@ class BranchVariables:
             result[name] = typ
         return _sorted_items(result.items())
 
-    def read(self, name: str) -> T.Type | None:
+    def read(self, name: Symbol) -> T.Type | None:
         """Read a variable using block, function, parameter, capture order."""
         for scope in (
             self.block_locals,
@@ -83,7 +84,7 @@ class BranchVariables:
 
     def write(
         self,
-        name: str,
+        name: Symbol,
         typ: T.Type,
         *,
         block_local: bool = False,
@@ -143,7 +144,7 @@ class BranchVariables:
             None,
         )
 
-    def with_block_local(self, name: str, typ: T.Type) -> BranchVariables:
+    def with_block_local(self, name: Symbol, typ: T.Type) -> BranchVariables:
         """Add or replace a temporary block-local variable."""
         return BranchVariables(
             function_locals=self.function_locals,
@@ -166,7 +167,7 @@ class BranchVariables:
         before: BranchVariables,
     ) -> BranchVariables:
         """Merge two branch outputs, preserving only variables visible before."""
-        locals_by_name: dict[str, T.Type] = {}
+        locals_by_name: dict[Symbol, T.Type] = {}
         before_names = {name for name, _ in before.function_locals}
         for name in before_names:
             left = _lookup(self.function_locals, name) or _lookup(
@@ -697,7 +698,7 @@ def _is_never(t: T.Type) -> bool:
 def _param_type(param: FunctionParam, index: int) -> T.Type:
     if param.typ is not None:
         return param.typ
-    name = param.name or f"_{index}"
+    name = param.name.text if param.name is not None else f"_{index}"
     return T.V(name)
 
 
@@ -711,7 +712,10 @@ def _stack_assignable(
     return all(T.assignable(a, e, ctx) for a, e in zip(actual, expected, strict=True))
 
 
-def _lookup(items: tuple[tuple[str, T.Type], ...], name: str) -> T.Type | None:
+def _lookup(
+    items: tuple[tuple[Symbol, T.Type], ...],
+    name: Symbol,
+) -> T.Type | None:
     for key, typ in items:
         if key == name:
             return typ
@@ -719,7 +723,7 @@ def _lookup(items: tuple[tuple[str, T.Type], ...], name: str) -> T.Type | None:
 
 
 def _assignment_error(
-    name: str,
+    name: Symbol,
     source: T.Type,
     target: T.Type,
     ctx: T.Context,
@@ -733,16 +737,16 @@ def _assignment_error(
 
 
 def _set_item(
-    items: tuple[tuple[str, T.Type], ...],
-    name: str,
+    items: tuple[tuple[Symbol, T.Type], ...],
+    name: Symbol,
     typ: T.Type,
-) -> tuple[tuple[str, T.Type], ...]:
+) -> tuple[tuple[Symbol, T.Type], ...]:
     result = {key: value for key, value in items}
     result[name] = typ
     return _sorted_items(result.items())
 
 
 def _sorted_items(
-    items: Iterable[tuple[str, T.Type]],
-) -> tuple[tuple[str, T.Type], ...]:
+    items: Iterable[tuple[Symbol, T.Type]],
+) -> tuple[tuple[Symbol, T.Type], ...]:
     return tuple(sorted(items, key=lambda item: item[0]))

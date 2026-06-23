@@ -198,7 +198,7 @@ class IfNode(ASTNode):
 Sketch:
 
 ```python
-Bool = N("Bool")
+Bool = N(Symbol("Bool"))
 
 
 def _if(self, branch: AnalysisBranch, node: IfNode) -> set[AnalysisBranch]:

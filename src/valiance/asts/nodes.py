@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from valiance.symbols import Symbol
 from valiance.types import Type
 
 
@@ -32,7 +33,7 @@ class TypedFunctionNode(TypedNode):
 class FunctionParam:
     """A function literal parameter annotation."""
 
-    name: str | None = None
+    name: Symbol | None = None
     typ: Type | None = None
 
 
@@ -54,7 +55,7 @@ class StringLiteralNode(ASTNode):
 class ElementNode(ASTNode):
     """An element, such as an operator or function name."""
 
-    name: str
+    name: Symbol
 
 
 @dataclass(frozen=True)
@@ -64,3 +65,17 @@ class FunctionNode(ASTNode):
     params: tuple[FunctionParam, ...] | None = None
     body: tuple[ASTNode, ...] = ()
     returns: tuple[Type, ...] | None = None
+
+
+@dataclass(frozen=True)
+class GetVariableNode(ASTNode):
+    """A variable reference."""
+
+    name: Symbol
+
+
+@dataclass(frozen=True)
+class SetVariableNode(ASTNode):
+    """Assign the top stack value to a variable."""
+
+    name: Symbol

@@ -17,6 +17,7 @@ from valiance.asts import (
     NumberLiteralNode,
     TypedFunctionNode,
 )
+from valiance.symbols import Symbol
 from valiance.types import (
     AppliedElement,
     C,
@@ -34,9 +35,27 @@ from valiance.types import (
     UnknownElement,
 )
 
-Number = N("Number")
-String = N("String")
-Bool = N("Bool")
+NUMBER = Symbol("Number")
+STRING = Symbol("String")
+BOOL = Symbol("Bool")
+BAX = Symbol("Bax")
+INTEGER = Symbol("Integer")
+
+Number = N(NUMBER)
+String = N(STRING)
+Bool = N(BOOL)
+PLUS = Symbol("+")
+SLASH = Symbol("/")
+AMB = Symbol("amb")
+BAR = Symbol("bar")
+COND = Symbol("cond")
+FOO = Symbol("Foo")
+ITEM = Symbol("item")
+MISSING = Symbol("missing")
+NAME = Symbol("name")
+OP = Symbol("op")
+X = Symbol("x")
+Y = Symbol("y")
 
 
 class AnalyserTests(unittest.TestCase):
@@ -45,7 +64,7 @@ class AnalyserTests(unittest.TestCase):
             [
                 NumberLiteralNode("1"),
                 NumberLiteralNode("2"),
-                ElementNode("+"),
+                ElementNode(PLUS),
             ],
         )
 
@@ -54,7 +73,7 @@ class AnalyserTests(unittest.TestCase):
     def test_default_environment_includes_generic_reduce_and_map(self):
         env = default_environment()
         reduce_result = env.apply(
-            "/",
+            SLASH,
             TypeStack(
                 (
                     C(ListExactType, Number),
@@ -66,7 +85,7 @@ class AnalyserTests(unittest.TestCase):
         self.assertEqual(reduce_result.application.stack, TypeStack((Number,)))
 
         map_result = env.apply(
-            "map",
+            Symbol("map"),
             TypeStack(
                 (
                     C(ListExactType, Number),
@@ -82,13 +101,13 @@ class AnalyserTests(unittest.TestCase):
 
     def test_element_uses_environment_overloads_and_updates_stack(self):
         env = Environment()
-        env.define_overload("+", Overload((Number, Number), (Number,)))
+        env.define_overload(PLUS, Overload((Number, Number), (Number,)))
 
         typed = analyse(
             [
                 NumberLiteralNode("1"),
                 NumberLiteralNode("2"),
-                ElementNode("+"),
+                ElementNode(PLUS),
             ],
             env,
         )
@@ -97,13 +116,13 @@ class AnalyserTests(unittest.TestCase):
 
     def test_non_inference_element_rejects_ambiguous_overload(self):
         env = Environment()
-        env.define_overload("amb", Overload((Number,), (Number,)))
-        env.define_overload("amb", Overload((Number,), (String,)))
+        env.define_overload(AMB, Overload((Number,), (Number,)))
+        env.define_overload(AMB, Overload((Number,), (String,)))
         analyser = Analyser(env)
 
         branches = analyser.analyse_block(
             BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
-            (ElementNode("amb"),),
+            (ElementNode(AMB),),
         )
 
         self.assertEqual(len(branches), 0)
@@ -113,21 +132,24 @@ class AnalyserTests(unittest.TestCase):
         )
 
     def test_unknown_element_is_untyped(self):
-        typed = analyse([ElementNode("missing")], Environment())
+        typed = analyse([ElementNode(MISSING)], Environment())
         self.assertIsNone(typed[0].typ)
 
     def test_environment_distinguishes_unknown_from_no_matching_overload(self):
         env = Environment()
-        self.assertIsInstance(env.apply("missing", TypeStack()), UnknownElement)
+        self.assertIsInstance(env.apply(MISSING, TypeStack()), UnknownElement)
 
-        env.define_overload("+", Overload((Number, Number), (Number,)))
-        self.assertIsInstance(env.apply("+", TypeStack((Number,))), NoMatchingOverload)
+        env.define_overload(PLUS, Overload((Number, Number), (Number,)))
+        self.assertIsInstance(
+            env.apply(PLUS, TypeStack((Number,))),
+            NoMatchingOverload,
+        )
 
     def test_no_matching_overload_applies_failed_stack_shape(self):
         env = Environment()
-        env.define_overload("+", Overload((Number, Number), (Number,)))
+        env.define_overload(PLUS, Overload((Number, Number), (Number,)))
 
-        result = env.apply("+", TypeStack((String, String)))
+        result = env.apply(PLUS, TypeStack((String, String)))
 
         self.assertIsInstance(result, NoMatchingOverload)
         self.assertEqual(result.stack, TypeStack((Never(),)))
@@ -136,50 +158,50 @@ class AnalyserTests(unittest.TestCase):
 
     def test_no_matching_overload_pops_expected_inputs_on_underflow(self):
         env = Environment()
-        env.define_overload("+", Overload((Number, Number), (Number,)))
+        env.define_overload(PLUS, Overload((Number, Number), (Number,)))
 
-        result = env.apply("+", TypeStack((Number,)))
+        result = env.apply(PLUS, TypeStack((Number,)))
 
         self.assertIsInstance(result, NoMatchingOverload)
         self.assertEqual(result.stack, TypeStack((Never(),)))
 
     def test_overload_sets_require_fixed_shape(self):
         env = Environment()
-        env.define_overload("op", Overload((Number,), (Number,)))
+        env.define_overload(OP, Overload((Number,), (Number,)))
 
         with self.assertRaises(ValueError):
-            env.define_overload("op", Overload((Number, Number), (Number,)))
+            env.define_overload(OP, Overload((Number, Number), (Number,)))
 
         with self.assertRaises(ValueError):
-            env.define_overload("op", Overload((Number,), (Number, Number)))
+            env.define_overload(OP, Overload((Number,), (Number, Number)))
 
     def test_environment_tracks_object_attributes(self):
         env = Environment()
 
         env.define_object(
-            "Foo",
+            FOO,
             (
-                ObjectAttribute("bar", N("Bax")),
-                ObjectAttribute("name", String),
+                ObjectAttribute(BAR, N(BAX)),
+                ObjectAttribute(NAME, String),
             ),
         )
 
-        self.assertTrue(env.object_exists("Foo"))
-        self.assertFalse(env.object_exists("Missing"))
-        self.assertEqual(env.lookup_attribute("Foo", "bar"), N("Bax"))
-        self.assertTrue(env.has_attribute("Foo", "name"))
-        self.assertFalse(env.has_attribute("Foo", "missing"))
-        self.assertIsNone(env.lookup_attribute("Missing", "bar"))
+        self.assertTrue(env.object_exists(FOO))
+        self.assertFalse(env.object_exists(MISSING))
+        self.assertEqual(env.lookup_attribute(FOO, BAR), N(BAX))
+        self.assertTrue(env.has_attribute(FOO, NAME))
+        self.assertFalse(env.has_attribute(FOO, MISSING))
+        self.assertIsNone(env.lookup_attribute(MISSING, BAR))
 
     def test_child_scope_reads_outer_overloads_and_objects(self):
         env = Environment()
-        env.define_overload("+", Overload((Number, Number), (Number,)))
-        env.define_object("Foo", (ObjectAttribute("bar", String),))
+        env.define_overload(PLUS, Overload((Number, Number), (Number,)))
+        env.define_object(FOO, (ObjectAttribute(BAR, String),))
 
         child = env.child_scope()
 
-        self.assertEqual(child.overloads_for("+"), env.overloads_for("+"))
-        self.assertEqual(child.lookup_attribute("Foo", "bar"), String)
+        self.assertEqual(child.overloads_for(PLUS), env.overloads_for(PLUS))
+        self.assertEqual(child.lookup_attribute(FOO, BAR), String)
 
     def test_analyser_can_analyse_one_branch_block(self):
         analyser = Analyser(Environment())
@@ -208,12 +230,12 @@ class AnalyserTests(unittest.TestCase):
 
     def test_branch_set_condition_validation_rejects_any_non_bool_path(self):
         env = Environment()
-        env.define_overload("cond", Overload((), (Bool,)))
-        env.define_overload("cond", Overload((), (Number,)))
+        env.define_overload(COND, Overload((), (Bool,)))
+        env.define_overload(COND, Overload((), (Number,)))
         analyser = Analyser(env)
         branches = analyser.analyse_block(
             BranchSet.one(AnalysisBranch(input_mode=InputMode.INFER_INPUTS)),
-            (ElementNode("cond"),),
+            (ElementNode(COND),),
         )
         branches = branches.require_stack_top_assignable(Bool, env.context)
 
@@ -224,23 +246,23 @@ class AnalyserTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             env.define_object(
-                "Foo",
+                FOO,
                 (
-                    ObjectAttribute("bar", Number),
-                    ObjectAttribute("bar", String),
+                    ObjectAttribute(BAR, Number),
+                    ObjectAttribute(BAR, String),
                 ),
             )
 
     def test_function_infers_missing_inputs(self):
         env = Environment()
-        env.define_overload("+", Overload((Number, Number), (Number,)))
+        env.define_overload(PLUS, Overload((Number, Number), (Number,)))
 
-        typ = analyse_function(FunctionNode(body=(ElementNode("+"),)), env)
+        typ = analyse_function(FunctionNode(body=(ElementNode(PLUS),)), env)
 
         self.assertEqual(typ, Fn((Number, Number), (Number,)))
 
     def test_function_infers_overload_set_when_missing_inputs_are_ambiguous(self):
-        typed = analyse([FunctionNode(body=(ElementNode("+"),))])
+        typed = analyse([FunctionNode(body=(ElementNode(PLUS),))])
 
         self.assertEqual(
             typed[0].typ,
@@ -251,7 +273,7 @@ class AnalyserTests(unittest.TestCase):
         )
 
     def test_overloaded_function_node_keeps_typed_body_per_overload(self):
-        typed = analyse([FunctionNode(body=(ElementNode("+"),))])
+        typed = analyse([FunctionNode(body=(ElementNode(PLUS),))])
         function = typed[0]
 
         self.assertIsInstance(function, TypedFunctionNode)
@@ -271,7 +293,7 @@ class AnalyserTests(unittest.TestCase):
         )
 
     def test_overloaded_function_node_drops_never_returning_overloads(self):
-        typed = analyse([FunctionNode(body=(ElementNode("+"), ElementNode("/")))])
+        typed = analyse([FunctionNode(body=(ElementNode(PLUS), ElementNode(SLASH)))])
 
         match typed[0].typ:
             case FunctionType(returns=returns):
@@ -286,9 +308,9 @@ class AnalyserTests(unittest.TestCase):
 
     def test_function_empty_params_do_not_infer_missing_inputs(self):
         env = Environment()
-        env.define_overload("+", Overload((Number, Number), (Number,)))
+        env.define_overload(PLUS, Overload((Number, Number), (Number,)))
 
-        typ = analyse_function(FunctionNode(params=(), body=(ElementNode("+"),)), env)
+        typ = analyse_function(FunctionNode(params=(), body=(ElementNode(PLUS),)), env)
 
         self.assertIsNone(typ)
 
@@ -302,13 +324,13 @@ class AnalyserTests(unittest.TestCase):
 
     def test_function_uses_explicit_params(self):
         env = Environment()
-        env.define_overload("+", Overload((Number, Number), (Number,)))
+        env.define_overload(PLUS, Overload((Number, Number), (Number,)))
         node = FunctionNode(
             params=(
-                FunctionParam("x", Number),
-                FunctionParam("y", Number),
+                FunctionParam(X, Number),
+                FunctionParam(Y, Number),
             ),
-            body=(ElementNode("+"),),
+            body=(ElementNode(PLUS),),
         )
 
         typ = analyse_function(node, env)
@@ -317,13 +339,13 @@ class AnalyserTests(unittest.TestCase):
 
     def test_explicit_non_niladic_function_cycles_params_on_underflow(self):
         env = Environment()
-        env.define_overload("+", Overload((Number, Number), (Number,)))
+        env.define_overload(PLUS, Overload((Number, Number), (Number,)))
         node = FunctionNode(
             params=(
-                FunctionParam("x", Number),
-                FunctionParam("y", Number),
+                FunctionParam(X, Number),
+                FunctionParam(Y, Number),
             ),
-            body=(ElementNode("+"), ElementNode("+")),
+            body=(ElementNode(PLUS), ElementNode(PLUS)),
         )
 
         typ = analyse_function(node, env)
@@ -334,18 +356,18 @@ class AnalyserTests(unittest.TestCase):
         number_vars = BranchVariables()
         string_vars = BranchVariables()
 
-        number_vars, number_error = number_vars.write("x", Number)
-        string_vars, string_error = string_vars.write("x", String)
+        number_vars, number_error = number_vars.write(X, Number)
+        string_vars, string_error = string_vars.write(X, String)
 
         self.assertIsNone(number_error)
         self.assertIsNone(string_error)
-        self.assertEqual(number_vars.read("x"), Number)
-        self.assertEqual(string_vars.read("x"), String)
+        self.assertEqual(number_vars.read(X), Number)
+        self.assertEqual(string_vars.read(X), String)
 
     def test_branch_variables_reject_incompatible_reassignment(self):
-        variables = BranchVariables(function_locals=(("x", Number),))
+        variables = BranchVariables(function_locals=((X, Number),))
 
-        updated, diagnostic = variables.write("x", String)
+        updated, diagnostic = variables.write(X, String)
 
         self.assertIsNone(updated)
         self.assertEqual(
@@ -355,18 +377,18 @@ class AnalyserTests(unittest.TestCase):
 
     def test_branch_variables_allow_assignable_reassignment(self):
         ctx = Environment().context
-        ctx.trait_impls.setdefault("Integer", set()).add("Number")
-        variables = BranchVariables(function_locals=(("x", Number),))
+        ctx.trait_impls.setdefault(INTEGER, set()).add(NUMBER)
+        variables = BranchVariables(function_locals=((X, Number),))
 
-        updated, diagnostic = variables.write("x", N("Integer"), ctx=ctx)
+        updated, diagnostic = variables.write(X, N(INTEGER), ctx=ctx)
 
         self.assertIsNone(diagnostic)
-        self.assertEqual(updated.read("x"), Number)
+        self.assertEqual(updated.read(X), Number)
 
     def test_branch_variables_check_existing_block_local_assignment(self):
-        variables = BranchVariables(block_locals=(("item", Number),))
+        variables = BranchVariables(block_locals=((ITEM, Number),))
 
-        updated, diagnostic = variables.write("item", String)
+        updated, diagnostic = variables.write(ITEM, String)
 
         self.assertIsNone(updated)
         self.assertEqual(
@@ -375,27 +397,27 @@ class AnalyserTests(unittest.TestCase):
         )
 
     def test_branch_variables_reject_parameter_writes(self):
-        variables = BranchVariables(parameters=(("x", Number),))
+        variables = BranchVariables(parameters=((X, Number),))
 
-        updated, diagnostic = variables.write("x", String)
+        updated, diagnostic = variables.write(X, String)
 
         self.assertIsNone(updated)
         self.assertEqual(diagnostic, "cannot assign to read-only parameter 'x'")
 
     def test_branch_variables_shadow_captures_on_write(self):
-        variables = BranchVariables(captures=(("x", Number),))
+        variables = BranchVariables(captures=((X, Number),))
 
-        updated, diagnostic = variables.write("x", String)
+        updated, diagnostic = variables.write(X, String)
 
         self.assertIsNone(diagnostic)
-        self.assertEqual(updated.read("x"), String)
-        self.assertEqual(updated.captures, (("x", Number),))
+        self.assertEqual(updated.read(X), String)
+        self.assertEqual(updated.captures, ((X, Number),))
 
     def test_branch_variables_drop_block_locals(self):
-        variables = BranchVariables().with_block_local("item", Number)
+        variables = BranchVariables().with_block_local(ITEM, Number)
 
-        self.assertEqual(variables.read("item"), Number)
-        self.assertIsNone(variables.drop_block_locals().read("item"))
+        self.assertEqual(variables.read(ITEM), Number)
+        self.assertIsNone(variables.drop_block_locals().read(ITEM))
 
     def test_function_return_annotation_must_match(self):
         env = Environment()
@@ -405,8 +427,8 @@ class AnalyserTests(unittest.TestCase):
 
     def test_top_level_function_node_is_typed_and_pushed(self):
         env = Environment()
-        env.define_overload("+", Overload((Number, Number), (Number,)))
-        node = FunctionNode(body=(ElementNode("+"),))
+        env.define_overload(PLUS, Overload((Number, Number), (Number,)))
+        node = FunctionNode(body=(ElementNode(PLUS),))
 
         typed = analyse([node], env)
 
