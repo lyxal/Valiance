@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from itertools import count
 
+from valiance.asts.nodes import GetVariableNode, SetVariableNode
 import valiance.types as T
 from valiance.analysis.builtins import default_environment
 from valiance.asts import (
@@ -448,6 +449,61 @@ class Analyser:
                         typed_branch.stack.push(function.typ)
                     ).append_typed(typed_node)
                 }
+            case GetVariableNode(name):
+                typ = branch.variables.read(name)
+                if typ is None:
+                    self._diagnose(f"undefined variable '{name}'")
+                    return {branch.append_typed(TypedNode(node, None))}
+                return {
+                    branch.with_stack(branch.stack.push(typ)).append_typed(
+                        TypedNode(node, typ)
+                    )
+                }
+            case SetVariableNode(name):
+                if not branch.stack:
+                    if branch.input_mode is InputMode.INFER_INPUTS:
+                        inferred = T.V(f"_inferred_{name}")
+                        variables, diagnostic = branch.variables.write(
+                            name,
+                            inferred,
+                            ctx=self.env.context,
+                        )
+                        if diagnostic is not None:
+                            return {branch.with_diagnostic(diagnostic)}
+                        if variables is None:
+                            return {
+                                branch.with_diagnostic(
+                                    f"cannot assign to variable '{name}'"
+                                )
+                            }
+                        return {
+                            branch.with_variables(variables).append_typed(
+                                TypedNode(node, inferred)
+                            )
+                        }
+                    return {
+                        branch.with_diagnostic(
+                            f"empty stack when trying to assign to variable '{name}'"
+                        )
+                    }
+                value_type = branch.stack[-1]
+                variables, diagnostic = branch.variables.write(
+                    name,
+                    value_type,
+                    block_local=True,
+                    ctx=self.env.context,
+                )
+                if diagnostic is not None:
+                    return {branch.with_diagnostic(diagnostic)}
+                if variables is None:
+                    return {
+                        branch.with_diagnostic(f"cannot assign to variable '{name}'")
+                    }
+                return {
+                    branch.with_variables(variables)
+                    .with_stack(branch.stack.pop())
+                    .append_typed(TypedNode(node, value_type))
+                }
             case _:
                 return {branch.append_typed(TypedNode(node, None))}
 
@@ -484,7 +540,9 @@ class Analyser:
         results: set[AnalysisBranch] = set()
         for applied, popped in winners:
             results.add(
-                popped.with_stack(popped.stack.push(*applied.actual_returns)).append_typed(
+                popped.with_stack(
+                    popped.stack.push(*applied.actual_returns)
+                ).append_typed(
                     TypedNode(node, _returns_result_type(applied.actual_returns))
                 )
             )

@@ -34,6 +34,12 @@ class TypeStack:
         """Return a new stack with ``types`` appended on top."""
         return TypeStack(self.items + tuple(types))
 
+    def pop(self, n: int = 1) -> TypeStack:
+        """Return a new stack with the top ``n`` items removed"""
+        if n > len(self):
+            raise ValueError("Cannot pop more items than are on the stack")
+        return TypeStack(self.items[:-n])
+
     def apply(
         self,
         overloads: Iterable[Overload],
