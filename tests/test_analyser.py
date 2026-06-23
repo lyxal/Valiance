@@ -342,6 +342,38 @@ class AnalyserTests(unittest.TestCase):
         self.assertEqual(number_vars.read("x"), Number)
         self.assertEqual(string_vars.read("x"), String)
 
+    def test_branch_variables_reject_incompatible_reassignment(self):
+        variables = BranchVariables(function_locals=(("x", Number),))
+
+        updated, diagnostic = variables.write("x", String)
+
+        self.assertIsNone(updated)
+        self.assertEqual(
+            diagnostic,
+            "cannot assign String to variable 'x' of type Number",
+        )
+
+    def test_branch_variables_allow_assignable_reassignment(self):
+        ctx = Environment().context
+        ctx.trait_impls.setdefault("Integer", set()).add("Number")
+        variables = BranchVariables(function_locals=(("x", Number),))
+
+        updated, diagnostic = variables.write("x", N("Integer"), ctx=ctx)
+
+        self.assertIsNone(diagnostic)
+        self.assertEqual(updated.read("x"), Number)
+
+    def test_branch_variables_check_existing_block_local_assignment(self):
+        variables = BranchVariables(block_locals=(("item", Number),))
+
+        updated, diagnostic = variables.write("item", String)
+
+        self.assertIsNone(updated)
+        self.assertEqual(
+            diagnostic,
+            "cannot assign String to variable 'item' of type Number",
+        )
+
     def test_branch_variables_reject_parameter_writes(self):
         variables = BranchVariables(parameters=(("x", Number),))
 

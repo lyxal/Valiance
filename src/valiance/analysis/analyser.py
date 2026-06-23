@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from itertools import count
@@ -87,14 +87,26 @@ class BranchVariables:
         typ: T.Type,
         *,
         block_local: bool = False,
+        ctx: T.Context | None = None,
     ) -> tuple[BranchVariables | None, str | None]:
         """Return variables after assigning ``name`` in this branch."""
+        ctx = ctx or T.Context()
+        existing_block_local = _lookup(self.block_locals, name)
+        if existing_block_local is not None:
+            diagnostic = _assignment_error(name, typ, existing_block_local, ctx)
+            if diagnostic is not None:
+                return None, diagnostic
+            return self, None
         if _lookup(self.parameters, name) is not None:
             return None, f"cannot assign to read-only parameter '{name}'"
-        if _lookup(self.function_locals, name) is not None:
+        existing_function_local = _lookup(self.function_locals, name)
+        if existing_function_local is not None:
+            diagnostic = _assignment_error(name, typ, existing_function_local, ctx)
+            if diagnostic is not None:
+                return None, diagnostic
             return (
                 BranchVariables(
-                    function_locals=_set_item(self.function_locals, name, typ),
+                    function_locals=self.function_locals,
                     parameters=self.parameters,
                     captures=self.captures,
                     block_locals=self.block_locals,
@@ -152,7 +164,6 @@ class BranchVariables:
         self,
         other: BranchVariables,
         before: BranchVariables,
-        ctx: T.Context,
     ) -> BranchVariables:
         """Merge two branch outputs, preserving only variables visible before."""
         locals_by_name: dict[str, T.Type] = {}
@@ -166,7 +177,7 @@ class BranchVariables:
             )
             if left is not None and right is not None:
                 locals_by_name[name] = (
-                    left if left == right else T.merge_types(left, right, ctx)
+                    left if left == right else T.merge_types(left, right)
                 )
         return BranchVariables(
             function_locals=_sorted_items(locals_by_name.items()),
@@ -252,11 +263,15 @@ class AnalysisBranch:
                 return None
 
 
+def _empty_branch_set() -> frozenset[AnalysisBranch]:
+    return frozenset()
+
+
 @dataclass(frozen=True)
 class BranchSet:
     """A set of possible analysis branches."""
 
-    branches: frozenset[AnalysisBranch] = field(default_factory=frozenset)
+    branches: frozenset[AnalysisBranch] = field(default_factory=_empty_branch_set)
 
     @classmethod
     def one(cls, branch: AnalysisBranch) -> BranchSet:
@@ -265,7 +280,7 @@ class BranchSet:
     def __bool__(self) -> bool:
         return bool(self.branches)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[AnalysisBranch]:
         return iter(self.branches)
 
     def __len__(self) -> int:
@@ -327,11 +342,10 @@ class BranchSet:
             for right in other.branches:
                 if left.inputs != right.inputs:
                     continue
-                stack = T.merge_stacks(left.stack, right.stack, analyser.env.context)
+                stack: T.TypeStack = T.merge_stacks(left.stack, right.stack)
                 variables = left.variables.merge_against(
                     right.variables,
                     left.variables,
-                    analyser.env.context,
                 )
                 joined.add(_replace_branch(left, stack=stack, variables=variables))
         return BranchSet(frozenset(joined))
@@ -569,20 +583,30 @@ def analyse_function_details(
     return Analyser(env).analyse_function_details(node)
 
 
-def _replace_branch(branch: AnalysisBranch, **changes: object) -> AnalysisBranch:
-    data = {
-        "stack": branch.stack,
-        "inputs": branch.inputs,
-        "variables": branch.variables,
-        "typed_body": branch.typed_body,
-        "input_mode": branch.input_mode,
-        "cycle_params": branch.cycle_params,
-        "cycle_index": branch.cycle_index,
-        "diagnostics": branch.diagnostics,
-        "origin": branch.origin,
-    }
-    data.update(changes)
-    return AnalysisBranch(**data)
+def _replace_branch(
+    branch: AnalysisBranch,
+    *,
+    stack: T.TypeStack | None = None,
+    inputs: tuple[T.Type, ...] | None = None,
+    variables: BranchVariables | None = None,
+    typed_body: tuple[TypedNode, ...] | None = None,
+    input_mode: InputMode | None = None,
+    cycle_params: tuple[T.Type, ...] | None = None,
+    cycle_index: int | None = None,
+    diagnostics: tuple[str, ...] | None = None,
+    origin: int | None = None,
+) -> AnalysisBranch:
+    return AnalysisBranch(
+        stack=branch.stack if stack is None else stack,
+        inputs=branch.inputs if inputs is None else inputs,
+        variables=branch.variables if variables is None else variables,
+        typed_body=branch.typed_body if typed_body is None else typed_body,
+        input_mode=branch.input_mode if input_mode is None else input_mode,
+        cycle_params=branch.cycle_params if cycle_params is None else cycle_params,
+        cycle_index=branch.cycle_index if cycle_index is None else cycle_index,
+        diagnostics=branch.diagnostics if diagnostics is None else diagnostics,
+        origin=branch.origin if origin is None else origin,
+    )
 
 
 def _declared_params(node: FunctionNode) -> tuple[T.Type, ...]:
@@ -692,6 +716,20 @@ def _lookup(items: tuple[tuple[str, T.Type], ...], name: str) -> T.Type | None:
         if key == name:
             return typ
     return None
+
+
+def _assignment_error(
+    name: str,
+    source: T.Type,
+    target: T.Type,
+    ctx: T.Context,
+) -> str | None:
+    if T.assignable(source, target, ctx):
+        return None
+    return (
+        f"cannot assign {T.show(source)} to variable '{name}' "
+        f"of type {T.show(target)}"
+    )
 
 
 def _set_item(

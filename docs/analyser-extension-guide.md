@@ -223,7 +223,6 @@ def _if(self, branch: AnalysisBranch, node: IfNode) -> set[AnalysisBranch]:
             variables = left.variables.merge_against(
                 right.variables,
                 branch.variables,
-                self.env.context,
             )
             typed_if = TypedIfNode(
                 node=node,
@@ -275,7 +274,6 @@ def _while(self, branch: AnalysisBranch, node: WhileNode) -> set[AnalysisBranch]
         variables = body_output.variables.merge_against(
             branch.variables,
             branch.variables,
-            self.env.context,
         )
         outputs.add(branch.with_stack(stack).with_variables(variables))
     return outputs
