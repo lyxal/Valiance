@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from valiance.asts.model import (
+from valiance.asts.nodes import (
     ASTNode,
     ElementNode,
     FunctionNode,
