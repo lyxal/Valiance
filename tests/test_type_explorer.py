@@ -3,7 +3,6 @@ import unittest
 from valiance.type_explorer import command, parse_type
 from valiance.types import ArrayMinType, C, Fn, ListExactType, N, U, optional
 
-
 Number = N("Number")
 String = N("String")
 

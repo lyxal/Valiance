@@ -2,9 +2,9 @@ from __future__ import annotations
 
 """Core immutable type nodes and overload result records."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Callable
 
 
 class Specificity(IntEnum):
@@ -124,7 +124,7 @@ class FunctionType(Type):
 class OverloadSetType(Type):
     """An overloaded callable value."""
 
-    overloads: tuple["Overload", ...] = ()
+    overloads: tuple[Overload, ...] = ()
 
 
 @dataclass(frozen=True)

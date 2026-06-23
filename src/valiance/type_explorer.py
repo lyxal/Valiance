@@ -32,7 +32,6 @@ from valiance.types import (
     resolve_overload_result,
 )
 
-
 HELP = """Commands:
   assignable <source> -> <target>
   compatible <argument> -> <parameter>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Type constructors, normalization, equality, and display formatting."""
 
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
 
 from valiance.types.nodes import (
     ArrayExactType,

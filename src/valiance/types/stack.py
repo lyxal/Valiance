@@ -30,7 +30,7 @@ class TypeStack:
     def __bool__(self) -> bool:
         return bool(self.items)
 
-    def push(self, *types: Type) -> "TypeStack":
+    def push(self, *types: Type) -> TypeStack:
         """Return a new stack with ``types`` appended on top."""
         return TypeStack(self.items + tuple(types))
 
@@ -40,7 +40,7 @@ class TypeStack:
         ctx: Context | None = None,
         *,
         infer_missing: bool = False,
-    ) -> "StackApplication | None":
+    ) -> StackApplication | None:
         """Choose and apply one overload candidate to this stack."""
         from valiance.types.relations import apply_overloads_to_stack
 
@@ -57,7 +57,7 @@ class TypeStack:
         ctx: Context | None = None,
         *,
         infer_missing: bool = False,
-    ) -> "StackApplication | None":
+    ) -> StackApplication | None:
         """Apply one known overload candidate to this stack."""
         from valiance.types.relations import apply_overload_to_stack
 
@@ -68,7 +68,7 @@ class TypeStack:
             infer_missing=infer_missing,
         )
 
-    def merge(self, other: "TypeStack") -> "TypeStack":
+    def merge(self, other: TypeStack) -> TypeStack:
         """Merge this stack with another branch stack."""
         from valiance.types.relations import merge_stacks
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Type relations, generic solving, overload resolution, and stack merging."""
 
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
 
 from valiance.types.builders import (
     C,
@@ -93,7 +93,7 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
         # Generic nominal types are invariant. Trait/variant relationships are
         # the only nominal widening currently supported.
         if source.name == target.name and len(source.args) == len(target.args):
-            return all(same(a, b) for a, b in zip(source.args, target.args))
+            return all(same(a, b) for a, b in zip(source.args, target.args, strict=False))
         if ctx.implements(source.name, target.name):
             return True
         if ctx.variant_members.get(source.name) == target.name:
@@ -103,7 +103,7 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
 
     if isinstance(source, TupleType) and isinstance(target, TupleType):
         return len(source.params) == len(target.params) and all(
-            assignable(a, b, ctx) for a, b in zip(source.params, target.params)
+            assignable(a, b, ctx) for a, b in zip(source.params, target.params, strict=False)
         )
 
     if isinstance(source, CollectionType) and isinstance(target, CollectionType):
@@ -211,13 +211,13 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
             return True
         if isinstance(p, NominalType) and isinstance(a, NominalType):
             return p.name == a.name and len(p.args) == len(a.args) and all(
-                rec(x, y) for x, y in zip(p.args, a.args)
+                rec(x, y) for x, y in zip(p.args, a.args, strict=False)
             )
         if isinstance(p, TupleType) and isinstance(a, TupleType):
-            return len(p.params) == len(a.params) and all(rec(x, y) for x, y in zip(p.params, a.params))
+            return len(p.params) == len(a.params) and all(rec(x, y) for x, y in zip(p.params, a.params, strict=False))
         if isinstance(p, FunctionType) and isinstance(a, FunctionType):
             return len(p.params) == len(a.params) and len(p.returns) == len(a.returns) and all(
-                rec(x, y) for x, y in zip(p.params + p.returns, a.params + a.returns)
+                rec(x, y) for x, y in zip(p.params + p.returns, a.params + a.returns, strict=False)
             )
         if isinstance(p, FunctionType) and isinstance(a, OverloadSetType):
             # Overloaded callables are checked after other generics are known.
@@ -380,7 +380,7 @@ def merge_stacks(
     length = max(len(a), len(b))
     left = (NoneType(),) * (length - len(a)) + a.items
     right = (NoneType(),) * (length - len(b)) + b.items
-    return TypeStack(tuple(merge_types(x, y) for x, y in zip(left, right)))
+    return TypeStack(tuple(merge_types(x, y) for x, y in zip(left, right, strict=False)))
 
 
 def _substitute(t: Type, subst: dict[str, Type]) -> Type:
@@ -454,7 +454,7 @@ def _callable_compatible(argument: Type, parameter: Type, ctx: Context) -> bool:
     if isinstance(argument, FunctionType):
         actual_returns = _overload_result_for_args(Overload(argument.params, argument.returns), parameter.params, ctx)
         return actual_returns is not None and len(actual_returns) == len(parameter.returns) and all(
-            compatible(a, p, ctx) for a, p in zip(actual_returns, parameter.returns)
+            compatible(a, p, ctx) for a, p in zip(actual_returns, parameter.returns, strict=False)
         )
     if isinstance(argument, OverloadSetType):
         # The expected Function[...] supplies the call input types for choosing
@@ -464,7 +464,7 @@ def _callable_compatible(argument: Type, parameter: Type, ctx: Context) -> bool:
     if isinstance(argument, CallSiteCheckedFunctionType):
         result = argument.checker(parameter.params)
         return result is not None and len(result) == len(parameter.returns) and all(
-            compatible(a, p, ctx) for a, p in zip(result, parameter.returns)
+            compatible(a, p, ctx) for a, p in zip(result, parameter.returns, strict=False)
         )
     return False
 
@@ -475,7 +475,7 @@ def _overload_callable_compatible(overload: Overload, expected: Type, ctx: Conte
         return False
     actual_returns = _overload_result_for_args(overload, expected.params, ctx)
     return actual_returns is not None and all(
-        compatible(r, e, ctx) for r, e in zip(actual_returns, expected.returns)
+        compatible(r, e, ctx) for r, e in zip(actual_returns, expected.returns, strict=False)
     )
 
 
@@ -483,12 +483,12 @@ def _overload_result_for_args(overload: Overload, args: tuple[Type, ...], ctx: C
     """Compute an overload's result stack when called with concrete argument types."""
     if len(overload.params) != len(args):
         return None
-    if not all(compatible(a, p, ctx) for a, p in zip(args, overload.params)):
+    if not all(compatible(a, p, ctx) for a, p in zip(args, overload.params, strict=False)):
         return None
 
     vector_rank = 0
     vector_type: CollectionClass | None = None
-    for arg, param in zip(args, overload.params):
+    for arg, param in zip(args, overload.params, strict=False):
         # Track how much vectorisation was needed. Return types are wrapped in
         # that outer vector shape after the scalar overload is applied.
         if not isinstance(arg, CollectionType):
@@ -564,7 +564,7 @@ def apply_overload(overload: Overload, args: tuple[Type, ...], ctx: Context | No
 
     constraints: dict[str, list[Type]] = {}
     deferred_function_args: list[tuple[FunctionType, FunctionType]] = []
-    for param, arg in zip(overload.params, args):
+    for param, arg in zip(overload.params, args, strict=False):
         if isinstance(param, FunctionType) and isinstance(arg, (FunctionType, OverloadSetType, CallSiteCheckedFunctionType)):
             # Defer function argument solving. Other parameters should usually
             # determine T before we ask whether this callable fits Function[T].
@@ -605,7 +605,7 @@ def apply_overload(overload: Overload, args: tuple[Type, ...], ctx: Context | No
 
     params = tuple(_substitute(param, substitution) for param in overload.params)
     returns = tuple(_substitute(ret, substitution) for ret in overload.returns)
-    if not all(compatible(arg, param, ctx) for arg, param in zip(args, params)):
+    if not all(compatible(arg, param, ctx) for arg, param in zip(args, params, strict=False)):
         return None
 
     actual_returns = _overload_result_for_args(Overload(params, returns), args, ctx)
@@ -614,7 +614,7 @@ def apply_overload(overload: Overload, args: tuple[Type, ...], ctx: Context | No
     # returns = declared returns after generic substitution.
     # actual_returns = returns after call adaptation such as vectorisation.
 
-    scores = tuple(_match_specificity(arg, param, ctx) for arg, param in zip(args, params))
+    scores = tuple(_match_specificity(arg, param, ctx) for arg, param in zip(args, params, strict=False))
     if any(score == Specificity.NO_MATCH for score in scores):
         return None
 
@@ -755,7 +755,7 @@ def _contains_type_var(t: Type) -> bool:
 
 def _dominates(a: tuple[Specificity, ...], b: tuple[Specificity, ...]) -> bool:
     """Return whether specificity vector ``a`` strictly dominates ``b``."""
-    return all(x <= y for x, y in zip(a, b)) and any(x < y for x, y in zip(a, b))
+    return all(x <= y for x, y in zip(a, b, strict=False)) and any(x < y for x, y in zip(a, b, strict=False))
 
 
 def _tag_requirements_met(actual: frozenset[str], required: frozenset[str]) -> bool:
