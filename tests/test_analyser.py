@@ -95,6 +95,23 @@ class AnalyserTests(unittest.TestCase):
 
         self.assertEqual([node.typ for node in typed], [Number, Number, Number])
 
+    def test_non_inference_element_rejects_ambiguous_overload(self):
+        env = Environment()
+        env.define_overload("amb", Overload((Number,), (Number,)))
+        env.define_overload("amb", Overload((Number,), (String,)))
+        analyser = Analyser(env)
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            (ElementNode("amb"),),
+        )
+
+        self.assertEqual(len(branches), 0)
+        self.assertEqual(
+            analyser.diagnostics,
+            ["ambiguous overloads for element 'amb'"],
+        )
+
     def test_unknown_element_is_untyped(self):
         typed = analyse([ElementNode("missing")], Environment())
         self.assertIsNone(typed[0].typ)

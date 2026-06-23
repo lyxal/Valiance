@@ -462,6 +462,9 @@ class Analyser:
                 f"no overloads for element '{node.name}' match the given arguments"
             )
             return set()
+        if len(winners) > 1 and branch.input_mode is not InputMode.INFER_INPUTS:
+            self._diagnose(f"ambiguous overloads for element '{node.name}'")
+            return set()
 
         results: set[AnalysisBranch] = set()
         for applied, popped in winners:
@@ -646,9 +649,9 @@ def _dominates(
         return False
     saw_strict = False
     for a, b in zip(left, right, strict=True):
-        if a.value < b.value:
-            return False
         if a.value > b.value:
+            return False
+        if a.value < b.value:
             saw_strict = True
     return saw_strict
 
