@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Type relations, generic solving, overload resolution, and stack merging."""
+
+from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
@@ -40,6 +40,7 @@ from valiance.types.nodes import (
     Overload,
     OverloadSetType,
     ResolvedOverload,
+    RowType,
     Specificity,
     TaggedType,
     TupleType,
@@ -93,6 +94,12 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
     if isinstance(source, IntersectionType):
         return any(subtype(s, target, ctx) for s in source.items)
 
+    if isinstance(target, RowType):
+        return _row_subtype(source, target, ctx)
+
+    if isinstance(source, RowType):
+        return subtype(source.base, target, ctx)
+
     if isinstance(source, NominalType) and isinstance(target, NominalType):
         # Generic nominal types are invariant. Trait/variant relationships are
         # the only nominal widening currently supported.
@@ -114,6 +121,20 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
         return _collection_subtype(source, target, ctx)
 
     return False
+
+
+def _row_subtype(source: Type, target: RowType, ctx: Context) -> bool:
+    """Return whether ``source`` satisfies a row-constrained target."""
+    if isinstance(source, RowType):
+        if not subtype(source.base, target.base, ctx):
+            return False
+        source_fields = {field.name: field.typ for field in source.fields}
+        for field in target.fields:
+            actual = source_fields.get(field.name)
+            if actual is None or not assignable(actual, field.typ, ctx):
+                return False
+        return True
+    return not target.fields and subtype(source, target.base, ctx)
 
 
 def _collection_subtype(source: Type, target: Type, ctx: Context) -> bool:
@@ -217,6 +238,20 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
             return p.name == a.name and len(p.args) == len(a.args) and all(
                 rec(x, y) for x, y in zip(p.args, a.args, strict=False)
             )
+        if isinstance(p, RowType):
+            actual_base = a.base if isinstance(a, RowType) else a
+            if not rec(p.base, actual_base):
+                return False
+            if not p.fields:
+                return True
+            if not isinstance(a, RowType):
+                return False
+            actual_fields = {field.name: field.typ for field in a.fields}
+            for field in p.fields:
+                actual_field = actual_fields.get(field.name)
+                if actual_field is None or not rec(field.typ, actual_field):
+                    return False
+            return True
         if isinstance(p, TupleType) and isinstance(a, TupleType):
             return len(p.params) == len(a.params) and all(rec(x, y) for x, y in zip(p.params, a.params, strict=False))
         if isinstance(p, FunctionType) and isinstance(a, FunctionType):
@@ -400,6 +435,16 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
         return I(*(_substitute(i, subst) for i in t.items))
     if isinstance(t, TupleType):
         return Tup(*(_substitute(p, subst) for p in t.params))
+    if isinstance(t, RowType):
+        return normalize(
+            RowType(
+                _substitute(t.base, subst),
+                tuple(
+                    type(field)(field.name, _substitute(field.typ, subst))
+                    for field in t.fields
+                ),
+            )
+        )
     if isinstance(t, CollectionType):
         return normalize(C(type(t), _substitute(t.base, subst), t.rank))
     if isinstance(t, FunctionType):
@@ -748,6 +793,10 @@ def _contains_type_var(t: Type) -> bool:
         return any(_contains_type_var(item) for item in t.items)
     if isinstance(t, TupleType):
         return any(_contains_type_var(item) for item in t.params)
+    if isinstance(t, RowType):
+        return _contains_type_var(t.base) or any(
+            _contains_type_var(field.typ) for field in t.fields
+        )
     if isinstance(t, CollectionType):
         return _contains_type_var(t.base)
     if isinstance(t, FunctionType):

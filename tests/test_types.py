@@ -4,6 +4,7 @@ from valiance.symbols import Symbol
 from valiance.types import (
     C,
     Context,
+    Field,
     Fn,
     ListExactType,
     ListMinType,
@@ -11,6 +12,7 @@ from valiance.types import (
     NoneType,
     Overload,
     Overloads,
+    Row,
     Specificity,
     TypeStack,
     U,
@@ -35,9 +37,13 @@ NUMBER = Symbol("Number")
 STRING = Symbol("String")
 CIRCLE = Symbol("Circle")
 SHAPE = Symbol("Shape")
+FOO = Symbol("Foo")
+BAR = Symbol("bar")
+BAZ = Symbol("baz")
 
 Number = N(NUMBER)
 String = N(STRING)
+Foo = N(FOO)
 
 
 class TypeLibraryTests(unittest.TestCase):
@@ -69,6 +75,44 @@ class TypeLibraryTests(unittest.TestCase):
             U(Number, C(ListMinType, Number)),
         )
         self.assertIsNone(collection_item_type(Number))
+
+    def test_row_type_displays_required_fields(self):
+        self.assertEqual(
+            str(Row(V("@1"), Field(BAZ, V("@2")))),
+            "@1(.baz: @2)",
+        )
+
+    def test_row_type_assignability_requires_fields(self):
+        source = Row(Foo, Field(BAR, Number), Field(BAZ, String))
+        target = Row(Foo, Field(BAR, Number))
+
+        self.assertTrue(assignable(source, target))
+        self.assertFalse(assignable(Foo, target))
+        self.assertFalse(assignable(source, Row(Foo, Field(BAR, String))))
+
+    def test_row_type_solves_base_and_field_generics(self):
+        constraints = _solve(
+            Row(V("T"), Field(BAR, V("U"))),
+            Row(Foo, Field(BAR, Number)),
+        )
+
+        self.assertIsNotNone(constraints)
+        self.assertEqual(_combine_all(constraints["T"]), Foo)
+        self.assertEqual(_combine_all(constraints["U"]), Number)
+
+    def test_row_type_overload_application_substitutes_fields(self):
+        overload = Overload(
+            (Row(V("T"), Field(BAR, V("U"))),),
+            (V("U"),),
+        )
+
+        applied = apply_overload(overload, (Row(Foo, Field(BAR, Number)),))
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.substitution["T"], Foo)
+        self.assertEqual(applied.substitution["U"], Number)
+        self.assertEqual(applied.params, (Row(Foo, Field(BAR, Number)),))
+        self.assertEqual(applied.returns, (Number,))
 
     def test_optional_none_does_not_solve_type_var(self):
         constraints = _solve(optional(V("T")), NoneType())

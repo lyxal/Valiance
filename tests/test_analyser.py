@@ -12,6 +12,7 @@ from valiance.analysis import (
 )
 from valiance.asts import (
     ElementNode,
+    FieldAccessNode,
     FunctionNode,
     FunctionParam,
     NumberLiteralNode,
@@ -22,6 +23,7 @@ from valiance.types import (
     AppliedElement,
     C,
     Environment,
+    Field,
     Fn,
     FunctionType,
     ListExactType,
@@ -31,8 +33,10 @@ from valiance.types import (
     ObjectAttribute,
     Overload,
     Overloads,
+    Row,
     TypeStack,
     UnknownElement,
+    V,
 )
 
 NUMBER = Symbol("Number")
@@ -336,6 +340,52 @@ class AnalyserTests(unittest.TestCase):
         typ = analyse_function(node, env)
 
         self.assertEqual(typ, Fn((Number, Number), (Number,)))
+
+    def test_function_infers_row_constraint_from_field_access(self):
+        typ = analyse_function(
+            FunctionNode(body=(FieldAccessNode(BAR),)),
+            Environment(),
+        )
+
+        self.assertEqual(typ, Fn((Row(V("@1"), Field(BAR, V("@2"))),), (V("@2"),)))
+
+    def test_chained_field_access_refines_nested_row_constraint(self):
+        typ = analyse_function(
+            FunctionNode(body=(FieldAccessNode(BAR), FieldAccessNode(NAME))),
+            Environment(),
+        )
+
+        self.assertEqual(
+            typ,
+            Fn(
+                (Row(V("@1"), Field(BAR, Row(V("@2"), Field(NAME, V("@3"))))),),
+                (V("@3"),),
+            ),
+        )
+
+    def test_function_uses_explicit_row_parameter_for_field_access(self):
+        node = FunctionNode(
+            params=(FunctionParam(X, Row(N(FOO), Field(BAR, String))),),
+            body=(FieldAccessNode(BAR),),
+        )
+
+        typ = analyse_function(node, Environment())
+
+        self.assertEqual(typ, Fn((Row(N(FOO), Field(BAR, String)),), (String,)))
+
+    def test_field_access_uses_environment_object_attributes(self):
+        env = Environment()
+        env.define_object(FOO, (ObjectAttribute(BAR, String),))
+
+        branches = Analyser(env).analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((N(FOO),)))),
+            (FieldAccessNode(BAR),),
+        )
+
+        self.assertEqual(len(branches), 1)
+        branch = next(iter(branches))
+        self.assertEqual(branch.stack, TypeStack((String,)))
+        self.assertEqual([node.typ for node in branch.typed_body], [String])
 
     def test_explicit_non_niladic_function_cycles_params_on_underflow(self):
         env = Environment()

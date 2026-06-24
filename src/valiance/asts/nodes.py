@@ -79,3 +79,10 @@ class SetVariableNode(ASTNode):
     """Assign the top stack value to a variable."""
 
     name: Symbol
+
+
+@dataclass(frozen=True)
+class FieldAccessNode(ASTNode):
+    """Read an attribute from the top stack value."""
+
+    name: Symbol

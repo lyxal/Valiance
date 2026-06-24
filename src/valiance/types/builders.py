@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Type constructors, normalization, equality, and display formatting."""
+
+from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
@@ -22,6 +22,8 @@ from valiance.types.nodes import (
     NoneTypeNode,
     Overload,
     OverloadSetType,
+    RowField,
+    RowType,
     TaggedType,
     TupleType,
     Type,
@@ -77,6 +79,16 @@ def I(*types: Type) -> Type:
 def Tup(*types: Type) -> Type:
     """Create a fixed positional tuple type."""
     return TupleType(tuple(types))
+
+
+def Field(name: Symbol, typ: Type) -> RowField:
+    """Create one required field for a row-constrained type."""
+    return RowField(name, typ)
+
+
+def Row(base: Type, *fields: RowField) -> Type:
+    """Create a type constrained by required fields."""
+    return normalize(RowType(base, tuple(fields)))
 
 
 def C(collection_type: CollectionClass, base: Type, rank: int = 1) -> Type:
@@ -194,6 +206,12 @@ def normalize(t: Type) -> Type:
                 return collapsed
         return type(t)(base, t.rank)
 
+    if isinstance(t, RowType):
+        return RowType(
+            normalize(t.base),
+            _normalize_row_fields(t.fields),
+        )
+
     if isinstance(t, FunctionType):
         return Fn((normalize(p) for p in t.params), (normalize(r) for r in t.returns))
 
@@ -207,6 +225,15 @@ def normalize(t: Type) -> Type:
         return TaggedType(inner, t.tags)
 
     return t
+
+
+def _normalize_row_fields(fields: tuple[RowField, ...]) -> tuple[RowField, ...]:
+    merged: dict[Symbol, Type] = {}
+    for field in fields:
+        typ = normalize(field.typ)
+        previous = merged.get(field.name)
+        merged[field.name] = typ if previous is None else U(previous, typ)
+    return tuple(RowField(name, typ) for name, typ in sorted(merged.items()))
 
 
 def collapse_nested_collection(
@@ -270,6 +297,9 @@ def show(t: Type) -> str:
         return " & ".join(sorted(show(i) for i in t.items))
     if isinstance(t, TupleType):
         return "{" + ", ".join(show(p) for p in t.params) + "}"
+    if isinstance(t, RowType):
+        fields = ", ".join(f".{field.name}: {show(field.typ)}" for field in t.fields)
+        return f"{show(t.base)}({fields})"
     if isinstance(t, CollectionType):
         suffix = {
             ListExactType: "+",

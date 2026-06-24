@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from itertools import count
 
-from valiance.asts.nodes import GetVariableNode, SetVariableNode
 import valiance.types as T
 from valiance.analysis.builtins import default_environment
 from valiance.asts import (
@@ -19,6 +18,7 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedNode,
 )
+from valiance.asts.nodes import FieldAccessNode, GetVariableNode, SetVariableNode
 from valiance.symbols import Symbol
 
 _branch_ids = count(1)
@@ -162,6 +162,15 @@ class BranchVariables:
             captures=self.captures,
         )
 
+    def refine_type(self, old: T.Type, new: T.Type) -> BranchVariables:
+        """Replace one type fact wherever it appears in visible branch variables."""
+        return BranchVariables(
+            function_locals=_refine_items(self.function_locals, old, new),
+            parameters=_refine_items(self.parameters, old, new),
+            captures=_refine_items(self.captures, old, new),
+            block_locals=_refine_items(self.block_locals, old, new),
+        )
+
     def merge_against(
         self,
         other: BranchVariables,
@@ -217,6 +226,18 @@ class AnalysisBranch:
 
     def with_diagnostic(self, message: str) -> AnalysisBranch:
         return _replace_branch(self, diagnostics=self.diagnostics + (message,))
+
+    def refine_type(self, old: T.Type, new: T.Type) -> AnalysisBranch:
+        """Replace one inferred/generic type fact across the branch."""
+        return _replace_branch(
+            self,
+            stack=_refine_stack(self.stack, old, new),
+            inputs=tuple(_refine_type(item, old, new) for item in self.inputs),
+            variables=self.variables.refine_type(old, new),
+            cycle_params=tuple(
+                _refine_type(item, old, new) for item in self.cycle_params
+            ),
+        )
 
     def source_arguments(
         self,
@@ -504,6 +525,8 @@ class Analyser:
                     .with_stack(branch.stack.pop())
                     .append_typed(TypedNode(node, value_type))
                 }
+            case FieldAccessNode(name):
+                return self._field_access(branch, node, name)
             case _:
                 return {branch.append_typed(TypedNode(node, None))}
 
@@ -547,6 +570,86 @@ class Analyser:
                 )
             )
         return results
+
+    def _field_access(
+        self,
+        branch: AnalysisBranch,
+        node: FieldAccessNode,
+        name: Symbol,
+    ) -> set[AnalysisBranch]:
+        sourced = self._source_field_receiver(branch, name)
+        if sourced is None:
+            self._diagnose(f"empty stack when trying to access field '{name}'")
+            return set()
+
+        receiver_type, field_type, branch = sourced
+        if field_type is None:
+            self._diagnose(
+                f"type {T.show(receiver_type)} has no known field '{name}'"
+            )
+            return set()
+
+        return {
+            branch.with_stack(branch.stack.push(field_type)).append_typed(
+                TypedNode(node, field_type)
+            )
+        }
+
+    def _source_field_receiver(
+        self,
+        branch: AnalysisBranch,
+        name: Symbol,
+    ) -> tuple[T.Type, T.Type | None, AnalysisBranch] | None:
+        if branch.stack:
+            receiver_type = branch.stack[-1]
+            popped = branch.with_stack(branch.stack.pop())
+            field_type, refined_receiver = self._field_type(receiver_type, name, popped)
+            if refined_receiver is not None:
+                popped = popped.refine_type(receiver_type, refined_receiver)
+                receiver_type = refined_receiver
+            return receiver_type, field_type, popped
+
+        if branch.input_mode is not InputMode.INFER_INPUTS:
+            return None
+
+        base = _anonymous_type_var(branch, 1)
+        field_type = _anonymous_type_var(branch, 2)
+        receiver_type = T.Row(base, T.Field(name, field_type))
+        return (
+            receiver_type,
+            field_type,
+            _replace_branch(branch, inputs=branch.inputs + (receiver_type,)),
+        )
+
+    def _field_type(
+        self,
+        receiver_type: T.Type,
+        name: Symbol,
+        branch: AnalysisBranch,
+    ) -> tuple[T.Type | None, T.Type | None]:
+        receiver_type = T.normalize(receiver_type)
+        if isinstance(receiver_type, T.RowType):
+            existing = _row_field_type(receiver_type, name)
+            if existing is not None:
+                return existing, None
+            field_type = _anonymous_type_var(branch, 1)
+            return (
+                field_type,
+                T.Row(
+                    receiver_type.base,
+                    *receiver_type.fields,
+                    T.Field(name, field_type),
+                ),
+            )
+
+        if isinstance(receiver_type, T.VarType):
+            field_type = _anonymous_type_var(branch, 1)
+            return field_type, T.Row(receiver_type, T.Field(name, field_type))
+
+        if isinstance(receiver_type, T.NominalType):
+            return self.env.lookup_attribute(receiver_type.name, name), None
+
+        return None, None
 
     def _analyse_function_literal(
         self,
@@ -758,6 +861,113 @@ def _param_type(param: FunctionParam, index: int) -> T.Type:
         return param.typ
     name = param.name.text if param.name is not None else f"_{index}"
     return T.V(name)
+
+
+def _anonymous_type_var(branch: AnalysisBranch, offset: int) -> T.Type:
+    taken = _anonymous_type_indices(
+        *branch.stack.items,
+        *branch.inputs,
+        *branch.cycle_params,
+        *(typ for _, typ in branch.variables.visible_items()),
+    )
+    start = max(taken, default=0)
+    return T.V(f"@{start + offset}")
+
+
+def _anonymous_type_indices(*types: T.Type) -> set[int]:
+    indices: set[int] = set()
+    for typ in types:
+        _collect_anonymous_type_indices(T.normalize(typ), indices)
+    return indices
+
+
+def _collect_anonymous_type_indices(typ: T.Type, indices: set[int]) -> None:
+    if isinstance(typ, T.VarType) and typ.name.startswith("@"):
+        suffix = typ.name[1:]
+        if suffix.isdecimal():
+            indices.add(int(suffix))
+        return
+    if isinstance(typ, T.NominalType):
+        for arg in typ.args:
+            _collect_anonymous_type_indices(arg, indices)
+        return
+    if isinstance(typ, (T.UnionType, T.IntersectionType)):
+        for item in typ.items:
+            _collect_anonymous_type_indices(item, indices)
+        return
+    if isinstance(typ, T.TupleType):
+        for item in typ.params:
+            _collect_anonymous_type_indices(item, indices)
+        return
+    if isinstance(typ, T.RowType):
+        _collect_anonymous_type_indices(typ.base, indices)
+        for row_field in typ.fields:
+            _collect_anonymous_type_indices(row_field.typ, indices)
+        return
+    if isinstance(typ, T.CollectionType):
+        _collect_anonymous_type_indices(typ.base, indices)
+        return
+    if isinstance(typ, T.FunctionType):
+        for item in typ.params + typ.returns:
+            _collect_anonymous_type_indices(item, indices)
+        return
+    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+        _collect_anonymous_type_indices(typ.inner, indices)
+
+
+def _row_field_type(row: T.RowType, name: Symbol) -> T.Type | None:
+    for row_field in row.fields:
+        if row_field.name == name:
+            return row_field.typ
+    return None
+
+
+def _refine_stack(stack: T.TypeStack, old: T.Type, new: T.Type) -> T.TypeStack:
+    return T.TypeStack(tuple(_refine_type(item, old, new) for item in stack.items))
+
+
+def _refine_items(
+    items: tuple[tuple[Symbol, T.Type], ...],
+    old: T.Type,
+    new: T.Type,
+) -> tuple[tuple[Symbol, T.Type], ...]:
+    return tuple((name, _refine_type(typ, old, new)) for name, typ in items)
+
+
+def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
+    typ = T.normalize(typ)
+    if T.same(typ, old):
+        return new
+    if isinstance(typ, T.NominalType):
+        return T.N(typ.name, *(_refine_type(arg, old, new) for arg in typ.args))
+    if isinstance(typ, T.UnionType):
+        return T.U(*(_refine_type(item, old, new) for item in typ.items))
+    if isinstance(typ, T.IntersectionType):
+        return T.I(*(_refine_type(item, old, new) for item in typ.items))
+    if isinstance(typ, T.TupleType):
+        return T.Tup(*(_refine_type(item, old, new) for item in typ.params))
+    if isinstance(typ, T.RowType):
+        return T.Row(
+            _refine_type(typ.base, old, new),
+            *(
+                T.Field(row_field.name, _refine_type(row_field.typ, old, new))
+                for row_field in typ.fields
+            ),
+        )
+    if isinstance(typ, T.CollectionType):
+        return T.C(type(typ), _refine_type(typ.base, old, new), typ.rank)
+    if isinstance(typ, T.FunctionType):
+        return T.Fn(
+            (_refine_type(item, old, new) for item in typ.params),
+            (_refine_type(item, old, new) for item in typ.returns),
+        )
+    if isinstance(typ, T.TaggedType):
+        return T.Tagged(_refine_type(typ.inner, old, new), *typ.tags)
+    if isinstance(typ, T.ExactType):
+        return T.Exact(_refine_type(typ.inner, old, new))
+    if isinstance(typ, T.AtomicType):
+        return T.Atomic(_refine_type(typ.inner, old, new))
+    return typ
 
 
 def _stack_assignable(

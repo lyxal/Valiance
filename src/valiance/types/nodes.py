@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Core immutable type nodes and overload result records."""
+
+from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -79,6 +79,22 @@ class TupleType(Type):
     """A fixed positional tuple type."""
 
     params: tuple[Type, ...] = ()
+
+
+@dataclass(frozen=True)
+class RowField:
+    """One required field in a row constraint."""
+
+    name: Symbol
+    typ: Type
+
+
+@dataclass(frozen=True)
+class RowType(Type):
+    """A base type with required structural fields."""
+
+    base: Type
+    fields: tuple[RowField, ...] = ()
 
 
 @dataclass(frozen=True)
