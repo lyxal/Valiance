@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from valiance.asts.nodes import (
     ASTNode,
+    BreakNode,
     ElementNode,
     FieldAccessNode,
+    ForNode,
     FunctionNode,
     FunctionOverloadTyping,
     FunctionParam,
@@ -22,8 +24,10 @@ from valiance.symbols import Symbol
 
 __all__ = [
     "ASTNode",
+    "BreakNode",
     "ElementNode",
     "FieldAccessNode",
+    "ForNode",
     "FunctionOverloadTyping",
     "FunctionNode",
     "FunctionParam",

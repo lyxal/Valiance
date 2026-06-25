@@ -127,3 +127,10 @@ class ForNode(ASTNode):
     variable: Symbol
     index_variable: Symbol | None = None
     body: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class BreakNode(ASTNode):
+    """Break from a while/for loop with optional value(s)"""
+
+    values: tuple[ASTNode, ...] = ()

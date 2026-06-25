@@ -19,7 +19,9 @@ from valiance.asts import (
     TypedNode,
 )
 from valiance.asts.nodes import (
+    BreakNode,
     FieldAccessNode,
+    ForNode,
     GetVariableNode,
     IfNode,
     SetVariableNode,
@@ -219,6 +221,7 @@ class AnalysisBranch:
     input_mode: InputMode = InputMode.TOP_LEVEL
     cycle_params: tuple[T.Type, ...] = ()
     cycle_index: int = 0
+    break_type: T.Type | None = None
     diagnostics: tuple[str, ...] = ()
     origin: int = field(default_factory=lambda: next(_branch_ids))
 
@@ -233,6 +236,9 @@ class AnalysisBranch:
 
     def with_diagnostic(self, message: str) -> AnalysisBranch:
         return _replace_branch(self, diagnostics=self.diagnostics + (message,))
+
+    def with_break(self, typ: T.Type | None) -> AnalysisBranch:
+        return _replace_branch(self, break_type=typ)
 
     def refine_type(self, old: T.Type, new: T.Type) -> AnalysisBranch:
         """Replace one inferred/generic type fact across the branch."""
@@ -325,7 +331,16 @@ class BranchSet:
         """Analyse a sequence of nodes from this branch set."""
         current = self
         for node in nodes:
-            current = current.map_node(node, analyser)
+            active = BranchSet(
+                frozenset(branch for branch in current if branch.break_type is None)
+            )
+            stopped = frozenset(
+                branch for branch in current if branch.break_type is not None
+            )
+            if active:
+                current = BranchSet(active.map_node(node, analyser).branches | stopped)
+            else:
+                current = BranchSet(stopped)
             if not current:
                 return current
         return current
@@ -537,6 +552,10 @@ class Analyser:
                 return self._field_access(branch, node, name)
             case IfNode():
                 return self._if(branch, node)
+            case ForNode():
+                return self._foreach(branch, node)
+            case BreakNode():
+                return self._break(branch, node)
             case _:
                 return {branch.append_typed(TypedNode(node, None))}
 
@@ -612,6 +631,61 @@ class Analyser:
             )
         }
 
+    def _foreach(self, branch: AnalysisBranch, node: ForNode) -> set[AnalysisBranch]:
+        if not branch.stack:
+            self._diagnose("for loop requires iterable on the stack")
+            return set()
+        iterable_type = branch.stack[-1]
+        item_type = T.collection_item_type(iterable_type)
+        if not item_type:
+            self._diagnose(
+                "for loop iterable must actually be iterable. "
+                f"Got {T.show(iterable_type)}"
+            )
+            return set()
+        body_branch = branch.with_stack(branch.stack.pop())
+        body_branch = body_branch.with_variables(
+            body_branch.variables.with_block_local(node.variable, item_type)
+        )
+        if node.index_variable is not None:
+            body_branch = body_branch.with_variables(
+                body_branch.variables.with_block_local(node.index_variable, T.Number)
+            )
+
+        body_outputs = self.analyse_block(BranchSet.one(body_branch), node.body)
+        if not body_outputs:
+            return set()
+        break_types = tuple(
+            output.break_type
+            for output in body_outputs
+            if output.break_type is not None
+        )
+        result_type = _loop_break_result_type(break_types)
+        variables = _merge_loop_variables(body_branch.variables, body_outputs)
+        typed_for = TypedNode(node, result_type)
+        return {
+            _refine_branch_like(branch, body_branch)
+            .with_stack(body_branch.stack.push(result_type))
+            .with_variables(variables)
+            .append_typed(typed_for)
+        }
+
+    def _break(
+        self,
+        branch: AnalysisBranch,
+        node: BreakNode,
+    ) -> set[AnalysisBranch]:
+        value_outputs = self.analyse_block(BranchSet.one(branch), node.values)
+        outputs: set[AnalysisBranch] = set()
+        for value_branch in value_outputs:
+            break_type = _top_or_none(value_branch.stack)
+            outputs.add(
+                value_branch.append_typed(TypedNode(node, break_type)).with_break(
+                    break_type
+                )
+            )
+        return outputs
+
     def _if(
         self,
         branch: AnalysisBranch,
@@ -633,6 +707,13 @@ class Analyser:
             for right in else_outputs:
                 if left.inputs != right.inputs:
                     self._diagnose("if branches inferred different inputs")
+                    continue
+                if left.break_type is not None or right.break_type is not None:
+                    for output in (left, right):
+                        typ = output.break_type
+                        if typ is None:
+                            typ = _returns_result_type(output.stack.items)
+                        outputs.add(output.append_typed(TypedNode(node, typ)))
                     continue
                 stack = merge_stacks(left.stack, right.stack)
                 base = _refine_branch_like(branch, left)
@@ -808,6 +889,7 @@ def _replace_branch(
     input_mode: InputMode | None = None,
     cycle_params: tuple[T.Type, ...] | None = None,
     cycle_index: int | None = None,
+    break_type: T.Type | None = None,
     diagnostics: tuple[str, ...] | None = None,
     origin: int | None = None,
 ) -> AnalysisBranch:
@@ -819,6 +901,7 @@ def _replace_branch(
         input_mode=branch.input_mode if input_mode is None else input_mode,
         cycle_params=branch.cycle_params if cycle_params is None else cycle_params,
         cycle_index=branch.cycle_index if cycle_index is None else cycle_index,
+        break_type=branch.break_type if break_type is None else break_type,
         diagnostics=branch.diagnostics if diagnostics is None else diagnostics,
         origin=branch.origin if origin is None else origin,
     )
@@ -1100,6 +1183,33 @@ def _returns_result_type(returns: tuple[T.Type, ...]) -> T.Type | None:
     if len(returns) == 1:
         return returns[0]
     return None
+
+
+def _top_or_none(stack: T.TypeStack) -> T.Type:
+    if stack:
+        return stack[-1]
+    return T.NoneType()
+
+
+def _loop_break_result_type(break_types: tuple[T.Type, ...]) -> T.Type:
+    if not break_types:
+        return T.NoneType()
+    if len(break_types) == 1:
+        return T.optional(break_types[0])
+    return T.optional(T.U(*break_types))
+
+
+def _merge_loop_variables(
+    before: BranchVariables,
+    outputs: BranchSet,
+) -> BranchVariables:
+    merged = before.drop_block_locals()
+    for output in outputs:
+        merged = merged.merge_against(
+            output.variables.drop_block_locals(),
+            before.drop_block_locals(),
+        )
+    return merged
 
 
 def _has_never_return(overload: T.Overload) -> bool:

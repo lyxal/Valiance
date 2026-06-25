@@ -12,13 +12,16 @@ from valiance.analysis import (
 )
 from valiance.analysis.builtins import BUILTIN_ELEMENTS
 from valiance.asts import (
+    BreakNode,
     ElementNode,
     FieldAccessNode,
+    ForNode,
     FunctionNode,
     FunctionParam,
     GetVariableNode,
     IfNode,
     NumberLiteralNode,
+    StringLiteralNode,
     TypedFunctionNode,
 )
 from valiance.symbols import Symbol
@@ -33,14 +36,18 @@ from valiance.types import (
     N,
     Never,
     NoMatchingOverload,
+    NoneType,
     ObjectAttribute,
     Overload,
     Overloads,
     Row,
     TypeStack,
+    U,
     UnknownElement,
     V,
+    optional,
 )
+from valiance.types.default_types import Boolean
 
 NUMBER = Symbol("Number")
 STRING = Symbol("String")
@@ -248,7 +255,7 @@ class AnalyserTests(unittest.TestCase):
 
     def test_branch_set_condition_validation_rejects_any_non_bool_path(self):
         env = Environment()
-        env.define_overload(COND, Overload((), (Bool,)))
+        env.define_overload(COND, Overload((), (Boolean,)))
         env.define_overload(COND, Overload((), (Number,)))
         analyser = Analyser(env)
         branches = analyser.analyse_block(
@@ -622,6 +629,67 @@ class AnalyserTests(unittest.TestCase):
         typed = analyse([node], env)
 
         self.assertEqual(typed[0].typ, Fn((Number, Number), (Number,)))
+
+    def test_for_loop_without_break_returns_none(self):
+        analyser = Analyser(Environment())
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((C(ListExactType, Number),)))),
+            (
+                ForNode(
+                    variable=ITEM,
+                    body=(GetVariableNode(ITEM),),
+                ),
+            ),
+        )
+
+        self.assertEqual(len(branches), 1)
+        branch = next(iter(branches))
+        self.assertEqual(branch.stack, TypeStack((NoneType(),)))
+        self.assertIsNone(branch.variables.read(ITEM))
+
+    def test_for_loop_break_returns_optional_break_type(self):
+        analyser = Analyser(Environment())
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((C(ListExactType, Number),)))),
+            (
+                ForNode(
+                    variable=ITEM,
+                    body=(BreakNode(values=(GetVariableNode(ITEM),)),),
+                ),
+            ),
+        )
+
+        self.assertEqual(len(branches), 1)
+        branch = next(iter(branches))
+        self.assertEqual(branch.stack, TypeStack((optional(Number),)))
+        self.assertIsNone(branch.break_type)
+
+    def test_for_loop_collects_break_types_from_if_branches(self):
+        env = Environment()
+        env.define_overload(COND, Overload((), (Boolean,)))
+        analyser = Analyser(env)
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((C(ListExactType, Number),)))),
+            (
+                ForNode(
+                    variable=ITEM,
+                    body=(
+                        IfNode(
+                            condition=(ElementNode(COND),),
+                            then_branch=(BreakNode(values=(NumberLiteralNode("1"),)),),
+                            else_branch=(BreakNode(values=(StringLiteralNode("x"),)),),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        self.assertEqual(len(branches), 1)
+        branch = next(iter(branches))
+        self.assertEqual(branch.stack, TypeStack((optional(U(Number, String)),)))
 
 
 if __name__ == "__main__":
