@@ -18,8 +18,15 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedNode,
 )
-from valiance.asts.nodes import FieldAccessNode, GetVariableNode, SetVariableNode
+from valiance.asts.nodes import (
+    FieldAccessNode,
+    GetVariableNode,
+    IfNode,
+    SetVariableNode,
+)
 from valiance.symbols import Symbol
+from valiance.types.default_types import Boolean
+from valiance.types.relations import merge_stacks
 
 _branch_ids = count(1)
 
@@ -234,6 +241,7 @@ class AnalysisBranch:
             stack=_refine_stack(self.stack, old, new),
             inputs=tuple(_refine_type(item, old, new) for item in self.inputs),
             variables=self.variables.refine_type(old, new),
+            typed_body=_refine_typed_body(self.typed_body, old, new),
             cycle_params=tuple(
                 _refine_type(item, old, new) for item in self.cycle_params
             ),
@@ -527,6 +535,8 @@ class Analyser:
                 }
             case FieldAccessNode(name):
                 return self._field_access(branch, node, name)
+            case IfNode():
+                return self._if(branch, node)
             case _:
                 return {branch.append_typed(TypedNode(node, None))}
 
@@ -546,9 +556,14 @@ class Analyser:
             if sourced is None:
                 continue
             args, popped = sourced
-            applied = T.apply_overload(overload, args, self.env.context)
-            if applied is not None:
-                candidates.append((applied, popped))
+            candidate = _apply_overload_to_branch(
+                overload,
+                args,
+                popped,
+                self.env.context,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
 
         winners = _best_candidates(candidates)
         if not winners:
@@ -556,7 +571,11 @@ class Analyser:
                 f"no overloads for element '{node.name}' match the given arguments"
             )
             return set()
-        if len(winners) > 1 and branch.input_mode is not InputMode.INFER_INPUTS:
+        if (
+            len(winners) > 1
+            and branch.input_mode is not InputMode.INFER_INPUTS
+            and not _winners_specialize_inputs(winners, branch)
+        ):
             self._diagnose(f"ambiguous overloads for element '{node.name}'")
             return set()
 
@@ -584,9 +603,7 @@ class Analyser:
 
         receiver_type, field_type, branch = sourced
         if field_type is None:
-            self._diagnose(
-                f"type {T.show(receiver_type)} has no known field '{name}'"
-            )
+            self._diagnose(f"type {T.show(receiver_type)} has no known field '{name}'")
             return set()
 
         return {
@@ -594,6 +611,41 @@ class Analyser:
                 TypedNode(node, field_type)
             )
         }
+
+    def _if(
+        self,
+        branch: AnalysisBranch,
+        node: IfNode,
+    ) -> set[AnalysisBranch]:
+        incoming = BranchSet.one(branch)
+        condition = self.analyse_block(incoming, node.condition)
+        condition = condition.require_stack_top_assignable(Boolean, self.env.context)
+        if not condition:
+            self._diagnose("if condition must be a boolean value")
+            return set()
+
+        body_inputs = condition.pop_stack_top()
+        then_outputs = self.analyse_block(body_inputs, node.then_branch)
+        else_outputs = self.analyse_block(body_inputs, node.else_branch)
+
+        outputs: set[AnalysisBranch] = set()
+        for left in then_outputs:
+            for right in else_outputs:
+                if left.inputs != right.inputs:
+                    self._diagnose("if branches inferred different inputs")
+                    continue
+                stack = merge_stacks(left.stack, right.stack)
+                variables = left.variables.merge_against(
+                    right.variables,
+                    branch.variables,
+                )
+                typed_if = TypedNode(node, _returns_result_type(stack.items))
+                outputs.add(
+                    branch.with_stack(stack)
+                    .with_variables(variables)
+                    .append_typed(typed_if)
+                )
+        return outputs
 
     def _source_field_receiver(
         self,
@@ -715,7 +767,7 @@ class Analyser:
         stack: T.TypeStack,
     ) -> tuple[T.Type, ...] | None:
         if node.returns is None:
-            return stack.items
+            return stack.items[-1:] if stack else ()
 
         expected = T.TypeStack(node.returns)
         if not _stack_assignable(stack, expected, self.env.context):
@@ -827,6 +879,176 @@ def _best_candidates(
     return tuple(winners)
 
 
+def _winners_specialize_inputs(
+    winners: tuple[tuple[T.AppliedOverload, AnalysisBranch], ...],
+    original: AnalysisBranch,
+) -> bool:
+    return all(branch.inputs != original.inputs for _, branch in winners)
+
+
+def _apply_overload_to_branch(
+    overload: T.Overload,
+    args: tuple[T.Type, ...],
+    branch: AnalysisBranch,
+    ctx: T.Context,
+) -> tuple[T.AppliedOverload, AnalysisBranch] | None:
+    substitution = _branch_argument_substitution(args, overload.params, ctx)
+    if substitution is None:
+        return None
+    specialized_branch = _specialize_branch_arguments(branch, substitution)
+    specialized_args = tuple(_substitute_branch_type(arg, substitution) for arg in args)
+    applied = T.apply_overload(overload, specialized_args, ctx)
+    if applied is None:
+        return None
+    return applied, specialized_branch
+
+
+def _specialize_branch_arguments(
+    branch: AnalysisBranch,
+    substitution: dict[str, T.Type],
+) -> AnalysisBranch:
+    for name, typ in substitution.items():
+        branch = branch.refine_type(T.V(name), typ)
+    return branch
+
+
+def _branch_argument_substitution(
+    args: tuple[T.Type, ...],
+    params: tuple[T.Type, ...],
+    ctx: T.Context,
+) -> dict[str, T.Type] | None:
+    substitution: dict[str, T.Type] = {}
+    for arg, param in zip(args, params, strict=True):
+        if T.compatible(arg, param, ctx):
+            continue
+        constraints = _solve_branch_argument(arg, param, ctx)
+        if constraints is None:
+            return None
+        for name, typ in constraints.items():
+            existing = substitution.get(name)
+            if existing is not None and not T.same(existing, typ):
+                return None
+            substitution[name] = typ
+    return substitution
+
+
+def _solve_branch_argument(
+    arg: T.Type,
+    param: T.Type,
+    ctx: T.Context,
+) -> dict[str, T.Type] | None:
+    constraints: dict[str, T.Type] = {}
+
+    def bind(name: str, typ: T.Type) -> bool:
+        previous = constraints.get(name)
+        if previous is None:
+            constraints[name] = typ
+            return True
+        return T.same(previous, typ)
+
+    def rec(actual: T.Type, expected: T.Type) -> bool:
+        actual = T.normalize(actual)
+        expected = T.normalize(expected)
+        if T.compatible(actual, expected, ctx):
+            return True
+        if isinstance(actual, T.VarType):
+            return bind(actual.name, expected)
+        if isinstance(actual, T.RowType):
+            if isinstance(expected, T.RowType):
+                if not rec(actual.base, expected.base):
+                    return False
+                expected_fields = {field.name: field.typ for field in expected.fields}
+                for field in actual.fields:
+                    expected_field = expected_fields.get(field.name)
+                    if expected_field is None or not rec(field.typ, expected_field):
+                        return False
+                return True
+            return rec(actual.base, expected)
+        if isinstance(actual, T.NominalType) and isinstance(expected, T.NominalType):
+            return (
+                actual.name == expected.name
+                and len(actual.args) == len(expected.args)
+                and all(
+                    rec(left, right)
+                    for left, right in zip(actual.args, expected.args, strict=True)
+                )
+            )
+        if isinstance(actual, T.CollectionType) and isinstance(
+            expected,
+            T.CollectionType,
+        ):
+            return (
+                type(actual) is type(expected)
+                and actual.rank == expected.rank
+                and rec(actual.base, expected.base)
+            )
+        if isinstance(actual, T.FunctionType) and isinstance(expected, T.FunctionType):
+            return (
+                len(actual.params) == len(expected.params)
+                and len(actual.returns) == len(expected.returns)
+                and all(
+                    rec(left, right)
+                    for left, right in zip(
+                        actual.params + actual.returns,
+                        expected.params + expected.returns,
+                        strict=True,
+                    )
+                )
+            )
+        if isinstance(actual, T.TupleType) and isinstance(expected, T.TupleType):
+            return len(actual.params) == len(expected.params) and all(
+                rec(left, right)
+                for left, right in zip(actual.params, expected.params, strict=True)
+            )
+        return False
+
+    return constraints if rec(arg, param) else None
+
+
+def _substitute_branch_type(typ: T.Type, substitution: dict[str, T.Type]) -> T.Type:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.VarType):
+        return substitution.get(typ.name, typ)
+    if isinstance(typ, T.NominalType):
+        return T.N(
+            typ.name,
+            *(_substitute_branch_type(arg, substitution) for arg in typ.args),
+        )
+    if isinstance(typ, T.UnionType):
+        return T.U(*(_substitute_branch_type(item, substitution) for item in typ.items))
+    if isinstance(typ, T.IntersectionType):
+        return T.I(*(_substitute_branch_type(item, substitution) for item in typ.items))
+    if isinstance(typ, T.TupleType):
+        return T.Tup(
+            *(_substitute_branch_type(item, substitution) for item in typ.params)
+        )
+    if isinstance(typ, T.RowType):
+        return T.Row(
+            _substitute_branch_type(typ.base, substitution),
+            *(
+                T.Field(
+                    field.name,
+                    _substitute_branch_type(field.typ, substitution),
+                )
+                for field in typ.fields
+            ),
+        )
+    if isinstance(typ, T.CollectionType):
+        return T.C(type(typ), _substitute_branch_type(typ.base, substitution), typ.rank)
+    if isinstance(typ, T.FunctionType):
+        return T.Fn(
+            (_substitute_branch_type(item, substitution) for item in typ.params),
+            (_substitute_branch_type(item, substitution) for item in typ.returns),
+        )
+    if isinstance(typ, T.TaggedType):
+        return T.Tagged(_substitute_branch_type(typ.inner, substitution), *typ.tags)
+    if isinstance(typ, T.ExactType):
+        return T.Exact(_substitute_branch_type(typ.inner, substitution))
+    if isinstance(typ, T.AtomicType):
+        return T.Atomic(_substitute_branch_type(typ.inner, substitution))
+    return typ
+
+
 def _dominates(
     left: tuple[T.Specificity, ...],
     right: tuple[T.Specificity, ...],
@@ -934,6 +1156,31 @@ def _refine_items(
     return tuple((name, _refine_type(typ, old, new)) for name, typ in items)
 
 
+def _refine_typed_body(
+    typed_body: tuple[TypedNode, ...],
+    old: T.Type,
+    new: T.Type,
+) -> tuple[TypedNode, ...]:
+    return tuple(_refine_typed_node(node, old, new) for node in typed_body)
+
+
+def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> TypedNode:
+    typ = None if typed_node.typ is None else _refine_type(typed_node.typ, old, new)
+    if isinstance(typed_node, TypedFunctionNode):
+        return TypedFunctionNode(
+            typed_node.node,
+            typ,
+            tuple(
+                FunctionOverloadTyping(
+                    _refine_type(overload.typ, old, new),
+                    _refine_typed_body(overload.body, old, new),
+                )
+                for overload in typed_node.overloads
+            ),
+        )
+    return TypedNode(typed_node.node, typ)
+
+
 def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
     typ = T.normalize(typ)
     if T.same(typ, old):
@@ -975,9 +1222,12 @@ def _stack_assignable(
     expected: T.TypeStack,
     ctx: T.Context,
 ) -> bool:
-    if len(actual) != len(expected):
+    if len(actual) < len(expected):
         return False
-    return all(T.assignable(a, e, ctx) for a, e in zip(actual, expected, strict=True))
+    actual_returns = actual.items[-len(expected) :] if expected else ()
+    return all(
+        T.assignable(a, e, ctx) for a, e in zip(actual_returns, expected, strict=True)
+    )
 
 
 def _lookup(

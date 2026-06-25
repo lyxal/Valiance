@@ -16,6 +16,7 @@ from valiance.asts.nodes import (
     TypedFunctionNode,
     TypedNode,
 )
+from valiance.asts.pretty import pretty_ast
 from valiance.symbols import Symbol
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "FunctionParam",
     "GetVariableNode",
     "NumberLiteralNode",
+    "pretty_ast",
     "SetVariableNode",
     "StringLiteralNode",
     "Symbol",

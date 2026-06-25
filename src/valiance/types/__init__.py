@@ -27,7 +27,7 @@ from valiance.types.builders import (
     show,
 )
 from valiance.types.context import Context
-from valiance.types.default_types import Number, String
+from valiance.types.default_types import Number, String, Boolean
 from valiance.types.environment import (
     AppliedElement,
     Environment,
@@ -90,6 +90,7 @@ __all__ = [
     "ArrayMinType",
     "Atomic",
     "AtomicType",
+    "Boolean",
     "C",
     "CSTC",
     "CallSiteCheckedFunctionType",

@@ -4,7 +4,16 @@ import sys
 from collections.abc import Sequence
 
 from valiance.analysis import analyser
-from valiance.asts import ASTNode, ElementNode, FunctionNode, Symbol
+from valiance.asts import ASTNode, FieldAccessNode, FunctionNode, Symbol, pretty_ast
+from valiance.asts.nodes import (
+    ElementNode,
+    FunctionParam,
+    GetVariableNode,
+    GetVariableNode,
+    IfNode,
+    NumberLiteralNode,
+    StringLiteralNode,
+)
 
 HELP = """usage: valiance [command]
 
@@ -23,16 +32,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     program: list[ASTNode] = [
-        FunctionNode(
-            params=None,
-            body=(
-                ElementNode(name=Symbol("+")),
-                ElementNode(name=Symbol("/")),
+        IfNode(
+            condition=(
+                NumberLiteralNode(value="1"),
+                NumberLiteralNode(value="2"),
+                ElementNode(name=Symbol("==")),
             ),
-            returns=None,
-        )
+            then_branch=(NumberLiteralNode(value="42"),),
+            else_branch=(StringLiteralNode(value="3.14"),),
+        ),
+        ElementNode(name=Symbol("dup")),
     ]
-    print(analyser.analyse(program))
+
+    print(pretty_ast(analyser.analyse(program)))
     return 0
 
 

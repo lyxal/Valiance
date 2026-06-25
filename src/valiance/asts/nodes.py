@@ -86,3 +86,44 @@ class FieldAccessNode(ASTNode):
     """Read an attribute from the top stack value."""
 
     name: Symbol
+
+
+@dataclass(frozen=True)
+class FieldSetNode(ASTNode):
+    """Set an attribute on the top stack value."""
+
+    name: Symbol
+
+
+@dataclass(frozen=True)
+class CallNode(ASTNode):
+    """Call a function with provided arguments, falling back
+    to taking values from the stack."""
+
+    args: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class IfNode(ASTNode):
+    """A conditional statement."""
+
+    condition: tuple[ASTNode, ...] = ()
+    then_branch: tuple[ASTNode, ...] = ()
+    else_branch: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class WhileNode(ASTNode):
+    """A while loop."""
+
+    condition: tuple[ASTNode, ...] = ()
+    body: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class ForNode(ASTNode):
+    """A for loop."""
+
+    variable: Symbol
+    index_variable: Symbol | None = None
+    body: tuple[ASTNode, ...] = ()

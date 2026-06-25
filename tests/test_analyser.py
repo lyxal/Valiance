@@ -10,11 +10,13 @@ from valiance.analysis import (
     analyse_function,
     default_environment,
 )
+from valiance.analysis.builtins import BUILTIN_ELEMENTS
 from valiance.asts import (
     ElementNode,
     FieldAccessNode,
     FunctionNode,
     FunctionParam,
+    GetVariableNode,
     NumberLiteralNode,
     TypedFunctionNode,
 )
@@ -73,6 +75,12 @@ class AnalyserTests(unittest.TestCase):
         )
 
         self.assertEqual([node.typ for node in typed], [Number, Number, Number])
+
+    def test_builtin_elements_are_declared_before_installation(self):
+        names = {element.name for element in BUILTIN_ELEMENTS}
+
+        self.assertIn(PLUS, names)
+        self.assertIn(SLASH, names)
 
     def test_default_environment_includes_generic_reduce_and_map(self):
         env = default_environment()
@@ -276,6 +284,57 @@ class AnalyserTests(unittest.TestCase):
             ),
         )
 
+    def test_unannotated_named_parameter_specializes_from_overload_use(self):
+        typed = analyse(
+            [
+                FunctionNode(
+                    params=(FunctionParam(X, None),),
+                    body=(
+                        ElementNode(PLUS),
+                    ),
+                )
+            ]
+        )
+
+        self.assertEqual(
+            typed[0].typ,
+            Overloads(
+                Overload((Number,), (Number,)),
+                Overload((String,), (String,)),
+            ),
+        )
+
+    def test_repeated_unannotated_named_parameter_specializes_from_overload_use(self):
+        typed = analyse(
+            [
+                FunctionNode(
+                    params=(FunctionParam(X, None),),
+                    body=(
+                        GetVariableNode(X),
+                        GetVariableNode(X),
+                        ElementNode(PLUS),
+                    ),
+                )
+            ]
+        )
+        function = typed[0]
+
+        self.assertEqual(
+            function.typ,
+            Overloads(
+                Overload((Number,), (Number,)),
+                Overload((String,), (String,)),
+            ),
+        )
+        self.assertIsInstance(function, TypedFunctionNode)
+        self.assertEqual(
+            [
+                [body_node.typ for body_node in overload.body]
+                for overload in function.overloads
+            ],
+            [[Number, Number, Number], [String, String, String]],
+        )
+
     def test_overloaded_function_node_keeps_typed_body_per_overload(self):
         typed = analyse([FunctionNode(body=(ElementNode(PLUS),))])
         function = typed[0]
@@ -325,6 +384,29 @@ class AnalyserTests(unittest.TestCase):
         )
 
         self.assertEqual(typ, Fn((), (Number,)))
+
+    def test_omitted_returns_keep_only_top_stack_value(self):
+        env = Environment()
+        node = FunctionNode(
+            params=(),
+            body=(NumberLiteralNode("1"), NumberLiteralNode("2")),
+        )
+
+        typ = analyse_function(node, env)
+
+        self.assertEqual(typ, Fn((), (Number,)))
+
+    def test_explicit_empty_returns_return_no_values(self):
+        env = Environment()
+        node = FunctionNode(
+            params=(),
+            body=(NumberLiteralNode("1"),),
+            returns=(),
+        )
+
+        typ = analyse_function(node, env)
+
+        self.assertEqual(typ, Fn((), ()))
 
     def test_function_uses_explicit_params(self):
         env = Environment()
