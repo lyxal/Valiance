@@ -18,6 +18,8 @@ MAP = Symbol("map")
 PLUS = Symbol("+")
 SLASH = Symbol("/")
 EQUALS = Symbol("==")
+IS_POSITIVE = Symbol("positive?")
+DOUBLE = Symbol("double")
 
 TRAIT_IMPLS = (
     (INTEGER, NUMBER),
@@ -86,6 +88,14 @@ BUILTIN_ELEMENTS = (
         EQUALS,
         overload((T.Number, T.Number), (T.Boolean,)),
         overload((T.String, T.String), (T.Boolean,)),
+    ),
+    element(
+        IS_POSITIVE,
+        overload((T.Number,), (T.Boolean,)),
+    ),
+    element(
+        DOUBLE,
+        overload((T.Number,), (T.Number,)),
     ),
 )
 

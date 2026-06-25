@@ -17,6 +17,7 @@ from valiance.asts import (
     FunctionNode,
     FunctionParam,
     GetVariableNode,
+    IfNode,
     NumberLiteralNode,
     TypedFunctionNode,
 )
@@ -54,8 +55,13 @@ PLUS = Symbol("+")
 SLASH = Symbol("/")
 AMB = Symbol("amb")
 BAR = Symbol("bar")
+FOO_FIELD = Symbol("foo")
 COND = Symbol("cond")
 FOO = Symbol("Foo")
+DOUBLE = Symbol("double")
+EQUALS = Symbol("==")
+IS_POSITIVE = Symbol("positive?")
+LENGTH = Symbol("length")
 ITEM = Symbol("item")
 MISSING = Symbol("missing")
 NAME = Symbol("name")
@@ -454,6 +460,57 @@ class AnalyserTests(unittest.TestCase):
         typ = analyse_function(node, Environment())
 
         self.assertEqual(typ, Fn((Row(N(FOO), Field(BAR, String)),), (String,)))
+
+    def test_if_condition_refines_row_field_from_later_numeric_use(self):
+        node = FunctionNode(
+            params=(FunctionParam(X),),
+            body=(
+                GetVariableNode(X),
+                FieldAccessNode(FOO_FIELD),
+                ElementNode(Symbol("dup")),
+                IfNode(
+                    condition=(ElementNode(IS_POSITIVE),),
+                    then_branch=(ElementNode(DOUBLE),),
+                    else_branch=(NumberLiteralNode("0"),),
+                ),
+            ),
+        )
+
+        typ = analyse_function(node, default_environment())
+
+        self.assertEqual(typ, Fn((Row(V("x"), Field(FOO_FIELD, Number)),), (Number,)))
+
+    def test_if_branches_refine_row_field_collection_element_type(self):
+        node = FunctionNode(
+            params=(FunctionParam(X),),
+            body=(
+                GetVariableNode(X),
+                FieldAccessNode(FOO_FIELD),
+                ElementNode(Symbol("dup")),
+                IfNode(
+                    condition=(
+                        ElementNode(LENGTH),
+                        NumberLiteralNode("2"),
+                        ElementNode(EQUALS),
+                    ),
+                    then_branch=(ElementNode(DOUBLE),),
+                    else_branch=(
+                        NumberLiteralNode("0"),
+                        ElementNode(PLUS),
+                    ),
+                ),
+            ),
+        )
+
+        typ = analyse_function(node, default_environment())
+
+        self.assertEqual(
+            typ,
+            Fn(
+                (Row(V("x"), Field(FOO_FIELD, C(ListExactType, Number))),),
+                (C(ListExactType, Number),),
+            ),
+        )
 
     def test_field_access_uses_environment_object_attributes(self):
         env = Environment()

@@ -635,13 +635,14 @@ class Analyser:
                     self._diagnose("if branches inferred different inputs")
                     continue
                 stack = merge_stacks(left.stack, right.stack)
+                base = _refine_branch_like(branch, left)
                 variables = left.variables.merge_against(
                     right.variables,
-                    branch.variables,
+                    base.variables,
                 )
                 typed_if = TypedNode(node, _returns_result_type(stack.items))
                 outputs.add(
-                    branch.with_stack(stack)
+                    base.with_stack(stack)
                     .with_variables(variables)
                     .append_typed(typed_if)
                 )
@@ -912,6 +913,35 @@ def _specialize_branch_arguments(
     return branch
 
 
+def _refine_branch_like(
+    branch: AnalysisBranch,
+    refined: AnalysisBranch,
+) -> AnalysisBranch:
+    substitution = _branch_pair_substitution(branch.inputs, refined.inputs)
+    if substitution is None:
+        return branch
+    return _specialize_branch_arguments(branch, substitution)
+
+
+def _branch_pair_substitution(
+    source: tuple[T.Type, ...],
+    target: tuple[T.Type, ...],
+) -> dict[str, T.Type] | None:
+    if len(source) != len(target):
+        return None
+    substitution: dict[str, T.Type] = {}
+    for left, right in zip(source, target, strict=True):
+        constraints = _solve_branch_argument(left, right, T.Context())
+        if constraints is None:
+            return None
+        for name, typ in constraints.items():
+            existing = substitution.get(name)
+            if existing is not None and not T.same(existing, typ):
+                return None
+            substitution[name] = typ
+    return substitution
+
+
 def _branch_argument_substitution(
     args: tuple[T.Type, ...],
     params: tuple[T.Type, ...],
@@ -982,6 +1012,8 @@ def _solve_branch_argument(
                 and actual.rank == expected.rank
                 and rec(actual.base, expected.base)
             )
+        if isinstance(actual, T.CollectionType):
+            return rec(actual.base, expected)
         if isinstance(actual, T.FunctionType) and isinstance(expected, T.FunctionType):
             return (
                 len(actual.params) == len(expected.params)

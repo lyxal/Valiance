@@ -32,16 +32,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     program: list[ASTNode] = [
-        IfNode(
-            condition=(
-                NumberLiteralNode(value="1"),
-                NumberLiteralNode(value="2"),
-                ElementNode(name=Symbol("==")),
+        FunctionNode(
+            params=(FunctionParam(name=Symbol("x")),),
+            body=(
+                GetVariableNode(name=Symbol("x")),
+                FieldAccessNode(name=Symbol("foo")),
+                ElementNode(name=Symbol("dup")),
+                IfNode(
+                    condition=(
+                        ElementNode(name=Symbol("length")),
+                        NumberLiteralNode(value="2"),
+                        ElementNode(name=Symbol("==")),
+                    ),
+                    then_branch=(ElementNode(name=Symbol("double")),),
+                    else_branch=(
+                        NumberLiteralNode(value="0"),
+                        ElementNode(name=Symbol("+")),
+                    ),
+                ),
             ),
-            then_branch=(NumberLiteralNode(value="42"),),
-            else_branch=(StringLiteralNode(value="3.14"),),
+            returns=None,
         ),
-        ElementNode(name=Symbol("dup")),
     ]
 
     print(pretty_ast(analyser.analyse(program)))
