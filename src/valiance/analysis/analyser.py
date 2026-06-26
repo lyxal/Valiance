@@ -21,6 +21,7 @@ from valiance.asts import (
 )
 from valiance.asts.nodes import (
     BreakNode,
+    CallNode,
     FieldAccessNode,
     ForNode,
     GetVariableNode,
@@ -505,6 +506,8 @@ class Analyser:
                 }
             case ListLiteralNode():
                 return self._list_literal(branch, node)
+            case CallNode():
+                return self._call(branch, node)
             case GetVariableNode(name):
                 typ = branch.variables.read(name)
                 if typ is None:
@@ -614,6 +617,76 @@ class Analyser:
             self._diagnose(
                 f"ambiguous overloads for element '{node.name}' with stack "
                 f"{_show_stack(stack_before)}; candidates: "
+                f"{_show_applied_overloads(winners)}",
+                node,
+            )
+            return set()
+
+        results: set[AnalysisBranch] = set()
+        for applied, popped in winners:
+            results.add(
+                popped.with_stack(
+                    popped.stack.push(*applied.actual_returns)
+                ).append_typed(
+                    TypedNode(node, _returns_result_type(applied.actual_returns))
+                )
+            )
+        return results
+
+    def _call(
+        self,
+        branch: AnalysisBranch,
+        node: CallNode,
+    ) -> set[AnalysisBranch]:
+        if not branch.stack:
+            self._diagnose("call requires a function on the stack", node)
+            return set()
+
+        callable_type = T.normalize(branch.stack[-1])
+        overloads = _callable_overloads(callable_type)
+        if not overloads:
+            self._diagnose(
+                f"cannot call non-function value of type {T.show(callable_type)}",
+                node,
+            )
+            return set()
+
+        callable_popped = branch.with_stack(branch.stack.pop())
+        arg_branches = self.analyse_block(BranchSet.one(callable_popped), node.args)
+
+        candidates: list[tuple[T.AppliedOverload, AnalysisBranch]] = []
+        for arg_branch in arg_branches:
+            for overload in overloads:
+                sourced = arg_branch.source_arguments(overload.params)
+                if sourced is None:
+                    continue
+                args, popped = sourced
+                candidate = _apply_overload_to_branch(
+                    overload,
+                    args,
+                    popped,
+                    self.env.context,
+                )
+                if candidate is not None:
+                    candidates.append(candidate)
+
+        winners = _best_candidates(candidates)
+        if not winners:
+            self._diagnose(
+                f"no overloads for call target {T.show(callable_type)} match stack "
+                f"{_show_stack(callable_popped.stack)}; available overloads: "
+                f"{_show_overloads(overloads)}",
+                node,
+            )
+            return set()
+        if (
+            len(winners) > 1
+            and branch.input_mode is not InputMode.INFER_INPUTS
+            and not _winners_specialize_inputs(winners, callable_popped)
+        ):
+            self._diagnose(
+                f"ambiguous call target {T.show(callable_type)} with stack "
+                f"{_show_stack(callable_popped.stack)}; candidates: "
                 f"{_show_applied_overloads(winners)}",
                 node,
             )
@@ -1014,6 +1087,15 @@ def _function_analysis_from_signatures(
     else:
         typ = T.Overloads(*ordered)
     return FunctionAnalysis(typ, overload_typings)
+
+
+def _callable_overloads(typ: T.Type) -> tuple[T.Overload, ...]:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.FunctionType):
+        return (T.Overload(typ.params, typ.returns),)
+    if isinstance(typ, T.OverloadSetType):
+        return typ.overloads
+    return ()
 
 
 def _best_candidates(

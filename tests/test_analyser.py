@@ -13,6 +13,7 @@ from valiance.analysis import (
 from valiance.analysis.builtins import BUILTIN_ELEMENTS
 from valiance.asts import (
     BreakNode,
+    CallNode,
     ElementNode,
     FieldAccessNode,
     ForNode,
@@ -652,6 +653,54 @@ class AnalyserTests(unittest.TestCase):
         typed = analyse([node], env)
 
         self.assertEqual(typed[0].typ, Fn((Number, Number), (Number,)))
+
+    def test_call_node_calls_function_from_stack_with_explicit_arguments(self):
+        typed = analyse(
+            [
+                FunctionNode(body=(ElementNode(PLUS),)),
+                CallNode(args=(NumberLiteralNode("1"), NumberLiteralNode("2"))),
+            ],
+        )
+
+        self.assertEqual(typed[-1].typ, Number)
+
+    def test_call_node_falls_back_to_stack_values_for_missing_arguments(self):
+        typed = analyse(
+            [
+                NumberLiteralNode("1"),
+                FunctionNode(body=(ElementNode(PLUS),)),
+                CallNode(args=(NumberLiteralNode("2"),)),
+            ],
+        )
+
+        self.assertEqual(typed[0].typ, Number)
+        self.assertIsInstance(typed[1], TypedFunctionNode)
+        self.assertEqual(typed[2].typ, Number)
+        self.assertEqual(typed[3].typ, Number)
+
+    def test_call_node_resolves_overloaded_function_type(self):
+        typed = analyse(
+            [
+                FunctionNode(body=(ElementNode(PLUS),)),
+                CallNode(args=(StringLiteralNode("a"), StringLiteralNode("b"))),
+            ],
+        )
+
+        self.assertEqual(typed[-1].typ, String)
+
+    def test_call_node_reports_non_function_values(self):
+        analyser = Analyser(Environment())
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            (CallNode(),),
+        )
+
+        self.assertEqual(len(branches), 0)
+        self.assertEqual(
+            analyser.diagnostics,
+            ["cannot call non-function value of type Number"],
+        )
 
     def test_for_loop_without_break_returns_none(self):
         analyser = Analyser(Environment())
