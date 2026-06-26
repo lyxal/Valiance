@@ -134,3 +134,89 @@ class BreakNode(ASTNode):
     """Break from a while/for loop with optional value(s)"""
 
     values: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class DefineNode(ASTNode):
+    """A named element/function definition."""
+
+    name: Symbol
+    function: FunctionNode
+    annotations: tuple[ASTNode, ...] = ()
+    is_multi: bool = False
+    visibility: Symbol | None = None
+
+
+@dataclass(frozen=True)
+class AnnotationNode(ASTNode):
+    """A compile-time annotation applied to the following structure."""
+
+    name: Symbol
+    args: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReturnNode(ASTNode):
+    """Return early from the current function."""
+
+    values: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class ListLiteralNode(ASTNode):
+    """A list literal whose items are stack expressions."""
+
+    items: tuple[tuple[ASTNode, ...], ...] = ()
+
+
+@dataclass(frozen=True)
+class TupleLiteralNode(ASTNode):
+    """A tuple literal whose items are stack expressions."""
+
+    items: tuple[tuple[ASTNode, ...], ...] = ()
+
+
+@dataclass(frozen=True)
+class ArrayLiteralNode(ASTNode):
+    """An array literal whose items are stack expressions."""
+
+    items: tuple[tuple[ASTNode, ...], ...] = ()
+
+
+@dataclass(frozen=True)
+class RecordLiteralNode(ASTNode):
+    """A record literal with static field names."""
+
+    fields: tuple[tuple[Symbol, tuple[ASTNode, ...]], ...] = ()
+
+
+@dataclass(frozen=True)
+class DictLiteralNode(ASTNode):
+    """A dictionary literal with expression keys and values."""
+
+    entries: tuple[tuple[tuple[ASTNode, ...], tuple[ASTNode, ...]], ...] = ()
+
+
+@dataclass(frozen=True)
+class MatchCaseNode(ASTNode):
+    """One branch of a match expression."""
+
+    pattern: tuple[ASTNode, ...] = ()
+    body: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class MatchNode(ASTNode):
+    """A match control-flow structure."""
+
+    cases: tuple[MatchCaseNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class ObjectNode(ASTNode):
+    """An object, trait, or variant-like top-level declaration."""
+
+    kind: Symbol
+    name: Symbol
+    body: tuple[ASTNode, ...] = ()
+    annotations: tuple[ASTNode, ...] = ()

@@ -1,24 +1,20 @@
 from __future__ import annotations
 
+import argparse
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
-from valiance.analysis import analyser
-from valiance.asts import ASTNode, FieldAccessNode, FunctionNode, Symbol, pretty_ast
-from valiance.asts.nodes import (
-    ElementNode,
-    FunctionParam,
-    GetVariableNode,
-    GetVariableNode,
-    IfNode,
-    NumberLiteralNode,
-    StringLiteralNode,
-)
+from valiance.analysis import analyse
+from valiance.asts import pretty_ast
+from valiance.parsing import LexError, ParseError, Parser, lex
 
-HELP = """usage: valiance [command]
+HELP = """usage: valiance <file>
+       valiance -c <code>
 
-commands:
-  analyse-demo   run a small built-in analyser demo
+source:
+  valiance <file>          lex, parse, and analyse a Valiance source file
+  valiance -c <code>       lex, parse, and analyse inline Valiance code
 """
 
 
@@ -27,35 +23,67 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args:
         print(HELP)
         return 0
-    if args != ["analyse-demo"]:
+
+    parsed = _parse_args(args)
+    if parsed is None:
         print(HELP)
         return 2
 
-    program: list[ASTNode] = [
-        FunctionNode(
-            params=(FunctionParam(name=Symbol("x")),),
-            body=(
-                GetVariableNode(name=Symbol("x")),
-                FieldAccessNode(name=Symbol("foo")),
-                ElementNode(name=Symbol("dup")),
-                IfNode(
-                    condition=(
-                        ElementNode(name=Symbol("length")),
-                        NumberLiteralNode(value="2"),
-                        ElementNode(name=Symbol("==")),
-                    ),
-                    then_branch=(ElementNode(name=Symbol("double")),),
-                    else_branch=(
-                        NumberLiteralNode(value="0"),
-                        ElementNode(name=Symbol("+")),
-                    ),
-                ),
-            ),
-            returns=None,
-        ),
-    ]
+    source = parsed.code
+    if source is None:
+        source = _read_source_file(parsed.file)
+        if source is None:
+            return 1
 
-    print(pretty_ast(analyser.analyse(program)))
+    return _run_source(source)
+
+
+def _parse_args(args: list[str]) -> argparse.Namespace | None:
+    parser = argparse.ArgumentParser(
+        prog="valiance",
+        add_help=False,
+    )
+    parser.add_argument("-c", "--code")
+    parser.add_argument("file", nargs="?")
+    parser.add_argument("-h", "--help", action="store_true")
+
+    try:
+        parsed = parser.parse_args(args)
+    except SystemExit:
+        return None
+
+    if parsed.help:
+        return None
+    if parsed.code is not None and parsed.file is not None:
+        print("error: pass either a file or --code, not both", file=sys.stderr)
+        return None
+    if parsed.code is None and parsed.file is None:
+        return None
+    return parsed
+
+
+def _read_source_file(filename: str) -> str | None:
+    try:
+        return Path(filename).read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"error: could not read {filename!r}: {exc}", file=sys.stderr)
+        return None
+
+
+def _run_source(source: str) -> int:
+    try:
+        tokens = lex(source)
+        program = Parser(tokens).parse_program()
+        typed = analyse(program)
+    except (LexError, ParseError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print("Parsed AST:")
+    print(pretty_ast(program))
+    print()
+    print("Typed AST:")
+    print(pretty_ast(typed))
     return 0
 
 

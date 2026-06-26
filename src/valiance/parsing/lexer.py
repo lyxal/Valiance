@@ -1,0 +1,276 @@
+"""Lexical analysis for Valiance source."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+
+
+class TokenKind(StrEnum):
+    IDENT = "IDENT"
+    NUMBER = "NUMBER"
+    STRING = "STRING"
+    NEWLINE = "NEWLINE"
+    EOF = "EOF"
+    ARROW = "->"
+    FAT_ARROW = "=>"
+    ASSIGN = "="
+    AUG_ASSIGN = ":="
+    LPAREN = "("
+    RPAREN = ")"
+    LBRACKET = "["
+    RBRACKET = "]"
+    LBRACE = "{"
+    RBRACE = "}"
+    COMMA = ","
+    COLON = ":"
+    DOT = "."
+    PIPE = "|"
+    AT = "@"
+    DOLLAR = "$"
+    OP = "OP"
+
+
+@dataclass(frozen=True, slots=True)
+class Token:
+    kind: TokenKind
+    value: str
+    line: int
+    column: int
+    offset: int
+
+
+class LexError(SyntaxError):
+    """Raised when Valiance source cannot be tokenized."""
+
+
+_SINGLE = {
+    "(": TokenKind.LPAREN,
+    ")": TokenKind.RPAREN,
+    "[": TokenKind.LBRACKET,
+    "]": TokenKind.RBRACKET,
+    "{": TokenKind.LBRACE,
+    "}": TokenKind.RBRACE,
+    ",": TokenKind.COMMA,
+    ":": TokenKind.COLON,
+    ".": TokenKind.DOT,
+    "|": TokenKind.PIPE,
+    "@": TokenKind.AT,
+    "$": TokenKind.DOLLAR,
+}
+
+_OP_CHARS = set("+-*%!?=/<>~&^")
+
+
+def lex(source: str) -> list[Token]:
+    """Return Valiance tokens, preserving newlines as statement separators."""
+    lexer = _Lexer(source)
+    return lexer.lex()
+
+
+class _Lexer:
+    def __init__(self, source: str) -> None:
+        self.source = source
+        self.length = len(source)
+        self.index = 0
+        self.line = 1
+        self.column = 1
+        self.tokens: list[Token] = []
+
+    def lex(self) -> list[Token]:
+        while not self._at_end:
+            char = self._peek()
+            if char in " \t\r":
+                self._advance()
+            elif char == "\n":
+                self._emit(TokenKind.NEWLINE, self._advance())
+            elif char == "#":
+                self._comment_or_tag()
+            elif char == '"':
+                self._string()
+            elif self._starts_number():
+                self._number()
+            elif self._is_ident_start(char):
+                self._ident()
+            elif char == "-" and self._peek(1) == ">":
+                self._emit(TokenKind.ARROW, self._advance(2))
+            elif char == "=" and self._peek(1) == ">":
+                self._emit(TokenKind.FAT_ARROW, self._advance(2))
+            elif char == "=" and self._peek(1) in _OP_CHARS:
+                self._operator()
+            elif char == ":" and self._peek(1) == "=":
+                self._emit(TokenKind.AUG_ASSIGN, self._advance(2))
+            elif char == "=":
+                self._emit(TokenKind.ASSIGN, self._advance())
+            elif char in _SINGLE:
+                self._emit(_SINGLE[char], self._advance())
+            elif char in _OP_CHARS or char == "\\":
+                self._operator()
+            else:
+                self._fail(f"unexpected character {char!r}")
+
+        self.tokens.append(Token(TokenKind.EOF, "", self.line, self.column, self.index))
+        return self.tokens
+
+    @property
+    def _at_end(self) -> bool:
+        return self.index >= self.length
+
+    def _peek(self, ahead: int = 0) -> str:
+        pos = self.index + ahead
+        if pos >= self.length:
+            return ""
+        return self.source[pos]
+
+    def _advance(self, count: int = 1) -> str:
+        start = self.index
+        for _ in range(count):
+            char = self.source[self.index]
+            self.index += 1
+            if char == "\n":
+                self.line += 1
+                self.column = 1
+            else:
+                self.column += 1
+        return self.source[start : self.index]
+
+    def _emit(
+        self,
+        kind: TokenKind,
+        value: str,
+        line: int | None = None,
+        col: int | None = None,
+        offset: int | None = None,
+    ) -> None:
+        self.tokens.append(
+            Token(
+                kind,
+                value,
+                self.line if line is None else line,
+                self.column - len(value) if col is None else col,
+                self.index - len(value) if offset is None else offset,
+            )
+        )
+
+    def _comment_or_tag(self) -> None:
+        if self._peek(1) == "?":
+            while not self._at_end and self._peek() != "\n":
+                self._advance()
+            return
+        if self._peek(1) == "/":
+            self._advance(2)
+            depth = 1
+            while not self._at_end and depth:
+                if self._peek() == "#" and self._peek(1) == "/":
+                    depth += 1
+                    self._advance(2)
+                elif self._peek() == "/" and self._peek(1) == "#":
+                    depth -= 1
+                    self._advance(2)
+                else:
+                    self._advance()
+            if depth:
+                self._fail("unterminated multiline comment")
+            return
+        self._operator()
+
+    def _string(self) -> None:
+        line, col, offset = self.line, self.column, self.index
+        self._advance()
+        pieces: list[str] = []
+        while not self._at_end:
+            char = self._advance()
+            if char == '"':
+                self.tokens.append(
+                    Token(TokenKind.STRING, "".join(pieces), line, col, offset)
+                )
+                return
+            if char == "\\":
+                if self._at_end:
+                    self._fail("unterminated string escape")
+                escaped = self._advance()
+                if escaped not in {'"', "\\", "$"}:
+                    pieces.append("\\" + escaped)
+                else:
+                    pieces.append(escaped)
+            else:
+                pieces.append(char)
+        self._fail("unterminated string", line, col)
+
+    def _starts_number(self) -> bool:
+        char = self._peek()
+        if char.isdigit():
+            return True
+        return char == "-" and self._peek(1).isdigit()
+
+    def _number(self) -> None:
+        line, col, offset = self.line, self.column, self.index
+        if self._peek() == "-":
+            self._advance()
+        self._number_part()
+        if self._peek() in {"e", "E"}:
+            self._exponent()
+        if self._peek() == "i":
+            self._advance()
+            if self._peek() in "+-" or self._peek().isdigit():
+                if self._peek() in "+-":
+                    self._advance()
+                self._number_part()
+                if self._peek() in {"e", "E"}:
+                    self._exponent()
+        self.tokens.append(
+            Token(TokenKind.NUMBER, self.source[offset : self.index], line, col, offset)
+        )
+
+    def _number_part(self) -> None:
+        while self._peek().isdigit():
+            self._advance()
+        if self._peek() == "." and self._peek(1).isdigit():
+            self._advance()
+            while self._peek().isdigit():
+                self._advance()
+
+    def _exponent(self) -> None:
+        self._advance()
+        if self._peek() in "+-":
+            self._advance()
+        if not self._peek().isdigit():
+            self._fail("expected exponent digits")
+        while self._peek().isdigit():
+            self._advance()
+
+    def _ident(self) -> None:
+        line, col, offset = self.line, self.column, self.index
+        self._advance()
+        while self._is_ident_part(self._peek()):
+            self._advance()
+        self.tokens.append(
+            Token(TokenKind.IDENT, self.source[offset : self.index], line, col, offset)
+        )
+
+    def _operator(self) -> None:
+        line, col, offset = self.line, self.column, self.index
+        if self._peek() == "\\":
+            self._advance()
+        while self._peek() in _OP_CHARS:
+            if self._peek() == "=" and self._peek(1) == ">":
+                break
+            self._advance()
+        if self.index == offset:
+            self._advance()
+        self.tokens.append(
+            Token(TokenKind.OP, self.source[offset : self.index], line, col, offset)
+        )
+
+    @staticmethod
+    def _is_ident_start(char: str) -> bool:
+        return char == "_" or char.isalpha()
+
+    @staticmethod
+    def _is_ident_part(char: str) -> bool:
+        return char == "_" or char.isalpha() or char.isdigit()
+
+    def _fail(
+        self, message: str, line: int | None = None, col: int | None = None
+    ) -> None:
+        raise LexError(f"{message} at {line or self.line}:{col or self.column}")
