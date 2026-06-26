@@ -76,6 +76,12 @@ class TypeLibraryTests(unittest.TestCase):
         )
         self.assertIsNone(collection_item_type(Number))
 
+    def test_collection_display_parenthesizes_union_base(self):
+        self.assertEqual(
+            str(C(ListExactType, U(Number, C(ListExactType, Number)))),
+            "(Number | Number+)+",
+        )
+
     def test_row_type_displays_required_fields(self):
         self.assertEqual(
             str(Row(V("@1"), Field(BAZ, V("@2")))),

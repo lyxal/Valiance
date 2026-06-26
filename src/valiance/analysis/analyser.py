@@ -13,6 +13,7 @@ from valiance.asts import (
     FunctionNode,
     FunctionOverloadTyping,
     FunctionParam,
+    ListLiteralNode,
     NumberLiteralNode,
     StringLiteralNode,
     TypedFunctionNode,
@@ -419,6 +420,15 @@ class FunctionAnalysis:
     overloads: tuple[FunctionOverloadTyping, ...]
 
 
+@dataclass(frozen=True)
+class ListItemAnalysis:
+    """One possible analysis result for a forked list item."""
+
+    branch: AnalysisBranch
+    typ: T.Type
+    consumed: int
+
+
 class Analyser:
     """Analysis session owning global environment, diagnostics, and dispatch."""
 
@@ -493,6 +503,8 @@ class Analyser:
                         typed_branch.stack.push(function.typ)
                     ).append_typed(typed_node)
                 }
+            case ListLiteralNode():
+                return self._list_literal(branch, node)
             case GetVariableNode(name):
                 typ = branch.variables.read(name)
                 if typ is None:
@@ -630,6 +642,47 @@ class Analyser:
                 TypedNode(node, field_type)
             )
         }
+
+    def _list_literal(
+        self,
+        branch: AnalysisBranch,
+        node: ListLiteralNode,
+    ) -> set[AnalysisBranch]:
+        if not node.items:
+            self._diagnose("empty list literal requires a type annotation or cast")
+            return set()
+
+        item_options: list[tuple[ListItemAnalysis, ...]] = []
+        for item in node.items:
+            item_outputs = self.analyse_block(BranchSet.one(branch), item)
+            options = tuple(
+                item_result
+                for output in item_outputs
+                if (item_result := _list_item_analysis(branch, output)) is not None
+            )
+            if not options:
+                self._diagnose("list item must leave a value on the stack")
+                return set()
+            item_options.append(options)
+
+        results: set[AnalysisBranch] = set()
+        for combo in _cartesian_product(tuple(item_options)):
+            inputs = _merge_inferred_inputs(branch.inputs, combo)
+            if inputs is None:
+                continue
+            consumed = max(item.consumed for item in combo)
+            item_type = T.U(*(item.typ for item in combo))
+            list_type = T.C(T.ListExactType, item_type)
+            variables = _merge_list_item_variables(branch.variables, combo)
+            results.add(
+                _replace_branch(
+                    branch,
+                    stack=_pop_stack(branch.stack, consumed).push(list_type),
+                    inputs=inputs,
+                    variables=variables,
+                ).append_typed(TypedNode(node, list_type))
+            )
+        return results
 
     def _foreach(self, branch: AnalysisBranch, node: ForNode) -> set[AnalysisBranch]:
         if not branch.stack:
@@ -1197,6 +1250,75 @@ def _loop_break_result_type(break_types: tuple[T.Type, ...]) -> T.Type:
     if len(break_types) == 1:
         return T.optional(break_types[0])
     return T.optional(T.U(*break_types))
+
+
+def _list_item_analysis(
+    base: AnalysisBranch,
+    output: AnalysisBranch,
+) -> ListItemAnalysis | None:
+    if output.break_type is not None or not output.stack:
+        return None
+    return ListItemAnalysis(
+        branch=output,
+        typ=output.stack[-1],
+        consumed=_forked_stack_consumption(base.stack, output.stack.pop()),
+    )
+
+
+def _forked_stack_consumption(base: T.TypeStack, item_remainder: T.TypeStack) -> int:
+    prefix = 0
+    limit = min(len(base), len(item_remainder))
+    while prefix < limit and T.same(base[prefix], item_remainder[prefix]):
+        prefix += 1
+    return len(base) - prefix
+
+
+def _cartesian_product(
+    options: tuple[tuple[ListItemAnalysis, ...], ...],
+) -> Iterator[tuple[ListItemAnalysis, ...]]:
+    if not options:
+        yield ()
+        return
+    first, rest = options[0], options[1:]
+    for item in first:
+        for suffix in _cartesian_product(rest):
+            yield (item, *suffix)
+
+
+def _merge_inferred_inputs(
+    base_inputs: tuple[T.Type, ...],
+    items: tuple[ListItemAnalysis, ...],
+) -> tuple[T.Type, ...] | None:
+    suffixes: list[tuple[T.Type, ...]] = []
+    for item in items:
+        if item.branch.inputs[: len(base_inputs)] != base_inputs:
+            return None
+        suffixes.append(item.branch.inputs[len(base_inputs) :])
+
+    merged: list[T.Type] = []
+    max_len = max((len(suffix) for suffix in suffixes), default=0)
+    for index in range(max_len):
+        candidates = tuple(
+            suffix[index] for suffix in suffixes if index < len(suffix)
+        )
+        merged.append(candidates[0] if len(candidates) == 1 else T.U(*candidates))
+    return base_inputs + tuple(merged)
+
+
+def _merge_list_item_variables(
+    before: BranchVariables,
+    items: tuple[ListItemAnalysis, ...],
+) -> BranchVariables:
+    merged = before
+    for item in items:
+        merged = merged.merge_against(item.branch.variables, before)
+    return merged
+
+
+def _pop_stack(stack: T.TypeStack, count: int) -> T.TypeStack:
+    if count == 0:
+        return stack
+    return stack.pop(count)
 
 
 def _merge_loop_variables(

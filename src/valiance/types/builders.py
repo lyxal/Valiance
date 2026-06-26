@@ -309,9 +309,11 @@ def show(t: Type) -> str:
             ArrayMinType: ">",
         }[type(t)]
         rank = "" if t.rank == 1 else str(t.rank)
-        return f"{show(t.base)}{suffix}{rank}"
+        return f"{_show_collection_base(t.base)}{suffix}{rank}"
     if isinstance(t, FunctionType):
-        return f"Function[{', '.join(show(p) for p in t.params)} -> {', '.join(show(r) for r in t.returns)}]"
+        params = ", ".join(show(p) for p in t.params)
+        returns = ", ".join(show(r) for r in t.returns)
+        return f"Function[{params} -> {returns}]"
     if isinstance(t, TaggedType):
         return f"{' '.join(sorted(t.tags))} {show(t.inner)}"
     if isinstance(t, OverloadSetType):
@@ -322,3 +324,10 @@ def show(t: Type) -> str:
     if isinstance(t, CallSiteCheckedFunctionType):
         return "CallSiteCheckedFunction"
     return type(t).__name__
+
+
+def _show_collection_base(t: Type) -> str:
+    rendered = show(t)
+    if isinstance(normalize(t), (UnionType, IntersectionType)):
+        return f"({rendered})"
+    return rendered

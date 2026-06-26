@@ -20,6 +20,7 @@ from valiance.asts import (
     FunctionParam,
     GetVariableNode,
     IfNode,
+    ListLiteralNode,
     NumberLiteralNode,
     StringLiteralNode,
     TypedFunctionNode,
@@ -690,6 +691,75 @@ class AnalyserTests(unittest.TestCase):
         self.assertEqual(len(branches), 1)
         branch = next(iter(branches))
         self.assertEqual(branch.stack, TypeStack((optional(U(Number, String)),)))
+
+    def test_list_literal_infers_union_item_type(self):
+        typed = analyse(
+            [
+                ListLiteralNode(
+                    (
+                        (NumberLiteralNode("1"),),
+                        (StringLiteralNode("x"),),
+                    )
+                )
+            ],
+            Environment(),
+        )
+
+        self.assertEqual(typed[0].typ, C(ListExactType, U(Number, String)))
+
+    def test_empty_list_literal_requires_annotation_or_cast(self):
+        analyser = Analyser(Environment())
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch()),
+            (ListLiteralNode(),),
+        )
+
+        self.assertEqual(len(branches), 0)
+        self.assertEqual(
+            analyser.diagnostics,
+            ["empty list literal requires a type annotation or cast"],
+        )
+
+    def test_list_literal_forks_stack_and_pops_max_consumed_inputs(self):
+        analyser = Analyser(default_environment())
+
+        branches = analyser.analyse_block(
+            BranchSet.one(
+                AnalysisBranch(stack=TypeStack((String, Number, Number)))
+            ),
+            (
+                ListLiteralNode(
+                    (
+                        (ElementNode(PLUS),),
+                        (ElementNode(DOUBLE),),
+                    )
+                ),
+            ),
+        )
+
+        self.assertEqual(len(branches), 1)
+        branch = next(iter(branches))
+        self.assertEqual(
+            branch.stack,
+            TypeStack((String, C(ListExactType, Number))),
+        )
+
+    def test_list_literal_items_contribute_to_function_input_inference(self):
+        node = FunctionNode(
+            body=(
+                ListLiteralNode(
+                    (
+                        (ElementNode(DOUBLE),),
+                        (NumberLiteralNode("1"),),
+                    )
+                ),
+            ),
+        )
+
+        typ = analyse_function(node, default_environment())
+
+        self.assertEqual(typ, Fn((Number,), (C(ListExactType, Number),)))
 
 
 if __name__ == "__main__":

@@ -50,6 +50,38 @@ class ParserTests(unittest.TestCase):
             ],
         )
 
+    def test_lowers_infix_chain_to_stack_order(self):
+        self.assertEqual(
+            parse("1 + 2"),
+            [
+                NumberLiteralNode("1"),
+                NumberLiteralNode("2"),
+                ElementNode(Symbol("+")),
+            ],
+        )
+
+    def test_lowers_multiple_chain_segments_left_to_right(self):
+        self.assertEqual(
+            parse("3 + 4 * 7"),
+            [
+                NumberLiteralNode("3"),
+                NumberLiteralNode("4"),
+                ElementNode(Symbol("+")),
+                NumberLiteralNode("7"),
+                ElementNode(Symbol("*")),
+            ],
+        )
+
+    def test_preserves_stack_order_when_chain_is_already_stacky(self):
+        self.assertEqual(
+            parse("1 2 +"),
+            [
+                NumberLiteralNode("1"),
+                NumberLiteralNode("2"),
+                ElementNode(Symbol("+")),
+            ],
+        )
+
     def test_parses_function_definition_with_params_and_returns(self):
         [node] = parse("define double(n: Number) -> Number => $n 2 *")
 
