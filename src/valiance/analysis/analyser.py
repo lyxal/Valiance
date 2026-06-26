@@ -596,10 +596,13 @@ class Analyser:
             if candidate is not None:
                 candidates.append(candidate)
 
+        stack_before = branch.stack
         winners = _best_candidates(candidates)
         if not winners:
             self._diagnose(
-                f"no overloads for element '{node.name}' match the given arguments"
+                f"no overloads for element '{node.name}' match stack "
+                f"{_show_stack(stack_before)}; available overloads: "
+                f"{_show_overloads(overloads)}"
             )
             return set()
         if (
@@ -607,7 +610,11 @@ class Analyser:
             and branch.input_mode is not InputMode.INFER_INPUTS
             and not _winners_specialize_inputs(winners, branch)
         ):
-            self._diagnose(f"ambiguous overloads for element '{node.name}'")
+            self._diagnose(
+                f"ambiguous overloads for element '{node.name}' with stack "
+                f"{_show_stack(stack_before)}; candidates: "
+                f"{_show_applied_overloads(winners)}"
+            )
             return set()
 
         results: set[AnalysisBranch] = set()
@@ -868,10 +875,10 @@ class Analyser:
 
         function_analyser = Analyser(self.env)
         final = function_analyser.analyse_block(BranchSet.one(initial), node.body)
-        self.diagnostics.extend(function_analyser.diagnostics)
         signatures = self._function_signatures(node, final)
         analysis = _function_analysis_from_signatures(signatures)
         if analysis is None:
+            self.diagnostics.extend(function_analyser.diagnostics)
             return None
         return analysis, outer
 
@@ -911,7 +918,6 @@ class Analyser:
 
     def _diagnose(self, message: str) -> None:
         self.diagnostics.append(message)
-        print(f"Error: {message}")
 
 
 def analyse(
@@ -1236,6 +1242,34 @@ def _returns_result_type(returns: tuple[T.Type, ...]) -> T.Type | None:
     if len(returns) == 1:
         return returns[0]
     return None
+
+
+def _show_stack(stack: T.TypeStack) -> str:
+    if not stack:
+        return "[]"
+    return "[" + ", ".join(T.show(item) for item in stack.items) + "]"
+
+
+def _show_overloads(overloads: Iterable[T.Overload]) -> str:
+    rendered = tuple(
+        T.show(T.Fn(overload.params, overload.returns))
+        for overload in overloads
+    )
+    if not rendered:
+        return "none"
+    return "; ".join(rendered)
+
+
+def _show_applied_overloads(
+    candidates: Iterable[tuple[T.AppliedOverload, AnalysisBranch]],
+) -> str:
+    rendered = tuple(
+        T.show(T.Fn(candidate.params, candidate.actual_returns))
+        for candidate, _ in candidates
+    )
+    if not rendered:
+        return "none"
+    return "; ".join(rendered)
 
 
 def _top_or_none(stack: T.TypeStack) -> T.Type:

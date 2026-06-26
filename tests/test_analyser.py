@@ -152,9 +152,10 @@ class AnalyserTests(unittest.TestCase):
         )
 
         self.assertEqual(len(branches), 0)
-        self.assertEqual(
-            analyser.diagnostics,
-            ["ambiguous overloads for element 'amb'"],
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "ambiguous overloads for element 'amb' with stack [Number]",
+            analyser.diagnostics[0],
         )
 
     def test_unknown_element_is_untyped(self):
@@ -382,6 +383,16 @@ class AnalyserTests(unittest.TestCase):
                         for overload in overload_set.overloads
                     )
                 )
+
+    def test_function_inference_suppresses_trimmed_branch_diagnostics(self):
+        analyser = Analyser(default_environment())
+
+        typ = analyser.analyse_function(
+            FunctionNode(body=(ElementNode(PLUS), ElementNode(DOUBLE)))
+        )
+
+        self.assertEqual(typ, Fn((Number, Number), (Number,)))
+        self.assertEqual(analyser.diagnostics, [])
 
     def test_function_empty_params_do_not_infer_missing_inputs(self):
         env = Environment()

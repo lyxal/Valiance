@@ -5,7 +5,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from valiance.analysis import analyse
+from valiance.analysis import Analyser
 from valiance.asts import pretty_ast
 from valiance.parsing import LexError, ParseError, Parser, lex
 
@@ -74,10 +74,14 @@ def _run_source(source: str) -> int:
     try:
         tokens = lex(source)
         program = Parser(tokens).parse_program()
-        typed = analyse(program)
+        analyser = Analyser()
+        typed = analyser.analyse(program)
     except (LexError, ParseError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+    for diagnostic in analyser.diagnostics:
+        print(f"error: {diagnostic}", file=sys.stderr)
 
     print("Parsed AST:")
     print(pretty_ast(program))
