@@ -52,11 +52,12 @@ class _Compiler:
         *,
         params: tuple[str, ...] = (),
         name: str | None = None,
+        cycle_params: bool = False,
     ) -> FunctionCode:
         for node in body:
             self.node(node)
         self.emit(OpCode.RETURN)
-        return FunctionCode(tuple(self.instructions), params, name)
+        return FunctionCode(tuple(self.instructions), params, name, cycle_params)
 
     def node(self, node: ASTNode | TypedNode) -> None:
         typed_node = node if isinstance(node, TypedNode) else None
@@ -206,7 +207,12 @@ def _compile_function_node(
     body: tuple[ASTNode | TypedNode, ...] = ast.body
     if typed is not None and typed.overloads:
         body = typed.overloads[0].body
-    return _Compiler().compile_function(body, params=params, name=name)
+    return _Compiler().compile_function(
+        body,
+        params=params,
+        name=name,
+        cycle_params=bool(ast.params),
+    )
 
 
 def _unwrap(node: ASTNode | TypedNode) -> ASTNode:

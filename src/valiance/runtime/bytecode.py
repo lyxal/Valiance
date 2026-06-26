@@ -42,6 +42,7 @@ class FunctionCode:
     instructions: tuple[Instruction, ...]
     params: tuple[str, ...] = ()
     name: str | None = None
+    cycle_params: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -5,7 +5,8 @@ from decimal import Decimal
 
 from valiance.analysis import Analyser
 from valiance.parsing import parse
-from valiance.runtime import CompileError, compile_program, run
+from valiance.runtime import CompileError, RuntimeError, compile_program, run
+from valiance.runtime.bytecode import FunctionCode, Instruction, OpCode, Program
 
 
 def execute(source: str):
@@ -75,6 +76,47 @@ $n
 
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "hello\n")
+
+    def test_explicit_function_params_cycle_on_runtime_underflow(self):
+        output = io.StringIO()
+        source = """
+define triple(:Number) => * 3
+println triple 5
+println(triple([1, 2, 3, 4, 5]))
+"""
+        program = parse(source)
+        analyser = Analyser()
+        typed = analyser.analyse(program)
+        self.assertEqual(analyser.diagnostics, [])
+
+        with contextlib.redirect_stdout(output):
+            stack = run(compile_program(typed))
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "15\n[3, 6, 9, 12, 15]\n")
+
+    def test_runtime_element_errors_show_stack_and_attempted_inputs(self):
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.PUSH_CONST, "x"),
+                    Instruction(OpCode.PUSH_CONST, Decimal("1")),
+                    Instruction(OpCode.LOAD_ELEMENT, "-"),
+                    Instruction(OpCode.CALL),
+                ),
+                name="<main>",
+            )
+        )
+
+        with self.assertRaises(RuntimeError) as error:
+            run(program)
+
+        message = str(error.exception)
+        self.assertIn("cannot call element '-'", message)
+        self.assertIn("stack: ['x', 1]", message)
+        self.assertIn("stack types: [String, Number]", message)
+        self.assertIn("attempted input shapes:", message)
+        self.assertIn("(Number, Number)", message)
 
 
 if __name__ == "__main__":

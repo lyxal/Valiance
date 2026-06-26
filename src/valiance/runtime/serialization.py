@@ -120,6 +120,7 @@ class _Writer:
 
     def function(self, function: FunctionCode) -> None:
         self.optional_string(function.name)
+        self.u8(1 if function.cycle_params else 0)
         self.u32(len(function.params))
         for param in function.params:
             self.string(param)
@@ -195,6 +196,9 @@ class _Reader:
 
     def function(self) -> FunctionCode:
         name = self.optional_string()
+        cycle_params = self.u8()
+        if cycle_params not in {0, 1}:
+            raise BytecodeFormatError(f"invalid function cycle flag {cycle_params}")
         params = tuple(self.string() for _ in range(self.u32()))
         instructions = []
         for _ in range(self.u32()):
@@ -204,4 +208,4 @@ class _Reader:
             except KeyError as exc:
                 raise BytecodeFormatError(f"unknown bytecode op {op_byte}") from exc
             instructions.append(Instruction(op, self.value()))
-        return FunctionCode(tuple(instructions), params, name)
+        return FunctionCode(tuple(instructions), params, name, bool(cycle_params))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from valiance.analysis.builtins import (
@@ -35,6 +36,34 @@ class BuiltinValue:
     context: RuntimeContext
 
 
+@dataclass(slots=True)
+class _Frame:
+    stack: list[Any]
+    locals: dict[str, Any]
+    globals: dict[str, Any]
+    cycle_values: tuple[Any, ...] = ()
+    cycle_index: int = 0
+
+    def source_args(self, arity: int) -> tuple[tuple[Any, ...], int, int]:
+        available = min(len(self.stack), arity)
+        missing = arity - available
+        stack_args = tuple(self.stack[-available:]) if available else ()
+        if missing == 0:
+            return stack_args, available, self.cycle_index
+        if not self.cycle_values:
+            raise _StackUnderflow
+        cycle_args = tuple(
+            self.cycle_values[(self.cycle_index + index) % len(self.cycle_values)]
+            for index in range(missing)
+        )
+        next_cycle_index = (self.cycle_index + missing) % len(self.cycle_values)
+        return cycle_args + stack_args, available, next_cycle_index
+
+
+class _StackUnderflow(Exception):
+    """Internal signal for trying another runtime overload shape."""
+
+
 class VirtualMachine:
     """A small stack-based bytecode interpreter."""
 
@@ -56,68 +85,93 @@ class VirtualMachine:
                 f"{len(function.code.params)} arguments, got {len(args)}"
             )
         locals_: dict[str, Any] = dict(zip(function.code.params, args, strict=True))
-        return self.execute(function.code, locals_, function.globals)
+        cycle_values = tuple(args) if function.code.cycle_params else ()
+        return self.execute(function.code, locals_, function.globals, cycle_values)
 
     def execute(
         self,
         code: FunctionCode,
         locals_: dict[str, Any],
         globals_: dict[str, Any],
+        cycle_values: tuple[Any, ...] = (),
     ) -> list[Any]:
-        stack: list[Any] = []
+        frame = _Frame([], locals_, globals_, cycle_values)
         ip = 0
         instructions = code.instructions
         while ip < len(instructions):
             instruction = instructions[ip]
             match instruction.op:
                 case OpCode.PUSH_CONST:
-                    stack.append(_constant(instruction.arg))
+                    frame.stack.append(_constant(instruction.arg))
                 case OpCode.LOAD_VAR:
-                    stack.append(_load_name(instruction.arg, locals_, globals_))
+                    frame.stack.append(
+                        _load_name(instruction.arg, frame.locals, frame.globals)
+                    )
                 case OpCode.STORE_VAR:
-                    locals_[instruction.arg] = _pop(stack, "store variable")
+                    frame.locals[instruction.arg] = _pop(
+                        frame.stack,
+                        "store variable",
+                    )
                 case OpCode.LOAD_ELEMENT:
-                    stack.append(_load_name(instruction.arg, locals_, globals_))
+                    frame.stack.append(
+                        _load_name(instruction.arg, frame.locals, frame.globals)
+                    )
                 case OpCode.MAKE_FUNCTION:
-                    stack.append(FunctionValue(instruction.arg, globals_ | locals_))
+                    frame.stack.append(
+                        FunctionValue(instruction.arg, frame.globals | frame.locals)
+                    )
                 case OpCode.CALL:
-                    self._call_stack_top(stack)
+                    self._call_stack_top(frame)
                 case OpCode.BUILD_LIST:
-                    stack.append(_pop_many(stack, instruction.arg))
+                    frame.stack.append(_pop_many(frame.stack, instruction.arg))
                 case OpCode.BUILD_TUPLE:
-                    stack.append(tuple(_pop_many(stack, instruction.arg)))
+                    frame.stack.append(tuple(_pop_many(frame.stack, instruction.arg)))
                 case OpCode.BUILD_RECORD:
-                    values = _pop_many(stack, len(instruction.arg))
-                    stack.append(dict(zip(instruction.arg, values, strict=True)))
+                    values = _pop_many(frame.stack, len(instruction.arg))
+                    frame.stack.append(dict(zip(instruction.arg, values, strict=True)))
                 case OpCode.BUILD_DICT:
-                    values = _pop_many(stack, instruction.arg * 2)
-                    stack.append(dict(zip(values[::2], values[1::2], strict=True)))
+                    values = _pop_many(frame.stack, instruction.arg * 2)
+                    frame.stack.append(
+                        dict(zip(values[::2], values[1::2], strict=True))
+                    )
                 case OpCode.GET_FIELD:
-                    receiver = _pop(stack, "field access")
-                    stack.append(_get_field(receiver, instruction.arg))
+                    receiver = _pop(frame.stack, "field access")
+                    frame.stack.append(_get_field(receiver, instruction.arg))
                 case OpCode.JUMP:
                     ip = instruction.arg
                     continue
                 case OpCode.JUMP_IF_FALSE:
-                    if not _truthy(_pop(stack, "conditional jump")):
+                    if not _truthy(_pop(frame.stack, "conditional jump")):
                         ip = instruction.arg
                         continue
                 case OpCode.POP:
-                    _pop(stack, "pop")
+                    _pop(frame.stack, "pop")
                 case OpCode.RETURN:
-                    return stack
+                    return frame.stack
             ip += 1
-        return stack
+        return frame.stack
 
-    def _call_stack_top(self, stack: list[Any]) -> None:
-        callee = _pop(stack, "call")
+    def _call_stack_top(self, frame: _Frame) -> None:
+        callee = _pop(frame.stack, "call")
         if isinstance(callee, BuiltinValue):
-            _call_builtin(callee, stack)
+            _call_builtin(callee, frame)
             return
         if isinstance(callee, FunctionValue):
             arity = len(callee.code.params)
-            args = _pop_many(stack, arity)
-            stack.extend(self.call(callee, args))
+            try:
+                args, stack_count, next_cycle_index = frame.source_args(arity)
+            except _StackUnderflow as exc:
+                raise RuntimeError(
+                    _format_call_error(
+                        f"function '{_function_name(callee.code)}'",
+                        frame.stack,
+                        [f"{arity} argument(s)"],
+                    )
+                ) from exc
+            if stack_count:
+                del frame.stack[-stack_count:]
+            frame.cycle_index = next_cycle_index
+            frame.stack.extend(self.call(callee, list(args)))
             return
         raise RuntimeError(f"cannot call value {callee!r}")
 
@@ -127,7 +181,7 @@ def run(program: Program, *, output: Callable[[str], None] | None = None) -> lis
     return VirtualMachine(output=output).run(program)
 
 
-def _call_builtin(callee: BuiltinValue, stack: list[Any]) -> None:
+def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
     candidates = sorted(
         callee.element.definitions,
         key=lambda overload: len(overload.signature.params),
@@ -135,25 +189,34 @@ def _call_builtin(callee: BuiltinValue, stack: list[Any]) -> None:
     )
     for overload in candidates:
         arity = len(overload.signature.params)
-        if len(stack) < arity:
+        try:
+            args, stack_count, next_cycle_index = frame.source_args(arity)
+        except _StackUnderflow:
             continue
-        args = tuple(stack[-arity:]) if arity else ()
         if not overload.runtime_accepts(args):
             vectorized = _call_vectorized_builtin(overload, args, callee.context)
             if vectorized is None:
                 continue
-            if arity:
-                del stack[-arity:]
-            stack.extend(vectorized)
+            if stack_count:
+                del frame.stack[-stack_count:]
+            frame.cycle_index = next_cycle_index
+            frame.stack.extend(vectorized)
             return
-        if arity:
-            del stack[-arity:]
+        if stack_count:
+            del frame.stack[-stack_count:]
+        frame.cycle_index = next_cycle_index
         implementation = overload.implementation
         if implementation is None:
             continue
-        stack.extend(implementation(args, callee.context))
+        frame.stack.extend(implementation(args, callee.context))
         return
-    raise RuntimeError(f"no runtime overload for element '{callee.element.name}'")
+    raise RuntimeError(
+        _format_call_error(
+            f"element '{callee.element.name}'",
+            frame.stack,
+            _show_overload_inputs(callee.element.definitions),
+        )
+    )
 
 
 def _call_vectorized_builtin(
@@ -252,3 +315,72 @@ def _get_field(receiver: Any, field: str) -> Any:
 
 def _function_name(code: FunctionCode) -> str:
     return "function" if code.name is None else code.name
+
+
+def _format_call_error(
+    target: str,
+    stack: list[Any],
+    expected_inputs: list[str],
+) -> str:
+    lines = [f"cannot call {target} with current stack"]
+    lines.append(f"stack: {_format_stack(stack)}")
+    lines.append(f"stack types: {_format_stack_types(stack)}")
+    if expected_inputs:
+        lines.append("attempted input shapes:")
+        lines.extend(f"  - {shape}" for shape in expected_inputs)
+    return "\n".join(lines)
+
+
+def _show_overload_inputs(overloads: tuple[BuiltinOverload, ...]) -> list[str]:
+    return [
+        "(" + ", ".join(str(param) for param in overload.signature.params) + ")"
+        for overload in overloads
+    ]
+
+
+def _format_stack(stack: list[Any]) -> str:
+    if not stack:
+        return "[]"
+    return "[" + ", ".join(_format_value(value) for value in stack) + "]"
+
+
+def _format_stack_types(stack: list[Any]) -> str:
+    if not stack:
+        return "[]"
+    return "[" + ", ".join(_runtime_type_name(value) for value in stack) + "]"
+
+
+def _format_value(value: Any) -> str:
+    if isinstance(value, Decimal):
+        if value == value.to_integral_value():
+            return format(value.quantize(Decimal(1)), "f")
+        return format(value.normalize(), "f")
+    if isinstance(value, str):
+        return repr(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_format_value(item) for item in value) + "]"
+    if isinstance(value, tuple):
+        return "(" + ", ".join(_format_value(item) for item in value) + ")"
+    if isinstance(value, dict):
+        items = ", ".join(
+            f"{_format_value(key)}: {_format_value(item)}"
+            for key, item in value.items()
+        )
+        return "{" + items + "}"
+    return repr(value)
+
+
+def _runtime_type_name(value: Any) -> str:
+    if isinstance(value, Decimal):
+        return "Number"
+    if isinstance(value, str):
+        return "String"
+    if isinstance(value, list):
+        item_types = sorted({_runtime_type_name(item) for item in value})
+        base = " | ".join(item_types) if item_types else "Unknown"
+        return f"{base}+"
+    if isinstance(value, tuple):
+        return "{" + ", ".join(_runtime_type_name(item) for item in value) + "}"
+    if isinstance(value, dict):
+        return "record"
+    return type(value).__name__

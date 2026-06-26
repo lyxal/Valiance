@@ -142,6 +142,18 @@ def _format_value(value: Any) -> str:
         if value == value.to_integral_value():
             return format(value.quantize(Decimal(1)), "f")
         return format(value.normalize(), "f")
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "[" + ", ".join(_format_value(item) for item in value) + "]"
+    if isinstance(value, tuple):
+        return "(" + ", ".join(_format_value(item) for item in value) + ")"
+    if isinstance(value, dict):
+        items = ", ".join(
+            f"{_format_value(key)}: {_format_value(item)}"
+            for key, item in value.items()
+        )
+        return "{" + items + "}"
     return str(value)
 
 
