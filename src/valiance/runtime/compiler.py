@@ -117,9 +117,6 @@ class _Compiler:
                 self.unsupported(node, type(node).__name__)
 
     def expression(self, nodes: tuple[ASTNode, ...]) -> None:
-        start_depth_marker = object()
-        self.emit(OpCode.PUSH_CONST, start_depth_marker)
-        self.emit(OpCode.POP)
         for node in nodes:
             self.node(node)
 

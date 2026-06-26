@@ -252,6 +252,20 @@ class _Lexer:
         line, col, offset = self.line, self.column, self.index
         if self._peek() == "\\":
             self._advance()
+            if self._is_ident_start(self._peek()):
+                self._advance()
+                while self._is_ident_part(self._peek()):
+                    self._advance()
+                self.tokens.append(
+                    Token(
+                        TokenKind.OP,
+                        self.source[offset : self.index],
+                        line,
+                        col,
+                        offset,
+                    )
+                )
+                return
         while self._peek() in _OP_CHARS:
             if self._peek() == "=" and self._peek(1) == ">":
                 break

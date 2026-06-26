@@ -369,7 +369,7 @@ class Parser:
             token = self._previous
             name = Symbol(token.value)
             if self._match(TokenKind.LPAREN):
-                args = self._comma_expressions(TokenKind.RPAREN)
+                args = self._argument_expressions(TokenKind.RPAREN)
                 return _ChainPiece(
                     (*_flatten(args), ElementNode(name, location=_loc(token))),
                     True,
@@ -406,7 +406,7 @@ class Parser:
                 True,
             )
         if self._match(TokenKind.LPAREN):
-            args = self._comma_expressions(TokenKind.RPAREN)
+            args = self._argument_expressions(TokenKind.RPAREN)
             return _ChainPiece(
                 (*_flatten(args), GetVariableNode(name, location=_loc(start))),
                 True,
@@ -424,6 +424,14 @@ class Parser:
                 return tuple(items)
             self._expect(TokenKind.COMMA)
             self._skip_newlines()
+
+    def _argument_expressions(
+        self, closer: TokenKind
+    ) -> tuple[tuple[ASTNode, ...], ...]:
+        self._skip_newlines()
+        if self._check(closer):
+            self._error("empty argument lists are invalid; use a \\nilad name")
+        return self._comma_expressions(closer)
 
     def _record_fields(self) -> tuple[tuple[Symbol, tuple[ASTNode, ...]], ...]:
         fields: list[tuple[Symbol, tuple[ASTNode, ...]]] = []
@@ -463,7 +471,7 @@ class Parser:
             name = self._symbol("expected annotation name")
             args: tuple[ASTNode, ...] = ()
             if self._match(TokenKind.LPAREN):
-                args = _flatten(self._comma_expressions(TokenKind.RPAREN))
+                args = _flatten(self._argument_expressions(TokenKind.RPAREN))
             annotations.append(AnnotationNode(name, args, location=_loc(start)))
             self._skip_newlines()
         return tuple(annotations)
@@ -471,8 +479,8 @@ class Parser:
     def _params(self) -> tuple[FunctionParam, ...]:
         params: list[FunctionParam] = []
         self._skip_newlines()
-        if self._match(TokenKind.RPAREN):
-            return ()
+        if self._check(TokenKind.RPAREN):
+            self._error("empty parameter lists are invalid; use a \\nilad name")
         while True:
             name: Symbol | None = None
             typ: Type | None = None

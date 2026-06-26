@@ -15,7 +15,7 @@ from valiance.asts import (
     StringLiteralNode,
     Symbol,
 )
-from valiance.parsing import LexError, lex, parse, parse_type
+from valiance.parsing import LexError, ParseError, lex, parse, parse_type
 from valiance.types import C, Fn, ListExactType, N, Number, String, same
 
 
@@ -29,6 +29,11 @@ class LexerTests(unittest.TestCase):
         self.assertIn('hi "there"', values)
         self.assertIn("-1e-2", values)
         self.assertIn("3i4", values)
+
+    def test_lexes_backslash_prefixed_element_name_as_one_token(self):
+        tokens = lex("\\foo")
+
+        self.assertEqual(tokens[0].value, "\\foo")
 
     def test_unterminated_string_is_error(self):
         with self.assertRaises(LexError):
@@ -92,6 +97,27 @@ class ParserTests(unittest.TestCase):
         self.assertTrue(same(node.function.params[0].typ, Number))
         self.assertEqual(node.function.returns, (Number,))
         self.assertEqual(node.function.body[-1], ElementNode(Symbol("*")))
+
+    def test_parses_niladic_define_with_backslash_name(self):
+        [node] = parse('define \\foo => println("Hello, World!")')
+
+        self.assertIsInstance(node, DefineNode)
+        self.assertEqual(node.name, Symbol("\\foo"))
+        self.assertEqual(
+            node.function.body,
+            (
+                StringLiteralNode("Hello, World!"),
+                ElementNode(Symbol("println")),
+            ),
+        )
+
+    def test_empty_define_params_are_syntax_error(self):
+        with self.assertRaises(ParseError):
+            parse("define foo() => 1")
+
+    def test_empty_element_call_args_are_syntax_error(self):
+        with self.assertRaises(ParseError):
+            parse("foo()")
 
     def test_inline_function_body_consumes_trailing_end(self):
         [node] = parse("fn => + | double end")
