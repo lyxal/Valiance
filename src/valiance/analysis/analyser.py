@@ -9,13 +9,17 @@ import valiance.types as T
 from valiance.analysis.builtins import default_environment
 from valiance.asts import (
     ASTNode,
+    DefineNode,
+    DictLiteralNode,
     ElementNode,
     FunctionNode,
     FunctionOverloadTyping,
     FunctionParam,
     ListLiteralNode,
     NumberLiteralNode,
+    RecordLiteralNode,
     StringLiteralNode,
+    TupleLiteralNode,
     TypedFunctionNode,
     TypedNode,
 )
@@ -504,8 +508,23 @@ class Analyser:
                         typed_branch.stack.push(function.typ)
                     ).append_typed(typed_node)
                 }
+            case DefineNode(name, function_node):
+                result = self._analyse_function_literal(branch, function_node)
+                if result is None:
+                    return {branch.append_typed(TypedNode(node, None))}
+                function, typed_branch = result
+                for overload in _callable_overloads(function.typ):
+                    self.env.define_overload(name, overload)
+                typed_node = TypedFunctionNode(node, function.typ, function.overloads)
+                return {typed_branch.append_typed(typed_node)}
             case ListLiteralNode():
                 return self._list_literal(branch, node)
+            case TupleLiteralNode():
+                return self._tuple_literal(branch, node)
+            case RecordLiteralNode():
+                return self._record_literal(branch, node)
+            case DictLiteralNode():
+                return self._dict_literal(branch, node)
             case CallNode():
                 return self._call(branch, node)
             case GetVariableNode(name):
@@ -771,6 +790,121 @@ class Analyser:
                 ).append_typed(TypedNode(node, list_type))
             )
         return results
+
+    def _tuple_literal(
+        self,
+        branch: AnalysisBranch,
+        node: TupleLiteralNode,
+    ) -> set[AnalysisBranch]:
+        item_options = self._literal_item_options(branch, node.items, node)
+        if item_options is None:
+            return set()
+
+        results: set[AnalysisBranch] = set()
+        for combo in _cartesian_product(item_options):
+            inputs = _merge_inferred_inputs(branch.inputs, combo)
+            if inputs is None:
+                continue
+            consumed = max((item.consumed for item in combo), default=0)
+            tuple_type = T.Tup(*(item.typ for item in combo))
+            variables = _merge_list_item_variables(branch.variables, combo)
+            results.add(
+                _replace_branch(
+                    branch,
+                    stack=_pop_stack(branch.stack, consumed).push(tuple_type),
+                    inputs=inputs,
+                    variables=variables,
+                ).append_typed(TypedNode(node, tuple_type))
+            )
+        return results
+
+    def _record_literal(
+        self,
+        branch: AnalysisBranch,
+        node: RecordLiteralNode,
+    ) -> set[AnalysisBranch]:
+        expressions = tuple(expr for _, expr in node.fields)
+        item_options = self._literal_item_options(branch, expressions, node)
+        if item_options is None:
+            return set()
+
+        results: set[AnalysisBranch] = set()
+        for combo in _cartesian_product(item_options):
+            inputs = _merge_inferred_inputs(branch.inputs, combo)
+            if inputs is None:
+                continue
+            consumed = max((item.consumed for item in combo), default=0)
+            record_type = T.Row(
+                T.N(Symbol("record")),
+                *(
+                    T.Field(name, item.typ)
+                    for (name, _), item in zip(node.fields, combo, strict=True)
+                ),
+            )
+            variables = _merge_list_item_variables(branch.variables, combo)
+            results.add(
+                _replace_branch(
+                    branch,
+                    stack=_pop_stack(branch.stack, consumed).push(record_type),
+                    inputs=inputs,
+                    variables=variables,
+                ).append_typed(TypedNode(node, record_type))
+            )
+        return results
+
+    def _dict_literal(
+        self,
+        branch: AnalysisBranch,
+        node: DictLiteralNode,
+    ) -> set[AnalysisBranch]:
+        expressions = tuple(expr for entry in node.entries for expr in entry)
+        item_options = self._literal_item_options(branch, expressions, node)
+        if item_options is None:
+            return set()
+
+        results: set[AnalysisBranch] = set()
+        for combo in _cartesian_product(item_options):
+            inputs = _merge_inferred_inputs(branch.inputs, combo)
+            if inputs is None:
+                continue
+            consumed = max((item.consumed for item in combo), default=0)
+            key_types = combo[::2]
+            value_types = combo[1::2]
+            dict_type = T.N(
+                Symbol("Dict"),
+                T.U(*(item.typ for item in key_types)),
+                T.U(*(item.typ for item in value_types)),
+            )
+            variables = _merge_list_item_variables(branch.variables, combo)
+            results.add(
+                _replace_branch(
+                    branch,
+                    stack=_pop_stack(branch.stack, consumed).push(dict_type),
+                    inputs=inputs,
+                    variables=variables,
+                ).append_typed(TypedNode(node, dict_type))
+            )
+        return results
+
+    def _literal_item_options(
+        self,
+        branch: AnalysisBranch,
+        expressions: tuple[tuple[ASTNode, ...], ...],
+        node: ASTNode,
+    ) -> tuple[tuple[ListItemAnalysis, ...], ...] | None:
+        item_options: list[tuple[ListItemAnalysis, ...]] = []
+        for expression in expressions:
+            item_outputs = self.analyse_block(BranchSet.one(branch), expression)
+            options = tuple(
+                item_result
+                for output in item_outputs
+                if (item_result := _list_item_analysis(branch, output)) is not None
+            )
+            if not options:
+                self._diagnose("literal item must leave a value on the stack", node)
+                return None
+            item_options.append(options)
+        return tuple(item_options)
 
     def _foreach(self, branch: AnalysisBranch, node: ForNode) -> set[AnalysisBranch]:
         if not branch.stack:

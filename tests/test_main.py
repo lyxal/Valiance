@@ -30,6 +30,57 @@ class MainTests(unittest.TestCase):
         self.assertIn("ElementNode(name=+, location=1:5)", rendered)
         self.assertIn("TypedNode(type=Number", rendered)
 
+    def test_main_runs_inline_code(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["--run", "--code", '"hello" println'])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), "hello\n")
+
+    def test_main_implicitly_prints_stack_when_requested(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(
+                [
+                    "--run",
+                    "--implicit-output",
+                    "--code",
+                    '[1, 2] "done"',
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            output.getvalue(),
+            "Stack [\n  0: [1, 2]\n  1: 'done'\n]\n",
+        )
+
+    def test_main_implicitly_prints_vectorised_stack_neatly(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(
+                [
+                    "--run",
+                    "--implicit-output",
+                    "--code",
+                    "[1, 2, 3] + [5, 6, 7]",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), "Stack [\n  0: [6, 8, 10]\n]\n")
+
+    def test_main_implicit_output_does_not_duplicate_explicit_prints(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(
+                ["--run", "--implicit-output", "--code", '"hello" println\n1']
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), "hello\n")
+
     def test_main_analyses_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "sample.vlnc"
