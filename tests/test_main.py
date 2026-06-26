@@ -27,7 +27,7 @@ class MainTests(unittest.TestCase):
         rendered = output.getvalue()
         self.assertIn("Parsed AST:", rendered)
         self.assertIn("Typed AST:", rendered)
-        self.assertIn("ElementNode(name=+)", rendered)
+        self.assertIn("ElementNode(name=+, location=1:5)", rendered)
         self.assertIn("TypedNode(type=Number", rendered)
 
     def test_main_analyses_file(self):
@@ -40,7 +40,10 @@ class MainTests(unittest.TestCase):
                 exit_code = main([str(source)])
 
         self.assertEqual(exit_code, 0)
-        self.assertIn("StringLiteralNode(value='hello')", output.getvalue())
+        self.assertIn(
+            "StringLiteralNode(value='hello', location=1:1)",
+            output.getvalue(),
+        )
 
 
 if __name__ == "__main__":

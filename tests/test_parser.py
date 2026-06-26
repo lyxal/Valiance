@@ -11,6 +11,7 @@ from valiance.asts import (
     ListLiteralNode,
     NumberLiteralNode,
     SetVariableNode,
+    SourceLocation,
     StringLiteralNode,
     Symbol,
 )
@@ -91,6 +92,25 @@ class ParserTests(unittest.TestCase):
         self.assertTrue(same(node.function.params[0].typ, Number))
         self.assertEqual(node.function.returns, (Number,))
         self.assertEqual(node.function.body[-1], ElementNode(Symbol("*")))
+
+    def test_inline_function_body_consumes_trailing_end(self):
+        [node] = parse("fn => + | double end")
+
+        self.assertIsInstance(node, FunctionNode)
+        self.assertEqual(
+            node.body,
+            (
+                ElementNode(Symbol("+")),
+                ElementNode(Symbol("double")),
+            ),
+        )
+
+    def test_parser_attaches_source_locations_to_ast_nodes(self):
+        program = parse("\n  1 + 2")
+
+        self.assertEqual(program[0].location, SourceLocation(2, 3, 3))
+        self.assertEqual(program[1].location, SourceLocation(2, 7, 7))
+        self.assertEqual(program[2].location, SourceLocation(2, 5, 5))
 
     def test_parses_multiline_if_else(self):
         [node] = parse(

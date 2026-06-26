@@ -4,6 +4,7 @@ from valiance.asts import (
     FieldAccessNode,
     FunctionNode,
     NumberLiteralNode,
+    SourceLocation,
     TypedNode,
     pretty_ast,
 )
@@ -35,6 +36,13 @@ class AstPrettyTests(unittest.TestCase):
 
         self.assertIn("TypedNode(type=Number", rendered)
         self.assertIn("NumberLiteralNode(value='1')", rendered)
+
+    def test_pretty_ast_includes_source_locations_when_present(self):
+        rendered = pretty_ast(
+            [NumberLiteralNode("1", location=SourceLocation(2, 3, 3))]
+        )
+
+        self.assertIn("NumberLiteralNode(value='1', location=2:3)", rendered)
 
 
 if __name__ == "__main__":

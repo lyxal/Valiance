@@ -1,15 +1,29 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from valiance.symbols import Symbol
 from valiance.types import Type
 
 
+@dataclass(frozen=True)
+class SourceLocation:
+    """A source position for parser-produced AST nodes."""
+
+    line: int
+    column: int
+    offset: int
+
+
+@dataclass(frozen=True)
 class ASTNode:
     """Base class for all AST nodes."""
 
-    pass
+    location: SourceLocation | None = field(
+        default=None,
+        compare=False,
+        kw_only=True,
+    )
 
 
 @dataclass(frozen=True, slots=True)

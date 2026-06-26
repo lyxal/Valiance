@@ -25,6 +25,7 @@ from valiance.asts import (
     StringLiteralNode,
     TypedFunctionNode,
 )
+from valiance.parsing import parse
 from valiance.symbols import Symbol
 from valiance.types import (
     AppliedElement,
@@ -161,6 +162,16 @@ class AnalyserTests(unittest.TestCase):
     def test_unknown_element_is_untyped(self):
         typed = analyse([ElementNode(MISSING)], Environment())
         self.assertIsNone(typed[0].typ)
+
+    def test_diagnostics_include_source_location_when_available(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(parse("missing"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["1:1: unknown element 'missing'"],
+        )
 
     def test_environment_distinguishes_unknown_from_no_matching_overload(self):
         env = Environment()

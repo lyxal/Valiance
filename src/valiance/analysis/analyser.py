@@ -508,7 +508,7 @@ class Analyser:
             case GetVariableNode(name):
                 typ = branch.variables.read(name)
                 if typ is None:
-                    self._diagnose(f"undefined variable '{name}'")
+                    self._diagnose(f"undefined variable '{name}'", node)
                     return {branch.append_typed(TypedNode(node, None))}
                 return {
                     branch.with_stack(branch.stack.push(typ)).append_typed(
@@ -578,7 +578,7 @@ class Analyser:
     ) -> set[AnalysisBranch]:
         overloads = self.env.overloads_for(node.name)
         if not overloads:
-            self._diagnose(f"unknown element '{node.name}'")
+            self._diagnose(f"unknown element '{node.name}'", node)
             return set()
 
         candidates: list[tuple[T.AppliedOverload, AnalysisBranch]] = []
@@ -602,7 +602,8 @@ class Analyser:
             self._diagnose(
                 f"no overloads for element '{node.name}' match stack "
                 f"{_show_stack(stack_before)}; available overloads: "
-                f"{_show_overloads(overloads)}"
+                f"{_show_overloads(overloads)}",
+                node,
             )
             return set()
         if (
@@ -613,7 +614,8 @@ class Analyser:
             self._diagnose(
                 f"ambiguous overloads for element '{node.name}' with stack "
                 f"{_show_stack(stack_before)}; candidates: "
-                f"{_show_applied_overloads(winners)}"
+                f"{_show_applied_overloads(winners)}",
+                node,
             )
             return set()
 
@@ -636,12 +638,15 @@ class Analyser:
     ) -> set[AnalysisBranch]:
         sourced = self._source_field_receiver(branch, name)
         if sourced is None:
-            self._diagnose(f"empty stack when trying to access field '{name}'")
+            self._diagnose(f"empty stack when trying to access field '{name}'", node)
             return set()
 
         receiver_type, field_type, branch = sourced
         if field_type is None:
-            self._diagnose(f"type {T.show(receiver_type)} has no known field '{name}'")
+            self._diagnose(
+                f"type {T.show(receiver_type)} has no known field '{name}'",
+                node,
+            )
             return set()
 
         return {
@@ -656,7 +661,10 @@ class Analyser:
         node: ListLiteralNode,
     ) -> set[AnalysisBranch]:
         if not node.items:
-            self._diagnose("empty list literal requires a type annotation or cast")
+            self._diagnose(
+                "empty list literal requires a type annotation or cast",
+                node,
+            )
             return set()
 
         item_options: list[tuple[ListItemAnalysis, ...]] = []
@@ -668,7 +676,7 @@ class Analyser:
                 if (item_result := _list_item_analysis(branch, output)) is not None
             )
             if not options:
-                self._diagnose("list item must leave a value on the stack")
+                self._diagnose("list item must leave a value on the stack", node)
                 return set()
             item_options.append(options)
 
@@ -693,14 +701,15 @@ class Analyser:
 
     def _foreach(self, branch: AnalysisBranch, node: ForNode) -> set[AnalysisBranch]:
         if not branch.stack:
-            self._diagnose("for loop requires iterable on the stack")
+            self._diagnose("for loop requires iterable on the stack", node)
             return set()
         iterable_type = branch.stack[-1]
         item_type = T.collection_item_type(iterable_type)
         if not item_type:
             self._diagnose(
                 "for loop iterable must actually be iterable. "
-                f"Got {T.show(iterable_type)}"
+                f"Got {T.show(iterable_type)}",
+                node,
             )
             return set()
         body_branch = branch.with_stack(branch.stack.pop())
@@ -755,7 +764,7 @@ class Analyser:
         condition = self.analyse_block(incoming, node.condition)
         condition = condition.require_stack_top_assignable(Boolean, self.env.context)
         if not condition:
-            self._diagnose("if condition must be a boolean value")
+            self._diagnose("if condition must be a boolean value", node)
             return set()
 
         body_inputs = condition.pop_stack_top()
@@ -766,7 +775,7 @@ class Analyser:
         for left in then_outputs:
             for right in else_outputs:
                 if left.inputs != right.inputs:
-                    self._diagnose("if branches inferred different inputs")
+                    self._diagnose("if branches inferred different inputs", node)
                     continue
                 if left.break_type is not None or right.break_type is not None:
                     for output in (left, right):
@@ -916,8 +925,8 @@ class Analyser:
             return None
         return node.returns
 
-    def _diagnose(self, message: str) -> None:
-        self.diagnostics.append(message)
+    def _diagnose(self, message: str, node: ASTNode | None = None) -> None:
+        self.diagnostics.append(_diagnostic_message(message, node))
 
 
 def analyse(
@@ -1248,6 +1257,13 @@ def _show_stack(stack: T.TypeStack) -> str:
     if not stack:
         return "[]"
     return "[" + ", ".join(T.show(item) for item in stack.items) + "]"
+
+
+def _diagnostic_message(message: str, node: ASTNode | None) -> str:
+    if node is None or node.location is None:
+        return message
+    location = node.location
+    return f"{location.line}:{location.column}: {message}"
 
 
 def _show_overloads(overloads: Iterable[T.Overload]) -> str:

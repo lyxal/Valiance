@@ -44,17 +44,17 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
     if isinstance(value, FunctionNode):
         return _function_node(value, level)
     if isinstance(value, NumberLiteralNode):
-        return f"NumberLiteralNode(value={value.value!r})"
+        return f"NumberLiteralNode(value={value.value!r}{_location_arg(value)})"
     if isinstance(value, StringLiteralNode):
-        return f"StringLiteralNode(value={value.value!r})"
+        return f"StringLiteralNode(value={value.value!r}{_location_arg(value)})"
     if isinstance(value, ElementNode):
-        return f"ElementNode(name={value.name})"
+        return f"ElementNode(name={value.name}{_location_arg(value)})"
     if isinstance(value, GetVariableNode):
-        return f"GetVariableNode(name={value.name})"
+        return f"GetVariableNode(name={value.name}{_location_arg(value)})"
     if isinstance(value, SetVariableNode):
-        return f"SetVariableNode(name={value.name})"
+        return f"SetVariableNode(name={value.name}{_location_arg(value)})"
     if isinstance(value, FieldAccessNode):
-        return f"FieldAccessNode(name={value.name})"
+        return f"FieldAccessNode(name={value.name}{_location_arg(value)})"
     return repr(value)
 
 
@@ -95,6 +95,8 @@ def _function_node(value: FunctionNode, level: int) -> str:
     for node in value.body:
         lines.extend(_indent(_pretty(node, level + 1).splitlines(), 2))
     lines.extend(["  ]", ")"])
+    if value.location is not None:
+        lines.insert(1, f"  location={_location_label(value)},")
     return "\n".join(lines)
 
 
@@ -118,6 +120,19 @@ def _types_label(types: tuple[Type, ...] | None) -> str:
 
 def _type_label(typ: Type | None) -> str:
     return "untyped" if typ is None else str(typ)
+
+
+def _location_arg(node: ASTNode) -> str:
+    if node.location is None:
+        return ""
+    return f", location={_location_label(node)}"
+
+
+def _location_label(node: ASTNode) -> str:
+    location = node.location
+    if location is None:
+        return "unknown"
+    return f"{location.line}:{location.column}"
 
 
 def _indent(lines: list[str], spaces: int = 2) -> list[str]:

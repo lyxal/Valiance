@@ -27,6 +27,7 @@ from valiance.asts import (
     RecordLiteralNode,
     ReturnNode,
     SetVariableNode,
+    SourceLocation,
     StringLiteralNode,
     Symbol,
     TupleLiteralNode,
@@ -98,23 +99,25 @@ class Parser:
             is_multi = True
 
         if self._match_ident("define"):
-            return (self._define(annotations, visibility, is_multi),)
+            return (self._define(self._previous, annotations, visibility, is_multi),)
         if self._match_ident("object", "trait", "variant"):
-            return (self._object(self._previous.value, annotations),)
+            return (self._object(self._previous, self._previous.value, annotations),)
         if self._match_ident("fn"):
-            return (self._function(),)
+            return (self._function(self._previous),)
         if self._match_ident("if"):
-            return (self._if(),)
+            return (self._if(self._previous),)
         if self._match_ident("while"):
-            return (self._while(),)
+            return (self._while(self._previous),)
         if self._match_ident("foreach"):
-            return (self._foreach(),)
+            return (self._foreach(self._previous),)
         if self._match_ident("break"):
-            return (BreakNode(self._optional_values()),)
+            start = self._previous
+            return (BreakNode(self._optional_values(), location=_loc(start)),)
         if self._match_ident("return"):
-            return (ReturnNode(self._optional_values()),)
+            start = self._previous
+            return (ReturnNode(self._optional_values(), location=_loc(start)),)
         if self._match_ident("match"):
-            return (self._match(),)
+            return (self._match(self._previous),)
 
         if annotations:
             self._error("annotation must be followed by a declaration")
@@ -122,6 +125,7 @@ class Parser:
 
     def _define(
         self,
+        start: Token,
         annotations: tuple[ASTNode, ...],
         visibility: Symbol | None,
         is_multi: bool,
@@ -133,47 +137,64 @@ class Parser:
         body = self._body()
         return DefineNode(
             name,
-            FunctionNode(params=params, body=body, returns=returns),
+            FunctionNode(
+                params=params,
+                body=body,
+                returns=returns,
+                location=_loc(start),
+            ),
             annotations,
             is_multi,
             visibility,
+            location=_loc(start),
         )
 
     def _object(
-        self, kind: str, annotations: tuple[ASTNode, ...]
+        self, start: Token, kind: str, annotations: tuple[ASTNode, ...]
     ) -> ObjectNode:
         name = self._symbol("expected object name")
         self._expect(TokenKind.FAT_ARROW)
-        return ObjectNode(Symbol(kind), name, self._body(), annotations)
+        return ObjectNode(
+            Symbol(kind),
+            name,
+            self._body(),
+            annotations,
+            location=_loc(start),
+        )
 
-    def _function(self) -> FunctionNode:
+    def _function(self, start: Token) -> FunctionNode:
         params = self._params() if self._match(TokenKind.LPAREN) else None
         returns = self._returns()
         self._expect(TokenKind.FAT_ARROW)
-        return FunctionNode(params=params, returns=returns, body=self._body())
+        return FunctionNode(
+            params=params,
+            returns=returns,
+            body=self._body(),
+            location=_loc(start),
+        )
 
-    def _if(self) -> IfNode:
+    def _if(self, start: Token) -> IfNode:
         condition = self._condition()
         self._expect(TokenKind.FAT_ARROW)
         then_branch = self._body({"else", "end"})
         else_branch: tuple[ASTNode, ...] = ()
         if self._match_ident("else"):
             if self._match_ident("if"):
-                else_branch = (self._if(),)
+                else_branch = (self._if(self._previous),)
             else:
                 self._expect(TokenKind.FAT_ARROW)
                 else_branch = self._body({"end"})
         else:
             self._consume_optional_end()
-        return IfNode(condition, then_branch, else_branch)
+        return IfNode(condition, then_branch, else_branch, location=_loc(start))
 
-    def _while(self) -> WhileNode:
+    def _while(self, start: Token) -> WhileNode:
         condition = self._condition()
         self._returns()
         self._expect(TokenKind.FAT_ARROW)
-        return WhileNode(condition, self._body())
+        return WhileNode(condition, self._body(), location=_loc(start))
 
-    def _foreach(self) -> ForNode:
+    def _foreach(self, start: Token) -> ForNode:
         self._expect(TokenKind.LPAREN)
         variable = self._symbol("expected foreach variable")
         index_variable = None
@@ -182,29 +203,38 @@ class Parser:
         self._expect(TokenKind.RPAREN)
         self._returns()
         self._expect(TokenKind.FAT_ARROW)
-        return ForNode(variable, index_variable, self._body())
+        return ForNode(variable, index_variable, self._body(), location=_loc(start))
 
-    def _match(self) -> MatchNode:
+    def _match(self, start: Token) -> MatchNode:
         self._expect(TokenKind.FAT_ARROW)
         cases: list[MatchCaseNode] = []
         self._skip_newlines()
         while not self._check_ident("end") and not self._check(TokenKind.EOF):
+            case_start = self._current
             if self._match_ident("if"):
-                pattern = (self._if(),)
-                cases.append(MatchCaseNode(pattern, ()))
+                pattern = (self._if(self._previous),)
+                cases.append(MatchCaseNode(pattern, (), location=_loc(case_start)))
                 self._skip_separators()
                 continue
             pattern = self._chain_until({TokenKind.FAT_ARROW})
             self._expect(TokenKind.FAT_ARROW)
-            cases.append(MatchCaseNode(pattern, self._body({"end", "_case"})))
+            cases.append(
+                MatchCaseNode(
+                    pattern,
+                    self._body({"end", "_case"}),
+                    location=_loc(case_start),
+                )
+            )
             self._skip_newlines()
         self._consume_optional_end()
-        return MatchNode(tuple(cases))
+        return MatchNode(tuple(cases), location=_loc(start))
 
     def _body(self, stop_words: set[str] | None = None) -> tuple[ASTNode, ...]:
         single_line = not self._check(TokenKind.NEWLINE)
         if single_line:
-            return self._chain_until(_LINE_TERMINATORS)
+            body = self._chain_until(_LINE_TERMINATORS)
+            self._consume_optional_end()
+            return body
         self._skip_newlines()
         nodes: list[ASTNode] = []
         stop_words = {"end"} if stop_words is None else stop_words
@@ -251,75 +281,137 @@ class Parser:
 
     def _term(self) -> _ChainPiece:
         if self._match(TokenKind.NUMBER):
-            return _ChainPiece((NumberLiteralNode(self._previous.value),), True)
-        if self._match(TokenKind.STRING):
-            return _ChainPiece((StringLiteralNode(self._previous.value),), True)
-        if self._match(TokenKind.DOLLAR):
-            return self._variable()
-        if self._match(TokenKind.DOT):
+            token = self._previous
             return _ChainPiece(
-                (FieldAccessNode(self._symbol("expected field name")),),
+                (NumberLiteralNode(token.value, location=_loc(token)),),
+                True,
+            )
+        if self._match(TokenKind.STRING):
+            token = self._previous
+            return _ChainPiece(
+                (StringLiteralNode(token.value, location=_loc(token)),),
+                True,
+            )
+        if self._match(TokenKind.DOLLAR):
+            return self._variable(self._previous)
+        if self._match(TokenKind.DOT):
+            token = self._previous
+            return _ChainPiece(
+                (
+                    FieldAccessNode(
+                        self._symbol("expected field name"),
+                        location=_loc(token),
+                    ),
+                ),
                 is_element=True,
             )
         if self._match(TokenKind.LBRACKET):
+            token = self._previous
             return _ChainPiece(
-                (ListLiteralNode(self._comma_expressions(TokenKind.RBRACKET)),),
+                (
+                    ListLiteralNode(
+                        self._comma_expressions(TokenKind.RBRACKET),
+                        location=_loc(token),
+                    ),
+                ),
                 True,
             )
         if self._match_ident("arr") and self._match(TokenKind.LBRACE):
+            token = self._previous
             return _ChainPiece(
-                (ArrayLiteralNode(self._comma_expressions(TokenKind.RBRACE)),),
+                (
+                    ArrayLiteralNode(
+                        self._comma_expressions(TokenKind.RBRACE),
+                        location=_loc(token),
+                    ),
+                ),
                 True,
             )
         if self._match_ident("record") and self._match(TokenKind.LBRACE):
-            return _ChainPiece((RecordLiteralNode(self._record_fields()),), True)
+            token = self._previous
+            return _ChainPiece(
+                (RecordLiteralNode(self._record_fields(), location=_loc(token)),),
+                True,
+            )
         if self._match_ident("dict") and self._match(TokenKind.LBRACE):
-            return _ChainPiece((DictLiteralNode(self._dict_entries()),), True)
+            token = self._previous
+            return _ChainPiece(
+                (DictLiteralNode(self._dict_entries(), location=_loc(token)),),
+                True,
+            )
         if self._match(TokenKind.LPAREN):
+            token = self._previous
             items = self._comma_expressions(TokenKind.RPAREN)
             if len(items) == 1:
                 return _ChainPiece(items[0], True)
-            return _ChainPiece((TupleLiteralNode(items),), True)
+            return _ChainPiece((TupleLiteralNode(items, location=_loc(token)),), True)
         if self._match_ident("fn"):
-            return _ChainPiece((self._function(),), True)
+            return _ChainPiece((self._function(self._previous),), True)
         if self._match_ident("if"):
-            return _ChainPiece((self._if(),), True)
+            return _ChainPiece((self._if(self._previous),), True)
         if self._match_ident("while"):
-            return _ChainPiece((self._while(),), True)
+            return _ChainPiece((self._while(self._previous),), True)
         if self._match_ident("foreach"):
-            return _ChainPiece((self._foreach(),), True)
+            return _ChainPiece((self._foreach(self._previous),), True)
         if self._match_ident("break"):
-            return _ChainPiece((BreakNode(self._optional_values()),), True)
+            token = self._previous
+            return _ChainPiece(
+                (BreakNode(self._optional_values(), location=_loc(token)),),
+                True,
+            )
         if self._match_ident("return"):
-            return _ChainPiece((ReturnNode(self._optional_values()),), True)
+            token = self._previous
+            return _ChainPiece(
+                (ReturnNode(self._optional_values(), location=_loc(token)),),
+                True,
+            )
         if self._match(TokenKind.IDENT, TokenKind.OP):
-            name = Symbol(self._previous.value)
+            token = self._previous
+            name = Symbol(token.value)
             if self._match(TokenKind.LPAREN):
                 args = self._comma_expressions(TokenKind.RPAREN)
-                return _ChainPiece((*_flatten(args), ElementNode(name)), True)
+                return _ChainPiece(
+                    (*_flatten(args), ElementNode(name, location=_loc(token))),
+                    True,
+                )
             return _ChainPiece(
-                (ElementNode(name),),
+                (ElementNode(name, location=_loc(token)),),
                 breaks_chain=name.text.startswith("\\"),
                 is_element=True,
             )
         self._error("expected expression")
 
-    def _variable(self) -> _ChainPiece:
+    def _variable(self, start: Token) -> _ChainPiece:
         if self._match(TokenKind.DOT):
             return _ChainPiece(
-                (FieldAccessNode(self._symbol("expected field name")),),
+                (
+                    FieldAccessNode(
+                        self._symbol("expected field name"),
+                        location=_loc(start),
+                    ),
+                ),
                 is_element=True,
             )
         name = self._symbol("expected variable name")
         if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
             op = self._previous.kind
             rhs = self._chain_until(_LINE_TERMINATORS)
-            prefix = (GetVariableNode(name),) if op is TokenKind.AUG_ASSIGN else ()
-            return _ChainPiece((*prefix, *rhs, SetVariableNode(name)), True)
+            prefix = (
+                (GetVariableNode(name, location=_loc(start)),)
+                if op is TokenKind.AUG_ASSIGN
+                else ()
+            )
+            return _ChainPiece(
+                (*prefix, *rhs, SetVariableNode(name, location=_loc(start))),
+                True,
+            )
         if self._match(TokenKind.LPAREN):
             args = self._comma_expressions(TokenKind.RPAREN)
-            return _ChainPiece((*_flatten(args), GetVariableNode(name)), True)
-        return _ChainPiece((GetVariableNode(name),), True)
+            return _ChainPiece(
+                (*_flatten(args), GetVariableNode(name, location=_loc(start))),
+                True,
+            )
+        return _ChainPiece((GetVariableNode(name, location=_loc(start)),), True)
 
     def _comma_expressions(self, closer: TokenKind) -> tuple[tuple[ASTNode, ...], ...]:
         items: list[tuple[ASTNode, ...]] = []
@@ -367,11 +459,12 @@ class Parser:
     def _annotations(self) -> tuple[ASTNode, ...]:
         annotations: list[ASTNode] = []
         while self._match(TokenKind.AT):
+            start = self._previous
             name = self._symbol("expected annotation name")
             args: tuple[ASTNode, ...] = ()
             if self._match(TokenKind.LPAREN):
                 args = _flatten(self._comma_expressions(TokenKind.RPAREN))
-            annotations.append(AnnotationNode(name, args))
+            annotations.append(AnnotationNode(name, args, location=_loc(start)))
             self._skip_newlines()
         return tuple(annotations)
 
@@ -601,6 +694,10 @@ _LINE_TERMINATORS: set[TokenKind | str] = {
 
 def _flatten(items: tuple[tuple[ASTNode, ...], ...]) -> tuple[ASTNode, ...]:
     return tuple(node for item in items for node in item)
+
+
+def _loc(token: Token) -> SourceLocation:
+    return SourceLocation(token.line, token.column, token.offset)
 
 
 def _lower_chain_segment(segment: list[_ChainPiece]) -> tuple[ASTNode, ...]:
