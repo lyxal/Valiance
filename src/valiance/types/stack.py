@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Immutable stack state and stack-application result records."""
+
+from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass

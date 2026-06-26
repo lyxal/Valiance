@@ -104,7 +104,9 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
         # Generic nominal types are invariant. Trait/variant relationships are
         # the only nominal widening currently supported.
         if source.name == target.name and len(source.args) == len(target.args):
-            return all(same(a, b) for a, b in zip(source.args, target.args, strict=False))
+            return all(
+                same(a, b) for a, b in zip(source.args, target.args, strict=False)
+            )
         if ctx.implements(source.name, target.name):
             return True
         if ctx.variant_members.get(source.name) == target.name:
@@ -114,7 +116,8 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
 
     if isinstance(source, TupleType) and isinstance(target, TupleType):
         return len(source.params) == len(target.params) and all(
-            assignable(a, b, ctx) for a, b in zip(source.params, target.params, strict=False)
+            assignable(a, b, ctx)
+            for a, b in zip(source.params, target.params, strict=False)
         )
 
     if isinstance(source, CollectionType) and isinstance(target, CollectionType):
@@ -139,11 +142,15 @@ def _row_subtype(source: Type, target: RowType, ctx: Context) -> bool:
 
 def _collection_subtype(source: Type, target: Type, ctx: Context) -> bool:
     """Return whether one collection type subsumes another by rank rules."""
-    if isinstance(source, (ListMinType, ListRuggedType)) and isinstance(target, ListExactType):
+    if isinstance(source, (ListMinType, ListRuggedType)) and isinstance(
+        target, ListExactType
+    ):
         # A minimum/rugged list can satisfy an exact outer-list pattern if the
         # peeled remainder is exactly the expected element type.
         if source.rank >= target.rank:
-            remainder = _collection_remainder(type(source), source.base, source.rank - target.rank)
+            remainder = _collection_remainder(
+                type(source), source.base, source.rank - target.rank
+            )
             return same(remainder, target.base)
     if not same(source.base, target.base):
         return False
@@ -181,7 +188,9 @@ def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
         # Assignment can implicitly wrap a present value into Some[T], and None
         # can be stored in any optional.
         inner = _optional_inner(target)
-        return isinstance(source, NoneTypeNode) or (inner is not None and assignable(source, inner, ctx))
+        return isinstance(source, NoneTypeNode) or (
+            inner is not None and assignable(source, inner, ctx)
+        )
 
     if isinstance(source, UnionType):
         return all(assignable(s, target, ctx) for s in source.items)
@@ -218,7 +227,11 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
                 return True
             inner = _optional_inner(p)
             actual_inner = _optional_inner(a) if _is_optional(a) else a
-            return inner is not None and actual_inner is not None and rec(inner, actual_inner)
+            return (
+                inner is not None
+                and actual_inner is not None
+                and rec(inner, actual_inner)
+            )
         if isinstance(p, UnionType):
             # Ordinary union solving is allowed only when exactly one branch
             # matches. Ambiguous generic unions should require explicit types.
@@ -226,7 +239,9 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
             for branch in p.items:
                 saved = {key: list(values) for key, values in constraints.items()}
                 if rec(branch, a):
-                    matches.append({key: list(values) for key, values in constraints.items()})
+                    matches.append(
+                        {key: list(values) for key, values in constraints.items()}
+                    )
                 constraints.clear()
                 constraints.update(saved)
             if len(matches) != 1:
@@ -235,8 +250,10 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
             constraints.update(matches[0])
             return True
         if isinstance(p, NominalType) and isinstance(a, NominalType):
-            return p.name == a.name and len(p.args) == len(a.args) and all(
-                rec(x, y) for x, y in zip(p.args, a.args, strict=False)
+            return (
+                p.name == a.name
+                and len(p.args) == len(a.args)
+                and all(rec(x, y) for x, y in zip(p.args, a.args, strict=False))
             )
         if isinstance(p, RowType):
             actual_base = a.base if isinstance(a, RowType) else a
@@ -253,10 +270,19 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
                     return False
             return True
         if isinstance(p, TupleType) and isinstance(a, TupleType):
-            return len(p.params) == len(a.params) and all(rec(x, y) for x, y in zip(p.params, a.params, strict=False))
+            return len(p.params) == len(a.params) and all(
+                rec(x, y) for x, y in zip(p.params, a.params, strict=False)
+            )
         if isinstance(p, FunctionType) and isinstance(a, FunctionType):
-            return len(p.params) == len(a.params) and len(p.returns) == len(a.returns) and all(
-                rec(x, y) for x, y in zip(p.params + p.returns, a.params + a.returns, strict=False)
+            return (
+                len(p.params) == len(a.params)
+                and len(p.returns) == len(a.returns)
+                and all(
+                    rec(x, y)
+                    for x, y in zip(
+                        p.params + p.returns, a.params + a.returns, strict=False
+                    )
+                )
             )
         if isinstance(p, FunctionType) and isinstance(a, OverloadSetType):
             # Overloaded callables are checked after other generics are known.
@@ -275,7 +301,9 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
     return constraints if rec(pattern, actual) else None
 
 
-def _solve_collection(pattern: Type, actual: Type, add: Callable[[str, Type], None]) -> bool:
+def _solve_collection(
+    pattern: Type, actual: Type, add: Callable[[str, Type], None]
+) -> bool:
     """Solve a generic collection pattern against an actual collection type."""
     if not isinstance(pattern.base, VarType):
         # This helper is only for patterns like T+. Non-generic collection
@@ -319,7 +347,9 @@ def _solve_collection(pattern: Type, actual: Type, add: Callable[[str, Type], No
     return False
 
 
-def _collection_remainder(collection_type: CollectionClass, base: Type, rank: int) -> Type:
+def _collection_remainder(
+    collection_type: CollectionClass, base: Type, rank: int
+) -> Type:
     """Return the element type left after peeling collection rank from a type."""
     if rank > 0:
         return C(collection_type, base, rank)
@@ -353,7 +383,11 @@ def _combine(a: Type, b: Type) -> Type | None:
             return a
         inner = _combine(ai, bi)
         return optional(inner) if inner else None
-    if isinstance(a, CollectionType) and isinstance(b, CollectionType) and same(a.base, b.base):
+    if (
+        isinstance(a, CollectionType)
+        and isinstance(b, CollectionType)
+        and same(a.base, b.base)
+    ):
         # Collection solutions can widen from exact to minimum/rugged when
         # multiple constraints need one shared generic type.
         return _combine_collections(a, b)
@@ -419,7 +453,9 @@ def merge_stacks(
     length = max(len(a), len(b))
     left = (NoneType(),) * (length - len(a)) + a.items
     right = (NoneType(),) * (length - len(b)) + b.items
-    return TypeStack(tuple(merge_types(x, y) for x, y in zip(left, right, strict=False)))
+    return TypeStack(
+        tuple(merge_types(x, y) for x, y in zip(left, right, strict=False))
+    )
 
 
 def _substitute(t: Type, subst: dict[str, Type]) -> Type:
@@ -448,7 +484,10 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
     if isinstance(t, CollectionType):
         return normalize(C(type(t), _substitute(t.base, subst), t.rank))
     if isinstance(t, FunctionType):
-        return Fn((_substitute(p, subst) for p in t.params), (_substitute(r, subst) for r in t.returns))
+        return Fn(
+            (_substitute(p, subst) for p in t.params),
+            (_substitute(r, subst) for r in t.returns),
+        )
     if isinstance(t, TaggedType):
         return Tagged(_substitute(t.inner, subst), *t.tags)
     if isinstance(t, AtomicType) and isinstance(t.inner, VarType):
@@ -483,7 +522,9 @@ def compatible(argument: Type, parameter: Type, ctx: Context | None = None) -> b
         return all(compatible(a, parameter, ctx) for a in argument.items)
     if _is_optional(parameter):
         inner = _optional_inner(parameter)
-        return isinstance(argument, NoneTypeNode) or (inner is not None and compatible(argument, inner, ctx))
+        return isinstance(argument, NoneTypeNode) or (
+            inner is not None and compatible(argument, inner, ctx)
+        )
     if _can_vectorise(argument, parameter, ctx):
         return True
     constraints = _solve(parameter, argument)
@@ -493,7 +534,11 @@ def compatible(argument: Type, parameter: Type, ctx: Context | None = None) -> b
         # recurse forever.
         subst = {k: _combine_all(v) for k, v in constraints.items()}
         substituted = _substitute(parameter, subst)
-        if subst and all(v is not None for v in subst.values()) and not same(substituted, parameter):
+        if (
+            subst
+            and all(v is not None for v in subst.values())
+            and not same(substituted, parameter)
+        ):
             return compatible(argument, substituted, ctx)
     return False
 
@@ -501,38 +546,65 @@ def compatible(argument: Type, parameter: Type, ctx: Context | None = None) -> b
 def _callable_compatible(argument: Type, parameter: Type, ctx: Context) -> bool:
     """Return whether a callable can act as an expected ``Function[...]`` type."""
     if isinstance(argument, FunctionType):
-        actual_returns = _overload_result_for_args(Overload(argument.params, argument.returns), parameter.params, ctx)
-        return actual_returns is not None and len(actual_returns) == len(parameter.returns) and all(
-            compatible(a, p, ctx) for a, p in zip(actual_returns, parameter.returns, strict=False)
+        actual_returns = _overload_result_for_args(
+            Overload(argument.params, argument.returns), parameter.params, ctx
+        )
+        return (
+            actual_returns is not None
+            and len(actual_returns) == len(parameter.returns)
+            and all(
+                compatible(a, p, ctx)
+                for a, p in zip(actual_returns, parameter.returns, strict=False)
+            )
         )
     if isinstance(argument, OverloadSetType):
         # The expected Function[...] supplies the call input types for choosing
         # an overload from the callable value.
-        matches = [o for o in argument.overloads if _overload_callable_compatible(o, parameter, ctx)]
-        return len(matches) == 1 or bool(resolve_overload_result(argument.overloads, parameter.params, ctx))
+        matches = [
+            o
+            for o in argument.overloads
+            if _overload_callable_compatible(o, parameter, ctx)
+        ]
+        return len(matches) == 1 or bool(
+            resolve_overload_result(argument.overloads, parameter.params, ctx)
+        )
     if isinstance(argument, CallSiteCheckedFunctionType):
         result = argument.checker(parameter.params)
-        return result is not None and len(result) == len(parameter.returns) and all(
-            compatible(a, p, ctx) for a, p in zip(result, parameter.returns, strict=False)
+        return (
+            result is not None
+            and len(result) == len(parameter.returns)
+            and all(
+                compatible(a, p, ctx)
+                for a, p in zip(result, parameter.returns, strict=False)
+            )
         )
     return False
 
 
-def _overload_callable_compatible(overload: Overload, expected: Type, ctx: Context) -> bool:
+def _overload_callable_compatible(
+    overload: Overload, expected: Type, ctx: Context
+) -> bool:
     """Return whether one overload can be used as an expected function type."""
-    if len(overload.params) != len(expected.params) or len(overload.returns) != len(expected.returns):
+    if len(overload.params) != len(expected.params) or len(overload.returns) != len(
+        expected.returns
+    ):
         return False
     actual_returns = _overload_result_for_args(overload, expected.params, ctx)
     return actual_returns is not None and all(
-        compatible(r, e, ctx) for r, e in zip(actual_returns, expected.returns, strict=False)
+        compatible(r, e, ctx)
+        for r, e in zip(actual_returns, expected.returns, strict=False)
     )
 
 
-def _overload_result_for_args(overload: Overload, args: tuple[Type, ...], ctx: Context) -> tuple[Type, ...] | None:
+def _overload_result_for_args(
+    overload: Overload, args: tuple[Type, ...], ctx: Context
+) -> tuple[Type, ...] | None:
     """Compute an overload's result stack when called with concrete argument types."""
     if len(overload.params) != len(args):
         return None
-    if not all(compatible(a, p, ctx) for a, p in zip(args, overload.params, strict=False)):
+    if not all(
+        compatible(a, p, ctx) for a, p in zip(args, overload.params, strict=False)
+    ):
         return None
 
     vector_rank = 0
@@ -565,7 +637,8 @@ def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:
     """Return whether compatibility can be achieved through vectorisation."""
     if isinstance(parameter, ExactType):
         return compatible(argument, parameter.inner, ctx) and not (
-            isinstance(argument, CollectionType) and not isinstance(parameter.inner, CollectionType)
+            isinstance(argument, CollectionType)
+            and not isinstance(parameter.inner, CollectionType)
         )
     if not isinstance(argument, CollectionType):
         return False
@@ -574,7 +647,9 @@ def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:
     return compatible(argument.base, parameter, ctx)
 
 
-def _match_specificity(argument: Type, parameter: Type, ctx: Context | None = None) -> Specificity:
+def _match_specificity(
+    argument: Type, parameter: Type, ctx: Context | None = None
+) -> Specificity:
     """Classify how specifically an argument matches a parameter."""
     ctx = ctx or Context()
     argument, parameter = normalize(argument), normalize(parameter)
@@ -583,29 +658,42 @@ def _match_specificity(argument: Type, parameter: Type, ctx: Context | None = No
     # The order here mirrors the language's specificity ladder. The first
     # applicable category wins.
     if isinstance(parameter, TaggedType) and isinstance(argument, TaggedType):
-        if _tag_requirements_met(argument.tags, parameter.tags) and same(argument.inner, parameter.inner):
+        if _tag_requirements_met(argument.tags, parameter.tags) and same(
+            argument.inner, parameter.inner
+        ):
             return Specificity.TAGGED
-    if _is_optional(parameter) and (isinstance(argument, NoneTypeNode) or compatible(argument, _optional_inner(parameter), ctx)):
+    if _is_optional(parameter) and (
+        isinstance(argument, NoneTypeNode)
+        or compatible(argument, _optional_inner(parameter), ctx)
+    ):
         return Specificity.OPTIONAL
     if isinstance(parameter, IntersectionType) and compatible(argument, parameter, ctx):
         return Specificity.INTERSECTION
     if isinstance(argument, NominalType) and isinstance(parameter, NominalType):
         if ctx.implements(argument.name, parameter.name):
             return Specificity.TRAIT
-    if isinstance(argument, CollectionType) and isinstance(parameter, CollectionType) and _collection_subtype(argument, parameter, ctx):
+    if (
+        isinstance(argument, CollectionType)
+        and isinstance(parameter, CollectionType)
+        and _collection_subtype(argument, parameter, ctx)
+    ):
         return Specificity.RANK
     if isinstance(parameter, UnionType) and compatible(argument, parameter, ctx):
         return Specificity.UNION
     if _can_vectorise(argument, parameter, ctx):
         return Specificity.VECTORISED
-    if isinstance(argument, CallSiteCheckedFunctionType) and compatible(argument, parameter, ctx):
+    if isinstance(argument, CallSiteCheckedFunctionType) and compatible(
+        argument, parameter, ctx
+    ):
         return Specificity.CALL_SITE_CHECKED
     if compatible(argument, parameter, ctx):
         return Specificity.EXACT_GENERIC
     return Specificity.NO_MATCH
 
 
-def apply_overload(overload: Overload, args: tuple[Type, ...], ctx: Context | None = None) -> AppliedOverload | None:
+def apply_overload(
+    overload: Overload, args: tuple[Type, ...], ctx: Context | None = None
+) -> AppliedOverload | None:
     """Apply one overload to concrete argument types, returning details on success."""
     ctx = ctx or Context()
     if len(overload.params) != len(args):
@@ -614,7 +702,9 @@ def apply_overload(overload: Overload, args: tuple[Type, ...], ctx: Context | No
     constraints: dict[str, list[Type]] = {}
     deferred_function_args: list[tuple[FunctionType, FunctionType]] = []
     for param, arg in zip(overload.params, args, strict=False):
-        if isinstance(param, FunctionType) and isinstance(arg, (FunctionType, OverloadSetType, CallSiteCheckedFunctionType)):
+        if isinstance(param, FunctionType) and isinstance(
+            arg, (FunctionType, OverloadSetType, CallSiteCheckedFunctionType)
+        ):
             # Defer function argument solving. Other parameters should usually
             # determine T before we ask whether this callable fits Function[T].
             if isinstance(arg, FunctionType):
@@ -654,7 +744,9 @@ def apply_overload(overload: Overload, args: tuple[Type, ...], ctx: Context | No
 
     params = tuple(_substitute(param, substitution) for param in overload.params)
     returns = tuple(_substitute(ret, substitution) for ret in overload.returns)
-    if not all(compatible(arg, param, ctx) for arg, param in zip(args, params, strict=False)):
+    if not all(
+        compatible(arg, param, ctx) for arg, param in zip(args, params, strict=False)
+    ):
         return None
 
     actual_returns = _overload_result_for_args(Overload(params, returns), args, ctx)
@@ -663,11 +755,16 @@ def apply_overload(overload: Overload, args: tuple[Type, ...], ctx: Context | No
     # returns = declared returns after generic substitution.
     # actual_returns = returns after call adaptation such as vectorisation.
 
-    scores = tuple(_match_specificity(arg, param, ctx) for arg, param in zip(args, params, strict=False))
+    scores = tuple(
+        _match_specificity(arg, param, ctx)
+        for arg, param in zip(args, params, strict=False)
+    )
     if any(score == Specificity.NO_MATCH for score in scores):
         return None
 
-    return AppliedOverload(overload, substitution, params, returns, actual_returns, scores)
+    return AppliedOverload(
+        overload, substitution, params, returns, actual_returns, scores
+    )
 
 
 def apply_overload_to_stack(
@@ -770,7 +867,13 @@ def resolve_overload_result(
         if applied is None:
             continue
         candidates.append(
-            ResolvedOverload(applied.overload, applied.substitution, applied.params, applied.returns, applied.scores)
+            ResolvedOverload(
+                applied.overload,
+                applied.substitution,
+                applied.params,
+                applied.returns,
+                applied.scores,
+            )
         )
     winners = []
     for candidate in candidates:
@@ -808,7 +911,9 @@ def _contains_type_var(t: Type) -> bool:
 
 def _dominates(a: tuple[Specificity, ...], b: tuple[Specificity, ...]) -> bool:
     """Return whether specificity vector ``a`` strictly dominates ``b``."""
-    return all(x <= y for x, y in zip(a, b, strict=False)) and any(x < y for x, y in zip(a, b, strict=False))
+    return all(x <= y for x, y in zip(a, b, strict=False)) and any(
+        x < y for x, y in zip(a, b, strict=False)
+    )
 
 
 def _tag_requirements_met(actual: frozenset[str], required: frozenset[str]) -> bool:
@@ -820,4 +925,3 @@ def _tag_requirements_met(actual: frozenset[str], required: frozenset[str]) -> b
         elif tag not in actual:
             return False
     return True
-

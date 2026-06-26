@@ -71,7 +71,7 @@ def U(*types: Type) -> Type:
     return normalize(UnionType(frozenset(types)))
 
 
-def I(*types: Type) -> Type:
+def I(*types: Type) -> Type:  # noqa: E743
     """Create and normalize an intersection type."""
     return normalize(IntersectionType(frozenset(types)))
 
@@ -150,11 +150,7 @@ def _optional_inner(t: UnionType) -> Type | None:
     for item in t.items:
         if isinstance(item, NoneTypeNode):
             continue
-        if (
-            isinstance(item, NominalType)
-            and item.name == SOME
-            and len(item.args) == 1
-        ):
+        if isinstance(item, NominalType) and item.name == SOME and len(item.args) == 1:
             non_none.append(item.args[0])
         else:
             non_none.append(item)

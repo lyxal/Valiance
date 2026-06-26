@@ -27,7 +27,7 @@ from valiance.types.builders import (
     show,
 )
 from valiance.types.context import Context
-from valiance.types.default_types import Number, String, Boolean
+from valiance.types.default_types import Boolean, Number, String
 from valiance.types.environment import (
     AppliedElement,
     Environment,
