@@ -15,6 +15,7 @@ from valiance.asts.nodes import (
     NumberLiteralNode,
     SetVariableNode,
     StringLiteralNode,
+    TagApplicationNode,
     TypedFunctionNode,
     TypedNode,
 )
@@ -55,6 +56,8 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
         return f"SetVariableNode(name={value.name}{_location_arg(value)})"
     if isinstance(value, FieldAccessNode):
         return f"FieldAccessNode(name={value.name}{_location_arg(value)})"
+    if isinstance(value, TagApplicationNode):
+        return f"TagApplicationNode(tag={_tag_label(value)}{_location_arg(value)})"
     return repr(value)
 
 
@@ -133,6 +136,12 @@ def _location_label(node: ASTNode) -> str:
     if location is None:
         return "unknown"
     return f"{location.line}:{location.column}"
+
+
+def _tag_label(node: TagApplicationNode) -> str:
+    prefix = "#!" if node.tag.absent else "#"
+    depth = "+" * node.tag.depth
+    return f"{prefix}{node.tag.name}{depth}"
 
 
 def _indent(lines: list[str], spaces: int = 2) -> list[str]:

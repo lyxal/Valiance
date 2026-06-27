@@ -4,6 +4,8 @@ from valiance.symbols import Symbol
 from valiance.types import (
     C,
     Context,
+    DataTag,
+    ExactList,
     Field,
     Fn,
     ListExactType,
@@ -14,9 +16,12 @@ from valiance.types import (
     Overloads,
     Row,
     Specificity,
+    Tagged,
     TypeStack,
+    TypeVariable,
     U,
     V,
+    WithoutTag,
     _combine_all,
     _match_specificity,
     _solve,
@@ -80,6 +85,37 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(
             str(C(ListExactType, U(Number, C(ListExactType, Number)))),
             "(Number | Number+)+",
+        )
+
+    def test_tagged_type_displays_tag_depth(self):
+        self.assertEqual(
+            str(Tagged(C(ListExactType, Number, 2), DataTag("infinite", depth=2))),
+            "#infinite++ Number+2",
+        )
+
+    def test_readable_type_builders_match_core_constructors(self):
+        self.assertEqual(TypeVariable("Item"), V("Item"))
+        self.assertEqual(ExactList(Number), C(ListExactType, Number))
+        self.assertEqual(
+            WithoutTag(ExactList(TypeVariable("Item")), "infinite"),
+            Tagged(C(ListExactType, V("Item")), DataTag("infinite", absent=True)),
+        )
+
+    def test_absent_tagged_collection_parameter_does_not_vectorise_return(self):
+        overload = Overload(
+            (Tagged(C(ListExactType, V("T")), DataTag("infinite", absent=True)),),
+            (Number,),
+        )
+
+        applied = apply_overload(overload, (C(ListExactType, Number),))
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.actual_returns, (Number,))
+
+    def test_collection_item_type_looks_through_tags(self):
+        self.assertEqual(
+            collection_item_type(Tagged(C(ListExactType, Number), "infinite")),
+            Number,
         )
 
     def test_row_type_displays_required_fields(self):

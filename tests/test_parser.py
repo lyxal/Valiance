@@ -14,9 +14,20 @@ from valiance.asts import (
     SourceLocation,
     StringLiteralNode,
     Symbol,
+    TagApplicationNode,
 )
 from valiance.parsing import LexError, ParseError, lex, parse, parse_type
-from valiance.types import C, Fn, ListExactType, N, Number, String, same
+from valiance.types import (
+    C,
+    DataTag,
+    Fn,
+    ListExactType,
+    N,
+    Number,
+    String,
+    Tagged,
+    same,
+)
 
 
 class LexerTests(unittest.TestCase):
@@ -34,6 +45,14 @@ class LexerTests(unittest.TestCase):
         tokens = lex("\\foo")
 
         self.assertEqual(tokens[0].value, "\\foo")
+
+    def test_lexes_data_tags_as_one_token(self):
+        tokens = lex("#sorted #!infinite #infinite++")
+
+        self.assertEqual(
+            [token.value for token in tokens[:-1]],
+            ["#sorted", "#!infinite", "#infinite++"],
+        )
 
     def test_unterminated_string_is_error(self):
         with self.assertRaises(LexError):
@@ -119,6 +138,12 @@ class ParserTests(unittest.TestCase):
         with self.assertRaises(ParseError):
             parse("foo()")
 
+    def test_parses_value_level_tag_application(self):
+        program = parse("[1, 2, 3] | #sorted")
+
+        self.assertIsInstance(program[-1], TagApplicationNode)
+        self.assertEqual(program[-1].tag, DataTag("sorted"))
+
     def test_inline_function_body_consumes_trailing_end(self):
         [node] = parse("fn => + | double end")
 
@@ -192,6 +217,18 @@ end
             same(
                 parse_type("Result[Number, String]"),
                 N(Symbol("Result"), Number, String),
+            )
+        )
+        self.assertTrue(
+            same(
+                parse_type("#sorted Number+"),
+                Tagged(C(ListExactType, Number), "sorted"),
+            )
+        )
+        self.assertTrue(
+            same(
+                parse_type("#!infinite Number+"),
+                Tagged(C(ListExactType, Number), DataTag("infinite", absent=True)),
             )
         )
 

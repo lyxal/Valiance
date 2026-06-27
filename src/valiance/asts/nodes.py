@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from valiance.symbols import Symbol
-from valiance.types import Type
+from valiance.types import DataTag, Type
 
 
 @dataclass(frozen=True)
@@ -70,6 +70,13 @@ class ElementNode(ASTNode):
     """An element, such as an operator or function name."""
 
     name: Symbol
+
+
+@dataclass(frozen=True)
+class TagApplicationNode(ASTNode):
+    """Apply or remove a data tag from the top stack value."""
+
+    tag: DataTag
 
 
 @dataclass(frozen=True)

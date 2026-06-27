@@ -19,6 +19,7 @@ from valiance.asts import (
     NumberLiteralNode,
     RecordLiteralNode,
     StringLiteralNode,
+    TagApplicationNode,
     TupleLiteralNode,
     TypedFunctionNode,
     TypedNode,
@@ -497,6 +498,8 @@ class Analyser:
                 }
             case ElementNode():
                 return self._element(branch, node)
+            case TagApplicationNode():
+                return self._tag_application(branch, node)
             case FunctionNode():
                 result = self._analyse_function_literal(branch, node)
                 if result is None:
@@ -651,6 +654,34 @@ class Analyser:
                 )
             )
         return results
+
+    def _tag_application(
+        self,
+        branch: AnalysisBranch,
+        node: TagApplicationNode,
+    ) -> set[AnalysisBranch]:
+        if not branch.stack:
+            self._diagnose(
+                f"empty stack when applying tag '{_show_tag(node.tag)}'",
+                node,
+            )
+            return {branch.append_typed(TypedNode(node, None))}
+
+        value_type = branch.stack[-1]
+        if node.tag.absent:
+            tagged = _remove_data_tag(value_type, node.tag)
+            if tagged is None:
+                self._diagnose(
+                    f"cannot remove absent tag '{_show_tag(node.tag)}' from "
+                    f"{value_type}",
+                    node,
+                )
+                return {branch.append_typed(TypedNode(node, None))}
+        else:
+            tagged = _with_data_tags(value_type, (node.tag,), self.env.context)
+
+        stack = T.TypeStack((*branch.stack.items[:-1], tagged))
+        return {branch.with_stack(stack).append_typed(TypedNode(node, tagged))}
 
     def _call(
         self,
@@ -1268,6 +1299,20 @@ def _apply_overload_to_branch(
     applied = T.apply_overload(overload, specialized_args, ctx)
     if applied is None:
         return None
+    actual_returns = _apply_data_tag_flow(
+        specialized_args,
+        overload.returns,
+        applied.actual_returns,
+        ctx,
+    )
+    applied = T.AppliedOverload(
+        applied.overload,
+        applied.substitution,
+        applied.params,
+        applied.returns,
+        actual_returns,
+        applied.scores,
+    )
     return applied, specialized_branch
 
 
@@ -1278,6 +1323,163 @@ def _specialize_branch_arguments(
     for name, typ in substitution.items():
         branch = branch.refine_type(T.V(name), typ)
     return branch
+
+
+def _apply_data_tag_flow(
+    args: tuple[T.Type, ...],
+    declared_returns: tuple[T.Type, ...],
+    actual_returns: tuple[T.Type, ...],
+    ctx: T.Context,
+) -> tuple[T.Type, ...]:
+    """Strip implicit computed tags and propagate sticky data tags."""
+    explicit_tags = tuple(_explicit_tags(ret) for ret in declared_returns)
+    returns = tuple(
+        _strip_implicit_computed_tags(
+            ret,
+            explicit_tags[index] if index < len(explicit_tags) else frozenset(),
+            ctx,
+        )
+        for index, ret in enumerate(actual_returns)
+    )
+    sticky_inputs = tuple(
+        sticky for arg in args for sticky in _sticky_input_tags(arg, ctx)
+    )
+    if not sticky_inputs:
+        return returns
+    return tuple(_propagate_sticky_tags(ret, sticky_inputs, ctx) for ret in returns)
+
+
+def _explicit_tags(typ: T.Type) -> frozenset[T.DataTag]:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        return typ.tags | _explicit_tags(typ.inner)
+    if isinstance(typ, T.CollectionType):
+        return _explicit_tags(typ.base)
+    if isinstance(typ, T.UnionType):
+        result: set[T.DataTag] = set()
+        for item in typ.items:
+            result.update(_explicit_tags(item))
+        return frozenset(result)
+    return frozenset()
+
+
+def _strip_implicit_computed_tags(
+    typ: T.Type,
+    explicit_tags: frozenset[T.DataTag],
+    ctx: T.Context,
+) -> T.Type:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        kept = tuple(
+            tag
+            for tag in typ.tags
+            if tag in explicit_tags
+        )
+        inner = _strip_implicit_computed_tags(typ.inner, explicit_tags, ctx)
+        return _with_data_tags(inner, kept, ctx) if kept else inner
+    if isinstance(typ, T.CollectionType):
+        return T.C(
+            type(typ),
+            _strip_implicit_computed_tags(typ.base, explicit_tags, ctx),
+            typ.rank,
+        )
+    if isinstance(typ, T.UnionType):
+        return T.U(
+            *(
+                _strip_implicit_computed_tags(item, explicit_tags, ctx)
+                for item in typ.items
+            )
+        )
+    return typ
+
+
+@dataclass(frozen=True)
+class StickyInputTag:
+    tag: T.DataTag
+    rank: int
+
+
+def _sticky_input_tags(typ: T.Type, ctx: T.Context) -> tuple[StickyInputTag, ...]:
+    typ = T.normalize(typ)
+    if not isinstance(typ, T.TaggedType):
+        return ()
+    return tuple(
+        StickyInputTag(tag, max(_type_rank(typ.inner) - tag.depth, 0))
+        for tag in sorted(typ.tags)
+        if ctx.is_constructed_like_tag(tag.name)
+    )
+
+
+def _propagate_sticky_tags(
+    typ: T.Type,
+    sticky_inputs: tuple[StickyInputTag, ...],
+    ctx: T.Context,
+) -> T.Type:
+    result = typ
+    output_rank = _type_rank(result)
+    for sticky in sticky_inputs:
+        if output_rank >= sticky.rank:
+            result = _tag_at_depth(
+                result,
+                sticky.tag.name,
+                max(output_rank - 1, 0),
+                ctx,
+            )
+    return result
+
+
+def _tag_at_depth(typ: T.Type, tag: str, depth: int, ctx: T.Context) -> T.Type:
+    return _with_data_tags(typ, (T.DataTag(tag, depth),), ctx)
+
+
+def _with_data_tags(
+    typ: T.Type,
+    tags: Iterable[T.DataTag],
+    ctx: T.Context,
+) -> T.Type:
+    existing: set[T.DataTag] = set()
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        existing.update(typ.tags)
+        typ = typ.inner
+    for tag in tags:
+        existing = {
+            item
+            for item in existing
+            if item.name not in ctx.disjoint_tags.get(tag.name, set())
+        }
+        existing.add(tag)
+        parent = ctx.tag_parents.get(tag.name)
+        if parent is not None:
+            existing.add(T.DataTag(parent, tag.depth))
+    return T.Tagged(typ, *sorted(existing)) if existing else typ
+
+
+def _remove_data_tag(typ: T.Type, tag: T.DataTag) -> T.Type | None:
+    typ = T.normalize(typ)
+    if not isinstance(typ, T.TaggedType):
+        return None
+    existing = set(typ.tags)
+    positive = T.DataTag(tag.name, tag.depth)
+    if positive not in existing:
+        return None
+    existing.remove(positive)
+    return T.Tagged(typ.inner, *sorted(existing)) if existing else typ.inner
+
+
+def _show_tag(tag: T.DataTag) -> str:
+    prefix = "#!" if tag.absent else "#"
+    depth = "+" * tag.depth
+    return f"{prefix}{tag.name}{depth}"
+
+
+def _type_rank(typ: T.Type) -> int:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        return _type_rank(typ.inner)
+    if isinstance(typ, T.CollectionType):
+        return typ.rank
+    return 0
 
 
 def _refine_branch_like(
@@ -1713,6 +1915,7 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
 
 def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
     typ = T.normalize(typ)
+    new = _erase_absent_tag_requirements(new)
     if T.same(typ, old):
         return new
     if isinstance(typ, T.NominalType):
@@ -1744,6 +1947,13 @@ def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
         return T.Exact(_refine_type(typ.inner, old, new))
     if isinstance(typ, T.AtomicType):
         return T.Atomic(_refine_type(typ.inner, old, new))
+    return typ
+
+
+def _erase_absent_tag_requirements(typ: T.Type) -> T.Type:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType) and all(tag.absent for tag in typ.tags):
+        return typ.inner
     return typ
 
 

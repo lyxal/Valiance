@@ -30,6 +30,7 @@ from valiance.asts import (
     SourceLocation,
     StringLiteralNode,
     Symbol,
+    TagApplicationNode,
     TupleLiteralNode,
     WhileNode,
 )
@@ -38,6 +39,7 @@ from valiance.types import (
     ArrayExactType,
     ArrayMinType,
     C,
+    DataTag,
     Fn,
     I,
     ListExactType,
@@ -45,6 +47,7 @@ from valiance.types import (
     ListRuggedType,
     N,
     NoneType,
+    Tagged,
     Tup,
     Type,
     U,
@@ -367,6 +370,11 @@ class Parser:
             )
         if self._match(TokenKind.IDENT, TokenKind.OP):
             token = self._previous
+            if token.value.startswith("#"):
+                return _ChainPiece(
+                    (TagApplicationNode(_tag_from_token(token), location=_loc(token)),),
+                    is_element=True,
+                )
             name = Symbol(token.value)
             if self._match(TokenKind.LPAREN):
                 args = self._argument_expressions(TokenKind.RPAREN)
@@ -520,11 +528,18 @@ class Parser:
         return typ
 
     def _type_intersection(self) -> Type:
-        typ = self._type_postfix()
+        typ = self._type_tagged()
         while self._check_op("&"):
             self._advance()
-            typ = I(typ, self._type_postfix())
+            typ = I(typ, self._type_tagged())
         return typ
+
+    def _type_tagged(self) -> Type:
+        tags: list[DataTag] = []
+        while self._check(TokenKind.OP) and self._current.value.startswith("#"):
+            tags.append(_tag_from_token(self._advance()))
+        typ = self._type_postfix()
+        return Tagged(typ, *tags) if tags else typ
 
     def _type_postfix(self) -> Type:
         typ = self._type_primary()
@@ -706,6 +721,28 @@ def _flatten(items: tuple[tuple[ASTNode, ...], ...]) -> tuple[ASTNode, ...]:
 
 def _loc(token: Token) -> SourceLocation:
     return SourceLocation(token.line, token.column, token.offset)
+
+
+def _tag_from_token(token: Token) -> DataTag:
+    value = token.value
+    if not value.startswith("#"):
+        raise ParseError(f"expected data tag at {token.line}:{token.column}")
+    raw = value[1:]
+    absent = raw.startswith("!")
+    if absent:
+        raw = raw[1:]
+    name, _, suffix = raw.partition("+")
+    if not name:
+        raise ParseError(f"expected data tag name at {token.line}:{token.column}")
+    if not suffix and "+" not in raw:
+        depth = 0
+    elif suffix.isdecimal():
+        depth = int(suffix)
+    elif set(suffix) <= {"+"}:
+        depth = len(suffix) + 1
+    else:
+        raise ParseError(f"invalid data tag depth at {token.line}:{token.column}")
+    return DataTag(name, depth=depth, absent=absent)
 
 
 def _lower_chain_segment(segment: list[_ChainPiece]) -> tuple[ASTNode, ...]:

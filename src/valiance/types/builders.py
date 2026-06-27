@@ -11,6 +11,7 @@ from valiance.types.nodes import (
     AtomicType,
     CallSiteCheckedFunctionType,
     CollectionType,
+    DataTag,
     ExactType,
     FunctionType,
     IntersectionType,
@@ -56,6 +57,11 @@ def V(name: str) -> Type:
     return VarType(name)
 
 
+def TypeVariable(name: str) -> Type:
+    """Create a generic type variable with a readable constructor name."""
+    return V(name)
+
+
 def Some(inner: Type) -> Type:
     """Create the explicit ``Some[T]`` wrapper used by optional types."""
     return N(SOME, inner)
@@ -96,6 +102,31 @@ def C(collection_type: CollectionClass, base: Type, rank: int = 1) -> Type:
     return collection_type(base, rank)
 
 
+def ExactList(base: Type, rank: int = 1) -> Type:
+    """Create a fixed-rank list type."""
+    return C(ListExactType, base, rank)
+
+
+def AtLeastList(base: Type, rank: int = 1) -> Type:
+    """Create a minimum-rank list type."""
+    return C(ListMinType, base, rank)
+
+
+def RuggedList(base: Type, rank: int = 1) -> Type:
+    """Create a potentially-ragged list type."""
+    return C(ListRuggedType, base, rank)
+
+
+def ExactArray(base: Type, rank: int = 1) -> Type:
+    """Create a fixed-rank array type."""
+    return C(ArrayExactType, base, rank)
+
+
+def AtLeastArray(base: Type, rank: int = 1) -> Type:
+    """Create a minimum-rank array type."""
+    return C(ArrayMinType, base, rank)
+
+
 def Fn(params: Iterable[Type], returns: Iterable[Type]) -> Type:
     """Create a stack-effect function type."""
     return FunctionType(tuple(params), tuple(returns))
@@ -106,9 +137,22 @@ def Overloads(*overloads: Overload) -> Type:
     return OverloadSetType(tuple(overloads))
 
 
-def Tagged(inner: Type, *tags: str) -> Type:
+TagSpec = str | DataTag
+
+
+def Tagged(inner: Type, *tags: TagSpec) -> Type:
     """Create a tagged type, merging nested tag wrappers during normalization."""
-    return normalize(TaggedType(inner, frozenset(tags)))
+    return normalize(TaggedType(inner, frozenset(_tag(tag) for tag in tags)))
+
+
+def WithTag(inner: Type, name: str, *, depth: int = 0) -> Type:
+    """Create a type that requires a present data tag."""
+    return Tagged(inner, DataTag(name, depth=depth))
+
+
+def WithoutTag(inner: Type, name: str, *, depth: int = 0) -> Type:
+    """Create a type that requires a data tag to be absent."""
+    return Tagged(inner, DataTag(name, depth=depth, absent=True))
 
 
 def Exact(inner: Type) -> Type:
@@ -311,7 +355,7 @@ def show(t: Type) -> str:
         returns = ", ".join(show(r) for r in t.returns)
         return f"Function[{params} -> {returns}]"
     if isinstance(t, TaggedType):
-        return f"{' '.join(sorted(t.tags))} {show(t.inner)}"
+        return f"{' '.join(_show_tag(tag) for tag in sorted(t.tags))} {show(t.inner)}"
     if isinstance(t, OverloadSetType):
         entries = ", ".join(
             show(Fn(overload.params, overload.returns)) for overload in t.overloads
@@ -327,3 +371,17 @@ def _show_collection_base(t: Type) -> str:
     if isinstance(normalize(t), (UnionType, IntersectionType)):
         return f"({rendered})"
     return rendered
+
+
+def _tag(tag: TagSpec) -> DataTag:
+    if isinstance(tag, DataTag):
+        return tag
+    absent = tag.startswith("!")
+    name = tag[1:] if absent else tag
+    return DataTag(name, absent=absent)
+
+
+def _show_tag(tag: DataTag) -> str:
+    prefix = "#!" if tag.absent else "#"
+    depth = "+" * tag.depth
+    return f"{prefix}{tag.name}{depth}"

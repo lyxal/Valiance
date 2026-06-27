@@ -145,12 +145,21 @@ class OverloadSetType(Type):
     overloads: tuple[Overload, ...] = ()
 
 
+@dataclass(frozen=True, order=True)
+class DataTag:
+    """A data-tag requirement or fact, including collection-depth metadata."""
+
+    name: str
+    depth: int = 0
+    absent: bool = False
+
+
 @dataclass(frozen=True)
 class TaggedType(Type):
     """A type decorated with present or absent tag requirements."""
 
     inner: Type
-    tags: frozenset[str] = field(default_factory=frozenset[str])
+    tags: frozenset[DataTag] = field(default_factory=frozenset[DataTag])
 
 
 @dataclass(frozen=True)

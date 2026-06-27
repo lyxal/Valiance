@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from valiance.symbols import Symbol
-from valiance.types.context import Context
+from valiance.types.context import Context, TagKind
 from valiance.types.nodes import NeverType, Overload, OverloadSetType, Type
 from valiance.types.stack import StackApplication, TypeStack
 
@@ -167,7 +167,23 @@ class Environment:
 
     def add_unit_tag(self, tag: str) -> None:
         """Record a tag that cannot be silently erased."""
-        self.context.unit_tags.add(tag)
+        self.context.define_tag(tag, TagKind.UNIT)
+
+    def add_constructed_tag(self, tag: str) -> None:
+        """Record a sticky constructed data tag."""
+        self.context.define_tag(tag, TagKind.CONSTRUCTED)
+
+    def add_computed_tag(self, tag: str) -> None:
+        """Record a non-sticky computed data tag."""
+        self.context.define_tag(tag, TagKind.COMPUTED)
+
+    def add_variant_tag(self, tag: str, parent: str) -> None:
+        """Record a runtime variant tag with a computed parent tag."""
+        self.context.define_variant_tag(tag, parent)
+
+    def add_disjoint_tags(self, tag: str, other: str) -> None:
+        """Record two data tags that remove each other."""
+        self.context.add_disjoint_tags(tag, other)
 
     def apply(
         self,

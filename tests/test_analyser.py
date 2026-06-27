@@ -24,6 +24,7 @@ from valiance.asts import (
     ListLiteralNode,
     NumberLiteralNode,
     StringLiteralNode,
+    TagApplicationNode,
     TypedFunctionNode,
 )
 from valiance.parsing import parse
@@ -31,6 +32,7 @@ from valiance.symbols import Symbol
 from valiance.types import (
     AppliedElement,
     C,
+    DataTag,
     Environment,
     Field,
     Fn,
@@ -44,6 +46,7 @@ from valiance.types import (
     Overload,
     Overloads,
     Row,
+    Tagged,
     TypeStack,
     U,
     UnknownElement,
@@ -700,6 +703,186 @@ class AnalyserTests(unittest.TestCase):
         self.assertEqual(
             analyser.diagnostics,
             ["cannot call non-function value of type Number"],
+        )
+
+    def test_computed_tags_are_stripped_unless_explicitly_returned(self):
+        env = Environment()
+        env.add_computed_tag("sorted")
+        env.define_overload(OP, Overload((V("T"),), (V("T"),)))
+        analyser = Analyser(env)
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Tagged(Number, "sorted"),)))),
+            (ElementNode(OP),),
+        )
+
+        self.assertEqual(len(branches), 1)
+        self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
+
+    def test_explicit_computed_return_tag_is_kept(self):
+        env = Environment()
+        env.add_computed_tag("sorted")
+        env.define_overload(
+            OP,
+            Overload((Tagged(Number, "sorted"),), (Tagged(Number, "sorted"),)),
+        )
+        analyser = Analyser(env)
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Tagged(Number, "sorted"),)))),
+            (ElementNode(OP),),
+        )
+
+        self.assertEqual(len(branches), 1)
+        self.assertEqual(
+            next(iter(branches)).stack,
+            TypeStack((Tagged(Number, "sorted"),)),
+        )
+
+    def test_tag_application_adds_tag_to_top_stack_value(self):
+        env = Environment()
+        env.add_computed_tag("sorted")
+        analyser = Analyser(env)
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            (TagApplicationNode(DataTag("sorted")),),
+        )
+
+        self.assertEqual(len(branches), 1)
+        self.assertEqual(
+            next(iter(branches)).stack,
+            TypeStack((Tagged(Number, "sorted"),)),
+        )
+
+    def test_absent_tag_application_removes_tag_from_top_stack_value(self):
+        env = Environment()
+        env.add_constructed_tag("infinite")
+        analyser = Analyser(env)
+
+        branches = analyser.analyse_block(
+            BranchSet.one(
+                AnalysisBranch(stack=TypeStack((Tagged(Number, "infinite"),)))
+            ),
+            (TagApplicationNode(DataTag("infinite", absent=True)),),
+        )
+
+        self.assertEqual(len(branches), 1)
+        self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
+
+    def test_constructed_tags_propagate_through_generic_returns(self):
+        env = Environment()
+        env.add_constructed_tag("infinite")
+        env.define_overload(OP, Overload((V("T"),), (V("T"),)))
+        tagged_list = Tagged(C(ListExactType, Number), "infinite")
+        analyser = Analyser(env)
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((tagged_list,)))),
+            (ElementNode(OP),),
+        )
+
+        self.assertEqual(len(branches), 1)
+        self.assertEqual(next(iter(branches)).stack, TypeStack((tagged_list,)))
+
+    def test_constructed_tags_propagate_to_output_depth(self):
+        env = Environment()
+        env.add_constructed_tag("infinite")
+        env.define_overload(OP, Overload((V("T"),), (V("T"),)))
+        analyser = Analyser(env)
+
+        branches = analyser.analyse_block(
+            BranchSet.one(
+                AnalysisBranch(
+                    stack=TypeStack(
+                        (Tagged(C(ListExactType, Number, 2), "infinite"),)
+                    )
+                )
+            ),
+            (ElementNode(OP),),
+        )
+
+        self.assertEqual(len(branches), 1)
+        self.assertEqual(
+            next(iter(branches)).stack,
+            TypeStack(
+                (Tagged(C(ListExactType, Number, 2), DataTag("infinite", depth=1)),)
+            ),
+        )
+
+    def test_multiple_sticky_tags_propagate_together(self):
+        env = Environment()
+        env.add_constructed_tag("infinite")
+        env.add_unit_tag("km")
+        env.define_overload(OP, Overload((V("T"),), (V("T"),)))
+        tagged = Tagged(Number, "infinite", "km")
+        analyser = Analyser(env)
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((tagged,)))),
+            (ElementNode(OP),),
+        )
+
+        self.assertEqual(len(branches), 1)
+        self.assertEqual(next(iter(branches)).stack, TypeStack((tagged,)))
+
+    def test_unit_tags_do_not_satisfy_untagged_concrete_parameters(self):
+        env = Environment()
+        env.add_unit_tag("km")
+        env.define_overload(OP, Overload((Number,), (Number,)))
+        analyser = Analyser(env)
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Tagged(Number, "km"),)))),
+            (ElementNode(OP),),
+        )
+
+        self.assertEqual(len(branches), 0)
+
+    def test_constructed_tags_do_not_propagate_when_rank_drops(self):
+        env = Environment()
+        env.add_constructed_tag("infinite")
+        env.define_overload(
+            OP,
+            Overload((Tagged(C(ListExactType, Number), "infinite"),), (Number,)),
+        )
+        analyser = Analyser(env)
+
+        branches = analyser.analyse_block(
+            BranchSet.one(
+                AnalysisBranch(
+                    stack=TypeStack((Tagged(C(ListExactType, Number), "infinite"),))
+                )
+            ),
+            (ElementNode(OP),),
+        )
+
+        self.assertEqual(len(branches), 1)
+        self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
+
+    def test_length_of_finite_list_returns_number(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(parse("print length [1, 2, 3, 4, 5]"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            [node.typ for node in typed],
+            [C(ListExactType, Number), Number, None],
+        )
+
+    def test_length_rejects_infinite_list(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(parse("[1, 2, 3] #infinite length"))
+
+        self.assertEqual([node.typ for node in typed], [None, None, None])
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "1:21: no overloads for element 'length' match stack [#infinite "
+                "Number+]; available overloads: Function[#!infinite Item+ -> Number]"
+            ],
         )
 
     def test_for_loop_without_break_returns_none(self):

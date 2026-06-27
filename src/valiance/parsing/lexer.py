@@ -172,7 +172,25 @@ class _Lexer:
             if depth:
                 self._fail("unterminated multiline comment")
             return
-        self._operator()
+        self._tag()
+
+    def _tag(self) -> None:
+        line, col, offset = self.line, self.column, self.index
+        self._advance()
+        if self._peek() == "!":
+            self._advance()
+        if not self._is_ident_start(self._peek()):
+            self._fail("expected tag name", line, col)
+        self._advance()
+        while self._is_ident_part(self._peek()):
+            self._advance()
+        while self._peek() == "+":
+            self._advance()
+            while self._peek().isdigit():
+                self._advance()
+        self.tokens.append(
+            Token(TokenKind.OP, self.source[offset : self.index], line, col, offset)
+        )
 
     def _string(self) -> None:
         line, col, offset = self.line, self.column, self.index

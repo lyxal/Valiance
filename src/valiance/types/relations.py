@@ -28,6 +28,7 @@ from valiance.types.nodes import (
     AtomicType,
     CallSiteCheckedFunctionType,
     CollectionType,
+    DataTag,
     ExactType,
     FunctionType,
     IntersectionType,
@@ -66,20 +67,16 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
         return True
 
     if isinstance(source, TaggedType):
-        if not (source.tags & ctx.unit_tags) and subtype(source.inner, target, ctx):
+        if not _has_unit_tag(source.tags, ctx) and subtype(source.inner, target, ctx):
             return True
 
     if isinstance(target, TaggedType):
         # Positive tag requirements must be present; absent tag requirements
-        # are encoded as strings beginning with '!'.
+        # are encoded as ``DataTag(absent=True)``.
         actual_tags = source.tags if isinstance(source, TaggedType) else frozenset()
         inner = source.inner if isinstance(source, TaggedType) else source
-        for tag in target.tags:
-            if tag.startswith("!"):
-                if tag[1:] in actual_tags:
-                    return False
-            elif tag not in actual_tags:
-                return False
+        if not _tag_requirements_met(actual_tags, target.tags):
+            return False
         return subtype(inner, target.inner, ctx)
 
     if isinstance(source, UnionType):
@@ -290,7 +287,7 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
             return True
         if isinstance(p, TaggedType):
             if not isinstance(a, TaggedType):
-                return all(tag.startswith("!") for tag in p.tags) and rec(p.inner, a)
+                return all(tag.absent for tag in p.tags) and rec(p.inner, a)
             if not _tag_requirements_met(a.tags, p.tags):
                 return False
             return rec(p.inner, a.inner)
@@ -365,9 +362,21 @@ def _collection_remainder(
 def collection_item_type(t: Type) -> Type | None:
     """Return the type produced by iterating one rank of a collection."""
     t = normalize(t)
+    if isinstance(t, TaggedType):
+        return collection_item_type(t.inner)
     if not isinstance(t, CollectionType):
         return None
     return _collection_remainder(type(t), t.base, t.rank - 1)
+
+
+def _collection_view(t: Type) -> CollectionType | None:
+    """Return a collection node through transparent wrappers, if present."""
+    t = normalize(t)
+    if isinstance(t, TaggedType):
+        return _collection_view(t.inner)
+    if isinstance(t, CollectionType):
+        return t
+    return None
 
 
 def _combine(a: Type, b: Type) -> Type | None:
@@ -612,18 +621,20 @@ def _overload_result_for_args(
     for arg, param in zip(args, overload.params, strict=False):
         # Track how much vectorisation was needed. Return types are wrapped in
         # that outer vector shape after the scalar overload is applied.
-        if not isinstance(arg, CollectionType):
+        arg_collection = _collection_view(arg)
+        param_collection = _collection_view(param)
+        if arg_collection is None:
             continue
-        if isinstance(param, CollectionType):
-            excess = arg.rank - param.rank
+        if param_collection is not None:
+            excess = arg_collection.rank - param_collection.rank
         else:
-            excess = arg.rank
+            excess = arg_collection.rank
         if excess > vector_rank:
             vector_rank = excess
         if excess > 0:
             if vector_type is None:
-                vector_type = type(arg)
-            elif vector_type is not type(arg):
+                vector_type = type(arg_collection)
+            elif vector_type is not type(arg_collection):
                 vector_type = ListExactType
 
     if vector_rank <= 0:
@@ -637,14 +648,19 @@ def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:
     """Return whether compatibility can be achieved through vectorisation."""
     if isinstance(parameter, ExactType):
         return compatible(argument, parameter.inner, ctx) and not (
-            isinstance(argument, CollectionType)
-            and not isinstance(parameter.inner, CollectionType)
+            _collection_view(argument) is not None
+            and _collection_view(parameter.inner) is None
         )
-    if not isinstance(argument, CollectionType):
+    argument_collection = _collection_view(argument)
+    parameter_collection = _collection_view(parameter)
+    if argument_collection is None:
         return False
-    if isinstance(parameter, CollectionType):
-        return same(argument.base, parameter.base) and argument.rank > parameter.rank
-    return compatible(argument.base, parameter, ctx)
+    if parameter_collection is not None:
+        return (
+            same(argument_collection.base, parameter_collection.base)
+            and argument_collection.rank > parameter_collection.rank
+        )
+    return compatible(argument_collection.base, parameter, ctx)
 
 
 def _match_specificity(
@@ -916,12 +932,20 @@ def _dominates(a: tuple[Specificity, ...], b: tuple[Specificity, ...]) -> bool:
     )
 
 
-def _tag_requirements_met(actual: frozenset[str], required: frozenset[str]) -> bool:
+def _tag_requirements_met(
+    actual: frozenset[DataTag],
+    required: frozenset[DataTag],
+) -> bool:
     """Return whether an actual tag set satisfies required/present tags."""
     for tag in required:
-        if tag.startswith("!"):
-            if tag[1:] in actual:
+        positive = DataTag(tag.name, tag.depth)
+        if tag.absent:
+            if positive in actual:
                 return False
-        elif tag not in actual:
+        elif positive not in actual:
             return False
     return True
+
+
+def _has_unit_tag(tags: frozenset[DataTag], ctx: Context) -> bool:
+    return any(not tag.absent and tag.name in ctx.unit_tags for tag in tags)

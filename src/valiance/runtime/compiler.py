@@ -24,6 +24,7 @@ from valiance.asts import (
     ReturnNode,
     SetVariableNode,
     StringLiteralNode,
+    TagApplicationNode,
     TupleLiteralNode,
     TypedFunctionNode,
     TypedNode,
@@ -74,6 +75,8 @@ class _Compiler:
             case ElementNode(name):
                 self.emit(OpCode.LOAD_ELEMENT, name.text)
                 self.emit(OpCode.CALL)
+            case TagApplicationNode():
+                pass
             case FunctionNode():
                 self.emit(
                     OpCode.MAKE_FUNCTION,

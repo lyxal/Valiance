@@ -204,10 +204,13 @@ BUILTIN_ELEMENTS = (
         ),
         overload(
             (
-                T.C(T.ListExactType, T.V("T")),
-                T.Fn((T.V("T"), T.V("T")), (T.V("T"),)),
+                T.ExactList(T.TypeVariable("Item")),
+                T.Fn(
+                    (T.TypeVariable("Item"), T.TypeVariable("Item")),
+                    (T.TypeVariable("Item"),),
+                ),
             ),
-            (T.V("T"),),
+            (T.TypeVariable("Item"),),
         ),
     ),
     element(
@@ -222,16 +225,16 @@ BUILTIN_ELEMENTS = (
         MAP,
         overload(
             (
-                T.C(T.ListExactType, T.V("T")),
-                T.Fn((T.V("T"),), (T.V("U"),)),
+                T.ExactList(T.TypeVariable("Item")),
+                T.Fn((T.TypeVariable("Item"),), (T.TypeVariable("Mapped"),)),
             ),
-            (T.C(T.ListExactType, T.V("U")),),
+            (T.ExactList(T.TypeVariable("Mapped")),),
         ),
     ),
     element(
         LENGTH,
         overload(
-            (T.C(T.ListExactType, T.V("T")),),
+            (T.WithoutTag(T.ExactList(T.TypeVariable("Item")), "infinite"),),
             (T.Number,),
             lambda args, ctx: (Decimal(len(args[0])),),
         ),
@@ -239,8 +242,8 @@ BUILTIN_ELEMENTS = (
     element(
         HEAD,
         overload(
-            (T.C(T.ListExactType, T.V("T")),),
-            (T.V("T"),),
+            (T.ExactList(T.TypeVariable("Item")),),
+            (T.TypeVariable("Item"),),
             lambda args, ctx: (args[0][0],),
         ),
     ),
