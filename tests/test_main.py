@@ -113,6 +113,30 @@ class MainTests(unittest.TestCase):
         self.assertEqual(run_exit, 0)
         self.assertEqual(run_output.getvalue(), "Stack [\n  0: [6, 8, 10]\n]\n")
 
+    def test_main_emits_relative_bytecode_path_next_to_source_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "src"
+            source_dir.mkdir()
+            source = source_dir / "sample.vlnc"
+            source.write_text("[1, 2, 3] + [5, 6, 7]", encoding="utf-8")
+            bytecode = source_dir / "sample.vbc"
+
+            emit_output = io.StringIO()
+            with contextlib.redirect_stdout(emit_output):
+                emit_exit = main(
+                    [
+                        str(source),
+                        "--emit-bytecode",
+                        "sample.vbc",
+                    ]
+                )
+
+            bytecode_data = bytecode.read_bytes()
+
+        self.assertEqual(emit_exit, 0)
+        self.assertEqual(emit_output.getvalue(), "")
+        self.assertTrue(bytecode_data.startswith(b"VLNCBC"))
+
     def test_main_analyses_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "sample.vlnc"

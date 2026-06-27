@@ -52,7 +52,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     source = parsed.code
+    source_file: Path | None = None
     if source is None:
+        source_file = Path(parsed.file)
         source = _read_source_file(parsed.file)
         if source is None:
             return 1
@@ -61,6 +63,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         source,
         execute=parsed.run,
         bytecode_output=parsed.emit_bytecode,
+        source_file=source_file,
         implicit_output=parsed.implicit_output,
     )
 
@@ -118,6 +121,7 @@ def _run_source(
     *,
     execute: bool = False,
     bytecode_output: str | None = None,
+    source_file: Path | None = None,
     implicit_output: bool = False,
 ) -> int:
     try:
@@ -132,7 +136,11 @@ def _run_source(
                 return 1
             bytecode = compile_program(typed)
             if bytecode_output is not None:
-                _write_bytecode_file(bytecode_output, dumps(bytecode))
+                output_path = _resolve_bytecode_output_path(
+                    bytecode_output,
+                    source_file,
+                )
+                _write_bytecode_file(output_path, dumps(bytecode))
             if execute:
                 _run_bytecode(bytecode, implicit_output=implicit_output)
             return 0
@@ -168,7 +176,14 @@ def _run_bytecode_file(filename: str, *, implicit_output: bool = False) -> int:
     return 0
 
 
-def _write_bytecode_file(filename: str, data: bytes) -> None:
+def _resolve_bytecode_output_path(filename: str, source_file: Path | None) -> Path:
+    output_path = Path(filename)
+    if source_file is not None and not output_path.is_absolute():
+        return source_file.parent / output_path
+    return output_path
+
+
+def _write_bytecode_file(filename: str | Path, data: bytes) -> None:
     Path(filename).write_bytes(data)
 
 
