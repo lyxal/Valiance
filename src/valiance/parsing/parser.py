@@ -749,6 +749,9 @@ def _lower_chain_segment(segment: list[_ChainPiece]) -> tuple[ASTNode, ...]:
     if not segment:
         return ()
 
+    if all(piece.is_element for piece in segment):
+        return tuple(node for piece in reversed(segment) for node in piece.nodes)
+
     if segment[-1].breaks_chain:
         right = segment[-1]
         left = segment[:-1]

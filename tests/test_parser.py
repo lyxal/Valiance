@@ -107,6 +107,18 @@ class ParserTests(unittest.TestCase):
             ],
         )
 
+    def test_lowers_element_only_chain_right_to_left(self):
+        program = parse("[1, 2, 3, 4, 5]\nprintln length")
+
+        self.assertIsInstance(program[0], ListLiteralNode)
+        self.assertEqual(
+            program[1:],
+            [
+                ElementNode(Symbol("length")),
+                ElementNode(Symbol("println")),
+            ],
+        )
+
     def test_parses_function_definition_with_params_and_returns(self):
         [node] = parse("define double(n: Number) -> Number => $n 2 *")
 

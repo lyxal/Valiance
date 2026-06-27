@@ -874,13 +874,13 @@ class AnalyserTests(unittest.TestCase):
     def test_length_rejects_infinite_list(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(parse("[1, 2, 3] #infinite length"))
+        typed = analyser.analyse(parse("[1, 2, 3] | #infinite | length"))
 
         self.assertEqual([node.typ for node in typed], [None, None, None])
         self.assertEqual(
             analyser.diagnostics,
             [
-                "1:21: no overloads for element 'length' match stack [#infinite "
+                "1:25: no overloads for element 'length' match stack [#infinite "
                 "Number+]; available overloads: Function[#!infinite Item+ -> Number]"
             ],
         )
