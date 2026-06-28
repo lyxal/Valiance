@@ -1,0 +1,874 @@
+# Valiance feature checklist
+
+Analysis audit note: as of 2026-06-28, checked items include parser support
+and static-analysis/type-system support that exists in the current
+implementation. Runtime-only behavior and source syntax that is merely planned
+remain unchecked unless the analyser can reason about it today.
+
+Codegen/runtime audit note: as of 2026-06-28, checked runtime items are limited
+to behavior that is compiled to bytecode and executed by the VM, or saved and
+loaded through the portable bytecode format.
+
+Current audit total: 245 / 724 items complete (33.8%).
+
+## 1. Lexer, parser, and general syntax
+
+- [x] Parse source as left-to-right chains that execute right-to-left.
+- [x] Recognise all chain-breaking constructs.
+- [x] Include nilads and functions in the chains they terminate.
+- [ ] Support `_` substitution for values pulled from the parent stack.
+- [x] Support newline-sensitive expression termination.
+- [x] Support `|` as a chain separator.
+- [x] Support single-line comments beginning with `#?`.
+- [x] Support nested, balanced multiline comments using `#/` and `/#`.
+- [x] Implement the common single-line and multiline `=> ... end` block syntax.
+- [x] Determine block form from the first significant token following `=>`.
+- [x] Produce lexer errors for unterminated strings.
+- [ ] Produce syntax errors for unbalanced comments and blocks.
+- [x] Parse element identifiers using the specified symbolic and alphanumeric character rules.
+- [ ] Require niladic element names to begin with `\`.
+
+## 2. Core execution and stack semantics
+
+- [x] Provide a top-level operand stack.
+- [x] Execute elements by popping their declared arity and pushing their declared multiplicity.
+- [x] Preserve the specified argument ordering when stack values are passed to elements.
+- [x] Support zero-arity and zero-multiplicity elements.
+- [x] Enforce fixed arity and multiplicity across every overload of an element.
+- [x] Support state semantics for control-flow blocks that may write parent-scope variables.
+- [x] Preserve extra stack values where constructs specify that only the top result is consumed.
+- [x] Implement stack-underflow handling according to each construct’s rules.
+- [x] Implement function-local stacks.
+- [x] Implement argument cycling for explicitly declared function parameters.
+- [ ] Implement argument cycling for loop inputs where specified.
+- [x] Compile typed AST nodes to bytecode.
+- [x] Execute bytecode with a stack-based virtual machine.
+
+## 3. Numbers and truthiness
+
+- [ ] Implement arbitrary-size, arbitrary-precision exact numbers.
+- [x] Support integer runtime values.
+- [x] Support real-number runtime values.
+- [ ] Support complex numbers.
+- [ ] Support symbolic or exact representations involving π, e, surds, and similar values.
+- [x] Parse decimal and signed numeric literals.
+- [x] Parse complex-number literals.
+- [x] Parse scientific notation with real-valued exponents.
+- [x] Reject exponent syntax without a leading coefficient.
+- [x] Provide the `Integer`, `Real`, and general `Number` types.
+- [ ] Implement `Integer` as the appropriate tagged `Number` type.
+- [ ] Implement `Real` as the appropriate tagged `Number` type.
+- [x] Treat numeric zero as false and every other number as true at runtime.
+- [x] Provide `true` as an alias for numeric `1`.
+- [x] Provide `false` as an alias for numeric `0`.
+- [x] Provide the `#boolean Number` type constrained to `0` or `1`.
+
+## 4. Strings
+
+- [x] Implement strings as dedicated objects rather than character lists.
+- [ ] Store or process strings as UTF-8.
+- [x] Parse double-quoted string literals.
+- [x] Allow literal newlines inside strings.
+- [x] Support escaping quotes, backslashes, and dollar signs.
+- [ ] Support `$identifier` interpolation.
+- [ ] Support `${expression}` interpolation.
+- [ ] Convert interpolated values to their string representations.
+- [x] Provide the `String` type.
+- [ ] Support string indexing and slicing.
+
+## 5. Tuples
+
+- [x] Implement fixed-length heterogeneous tuples.
+- [x] Parse tuple literals using `(...)`.
+- [x] Support nested tuples.
+- [x] Represent tuple types using `{...}`.
+- [x] Track tuple lengths at compile time.
+- [ ] Support arbitrary-length tuple parameter types using `...`.
+- [ ] Support repeated tuple-type segments before, between, or after fixed segments.
+- [ ] Restrict arbitrary-length tuple types to parameter positions.
+- [ ] Allow compatible fixed tuples where arbitrary-length tuple parameters are expected.
+- [ ] Restrict arbitrary-length tuple values to contexts expecting arbitrary-length tuples.
+- [ ] Trigger call-site type checking for functions containing variadic tuple parameters.
+
+## 6. Records and dictionaries
+
+- [x] Implement anonymous records with statically known bareword keys.
+- [x] Parse `record{...}` literals.
+- [x] Represent record types as named key/type mappings.
+- [x] Support record member access.
+- [ ] Support record member replacement using assignment syntax.
+- [ ] Implement `record.extend{...}`.
+- [ ] Reject `record.extend` when a supplied key already exists.
+- [ ] Implement record merging with overwrite behavior.
+- [x] Implement dictionaries with runtime-computed keys.
+- [x] Parse `dict{...}` literals.
+- [x] Represent dictionary types as `Dict[key, value]`.
+- [ ] Support dictionary indexing.
+- [ ] Implement dictionary merging.
+
+## 7. None, Some, and optional types
+
+- [ ] Provide a singleton absence value named `None`.
+- [x] Provide the `None` type.
+- [x] Provide the `Some[T]` wrapper.
+- [x] Parse optional types using `T?`.
+- [x] Define `T?` as `Some[T] | None`.
+- [x] Support nested optional types such as `T??`.
+- [ ] Automatically wrap non-`None` values in `Some` when used as optional values.
+- [ ] Preserve explicitly wrapped `None` values.
+- [x] Implement optional-type union simplification.
+- [x] Canonicalise optional unions into the specified ordering.
+- [ ] Implement the specified `T | Some[U]` simplification rules.
+
+## 8. Lists
+
+- [x] Implement homogeneous lists whose element type may itself be a union.
+- [x] Support finite lists.
+- [ ] Support potentially infinite lists.
+- [x] Parse list literals using `[...]`.
+- [x] Infer list base types and ranks.
+- [x] Implement list-construction stack fallback when an item expression underflows.
+- [x] Apply implicit fork-like behavior across list item expressions.
+- [x] Pop the maximum required arity across list items during implicit construction.
+- [x] Reject untyped empty-list literals.
+- [ ] Allow empty lists when a type annotation, cast, or typed list constructor supplies the element type.
+- [ ] Support list indexing, slicing, multidimensional indexing, and spread indexing.
+- [ ] Support immutable list updates through indexed assignment syntax.
+
+## 9. Arrays
+
+- [ ] Implement finite rectangular arrays.
+- [x] Parse array literals using `arr{...}`.
+- [ ] Validate rectangularity.
+- [ ] Store array rank and shape.
+- [ ] Preserve array results through vectorisation when all applicable inputs and outputs remain arrays.
+- [ ] Produce list results when vectorisation mixes lists and arrays.
+- [ ] Support array indexing and multidimensional slicing.
+
+## 10. Type system foundations
+
+- [x] Assign a static type to every stack value.
+- [x] Support concrete named types.
+- [x] Support union types.
+- [x] Support intersection types.
+- [x] Support optional types.
+- [x] Support function types.
+- [x] Support overload-set types.
+- [x] Support generic types.
+- [ ] Support trait types.
+- [ ] Support object, variant, enum, record, dictionary, tuple, task, channel, result, and FFI types.
+- [x] Canonicalise union and intersection types.
+- [ ] Reject invalid or unsatisfiable type combinations where specified.
+
+## 11. Ranked list types
+
+- [x] Parse exact list-rank syntax using `+`.
+- [x] Parse numeric exact-rank shorthand such as `T+3`.
+- [x] Parse minimum list-rank syntax using `*`.
+- [x] Parse numeric minimum-rank shorthand such as `T*3`.
+- [x] Parse rugged list-rank syntax using `~`.
+- [x] Parse numeric rugged-rank shorthand.
+- [x] Enforce exact-rank compatibility.
+- [x] Enforce minimum-rank compatibility.
+- [x] Enforce rugged-rank compatibility.
+- [x] Allow exact-rank lists where compatible minimum-rank lists are expected.
+- [x] Allow exact- or minimum-rank lists where compatible rugged lists are expected.
+- [ ] Represent rugged rank as a compile-time abstraction over recursive union structures.
+- [ ] Apply the specified rugged-vectorisation rules.
+
+## 12. Ranked array types
+
+- [x] Parse exact array-rank syntax using `^`.
+- [x] Parse numeric exact-array-rank shorthand.
+- [x] Parse minimum array-rank syntax using `>`.
+- [x] Parse numeric minimum-array-rank shorthand.
+- [x] Allow compatible arrays where corresponding list types are expected.
+- [ ] Support checked list-to-array treatment.
+- [ ] Emit compile-time warnings for list-to-array conversions requiring runtime validation.
+- [ ] Perform rectangularity checks for checked list-to-array conversions.
+- [ ] Avoid redundant checks when a list type is known to have originated as an array.
+- [x] Reject rugged lists where array types are expected.
+
+## 13. Type casting
+
+- [ ] Parse safe casts using `as Type`.
+- [ ] Parse unsafe casts using `as! Type`.
+- [ ] Support trait upcasts.
+- [ ] Support valid trait downcasts where specified.
+- [ ] Support collection reranking casts.
+- [ ] Perform runtime validation for checked collection casts.
+- [ ] Preserve zero-cost array-to-list-to-array restoration where provenance permits.
+- [ ] Reject casts that cannot make sense under the type rules.
+- [ ] Reject `as!` when the corresponding cast is already statically safe.
+- [ ] Support inline parameter casts.
+- [ ] Support inline return-value casts.
+- [ ] Support user-defined cast rules through `cast`.
+
+## 14. Variables and constants
+
+- [x] Parse inferred variable declarations.
+- [ ] Parse explicitly typed variable declarations.
+- [x] Require every variable to be initialised.
+- [x] Preserve a variable’s declared or inferred type across later assignments.
+- [x] Implement mutable bindings over immutable stored values.
+- [x] Restrict variables to local scope.
+- [x] Support assignment expressions extending to the end of the current line or containing delimiter.
+- [x] Preserve unused stack values after assignment.
+- [x] Parse augmented assignment using `$name := code`.
+- [x] Push the previous variable value before augmented-assignment code runs.
+- [ ] Disable argument cycling for the implicitly supplied augmented-assignment value.
+- [ ] Parse constant declarations using `const`.
+- [ ] Reject reassignment of constants.
+- [ ] Parse multiple assignment.
+- [ ] Map multiple-assignment targets to corresponding stack results.
+- [ ] Fill missing multiple-assignment values from the existing stack.
+- [x] Implement evaluation-time variable shadowing.
+- [x] Create a new local binding instead of modifying an outer-scope variable.
+- [x] Permit an assignment expression to read the outer binding before creating its shadow.
+
+## 15. Elements and overloads
+
+- [x] Represent elements as immediate stack operations distinct from functions.
+- [x] Support multiple overloads per element.
+- [x] Dispatch overloads based on stack argument types.
+- [x] Apply the specified overload-specificity ordering.
+- [x] Give tagged matches priority over equivalent untagged matches.
+- [x] Require one overload to be strictly more specific across every corresponding parameter.
+- [x] Report ambiguous equally specific overloads as compile errors.
+- [ ] Support overload disambiguation using `element[Types]`.
+- [x] Support generic-equivalent matching.
+- [x] Support optional-substitution matching.
+- [x] Support vectorising matches.
+- [x] Support intersection and trait-implementation matches.
+- [x] Support rank and union matches.
+- [ ] Allow module-scoped overloads to supersede imported and built-in overloads.
+
+## 16. Element call syntax
+
+- [x] Parse `element(arguments)` with no intervening whitespace.
+- [x] Evaluate call-syntax arguments left to right.
+- [x] Push evaluated arguments before invoking the element.
+- [x] Allow partial argument specification.
+- [x] Fill unspecified arguments from the existing stack.
+- [ ] Support `_` placeholders in any argument position.
+- [ ] Preserve normal left-to-right evaluation despite placeholders.
+- [ ] Support named arguments.
+- [ ] Validate named arguments against declared parameter names.
+- [ ] Allow named placeholders that consume values from the stack.
+- [ ] Partition stack consumption right-to-left among call-syntax expressions.
+- [ ] Use only the top result of a multi-result argument expression.
+- [ ] Discard remaining results from such argument expressions.
+- [ ] Emit a warning when argument-expression results are discarded.
+
+## 17. Stack-shuffling operations
+
+- [x] Provide `dup`.
+- [ ] Provide `swap`.
+- [ ] Provide `pop`.
+- [ ] Parse and execute `copy(prestack -> poststack)`.
+- [ ] Parse and execute `move(prestack -> poststack)`.
+- [ ] Support duplicate post-stack labels.
+- [ ] Pop every labelled pre-stack value for `move`, including unused labels.
+- [ ] Support `_` as an ignored pre-stack label.
+- [ ] Reject duplicate non-underscore pre-stack labels.
+- [ ] Support `_n` shorthand for repeated ignored labels.
+- [ ] Interpret pre-stack labels from the top of the stack.
+
+## 18. Functions
+
+- [x] Implement anonymous first-class functions.
+- [x] Parse full `fn` syntax.
+- [x] Support optional parameter declarations.
+- [x] Support optional return declarations.
+- [x] Infer a single top-stack return when return types are omitted.
+- [x] Discard non-returned function-stack values.
+- [x] Support explicitly zero-return functions.
+- [x] Support multiple return values.
+- [x] Execute functions on independent stacks seeded with their arguments.
+- [x] Pop function arguments from the parent stack.
+- [x] Support named typed parameters.
+- [x] Support unnamed typed parameters.
+- [x] Support named inferred parameters.
+- [x] Prevent writes to named function parameters.
+- [x] Prevent shadowing named function parameters.
+- [ ] Support function calls through the `call` element.
+- [x] Support call syntax on variables containing functions.
+- [x] Support explicit stack-fed function invocation.
+- [x] Implement argument cycling for explicitly declared parameters.
+- [x] Disable argument cycling when parameters are inferred.
+- [x] Disable argument cycling for explicitly zero-parameter functions.
+- [ ] Implement closure capture by value.
+- [ ] Preserve captured values after the defining scope exits.
+- [ ] Parse quick functions using `'chain`.
+- [ ] Make quick functions equivalent to `fn => chain`.
+
+## 19. Function type inference and call-site checking
+
+- [x] Perform forward overload inference at function definition sites.
+- [x] Infer parameter constraints from operations used in function bodies.
+- [x] Discard overload possibilities made impossible by later operations.
+- [x] Produce overload-set function types when multiple alternatives remain.
+- [x] Infer untyped named parameters from use.
+- [ ] Reject unused untyped parameters.
+- [ ] Support generic `Function` parameters with unknown arity and multiplicity.
+- [x] Defer stack-polymorphic function validation to call sites.
+- [x] Validate each call independently using the concrete function argument type.
+- [ ] Allow call-site-checked functions to consume additional outer-stack arguments.
+- [ ] Trigger call-site checking for variadic tuple parameters.
+
+## 20. Vectorisation
+
+- [x] Automatically vectorise element calls over higher-ranked arguments.
+- [x] Repeatedly vectorise until every argument reaches its expected rank.
+- [x] Zip arguments still above their expected ranks.
+- [x] Reuse arguments that have reached their expected ranks.
+- [x] Reject calls with no direct or vectorised matching overload.
+- [x] Require equal lengths at each paired vectorisation dimension by default.
+- [ ] Raise `VectorisationFault` for runtime length mismatches.
+- [ ] Make `VectorisationFault` catchable by `try/handle`.
+- [ ] Prevent user code from producing `VectorisationFault` through `panic`.
+- [ ] Exclude the `Panic` element tag from intrinsic `VectorisationFault`s.
+- [x] Produce lists when all vectorised arguments are lists.
+- [x] Produce arrays when all arguments are arrays and the return type retains arrayness.
+- [x] Produce lists when vectorisation mixes lists and arrays.
+- [ ] Support fine-grained vectorisation depth through overload disambiguation.
+- [ ] Parse exact parameter types.
+- [x] Prevent vectorisation through exact parameters.
+- [x] Include exact in function types.
+- [ ] Apply vectorisation rules for rugged types and equivalent expanded unions.
+- [ ] Parse and execute `at (...) => ...`.
+- [ ] Support per-argument vectorisation-depth labels in `at`.
+- [ ] Support underscore depth inference in `at`.
+
+## 21. Vectorisation extension rules
+
+- [ ] Parse `extend(default)`.
+- [ ] Evaluate an extension default exactly once.
+- [ ] Substitute the default for missing zipped values.
+- [ ] Validate default compatibility with every affected parameter.
+- [ ] Parse pattern-based `extend => ... end`.
+- [ ] Support present-value bindings and missing-value `_` patterns.
+- [ ] Select the matching extension rule for each missing-value combination.
+- [ ] Parse selector-based `extend: selector`.
+- [ ] Require selector arity to match the target element.
+- [ ] Pass optionalised arguments to extension selectors.
+- [ ] Preserve nested optional meaning for already optional target parameters.
+
+## 22. Function-argument modifier
+
+- [x] Parse the `element: chain` modifier.
+- [x] Automatically wrap the following chain as a function argument.
+- [x] Support multiple function arguments in parenthesised comma-separated form.
+- [ ] Require all function-typed parameters to be supplied when `:` is used.
+- [ ] Integrate `:` calls with optional function arguments.
+
+## 23. Indexing and slicing
+
+- [ ] Parse stack indexing using `$[index]`.
+- [ ] Use zero-based indexing.
+- [ ] Support negative indices from the end.
+- [ ] Dispatch indexing through the `index` overload mechanism.
+- [ ] Support tuple, list, array, string, and dictionary indexing.
+- [ ] Parse multiple indices and return the selected values as a list.
+- [ ] Parse direct variable indexing.
+- [ ] Parse inclusive slices with start, stop, and step.
+- [ ] Apply default slice values.
+- [ ] Support multidimensional chained indices.
+- [ ] Support multidimensional slices.
+- [ ] Raise `SliceFault` for invalid multidimensional slicing.
+- [x] Parse record member access using `$.member`.
+- [ ] Support indexed augmented assignment.
+- [ ] Treat indexed updates as immutable reconstruction.
+- [ ] Parse spread indexing using `...$[...]`.
+- [ ] Push statically known indexed values individually onto the stack.
+
+## 24. Pattern matching
+
+- [x] Parse `match` blocks.
+- [ ] Support matching one or more stack values.
+- [ ] Require every case to match the same number of values.
+- [ ] Support literal patterns.
+- [ ] Support predicate patterns using `if`.
+- [ ] Support list-structure patterns.
+- [ ] Support wildcard list positions.
+- [ ] Support list-rest patterns using `...`.
+- [ ] Support bindings within list patterns.
+- [ ] Support type patterns.
+- [ ] Support named type-pattern bindings.
+- [ ] Support object destructuring in type patterns.
+- [ ] Support guards on type patterns.
+- [ ] Support wildcard patterns.
+- [ ] Support `||` alternatives within a case item.
+- [ ] Pass matched values to the selected branch body.
+- [ ] Avoid popping additional values from the outer stack inside branch invocation.
+- [ ] Union corresponding branch result types.
+- [ ] Pad missing branch results with `None`.
+- [ ] Require exhaustive matching.
+- [ ] Recognise wildcard cases as exhaustive.
+- [ ] Support exhaustive checking for variants and enums.
+
+## 25. Assertions and conditionals
+
+- [ ] Parse `assert` blocks.
+- [ ] Require assertion conditions to return `#boolean Number`.
+- [ ] Evaluate assertion conditions by peeking rather than consuming inputs.
+- [ ] Panic when a basic assertion is false.
+- [ ] Parse `assert ... else`.
+- [ ] Return an `AssertError` wrapping the else result when the condition fails.
+- [x] Parse single-branch `if`.
+- [ ] Peek condition inputs.
+- [ ] Optionalise the result of an `if` without `else`.
+- [ ] Return `None` when a single-branch `if` is not taken.
+- [x] Parse `if/else`.
+- [x] Require compatible input signatures across branches.
+- [x] Resolve compatible overload sets across branches.
+- [x] Infer the intersection of branch overload sets.
+- [x] Union branch result stacks.
+- [x] Pad missing branch results with `None`.
+- [ ] Parse `else if` chains.
+- [ ] Require every condition in an `else if` chain to accept the same input signature.
+- [ ] Evaluate every chained condition against the same values.
+- [ ] Require `else` to appear last.
+
+## 26. Loops and generators
+
+- [x] Parse `foreach`.
+- [x] Require a list-type iterable.
+- [x] Pop the iterable before iteration.
+- [x] Support iteration-value bindings.
+- [x] Support optional index bindings.
+- [ ] Cycle iteration inputs within each loop body.
+- [x] Permit loop bodies to write parent-scope variables.
+- [x] Return `None` when a `foreach` completes normally.
+- [ ] Parse optional explicit `foreach` break-return annotations.
+- [x] Parse `break value`.
+- [x] Parse multi-value `break (...)`.
+- [ ] Pad differing break multiplicities with `None`.
+- [x] Return break values from terminated loops.
+- [x] Parse `while`.
+- [ ] Require a boolean-number condition.
+- [ ] Feed previous iteration results into subsequent condition checks.
+- [ ] Require loop-body outputs to match condition inputs.
+- [ ] Return the values that caused loop termination.
+- [ ] Support explicitly declared `while` input parameters.
+- [ ] Cycle named and unnamed `while` inputs.
+- [ ] Parse `unfold`.
+- [ ] Maintain unfold state between iterations.
+- [ ] Support optional unfold conditions.
+- [ ] Support infinite unfolding when no condition is provided.
+- [ ] Infer state and generated values from body arity and multiplicity.
+- [ ] Support explicit unfold state parameters.
+- [ ] Skip generated `None` values.
+- [ ] Preserve explicitly generated `Some[None]`.
+- [ ] Tag unfold results as `#infinite`.
+
+## 27. Custom element definitions
+
+- [x] Parse `define`.
+- [ ] Support generic parameter lists on definitions.
+- [x] Support optional parameter lists.
+- [x] Support optional return declarations.
+- [x] Create new executable elements from definitions.
+- [ ] Add module-scoped overloads to existing elements.
+- [ ] Capture visible variables at definition evaluation time.
+- [ ] Support trailing optional parameters with default expressions.
+- [ ] Restrict optional element arguments to explicit call syntax.
+- [ ] Allow function-valued optionals through `:` syntax.
+- [ ] Support named optional arguments.
+- [ ] Allow omission of unrelated optional arguments.
+- [x] Enforce identical arity and multiplicity across overloads.
+
+## 28. Objects
+
+- [ ] Parse generic and non-generic object declarations.
+- [x] Support statically known object members.
+- [ ] Support public, readable, and private member access levels.
+- [ ] Default omitted access modifiers to readable.
+- [ ] Support typed fields without defaults.
+- [ ] Support inferred fields with defaults.
+- [ ] Require every constructor path to initialise fields lacking defaults.
+- [ ] Treat elements named after an object as constructors.
+- [ ] Generate a default field-order constructor when none is declared.
+- [ ] Support constructor invocation through normal element syntax.
+- [ ] Support object-friendly elements declared inside object scopes.
+- [ ] Make object-friendly elements available in the intended calling form.
+- [x] Support object member reads.
+- [ ] Support permitted object member writes.
+- [ ] Reconstruct immutable object values after writes.
+- [ ] Support optional-member access behavior.
+- [ ] Provide `$self` in object-associated definitions.
+- [ ] Parse destructors named with the object’s destructor form.
+- [ ] Run destructors according to object lifetime rules.
+- [ ] Enforce destructor constraints.
+- [ ] Account for objects during stack copying, moving, and disposal.
+- [ ] Support shared-state objects.
+- [ ] Enforce shared-state access and update rules.
+
+## 29. Traits
+
+- [x] Parse trait declarations.
+- [ ] Support required object members in traits.
+- [ ] Support required element signatures in traits.
+- [ ] Support default trait behavior where specified.
+- [ ] Parse object-to-trait implementations.
+- [ ] Validate that implementations satisfy all required members and elements.
+- [ ] Support generic traits and implementations.
+- [x] Support trait inheritance or trait composition.
+- [ ] Support trait types in parameters and casts.
+- [x] Support intersection types requiring multiple traits.
+- [x] Support static dispatch through trait-typed values.
+- [ ] Integrate traits with overload resolution and multimethods.
+
+## 30. Variants
+
+- [x] Parse variant declarations.
+- [ ] Support named variant cases.
+- [ ] Support cases with and without associated values.
+- [ ] Allow variants to be used as types.
+- [ ] Construct variant values.
+- [ ] Access or destructure associated case values.
+- [ ] Integrate variants with exhaustive pattern matching.
+- [ ] Support generic variants.
+
+## 31. Enums
+
+- [ ] Parse enum declarations.
+- [ ] Support enums without backing values.
+- [ ] Support enums with a declared backing type.
+- [ ] Require every member to have a value when a backing type is declared.
+- [ ] Support member access through `Enum.Member`.
+- [ ] Support backing-value access through `.value`.
+- [ ] Allow enum names to be used as types.
+- [ ] Integrate enums with exhaustive pattern matching.
+
+## 32. Generics and unification
+
+- [ ] Parse generic parameter lists.
+- [ ] Preserve generic types at runtime rather than erasing them.
+- [x] Treat generics as invariant.
+- [ ] Support trait constraints on generic parameters.
+- [ ] Parse the atomic generic marker.
+- [x] Resolve the atomic base type of ranked generic values.
+- [x] Exclude atomic parameter positions from driving unification where specified.
+- [x] Implement generic unification across concrete generic constructors.
+- [x] Implement unification across exact, minimum, rugged, and array ranks.
+- [x] Implement optional-type unification.
+- [x] Respect the defined rank-zero interpretations.
+- [x] Reject inconsistent generic solutions.
+- [x] Avoid positional unification across unions.
+- [ ] Avoid positional unification across intersections.
+- [x] Support anonymous generics in function types.
+- [x] Support row polymorphism for extensible record-like types.
+
+## 33. Data tags
+
+- [ ] Parse data-tag declarations.
+- [x] Support constructed tags.
+- [x] Support unit tags.
+- [x] Support computed tags.
+- [x] Support variant tags.
+- [x] Apply tags to values.
+- [x] Remove tags using tag-negation syntax.
+- [x] Include tags in parameter and return types.
+- [x] Give tagged overloads higher specificity.
+- [x] Support tag constraints in generic contexts.
+- [x] Support tag disjoint declarations.
+- [ ] Reject disallowed simultaneous tags.
+- [ ] Support tag-overlay declarations.
+- [ ] Apply overlay signatures without changing underlying element behavior.
+- [ ] Support overlays for multiple elements.
+- [ ] Remove constructed tags when no overlay preserves them.
+- [ ] Support tag validators as tag-named definitions.
+- [ ] Require validators to return `#boolean Number`.
+- [ ] Run validators when tags are applied.
+- [ ] Panic when tag validation fails.
+- [ ] Report compile errors when no applicable validator overload exists.
+- [ ] Eliminate checks for validators statically known to always succeed or fail.
+- [ ] Import tags explicitly.
+- [ ] Import tag overlay rules.
+- [ ] Support elements attached to tag imports.
+- [x] Parse tag depth using repeated `+` or numeric shorthand.
+- [x] Apply tags at the requested nested collection depth.
+
+## 34. Element tags and effects
+
+- [ ] Support sticky element tags that propagate to callers.
+- [ ] Support generic parameters on element tags.
+- [ ] Represent element tags after function types using `<...>`.
+- [ ] Represent required tag absence using `!Tag`.
+- [ ] Parse property element-tag declarations.
+- [ ] Parse companion element-tag declarations.
+- [ ] Support built-in property tags including `IO`, `Random`, `Panic[T]`, and `Memoizable`.
+- [ ] Support built-in companion tags including `Eager` and `Memoized`.
+- [ ] Allow users to attach property tags.
+- [ ] Prevent users from directly attaching companion tags.
+- [ ] Infer unspecified property tags.
+- [ ] Validate explicitly declared property-tag sets.
+- [ ] Reject undeclared effects used inside explicitly constrained definitions.
+- [ ] Allow explicitly declared effects even when no tagged operation is called.
+- [ ] Support element-tag disjoint rules.
+- [ ] Propagate effect information through functions and higher-order calls.
+
+## 35. Annotations
+
+- [x] Parse annotations on definitions.
+- [ ] Implement `@recursive`.
+- [ ] Enforce recursive-call restrictions unless `@recursive` is present.
+- [ ] Implement `@self`.
+- [ ] Supply or transform the implicit object receiver as specified.
+- [ ] Implement `@@tupled`.
+- [ ] Generate tuple-taking forms as specified.
+- [ ] Implement `@error`.
+- [ ] Emit compile errors using annotation-provided diagnostics.
+- [ ] Implement `@warn`.
+- [ ] Emit compile warnings using annotation-provided diagnostics.
+- [ ] Implement `@deprecated`.
+- [ ] Emit deprecation diagnostics at use sites.
+- [ ] Implement `@returnAll`.
+- [ ] Return all remaining function-stack values where requested.
+- [ ] Implement `@errType`.
+- [ ] Apply error-type transformations or constraints.
+- [ ] Implement `@mustcall`.
+- [ ] Warn or error when marked results are discarded.
+- [ ] Implement `@commutative`.
+- [ ] Generate every required argument-order overload permutation.
+- [ ] Apply normal overload resolution to generated permutations.
+
+## 36. Multimethods
+
+- [x] Parse `multi define`.
+- [ ] Register runtime-dispatched overloads.
+- [ ] Require a compatible non-multi fallback overload.
+- [ ] Require multimethod return signatures to match their fallback.
+- [ ] Select specialisations from exact runtime argument types.
+- [ ] Use compile-time dispatch when static types already identify an exact multimethod.
+- [ ] Fall back to normal overload resolution when no runtime specialisation applies.
+- [ ] Support multiple runtime-dispatched parameters.
+
+## 37. Error handling
+
+- [ ] Provide the generic `Result[T, E]` type.
+- [ ] Provide success and error variants or constructors.
+- [ ] Provide the `Err` trait.
+- [ ] Provide the `Fault` trait.
+- [ ] Implement panic values and panic propagation.
+- [ ] Attach `Panic[T]` element tags to panicking operations.
+- [ ] Distinguish intrinsic runtime faults from explicit panic where specified.
+- [ ] Parse `try/handle`.
+- [ ] Match handlers against panic or fault types.
+- [ ] Support recovery values from handlers.
+- [ ] Integrate handler return types with normal stack typing.
+- [ ] Provide optional/result propagation using `&`.
+- [ ] Provide the `?` optional/result helper.
+- [ ] Provide the `?!` helper.
+- [ ] Preserve nested optional and result semantics through these helpers.
+- [ ] Provide `AssertError`.
+- [ ] Provide `VectorisationFault`.
+- [ ] Provide `SliceFault`.
+- [ ] Provide other built-in faults referenced by the design.
+
+## 38. `where` clauses and type-level constraints
+
+- [ ] Parse `where` clauses.
+- [ ] Support constraints on generic types.
+- [ ] Support rank variables.
+- [ ] Bind collection ranks to rank variables.
+- [ ] Support the allowed rank arithmetic and comparisons.
+- [ ] Validate relationships between parameter and return ranks.
+- [ ] Restrict operations in `where` clauses to the specified set.
+- [ ] Reject invalid, unresolved, or unsupported constraints.
+- [ ] Integrate solved constraints with overload selection and unification.
+
+## 39. Imports and modules
+
+- [ ] Treat each source file as a module.
+- [ ] Parse import blocks.
+- [ ] Support importing entire namespaces.
+- [ ] Support importing individual components.
+- [ ] Support importing several components using bracket syntax.
+- [ ] Support selective element-overload imports.
+- [ ] Support generic wildcard overload signatures in imports.
+- [ ] Support importing object-to-trait implementations.
+- [ ] Support local relative module paths.
+- [ ] Support project-root-relative paths using `~`.
+- [ ] Support standard-library paths beginning with `std`.
+- [ ] Support VCS package paths.
+- [ ] Support installed-package paths beginning with `@`.
+- [ ] Support namespace-qualified access.
+- [ ] Keep imports private by default.
+- [ ] Support public re-exports.
+- [ ] Detect conflicting imported overloads.
+- [ ] Detect conflicting imported trait implementations.
+- [ ] Require explicit conflict resolution.
+- [ ] Parse overload exclusions using `except`.
+- [ ] Support concrete and generic exclusions.
+- [ ] Reject exclusions of nonexistent overloads.
+- [ ] Reject `except` after an already specific overload import.
+- [ ] Continue detecting conflicts after exclusions.
+- [ ] Automatically import object-friendly elements with component object imports.
+- [ ] Avoid automatically importing object-friendly elements through namespace-only imports.
+- [ ] Import tag overlays and tag-associated elements.
+- [ ] Avoid importing unrelated elements that merely use an imported tag.
+
+## 40. Package management and CLI
+
+- [ ] Recognise `valiance.toml` as the project manifest.
+- [ ] Use the manifest location as the project root.
+- [ ] Support standalone scripts without a manifest.
+- [ ] Disable external packages for standalone scripts.
+- [ ] Parse project metadata.
+- [ ] Parse exact-version dependency declarations.
+- [ ] Reject version ranges, wildcards, and implicit version selection.
+- [ ] Generate and maintain `valiance.lock`.
+- [ ] Record exact transitive dependency versions.
+- [ ] Install per-project packages into `.vln`.
+- [ ] Support a global package location for tools.
+- [ ] Install multiple versions of the same dependency simultaneously.
+- [ ] Keep types from different package versions distinct.
+- [ ] Support explicit dependency upgrades.
+- [ ] Implement `vln install`.
+- [ ] Implement installed-package `vln add`.
+- [ ] Implement VCS-package `vln add`.
+- [ ] Implement `vln remove`.
+- [ ] Implement `vln upgrade`.
+- [ ] Update both manifest and lockfile during package changes.
+
+## 41. Concurrency — deferred design area
+
+- [ ] Implement green-thread tasks.
+- [ ] Parse `spawn`.
+- [ ] Return `Task[T]` from spawned blocks.
+- [ ] Implement `wait`.
+- [ ] Return the task result from `wait`.
+- [ ] Prevent a task from being successfully waited more than once.
+- [ ] Vectorise `wait` over collections of tasks.
+- [ ] Automatically wait for unreturned tasks at function exit.
+- [ ] Automatically wait for outstanding main-program tasks.
+- [ ] Parse `concurrent` blocks.
+- [ ] Automatically wait for tasks at the end of a `concurrent` block.
+- [ ] Provide generic channels.
+- [ ] Support sending values to channels.
+- [ ] Support receiving values from channels.
+- [ ] Support channel closure.
+- [ ] Define behavior for sends and receives involving closed channels.
+- [ ] Support channel communication across tasks.
+- [ ] Parse `match channels`.
+- [ ] Wait on multiple channel operations.
+- [ ] Select ready channel cases.
+- [ ] Support any specified default or fallback channel cases.
+- [ ] Integrate channel matching with static types.
+
+## 42. Eager evaluation — deferred design area
+
+- [ ] Parse eager definitions or eager markers.
+- [ ] Attach the `Eager` companion tag.
+- [ ] Trigger eager execution under the specified conditions.
+- [ ] Preserve eager behavior through higher-order function calls.
+- [ ] Integrate eagerness with vectorisation.
+- [ ] Integrate eagerness with effect-tag propagation.
+- [ ] Enforce restrictions associated with eager functions.
+- [ ] Prevent direct user attachment of the `Eager` companion tag.
+
+## 43. Foreign-function interface — deferred design area
+
+- [ ] Parse `external` blocks.
+- [ ] Support optional external library filenames.
+- [ ] Support optional namespaces.
+- [ ] Allow external function declarations.
+- [ ] Bind declaration names to matching C function names.
+- [ ] Validate foreign parameter and return types.
+- [ ] Restrict foreign declarations to external contexts.
+- [ ] Allow ordinary Valiance code inside external blocks.
+- [ ] Return the external block’s top stack value.
+- [ ] Prevent ordinary FFI scalar types from escaping external blocks.
+- [ ] Permit opaque foreign handles to escape external blocks.
+- [ ] Provide a standard library of C-compatible FFI types.
+- [ ] Restrict creation and manipulation of FFI types to external contexts.
+- [ ] Provide built-in casts between compatible Valiance and FFI types.
+- [ ] Perform required range and representation validation.
+- [ ] Parse external object opaque bindings.
+- [ ] Prevent constructors, members, and object-friendly elements on opaque bindings.
+- [ ] Support C struct bindings with field declarations.
+- [ ] Allow foreign struct construction inside external blocks.
+- [ ] Permit public foreign-struct field reads in external blocks.
+- [ ] Reject direct foreign-struct field writes.
+- [ ] Support wrapping opaque handles in ordinary Valiance objects.
+- [ ] Support explicit foreign-resource destructors.
+- [ ] Define FFI list/array conversion behavior.
+- [ ] Define rectangular shape validation for list-to-C-array conversion.
+- [ ] Define FFI function-object and callback behavior.
+- [ ] Parse inline external function bindings.
+- [ ] Apply inline parameter and return casts around an external call.
+
+## 44. User-defined cast declarations — deferred design area
+
+- [ ] Parse `cast Source -> Target => ... end`.
+- [ ] Support named and unnamed source parameters.
+- [ ] Restrict cast declarations to permitted atomic source and target types.
+- [ ] Require cast bodies to return the declared target type.
+- [ ] Include declared casts in safe `as` resolution.
+- [ ] Keep unsafe `as!` independent of declared cast rules.
+- [ ] Support casts involving external blocks.
+- [ ] Detect ambiguous cast rules.
+- [ ] Detect recursive or cyclic cast selection where prohibited.
+
+## 45. Diagnostics and static validation
+
+- [x] Report lexical errors with source locations.
+- [x] Report syntax errors with source locations.
+- [x] Report stack-underflow errors detectable at compile time.
+- [x] Report unresolved element overloads.
+- [x] Report ambiguous overloads.
+- [x] Report arity or multiplicity inconsistencies.
+- [x] Report invalid variable reassignment.
+- [ ] Report writes to constants.
+- [ ] Report writes to protected object members.
+- [ ] Report incomplete object construction.
+- [ ] Report non-exhaustive matches.
+- [ ] Report branch input-signature mismatches.
+- [ ] Report loop state-signature mismatches.
+- [ ] Report invalid casts.
+- [ ] Report unnecessary unsafe casts.
+- [x] Report missing generic solutions.
+- [x] Report conflicting generic solutions.
+- [ ] Report invalid rank relationships.
+- [ ] Report tag disjoint violations.
+- [ ] Report missing tag validators.
+- [ ] Report effect-tag violations.
+- [ ] Report import and implementation conflicts.
+- [ ] Report invalid package-version usage.
+- [ ] Report discarded multi-value expression results.
+- [ ] Report ignored `@mustcall` results.
+- [ ] Emit annotation-driven warnings and errors.
+- [ ] Emit deprecation warnings.
+- [ ] Emit list-to-array runtime-check warnings.
+- [x] Include runtime stack values in call-error diagnostics.
+- [x] Include runtime stack value types in call-error diagnostics.
+- [x] Include attempted overload input shapes in call-error diagnostics.
+
+## 46. Core runtime and standard built-ins
+
+- [x] Execute inline source through the bytecode runtime.
+- [x] Execute source files through the bytecode runtime.
+- [x] Print the final stack when implicit output is requested and nothing prints.
+- [x] Emit portable binary bytecode files.
+- [x] Execute saved portable binary bytecode files.
+- [x] Encode bytecode operations as implementation-independent byte values.
+- [x] Provide core arithmetic elements and overloads.
+- [x] Provide string concatenation.
+- [x] Provide comparison and equality operations.
+- [ ] Provide list and array operations used by the design examples.
+- [x] Provide `length`.
+- [ ] Provide `sum`.
+- [x] Provide reduction.
+- [ ] Provide `wrap`.
+- [ ] Provide `top`.
+- [ ] Provide `call`.
+- [ ] Provide indexing and immutable-update elements.
+- [ ] Provide optional and result helper elements.
+- [ ] Provide `or` for extension selection.
+- [x] Provide tag application and removal operations.
+- [ ] Provide type inspection required by matching and multimethods.
+- [ ] Provide standard fault, result, option, task, and channel types.
+- [ ] Provide the standard traits referenced by the language.
+- [ ] Provide the `std` module namespace and module-resolution behavior.
