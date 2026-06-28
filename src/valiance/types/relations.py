@@ -779,7 +779,13 @@ def apply_overload(
         return None
 
     return AppliedOverload(
-        overload, substitution, params, returns, actual_returns, scores
+        overload,
+        substitution,
+        params,
+        returns,
+        actual_returns,
+        scores,
+        any(score == Specificity.VECTORISED for score in scores),
     )
 
 
@@ -825,6 +831,7 @@ def apply_overload_to_stack(
         returns=applied.returns,
         actual_returns=applied.actual_returns,
         scores=applied.scores,
+        vectorised=applied.vectorised,
     )
 
 

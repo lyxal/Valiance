@@ -111,6 +111,19 @@ class TypeLibraryTests(unittest.TestCase):
 
         self.assertIsNotNone(applied)
         self.assertEqual(applied.actual_returns, (Number,))
+        self.assertFalse(applied.vectorised)
+
+    def test_apply_overload_marks_vectorisation(self):
+        overload = Overload((Number, Number), (Number,))
+
+        applied = apply_overload(
+            overload,
+            (C(ListExactType, Number), C(ListExactType, Number)),
+        )
+
+        self.assertIsNotNone(applied)
+        self.assertTrue(applied.vectorised)
+        self.assertEqual(applied.actual_returns, (C(ListExactType, Number),))
 
     def test_collection_item_type_looks_through_tags(self):
         self.assertEqual(
@@ -203,6 +216,7 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(applied.substitution["T"], C(ListExactType, Number))
         self.assertEqual(applied.params[0], C(ListExactType, Number, 2))
         self.assertEqual(applied.returns, (C(ListExactType, Number),))
+        self.assertFalse(applied.vectorised)
 
     def test_apply_overload_to_stack_can_infer_missing_inputs(self):
         plus = Overload((Number, Number), (Number,))

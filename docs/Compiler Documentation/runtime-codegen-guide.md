@@ -100,6 +100,26 @@ Do not reintroduce separate static-only and runtime-only definitions for the
 same element. Add built-ins in `analysis/builtins.py` so the analyser and VM see
 the same element set.
 
+Overload resolution should be a compile-time decision.
+
+The analyser attaches resolved overload metadata to `TypedElementNode` and
+`TypedCallNode`. For built-in elements, codegen lowers resolved element calls to
+bytecode that identifies the selected overload slot directly. The VM then
+executes that selected overload instead of repeating overload resolution from
+runtime value shapes. User-defined elements still compile through normal
+`LOAD_ELEMENT` and `CALL`, because those values live in the runtime environment
+rather than the built-in element table.
+
+`AppliedOverload.vectorised` records whether overload application required
+vectorisation. Codegen can inspect `typed_node.overload.vectorised` on
+`TypedElementNode` or `TypedCallNode` when it needs different lowering for a
+vectorised call shape.
+
+Runtime checks may still be needed for values whose static type permits several
+runtime shapes, such as vectorised list lengths or predicates that cannot be
+proven statically. Those checks should validate assumptions made by the selected
+overload; they should not choose a different overload.
+
 The VM stack is ordered bottom to top.
 
 When an operation consumes multiple values, the rightmost values of the Python
@@ -223,6 +243,46 @@ Start from the typed AST produced by analysis.
 If the node has child expressions, compile them in source order unless the
 language reference says otherwise. Stack effects should be obvious from the
 instruction sequence; avoid hidden compiler-side stack mutation.
+
+## Resolved Overload Codegen
+
+Resolved built-in elements use analyser-selected overloads.
+
+```text
+TypedElementNode("+", overload_index=N)
+  -> CALL_RESOLVED_ELEMENT ("+", N)
+VM invokes the selected built-in overload directly
+```
+
+Unresolved elements and user-defined elements keep the normal path:
+
+```text
+ElementNode("name")
+  -> LOAD_ELEMENT "name"
+  -> CALL
+```
+
+The invariant is: type-level overload resolution belongs to analysis, and
+runtime should not redo it for operations whose selected implementation is known
+at compile time.
+
+Implementation checklist:
+
+1. Extend typed AST metadata so overload-resolved nodes expose the chosen
+   overload.
+2. Give built-in overloads an identity within their element definition.
+3. Emit `CALL_RESOLVED_ELEMENT` with `(element_name, overload_index)`.
+4. Serialize that reference, not a Python function object.
+5. In the VM, execute the selected overload directly.
+6. Keep runtime validation for vectorisation length mismatches and explicit
+   runtime predicates.
+7. Preserve useful errors if a bytecode file references an unknown element or
+   overload id.
+
+Be careful with saved bytecode. The current bytecode format encodes positional
+overload indices, so changing built-in overload order is a compatibility
+concern. Prefer explicit stable overload ids before bytecode is treated as
+durable.
 
 ## Function Calls and Parameter Cycling
 
@@ -350,6 +410,8 @@ These are known constraints of the current runtime/codegen layer:
 
 - `ForNode` / foreach codegen is not implemented.
 - `TagApplicationNode` currently compiles as a no-op.
+- Unresolved and user-defined element calls still compile through
+  `LOAD_ELEMENT` / `CALL` and are runtime-dispatched.
 - Runtime arrays are currently represented like lists.
 - Function overload codegen chooses the first typed overload body.
 - Full closure semantics should not be assumed; function values capture the

@@ -16,6 +16,8 @@ from valiance.asts.nodes import (
     SetVariableNode,
     StringLiteralNode,
     TagApplicationNode,
+    TypedCallNode,
+    TypedElementNode,
     TypedFunctionNode,
     TypedNode,
 )
@@ -38,6 +40,10 @@ def pretty_ast(value: ASTNode | TypedNode | Sequence[ASTNode | TypedNode]) -> st
 def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> str:
     if isinstance(value, TypedFunctionNode):
         return _typed_function_node(value, level)
+    if isinstance(value, TypedElementNode):
+        return _typed_element_node(value, level)
+    if isinstance(value, TypedCallNode):
+        return _typed_call_node(value, level)
     if isinstance(value, TypedNode):
         return _typed_node(value, level)
     if isinstance(value, FunctionOverloadTyping):
@@ -71,6 +77,39 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
 
 def _typed_node(value: TypedNode, level: int) -> str:
     lines = [f"TypedNode(type={_type_label(value.typ)}, node="]
+    lines.extend(_indent(_pretty(value.node, level + 1).splitlines()))
+    lines.append(")")
+    return "\n".join(lines)
+
+
+def _typed_element_node(value: TypedElementNode, level: int) -> str:
+    overload = "unresolved"
+    if value.overload is not None:
+        overload = str(value.overload.overload)
+    lines = [
+        "TypedElementNode("
+        f"type={_type_label(value.typ)}, "
+        f"overload_index={value.overload_index}, "
+        f"vectorised={value.overload.vectorised if value.overload else False}, "
+        f"overload={overload}, "
+        "node="
+    ]
+    lines.extend(_indent(_pretty(value.node, level + 1).splitlines()))
+    lines.append(")")
+    return "\n".join(lines)
+
+
+def _typed_call_node(value: TypedCallNode, level: int) -> str:
+    overload = "unresolved"
+    if value.overload is not None:
+        overload = str(value.overload.overload)
+    lines = [
+        "TypedCallNode("
+        f"type={_type_label(value.typ)}, "
+        f"vectorised={value.overload.vectorised if value.overload else False}, "
+        f"overload={overload}, "
+        "node="
+    ]
     lines.extend(_indent(_pretty(value.node, level + 1).splitlines()))
     lines.append(")")
     return "\n".join(lines)

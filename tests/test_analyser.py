@@ -25,6 +25,8 @@ from valiance.asts import (
     NumberLiteralNode,
     StringLiteralNode,
     TagApplicationNode,
+    TypedCallNode,
+    TypedElementNode,
     TypedFunctionNode,
 )
 from valiance.parsing import parse
@@ -162,6 +164,23 @@ class AnalyserTests(unittest.TestCase):
         )
 
         self.assertEqual([node.typ for node in typed], [Number, Number, Number])
+        self.assertIsInstance(typed[-1], TypedElementNode)
+        self.assertEqual(typed[-1].overload_index, 0)
+        self.assertEqual(
+            typed[-1].overload.overload,
+            Overload((Number, Number), (Number,)),
+        )
+        self.assertFalse(typed[-1].overload.vectorised)
+
+    def test_element_records_vectorised_overload_application(self):
+        typed = analyse(parse("[1, 2, 3] + [4, 5, 6]"))
+
+        self.assertIsInstance(typed[-1], TypedElementNode)
+        self.assertTrue(typed[-1].overload.vectorised)
+        self.assertEqual(
+            typed[-1].overload.actual_returns,
+            (C(ListExactType, Number),),
+        )
 
     def test_non_inference_element_rejects_ambiguous_overload(self):
         env = Environment()
@@ -684,6 +703,10 @@ class AnalyserTests(unittest.TestCase):
         )
 
         self.assertEqual(typed[-1].typ, Number)
+        self.assertIsInstance(typed[-1], TypedCallNode)
+        self.assertEqual(typed[-1].overload.params, (Number, Number))
+        self.assertEqual(typed[-1].overload.actual_returns, (Number,))
+        self.assertFalse(typed[-1].overload.vectorised)
 
     def test_call_node_falls_back_to_stack_values_for_missing_arguments(self):
         typed = analyse(
@@ -708,6 +731,9 @@ class AnalyserTests(unittest.TestCase):
         )
 
         self.assertEqual(typed[-1].typ, String)
+        self.assertIsInstance(typed[-1], TypedCallNode)
+        self.assertEqual(typed[-1].overload.params, (String, String))
+        self.assertEqual(typed[-1].overload.actual_returns, (String,))
 
     def test_call_node_reports_non_function_values(self):
         analyser = Analyser(Environment())

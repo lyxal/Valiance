@@ -93,3 +93,4 @@ class StackApplication:
     returns: tuple[Type, ...]
     actual_returns: tuple[Type, ...]
     scores: tuple[Specificity, ...]
+    vectorised: bool = False

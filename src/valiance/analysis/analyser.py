@@ -21,6 +21,8 @@ from valiance.asts import (
     StringLiteralNode,
     TagApplicationNode,
     TupleLiteralNode,
+    TypedCallNode,
+    TypedElementNode,
     TypedFunctionNode,
     TypedNode,
 )
@@ -662,7 +664,12 @@ class Analyser:
                 popped.with_stack(
                     popped.stack.push(*applied.actual_returns)
                 ).append_typed(
-                    TypedNode(node, _returns_result_type(applied.actual_returns))
+                    TypedElementNode(
+                        node,
+                        _returns_result_type(applied.actual_returns),
+                        applied,
+                        _overload_index(overloads, applied.overload),
+                    )
                 )
             )
         return results
@@ -774,7 +781,11 @@ class Analyser:
                 popped.with_stack(
                     popped.stack.push(*applied.actual_returns)
                 ).append_typed(
-                    TypedNode(node, _returns_result_type(applied.actual_returns))
+                    TypedCallNode(
+                        node,
+                        _returns_result_type(applied.actual_returns),
+                        applied,
+                    )
                 )
             )
         return results
@@ -1311,6 +1322,16 @@ def _winners_specialize_inputs(
     return all(branch.inputs != original.inputs for _, branch in winners)
 
 
+def _overload_index(
+    overloads: tuple[T.Overload, ...],
+    overload: T.Overload,
+) -> int | None:
+    try:
+        return overloads.index(overload)
+    except ValueError:
+        return None
+
+
 def _source_element_arguments(
     branch: AnalysisBranch,
     overload: T.Overload,
@@ -1397,6 +1418,7 @@ def _apply_overload_to_branch(
         applied.returns,
         actual_returns,
         applied.scores,
+        applied.vectorised,
     )
     return applied, specialized_branch
 
@@ -1994,6 +2016,19 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
                 )
                 for overload in typed_node.overloads
             ),
+        )
+    if isinstance(typed_node, TypedElementNode):
+        return TypedElementNode(
+            typed_node.node,
+            typ,
+            typed_node.overload,
+            typed_node.overload_index,
+        )
+    if isinstance(typed_node, TypedCallNode):
+        return TypedCallNode(
+            typed_node.node,
+            typ,
+            typed_node.overload,
         )
     return TypedNode(typed_node.node, typ)
 

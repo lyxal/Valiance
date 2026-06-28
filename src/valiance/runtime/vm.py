@@ -122,6 +122,8 @@ class VirtualMachine:
                     )
                 case OpCode.CALL:
                     self._call_stack_top(frame)
+                case OpCode.CALL_RESOLVED_ELEMENT:
+                    self._call_resolved_element(frame, instruction.arg)
                 case OpCode.BUILD_LIST:
                     frame.stack.append(_pop_many(frame.stack, instruction.arg))
                 case OpCode.BUILD_TUPLE:
@@ -175,6 +177,30 @@ class VirtualMachine:
             return
         raise RuntimeError(f"cannot call value {callee!r}")
 
+    def _call_resolved_element(
+        self,
+        frame: _Frame,
+        reference: object,
+    ) -> None:
+        if (
+            not isinstance(reference, tuple)
+            or len(reference) != 2
+            or not isinstance(reference[0], str)
+            or not isinstance(reference[1], int)
+        ):
+            raise RuntimeError(f"invalid resolved element reference {reference!r}")
+        name, overload_index = reference
+        value = _load_name(name, frame.locals, frame.globals)
+        if not isinstance(value, BuiltinValue):
+            raise RuntimeError(f"resolved element '{name}' is not a built-in")
+        try:
+            overload = value.element.definitions[overload_index]
+        except IndexError as exc:
+            raise RuntimeError(
+                f"resolved element '{name}' has no overload {overload_index}"
+            ) from exc
+        _call_resolved_builtin(value, overload, frame)
+
 
 def run(program: Program, *, output: Callable[[str], None] | None = None) -> list[Any]:
     """Execute a bytecode program with a fresh VM."""
@@ -217,6 +243,46 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
             _show_overload_inputs(callee.element.definitions),
         )
     )
+
+
+def _call_resolved_builtin(
+    callee: BuiltinValue,
+    overload: BuiltinOverload,
+    frame: _Frame,
+) -> None:
+    arity = len(overload.signature.params)
+    try:
+        args, stack_count, next_cycle_index = frame.source_args(arity)
+    except _StackUnderflow as exc:
+        raise RuntimeError(
+            _format_call_error(
+                f"element '{callee.element.name}'",
+                frame.stack,
+                _show_overload_inputs((overload,)),
+            )
+        ) from exc
+    if not overload.runtime_accepts(args):
+        vectorized = _call_vectorized_builtin(overload, args, callee.context)
+        if vectorized is None:
+            raise RuntimeError(
+                _format_call_error(
+                    f"element '{callee.element.name}'",
+                    frame.stack,
+                    _show_overload_inputs((overload,)),
+                )
+            )
+        if stack_count:
+            del frame.stack[-stack_count:]
+        frame.cycle_index = next_cycle_index
+        frame.stack.extend(vectorized)
+        return
+    if stack_count:
+        del frame.stack[-stack_count:]
+    frame.cycle_index = next_cycle_index
+    implementation = overload.implementation
+    if implementation is None:
+        raise RuntimeError(f"resolved element '{callee.element.name}' is not callable")
+    frame.stack.extend(implementation(args, callee.context))
 
 
 def _call_vectorized_builtin(

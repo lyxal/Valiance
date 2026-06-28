@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import NoReturn
 
+from valiance.analysis.builtins import runtime_elements
 from valiance.asts import (
     ArrayLiteralNode,
     ASTNode,
@@ -26,6 +27,7 @@ from valiance.asts import (
     StringLiteralNode,
     TagApplicationNode,
     TupleLiteralNode,
+    TypedElementNode,
     TypedFunctionNode,
     TypedNode,
     WhileNode,
@@ -75,8 +77,12 @@ class _Compiler:
             case ElementNode(name, modifier_args):
                 for arg in modifier_args:
                     self.node(arg)
-                self.emit(OpCode.LOAD_ELEMENT, name.text)
-                self.emit(OpCode.CALL)
+                resolved = _resolved_element_reference(typed_node)
+                if resolved is None:
+                    self.emit(OpCode.LOAD_ELEMENT, name.text)
+                    self.emit(OpCode.CALL)
+                else:
+                    self.emit(OpCode.CALL_RESOLVED_ELEMENT, resolved)
             case TagApplicationNode():
                 pass
             case FunctionNode():
@@ -224,6 +230,23 @@ def _unwrap(node: ASTNode | TypedNode) -> ASTNode:
     if isinstance(node, TypedNode):
         return node.node
     return node
+
+
+def _resolved_element_reference(node: TypedNode | None) -> tuple[str, int] | None:
+    if not isinstance(node, TypedElementNode):
+        return None
+    if node.overload_index is None:
+        return None
+    ast = node.node
+    if not isinstance(ast, ElementNode):
+        return None
+    elements = runtime_elements()
+    element = elements.get(ast.name.text)
+    if element is None:
+        return None
+    if not 0 <= node.overload_index < len(element.definitions):
+        return None
+    return ast.name.text, node.overload_index
 
 
 def _number(value: str, node: ASTNode) -> Decimal:

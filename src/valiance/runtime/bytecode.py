@@ -16,6 +16,7 @@ class OpCode(Enum):
     LOAD_ELEMENT = "load_element"
     MAKE_FUNCTION = "make_function"
     CALL = "call"
+    CALL_RESOLVED_ELEMENT = "call_resolved_element"
     BUILD_LIST = "build_list"
     BUILD_TUPLE = "build_tuple"
     BUILD_RECORD = "build_record"

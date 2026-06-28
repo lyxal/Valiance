@@ -162,7 +162,7 @@ Element application happens in `Analyser._element`:
 4. Keep non-dominated winners with `_best_candidates`.
 5. Reject ambiguity outside inference unless winners merely specialize inputs.
 6. Push `applied.actual_returns`.
-7. Append a `TypedNode`.
+7. Append a typed node that records the resolved operation.
 
 Overload resolution itself belongs in `types.relations`, not in the analyser.
 The analyser owns how overload application transforms branches.
@@ -174,6 +174,25 @@ The analyser owns how overload application transforms branches.
   tag flow
 
 When updating stack state after a call, use `actual_returns`.
+
+The typed AST carries the selected overload for overload-resolved operations.
+Element applications use `TypedElementNode`; call expressions use
+`TypedCallNode`.
+
+The important data to attach is the resolved compile-time operation, not just
+the displayed type:
+
+- original element symbol
+- selected overload signature
+- substituted parameter types
+- substituted declared returns
+- actual returns after vectorisation/tag flow
+- for elements, the overload index within the element definition, which lets
+  codegen find the runtime implementation without re-resolving overloads by type
+
+Keep this on typed metadata, not on the raw parser `ElementNode`. Parser AST
+nodes should remain syntax. Do not make the runtime compiler repeat type-level
+overload resolution as a workaround.
 
 ## Type Relations
 

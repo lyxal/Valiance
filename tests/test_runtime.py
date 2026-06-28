@@ -32,6 +32,34 @@ class RuntimeTests(unittest.TestCase):
             [[Decimal("11"), Decimal("12"), Decimal("13")]],
         )
 
+    def test_compiler_emits_resolved_builtin_element_calls(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse("1 2 +"))
+        self.assertEqual(analyser.diagnostics, [])
+
+        program = compile_program(typed)
+        ops = tuple(instruction.op for instruction in program.main.instructions)
+
+        self.assertIn(OpCode.CALL_RESOLVED_ELEMENT, ops)
+        self.assertNotIn(OpCode.LOAD_ELEMENT, ops)
+        self.assertEqual(run(program), [Decimal("3")])
+
+    def test_compiler_keeps_user_defined_elements_runtime_dispatched(self):
+        source = """
+define add_one(n: Number) -> Number => $n 1 +
+41 add_one
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+
+        program = compile_program(typed)
+        ops = tuple(instruction.op for instruction in program.main.instructions)
+
+        self.assertIn(OpCode.LOAD_ELEMENT, ops)
+        self.assertIn(OpCode.CALL, ops)
+        self.assertEqual(run(program), [Decimal("42")])
+
     def test_compiler_requires_typed_nodes(self):
         with self.assertRaises(CompileError):
             compile_program(parse("1"))

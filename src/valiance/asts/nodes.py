@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from valiance.symbols import Symbol
-from valiance.types import DataTag, Type
+from valiance.types import AppliedOverload, DataTag, Type
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,21 @@ class ASTNode:
 class TypedNode:
     node: ASTNode
     typ: Type | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TypedElementNode(TypedNode):
+    """A typed element application with its compile-time resolved overload."""
+
+    overload: AppliedOverload | None = None
+    overload_index: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TypedCallNode(TypedNode):
+    """A typed call expression with its compile-time resolved callable overload."""
+
+    overload: AppliedOverload | None = None
 
 
 @dataclass(frozen=True, slots=True)

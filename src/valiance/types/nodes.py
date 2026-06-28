@@ -203,6 +203,17 @@ class ResolvedOverload:
     returns: tuple[Type, ...]
     scores: tuple[Specificity, ...]
 
+    def __hash__(self) -> int:
+        return hash(
+            (
+                self.overload,
+                _substitution_items(self.substitution),
+                self.params,
+                self.returns,
+                self.scores,
+            )
+        )
+
 
 @dataclass(frozen=True)
 class AppliedOverload:
@@ -214,3 +225,21 @@ class AppliedOverload:
     returns: tuple[Type, ...]
     actual_returns: tuple[Type, ...]
     scores: tuple[Specificity, ...]
+    vectorised: bool = False
+
+    def __hash__(self) -> int:
+        return hash(
+            (
+                self.overload,
+                _substitution_items(self.substitution),
+                self.params,
+                self.returns,
+                self.actual_returns,
+                self.scores,
+                self.vectorised,
+            )
+        )
+
+
+def _substitution_items(substitution: dict[str, Type]) -> tuple[tuple[str, Type], ...]:
+    return tuple(sorted(substitution.items()))

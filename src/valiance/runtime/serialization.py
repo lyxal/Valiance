@@ -27,6 +27,7 @@ _OP_TO_BYTE = {
     OpCode.JUMP_IF_FALSE: 0x0D,
     OpCode.POP: 0x0E,
     OpCode.RETURN: 0x0F,
+    OpCode.CALL_RESOLVED_ELEMENT: 0x10,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 
