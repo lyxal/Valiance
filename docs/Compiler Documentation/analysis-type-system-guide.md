@@ -392,8 +392,7 @@ NominalType(Symbol("Result"), (Number, String))
 ```
 
 Do not assume that unions such as `T | E` automatically become
-`Result[T, E]`. That is design intent in `docs/type-system-rules.md`, not
-current analyser behavior.
+`Result[T, E]`. That is future design intent, not current analyser behavior.
 
 If adding Result normalization later, keep it separate from ordinary union
 normalization until the error trait hierarchy exists. Otherwise the type layer
