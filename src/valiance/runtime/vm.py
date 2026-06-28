@@ -13,7 +13,7 @@ from valiance.analysis.builtins import (
     RuntimeContext,
     runtime_elements,
 )
-from valiance.runtime.bytecode import FunctionCode, OpCode, Program
+from valiance.runtime.bytecode import FunctionCode, FunctionSetCode, OpCode, Program
 
 
 class RuntimeError(Exception):
@@ -26,6 +26,13 @@ class FunctionValue:
 
     code: FunctionCode
     globals: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class OverloadedFunctionValue:
+    """A closure with one compiled body per statically analysed overload."""
+
+    overloads: tuple[FunctionValue, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +77,7 @@ class VirtualMachine:
     def __init__(self, *, output: Callable[[str], None] | None = None) -> None:
         self.output = print if output is None else output
         self.globals = {
-            name: BuiltinValue(element, RuntimeContext(self.output))
+            name: BuiltinValue(element, RuntimeContext(self.output, self.call_value))
             for name, element in runtime_elements().items()
         }
 
@@ -86,7 +93,21 @@ class VirtualMachine:
             )
         locals_: dict[str, Any] = dict(zip(function.code.params, args, strict=True))
         cycle_values = tuple(args) if function.code.cycle_params else ()
-        return self.execute(function.code, locals_, function.globals, cycle_values)
+        initial_stack = list(args) if function.code.params and not cycle_values else []
+        return self.execute(
+            function.code,
+            locals_,
+            function.globals,
+            cycle_values,
+            initial_stack,
+        )
+
+    def call_value(self, value: Any, args: list[Any]) -> list[Any]:
+        if isinstance(value, FunctionValue):
+            return self.call(value, args)
+        if isinstance(value, OverloadedFunctionValue) and len(value.overloads) == 1:
+            return self.call(value.overloads[0], args)
+        raise RuntimeError(f"cannot call value {value!r}")
 
     def execute(
         self,
@@ -94,8 +115,9 @@ class VirtualMachine:
         locals_: dict[str, Any],
         globals_: dict[str, Any],
         cycle_values: tuple[Any, ...] = (),
+        initial_stack: list[Any] | None = None,
     ) -> list[Any]:
-        frame = _Frame([], locals_, globals_, cycle_values)
+        frame = _Frame(list(initial_stack or ()), locals_, globals_, cycle_values)
         ip = 0
         instructions = code.instructions
         while ip < len(instructions):
@@ -108,9 +130,13 @@ class VirtualMachine:
                         _load_name(instruction.arg, frame.locals, frame.globals)
                     )
                 case OpCode.STORE_VAR:
-                    frame.locals[instruction.arg] = _pop(
+                    value = _pop(
                         frame.stack,
                         "store variable",
+                    )
+                    frame.locals[instruction.arg] = _store_value(
+                        frame.locals.get(instruction.arg),
+                        value,
                     )
                 case OpCode.LOAD_ELEMENT:
                     frame.stack.append(
@@ -118,7 +144,10 @@ class VirtualMachine:
                     )
                 case OpCode.MAKE_FUNCTION:
                     frame.stack.append(
-                        FunctionValue(instruction.arg, frame.globals | frame.locals)
+                        _make_function_value(
+                            instruction.arg,
+                            frame.globals | frame.locals,
+                        )
                     )
                 case OpCode.CALL:
                     self._call_stack_top(frame)
@@ -159,22 +188,13 @@ class VirtualMachine:
             _call_builtin(callee, frame)
             return
         if isinstance(callee, FunctionValue):
-            arity = len(callee.code.params)
-            try:
-                args, stack_count, next_cycle_index = frame.source_args(arity)
-            except _StackUnderflow as exc:
-                raise RuntimeError(
-                    _format_call_error(
-                        f"function '{_function_name(callee.code)}'",
-                        frame.stack,
-                        [f"{arity} argument(s)"],
-                    )
-                ) from exc
-            if stack_count:
-                del frame.stack[-stack_count:]
-            frame.cycle_index = next_cycle_index
-            frame.stack.extend(self.call(callee, list(args)))
+            self._call_function(callee, frame)
             return
+        if isinstance(callee, OverloadedFunctionValue):
+            if len(callee.overloads) == 1:
+                self._call_function(callee.overloads[0], frame)
+                return
+            raise RuntimeError("cannot call overloaded function without resolved slot")
         raise RuntimeError(f"cannot call value {callee!r}")
 
     def _call_resolved_element(
@@ -191,20 +211,88 @@ class VirtualMachine:
             raise RuntimeError(f"invalid resolved element reference {reference!r}")
         name, overload_index = reference
         value = _load_name(name, frame.locals, frame.globals)
-        if not isinstance(value, BuiltinValue):
-            raise RuntimeError(f"resolved element '{name}' is not a built-in")
+        if isinstance(value, BuiltinValue):
+            try:
+                overload = value.element.definitions[overload_index]
+            except IndexError as exc:
+                raise RuntimeError(
+                    f"resolved element '{name}' has no overload {overload_index}"
+                ) from exc
+            _call_resolved_builtin(value, overload, frame)
+            return
+        if isinstance(value, FunctionValue):
+            if overload_index != 0:
+                raise RuntimeError(
+                    f"resolved function '{name}' has no overload {overload_index}"
+                )
+            self._call_function(value, frame)
+            return
+        if isinstance(value, OverloadedFunctionValue):
+            try:
+                overload = value.overloads[overload_index]
+            except IndexError as exc:
+                raise RuntimeError(
+                    f"resolved function '{name}' has no overload {overload_index}"
+                ) from exc
+            self._call_function(overload, frame)
+            return
+        raise RuntimeError(f"resolved element '{name}' is not callable")
+
+    def _call_function(self, callee: FunctionValue, frame: _Frame) -> None:
+        arity = len(callee.code.params)
         try:
-            overload = value.element.definitions[overload_index]
-        except IndexError as exc:
+            args, stack_count, next_cycle_index = frame.source_args(arity)
+        except _StackUnderflow as exc:
             raise RuntimeError(
-                f"resolved element '{name}' has no overload {overload_index}"
+                _format_call_error(
+                    f"function '{_function_name(callee.code)}'",
+                    frame.stack,
+                    [f"{arity} argument(s)"],
+                )
             ) from exc
-        _call_resolved_builtin(value, overload, frame)
+        if stack_count:
+            del frame.stack[-stack_count:]
+        frame.cycle_index = next_cycle_index
+        frame.stack.extend(self.call(callee, list(args)))
 
 
 def run(program: Program, *, output: Callable[[str], None] | None = None) -> list[Any]:
     """Execute a bytecode program with a fresh VM."""
     return VirtualMachine(output=output).run(program)
+
+
+def _make_function_value(
+    code: object,
+    globals_: dict[str, Any],
+) -> FunctionValue | OverloadedFunctionValue:
+    if isinstance(code, FunctionCode):
+        return FunctionValue(code, globals_)
+    if isinstance(code, FunctionSetCode):
+        return OverloadedFunctionValue(
+            tuple(FunctionValue(overload, globals_) for overload in code.overloads)
+        )
+    raise RuntimeError(f"invalid function bytecode value {code!r}")
+
+
+def _store_value(existing: Any, value: Any) -> Any:
+    if _is_function_value(existing) and _is_function_value(value):
+        return OverloadedFunctionValue(
+            _function_overloads(existing) + _function_overloads(value)
+        )
+    return value
+
+
+def _is_function_value(value: Any) -> bool:
+    return isinstance(value, (FunctionValue, OverloadedFunctionValue))
+
+
+def _function_overloads(value: FunctionValue | OverloadedFunctionValue) -> tuple[
+    FunctionValue,
+    ...
+]:
+    if isinstance(value, FunctionValue):
+        return (value,)
+    return value.overloads
 
 
 def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:

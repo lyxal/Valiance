@@ -6,7 +6,13 @@ from decimal import Decimal
 from valiance.analysis import Analyser
 from valiance.parsing import parse
 from valiance.runtime import CompileError, RuntimeError, compile_program, run
-from valiance.runtime.bytecode import FunctionCode, Instruction, OpCode, Program
+from valiance.runtime.bytecode import (
+    FunctionCode,
+    FunctionSetCode,
+    Instruction,
+    OpCode,
+    Program,
+)
 
 
 def execute(source: str):
@@ -32,6 +38,12 @@ class RuntimeTests(unittest.TestCase):
             [[Decimal("11"), Decimal("12"), Decimal("13")]],
         )
 
+    def test_executes_element_with_colon_function_argument(self):
+        self.assertEqual(
+            execute("[1, 2, 3] map: double"),
+            [[Decimal("2"), Decimal("4"), Decimal("6")]],
+        )
+
     def test_compiler_emits_resolved_builtin_element_calls(self):
         analyser = Analyser()
         typed = analyser.analyse(parse("1 2 +"))
@@ -44,7 +56,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotIn(OpCode.LOAD_ELEMENT, ops)
         self.assertEqual(run(program), [Decimal("3")])
 
-    def test_compiler_keeps_user_defined_elements_runtime_dispatched(self):
+    def test_compiler_emits_resolved_user_defined_element_calls(self):
         source = """
 define add_one(n: Number) -> Number => $n 1 +
 41 add_one
@@ -56,9 +68,40 @@ define add_one(n: Number) -> Number => $n 1 +
         program = compile_program(typed)
         ops = tuple(instruction.op for instruction in program.main.instructions)
 
-        self.assertIn(OpCode.LOAD_ELEMENT, ops)
-        self.assertIn(OpCode.CALL, ops)
+        self.assertIn(OpCode.CALL_RESOLVED_ELEMENT, ops)
+        self.assertNotIn(OpCode.LOAD_ELEMENT, ops)
         self.assertEqual(run(program), [Decimal("42")])
+
+    def test_compiler_emits_every_user_defined_overload_body(self):
+        source = """
+define same(x, y) => $x $y +
+1 2 same
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+
+        program = compile_program(typed)
+        maker = program.main.instructions[0]
+        self.assertEqual(maker.op, OpCode.MAKE_FUNCTION)
+        self.assertIsInstance(maker.arg, FunctionSetCode)
+        self.assertEqual(len(maker.arg.overloads), 2)
+        self.assertEqual(run(program), [Decimal("3")])
+
+    def test_repeated_defines_merge_user_defined_overloads(self):
+        source = """
+define triple(n: Number) -> Number => $n * 3
+define triple(s: String) -> String => $s + $s + $s
+triple 15
+"""
+        self.assertEqual(execute(source), [Decimal("45")])
+
+        source = """
+define triple(n: Number) -> Number => $n * 3
+define triple(s: String) -> String => $s + $s + $s
+triple "H"
+"""
+        self.assertEqual(execute(source), ["HHH"])
 
     def test_compiler_requires_typed_nodes(self):
         with self.assertRaises(CompileError):

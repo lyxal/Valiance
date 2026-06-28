@@ -1,0 +1,5 @@
+define triple(n: Number) -> Number => $n * 3
+define triple(s: String) -> String => $s + $s + $s
+
+println triple 5
+println (triple "Hee " | + "Haw")

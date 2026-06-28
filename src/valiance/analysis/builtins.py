@@ -47,6 +47,7 @@ class RuntimeContext:
     """Runtime services available to built-in element implementations."""
 
     output: Callable[[str], None]
+    call: Callable[[Any, list[Any]], list[Any]]
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
@@ -114,6 +115,20 @@ def _comparison(func: Callable[[Any, Any], bool]) -> RuntimeImpl:
 def _print(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     ctx.output(_format_value(args[0]))
     return ()
+
+
+def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    result = []
+    for item in args[0]:
+        mapped = ctx.call(args[1], [item])
+        if len(mapped) != 1:
+            raise RuntimeError("map function must return exactly one value")
+        result.append(mapped[0])
+    return (result,)
+
+
+def _accepts_map(args: tuple[Any, ...]) -> bool:
+    return isinstance(args[0], list) and len(args) == 2
 
 
 def _truth(value: bool) -> Decimal:
@@ -229,6 +244,8 @@ BUILTIN_ELEMENTS = (
                 T.Fn((T.TypeVariable("Item"),), (T.TypeVariable("Mapped"),)),
             ),
             (T.ExactList(T.TypeVariable("Mapped")),),
+            _map,
+            _accepts_map,
         ),
     ),
     element(

@@ -95,6 +95,11 @@ def _typed_element_node(value: TypedElementNode, level: int) -> str:
         "node="
     ]
     lines.extend(_indent(_pretty(value.node, level + 1).splitlines()))
+    if value.modifier_args:
+        lines.append("  modifier_args=[")
+        for arg in value.modifier_args:
+            lines.extend(_indent(_pretty(arg, level + 1).splitlines(), 2))
+        lines.append("  ]")
     lines.append(")")
     return "\n".join(lines)
 

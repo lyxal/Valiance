@@ -7,7 +7,13 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from valiance.runtime.bytecode import FunctionCode, Instruction, OpCode, Program
+from valiance.runtime.bytecode import (
+    FunctionCode,
+    FunctionSetCode,
+    Instruction,
+    OpCode,
+    Program,
+)
 
 MAGIC = b"VLNCBC\x02"
 
@@ -37,6 +43,7 @@ _DECIMAL = 0x02
 _STRING = 0x03
 _TUPLE = 0x04
 _FUNCTION = 0x05
+_FUNCTION_SET = 0x06
 
 
 class BytecodeFormatError(Exception):
@@ -116,6 +123,11 @@ class _Writer:
         elif isinstance(value, FunctionCode):
             self.u8(_FUNCTION)
             self.function(value)
+        elif isinstance(value, FunctionSetCode):
+            self.u8(_FUNCTION_SET)
+            self.u32(len(value.overloads))
+            for overload in value.overloads:
+                self.function(overload)
         else:
             raise BytecodeFormatError(f"cannot serialize bytecode value {value!r}")
 
@@ -193,6 +205,8 @@ class _Reader:
             return tuple(self.value() for _ in range(self.u32()))
         if tag == _FUNCTION:
             return self.function()
+        if tag == _FUNCTION_SET:
+            return FunctionSetCode(tuple(self.function() for _ in range(self.u32())))
         raise BytecodeFormatError(f"unknown bytecode value tag {tag}")
 
     def function(self) -> FunctionCode:

@@ -47,6 +47,13 @@ class FunctionCode:
 
 
 @dataclass(frozen=True, slots=True)
+class FunctionSetCode:
+    """Executable bytecode for every statically analysed overload of a function."""
+
+    overloads: tuple[FunctionCode, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Program:
     """A compiled Valiance program."""
 

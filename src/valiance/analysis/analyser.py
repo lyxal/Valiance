@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from itertools import count, permutations
+from typing import Any
 
 import valiance.types as T
 from valiance.analysis.builtins import default_environment
@@ -442,6 +443,7 @@ class ModifierArgumentAnalysis:
     """Analysed function value supplied by an element modifier."""
 
     typ: T.Type
+    typed_node: TypedFunctionNode
 
 
 class Analyser:
@@ -618,10 +620,24 @@ class Analyser:
         modifier_args = self._modifier_argument_types(branch, node)
         if modifier_args is None:
             return {branch.append_typed(TypedNode(node, None))}
+        if node.modifier_args and not _modifier_arity_matches(overloads, modifier_args):
+            self._diagnose(
+                f"element '{node.name}' expects "
+                f"{_show_modifier_counts(overloads)} ':' function argument(s), "
+                f"got {len(modifier_args)}",
+                node,
+            )
+            return set()
 
-        candidates: list[tuple[T.AppliedOverload, AnalysisBranch]] = []
+        candidates: list[
+            tuple[
+                T.AppliedOverload,
+                AnalysisBranch,
+                tuple[ModifierArgumentAnalysis, ...],
+            ]
+        ] = []
         for overload in overloads:
-            for args, popped in _source_element_arguments(
+            for args, popped, ordered_modifiers in _source_element_arguments(
                 branch,
                 overload,
                 modifier_args,
@@ -633,7 +649,8 @@ class Analyser:
                     self.env.context,
                 )
                 if candidate is not None:
-                    candidates.append(candidate)
+                    applied, candidate_branch = candidate
+                    candidates.append((applied, candidate_branch, ordered_modifiers))
 
         stack_before = branch.stack
         winners = _best_candidates(candidates)
@@ -659,7 +676,7 @@ class Analyser:
             return set()
 
         results: set[AnalysisBranch] = set()
-        for applied, popped in winners:
+        for applied, popped, ordered_modifiers in winners:
             results.add(
                 popped.with_stack(
                     popped.stack.push(*applied.actual_returns)
@@ -669,6 +686,7 @@ class Analyser:
                         _returns_result_type(applied.actual_returns),
                         applied,
                         _overload_index(overloads, applied.overload),
+                        tuple(item.typed_node for item in ordered_modifiers),
                     )
                 )
             )
@@ -685,7 +703,12 @@ class Analyser:
             if result is None:
                 return None
             function, _ = result
-            analyses.append(ModifierArgumentAnalysis(function.typ))
+            analyses.append(
+                ModifierArgumentAnalysis(
+                    function.typ,
+                    TypedFunctionNode(arg, function.typ, function.overloads),
+                )
+            )
         return tuple(analyses)
 
     def _tag_application(
@@ -1301,12 +1324,12 @@ def _callable_overloads(typ: T.Type) -> tuple[T.Overload, ...]:
 
 
 def _best_candidates(
-    candidates: Iterable[tuple[T.AppliedOverload, AnalysisBranch]],
-) -> tuple[tuple[T.AppliedOverload, AnalysisBranch], ...]:
+    candidates: Iterable[tuple[Any, ...]],
+) -> tuple[tuple[Any, ...], ...]:
     ordered = list(candidates)
-    winners: list[tuple[T.AppliedOverload, AnalysisBranch]] = []
+    winners: list[tuple[Any, ...]] = []
     for candidate in ordered:
-        applied, _ = candidate
+        applied = candidate[0]
         if not any(
             other is not candidate and _dominates(other[0].scores, applied.scores)
             for other in ordered
@@ -1316,10 +1339,10 @@ def _best_candidates(
 
 
 def _winners_specialize_inputs(
-    winners: tuple[tuple[T.AppliedOverload, AnalysisBranch], ...],
+    winners: tuple[tuple[Any, ...], ...],
     original: AnalysisBranch,
 ) -> bool:
-    return all(branch.inputs != original.inputs for _, branch in winners)
+    return all(candidate[1].inputs != original.inputs for candidate in winners)
 
 
 def _overload_index(
@@ -1336,11 +1359,18 @@ def _source_element_arguments(
     branch: AnalysisBranch,
     overload: T.Overload,
     modifier_args: tuple[ModifierArgumentAnalysis, ...],
-) -> Iterator[tuple[tuple[T.Type, ...], AnalysisBranch]]:
+) -> Iterator[
+    tuple[
+        tuple[T.Type, ...],
+        AnalysisBranch,
+        tuple[ModifierArgumentAnalysis, ...],
+    ]
+]:
     if not modifier_args:
         sourced = branch.source_arguments(overload.params)
         if sourced is not None:
-            yield sourced
+            args, popped = sourced
+            yield args, popped, ()
         return
 
     modifier_indexes = _modifier_param_indexes(overload.params)
@@ -1368,7 +1398,25 @@ def _source_element_arguments(
             else:
                 args.append(stack_args[stack_index])
                 stack_index += 1
-        yield tuple(args), popped
+        yield tuple(args), popped, ordered_modifiers
+
+
+def _modifier_arity_matches(
+    overloads: tuple[T.Overload, ...],
+    modifier_args: tuple[ModifierArgumentAnalysis, ...],
+) -> bool:
+    return len(modifier_args) in {
+        len(_modifier_param_indexes(overload.params)) for overload in overloads
+    }
+
+
+def _show_modifier_counts(overloads: tuple[T.Overload, ...]) -> str:
+    counts = sorted(
+        {len(_modifier_param_indexes(overload.params)) for overload in overloads}
+    )
+    if len(counts) == 1:
+        return str(counts[0])
+    return " or ".join(str(count) for count in counts)
 
 
 def _modifier_param_indexes(params: tuple[T.Type, ...]) -> tuple[int, ...]:
@@ -1802,11 +1850,11 @@ def _show_overloads(overloads: Iterable[T.Overload]) -> str:
 
 
 def _show_applied_overloads(
-    candidates: Iterable[tuple[T.AppliedOverload, AnalysisBranch]],
+    candidates: Iterable[tuple[Any, ...]],
 ) -> str:
     rendered = tuple(
-        T.show(T.Fn(candidate.params, candidate.actual_returns))
-        for candidate, _ in candidates
+        T.show(T.Fn(candidate[0].params, candidate[0].actual_returns))
+        for candidate in candidates
     )
     if not rendered:
         return "none"
@@ -2023,6 +2071,7 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typ,
             typed_node.overload,
             typed_node.overload_index,
+            typed_node.modifier_args,
         )
     if isinstance(typed_node, TypedCallNode):
         return TypedCallNode(

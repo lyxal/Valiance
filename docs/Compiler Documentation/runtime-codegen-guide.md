@@ -103,12 +103,11 @@ the same element set.
 Overload resolution should be a compile-time decision.
 
 The analyser attaches resolved overload metadata to `TypedElementNode` and
-`TypedCallNode`. For built-in elements, codegen lowers resolved element calls to
-bytecode that identifies the selected overload slot directly. The VM then
-executes that selected overload instead of repeating overload resolution from
-runtime value shapes. User-defined elements still compile through normal
-`LOAD_ELEMENT` and `CALL`, because those values live in the runtime environment
-rather than the built-in element table.
+`TypedCallNode`. Codegen lowers resolved element calls to bytecode that
+identifies the selected overload slot directly. The VM then executes that
+selected overload instead of repeating overload resolution from runtime value
+shapes. Built-in elements select a built-in overload slot; user-defined elements
+select a compiled function overload slot from `FunctionSetCode`.
 
 `AppliedOverload.vectorised` records whether overload application required
 vectorisation. Codegen can inspect `typed_node.overload.vectorised` on
@@ -254,7 +253,7 @@ TypedElementNode("+", overload_index=N)
 VM invokes the selected built-in overload directly
 ```
 
-Unresolved elements and user-defined elements keep the normal path:
+Unresolved elements keep the normal path:
 
 ```text
 ElementNode("name")
@@ -410,8 +409,8 @@ These are known constraints of the current runtime/codegen layer:
 
 - `ForNode` / foreach codegen is not implemented.
 - `TagApplicationNode` currently compiles as a no-op.
-- Unresolved and user-defined element calls still compile through
-  `LOAD_ELEMENT` / `CALL` and are runtime-dispatched.
+- Unresolved element calls still compile through `LOAD_ELEMENT` / `CALL` and
+  are runtime-dispatched.
 - Runtime arrays are currently represented like lists.
 - Function overload codegen chooses the first typed overload body.
 - Full closure semantics should not be assumed; function values capture the

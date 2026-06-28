@@ -150,6 +150,26 @@ class AnalyserTests(unittest.TestCase):
 
         self.assertEqual(typed[-1].typ, String)
 
+    def test_colon_function_argument_is_attached_as_typed_function(self):
+        typed = analyse(parse("[1, 2, 3] map: double"))
+
+        self.assertIsInstance(typed[-1], TypedElementNode)
+        self.assertEqual(typed[-1].typ, C(ListExactType, Number))
+        self.assertEqual(len(typed[-1].modifier_args), 1)
+        modifier = typed[-1].modifier_args[0]
+        self.assertIsInstance(modifier, TypedFunctionNode)
+        self.assertEqual(modifier.typ, Fn((Number,), (Number,)))
+
+    def test_colon_function_arguments_must_match_function_parameter_count(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("[1, 2, 3] map: (double, double)"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["1:11: element 'map' expects 1 ':' function argument(s), got 2"],
+        )
+
     def test_element_uses_environment_overloads_and_updates_stack(self):
         env = Environment()
         env.define_overload(PLUS, Overload((Number, Number), (Number,)))

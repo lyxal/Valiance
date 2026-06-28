@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import NoReturn
 
-from valiance.analysis.builtins import runtime_elements
+from valiance.analysis.builtins import BUILTIN_ELEMENTS, runtime_elements
 from valiance.asts import (
     ArrayLiteralNode,
     ASTNode,
@@ -17,6 +17,7 @@ from valiance.asts import (
     FieldAccessNode,
     ForNode,
     FunctionNode,
+    FunctionOverloadTyping,
     GetVariableNode,
     IfNode,
     ListLiteralNode,
@@ -32,7 +33,14 @@ from valiance.asts import (
     TypedNode,
     WhileNode,
 )
-from valiance.runtime.bytecode import FunctionCode, Instruction, OpCode, Program
+from valiance.runtime.bytecode import (
+    FunctionCode,
+    FunctionSetCode,
+    Instruction,
+    OpCode,
+    Program,
+)
+from valiance.types import FunctionType
 
 
 class CompileError(Exception):
@@ -75,7 +83,13 @@ class _Compiler:
             case SetVariableNode(name):
                 self.emit(OpCode.STORE_VAR, name.text)
             case ElementNode(name, modifier_args):
-                for arg in modifier_args:
+                args: tuple[ASTNode | TypedNode, ...] = modifier_args
+                if (
+                    isinstance(typed_node, TypedElementNode)
+                    and typed_node.modifier_args
+                ):
+                    args = typed_node.modifier_args
+                for arg in args:
                     self.node(arg)
                 resolved = _resolved_element_reference(typed_node)
                 if resolved is None:
@@ -88,12 +102,12 @@ class _Compiler:
             case FunctionNode():
                 self.emit(
                     OpCode.MAKE_FUNCTION,
-                    _compile_function_node(typed_node or node),
+                    _compile_function_value(typed_node or node),
                 )
             case DefineNode(name, function):
                 self.emit(
                     OpCode.MAKE_FUNCTION,
-                    _compile_function_node(typed_node or function, name.text),
+                    _compile_function_value(typed_node or function, name.text),
                 )
                 self.emit(OpCode.STORE_VAR, name.text)
             case ListLiteralNode(items) | ArrayLiteralNode(items):
@@ -199,31 +213,76 @@ def compile_program(nodes: list[TypedNode]) -> Program:
     return Program(compiler.compile_function(tuple(nodes), name="<main>"))
 
 
+def _compile_function_value(
+    node: FunctionNode | TypedNode,
+    name: str | None = None,
+) -> FunctionCode | FunctionSetCode:
+    typed = node if isinstance(node, TypedFunctionNode) else None
+    if typed is not None and typed.overloads:
+        ast = _function_ast(node)
+        overloads = tuple(
+            _compile_function_overload(ast, overload, name)
+            for overload in typed.overloads
+        )
+        if len(overloads) == 1:
+            return overloads[0]
+        return FunctionSetCode(overloads)
+    return _compile_function_node(node, name)
+
+
 def _compile_function_node(
     node: FunctionNode | TypedNode,
     name: str | None = None,
 ) -> FunctionCode:
-    typed = node if isinstance(node, TypedFunctionNode) else None
-    ast = _unwrap(node)
-    if isinstance(ast, DefineNode):
-        ast = ast.function
-    if not isinstance(ast, FunctionNode):
-        raise CompileError(f"cannot compile function from {type(ast).__name__}")
+    ast = _function_ast(node)
     params = ()
     if ast.params is not None:
         params = tuple(
             f"_{index}" if param.name is None else param.name.text
             for index, param in enumerate(ast.params)
         )
-    body: tuple[ASTNode | TypedNode, ...] = ast.body
-    if typed is not None and typed.overloads:
-        body = typed.overloads[0].body
     return _Compiler().compile_function(
-        body,
+        ast.body,
         params=params,
         name=name,
         cycle_params=bool(ast.params),
     )
+
+
+def _compile_function_overload(
+    ast: FunctionNode,
+    overload: FunctionOverloadTyping,
+    name: str | None,
+) -> FunctionCode:
+    typ = overload.typ
+    if not isinstance(typ, FunctionType):
+        raise CompileError(
+            f"cannot compile function overload from {type(typ).__name__}"
+        )
+    return _Compiler().compile_function(
+        overload.body,
+        params=_function_param_names(ast, len(typ.params)),
+        name=name,
+        cycle_params=bool(ast.params),
+    )
+
+
+def _function_param_names(ast: FunctionNode, arity: int) -> tuple[str, ...]:
+    if ast.params is None:
+        return tuple(f"_{index}" for index in range(arity))
+    return tuple(
+        f"_{index}" if param.name is None else param.name.text
+        for index, param in enumerate(ast.params)
+    )
+
+
+def _function_ast(node: FunctionNode | TypedNode) -> FunctionNode:
+    ast = _unwrap(node)
+    if isinstance(ast, DefineNode):
+        ast = ast.function
+    if not isinstance(ast, FunctionNode):
+        raise CompileError(f"cannot compile function from {type(ast).__name__}")
+    return ast
 
 
 def _unwrap(node: ASTNode | TypedNode) -> ASTNode:
@@ -242,9 +301,9 @@ def _resolved_element_reference(node: TypedNode | None) -> tuple[str, int] | Non
         return None
     elements = runtime_elements()
     element = elements.get(ast.name.text)
-    if element is None:
+    if element is not None and not 0 <= node.overload_index < len(element.definitions):
         return None
-    if not 0 <= node.overload_index < len(element.definitions):
+    if element is None and ast.name in {item.name for item in BUILTIN_ELEMENTS}:
         return None
     return ast.name.text, node.overload_index
 

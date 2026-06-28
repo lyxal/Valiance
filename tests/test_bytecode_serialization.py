@@ -2,7 +2,13 @@ import unittest
 from decimal import Decimal
 
 from valiance.runtime import dumps, loads
-from valiance.runtime.bytecode import FunctionCode, Instruction, OpCode, Program
+from valiance.runtime.bytecode import (
+    FunctionCode,
+    FunctionSetCode,
+    Instruction,
+    OpCode,
+    Program,
+)
 
 
 class BytecodeSerializationTests(unittest.TestCase):
@@ -41,6 +47,25 @@ class BytecodeSerializationTests(unittest.TestCase):
             FunctionCode(
                 (
                     Instruction(OpCode.MAKE_FUNCTION, inner),
+                    Instruction(OpCode.RETURN),
+                ),
+                name="<main>",
+            )
+        )
+
+        self.assertEqual(loads(dumps(program)), program)
+
+    def test_serializes_function_set_code(self):
+        overloads = FunctionSetCode(
+            (
+                FunctionCode((Instruction(OpCode.RETURN),), params=("x",)),
+                FunctionCode((Instruction(OpCode.RETURN),), params=("x", "y")),
+            )
+        )
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.MAKE_FUNCTION, overloads),
                     Instruction(OpCode.RETURN),
                 ),
                 name="<main>",
