@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from itertools import count
+from itertools import count, permutations
 
 import valiance.types as T
 from valiance.analysis.builtins import default_environment
@@ -435,6 +435,13 @@ class ListItemAnalysis:
     consumed: int
 
 
+@dataclass(frozen=True)
+class ModifierArgumentAnalysis:
+    """Analysed function value supplied by an element modifier."""
+
+    typ: T.Type
+
+
 class Analyser:
     """Analysis session owning global environment, diagnostics, and dispatch."""
 
@@ -606,20 +613,25 @@ class Analyser:
             self._diagnose(f"unknown element '{node.name}'", node)
             return set()
 
+        modifier_args = self._modifier_argument_types(branch, node)
+        if modifier_args is None:
+            return {branch.append_typed(TypedNode(node, None))}
+
         candidates: list[tuple[T.AppliedOverload, AnalysisBranch]] = []
         for overload in overloads:
-            sourced = branch.source_arguments(overload.params)
-            if sourced is None:
-                continue
-            args, popped = sourced
-            candidate = _apply_overload_to_branch(
+            for args, popped in _source_element_arguments(
+                branch,
                 overload,
-                args,
-                popped,
-                self.env.context,
-            )
-            if candidate is not None:
-                candidates.append(candidate)
+                modifier_args,
+            ):
+                candidate = _apply_overload_to_branch(
+                    overload,
+                    args,
+                    popped,
+                    self.env.context,
+                )
+                if candidate is not None:
+                    candidates.append(candidate)
 
         stack_before = branch.stack
         winners = _best_candidates(candidates)
@@ -654,6 +666,20 @@ class Analyser:
                 )
             )
         return results
+
+    def _modifier_argument_types(
+        self,
+        branch: AnalysisBranch,
+        node: ElementNode,
+    ) -> tuple[ModifierArgumentAnalysis, ...] | None:
+        analyses: list[ModifierArgumentAnalysis] = []
+        for arg in node.modifier_args:
+            result = self._analyse_function_literal(branch, arg)
+            if result is None:
+                return None
+            function, _ = result
+            analyses.append(ModifierArgumentAnalysis(function.typ))
+        return tuple(analyses)
 
     def _tag_application(
         self,
@@ -1283,6 +1309,65 @@ def _winners_specialize_inputs(
     original: AnalysisBranch,
 ) -> bool:
     return all(branch.inputs != original.inputs for _, branch in winners)
+
+
+def _source_element_arguments(
+    branch: AnalysisBranch,
+    overload: T.Overload,
+    modifier_args: tuple[ModifierArgumentAnalysis, ...],
+) -> Iterator[tuple[tuple[T.Type, ...], AnalysisBranch]]:
+    if not modifier_args:
+        sourced = branch.source_arguments(overload.params)
+        if sourced is not None:
+            yield sourced
+        return
+
+    modifier_indexes = _modifier_param_indexes(overload.params)
+    if len(modifier_indexes) != len(modifier_args):
+        return
+
+    stack_params = tuple(
+        param
+        for index, param in enumerate(overload.params)
+        if index not in modifier_indexes
+    )
+    sourced = branch.source_arguments(stack_params)
+    if sourced is None:
+        return
+    stack_args, popped = sourced
+
+    for ordered_modifiers in _unique_permutations(modifier_args):
+        args: list[T.Type] = []
+        stack_index = 0
+        modifier_index = 0
+        for index in range(len(overload.params)):
+            if index in modifier_indexes:
+                args.append(ordered_modifiers[modifier_index].typ)
+                modifier_index += 1
+            else:
+                args.append(stack_args[stack_index])
+                stack_index += 1
+        yield tuple(args), popped
+
+
+def _modifier_param_indexes(params: tuple[T.Type, ...]) -> tuple[int, ...]:
+    return tuple(
+        index
+        for index, param in enumerate(params)
+        if isinstance(T.normalize(param), T.FunctionType)
+    )
+
+
+def _unique_permutations(
+    modifier_args: tuple[ModifierArgumentAnalysis, ...],
+) -> Iterator[tuple[ModifierArgumentAnalysis, ...]]:
+    seen: set[tuple[T.Type, ...]] = set()
+    for candidate in permutations(modifier_args):
+        key = tuple(item.typ for item in candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield candidate
 
 
 def _apply_overload_to_branch(

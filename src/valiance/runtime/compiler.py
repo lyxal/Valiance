@@ -72,7 +72,9 @@ class _Compiler:
                 self.emit(OpCode.LOAD_VAR, name.text)
             case SetVariableNode(name):
                 self.emit(OpCode.STORE_VAR, name.text)
-            case ElementNode(name):
+            case ElementNode(name, modifier_args):
+                for arg in modifier_args:
+                    self.node(arg)
                 self.emit(OpCode.LOAD_ELEMENT, name.text)
                 self.emit(OpCode.CALL)
             case TagApplicationNode():

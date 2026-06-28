@@ -49,7 +49,15 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
     if isinstance(value, StringLiteralNode):
         return f"StringLiteralNode(value={value.value!r}{_location_arg(value)})"
     if isinstance(value, ElementNode):
-        return f"ElementNode(name={value.name}{_location_arg(value)})"
+        if not value.modifier_args:
+            return f"ElementNode(name={value.name}{_location_arg(value)})"
+        lines = [
+            f"ElementNode(name={value.name}{_location_arg(value)}, modifier_args=["
+        ]
+        for arg in value.modifier_args:
+            lines.extend(_indent(_pretty(arg, level + 1).splitlines()))
+        lines.append("])")
+        return "\n".join(lines)
     if isinstance(value, GetVariableNode):
         return f"GetVariableNode(name={value.name}{_location_arg(value)})"
     if isinstance(value, SetVariableNode):

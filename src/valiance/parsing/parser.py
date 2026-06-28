@@ -376,6 +376,17 @@ class Parser:
                     is_element=True,
                 )
             name = Symbol(token.value)
+            if self._match(TokenKind.COLON):
+                return _ChainPiece(
+                    (
+                        ElementNode(
+                            name,
+                            self._modifier_arguments(token),
+                            location=_loc(token),
+                        ),
+                    ),
+                    True,
+                )
             if self._match(TokenKind.LPAREN):
                 args = self._argument_expressions(TokenKind.RPAREN)
                 return _ChainPiece(
@@ -440,6 +451,18 @@ class Parser:
         if self._check(closer):
             self._error("empty argument lists are invalid; use a \\nilad name")
         return self._comma_expressions(closer)
+
+    def _modifier_arguments(self, start: Token) -> tuple[FunctionNode, ...]:
+        if self._match(TokenKind.LPAREN):
+            return tuple(
+                FunctionNode(body=body, location=_loc(start))
+                for body in self._argument_expressions(TokenKind.RPAREN)
+            )
+
+        body = self._chain_until(_LINE_TERMINATORS)
+        if not body:
+            self._error("expected modifier function body")
+        return (FunctionNode(body=body, location=_loc(start)),)
 
     def _record_fields(self) -> tuple[tuple[Symbol, tuple[ASTNode, ...]], ...]:
         fields: list[tuple[Symbol, tuple[ASTNode, ...]]] = []

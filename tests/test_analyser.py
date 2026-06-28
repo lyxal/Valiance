@@ -130,6 +130,24 @@ class AnalyserTests(unittest.TestCase):
             TypeStack((C(ListExactType, String),)),
         )
 
+    def test_modifier_arguments_bind_to_function_parameters(self):
+        env = default_environment()
+        env.define_overload(
+            OP,
+            Overload(
+                (
+                    Fn((Number,), (Number,)),
+                    C(ListExactType, Number),
+                    Fn((Number,), (Number,)),
+                ),
+                (String,),
+            ),
+        )
+
+        typed = analyse(parse("[1, 2] op: (double, double)"), env)
+
+        self.assertEqual(typed[-1].typ, String)
+
     def test_element_uses_environment_overloads_and_updates_stack(self):
         env = Environment()
         env.define_overload(PLUS, Overload((Number, Number), (Number,)))

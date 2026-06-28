@@ -70,6 +70,7 @@ class ElementNode(ASTNode):
     """An element, such as an operator or function name."""
 
     name: Symbol
+    modifier_args: tuple[FunctionNode, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -119,6 +119,32 @@ class ParserTests(unittest.TestCase):
             ],
         )
 
+    def test_parses_colon_modifier_as_function_argument(self):
+        program = parse("[1, 2, 3, 4] map: double")
+
+        self.assertIsInstance(program[0], ListLiteralNode)
+        self.assertEqual(program[1].name, Symbol("map"))
+        self.assertEqual(
+            program[1].modifier_args,
+            (FunctionNode(body=(ElementNode(Symbol("double")),)),),
+        )
+
+    def test_parses_parenthesized_colon_modifier_arguments(self):
+        program = parse("fork: (sum, length) /")
+
+        self.assertEqual(program[0].name, Symbol("fork"))
+        self.assertEqual(
+            program[0].modifier_args,
+            (
+                FunctionNode(body=(ElementNode(Symbol("sum")),)),
+                FunctionNode(body=(ElementNode(Symbol("length")),)),
+            ),
+        )
+        self.assertEqual(
+            program[1:],
+            [ElementNode(Symbol("/"))],
+        )
+
     def test_parses_function_definition_with_params_and_returns(self):
         [node] = parse("define double(n: Number) -> Number => $n 2 *")
 
