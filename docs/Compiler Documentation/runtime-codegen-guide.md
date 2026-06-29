@@ -57,6 +57,18 @@ The runtime implementation is small, but several files must evolve together.
 - Runtime call errors should include the stack, stack types, and attempted input
   shapes.
 
+`src/valiance/runtime_values.py`
+
+- Defines shared runtime-value helpers used by built-ins, the VM, and the CLI.
+- `LazyList` wraps an iterable that should behave like a Valiance list without
+  promising a finite length.
+- `is_list_like(...)` is the runtime predicate for list-shaped values. It
+  accepts Python lists and lazy iterable values, but excludes strings, bytes,
+  tuples, and mappings because those are distinct runtime shapes.
+- `is_finite_list_like(...)` means a list-like value has a known `len(...)`.
+- `is_eager_sequence(...)` means a list-like value can be indexed without
+  consuming it.
+
 `src/valiance/runtime/serialization.py`
 
 - Encodes `Program` as portable binary bytecode.
@@ -182,7 +194,11 @@ For richer runtime matching:
 
 ```python
 def _accepts_non_empty_list(args: tuple[Any, ...]) -> bool:
-    return isinstance(args[0], list) and bool(args[0])
+    return is_finite_list_like(args[0]) and bool(args[0])
+
+
+def _head(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (next(iter(args[0])),)
 
 
 element(
@@ -190,7 +206,7 @@ element(
     overload(
         (T.ExactList(T.TypeVariable("Item")),),
         (T.TypeVariable("Item"),),
-        lambda args, ctx: (args[0][0],),
+        _head,
         accepts=_accepts_non_empty_list,
     ),
 )
@@ -198,6 +214,10 @@ element(
 
 Prefer named helper functions once behaviour is more than a tiny lambda. This
 keeps overload entries readable as the built-in catalogue grows.
+
+Use the helpers from `valiance.runtime_values` for collection predicates. Do not
+write new runtime built-ins that check only `isinstance(value, list)` unless the
+operation truly requires Python's eager list object specifically.
 
 ## Adding an Opcode
 
@@ -321,9 +341,14 @@ For a scalar overload with a runtime implementation:
 - If one or more arguments are lists, try to map the scalar overload over the
   list elements.
 - Scalar arguments broadcast across list arguments.
-- All list arguments must have the same length.
+- Eager sequence list arguments must have the same length before mapping.
+- Lazy list arguments are advanced with iterators and may be infinite.
 - The scalar overload may return multiple stack values; vectorisation collects
   each return position into its own list.
+- Lazy vectorisation returns a `LazyList` and requires the vectorised scalar call
+  to produce exactly one stack value per item.
+- Lazy vectorisation detects mismatched finite/lazy input lengths only when the
+  shorter iterator is exhausted.
 
 For example:
 
@@ -339,6 +364,12 @@ uses the scalar `Number Number -> Number` overload of `+` and returns:
 
 Do not hardcode arithmetic vectorisation in `+`, `*`, or the compiler. Keep it
 generic so future scalar built-ins get the same behaviour.
+
+List-consuming built-ins should preserve laziness when possible. For example,
+`map` returns an eager Python list for finite list-like inputs and a `LazyList`
+for lazy inputs; `head` consumes only the first item; `length` requires a
+finite list-like value and rejects lazy/infinite lists at runtime. Runtime value
+formatters print lazy lists as `<lazy list>` rather than forcing iteration.
 
 ## Implicit Output
 

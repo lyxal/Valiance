@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
+from itertools import zip_longest
 from typing import Any
 
 from valiance.analysis.builtins import (
@@ -14,6 +15,11 @@ from valiance.analysis.builtins import (
     runtime_elements,
 )
 from valiance.runtime.bytecode import FunctionCode, FunctionSetCode, OpCode, Program
+from valiance.runtime_values import (
+    LazyList,
+    is_eager_sequence,
+    is_list_like,
+)
 
 
 class RuntimeError(Exception):
@@ -378,9 +384,7 @@ def _call_vectorized_builtin(
     args: tuple[Any, ...],
     context: RuntimeContext,
 ) -> tuple[Any, ...] | None:
-    if overload.implementation is None or not any(
-        isinstance(arg, list) for arg in args
-    ):
+    if overload.implementation is None or not any(is_list_like(arg) for arg in args):
         return None
     try:
         return _vectorize(overload, args, context)
@@ -393,22 +397,60 @@ def _vectorize(
     args: tuple[Any, ...],
     context: RuntimeContext,
 ) -> tuple[Any, ...]:
-    vector_lengths = {len(arg) for arg in args if isinstance(arg, list)}
-    if not vector_lengths:
+    vector_args = tuple(arg for arg in args if is_list_like(arg))
+    if not vector_args:
         if not overload.runtime_accepts(args):
             raise _CannotVectorize
         implementation = overload.implementation
         if implementation is None:
             raise _CannotVectorize
         return implementation(args, context)
+    if all(is_eager_sequence(arg) for arg in vector_args):
+        return _vectorize_eager(overload, args, context)
+    return (LazyList(_vectorize_lazy(overload, args, context)),)
+
+
+def _vectorize_eager(
+    overload: BuiltinOverload,
+    args: tuple[Any, ...],
+    context: RuntimeContext,
+) -> tuple[Any, ...]:
+    vector_lengths = {len(arg) for arg in args if is_eager_sequence(arg)}
     if len(vector_lengths) != 1:
         raise RuntimeError("cannot vectorise lists with different lengths")
 
     result_items = []
     for index in range(next(iter(vector_lengths))):
-        item_args = tuple(arg[index] if isinstance(arg, list) else arg for arg in args)
+        item_args = tuple(
+            arg[index] if is_eager_sequence(arg) else arg for arg in args
+        )
         result_items.append(_vectorize(overload, item_args, context))
 
+    return _transpose_vectorized_items(result_items)
+
+
+def _vectorize_lazy(
+    overload: BuiltinOverload,
+    args: tuple[Any, ...],
+    context: RuntimeContext,
+):
+    sentinel = object()
+    iterators = tuple(iter(arg) if is_list_like(arg) else None for arg in args)
+    for items in zip_longest(
+        *(iterator for iterator in iterators if iterator is not None),
+        fillvalue=sentinel,
+    ):
+        if sentinel in items:
+            raise RuntimeError("cannot vectorise lists with different lengths")
+        item_iter = iter(items)
+        item_args = tuple(next(item_iter) if is_list_like(arg) else arg for arg in args)
+        result = _vectorize(overload, item_args, context)
+        if len(result) != 1:
+            raise RuntimeError("lazy vectorised overload must return one value")
+        yield result[0]
+
+
+def _transpose_vectorized_items(result_items: list[tuple[Any, ...]]) -> tuple[Any, ...]:
     if not result_items:
         return ([],)
     width = len(result_items[0])
@@ -513,6 +555,8 @@ def _format_value(value: Any) -> str:
         return repr(value)
     if isinstance(value, list):
         return "[" + ", ".join(_format_value(item) for item in value) + "]"
+    if is_list_like(value):
+        return "<lazy list>"
     if isinstance(value, tuple):
         return "(" + ", ".join(_format_value(item) for item in value) + ")"
     if isinstance(value, dict):
@@ -533,6 +577,8 @@ def _runtime_type_name(value: Any) -> str:
         item_types = sorted({_runtime_type_name(item) for item in value})
         base = " | ".join(item_types) if item_types else "Unknown"
         return f"{base}+"
+    if is_list_like(value):
+        return "Unknown+"
     if isinstance(value, tuple):
         return "{" + ", ".join(_runtime_type_name(item) for item in value) + "}"
     if isinstance(value, dict):

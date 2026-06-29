@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
 import valiance.types as T
+from valiance.runtime_values import LazyList, is_finite_list_like, is_list_like
 from valiance.symbols import Symbol
 
 INTEGER = Symbol("Integer")
@@ -118,17 +119,40 @@ def _print(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    result = []
-    for item in args[0]:
-        mapped = ctx.call(args[1], [item])
-        if len(mapped) != 1:
-            raise RuntimeError("map function must return exactly one value")
-        result.append(mapped[0])
-    return (result,)
+    def mapped_items():
+        for item in args[0]:
+            mapped = ctx.call(args[1], [item])
+            if len(mapped) != 1:
+                raise RuntimeError("map function must return exactly one value")
+            yield mapped[0]
+
+    if is_finite_list_like(args[0]):
+        return (list(mapped_items()),)
+    return (LazyList(mapped_items()),)
 
 
 def _accepts_map(args: tuple[Any, ...]) -> bool:
-    return isinstance(args[0], list) and len(args) == 2
+    return is_list_like(args[0]) and len(args) == 2
+
+
+def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    if not is_finite_list_like(args[0]):
+        raise RuntimeError("length requires a finite list")
+    return (Decimal(len(args[0])),)
+
+
+def _head(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    for item in args[0]:
+        return (item,)
+    raise RuntimeError("head requires a non-empty list")
+
+
+def _accepts_length(args: tuple[Any, ...]) -> bool:
+    return len(args) == 1 and is_list_like(args[0])
+
+
+def _accepts_head(args: tuple[Any, ...]) -> bool:
+    return len(args) == 1 and is_list_like(args[0])
 
 
 def _truth(value: bool) -> Decimal:
@@ -148,7 +172,7 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
             return isinstance(value, str)
         return True
     if isinstance(typ, T.CollectionType):
-        return isinstance(value, Sequence) and not isinstance(value, (str, bytes))
+        return is_list_like(value)
     return True
 
 
@@ -161,6 +185,8 @@ def _format_value(value: Any) -> str:
         return value
     if isinstance(value, list):
         return "[" + ", ".join(_format_value(item) for item in value) + "]"
+    if is_list_like(value):
+        return "<lazy list>"
     if isinstance(value, tuple):
         return "(" + ", ".join(_format_value(item) for item in value) + ")"
     if isinstance(value, dict):
@@ -253,7 +279,8 @@ BUILTIN_ELEMENTS = (
         overload(
             (T.WithoutTag(T.ExactList(T.TypeVariable("Item")), "infinite"),),
             (T.Number,),
-            lambda args, ctx: (Decimal(len(args[0])),),
+            _length,
+            _accepts_length,
         ),
     ),
     element(
@@ -261,7 +288,8 @@ BUILTIN_ELEMENTS = (
         overload(
             (T.ExactList(T.TypeVariable("Item")),),
             (T.TypeVariable("Item"),),
-            lambda args, ctx: (args[0][0],),
+            _head,
+            _accepts_head,
         ),
     ),
     element(

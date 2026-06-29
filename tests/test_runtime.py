@@ -1,7 +1,9 @@
 import contextlib
 import io
 import unittest
+from builtins import RuntimeError as PythonRuntimeError
 from decimal import Decimal
+from itertools import count, islice
 
 from valiance.analysis import Analyser
 from valiance.parsing import parse
@@ -13,6 +15,7 @@ from valiance.runtime.bytecode import (
     OpCode,
     Program,
 )
+from valiance.runtime_values import LazyList
 
 
 def execute(source: str):
@@ -37,6 +40,59 @@ class RuntimeTests(unittest.TestCase):
             execute("[1, 2, 3] + 10"),
             [[Decimal("11"), Decimal("12"), Decimal("13")]],
         )
+
+    def test_vectorises_scalar_overloads_over_lazy_lists(self):
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.PUSH_CONST, count(Decimal("1"))),
+                    Instruction(OpCode.PUSH_CONST, Decimal("10")),
+                    Instruction(OpCode.LOAD_ELEMENT, "+"),
+                    Instruction(OpCode.CALL),
+                ),
+                name="<main>",
+            )
+        )
+
+        stack = run(program)
+
+        self.assertEqual(len(stack), 1)
+        self.assertIsInstance(stack[0], LazyList)
+        self.assertEqual(
+            list(islice(stack[0], 5)),
+            [Decimal("11"), Decimal("12"), Decimal("13"), Decimal("14"), Decimal("15")],
+        )
+
+    def test_runtime_list_builtins_accept_lazy_lists_without_forcing_length(self):
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.PUSH_CONST, count(1)),
+                    Instruction(OpCode.LOAD_ELEMENT, "head"),
+                    Instruction(OpCode.CALL),
+                ),
+                name="<main>",
+            )
+        )
+
+        self.assertEqual(run(program), [1])
+
+    def test_runtime_length_rejects_lazy_lists(self):
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.PUSH_CONST, count(1)),
+                    Instruction(OpCode.LOAD_ELEMENT, "length"),
+                    Instruction(OpCode.CALL),
+                ),
+                name="<main>",
+            )
+        )
+
+        with self.assertRaises(PythonRuntimeError) as error:
+            run(program)
+
+        self.assertIn("length requires a finite list", str(error.exception))
 
     def test_executes_element_with_colon_function_argument(self):
         self.assertEqual(

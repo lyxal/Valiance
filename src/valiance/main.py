@@ -19,6 +19,7 @@ from valiance.runtime import (
     loads,
     run,
 )
+from valiance.runtime_values import is_list_like
 
 HELP = """usage: valiance <file>
        valiance -c <code>
@@ -222,6 +223,8 @@ def _format_value(value: Any) -> str:
         return repr(value)
     if isinstance(value, list):
         return "[" + ", ".join(_format_value(item) for item in value) + "]"
+    if is_list_like(value):
+        return "<lazy list>"
     if isinstance(value, tuple):
         inner = ", ".join(_format_value(item) for item in value)
         if len(value) == 1:
