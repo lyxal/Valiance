@@ -210,12 +210,13 @@ class VirtualMachine:
     ) -> None:
         if (
             not isinstance(reference, tuple)
-            or len(reference) != 2
+            or len(reference) not in {2, 3}
             or not isinstance(reference[0], str)
             or not isinstance(reference[1], int)
         ):
             raise RuntimeError(f"invalid resolved element reference {reference!r}")
-        name, overload_index = reference
+        name, overload_index = reference[:2]
+        vectorised = bool(reference[2]) if len(reference) == 3 else False
         value = _load_name(name, frame.locals, frame.globals)
         if isinstance(value, BuiltinValue):
             try:
@@ -224,7 +225,7 @@ class VirtualMachine:
                 raise RuntimeError(
                     f"resolved element '{name}' has no overload {overload_index}"
                 ) from exc
-            _call_resolved_builtin(value, overload, frame)
+            _call_resolved_builtin(value, overload, frame, vectorised)
             return
         if isinstance(value, FunctionValue):
             if overload_index != 0:
@@ -313,7 +314,7 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
             args, stack_count, next_cycle_index = frame.source_args(arity)
         except _StackUnderflow:
             continue
-        if not overload.runtime_accepts(args):
+        if not overload.runtime_matches(args):
             vectorized = _call_vectorized_builtin(overload, args, callee.context)
             if vectorized is None:
                 continue
@@ -343,6 +344,7 @@ def _call_resolved_builtin(
     callee: BuiltinValue,
     overload: BuiltinOverload,
     frame: _Frame,
+    vectorised: bool,
 ) -> None:
     arity = len(overload.signature.params)
     try:
@@ -355,8 +357,8 @@ def _call_resolved_builtin(
                 _show_overload_inputs((overload,)),
             )
         ) from exc
-    if not overload.runtime_accepts(args):
-        vectorized = _call_vectorized_builtin(overload, args, callee.context)
+    if vectorised:
+        vectorized = _call_vectorized_resolved_builtin(overload, args, callee.context)
         if vectorized is None:
             raise RuntimeError(
                 _format_call_error(
@@ -374,8 +376,7 @@ def _call_resolved_builtin(
         del frame.stack[-stack_count:]
     frame.cycle_index = next_cycle_index
     implementation = overload.implementation
-    if implementation is None:
-        raise RuntimeError(f"resolved element '{callee.element.name}' is not callable")
+    assert implementation is not None
     frame.stack.extend(implementation(args, callee.context))
 
 
@@ -392,6 +393,19 @@ def _call_vectorized_builtin(
         return None
 
 
+def _call_vectorized_resolved_builtin(
+    overload: BuiltinOverload,
+    args: tuple[Any, ...],
+    context: RuntimeContext,
+) -> tuple[Any, ...] | None:
+    implementation = overload.implementation
+    assert implementation is not None
+    try:
+        return _vectorize_resolved(implementation, args, context)
+    except _CannotVectorize:
+        return None
+
+
 def _vectorize(
     overload: BuiltinOverload,
     args: tuple[Any, ...],
@@ -399,7 +413,7 @@ def _vectorize(
 ) -> tuple[Any, ...]:
     vector_args = tuple(arg for arg in args if is_list_like(arg))
     if not vector_args:
-        if not overload.runtime_accepts(args):
+        if not overload.runtime_matches(args):
             raise _CannotVectorize
         implementation = overload.implementation
         if implementation is None:
@@ -408,6 +422,19 @@ def _vectorize(
     if all(is_eager_sequence(arg) for arg in vector_args):
         return _vectorize_eager(overload, args, context)
     return (LazyList(_vectorize_lazy(overload, args, context)),)
+
+
+def _vectorize_resolved(
+    implementation: Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]],
+    args: tuple[Any, ...],
+    context: RuntimeContext,
+) -> tuple[Any, ...]:
+    vector_args = tuple(arg for arg in args if is_list_like(arg))
+    if not vector_args:
+        return implementation(args, context)
+    if all(is_eager_sequence(arg) for arg in vector_args):
+        return _vectorize_eager_resolved(implementation, args, context)
+    return (LazyList(_vectorize_lazy_resolved(implementation, args, context)),)
 
 
 def _vectorize_eager(
@@ -429,6 +456,25 @@ def _vectorize_eager(
     return _transpose_vectorized_items(result_items)
 
 
+def _vectorize_eager_resolved(
+    implementation: Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]],
+    args: tuple[Any, ...],
+    context: RuntimeContext,
+) -> tuple[Any, ...]:
+    vector_lengths = {len(arg) for arg in args if is_eager_sequence(arg)}
+    if len(vector_lengths) != 1:
+        raise RuntimeError("cannot vectorise lists with different lengths")
+
+    result_items = []
+    for index in range(next(iter(vector_lengths))):
+        item_args = tuple(
+            arg[index] if is_eager_sequence(arg) else arg for arg in args
+        )
+        result_items.append(_vectorize_resolved(implementation, item_args, context))
+
+    return _transpose_vectorized_items(result_items)
+
+
 def _vectorize_lazy(
     overload: BuiltinOverload,
     args: tuple[Any, ...],
@@ -445,6 +491,27 @@ def _vectorize_lazy(
         item_iter = iter(items)
         item_args = tuple(next(item_iter) if is_list_like(arg) else arg for arg in args)
         result = _vectorize(overload, item_args, context)
+        if len(result) != 1:
+            raise RuntimeError("lazy vectorised overload must return one value")
+        yield result[0]
+
+
+def _vectorize_lazy_resolved(
+    implementation: Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]],
+    args: tuple[Any, ...],
+    context: RuntimeContext,
+):
+    sentinel = object()
+    iterators = tuple(iter(arg) if is_list_like(arg) else None for arg in args)
+    for items in zip_longest(
+        *(iterator for iterator in iterators if iterator is not None),
+        fillvalue=sentinel,
+    ):
+        if sentinel in items:
+            raise RuntimeError("cannot vectorise lists with different lengths")
+        item_iter = iter(items)
+        item_args = tuple(next(item_iter) if is_list_like(arg) else arg for arg in args)
+        result = _vectorize_resolved(implementation, item_args, context)
         if len(result) != 1:
             raise RuntimeError("lazy vectorised overload must return one value")
         yield result[0]

@@ -19,7 +19,7 @@ class BytecodeSerializationTests(unittest.TestCase):
                     Instruction(OpCode.PUSH_CONST, Decimal("42")),
                     Instruction(OpCode.PUSH_CONST, "answer"),
                     Instruction(OpCode.BUILD_TUPLE, 2),
-                    Instruction(OpCode.CALL_RESOLVED_ELEMENT, ("+", 0)),
+                    Instruction(OpCode.CALL_RESOLVED_ELEMENT, ("+", 0, 0)),
                     Instruction(OpCode.RETURN),
                 ),
                 name="<main>",

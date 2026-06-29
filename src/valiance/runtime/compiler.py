@@ -291,7 +291,7 @@ def _unwrap(node: ASTNode | TypedNode) -> ASTNode:
     return node
 
 
-def _resolved_element_reference(node: TypedNode | None) -> tuple[str, int] | None:
+def _resolved_element_reference(node: TypedNode | None) -> tuple[str, int, int] | None:
     if not isinstance(node, TypedElementNode):
         return None
     if node.overload_index is None:
@@ -301,11 +301,18 @@ def _resolved_element_reference(node: TypedNode | None) -> tuple[str, int] | Non
         return None
     elements = runtime_elements()
     element = elements.get(ast.name.text)
-    if element is not None and not 0 <= node.overload_index < len(element.definitions):
-        return None
+    if element is not None:
+        if not 0 <= node.overload_index < len(element.definitions):
+            return None
+        if element.definitions[node.overload_index].implementation is None:
+            raise CompileError(
+                f"cannot compile static-only overload {node.overload_index} "
+                f"of built-in element '{ast.name.text}'"
+            )
     if element is None and ast.name in {item.name for item in BUILTIN_ELEMENTS}:
         return None
-    return ast.name.text, node.overload_index
+    vectorised = int(node.overload.vectorised) if node.overload is not None else 0
+    return ast.name.text, node.overload_index, vectorised
 
 
 def _number(value: str, node: ASTNode) -> Decimal:

@@ -52,8 +52,10 @@ The runtime implementation is small, but several files must evolve together.
 - Function calls and built-in calls both source arguments from the current
   stack. Explicit-parameter functions can also source missing arguments from the
   parameter cycle.
-- Built-in dispatch tries runtime overloads by arity and predicate.
-- Scalar built-in overloads can vectorise over list arguments at runtime.
+- Legacy unresolved built-in dispatch tries runtime overloads dynamically. Normal
+  compiled code should use resolved element calls produced by static analysis.
+- Resolved built-in calls carry the analyser-selected overload slot and whether
+  the call should be vectorised.
 - Runtime call errors should include the stack, stack types, and attempted input
   shapes.
 
@@ -62,7 +64,7 @@ The runtime implementation is small, but several files must evolve together.
 - Defines shared runtime-value helpers used by built-ins, the VM, and the CLI.
 - `LazyList` wraps an iterable that should behave like a Valiance list without
   promising a finite length.
-- `is_list_like(...)` is the runtime predicate for list-shaped values. It
+- `is_list_like(...)` tests for list-shaped runtime values. It
   accepts Python lists and lazy iterable values, but excludes strings, bytes,
   tuples, and mappings because those are distinct runtime shapes.
 - `is_finite_list_like(...)` means a list-like value has a known `len(...)`.
@@ -85,8 +87,6 @@ The runtime implementation is small, but several files must evolve together.
 - `BuiltinElement` groups all overloads for one element name.
 - `BuiltinOverload.signature` is the analyser-visible stack effect.
 - `BuiltinOverload.implementation` is the runtime implementation.
-- `BuiltinOverload.accepts` is an optional runtime predicate for behaviour that
-  is richer than nominal type matching.
 - `default_environment()` publishes static overloads to the analyser.
 - `runtime_elements()` publishes runtime-capable built-ins to the VM.
 
@@ -127,8 +127,8 @@ vectorisation. Codegen can inspect `typed_node.overload.vectorised` on
 vectorised call shape.
 
 Runtime checks may still be needed for values whose static type permits several
-runtime shapes, such as vectorised list lengths or predicates that cannot be
-proven statically. Those checks should validate assumptions made by the selected
+runtime shapes, such as finite list lengths. Those checks belong inside the
+selected overload implementation and should validate assumptions made by that
 overload; they should not choose a different overload.
 
 The VM stack is ordered bottom to top.
@@ -145,9 +145,10 @@ values to push. Niladic returns use `()`, not `None`.
 Vectorisation belongs in dispatch, not in each arithmetic built-in.
 
 Scalar built-ins such as `+` and `*` should remain simple scalar
-implementations. Runtime dispatch handles list arguments generically by mapping
-the scalar overload over each list item and collecting the returned stack
-fragments.
+implementations. For resolved calls, analysis decides whether vectorisation is
+needed and codegen records that decision in bytecode. The VM then maps the
+selected scalar implementation over each list item and collects the returned
+stack fragments.
 
 Saved bytecode must stay portable.
 
@@ -172,7 +173,8 @@ Add new built-ins in `src/valiance/analysis/builtins.py`.
 2. Add an `element(...)` entry to `BUILTIN_ELEMENTS`.
 3. Add one or more `overload(...)` entries.
 4. Provide a runtime implementation for overloads that should execute.
-5. Provide an `accepts` predicate when nominal runtime matching is not enough.
+5. Put value-shape checks that cannot be proven statically inside the runtime
+   implementation.
 6. Add analyser and runtime tests.
 
 Example shape:
@@ -190,14 +192,12 @@ element(
 )
 ```
 
-For richer runtime matching:
+For richer runtime validation:
 
 ```python
-def _accepts_non_empty_list(args: tuple[Any, ...]) -> bool:
-    return is_finite_list_like(args[0]) and bool(args[0])
-
-
 def _head(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    if not is_list_like(args[0]):
+        raise RuntimeError("head requires a list")
     return (next(iter(args[0])),)
 
 
@@ -207,7 +207,6 @@ element(
         (T.ExactList(T.TypeVariable("Item")),),
         (T.TypeVariable("Item"),),
         _head,
-        accepts=_accepts_non_empty_list,
     ),
 )
 ```
@@ -215,7 +214,7 @@ element(
 Prefer named helper functions once behaviour is more than a tiny lambda. This
 keeps overload entries readable as the built-in catalogue grows.
 
-Use the helpers from `valiance.runtime_values` for collection predicates. Do not
+Use the helpers from `valiance.runtime_values` for collection validation. Do not
 write new runtime built-ins that check only `isinstance(value, list)` unless the
 operation truly requires Python's eager list object specifically.
 
@@ -269,8 +268,9 @@ Resolved built-in elements use analyser-selected overloads.
 
 ```text
 TypedElementNode("+", overload_index=N)
-  -> CALL_RESOLVED_ELEMENT ("+", N)
-VM invokes the selected built-in overload directly
+  -> CALL_RESOLVED_ELEMENT ("+", N, vectorised)
+VM invokes the selected built-in overload directly, vectorising only when the
+compiled reference says to do so
 ```
 
 Unresolved elements keep the normal path:
@@ -290,12 +290,15 @@ Implementation checklist:
 1. Extend typed AST metadata so overload-resolved nodes expose the chosen
    overload.
 2. Give built-in overloads an identity within their element definition.
-3. Emit `CALL_RESOLVED_ELEMENT` with `(element_name, overload_index)`.
+3. Emit `CALL_RESOLVED_ELEMENT` with
+   `(element_name, overload_index, vectorised)`.
 4. Serialize that reference, not a Python function object.
 5. In the VM, execute the selected overload directly.
-6. Keep runtime validation for vectorisation length mismatches and explicit
-   runtime predicates.
-7. Preserve useful errors if a bytecode file references an unknown element or
+6. Include the analyser's vectorisation decision in the resolved bytecode
+   reference so runtime does not infer it again.
+7. Keep runtime validation for vectorisation length mismatches and other
+   concrete value assumptions inside the selected implementation.
+8. Preserve useful errors if a bytecode file references an unknown element or
    overload id.
 
 Be careful with saved bytecode. The current bytecode format encodes positional
@@ -333,13 +336,16 @@ bodies.
 
 ## Runtime Vectorisation
 
-Runtime vectorisation is a fallback inside built-in dispatch.
+Runtime vectorisation executes a scalar built-in implementation across
+list-shaped arguments when static analysis has selected a scalar overload and
+marked the call as vectorised.
 
 For a scalar overload with a runtime implementation:
 
-- If all arguments are scalar and `runtime_accepts` passes, execute normally.
-- If one or more arguments are lists, try to map the scalar overload over the
-  list elements.
+- If analysis marked the resolved call as scalar, execute the selected overload
+  implementation directly.
+- If analysis marked the resolved call as vectorised, map the selected scalar
+  implementation over the list-shaped arguments.
 - Scalar arguments broadcast across list arguments.
 - Eager sequence list arguments must have the same length before mapping.
 - Lazy list arguments are advanced with iterators and may be infinite.

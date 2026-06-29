@@ -52,7 +52,6 @@ class RuntimeContext:
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
-RuntimePredicate = Callable[[tuple[Any, ...]], bool]
 
 
 @dataclass(frozen=True)
@@ -61,16 +60,13 @@ class BuiltinOverload:
 
     signature: T.Overload
     implementation: RuntimeImpl | None = None
-    accepts: RuntimePredicate | None = None
 
-    def runtime_accepts(self, args: tuple[Any, ...]) -> bool:
-        """Return whether this overload can execute these runtime arguments."""
+    def runtime_matches(self, args: tuple[Any, ...]) -> bool:
+        """Return whether these runtime arguments match the nominal signature."""
         if len(args) != len(self.signature.params):
             return False
         if self.implementation is None:
             return False
-        if self.accepts is not None:
-            return self.accepts(args)
         return all(
             _runtime_assignable(arg, param)
             for arg, param in zip(args, self.signature.params, strict=True)
@@ -99,10 +95,9 @@ def overload(
     params: tuple[T.Type, ...],
     returns: tuple[T.Type, ...],
     implementation: RuntimeImpl | None = None,
-    accepts: RuntimePredicate | None = None,
 ) -> BuiltinOverload:
     """Declare one stack-effect overload."""
-    return BuiltinOverload(T.Overload(params, returns), implementation, accepts)
+    return BuiltinOverload(T.Overload(params, returns), implementation)
 
 
 def _binary(func: Callable[[Any, Any], Any]) -> RuntimeImpl:
@@ -119,6 +114,9 @@ def _print(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    if not is_list_like(args[0]):
+        raise RuntimeError("map requires a list")
+
     def mapped_items():
         for item in args[0]:
             mapped = ctx.call(args[1], [item])
@@ -131,10 +129,6 @@ def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (LazyList(mapped_items()),)
 
 
-def _accepts_map(args: tuple[Any, ...]) -> bool:
-    return is_list_like(args[0]) and len(args) == 2
-
-
 def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     if not is_finite_list_like(args[0]):
         raise RuntimeError("length requires a finite list")
@@ -142,17 +136,11 @@ def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 def _head(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    if not is_list_like(args[0]):
+        raise RuntimeError("head requires a list")
     for item in args[0]:
         return (item,)
     raise RuntimeError("head requires a non-empty list")
-
-
-def _accepts_length(args: tuple[Any, ...]) -> bool:
-    return len(args) == 1 and is_list_like(args[0])
-
-
-def _accepts_head(args: tuple[Any, ...]) -> bool:
-    return len(args) == 1 and is_list_like(args[0])
 
 
 def _truth(value: bool) -> Decimal:
@@ -271,7 +259,6 @@ BUILTIN_ELEMENTS = (
             ),
             (T.ExactList(T.TypeVariable("Mapped")),),
             _map,
-            _accepts_map,
         ),
     ),
     element(
@@ -280,7 +267,6 @@ BUILTIN_ELEMENTS = (
             (T.WithoutTag(T.ExactList(T.TypeVariable("Item")), "infinite"),),
             (T.Number,),
             _length,
-            _accepts_length,
         ),
     ),
     element(
@@ -289,7 +275,6 @@ BUILTIN_ELEMENTS = (
             (T.ExactList(T.TypeVariable("Item")),),
             (T.TypeVariable("Item"),),
             _head,
-            _accepts_head,
         ),
     ),
     element(
