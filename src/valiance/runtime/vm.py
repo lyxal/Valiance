@@ -201,6 +201,10 @@ class VirtualMachine:
                 case OpCode.GET_FIELD:
                     receiver = _pop(frame.stack, "field access")
                     frame.stack.append(_get_field(receiver, instruction.arg))
+                case OpCode.SET_FIELD:
+                    value = _pop(frame.stack, "field assignment")
+                    receiver = _pop(frame.stack, "field assignment")
+                    frame.stack.append(_set_field(receiver, instruction.arg, value))
                 case OpCode.JUMP:
                     ip = instruction.arg
                     continue
@@ -681,6 +685,22 @@ def _get_field(receiver: Any, field: str) -> Any:
         return getattr(receiver, field)
     except AttributeError as exc:
         raise RuntimeError(f"value has no field '{field}'") from exc
+
+
+def _set_field(receiver: Any, field: str, value: Any) -> Any:
+    if isinstance(receiver, ObjectValue):
+        if field not in receiver.fields:
+            raise RuntimeError(f"{receiver.type_name} has no field '{field}'")
+        fields = dict(receiver.fields)
+        fields[field] = value
+        return ObjectValue(receiver.type_name, fields)
+    if isinstance(receiver, dict):
+        if field not in receiver:
+            raise RuntimeError(f"record has no field '{field}'")
+        fields = dict(receiver)
+        fields[field] = value
+        return fields
+    raise RuntimeError(f"value has no field '{field}'")
 
 
 def _function_name(code: FunctionCode) -> str:

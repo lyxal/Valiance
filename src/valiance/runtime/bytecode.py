@@ -24,6 +24,7 @@ class OpCode(Enum):
     MAKE_OBJECT_CONSTRUCTOR = "make_object_constructor"
     MAKE_ENUM_MEMBER = "make_enum_member"
     GET_FIELD = "get_field"
+    SET_FIELD = "set_field"
     JUMP = "jump"
     JUMP_IF_FALSE = "jump_if_false"
     POP = "pop"

@@ -35,6 +35,7 @@ from valiance.asts.nodes import (
     BreakNode,
     CallNode,
     FieldAccessNode,
+    FieldSetNode,
     ForNode,
     GetVariableNode,
     IfNode,
@@ -466,6 +467,7 @@ class Analyser:
         self.module_loader = module_loader or ModuleLoader()
         self.source_file = source_file
         self.diagnostics: list[str] = []
+        self._friendly_owners: tuple[Symbol, ...] = ()
 
     def analyse(self, program: list[ASTNode]) -> list[TypedNode]:
         """Analyse a top-level sequence into typed nodes."""
@@ -609,6 +611,8 @@ class Analyser:
                 }
             case FieldAccessNode(name):
                 return self._field_access(branch, node, name)
+            case FieldSetNode(name):
+                return self._field_set(branch, node, name)
             case IfNode():
                 return self._if(branch, node)
             case ForNode():
@@ -807,7 +811,11 @@ class Analyser:
             returns=definition.function.returns,
             location=definition.function.location,
         )
-        result = self._analyse_function_literal(branch, function_node)
+        self._friendly_owners = self._friendly_owners + (owner,)
+        try:
+            result = self._analyse_function_literal(branch, function_node)
+        finally:
+            self._friendly_owners = self._friendly_owners[:-1]
         if result is None:
             return branch.append_typed(TypedNode(definition, None))
         function, typed_branch = result
@@ -1077,6 +1085,46 @@ class Analyser:
             branch.with_stack(branch.stack.push(field_type)).append_typed(
                 TypedNode(node, field_type)
             )
+        }
+
+    def _field_set(
+        self,
+        branch: AnalysisBranch,
+        node: FieldSetNode,
+        name: Symbol,
+    ) -> set[AnalysisBranch]:
+        if len(branch.stack) < 2:
+            self._diagnose(
+                f"field assignment to '{name}' requires receiver and value",
+                node,
+            )
+            return set()
+        receiver_type = branch.stack[-2]
+        value_type = branch.stack[-1]
+        field_type, refined_receiver = self._field_type(
+            receiver_type,
+            name,
+            branch,
+            write=True,
+        )
+        if field_type is None:
+            self._diagnose(
+                f"type {T.show(receiver_type)} has no writable field '{name}'",
+                node,
+            )
+            return set()
+        if not T.assignable(value_type, field_type, self.env.context):
+            self._diagnose(
+                f"cannot assign {T.show(value_type)} to field '{name}' "
+                f"of type {T.show(field_type)}",
+                node,
+            )
+            return set()
+        result_type = receiver_type if refined_receiver is None else refined_receiver
+        return {
+            branch.with_stack(
+                T.TypeStack(branch.stack.items[:-2]).push(result_type)
+            ).append_typed(TypedNode(node, result_type))
         }
 
     def _list_literal(
@@ -1368,9 +1416,13 @@ class Analyser:
         receiver_type: T.Type,
         name: Symbol,
         branch: AnalysisBranch,
+        *,
+        write: bool = False,
     ) -> tuple[T.Type | None, T.Type | None]:
         receiver_type = T.normalize(receiver_type)
         if isinstance(receiver_type, T.RowType):
+            if write:
+                return None, None
             existing = _row_field_type(receiver_type, name)
             if existing is not None:
                 return existing, None
@@ -1385,17 +1437,29 @@ class Analyser:
             )
 
         if isinstance(receiver_type, T.VarType):
+            if write:
+                return None, None
             field_type = _anonymous_type_var(branch, 1)
             return field_type, T.Row(receiver_type, T.Field(name, field_type))
 
         if isinstance(receiver_type, T.NominalType):
-            return self.env.lookup_attribute(receiver_type.name, name), None
+            attribute = self.env.lookup_attribute_definition(receiver_type.name, name)
+            if attribute is None:
+                return None, None
+            if not self._can_access_attribute(
+                receiver_type.name,
+                attribute,
+                write=write,
+            ):
+                return None, None
+            return attribute.typ, None
 
         if isinstance(receiver_type, T.CollectionType):
             field_type, refined_base = self._field_type(
                 receiver_type.base,
                 name,
                 branch,
+                write=write,
             )
             if field_type is None:
                 return None, None
@@ -1407,6 +1471,20 @@ class Analyser:
             return T.C(type(receiver_type), field_type, receiver_type.rank), refined
 
         return None, None
+
+    def _can_access_attribute(
+        self,
+        receiver_name: Symbol,
+        attribute: T.ObjectAttribute,
+        *,
+        write: bool,
+    ) -> bool:
+        access = attribute.access.text
+        if access == "public":
+            return True
+        if access == "readable" and not write:
+            return True
+        return receiver_name in self._friendly_owners
 
     def _analyse_function_literal(
         self,
@@ -1437,6 +1515,7 @@ class Analyser:
         )
 
         function_analyser = Analyser(self.env)
+        function_analyser._friendly_owners = self._friendly_owners
         final = function_analyser.analyse_block(BranchSet.one(initial), node.body)
         signatures = self._function_signatures(node, final)
         analysis = _function_analysis_from_signatures(signatures)

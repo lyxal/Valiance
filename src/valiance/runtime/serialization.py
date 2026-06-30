@@ -31,11 +31,12 @@ _OP_TO_BYTE = {
     OpCode.MAKE_OBJECT_CONSTRUCTOR: 0x0B,
     OpCode.MAKE_ENUM_MEMBER: 0x0C,
     OpCode.GET_FIELD: 0x0D,
-    OpCode.JUMP: 0x0E,
-    OpCode.JUMP_IF_FALSE: 0x0F,
-    OpCode.POP: 0x10,
-    OpCode.RETURN: 0x11,
-    OpCode.CALL_RESOLVED_ELEMENT: 0x12,
+    OpCode.SET_FIELD: 0x0E,
+    OpCode.JUMP: 0x0F,
+    OpCode.JUMP_IF_FALSE: 0x10,
+    OpCode.POP: 0x11,
+    OpCode.RETURN: 0x12,
+    OpCode.CALL_RESOLVED_ELEMENT: 0x13,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 

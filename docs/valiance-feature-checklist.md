@@ -9,7 +9,7 @@ Codegen/runtime audit note: as of 2026-06-28, checked runtime items are limited
 to behavior that is compiled to bytecode and executed by the VM, or saved and
 loaded through the portable bytecode format.
 
-Current audit total: 266 / 724 items complete (36.7%).
+Current audit total: 269 / 724 items complete (37.2%).
 
 ## 1. Lexer, parser, and general syntax
 
@@ -482,7 +482,7 @@ Current audit total: 266 / 724 items complete (36.7%).
 
 - [x] Parse generic and non-generic object declarations.
 - [x] Support statically known object members.
-- [ ] Support public, readable, and private member access levels.
+- [x] Support public, readable, and private member access levels.
 - [x] Default omitted access modifiers to readable.
 - [x] Support typed fields without defaults.
 - [x] Support inferred fields with defaults.
@@ -493,8 +493,8 @@ Current audit total: 266 / 724 items complete (36.7%).
 - [x] Support object-friendly elements declared inside object scopes.
 - [x] Make object-friendly elements available in the intended calling form.
 - [x] Support object member reads.
-- [ ] Support permitted object member writes.
-- [ ] Reconstruct immutable object values after writes.
+- [x] Support permitted object member writes.
+- [x] Reconstruct immutable object values after writes.
 - [ ] Support optional-member access behavior.
 - [ ] Provide `$self` in object-associated definitions.
 - [ ] Parse destructors named with the object’s destructor form.
@@ -822,7 +822,7 @@ Current audit total: 266 / 724 items complete (36.7%).
 - [x] Report arity or multiplicity inconsistencies.
 - [x] Report invalid variable reassignment.
 - [ ] Report writes to constants.
-- [ ] Report writes to protected object members.
+- [x] Report writes to protected object members.
 - [ ] Report incomplete object construction.
 - [ ] Report non-exhaustive matches.
 - [ ] Report branch input-signature mismatches.

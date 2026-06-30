@@ -379,6 +379,75 @@ Person("Ada", 36) $.name
         )
         self.assertTrue(analyser.env.overloads_for(Symbol("Person::label")))
 
+    def test_object_member_access_levels_are_enforced(self):
+        private_read = Analyser(Environment())
+        private_read.analyse(
+            parse(
+                """
+object Secret =>
+  private $code: String
+end
+Secret("x") $.code
+"""
+            )
+        )
+        self.assertEqual(
+            private_read.diagnostics,
+            ["5:13: type Secret has no known field 'code'"],
+        )
+
+        readable_write = Analyser(Environment())
+        readable_write.analyse(
+            parse(
+                """
+object Person =>
+  $name: String
+end
+Person("Ada") | $.name = "Grace"
+"""
+            )
+        )
+        self.assertEqual(
+            readable_write.diagnostics,
+            ["5:17: type Person has no writable field 'name'"],
+        )
+
+        public_write = Analyser(Environment())
+        typed = public_write.analyse(
+            parse(
+                """
+object Person =>
+  public $name: String
+end
+Person("Ada") | $.name = "Grace"
+"""
+            )
+        )
+        self.assertEqual(public_write.diagnostics, [])
+        self.assertEqual(typed[-1].typ, N(Symbol("Person")))
+
+    def test_object_friendly_elements_can_read_private_and_write_readable_fields(
+        self,
+    ):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(
+            parse(
+                """
+object Secret =>
+  private $code: String
+  $label: String
+  define reveal -> String => $self.code
+  define relabel(label: String) -> Secret => $self.label = $label
+end
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertTrue(analyser.env.overloads_for(Symbol("Secret::reveal")))
+        self.assertTrue(analyser.env.overloads_for(Symbol("Secret::relabel")))
+
     def test_trait_and_variant_declarations_register_relationships(self):
         env = Environment()
         analyser = Analyser(env)

@@ -15,6 +15,7 @@ from valiance.asts import (
     DictLiteralNode,
     ElementNode,
     FieldAccessNode,
+    FieldSetNode,
     ForNode,
     FunctionNode,
     FunctionOverloadTyping,
@@ -135,6 +136,8 @@ class _Compiler:
                 self.object_declaration(node)
             case FieldAccessNode(name):
                 self.emit(OpCode.GET_FIELD, name.text)
+            case FieldSetNode(name):
+                self.emit(OpCode.SET_FIELD, name.text)
             case IfNode():
                 self.if_node(node)
             case WhileNode():

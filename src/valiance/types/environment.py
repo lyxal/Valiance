@@ -59,9 +59,14 @@ class ObjectDefinition:
 
     def attribute_type(self, name: Symbol) -> Type | None:
         """Return an attribute's type, if the object declares it."""
+        attribute = self.attribute(name)
+        return None if attribute is None else attribute.typ
+
+    def attribute(self, name: Symbol) -> ObjectAttribute | None:
+        """Return an attribute, if the object declares it."""
         for attribute in self.attributes:
             if attribute.name == name:
-                return attribute.typ
+                return attribute
         return None
 
 @dataclass(frozen=True)
@@ -274,6 +279,17 @@ class Environment:
         if definition is None:
             return None
         return definition.attribute_type(attribute_name)
+
+    def lookup_attribute_definition(
+        self,
+        object_name: Symbol,
+        attribute_name: Symbol,
+    ) -> ObjectAttribute | None:
+        """Return the declared attribute metadata of ``object_name.attribute``."""
+        definition = self.lookup_object(object_name)
+        if definition is None:
+            return None
+        return definition.attribute(attribute_name)
 
     def has_attribute(self, object_name: Symbol, attribute_name: Symbol) -> bool:
         """Return whether an object declares the requested attribute."""

@@ -40,6 +40,8 @@ The runtime implementation is small, but several files must evolve together.
 - Object and variant declarations compile constructor globals with
   `MAKE_OBJECT_CONSTRUCTOR`; enum members compile constants with
   `MAKE_ENUM_MEMBER` and optional backing-value globals.
+- Permitted object/record member writes compile to `SET_FIELD`, which returns a
+  reconstructed value instead of mutating the original visible value.
 - `TagApplicationNode` is currently a compile-time no-op.
 - `ForNode` is not compiled yet.
 - For typed functions with multiple inferred overload bodies, codegen currently

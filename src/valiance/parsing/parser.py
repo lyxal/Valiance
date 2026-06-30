@@ -15,6 +15,7 @@ from valiance.asts import (
     ElementNode,
     EnumMemberNode,
     FieldAccessNode,
+    FieldSetNode,
     ForNode,
     FunctionNode,
     FunctionParam,
@@ -639,16 +640,51 @@ class Parser:
 
     def _variable(self, start: Token) -> _ChainPiece:
         if self._match(TokenKind.DOT):
+            field = self._symbol("expected field name")
+            if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
+                op = self._previous.kind
+                rhs = self._chain_until(_LINE_TERMINATORS)
+                prefix = (
+                    (FieldAccessNode(field, location=_loc(start)),)
+                    if op is TokenKind.AUG_ASSIGN
+                    else ()
+                )
+                return _ChainPiece(
+                    (*prefix, *rhs, FieldSetNode(field, location=_loc(start))),
+                    True,
+                )
             return _ChainPiece(
                 (
                     FieldAccessNode(
-                        self._symbol("expected field name"),
+                        field,
                         location=_loc(start),
                     ),
                 ),
                 is_element=True,
             )
         name = self._symbol("expected variable name")
+        if self._match(TokenKind.DOT):
+            field = self._symbol("expected field name")
+            if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
+                op = self._previous.kind
+                rhs = self._chain_until(_LINE_TERMINATORS)
+                receiver = (GetVariableNode(name, location=_loc(start)),)
+                prefix = (
+                    (*receiver, FieldAccessNode(field, location=_loc(start)))
+                    if op is TokenKind.AUG_ASSIGN
+                    else receiver
+                )
+                return _ChainPiece(
+                    (*prefix, *rhs, FieldSetNode(field, location=_loc(start))),
+                    True,
+                )
+            return _ChainPiece(
+                (
+                    GetVariableNode(name, location=_loc(start)),
+                    FieldAccessNode(field, location=_loc(start)),
+                ),
+                True,
+            )
         if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
             op = self._previous.kind
             rhs = self._chain_until(_LINE_TERMINATORS)

@@ -230,6 +230,21 @@ end
             [["Ada", "Grace"]],
         )
 
+    def test_executes_public_object_field_write_as_reconstruction(self):
+        self.assertEqual(
+            execute(
+                """
+object Person =>
+  public $name: String
+end
+Person("Ada")
+$.name = "Grace"
+$.name
+"""
+            ),
+            ["Grace"],
+        )
+
     def test_executes_enum_member_value_access(self):
         self.assertEqual(
             execute(
