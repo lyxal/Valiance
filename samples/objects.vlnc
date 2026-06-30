@@ -1,0 +1,7 @@
+object Person =>
+  $name: String
+  $age: Number
+end
+
+println Person("Joe", 67)
+"Jeff" 10 Person | println
