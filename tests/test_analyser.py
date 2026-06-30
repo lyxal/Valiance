@@ -355,6 +355,70 @@ class AnalyserTests(unittest.TestCase):
                 ),
             )
 
+    def test_object_declaration_registers_constructor_fields_and_friendly_element(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(
+            parse(
+                """
+object Person =>
+  $name: String
+  $age: Number
+  define label -> String => $self.name
+end
+Person("Ada", 36) $.name
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(analyser.env.lookup_attribute(Symbol("Person"), NAME), String)
+        self.assertEqual(
+            analyser.env.overloads_for(Symbol("Person"))[0],
+            Overload((String, Number), (N(Symbol("Person")),)),
+        )
+        self.assertTrue(analyser.env.overloads_for(Symbol("Person::label")))
+
+    def test_trait_and_variant_declarations_register_relationships(self):
+        env = Environment()
+        analyser = Analyser(env)
+
+        analyser.analyse(
+            parse(
+                """
+trait Shape => extend area -> Number end
+object Circle =>
+  $radius: Number
+end
+object Circle as Shape => end
+variant Maybe =>
+  Some => $value: Number end
+  None => end
+end
+"""
+            )
+        )
+
+        self.assertTrue(env.context.implements(Symbol("Circle"), Symbol("Shape")))
+        self.assertEqual(
+            env.context.variant_members[Symbol("Maybe.Some")],
+            Symbol("Maybe"),
+        )
+        self.assertEqual(
+            env.lookup_variant(Symbol("Maybe")).members[0],
+            Symbol("Maybe.Some"),
+        )
+
+    def test_enum_declaration_registers_niladic_members(self):
+        env = Environment()
+        analyser = Analyser(env)
+
+        typed = analyser.analyse(parse("enum Colour => RED GREEN end\nColour.RED"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, N(Symbol("Colour")))
+        self.assertTrue(env.overloads_for(Symbol("Colour.RED")))
+
     def test_function_infers_missing_inputs(self):
         env = Environment()
         env.define_overload(PLUS, Overload((Number, Number), (Number,)))

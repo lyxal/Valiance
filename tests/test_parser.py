@@ -4,6 +4,7 @@ from valiance.asts import (
     BreakNode,
     DefineNode,
     ElementNode,
+    EnumMemberNode,
     ForNode,
     FunctionNode,
     GetVariableNode,
@@ -14,11 +15,14 @@ from valiance.asts import (
     ImportSpec,
     ListLiteralNode,
     NumberLiteralNode,
+    ObjectFieldNode,
     SetVariableNode,
     SourceLocation,
     StringLiteralNode,
     Symbol,
     TagApplicationNode,
+    TraitRequirementNode,
+    VariantMemberNode,
 )
 from valiance.parsing import LexError, ParseError, lex, parse, parse_type
 from valiance.types import (
@@ -227,6 +231,72 @@ public import {
 
         self.assertIsInstance(program[-1], TagApplicationNode)
         self.assertEqual(program[-1].tag, DataTag("sorted"))
+
+    def test_parses_object_trait_variant_and_enum_declarations(self):
+        [person] = parse(
+            """
+object Person =>
+  $name: String
+  public $age: Number = 0
+  define label => $self.name
+end
+"""
+        )
+
+        self.assertEqual(person.name, Symbol("Person"))
+        self.assertEqual(
+            person.fields[:2],
+            (
+                ObjectFieldNode(Symbol("name"), String),
+                ObjectFieldNode(
+                    Symbol("age"),
+                    Number,
+                    (NumberLiteralNode("0"),),
+                    Symbol("public"),
+                ),
+            ),
+        )
+        self.assertEqual(person.definitions[0].name, Symbol("label"))
+
+        [shape] = parse("trait Shape => extend area -> Number end")
+        self.assertEqual(
+            shape.requirements,
+            (TraitRequirementNode(Symbol("area"), returns=(Number,)),),
+        )
+
+        [option] = parse(
+            """
+variant Option =>
+  Some =>
+    $value: Number
+  end
+  None => end
+end
+"""
+        )
+        self.assertEqual(
+            option.variants,
+            (
+                VariantMemberNode(
+                    Symbol("Some"),
+                    (ObjectFieldNode(Symbol("value"), Number),),
+                ),
+                VariantMemberNode(Symbol("None")),
+            ),
+        )
+
+        [colour] = parse("enum Colour => RED GREEN BLUE end")
+        self.assertEqual(
+            colour.enum_members,
+            (
+                EnumMemberNode(Symbol("RED")),
+                EnumMemberNode(Symbol("GREEN")),
+                EnumMemberNode(Symbol("BLUE")),
+            ),
+        )
+
+    def test_parses_object_friendly_qualified_element_name(self):
+        self.assertEqual(parse("Foo::bar"), [ElementNode(Symbol("Foo::bar"))])
 
     def test_inline_function_body_consumes_trailing_end(self):
         [node] = parse("fn => + | double end")

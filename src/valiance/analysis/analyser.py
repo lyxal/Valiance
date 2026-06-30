@@ -20,9 +20,11 @@ from valiance.asts import (
     ImportNode,
     ListLiteralNode,
     NumberLiteralNode,
+    ObjectNode,
     RecordLiteralNode,
     StringLiteralNode,
     TagApplicationNode,
+    TraitRequirementNode,
     TupleLiteralNode,
     TypedCallNode,
     TypedElementNode,
@@ -36,6 +38,7 @@ from valiance.asts.nodes import (
     ForNode,
     GetVariableNode,
     IfNode,
+    ObjectFieldNode,
     SetVariableNode,
 )
 from valiance.modules import ModuleLoader, ModuleLoadError, import_definitions
@@ -534,14 +537,9 @@ class Analyser:
                     ).append_typed(typed_node)
                 }
             case DefineNode(name, function_node):
-                result = self._analyse_function_literal(branch, function_node)
-                if result is None:
-                    return {branch.append_typed(TypedNode(node, None))}
-                function, typed_branch = result
-                for overload in _callable_overloads(function.typ):
-                    self.env.define_overload(name, overload)
-                typed_node = TypedFunctionNode(node, function.typ, function.overloads)
-                return {typed_branch.append_typed(typed_node)}
+                return self._define(branch, node, name, function_node)
+            case ObjectNode():
+                return self._object_declaration(branch, node)
             case ImportNode():
                 return self._import(branch, node)
             case ListLiteralNode():
@@ -619,6 +617,204 @@ class Analyser:
                 return self._break(branch, node)
             case _:
                 return {branch.append_typed(TypedNode(node, None))}
+
+    def _define(
+        self,
+        branch: AnalysisBranch,
+        node: DefineNode,
+        name: Symbol,
+        function_node: FunctionNode,
+    ) -> set[AnalysisBranch]:
+        result = self._analyse_function_literal(branch, function_node)
+        if result is None:
+            return {branch.append_typed(TypedNode(node, None))}
+        function, typed_branch = result
+        for overload in _callable_overloads(function.typ):
+            self.env.define_overload(name, overload)
+        typed_node = TypedFunctionNode(node, function.typ, function.overloads)
+        return {typed_branch.append_typed(typed_node)}
+
+    def _object_declaration(
+        self,
+        branch: AnalysisBranch,
+        node: ObjectNode,
+    ) -> set[AnalysisBranch]:
+        kind = node.kind.text
+        if kind == "object":
+            return self._object_definition(branch, node)
+        if kind == "trait":
+            return self._trait_definition(branch, node)
+        if kind == "variant":
+            return self._variant_definition(branch, node)
+        if kind == "enum":
+            return self._enum_definition(branch, node)
+        self._diagnose(f"unknown object-like declaration '{node.kind}'", node)
+        return {branch.append_typed(TypedNode(node, None))}
+
+    def _object_definition(
+        self,
+        branch: AnalysisBranch,
+        node: ObjectNode,
+    ) -> set[AnalysisBranch]:
+        if node.target is not None:
+            if node.fields:
+                self._diagnose(
+                    "trait implementation blocks cannot declare fields",
+                    node,
+                )
+                return {branch.append_typed(TypedNode(node, None))}
+            target = T.normalize(node.target)
+            if isinstance(target, T.NominalType):
+                self.env.add_trait_impl(node.name, target.name)
+            current = branch.append_typed(TypedNode(node, None))
+            for definition in node.definitions:
+                current = self._register_friendly_definition(
+                    current,
+                    node.name,
+                    definition,
+                )
+            return {current}
+
+        attributes = tuple(self._object_attribute(field) for field in node.fields)
+        if any(attribute is None for attribute in attributes):
+            return {branch.append_typed(TypedNode(node, None))}
+        object_attributes = tuple(attribute for attribute in attributes if attribute)
+        self.env.define_object(node.name, object_attributes, generics=node.generics)
+        self.env.define_constructor(
+            node.name,
+            object_attributes,
+            defaults=frozenset(
+                field.name for field in node.fields if field.default
+            ),
+        )
+        current = branch.append_typed(TypedNode(node, None))
+        for definition in node.definitions:
+            current = self._register_friendly_definition(current, node.name, definition)
+        return {current}
+
+    def _trait_definition(
+        self,
+        branch: AnalysisBranch,
+        node: ObjectNode,
+    ) -> set[AnalysisBranch]:
+        requirements = tuple(
+            requirement
+            for item in node.requirements
+            if (requirement := _trait_requirement(item)) is not None
+        )
+        self.env.define_trait(
+            node.name,
+            generics=node.generics,
+            requirements=requirements,
+        )
+        if node.target is not None:
+            target = T.normalize(node.target)
+            if isinstance(target, T.NominalType):
+                self.env.add_trait_parent(node.name, target.name)
+        current = branch.append_typed(TypedNode(node, None))
+        for definition in node.definitions:
+            current = self._register_friendly_definition(current, node.name, definition)
+        return {current}
+
+    def _variant_definition(
+        self,
+        branch: AnalysisBranch,
+        node: ObjectNode,
+    ) -> set[AnalysisBranch]:
+        requirements = tuple(
+            requirement
+            for item in node.requirements
+            if (requirement := _trait_requirement(item)) is not None
+        )
+        members: list[Symbol] = []
+        for member in node.variants:
+            member_name = Symbol(f"{node.name}.{member.name}")
+            members.append(member_name)
+            attributes = tuple(self._object_attribute(field) for field in member.fields)
+            object_attributes = tuple(
+                attribute for attribute in attributes if attribute
+            )
+            self.env.define_object(member_name, object_attributes)
+            self.env.define_constructor(member_name, object_attributes)
+            self.env.define_overload(member.name, T.Overload(
+                tuple(attribute.typ for attribute in object_attributes),
+                (T.N(node.name),),
+            ))
+        self.env.define_variant(
+            node.name,
+            tuple(members),
+            generics=node.generics,
+            requirements=requirements,
+        )
+        return {branch.append_typed(TypedNode(node, T.N(node.name)))}
+
+    def _enum_definition(
+        self,
+        branch: AnalysisBranch,
+        node: ObjectNode,
+    ) -> set[AnalysisBranch]:
+        value_type = T.V(node.generics[0].text) if node.generics else None
+        members = tuple(
+            T.EnumMemberDefinition(
+                Symbol(f"{node.name}.{member.name}"),
+                value_type,
+                bool(member.value),
+            )
+            for member in node.enum_members
+        )
+        self.env.define_enum(node.name, members, value_type=value_type)
+        return {branch.append_typed(TypedNode(node, T.N(node.name)))}
+
+    def _object_attribute(self, field: ObjectFieldNode) -> T.ObjectAttribute | None:
+        if field.typ is not None:
+            typ = field.typ
+        elif field.default:
+            outputs = self.analyse_block(
+                BranchSet.one(AnalysisBranch(input_mode=InputMode.TOP_LEVEL)),
+                field.default,
+            )
+            types = tuple(output.stack[-1] for output in outputs if output.stack)
+            if not types:
+                self._diagnose(
+                    f"default for field '{field.name}' must leave a value",
+                    field,
+                )
+                return None
+            typ = T.U(*types)
+        else:
+            self._diagnose(f"field '{field.name}' needs a type", field)
+            return None
+        return T.ObjectAttribute(
+            field.name,
+            typ,
+            field.access,
+            has_default=bool(field.default),
+        )
+
+    def _register_friendly_definition(
+        self,
+        branch: AnalysisBranch,
+        owner: Symbol,
+        definition: DefineNode,
+    ) -> AnalysisBranch:
+        self_type = T.N(owner)
+        params = (FunctionParam(Symbol("self"), self_type),) + tuple(
+            definition.function.params or ()
+        )
+        function_node = FunctionNode(
+            params=params,
+            body=definition.function.body,
+            returns=definition.function.returns,
+            location=definition.function.location,
+        )
+        result = self._analyse_function_literal(branch, function_node)
+        if result is None:
+            return branch.append_typed(TypedNode(definition, None))
+        function, typed_branch = result
+        for name in (definition.name, Symbol(f"{owner}::{definition.name}")):
+            for overload in _callable_overloads(function.typ):
+                self.env.define_overload(name, overload)
+        return typed_branch
 
     def _import(
         self,
@@ -1194,6 +1390,21 @@ class Analyser:
 
         if isinstance(receiver_type, T.NominalType):
             return self.env.lookup_attribute(receiver_type.name, name), None
+
+        if isinstance(receiver_type, T.CollectionType):
+            field_type, refined_base = self._field_type(
+                receiver_type.base,
+                name,
+                branch,
+            )
+            if field_type is None:
+                return None, None
+            refined = (
+                receiver_type
+                if refined_base is None
+                else T.C(type(receiver_type), refined_base, receiver_type.rank)
+            )
+            return T.C(type(receiver_type), field_type, receiver_type.rank), refined
 
         return None, None
 
@@ -2015,6 +2226,15 @@ def _param_type(param: FunctionParam, index: int) -> T.Type:
         return param.typ
     name = param.name.text if param.name is not None else f"_{index}"
     return T.V(name)
+
+
+def _trait_requirement(node: TraitRequirementNode) -> T.TraitRequirement | None:
+    params = tuple(
+        _param_type(param, index)
+        for index, param in enumerate(node.params or ())
+    )
+    returns = node.returns or ()
+    return T.TraitRequirement(node.name, T.Overload(params, returns))
 
 
 def _anonymous_type_var(branch: AnalysisBranch, offset: int) -> T.Type:

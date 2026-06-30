@@ -21,6 +21,8 @@ class OpCode(Enum):
     BUILD_TUPLE = "build_tuple"
     BUILD_RECORD = "build_record"
     BUILD_DICT = "build_dict"
+    MAKE_OBJECT_CONSTRUCTOR = "make_object_constructor"
+    MAKE_ENUM_MEMBER = "make_enum_member"
     GET_FIELD = "get_field"
     JUMP = "jump"
     JUMP_IF_FALSE = "jump_if_false"

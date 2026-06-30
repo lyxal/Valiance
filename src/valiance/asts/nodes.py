@@ -186,6 +186,42 @@ class DefineNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class ObjectFieldNode(ASTNode):
+    """One field/member declared by an object-like type."""
+
+    name: Symbol
+    typ: Type | None = None
+    default: tuple[ASTNode, ...] = ()
+    access: Symbol = Symbol("readable")
+
+
+@dataclass(frozen=True)
+class TraitRequirementNode(ASTNode):
+    """An element signature required by a trait or variant."""
+
+    name: Symbol
+    params: tuple[FunctionParam, ...] | None = None
+    returns: tuple[Type, ...] | None = None
+
+
+@dataclass(frozen=True)
+class VariantMemberNode(ASTNode):
+    """One closed member of a variant declaration."""
+
+    name: Symbol
+    fields: tuple[ObjectFieldNode, ...] = ()
+    definitions: tuple[DefineNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class EnumMemberNode(ASTNode):
+    """One member of an enum declaration."""
+
+    name: Symbol
+    value: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
 class ImportPath:
     """A parsed module path."""
 
@@ -289,5 +325,11 @@ class ObjectNode(ASTNode):
 
     kind: Symbol
     name: Symbol
-    body: tuple[ASTNode, ...] = ()
+    generics: tuple[Symbol, ...] = ()
+    target: Type | None = None
+    fields: tuple[ObjectFieldNode, ...] = ()
+    definitions: tuple[DefineNode, ...] = ()
+    requirements: tuple[TraitRequirementNode, ...] = ()
+    variants: tuple[VariantMemberNode, ...] = ()
+    enum_members: tuple[EnumMemberNode, ...] = ()
     annotations: tuple[ASTNode, ...] = ()

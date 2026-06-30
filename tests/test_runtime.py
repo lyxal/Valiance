@@ -203,6 +203,46 @@ $value add_one
             [Decimal("42")],
         )
 
+    def test_executes_object_default_constructor_and_field_access(self):
+        self.assertEqual(
+            execute(
+                """
+object Person =>
+  $name: String
+  $age: Number
+end
+Person("Ada", 36) $.name
+"""
+            ),
+            ["Ada"],
+        )
+
+    def test_executes_object_field_access_over_lists(self):
+        self.assertEqual(
+            execute(
+                """
+object Person =>
+  $name: String
+end
+[Person("Ada"), Person("Grace")] $.name
+"""
+            ),
+            [["Ada", "Grace"]],
+        )
+
+    def test_executes_enum_member_value_access(self):
+        self.assertEqual(
+            execute(
+                """
+enum[String] TokenType =>
+  NUMBER = "Number"
+end
+TokenType.NUMBER.value
+"""
+            ),
+            ["Number"],
+        )
+
     def test_executes_list_tuple_record_and_dict_literals(self):
         self.assertEqual(execute("[1, 2, 3] length"), [Decimal("3")])
         self.assertEqual(execute('(1, "two")'), [(Decimal("1"), "two")])

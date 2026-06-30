@@ -28,12 +28,14 @@ _OP_TO_BYTE = {
     OpCode.BUILD_TUPLE: 0x08,
     OpCode.BUILD_RECORD: 0x09,
     OpCode.BUILD_DICT: 0x0A,
-    OpCode.GET_FIELD: 0x0B,
-    OpCode.JUMP: 0x0C,
-    OpCode.JUMP_IF_FALSE: 0x0D,
-    OpCode.POP: 0x0E,
-    OpCode.RETURN: 0x0F,
-    OpCode.CALL_RESOLVED_ELEMENT: 0x10,
+    OpCode.MAKE_OBJECT_CONSTRUCTOR: 0x0B,
+    OpCode.MAKE_ENUM_MEMBER: 0x0C,
+    OpCode.GET_FIELD: 0x0D,
+    OpCode.JUMP: 0x0E,
+    OpCode.JUMP_IF_FALSE: 0x0F,
+    OpCode.POP: 0x10,
+    OpCode.RETURN: 0x11,
+    OpCode.CALL_RESOLVED_ELEMENT: 0x12,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 

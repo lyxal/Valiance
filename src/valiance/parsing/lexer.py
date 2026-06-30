@@ -16,6 +16,7 @@ class TokenKind(StrEnum):
     FAT_ARROW = "=>"
     ASSIGN = "="
     AUG_ASSIGN = ":="
+    DOUBLE_COLON = "::"
     LPAREN = "("
     RPAREN = ")"
     LBRACKET = "["
@@ -100,6 +101,8 @@ class _Lexer:
                 self._operator()
             elif char == ":" and self._peek(1) == "=":
                 self._emit(TokenKind.AUG_ASSIGN, self._advance(2))
+            elif char == ":" and self._peek(1) == ":":
+                self._emit(TokenKind.DOUBLE_COLON, self._advance(2))
             elif char == "=":
                 self._emit(TokenKind.ASSIGN, self._advance())
             elif char in _SINGLE:

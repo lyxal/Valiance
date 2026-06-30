@@ -9,7 +9,7 @@ Codegen/runtime audit note: as of 2026-06-28, checked runtime items are limited
 to behavior that is compiled to bytecode and executed by the VM, or saved and
 loaded through the portable bytecode format.
 
-Current audit total: 245 / 724 items complete (33.8%).
+Current audit total: 266 / 724 items complete (36.7%).
 
 ## 1. Lexer, parser, and general syntax
 
@@ -480,18 +480,18 @@ Current audit total: 245 / 724 items complete (33.8%).
 
 ## 28. Objects
 
-- [ ] Parse generic and non-generic object declarations.
+- [x] Parse generic and non-generic object declarations.
 - [x] Support statically known object members.
 - [ ] Support public, readable, and private member access levels.
-- [ ] Default omitted access modifiers to readable.
-- [ ] Support typed fields without defaults.
-- [ ] Support inferred fields with defaults.
+- [x] Default omitted access modifiers to readable.
+- [x] Support typed fields without defaults.
+- [x] Support inferred fields with defaults.
 - [ ] Require every constructor path to initialise fields lacking defaults.
-- [ ] Treat elements named after an object as constructors.
-- [ ] Generate a default field-order constructor when none is declared.
-- [ ] Support constructor invocation through normal element syntax.
-- [ ] Support object-friendly elements declared inside object scopes.
-- [ ] Make object-friendly elements available in the intended calling form.
+- [x] Treat elements named after an object as constructors.
+- [x] Generate a default field-order constructor when none is declared.
+- [x] Support constructor invocation through normal element syntax.
+- [x] Support object-friendly elements declared inside object scopes.
+- [x] Make object-friendly elements available in the intended calling form.
 - [x] Support object member reads.
 - [ ] Support permitted object member writes.
 - [ ] Reconstruct immutable object values after writes.
@@ -508,9 +508,9 @@ Current audit total: 245 / 724 items complete (33.8%).
 
 - [x] Parse trait declarations.
 - [ ] Support required object members in traits.
-- [ ] Support required element signatures in traits.
+- [x] Support required element signatures in traits.
 - [ ] Support default trait behavior where specified.
-- [ ] Parse object-to-trait implementations.
+- [x] Parse object-to-trait implementations.
 - [ ] Validate that implementations satisfy all required members and elements.
 - [ ] Support generic traits and implementations.
 - [x] Support trait inheritance or trait composition.
@@ -522,23 +522,23 @@ Current audit total: 245 / 724 items complete (33.8%).
 ## 30. Variants
 
 - [x] Parse variant declarations.
-- [ ] Support named variant cases.
-- [ ] Support cases with and without associated values.
-- [ ] Allow variants to be used as types.
-- [ ] Construct variant values.
+- [x] Support named variant cases.
+- [x] Support cases with and without associated values.
+- [x] Allow variants to be used as types.
+- [x] Construct variant values.
 - [ ] Access or destructure associated case values.
 - [ ] Integrate variants with exhaustive pattern matching.
 - [ ] Support generic variants.
 
 ## 31. Enums
 
-- [ ] Parse enum declarations.
-- [ ] Support enums without backing values.
-- [ ] Support enums with a declared backing type.
+- [x] Parse enum declarations.
+- [x] Support enums without backing values.
+- [x] Support enums with a declared backing type.
 - [ ] Require every member to have a value when a backing type is declared.
-- [ ] Support member access through `Enum.Member`.
-- [ ] Support backing-value access through `.value`.
-- [ ] Allow enum names to be used as types.
+- [x] Support member access through `Enum.Member`.
+- [x] Support backing-value access through `.value`.
+- [x] Allow enum names to be used as types.
 - [ ] Integrate enums with exhaustive pattern matching.
 
 ## 32. Generics and unification

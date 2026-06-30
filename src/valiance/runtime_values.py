@@ -17,6 +17,14 @@ class LazyList:
         return iter(self.iterable)
 
 
+@dataclass(frozen=True)
+class ObjectValue:
+    """A nominal structured runtime value."""
+
+    type_name: str
+    fields: dict[str, Any]
+
+
 def is_list_like(value: Any) -> bool:
     """Return whether a runtime value behaves like a Valiance list."""
     return (

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from valiance.symbols import Symbol
 from valiance.types.context import Context, TagKind
-from valiance.types.nodes import NeverType, Overload, OverloadSetType, Type
+from valiance.types.nodes import NeverType, NominalType, Overload, OverloadSetType, Type
 from valiance.types.stack import StackApplication, TypeStack
 
 
@@ -45,6 +45,8 @@ class ObjectAttribute:
 
     name: Symbol
     typ: Type
+    access: Symbol = Symbol("readable")
+    has_default: bool = False
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,7 @@ class ObjectDefinition:
     """The structural facts known about one object type in scope."""
 
     name: Symbol
+    generics: tuple[Symbol, ...] = ()
     attributes: tuple[ObjectAttribute, ...] = ()
 
     def attribute_type(self, name: Symbol) -> Type | None:
@@ -60,6 +63,63 @@ class ObjectDefinition:
             if attribute.name == name:
                 return attribute.typ
         return None
+
+@dataclass(frozen=True)
+class TraitRequirement:
+    """One required element signature for a trait-like interface."""
+
+    name: Symbol
+    overload: Overload
+
+
+@dataclass(frozen=True)
+class TraitDefinition:
+    """The static facts known about a trait."""
+
+    name: Symbol
+    generics: tuple[Symbol, ...] = ()
+    requirements: tuple[TraitRequirement, ...] = ()
+
+
+@dataclass(frozen=True)
+class VariantDefinition:
+    """The static facts known about a closed variant."""
+
+    name: Symbol
+    generics: tuple[Symbol, ...] = ()
+    members: tuple[Symbol, ...] = ()
+    requirements: tuple[TraitRequirement, ...] = ()
+
+
+@dataclass(frozen=True)
+class EnumMemberDefinition:
+    """One statically declared enum member."""
+
+    name: Symbol
+    typ: Type | None = None
+    has_value: bool = False
+
+
+@dataclass(frozen=True)
+class EnumDefinition:
+    """The static facts known about an enum."""
+
+    name: Symbol
+    value_type: Type | None = None
+    members: tuple[EnumMemberDefinition, ...] = ()
+
+
+@dataclass(frozen=True)
+class ConstructorDefinition:
+    """Runtime constructor metadata for a nominal structured value."""
+
+    name: Symbol
+    fields: tuple[ObjectAttribute, ...]
+    defaults: frozenset[Symbol] = frozenset()
+
+    @property
+    def required_fields(self) -> tuple[ObjectAttribute, ...]:
+        return tuple(field for field in self.fields if field.name not in self.defaults)
 
 
 @dataclass
@@ -74,6 +134,18 @@ class Environment:
     objects: dict[Symbol, ObjectDefinition] = field(
         default_factory=dict[Symbol, ObjectDefinition]
     )
+    traits: dict[Symbol, TraitDefinition] = field(
+        default_factory=dict[Symbol, TraitDefinition]
+    )
+    variants: dict[Symbol, VariantDefinition] = field(
+        default_factory=dict[Symbol, VariantDefinition]
+    )
+    enums: dict[Symbol, EnumDefinition] = field(
+        default_factory=dict[Symbol, EnumDefinition]
+    )
+    constructors: dict[Symbol, ConstructorDefinition] = field(
+        default_factory=dict[Symbol, ConstructorDefinition]
+    )
 
     def child_scope(self) -> Environment:
         """Return a child frame that can read this environment."""
@@ -83,6 +155,8 @@ class Environment:
         self,
         name: Symbol,
         attributes: tuple[ObjectAttribute, ...] = (),
+        *,
+        generics: tuple[Symbol, ...] = (),
     ) -> None:
         """Register or replace an object type visible in this environment."""
         seen: set[Symbol] = set()
@@ -92,7 +166,7 @@ class Environment:
                     f"object {name!r} declares attribute {attribute.name!r} twice"
                 )
             seen.add(attribute.name)
-        self.objects[name] = ObjectDefinition(name, attributes)
+        self.objects[name] = ObjectDefinition(name, generics, attributes)
 
     def lookup_object(self, name: Symbol) -> ObjectDefinition | None:
         """Return an object definition, if one exists in scope."""
@@ -100,6 +174,90 @@ class Environment:
             return self.objects[name]
         if self.parent is not None:
             return self.parent.lookup_object(name)
+        return None
+
+    def define_constructor(
+        self,
+        name: Symbol,
+        fields: tuple[ObjectAttribute, ...],
+        *,
+        defaults: frozenset[Symbol] = frozenset(),
+    ) -> None:
+        """Register constructor metadata and its overload."""
+        self.constructors[name] = ConstructorDefinition(name, fields, defaults)
+        params = tuple(field.typ for field in fields if field.name not in defaults)
+        self.define_overload(name, Overload(params, (NominalType(name),)))
+
+    def lookup_constructor(self, name: Symbol) -> ConstructorDefinition | None:
+        """Return constructor metadata, if visible."""
+        if name in self.constructors:
+            return self.constructors[name]
+        if self.parent is not None:
+            return self.parent.lookup_constructor(name)
+        return None
+
+    def define_trait(
+        self,
+        name: Symbol,
+        *,
+        generics: tuple[Symbol, ...] = (),
+        requirements: tuple[TraitRequirement, ...] = (),
+    ) -> None:
+        """Register a trait definition."""
+        self.traits[name] = TraitDefinition(name, generics, requirements)
+
+    def lookup_trait(self, name: Symbol) -> TraitDefinition | None:
+        """Return a trait definition, if visible."""
+        if name in self.traits:
+            return self.traits[name]
+        if self.parent is not None:
+            return self.parent.lookup_trait(name)
+        return None
+
+    def define_variant(
+        self,
+        name: Symbol,
+        members: tuple[Symbol, ...],
+        *,
+        generics: tuple[Symbol, ...] = (),
+        requirements: tuple[TraitRequirement, ...] = (),
+    ) -> None:
+        """Register a closed variant and its members."""
+        self.variants[name] = VariantDefinition(name, generics, members, requirements)
+        for member in members:
+            self.add_variant_member(member, name)
+
+    def lookup_variant(self, name: Symbol) -> VariantDefinition | None:
+        """Return a variant definition, if visible."""
+        if name in self.variants:
+            return self.variants[name]
+        if self.parent is not None:
+            return self.parent.lookup_variant(name)
+        return None
+
+    def define_enum(
+        self,
+        name: Symbol,
+        members: tuple[EnumMemberDefinition, ...],
+        *,
+        value_type: Type | None = None,
+    ) -> None:
+        """Register an enum and niladic overloads for its members."""
+        self.enums[name] = EnumDefinition(name, value_type, members)
+        for member in members:
+            self.define_overload(member.name, Overload((), (NominalType(name),)))
+            if member.typ is not None and member.has_value:
+                self.define_overload(
+                    Symbol(f"{member.name}.value"),
+                    Overload((), (member.typ,)),
+                )
+
+    def lookup_enum(self, name: Symbol) -> EnumDefinition | None:
+        """Return an enum definition, if visible."""
+        if name in self.enums:
+            return self.enums[name]
+        if self.parent is not None:
+            return self.parent.lookup_enum(name)
         return None
 
     def object_exists(self, name: Symbol) -> bool:

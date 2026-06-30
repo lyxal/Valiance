@@ -37,6 +37,9 @@ The runtime implementation is small, but several files must evolve together.
 - Function literals and definitions become `MAKE_FUNCTION`.
 - Definitions compile as `MAKE_FUNCTION` followed by `STORE_VAR`.
 - List literals and array literals currently both compile to `BUILD_LIST`.
+- Object and variant declarations compile constructor globals with
+  `MAKE_OBJECT_CONSTRUCTOR`; enum members compile constants with
+  `MAKE_ENUM_MEMBER` and optional backing-value globals.
 - `TagApplicationNode` is currently a compile-time no-op.
 - `ForNode` is not compiled yet.
 - For typed functions with multiple inferred overload bodies, codegen currently
@@ -49,6 +52,8 @@ The runtime implementation is small, but several files must evolve together.
   `valiance.analysis.builtins.runtime_elements()`.
 - User functions are represented as `FunctionValue`.
 - Built-ins are represented as `BuiltinValue`.
+- Object constructors are represented as `ObjectConstructorValue`, and nominal
+  object/variant/enum member values are represented as `ObjectValue`.
 - Function calls and built-in calls both source arguments from the current
   stack. Explicit-parameter functions can also source missing arguments from the
   parameter cycle.

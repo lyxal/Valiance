@@ -13,6 +13,7 @@ from valiance.asts import (
     DefineNode,
     DictLiteralNode,
     ElementNode,
+    EnumMemberNode,
     FieldAccessNode,
     ForNode,
     FunctionNode,
@@ -27,6 +28,7 @@ from valiance.asts import (
     MatchCaseNode,
     MatchNode,
     NumberLiteralNode,
+    ObjectFieldNode,
     ObjectNode,
     RecordLiteralNode,
     ReturnNode,
@@ -35,7 +37,9 @@ from valiance.asts import (
     StringLiteralNode,
     Symbol,
     TagApplicationNode,
+    TraitRequirementNode,
     TupleLiteralNode,
+    VariantMemberNode,
     WhileNode,
 )
 from valiance.parsing.lexer import Token, TokenKind, lex
@@ -114,8 +118,10 @@ class Parser:
 
         if self._match_ident("define"):
             return (self._define(self._previous, annotations, visibility, is_multi),)
-        if self._match_ident("object", "trait", "variant"):
-            return (self._object(self._previous, self._previous.value, annotations),)
+        if self._match_ident("object", "trait", "variant", "enum"):
+            return (
+                self._object_like(self._previous, self._previous.value, annotations),
+            )
         if self._match_ident("fn"):
             return (self._function(self._previous),)
         if self._match_ident("if"):
@@ -223,18 +229,168 @@ class Parser:
             location=_loc(start),
         )
 
-    def _object(
+    def _object_like(
         self, start: Token, kind: str, annotations: tuple[ASTNode, ...]
     ) -> ObjectNode:
+        generics = self._generic_names()
         name = self._symbol("expected object name")
+        target = self.parse_type_expression() if self._match_ident("as") else None
         self._expect(TokenKind.FAT_ARROW)
+        if kind == "enum":
+            enum_members = self._enum_body()
+            return ObjectNode(
+                Symbol(kind),
+                name,
+                generics,
+                target,
+                enum_members=enum_members,
+                annotations=annotations,
+                location=_loc(start),
+            )
+        fields, definitions, requirements, variants = self._object_body(kind, name)
         return ObjectNode(
             Symbol(kind),
             name,
-            self._body(),
+            generics,
+            target,
+            fields,
+            definitions,
+            requirements,
+            variants,
+            (),
             annotations,
             location=_loc(start),
         )
+
+    def _generic_names(self) -> tuple[Symbol, ...]:
+        if not self._match(TokenKind.LBRACKET):
+            return ()
+        names: list[Symbol] = []
+        self._skip_newlines()
+        if self._match(TokenKind.RBRACKET):
+            return ()
+        while True:
+            names.append(self._symbol("expected generic parameter name"))
+            if self._match(TokenKind.RBRACKET):
+                return tuple(names)
+            self._expect(TokenKind.COMMA)
+            self._skip_newlines()
+
+    def _object_body(
+        self,
+        kind: str,
+        owner: Symbol,
+    ) -> tuple[
+        tuple[ObjectFieldNode, ...],
+        tuple[DefineNode, ...],
+        tuple[TraitRequirementNode, ...],
+        tuple[VariantMemberNode, ...],
+    ]:
+        single_line = not self._check(TokenKind.NEWLINE)
+        fields: list[ObjectFieldNode] = []
+        definitions: list[DefineNode] = []
+        requirements: list[TraitRequirementNode] = []
+        variants: list[VariantMemberNode] = []
+
+        if single_line:
+            if self._check_ident("end"):
+                self._consume_optional_end()
+                return (), (), (), ()
+            if kind == "variant" and self._check(TokenKind.IDENT):
+                variants.append(self._variant_member())
+            else:
+                item = self._object_body_item(owner)
+                _append_object_body_item(item, fields, definitions, requirements)
+            self._consume_optional_end()
+            return (
+                tuple(fields),
+                tuple(definitions),
+                tuple(requirements),
+                tuple(variants),
+            )
+
+        self._skip_newlines()
+        while not self._check(TokenKind.EOF) and not self._check_ident("end"):
+            if (
+                kind == "variant"
+                and self._check(TokenKind.IDENT)
+                and self._peek(1).kind == TokenKind.FAT_ARROW
+            ):
+                variants.append(self._variant_member())
+            else:
+                item = self._object_body_item(owner)
+                _append_object_body_item(item, fields, definitions, requirements)
+            self._skip_separators()
+        self._consume_optional_end()
+        return tuple(fields), tuple(definitions), tuple(requirements), tuple(variants)
+
+    def _object_body_item(
+        self,
+        owner: Symbol,
+    ) -> ObjectFieldNode | DefineNode | TraitRequirementNode:
+        annotations = self._annotations()
+        visibility: Symbol | None = None
+        if self._match_ident("public", "private"):
+            visibility = Symbol(self._previous.value)
+        if self._match_ident("define"):
+            return self._define(self._previous, annotations, visibility, False)
+        if self._match_ident("extend"):
+            return self._extend(self._previous)
+        if annotations:
+            self._error("annotation must be followed by a declaration")
+        return self._field(owner, visibility)
+
+    def _extend(self, start: Token) -> TraitRequirementNode:
+        name = self._symbol("expected required element name")
+        params = self._params() if self._match(TokenKind.LPAREN) else None
+        returns = self._returns()
+        return TraitRequirementNode(name, params, returns, location=_loc(start))
+
+    def _field(self, owner: Symbol, visibility: Symbol | None) -> ObjectFieldNode:
+        access = visibility
+        if access is None and self._match_ident("readable"):
+            access = Symbol("readable")
+        if access is None and self._match_ident("public", "private"):
+            access = Symbol(self._previous.value)
+        access = access or Symbol("readable")
+        start = self._expect(TokenKind.DOLLAR)
+        name = self._symbol("expected field name")
+        typ = None
+        default: tuple[ASTNode, ...] = ()
+        if self._match(TokenKind.COLON):
+            typ = self.parse_type_expression()
+        if self._match(TokenKind.ASSIGN):
+            default = self._chain_until(_LINE_TERMINATORS)
+        if typ is None and not default:
+            self._error(f"field '{owner}.{name}' needs a type or default value")
+        return ObjectFieldNode(name, typ, default, access, location=_loc(start))
+
+    def _variant_member(self) -> VariantMemberNode:
+        start = self._current
+        name = self._symbol("expected variant member name")
+        self._expect(TokenKind.FAT_ARROW)
+        fields, definitions, requirements, variants = self._object_body("object", name)
+        if requirements or variants:
+            self._error("variant members may contain fields and definitions only")
+        return VariantMemberNode(name, fields, definitions, location=_loc(start))
+
+    def _enum_body(self) -> tuple[EnumMemberNode, ...]:
+        members: list[EnumMemberNode] = []
+        single_line = not self._check(TokenKind.NEWLINE)
+        if single_line and self._check_ident("end"):
+            self._consume_optional_end()
+            return ()
+        self._skip_newlines()
+        while not self._check(TokenKind.EOF) and not self._check_ident("end"):
+            start = self._current
+            name = self._symbol("expected enum member name")
+            value: tuple[ASTNode, ...] = ()
+            if self._match(TokenKind.ASSIGN):
+                value = self._chain_until(_LINE_TERMINATORS)
+            members.append(EnumMemberNode(name, value, location=_loc(start)))
+            self._skip_separators()
+        self._consume_optional_end()
+        return tuple(members)
 
     def _function(self, start: Token) -> FunctionNode:
         params = self._params() if self._match(TokenKind.LPAREN) else None
@@ -476,7 +632,10 @@ class Parser:
         while self._check(TokenKind.DOT) and self._peek(1).kind == TokenKind.IDENT:
             self._advance()
             parts.append(self._advance().value)
-        return Symbol(".".join(parts))
+        name = ".".join(parts)
+        if self._match(TokenKind.DOUBLE_COLON):
+            name = f"{name}::{self._expect(TokenKind.IDENT).value}"
+        return Symbol(name)
 
     def _variable(self, start: Token) -> _ChainPiece:
         if self._match(TokenKind.DOT):
@@ -818,6 +977,20 @@ _LINE_TERMINATORS: set[TokenKind | str] = {
 
 def _flatten(items: tuple[tuple[ASTNode, ...], ...]) -> tuple[ASTNode, ...]:
     return tuple(node for item in items for node in item)
+
+
+def _append_object_body_item(
+    item: ObjectFieldNode | DefineNode | TraitRequirementNode,
+    fields: list[ObjectFieldNode],
+    definitions: list[DefineNode],
+    requirements: list[TraitRequirementNode],
+) -> None:
+    if isinstance(item, ObjectFieldNode):
+        fields.append(item)
+    elif isinstance(item, DefineNode):
+        definitions.append(item)
+    else:
+        requirements.append(item)
 
 
 def _loc(token: Token) -> SourceLocation:

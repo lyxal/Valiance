@@ -18,11 +18,13 @@ from valiance.asts import (
     ForNode,
     FunctionNode,
     FunctionOverloadTyping,
+    FunctionParam,
     GetVariableNode,
     IfNode,
     ImportNode,
     ListLiteralNode,
     NumberLiteralNode,
+    ObjectNode,
     RecordLiteralNode,
     ReturnNode,
     SetVariableNode,
@@ -41,6 +43,7 @@ from valiance.runtime.bytecode import (
     OpCode,
     Program,
 )
+from valiance.symbols import Symbol
 from valiance.types import FunctionType
 
 
@@ -128,6 +131,8 @@ class _Compiler:
                     self.expression(key_expr)
                     self.expression(value_expr)
                 self.emit(OpCode.BUILD_DICT, len(entries))
+            case ObjectNode():
+                self.object_declaration(node)
             case FieldAccessNode(name):
                 self.emit(OpCode.GET_FIELD, name.text)
             case IfNode():
@@ -157,6 +162,82 @@ class _Compiler:
         for item in items:
             self.expression(item)
         self.emit(op, len(items))
+
+    def object_declaration(self, node: ObjectNode) -> None:
+        match node.kind.text:
+            case "object":
+                self.object_constructor(node.name.text, node.fields)
+                for definition in node.definitions:
+                    self.friendly_definition(node.name.text, definition)
+            case "variant":
+                for member in node.variants:
+                    runtime_name = f"{node.name}.{member.name}"
+                    self.object_constructor(runtime_name, member.fields)
+                    for definition in member.definitions:
+                        self.friendly_definition(runtime_name, definition)
+            case "enum":
+                for member in node.enum_members:
+                    value = None
+                    if member.value:
+                        value = _literal_expression_value(member.value)
+                    self.emit(
+                        OpCode.MAKE_ENUM_MEMBER,
+                        (node.name.text, member.name.text, value),
+                    )
+                    self.emit(OpCode.STORE_VAR, f"{node.name}.{member.name}")
+                    if value is not None:
+                        self.emit(OpCode.PUSH_CONST, value)
+                        self.emit(
+                            OpCode.STORE_VAR,
+                            f"{node.name}.{member.name}.value",
+                        )
+
+    def object_constructor(self, name: str, fields: object) -> None:
+        field_names: list[str] = []
+        default_values: list[tuple[str, object]] = []
+        for field in fields:
+            field_names.append(field.name.text)
+            if field.default:
+                default_values.append(
+                    (field.name.text, _literal_expression_value(field.default))
+                )
+        required = tuple(
+            field_name
+            for field_name in field_names
+            if field_name not in {name for name, _ in default_values}
+        )
+        self.emit(
+            OpCode.MAKE_OBJECT_CONSTRUCTOR,
+            (name, tuple(field_names), required, tuple(default_values)),
+        )
+        self.emit(OpCode.STORE_VAR, name.rsplit(".", 1)[-1])
+
+    def friendly_definition(self, owner: str, definition: DefineNode) -> None:
+        function = FunctionNode(
+            params=(FunctionParam(Symbol("self")),)
+            + tuple(definition.function.params or ()),
+            body=definition.function.body,
+            returns=definition.function.returns,
+            location=definition.function.location,
+        )
+        node = DefineNode(
+            definition.name,
+            function,
+            definition.annotations,
+            definition.is_multi,
+            definition.visibility,
+            location=definition.location,
+        )
+        self.emit(
+            OpCode.MAKE_FUNCTION,
+            _compile_function_value(node, definition.name.text),
+        )
+        self.emit(OpCode.STORE_VAR, definition.name.text)
+        self.emit(
+            OpCode.MAKE_FUNCTION,
+            _compile_function_value(node, f"{owner}::{definition.name.text}"),
+        )
+        self.emit(OpCode.STORE_VAR, f"{owner}::{definition.name.text}")
 
     def if_node(self, node: IfNode) -> None:
         for condition_node in node.condition:
@@ -316,6 +397,21 @@ def _resolved_element_reference(node: TypedNode | None) -> tuple[str, int, int] 
         return None
     vectorised = int(node.overload.vectorised) if node.overload is not None else 0
     return ast.name.text, node.overload_index, vectorised
+
+
+def _literal_expression_value(nodes: tuple[ASTNode, ...]) -> object:
+    if len(nodes) != 1:
+        raise CompileError("object and enum default values must be literal values")
+    node = nodes[0]
+    match node:
+        case NumberLiteralNode(value):
+            return _number(value, node)
+        case StringLiteralNode(value):
+            return value
+        case _:
+            raise CompileError(
+                "object and enum default values must be literal values"
+            )
 
 
 def _number(value: str, node: ASTNode) -> Decimal:

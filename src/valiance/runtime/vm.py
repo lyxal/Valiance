@@ -17,6 +17,7 @@ from valiance.analysis.builtins import (
 from valiance.runtime.bytecode import FunctionCode, FunctionSetCode, OpCode, Program
 from valiance.runtime_values import (
     LazyList,
+    ObjectValue,
     is_eager_sequence,
     is_list_like,
 )
@@ -47,6 +48,16 @@ class BuiltinValue:
 
     element: BuiltinElement
     context: RuntimeContext
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectConstructorValue:
+    """Runtime constructor for nominal structured values."""
+
+    type_name: str
+    fields: tuple[str, ...]
+    required: tuple[str, ...]
+    defaults: dict[str, Any]
 
 
 @dataclass(slots=True)
@@ -171,6 +182,22 @@ class VirtualMachine:
                     frame.stack.append(
                         dict(zip(values[::2], values[1::2], strict=True))
                     )
+                case OpCode.MAKE_OBJECT_CONSTRUCTOR:
+                    type_name, fields, required, defaults = instruction.arg
+                    frame.stack.append(
+                        ObjectConstructorValue(
+                            type_name,
+                            tuple(fields),
+                            tuple(required),
+                            dict(defaults),
+                        )
+                    )
+                case OpCode.MAKE_ENUM_MEMBER:
+                    enum_name, member_name, value = instruction.arg
+                    fields = {"name": member_name}
+                    if value is not None:
+                        fields["value"] = value
+                    frame.stack.append(ObjectValue(enum_name, fields))
                 case OpCode.GET_FIELD:
                     receiver = _pop(frame.stack, "field access")
                     frame.stack.append(_get_field(receiver, instruction.arg))
@@ -195,6 +222,9 @@ class VirtualMachine:
             return
         if isinstance(callee, FunctionValue):
             self._call_function(callee, frame)
+            return
+        if isinstance(callee, ObjectConstructorValue):
+            _call_object_constructor(callee, frame)
             return
         if isinstance(callee, OverloadedFunctionValue):
             if len(callee.overloads) == 1:
@@ -242,6 +272,23 @@ class VirtualMachine:
                     f"resolved function '{name}' has no overload {overload_index}"
                 ) from exc
             self._call_function(overload, frame, vectorised=vectorised)
+            return
+        if isinstance(value, ObjectConstructorValue):
+            if overload_index != 0:
+                raise RuntimeError(
+                    f"resolved constructor '{name}' has no overload {overload_index}"
+                )
+            _call_object_constructor(value, frame)
+            return
+        if isinstance(value, ObjectValue):
+            if overload_index != 0:
+                raise RuntimeError(
+                    f"resolved enum member '{name}' has no overload {overload_index}"
+                )
+            frame.stack.append(value)
+            return
+        if overload_index == 0 and not callable(value):
+            frame.stack.append(value)
             return
         raise RuntimeError(f"resolved element '{name}' is not callable")
 
@@ -347,6 +394,31 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
             _show_overload_inputs(callee.element.definitions),
         )
     )
+
+
+def _call_object_constructor(callee: ObjectConstructorValue, frame: _Frame) -> None:
+    arity = len(callee.required)
+    try:
+        args, stack_count, next_cycle_index = frame.source_args(arity)
+    except _StackUnderflow as exc:
+        raise RuntimeError(
+            _format_call_error(
+                f"constructor '{callee.type_name}'",
+                frame.stack,
+                [f"{arity} argument(s)"],
+            )
+        ) from exc
+    if stack_count:
+        del frame.stack[-stack_count:]
+    frame.cycle_index = next_cycle_index
+    fields = dict(callee.defaults)
+    fields.update(dict(zip(callee.required, args, strict=True)))
+    missing = [name for name in callee.fields if name not in fields]
+    if missing:
+        raise RuntimeError(
+            f"constructor '{callee.type_name}' missing fields: {', '.join(missing)}"
+        )
+    frame.stack.append(ObjectValue(callee.type_name, fields))
 
 
 def _call_resolved_builtin(
@@ -589,6 +661,17 @@ def _truthy(value: Any) -> bool:
 
 
 def _get_field(receiver: Any, field: str) -> Any:
+    if is_list_like(receiver):
+        if is_eager_sequence(receiver):
+            return [_get_field(item, field) for item in receiver]
+        return LazyList(_get_field(item, field) for item in receiver)
+    if isinstance(receiver, ObjectValue):
+        try:
+            return receiver.fields[field]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"{receiver.type_name} has no field '{field}'"
+            ) from exc
     if isinstance(receiver, dict):
         try:
             return receiver[field]
@@ -656,6 +739,11 @@ def _format_value(value: Any) -> str:
             for key, item in value.items()
         )
         return "{" + items + "}"
+    if isinstance(value, ObjectValue):
+        items = ", ".join(
+            f"{name}: {_format_value(item)}" for name, item in value.fields.items()
+        )
+        return f"{value.type_name}{{{items}}}"
     return repr(value)
 
 
@@ -674,4 +762,6 @@ def _runtime_type_name(value: Any) -> str:
         return "{" + ", ".join(_runtime_type_name(item) for item in value) + "}"
     if isinstance(value, dict):
         return "record"
+    if isinstance(value, ObjectValue):
+        return value.type_name
     return type(value).__name__
