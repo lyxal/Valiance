@@ -19,6 +19,10 @@ from valiance.asts import (
     FunctionParam,
     GetVariableNode,
     IfNode,
+    ImportComponent,
+    ImportNode,
+    ImportPath,
+    ImportSpec,
     ListLiteralNode,
     MatchCaseNode,
     MatchNode,
@@ -98,6 +102,13 @@ class Parser:
         is_multi = False
         if self._match_ident("public", "private"):
             visibility = Symbol(self._previous.value)
+        if self._match_ident("import"):
+            return (
+                self._import(
+                    self._previous,
+                    public=visibility == Symbol("public"),
+                ),
+            )
         if self._match_ident("multi"):
             is_multi = True
 
@@ -125,6 +136,66 @@ class Parser:
         if annotations:
             self._error("annotation must be followed by a declaration")
         return self._chain_until(_LINE_TERMINATORS)
+
+    def _import(self, start: Token, *, public: bool = False) -> ImportNode:
+        self._expect(TokenKind.LBRACE)
+        specs: list[ImportSpec] = []
+        self._skip_newlines()
+        if self._match(TokenKind.RBRACE):
+            return ImportNode((), public, location=_loc(start))
+        while True:
+            specs.append(self._import_spec())
+            self._skip_newlines()
+            if self._match(TokenKind.RBRACE):
+                break
+            self._expect(TokenKind.COMMA)
+            self._skip_newlines()
+        return ImportNode(tuple(specs), public, location=_loc(start))
+
+    def _import_spec(self) -> ImportSpec:
+        path = self._import_path()
+        components: tuple[ImportComponent, ...] = ()
+        if self._match(TokenKind.DOT) and self._match(TokenKind.LBRACKET):
+            components = self._import_components()
+        alias = None
+        if self._match_ident("as"):
+            alias = self._symbol("expected import alias")
+        return ImportSpec(path, alias, components)
+
+    def _import_path(self) -> ImportPath:
+        root = None
+        parts: list[str] = []
+        if self._check(TokenKind.OP) and self._current.value == "~":
+            self._advance()
+            root = Symbol("~")
+        elif self._match(TokenKind.AT):
+            root = Symbol("@")
+            parts.append(self._expect(TokenKind.IDENT).value)
+        else:
+            parts.append(self._expect(TokenKind.IDENT).value)
+        while self._match(TokenKind.DOT):
+            if self._check(TokenKind.LBRACKET):
+                self.index -= 1
+                break
+            parts.append(self._expect(TokenKind.IDENT).value)
+        return ImportPath(tuple(parts), root)
+
+    def _import_components(self) -> tuple[ImportComponent, ...]:
+        components: list[ImportComponent] = []
+        self._skip_newlines()
+        if self._match(TokenKind.RBRACKET):
+            return ()
+        while True:
+            name = self._symbol("expected imported component")
+            alias = None
+            if self._match_ident("as"):
+                alias = self._symbol("expected component alias")
+            components.append(ImportComponent(name, alias))
+            self._skip_newlines()
+            if self._match(TokenKind.RBRACKET):
+                return tuple(components)
+            self._expect(TokenKind.COMMA)
+            self._skip_newlines()
 
     def _define(
         self,
@@ -375,7 +446,7 @@ class Parser:
                     (TagApplicationNode(_tag_from_token(token), location=_loc(token)),),
                     is_element=True,
                 )
-            name = Symbol(token.value)
+            name = self._qualified_symbol(token)
             if self._match(TokenKind.COLON):
                 return _ChainPiece(
                     (
@@ -399,6 +470,13 @@ class Parser:
                 is_element=True,
             )
         self._error("expected expression")
+
+    def _qualified_symbol(self, start: Token) -> Symbol:
+        parts = [start.value]
+        while self._check(TokenKind.DOT) and self._peek(1).kind == TokenKind.IDENT:
+            self._advance()
+            parts.append(self._advance().value)
+        return Symbol(".".join(parts))
 
     def _variable(self, start: Token) -> _ChainPiece:
         if self._match(TokenKind.DOT):

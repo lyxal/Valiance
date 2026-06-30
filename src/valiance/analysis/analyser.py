@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from itertools import count, permutations
+from pathlib import Path
 from typing import Any
 
 import valiance.types as T
@@ -16,6 +17,7 @@ from valiance.asts import (
     FunctionNode,
     FunctionOverloadTyping,
     FunctionParam,
+    ImportNode,
     ListLiteralNode,
     NumberLiteralNode,
     RecordLiteralNode,
@@ -36,6 +38,7 @@ from valiance.asts.nodes import (
     IfNode,
     SetVariableNode,
 )
+from valiance.modules import ModuleLoader, ModuleLoadError, import_definitions
 from valiance.symbols import Symbol
 from valiance.types.default_types import Boolean
 from valiance.types.relations import merge_stacks
@@ -449,8 +452,16 @@ class ModifierArgumentAnalysis:
 class Analyser:
     """Analysis session owning global environment, diagnostics, and dispatch."""
 
-    def __init__(self, env: T.Environment | None = None):
+    def __init__(
+        self,
+        env: T.Environment | None = None,
+        *,
+        module_loader: ModuleLoader | None = None,
+        source_file: Path | None = None,
+    ):
         self.env = env or default_environment()
+        self.module_loader = module_loader or ModuleLoader()
+        self.source_file = source_file
         self.diagnostics: list[str] = []
 
     def analyse(self, program: list[ASTNode]) -> list[TypedNode]:
@@ -531,6 +542,8 @@ class Analyser:
                     self.env.define_overload(name, overload)
                 typed_node = TypedFunctionNode(node, function.typ, function.overloads)
                 return {typed_branch.append_typed(typed_node)}
+            case ImportNode():
+                return self._import(branch, node)
             case ListLiteralNode():
                 return self._list_literal(branch, node)
             case TupleLiteralNode():
@@ -606,6 +619,38 @@ class Analyser:
                 return self._break(branch, node)
             case _:
                 return {branch.append_typed(TypedNode(node, None))}
+
+    def _import(
+        self,
+        branch: AnalysisBranch,
+        node: ImportNode,
+    ) -> set[AnalysisBranch]:
+        typed_nodes: list[TypedFunctionNode] = []
+        for spec in node.specs:
+            try:
+                exports = self.module_loader.load(
+                    spec.path,
+                    current_file=self.source_file,
+                )
+                definitions = import_definitions(exports, spec)
+            except ModuleLoadError as exc:
+                self._diagnose(str(exc), node)
+                return {branch.append_typed(TypedNode(node, None))}
+            for definition in definitions:
+                self._register_imported_definition(definition.name, definition.typed)
+                typed_nodes.append(definition.typed)
+        imported = branch
+        for typed_node in typed_nodes:
+            imported = imported.append_typed(typed_node)
+        return {imported.append_typed(TypedNode(node, None))}
+
+    def _register_imported_definition(
+        self,
+        name: Symbol,
+        typed_node: TypedFunctionNode,
+    ) -> None:
+        for overload in _callable_overloads(typed_node.typ):
+            self.env.define_overload(name, overload)
 
     def _element(
         self,

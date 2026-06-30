@@ -128,7 +128,7 @@ def _run_source(
     try:
         tokens = lex(source)
         program = Parser(tokens).parse_program()
-        analyser = Analyser()
+        analyser = Analyser(source_file=source_file)
         typed = analyser.analyse(program)
         if execute or bytecode_output is not None:
             if analyser.diagnostics:

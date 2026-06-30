@@ -12,6 +12,7 @@ from valiance.asts.nodes import (
     FunctionOverloadTyping,
     FunctionParam,
     GetVariableNode,
+    ImportNode,
     NumberLiteralNode,
     SetVariableNode,
     StringLiteralNode,
@@ -66,6 +67,9 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
         return "\n".join(lines)
     if isinstance(value, GetVariableNode):
         return f"GetVariableNode(name={value.name}{_location_arg(value)})"
+    if isinstance(value, ImportNode):
+        visibility = ", public=True" if value.public else ""
+        return f"ImportNode(specs={value.specs!r}{visibility}{_location_arg(value)})"
     if isinstance(value, SetVariableNode):
         return f"SetVariableNode(name={value.name}{_location_arg(value)})"
     if isinstance(value, FieldAccessNode):

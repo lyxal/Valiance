@@ -20,6 +20,7 @@ from valiance.asts import (
     FunctionOverloadTyping,
     GetVariableNode,
     IfNode,
+    ImportNode,
     ListLiteralNode,
     NumberLiteralNode,
     RecordLiteralNode,
@@ -110,6 +111,8 @@ class _Compiler:
                     _compile_function_value(typed_node or function, name.text),
                 )
                 self.emit(OpCode.STORE_VAR, name.text)
+            case ImportNode():
+                pass
             case ListLiteralNode(items) | ArrayLiteralNode(items):
                 self.collection(items, OpCode.BUILD_LIST)
             case TupleLiteralNode(items):

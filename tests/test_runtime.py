@@ -4,6 +4,8 @@ import unittest
 from builtins import RuntimeError as PythonRuntimeError
 from decimal import Decimal
 from itertools import count, islice
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from valiance.analysis import Analyser
 from valiance.parsing import parse
@@ -18,9 +20,9 @@ from valiance.runtime.bytecode import (
 from valiance.runtime_values import LazyList
 
 
-def execute(source: str):
+def execute(source: str, source_file: Path | None = None):
     program = parse(source)
-    analyser = Analyser()
+    analyser = Analyser(source_file=source_file)
     typed = analyser.analyse(program)
     if analyser.diagnostics:
         raise AssertionError(analyser.diagnostics)
@@ -158,6 +160,32 @@ define triple(s: String) -> String => $s + $s + $s
 triple "H"
 """
         self.assertEqual(execute(source), ["HHH"])
+
+    def test_executes_imported_component_definition(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "math.vlnc").write_text(
+                "public define add_one(n: Number) -> Number => $n 1 +\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            stack = execute("import { math.[add_one] }\n41 add_one", main)
+
+        self.assertEqual(stack, [Decimal("42")])
+
+    def test_executes_imported_namespace_definition(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "math.vlnc").write_text(
+                "public define add_one(n: Number) -> Number => $n 1 +\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            stack = execute("import { math }\n41 math.add_one", main)
+
+        self.assertEqual(stack, [Decimal("42")])
 
     def test_compiler_requires_typed_nodes(self):
         with self.assertRaises(CompileError):

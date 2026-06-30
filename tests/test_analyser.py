@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from valiance.analysis import (
     Analyser,
@@ -29,6 +31,7 @@ from valiance.asts import (
     TypedElementNode,
     TypedFunctionNode,
 )
+from valiance.modules import ModuleLoader
 from valiance.parsing import parse
 from valiance.symbols import Symbol
 from valiance.types import (
@@ -1078,6 +1081,69 @@ class AnalyserTests(unittest.TestCase):
         typ = analyse_function(node, default_environment())
 
         self.assertEqual(typ, Fn((Number,), (C(ListExactType, Number),)))
+
+    def test_imports_public_definition_from_relative_module(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "math.vlnc").write_text(
+                "public define add_one(n: Number) -> Number => $n 1 +\n"
+                "define hidden => 2\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            main.write_text(
+                "import { math.[add_one] }\n41 add_one\n",
+                encoding="utf-8",
+            )
+
+            analyser = Analyser(source_file=main)
+            typed = analyser.analyse(parse(main.read_text(encoding="utf-8")))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Number)
+        self.assertIsInstance(typed[0], TypedFunctionNode)
+
+    def test_import_namespace_uses_qualified_element_name(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "math.vlnc").write_text(
+                "public define add_one(n: Number) -> Number => $n 1 +\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            analyser = Analyser(source_file=main)
+            typed = analyser.analyse(parse("import { math }\n41 math.add_one"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Number)
+
+    def test_private_module_definition_is_not_importable(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "math.vlnc").write_text(
+                "define hidden => 2\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            analyser = Analyser(source_file=main)
+            analyser.analyse(parse("import { math.[hidden] }"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["1:1: module 'math' has no public component 'hidden'"],
+        )
+
+    def test_inline_code_cannot_use_local_imports_without_source_file(self):
+        analyser = Analyser(module_loader=ModuleLoader())
+
+        analyser.analyse(parse("import { math }"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["1:1: local imports require a source file"],
+        )
 
 
 if __name__ == "__main__":

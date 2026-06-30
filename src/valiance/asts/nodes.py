@@ -186,6 +186,39 @@ class DefineNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class ImportPath:
+    """A parsed module path."""
+
+    parts: tuple[str, ...]
+    root: Symbol | None = None
+
+
+@dataclass(frozen=True)
+class ImportComponent:
+    """One component selected from an imported module."""
+
+    name: Symbol
+    alias: Symbol | None = None
+
+
+@dataclass(frozen=True)
+class ImportSpec:
+    """One import clause inside an import block."""
+
+    path: ImportPath
+    alias: Symbol | None = None
+    components: tuple[ImportComponent, ...] = ()
+
+
+@dataclass(frozen=True)
+class ImportNode(ASTNode):
+    """A module import declaration."""
+
+    specs: tuple[ImportSpec, ...] = ()
+    public: bool = False
+
+
+@dataclass(frozen=True)
 class AnnotationNode(ASTNode):
     """A compile-time annotation applied to the following structure."""
 

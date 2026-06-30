@@ -232,7 +232,7 @@ class VirtualMachine:
                 raise RuntimeError(
                     f"resolved function '{name}' has no overload {overload_index}"
                 )
-            self._call_function(value, frame)
+            self._call_function(value, frame, vectorised=vectorised)
             return
         if isinstance(value, OverloadedFunctionValue):
             try:
@@ -241,11 +241,17 @@ class VirtualMachine:
                 raise RuntimeError(
                     f"resolved function '{name}' has no overload {overload_index}"
                 ) from exc
-            self._call_function(overload, frame)
+            self._call_function(overload, frame, vectorised=vectorised)
             return
         raise RuntimeError(f"resolved element '{name}' is not callable")
 
-    def _call_function(self, callee: FunctionValue, frame: _Frame) -> None:
+    def _call_function(
+        self,
+        callee: FunctionValue,
+        frame: _Frame,
+        *,
+        vectorised: bool = False,
+    ) -> None:
         arity = len(callee.code.params)
         try:
             args, stack_count, next_cycle_index = frame.source_args(arity)
@@ -260,7 +266,10 @@ class VirtualMachine:
         if stack_count:
             del frame.stack[-stack_count:]
         frame.cycle_index = next_cycle_index
-        frame.stack.extend(self.call(callee, list(args)))
+        if vectorised:
+            frame.stack.extend(_vectorize_function(self, callee, args))
+        else:
+            frame.stack.extend(self.call(callee, list(args)))
 
 
 def run(program: Program, *, output: Callable[[str], None] | None = None) -> list[Any]:
@@ -435,6 +444,21 @@ def _vectorize_resolved(
     if all(is_eager_sequence(arg) for arg in vector_args):
         return _vectorize_eager_resolved(implementation, args, context)
     return (LazyList(_vectorize_lazy_resolved(implementation, args, context)),)
+
+
+def _vectorize_function(
+    vm: VirtualMachine,
+    callee: FunctionValue,
+    args: tuple[Any, ...],
+) -> tuple[Any, ...]:
+    def implementation(item_args: tuple[Any, ...], _context: RuntimeContext):
+        return tuple(vm.call(callee, list(item_args)))
+
+    return _vectorize_resolved(
+        implementation,
+        args,
+        RuntimeContext(vm.output, vm.call_value),
+    )
 
 
 def _vectorize_eager(

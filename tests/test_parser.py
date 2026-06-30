@@ -8,6 +8,10 @@ from valiance.asts import (
     FunctionNode,
     GetVariableNode,
     IfNode,
+    ImportComponent,
+    ImportNode,
+    ImportPath,
+    ImportSpec,
     ListLiteralNode,
     NumberLiteralNode,
     SetVariableNode,
@@ -154,6 +158,48 @@ class ParserTests(unittest.TestCase):
         self.assertTrue(same(node.function.params[0].typ, Number))
         self.assertEqual(node.function.returns, (Number,))
         self.assertEqual(node.function.body[-1], ElementNode(Symbol("*")))
+
+    def test_parses_imports_with_namespace_alias_and_components(self):
+        program = parse(
+            """
+public import {
+  utils as u,
+  math.[double, triple as t]
+}
+"""
+        )
+
+        self.assertEqual(
+            program,
+            [
+                ImportNode(
+                    (
+                        ImportSpec(
+                            ImportPath(("utils",)),
+                            Symbol("u"),
+                        ),
+                        ImportSpec(
+                            ImportPath(("math",)),
+                            None,
+                            (
+                                ImportComponent(Symbol("double")),
+                                ImportComponent(Symbol("triple"), Symbol("t")),
+                            ),
+                        ),
+                    ),
+                    True,
+                )
+            ],
+        )
+
+    def test_parses_namespace_qualified_element_names(self):
+        self.assertEqual(
+            parse("utils.double 4"),
+            [
+                NumberLiteralNode("4"),
+                ElementNode(Symbol("utils.double")),
+            ],
+        )
 
     def test_parses_niladic_define_with_backslash_name(self):
         [node] = parse('define \\foo => println("Hello, World!")')
