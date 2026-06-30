@@ -387,25 +387,25 @@ Current audit total: 269 / 724 items complete (37.2%).
 - [x] Parse `match` blocks.
 - [ ] Support matching one or more stack values.
 - [ ] Require every case to match the same number of values.
-- [ ] Support literal patterns.
-- [ ] Support predicate patterns using `if`.
-- [ ] Support list-structure patterns.
-- [ ] Support wildcard list positions.
-- [ ] Support list-rest patterns using `...`.
-- [ ] Support bindings within list patterns.
-- [ ] Support type patterns.
-- [ ] Support named type-pattern bindings.
-- [ ] Support object destructuring in type patterns.
-- [ ] Support guards on type patterns.
-- [ ] Support wildcard patterns.
-- [ ] Support `||` alternatives within a case item.
-- [ ] Pass matched values to the selected branch body.
-- [ ] Avoid popping additional values from the outer stack inside branch invocation.
-- [ ] Union corresponding branch result types.
+- [x] Support literal patterns.
+- [x] Support predicate patterns using `if`.
+- [x] Support list-structure patterns.
+- [x] Support wildcard list positions.
+- [x] Support list-rest patterns using `...`.
+- [x] Support bindings within list patterns.
+- [x] Support type patterns.
+- [x] Support named type-pattern bindings.
+- [x] Support object destructuring in type patterns.
+- [x] Support guards on type patterns.
+- [x] Support wildcard patterns.
+- [x] Support `||` alternatives within a case item.
+- [x] Pass matched values to the selected branch body.
+- [x] Avoid popping additional values from the outer stack inside branch invocation.
+- [x] Union corresponding branch result types.
 - [ ] Pad missing branch results with `None`.
-- [ ] Require exhaustive matching.
-- [ ] Recognise wildcard cases as exhaustive.
-- [ ] Support exhaustive checking for variants and enums.
+- [x] Require exhaustive matching.
+- [x] Recognise wildcard cases as exhaustive.
+- [x] Support exhaustive checking for variants and enums.
 
 ## 25. Assertions and conditionals
 
@@ -527,7 +527,7 @@ Current audit total: 269 / 724 items complete (37.2%).
 - [x] Allow variants to be used as types.
 - [x] Construct variant values.
 - [ ] Access or destructure associated case values.
-- [ ] Integrate variants with exhaustive pattern matching.
+- [x] Integrate variants with exhaustive pattern matching.
 - [ ] Support generic variants.
 
 ## 31. Enums
@@ -539,7 +539,7 @@ Current audit total: 269 / 724 items complete (37.2%).
 - [x] Support member access through `Enum.Member`.
 - [x] Support backing-value access through `.value`.
 - [x] Allow enum names to be used as types.
-- [ ] Integrate enums with exhaustive pattern matching.
+- [x] Integrate enums with exhaustive pattern matching.
 
 ## 32. Generics and unification
 

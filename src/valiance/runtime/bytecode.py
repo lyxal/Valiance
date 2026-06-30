@@ -27,6 +27,8 @@ class OpCode(Enum):
     SET_FIELD = "set_field"
     JUMP = "jump"
     JUMP_IF_FALSE = "jump_if_false"
+    JUMP_IF_MATCH = "jump_if_match"
+    MATCH_ERROR = "match_error"
     POP = "pop"
     RETURN = "return"
 

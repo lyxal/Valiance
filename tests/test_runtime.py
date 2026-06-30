@@ -258,6 +258,170 @@ TokenType.NUMBER.value
             ["Number"],
         )
 
+    def test_executes_match_on_enum_and_variant_members(self):
+        self.assertEqual(
+            execute(
+                """
+enum Colour => RED GREEN end
+Colour.GREEN
+match =>
+  as :RED => "red"
+  as :GREEN => "green"
+end
+"""
+            ),
+            ["green"],
+        )
+        self.assertEqual(
+            execute(
+                """
+variant Maybe =>
+  Some => $value: Number end
+  None => end
+end
+Some(1)
+match =>
+  as :Some => "some"
+  as :None => 0
+end
+"""
+            ),
+            ["some"],
+        )
+
+    def test_executes_match_literal_guard_and_wildcard_patterns(self):
+        self.assertEqual(
+            execute(
+                """
+10
+match =>
+  10 => "The number was 10"
+  if > 5 => "The number is bigger than 5"
+  _ => "Too small"
+end
+"""
+            ),
+            ["The number was 10"],
+        )
+        self.assertEqual(
+            execute(
+                """
+7
+match =>
+  10 => "The number was 10"
+  if > 5 => "The number is bigger than 5"
+  _ => "Too small"
+end
+"""
+            ),
+            ["The number is bigger than 5"],
+        )
+        self.assertEqual(
+            execute(
+                """
+2
+match =>
+  10 => "The number was 10"
+  if > 5 => "The number is bigger than 5"
+  _ => "Too small"
+end
+"""
+            ),
+            ["Too small"],
+        )
+
+    def test_executes_match_list_patterns_with_bindings_and_rests(self):
+        self.assertEqual(
+            execute(
+                """
+[1, 99, 3]
+match =>
+  [1, _, 3] => "shape"
+  _ => "no"
+end
+"""
+            ),
+            ["shape"],
+        )
+        self.assertEqual(
+            execute(
+                """
+[1, 99, 3]
+match =>
+  [1, $x = _, 3] => $x
+  _ => 0
+end
+"""
+            ),
+            [Decimal("99")],
+        )
+        self.assertEqual(
+            execute(
+                """
+[1, 2, 3, 4, 6]
+match =>
+  [1, ..., 3, $y = ..., 6] => $y length
+  _ => 0
+end
+"""
+            ),
+            [Decimal("1")],
+        )
+
+    def test_executes_match_type_guards_destructure_and_stack_patterns(self):
+        self.assertEqual(
+            execute(
+                """
+6
+match =>
+  as :Number if > 5 => "Type match with guard"
+  as y => $y
+end
+"""
+            ),
+            ["Type match with guard"],
+        )
+        self.assertEqual(
+            execute(
+                """
+object Pair =>
+  $left: Number
+  $right: Number
+end
+Pair(5, 5)
+match =>
+  as :Pair(param, param) => $param
+  _ => 0
+end
+"""
+            ),
+            [Decimal("5")],
+        )
+        self.assertEqual(
+            execute(
+                """
+2 1
+match =>
+  1, 2 => "Top of stack was 1 and then 2"
+  _, _ => "default case"
+end
+"""
+            ),
+            ["Top of stack was 1 and then 2"],
+        )
+        self.assertEqual(
+            execute(
+                """
+[1, 2, 3] 3
+match =>
+  if > 10 || if < 4, [1, 2, 3] => "mixed"
+  _, _ => "default"
+end
+"""
+            ),
+            ["mixed"],
+        )
+
     def test_executes_list_tuple_record_and_dict_literals(self):
         self.assertEqual(execute("[1, 2, 3] length"), [Decimal("3")])
         self.assertEqual(execute('(1, "two")'), [(Decimal("1"), "two")])

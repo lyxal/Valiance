@@ -212,6 +212,16 @@ class VirtualMachine:
                     if not _truthy(_pop(frame.stack, "conditional jump")):
                         ip = instruction.arg
                         continue
+                case OpCode.JUMP_IF_MATCH:
+                    patterns, target = instruction.arg
+                    bindings = self._match_patterns(frame, patterns)
+                    if bindings is not None:
+                        del frame.stack[-len(patterns) :]
+                        frame.locals.update(bindings)
+                        ip = target
+                        continue
+                case OpCode.MATCH_ERROR:
+                    raise RuntimeError("non-exhaustive match at runtime")
                 case OpCode.POP:
                     _pop(frame.stack, "pop")
                 case OpCode.RETURN:
@@ -321,6 +331,160 @@ class VirtualMachine:
             frame.stack.extend(_vectorize_function(self, callee, args))
         else:
             frame.stack.extend(self.call(callee, list(args)))
+
+    def _match_patterns(
+        self,
+        frame: _Frame,
+        patterns: tuple[object, ...],
+    ) -> dict[str, Any] | None:
+        if len(frame.stack) < len(patterns):
+            return None
+        bindings: dict[str, Any] = {}
+        values = tuple(reversed(frame.stack[-len(patterns) :]))
+        for pattern, value in zip(patterns, values, strict=True):
+            if not self._match_pattern(value, pattern, bindings):
+                return None
+        return bindings
+
+    def _match_pattern(
+        self,
+        value: Any,
+        pattern: object,
+        bindings: dict[str, Any],
+    ) -> bool:
+        if not isinstance(pattern, tuple) or not pattern:
+            return False
+        kind = pattern[0]
+        if kind == "literal":
+            return value == pattern[1]
+        if kind == "guard":
+            return self._guard_truthy(pattern[1], value)
+        if kind == "wildcard":
+            return True
+        if kind == "rest":
+            name = pattern[1]
+            return name is None or _bind_match_name(bindings, name, value)
+        if kind == "bind":
+            name, inner = pattern[1], pattern[2]
+            snapshot = dict(bindings)
+            if not self._match_pattern(value, inner, bindings):
+                bindings.clear()
+                bindings.update(snapshot)
+                return False
+            return _bind_match_name(bindings, name, value)
+        if kind == "or":
+            for option in pattern[1]:
+                snapshot = dict(bindings)
+                if self._match_pattern(value, option, bindings):
+                    return True
+                bindings.clear()
+                bindings.update(snapshot)
+            return False
+        if kind == "list":
+            return self._match_list_pattern(value, pattern[1], bindings)
+        if kind == "type":
+            return self._match_type_pattern(value, pattern, bindings)
+        return False
+
+    def _match_list_pattern(
+        self,
+        value: Any,
+        items: tuple[object, ...],
+        bindings: dict[str, Any],
+    ) -> bool:
+        if not is_eager_sequence(value):
+            return False
+        return self._match_list_items(tuple(value), items, bindings, 0, 0)
+
+    def _match_list_items(
+        self,
+        values: tuple[Any, ...],
+        patterns: tuple[object, ...],
+        bindings: dict[str, Any],
+        value_index: int,
+        pattern_index: int,
+    ) -> bool:
+        if pattern_index == len(patterns):
+            return value_index == len(values)
+        pattern = patterns[pattern_index]
+        if _is_rest_pattern(pattern):
+            name = pattern[1]
+            for end in range(value_index, len(values) + 1):
+                snapshot = dict(bindings)
+                if name is None or _bind_match_name(
+                    bindings,
+                    name,
+                    list(values[value_index:end]),
+                ):
+                    if self._match_list_items(
+                        values,
+                        patterns,
+                        bindings,
+                        end,
+                        pattern_index + 1,
+                    ):
+                        return True
+                bindings.clear()
+                bindings.update(snapshot)
+            return False
+        if value_index >= len(values):
+            return False
+        snapshot = dict(bindings)
+        if self._match_pattern(values[value_index], pattern, bindings):
+            if self._match_list_items(
+                values,
+                patterns,
+                bindings,
+                value_index + 1,
+                pattern_index + 1,
+            ):
+                return True
+        bindings.clear()
+        bindings.update(snapshot)
+        return False
+
+    def _match_pattern_sequence(
+        self,
+        values: tuple[Any, ...],
+        patterns: tuple[object, ...],
+        bindings: dict[str, Any],
+    ) -> bool:
+        snapshot = dict(bindings)
+        for value, pattern in zip(values, patterns, strict=True):
+            if not self._match_pattern(value, pattern, bindings):
+                bindings.clear()
+                bindings.update(snapshot)
+                return False
+        return True
+
+    def _match_type_pattern(
+        self,
+        value: Any,
+        pattern: tuple[object, ...],
+        bindings: dict[str, Any],
+    ) -> bool:
+        _, type_name, binding_name, fields, guard = pattern
+        if type_name is not None and not _matches_type_pattern(value, type_name):
+            return False
+        if binding_name is not None and not _bind_match_name(
+            bindings,
+            binding_name,
+            value,
+        ):
+            return False
+        if fields:
+            if not isinstance(value, ObjectValue):
+                return False
+            values = tuple(value.fields.values())
+            if len(values) != len(fields):
+                return False
+            if not self._match_pattern_sequence(values, fields, bindings):
+                return False
+        return guard is None or self._guard_truthy(guard, value)
+
+    def _guard_truthy(self, guard: FunctionCode, value: Any) -> bool:
+        result = self.call(FunctionValue(guard, self.globals), [value])
+        return bool(result) and _truthy(result[-1])
 
 
 def run(program: Program, *, output: Callable[[str], None] | None = None) -> list[Any]:
@@ -662,6 +826,34 @@ def _constant(value: Any) -> Any:
 
 def _truthy(value: Any) -> bool:
     return value != 0 and value is not None
+
+
+def _matches_type_pattern(value: Any, pattern: str) -> bool:
+    if pattern == "Number":
+        return isinstance(value, Decimal)
+    if pattern == "String":
+        return isinstance(value, str)
+    if not isinstance(value, ObjectValue):
+        return False
+    if value.type_name == pattern:
+        return True
+    if value.type_name.rsplit(".", 1)[-1] == pattern:
+        return True
+    member_name = value.fields.get("name")
+    return isinstance(member_name, str) and (
+        member_name == pattern or f"{value.type_name}.{member_name}" == pattern
+    )
+
+
+def _bind_match_name(bindings: dict[str, Any], name: str, value: Any) -> bool:
+    if name in bindings:
+        return bindings[name] == value
+    bindings[name] = value
+    return True
+
+
+def _is_rest_pattern(pattern: object) -> bool:
+    return isinstance(pattern, tuple) and bool(pattern) and pattern[0] == "rest"
 
 
 def _get_field(receiver: Any, field: str) -> Any:

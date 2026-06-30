@@ -10,10 +10,12 @@ from valiance.analysis.builtins import BUILTIN_ELEMENTS, runtime_elements
 from valiance.asts import (
     ArrayLiteralNode,
     ASTNode,
+    BindingPatternNode,
     BreakNode,
     DefineNode,
     DictLiteralNode,
     ElementNode,
+    ExpressionPatternNode,
     FieldAccessNode,
     FieldSetNode,
     ForNode,
@@ -21,12 +23,20 @@ from valiance.asts import (
     FunctionOverloadTyping,
     FunctionParam,
     GetVariableNode,
+    GuardPatternNode,
     IfNode,
     ImportNode,
     ListLiteralNode,
+    ListPatternNode,
+    LiteralPatternNode,
+    MatchCaseNode,
+    MatchNode,
+    MatchPatternNode,
     NumberLiteralNode,
     ObjectNode,
+    OrPatternNode,
     RecordLiteralNode,
+    RestPatternNode,
     ReturnNode,
     SetVariableNode,
     StringLiteralNode,
@@ -35,7 +45,9 @@ from valiance.asts import (
     TypedElementNode,
     TypedFunctionNode,
     TypedNode,
+    TypePatternNode,
     WhileNode,
+    WildcardPatternNode,
 )
 from valiance.runtime.bytecode import (
     FunctionCode,
@@ -140,6 +152,8 @@ class _Compiler:
                 self.emit(OpCode.SET_FIELD, name.text)
             case IfNode():
                 self.if_node(node)
+            case MatchNode():
+                self.match_node(node)
             case WhileNode():
                 self.while_node(node)
             case ForNode():
@@ -255,6 +269,46 @@ class _Compiler:
             self.node(branch_node)
         self.patch(jump_to_end, len(self.instructions))
 
+    def match_node(self, node: MatchNode) -> None:
+        case_jumps: list[tuple[int, MatchCaseNode]] = []
+        default_case: MatchCaseNode | None = None
+        for case in node.cases:
+            if case.is_default or _is_default_case(case.patterns):
+                default_case = case
+                continue
+            case_jumps.append(
+                (
+                    self.emit(
+                        OpCode.JUMP_IF_MATCH,
+                        (_compile_case_patterns(case.patterns), None),
+                    ),
+                    case,
+                )
+            )
+
+        end_jumps: list[int] = []
+        if default_case is None:
+            self.emit(OpCode.MATCH_ERROR)
+        else:
+            default_jump = self.emit(
+                OpCode.JUMP_IF_MATCH,
+                (_compile_case_patterns(default_case.patterns), None),
+            )
+            self.emit(OpCode.MATCH_ERROR)
+            self.patch_match(default_jump, len(self.instructions))
+            for branch_node in default_case.body:
+                self.node(branch_node)
+            end_jumps.append(self.emit(OpCode.JUMP, None))
+
+        for jump, case in case_jumps:
+            self.patch_match(jump, len(self.instructions))
+            for branch_node in case.body:
+                self.node(branch_node)
+            end_jumps.append(self.emit(OpCode.JUMP, None))
+        end = len(self.instructions)
+        for jump in end_jumps:
+            self.patch(jump, end)
+
     def while_node(self, node: WhileNode) -> None:
         loop_start = len(self.instructions)
         self.loops.append(_LoopPatch([]))
@@ -284,6 +338,11 @@ class _Compiler:
     def patch(self, index: int, target: int) -> None:
         instruction = self.instructions[index]
         self.instructions[index] = Instruction(instruction.op, target)
+
+    def patch_match(self, index: int, target: int) -> None:
+        instruction = self.instructions[index]
+        pattern, _ = instruction.arg
+        self.instructions[index] = Instruction(instruction.op, (pattern, target))
 
     def unsupported(self, node: ASTNode, feature: str) -> NoReturn:
         location = ""
@@ -426,3 +485,76 @@ def _number(value: str, node: ASTNode) -> Decimal:
             location = f" at {node.location.line}:{node.location.column}"
         message = f"cannot compile numeric literal {value!r}{location}"
         raise CompileError(message) from exc
+
+
+def _compile_case_patterns(
+    patterns: tuple[MatchPatternNode, ...],
+) -> tuple[object, ...]:
+    return tuple(_compile_match_pattern(pattern) for pattern in patterns)
+
+
+def _compile_match_pattern(pattern: MatchPatternNode) -> object:
+    match pattern:
+        case LiteralPatternNode(value):
+            return ("literal", _literal_pattern_value(value))
+        case ExpressionPatternNode(expression):
+            return ("literal", _literal_expression_value(expression))
+        case GuardPatternNode(condition):
+            return ("guard", _compile_guard(condition))
+        case WildcardPatternNode():
+            return ("wildcard",)
+        case RestPatternNode(name):
+            return ("rest", None if name is None else name.text)
+        case BindingPatternNode(name, inner):
+            if isinstance(inner, RestPatternNode):
+                return ("rest", name.text)
+            return ("bind", name.text, _compile_match_pattern(inner))
+        case OrPatternNode(options):
+            return ("or", tuple(_compile_match_pattern(option) for option in options))
+        case ListPatternNode(items):
+            return ("list", tuple(_compile_match_pattern(item) for item in items))
+        case TypePatternNode(typ, name, fields, guard):
+            return (
+                "type",
+                None if typ is None else _type_pattern_name(typ),
+                None if name is None else name.text,
+                tuple(_compile_match_pattern(field) for field in fields),
+                _compile_guard(guard) if guard else None,
+            )
+        case _:
+            raise CompileError(f"cannot compile match pattern {pattern!r}")
+
+
+def _literal_pattern_value(node: ASTNode) -> object:
+    match node:
+        case NumberLiteralNode(value):
+            return _number(value, node)
+        case StringLiteralNode(value):
+            return value
+        case _:
+            raise CompileError(f"cannot compile literal pattern {node!r}")
+
+
+def _compile_guard(condition: tuple[ASTNode, ...]) -> FunctionCode:
+    return _Compiler().compile_function(condition, params=("_",), name="<match guard>")
+
+
+def _type_pattern_name(typ: object) -> str:
+    from valiance.types import NominalType, NoneTypeNode, normalize
+
+    typ = normalize(typ)
+    if isinstance(typ, NoneTypeNode):
+        return "None"
+    if not isinstance(typ, NominalType):
+        raise CompileError(f"cannot compile match type pattern {typ}")
+    return typ.name.text
+
+
+def _is_default_case(patterns: tuple[MatchPatternNode, ...]) -> bool:
+    return bool(patterns) and all(_is_default_pattern(pattern) for pattern in patterns)
+
+
+def _is_default_pattern(pattern: MatchPatternNode) -> bool:
+    return isinstance(pattern, (WildcardPatternNode, RestPatternNode)) or (
+        isinstance(pattern, TypePatternNode) and pattern.typ is None
+    )

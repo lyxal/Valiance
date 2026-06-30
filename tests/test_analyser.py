@@ -488,6 +488,49 @@ end
         self.assertEqual(typed[-1].typ, N(Symbol("Colour")))
         self.assertTrue(env.overloads_for(Symbol("Colour.RED")))
 
+    def test_match_on_enum_requires_all_members_without_default(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(
+            parse(
+                """
+enum Colour => RED GREEN BLUE end
+Colour.RED
+match =>
+  as :RED => "red"
+  as :GREEN => "green"
+end
+"""
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["4:1: non-exhaustive match for Colour; missing cases: Colour.BLUE"],
+        )
+
+    def test_match_on_variant_is_exhaustive_by_member_cases(self):
+        analyser = Analyser(Environment())
+
+        typed = analyser.analyse(
+            parse(
+                """
+variant Maybe =>
+  Some => $value: Number end
+  None => end
+end
+Some(1)
+match =>
+  as :Some => "some"
+  as :None => "none"
+end
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, String)
+
     def test_function_infers_missing_inputs(self):
         env = Environment()
         env.define_overload(PLUS, Overload((Number, Number), (Number,)))

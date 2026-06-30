@@ -305,10 +305,67 @@ class DictLiteralNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class MatchPatternNode(ASTNode):
+    """Base class for match case patterns."""
+
+
+@dataclass(frozen=True)
+class LiteralPatternNode(MatchPatternNode):
+    value: ASTNode
+
+
+@dataclass(frozen=True)
+class ExpressionPatternNode(MatchPatternNode):
+    expression: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class GuardPatternNode(MatchPatternNode):
+    condition: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class WildcardPatternNode(MatchPatternNode):
+    pass
+
+
+@dataclass(frozen=True)
+class RestPatternNode(MatchPatternNode):
+    name: Symbol | None = None
+
+
+@dataclass(frozen=True)
+class BindingPatternNode(MatchPatternNode):
+    name: Symbol
+    pattern: MatchPatternNode
+
+
+@dataclass(frozen=True)
+class OrPatternNode(MatchPatternNode):
+    options: tuple[MatchPatternNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class ListPatternNode(MatchPatternNode):
+    items: tuple[MatchPatternNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class TypePatternNode(MatchPatternNode):
+    typ: Type | None = None
+    name: Symbol | None = None
+    fields: tuple[MatchPatternNode, ...] = ()
+    guard: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
 class MatchCaseNode(ASTNode):
     """One branch of a match expression."""
 
+    patterns: tuple[MatchPatternNode, ...] = ()
     pattern: tuple[ASTNode, ...] = ()
+    pattern_type: Type | None = None
+    is_default: bool = False
     body: tuple[ASTNode, ...] = ()
 
 

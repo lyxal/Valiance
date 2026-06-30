@@ -11,17 +11,24 @@ import valiance.types as T
 from valiance.analysis.builtins import default_environment
 from valiance.asts import (
     ASTNode,
+    BindingPatternNode,
     DefineNode,
     DictLiteralNode,
     ElementNode,
     FunctionNode,
     FunctionOverloadTyping,
     FunctionParam,
+    GuardPatternNode,
     ImportNode,
     ListLiteralNode,
+    ListPatternNode,
+    MatchNode,
+    MatchPatternNode,
     NumberLiteralNode,
     ObjectNode,
+    OrPatternNode,
     RecordLiteralNode,
+    RestPatternNode,
     StringLiteralNode,
     TagApplicationNode,
     TraitRequirementNode,
@@ -30,6 +37,8 @@ from valiance.asts import (
     TypedElementNode,
     TypedFunctionNode,
     TypedNode,
+    TypePatternNode,
+    WildcardPatternNode,
 )
 from valiance.asts.nodes import (
     BreakNode,
@@ -617,6 +626,8 @@ class Analyser:
                 return self._if(branch, node)
             case ForNode():
                 return self._foreach(branch, node)
+            case MatchNode():
+                return self._match(branch, node)
             case BreakNode():
                 return self._break(branch, node)
             case _:
@@ -1384,6 +1395,115 @@ class Analyser:
                     .append_typed(typed_if)
                 )
         return outputs
+
+    def _match(
+        self,
+        branch: AnalysisBranch,
+        node: MatchNode,
+    ) -> set[AnalysisBranch]:
+        if not branch.stack:
+            self._diagnose("match requires a value on the stack", node)
+            return set()
+        if not node.cases:
+            self._diagnose("match requires at least one case", node)
+            return set()
+
+        subject_type = branch.stack[-1]
+        body_input = branch.with_stack(branch.stack.pop())
+        if not self._match_is_exhaustive(subject_type, node):
+            return set()
+
+        joined: AnalysisBranch | None = None
+        for case in node.cases:
+            case_input = body_input.with_variables(
+                _match_case_variables(body_input.variables, case.patterns)
+            )
+            if not self._match_guards_are_valid(subject_type, case.patterns, node):
+                return set()
+            case_outputs = self.analyse_block(BranchSet.one(case_input), case.body)
+            for output in case_outputs:
+                candidate = output
+                if candidate.break_type is not None:
+                    typ = candidate.break_type
+                    if typ is None:
+                        typ = _returns_result_type(candidate.stack.items)
+                    candidate = candidate.append_typed(TypedNode(node, typ))
+                if joined is None:
+                    joined = candidate
+                    continue
+                if joined.inputs != candidate.inputs:
+                    self._diagnose("match cases inferred different inputs", node)
+                    return set()
+                stack = merge_stacks(joined.stack, candidate.stack)
+                variables = joined.variables.merge_against(
+                    candidate.variables,
+                    body_input.variables,
+                )
+                joined = (
+                    _refine_branch_like(branch, joined)
+                    .with_stack(stack)
+                    .with_variables(variables)
+                )
+
+        if joined is None:
+            return set()
+        return {
+            joined.append_typed(
+                TypedNode(node, _returns_result_type(joined.stack.items))
+            )
+        }
+
+    def _match_guards_are_valid(
+        self,
+        subject_type: T.Type,
+        patterns: tuple[MatchPatternNode, ...],
+        node: MatchNode,
+    ) -> bool:
+        guards = tuple(_match_pattern_guards(patterns))
+        for guard in guards:
+            guard_input = AnalysisBranch(
+                stack=T.TypeStack((subject_type,)),
+                variables=BranchVariables(),
+                input_mode=InputMode.TOP_LEVEL,
+            )
+            outputs = self.analyse_block(BranchSet.one(guard_input), guard)
+            outputs = outputs.require_stack_top_assignable(Boolean, self.env.context)
+            if not outputs:
+                self._diagnose("match guard must be a boolean value", node)
+                return False
+        return True
+
+    def _match_is_exhaustive(self, subject_type: T.Type, node: MatchNode) -> bool:
+        if any(
+            case.is_default or _is_default_match_case(case.patterns)
+            for case in node.cases
+        ):
+            return True
+        closed_name = _nominal_name(subject_type)
+        if closed_name is None:
+            self._diagnose("match without default requires enum or variant value", node)
+            return False
+        expected = _closed_match_members(self.env, closed_name)
+        if expected is None:
+            self._diagnose("match without default requires enum or variant value", node)
+            return False
+        covered = {
+            resolved
+            for case in node.cases
+            for pattern_type in _match_case_pattern_types(case.patterns)
+            if (resolved := _resolve_closed_member(expected, pattern_type))
+            is not None
+        }
+        missing = tuple(member for member in expected if member not in covered)
+        if missing:
+            self._diagnose(
+                "non-exhaustive match for "
+                f"{closed_name}; missing cases: "
+                + ", ".join(str(member) for member in missing),
+                node,
+            )
+            return False
+        return True
 
     def _source_field_receiver(
         self,
@@ -2159,6 +2279,159 @@ def _returns_result_type(returns: tuple[T.Type, ...]) -> T.Type | None:
     if len(returns) == 1:
         return returns[0]
     return None
+
+
+def _nominal_name(typ: T.Type) -> Symbol | None:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.NominalType):
+        return typ.name
+    return None
+
+
+def _closed_match_members(
+    env: T.Environment,
+    name: Symbol,
+) -> tuple[Symbol, ...] | None:
+    variant = env.lookup_variant(name)
+    if variant is not None:
+        return variant.members
+    enum = env.lookup_enum(name)
+    if enum is not None:
+        return tuple(member.name for member in enum.members)
+    return None
+
+
+def _resolve_closed_member(
+    expected: tuple[Symbol, ...],
+    typ: T.Type,
+) -> Symbol | None:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.NoneTypeNode):
+        name = Symbol("None")
+    else:
+        name = _nominal_name(typ)
+    if name is None:
+        return None
+    for member in expected:
+        if name == member or name.text == member.text.rsplit(".", 1)[-1]:
+            return member
+    return None
+
+
+def _match_case_pattern_types(
+    patterns: tuple[MatchPatternNode, ...],
+) -> Iterator[T.Type]:
+    for pattern in patterns:
+        yield from _match_pattern_types(pattern)
+
+
+def _match_pattern_types(pattern: MatchPatternNode) -> Iterator[T.Type]:
+    if isinstance(pattern, TypePatternNode) and pattern.typ is not None:
+        yield pattern.typ
+    if isinstance(pattern, OrPatternNode):
+        for option in pattern.options:
+            yield from _match_pattern_types(option)
+
+
+def _is_default_match_case(patterns: tuple[MatchPatternNode, ...]) -> bool:
+    return bool(patterns) and all(
+        _is_default_match_pattern(pattern) for pattern in patterns
+    )
+
+
+def _is_default_match_pattern(pattern: MatchPatternNode) -> bool:
+    return isinstance(pattern, (WildcardPatternNode, RestPatternNode)) or (
+        isinstance(pattern, TypePatternNode) and pattern.typ is None
+    )
+
+
+def _match_case_variables(
+    variables: BranchVariables,
+    patterns: tuple[MatchPatternNode, ...],
+) -> BranchVariables:
+    result = variables
+    for pattern in patterns:
+        result = _add_match_pattern_variables(result, pattern)
+    return result
+
+
+def _add_match_pattern_variables(
+    variables: BranchVariables,
+    pattern: MatchPatternNode,
+) -> BranchVariables:
+    if isinstance(pattern, BindingPatternNode):
+        return _add_match_binding(
+            _add_match_pattern_variables(variables, pattern.pattern),
+            pattern.name,
+            _pattern_binding_type(pattern.pattern, pattern.name),
+        )
+    if isinstance(pattern, RestPatternNode) and pattern.name is not None:
+        return _add_match_binding(
+            variables,
+            pattern.name,
+            T.C(T.ListExactType, T.V(f"_matched_{pattern.name}")),
+        )
+    if isinstance(pattern, TypePatternNode):
+        result = variables
+        if pattern.name is not None:
+            result = _add_match_binding(
+                result,
+                pattern.name,
+                pattern.typ or T.V(f"_matched_{pattern.name}"),
+            )
+        for field in pattern.fields:
+            result = _add_match_pattern_variables(result, field)
+        return result
+    if isinstance(pattern, ListPatternNode):
+        result = variables
+        for item in pattern.items:
+            result = _add_match_pattern_variables(result, item)
+        return result
+    if isinstance(pattern, OrPatternNode):
+        result = variables
+        for option in pattern.options:
+            result = _add_match_pattern_variables(result, option)
+        return result
+    return variables
+
+
+def _add_match_binding(
+    variables: BranchVariables,
+    name: Symbol,
+    typ: T.Type,
+) -> BranchVariables:
+    updated, _diagnostic = variables.write(name, typ, block_local=True)
+    return variables if updated is None else updated
+
+
+def _pattern_binding_type(pattern: MatchPatternNode, name: Symbol) -> T.Type:
+    if isinstance(pattern, RestPatternNode):
+        return T.C(T.ListExactType, T.V(f"_matched_{name}"))
+    if isinstance(pattern, TypePatternNode) and pattern.typ is not None:
+        return pattern.typ
+    return T.V(f"_matched_{name}")
+
+
+def _match_pattern_guards(
+    patterns: tuple[MatchPatternNode, ...],
+) -> Iterator[tuple[ASTNode, ...]]:
+    for pattern in patterns:
+        yield from _pattern_guards(pattern)
+
+
+def _pattern_guards(pattern: MatchPatternNode) -> Iterator[tuple[ASTNode, ...]]:
+    if isinstance(pattern, GuardPatternNode):
+        yield pattern.condition
+    elif isinstance(pattern, TypePatternNode) and pattern.guard:
+        yield pattern.guard
+    elif isinstance(pattern, OrPatternNode):
+        for option in pattern.options:
+            yield from _pattern_guards(option)
+    elif isinstance(pattern, ListPatternNode):
+        for item in pattern.items:
+            yield from _pattern_guards(item)
+    elif isinstance(pattern, BindingPatternNode):
+        yield from _pattern_guards(pattern.pattern)
 
 
 def _show_stack(stack: T.TypeStack) -> str:

@@ -1,6 +1,7 @@
 import unittest
 
 from valiance.asts import (
+    BindingPatternNode,
     BreakNode,
     DefineNode,
     ElementNode,
@@ -8,21 +9,28 @@ from valiance.asts import (
     ForNode,
     FunctionNode,
     GetVariableNode,
+    GuardPatternNode,
     IfNode,
     ImportComponent,
     ImportNode,
     ImportPath,
     ImportSpec,
     ListLiteralNode,
+    ListPatternNode,
+    MatchNode,
     NumberLiteralNode,
     ObjectFieldNode,
+    OrPatternNode,
+    RestPatternNode,
     SetVariableNode,
     SourceLocation,
     StringLiteralNode,
     Symbol,
     TagApplicationNode,
     TraitRequirementNode,
+    TypePatternNode,
     VariantMemberNode,
+    WildcardPatternNode,
 )
 from valiance.parsing import LexError, ParseError, lex, parse, parse_type
 from valiance.types import (
@@ -350,6 +358,80 @@ end
         self.assertEqual(loop.index_variable, Symbol("i"))
         self.assertIsInstance(loop.body[0], IfNode)
         self.assertIsInstance(loop.body[0].then_branch[0], BreakNode)
+
+    def test_parses_match_type_and_default_cases(self):
+        [node] = parse(
+            """
+match =>
+  as :Colour.RED => "red"
+  default => "other"
+end
+"""
+        )
+
+        self.assertIsInstance(node, MatchNode)
+        self.assertEqual(node.cases[0].pattern_type, N(Symbol("Colour.RED")))
+        self.assertFalse(node.cases[0].is_default)
+        self.assertTrue(node.cases[1].is_default)
+        self.assertEqual(node.cases[1].body, (StringLiteralNode("other"),))
+
+    def test_parses_match_pattern_examples(self):
+        [node] = parse(
+            """
+match =>
+  10 => "ten"
+  if > 5 => "big"
+  _ => "small"
+end
+"""
+        )
+        self.assertEqual(len(node.cases), 3)
+        self.assertIsInstance(node.cases[1].patterns[0], GuardPatternNode)
+        self.assertIsInstance(node.cases[2].patterns[0], WildcardPatternNode)
+
+        [node] = parse(
+            """
+match =>
+  [1, _, 3] => "a"
+  [1, $x = _, 3] => "b"
+  [1, ..., 3] => "c"
+  [1, ..., 3, $y = ..., 6] => "d"
+end
+"""
+        )
+        self.assertIsInstance(node.cases[0].patterns[0], ListPatternNode)
+        self.assertIsInstance(node.cases[1].patterns[0].items[1], BindingPatternNode)
+        self.assertIsInstance(node.cases[2].patterns[0].items[1], RestPatternNode)
+        self.assertIsInstance(node.cases[3].patterns[0].items[3], BindingPatternNode)
+
+        [node] = parse(
+            """
+match =>
+  as x: OtherType => "named"
+  as :Number if > 5 => "guarded"
+  as :Obj(param, param) => "obj"
+  as y => "default"
+end
+"""
+        )
+        self.assertIsInstance(node.cases[0].patterns[0], TypePatternNode)
+        self.assertEqual(node.cases[0].patterns[0].name, Symbol("x"))
+        self.assertTrue(node.cases[1].patterns[0].guard)
+        self.assertEqual(len(node.cases[2].patterns[0].fields), 2)
+
+        [node] = parse(
+            """
+match =>
+  1, 2 => "stack"
+  3 || 4, 5 || 6 => "alts"
+  if > 10 || if < 4, [1, 2, 3] => "mixed"
+  _, _ => "default"
+end
+"""
+        )
+        self.assertEqual(len(node.cases[0].patterns), 2)
+        self.assertIsInstance(node.cases[1].patterns[0], OrPatternNode)
+        self.assertIsInstance(node.cases[2].patterns[0], OrPatternNode)
 
     def test_parses_list_literal_as_item_expressions(self):
         [node] = parse("[1, +(2, 3), \"x\"]")
