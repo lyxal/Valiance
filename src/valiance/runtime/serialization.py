@@ -15,7 +15,7 @@ from valiance.runtime.bytecode import (
     Program,
 )
 
-MAGIC = b"VLNCBC\x02"
+MAGIC = b"VLNCBC\x03"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -25,20 +25,21 @@ _OP_TO_BYTE = {
     OpCode.MAKE_FUNCTION: 0x05,
     OpCode.CALL: 0x06,
     OpCode.BUILD_LIST: 0x07,
-    OpCode.BUILD_TUPLE: 0x08,
-    OpCode.BUILD_RECORD: 0x09,
-    OpCode.BUILD_DICT: 0x0A,
-    OpCode.MAKE_OBJECT_CONSTRUCTOR: 0x0B,
-    OpCode.MAKE_ENUM_MEMBER: 0x0C,
-    OpCode.GET_FIELD: 0x0D,
-    OpCode.SET_FIELD: 0x0E,
-    OpCode.JUMP: 0x0F,
-    OpCode.JUMP_IF_FALSE: 0x10,
-    OpCode.POP: 0x11,
-    OpCode.RETURN: 0x12,
-    OpCode.CALL_RESOLVED_ELEMENT: 0x13,
-    OpCode.JUMP_IF_MATCH: 0x14,
-    OpCode.MATCH_ERROR: 0x15,
+    OpCode.BUILD_STRING: 0x08,
+    OpCode.BUILD_TUPLE: 0x09,
+    OpCode.BUILD_RECORD: 0x0A,
+    OpCode.BUILD_DICT: 0x0B,
+    OpCode.MAKE_OBJECT_CONSTRUCTOR: 0x0C,
+    OpCode.MAKE_ENUM_MEMBER: 0x0D,
+    OpCode.GET_FIELD: 0x0E,
+    OpCode.SET_FIELD: 0x0F,
+    OpCode.JUMP: 0x10,
+    OpCode.JUMP_IF_FALSE: 0x11,
+    OpCode.POP: 0x12,
+    OpCode.RETURN: 0x13,
+    OpCode.CALL_RESOLVED_ELEMENT: 0x14,
+    OpCode.JUMP_IF_MATCH: 0x15,
+    OpCode.MATCH_ERROR: 0x16,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 

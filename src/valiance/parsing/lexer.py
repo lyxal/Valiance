@@ -39,6 +39,7 @@ class Token:
     line: int
     column: int
     offset: int
+    raw: str | None = None
 
 
 class LexError(SyntaxError):
@@ -199,11 +200,19 @@ class _Lexer:
         line, col, offset = self.line, self.column, self.index
         self._advance()
         pieces: list[str] = []
+        interpolation_depth = 0
         while not self._at_end:
             char = self._advance()
-            if char == '"':
+            if char == '"' and interpolation_depth == 0:
                 self.tokens.append(
-                    Token(TokenKind.STRING, "".join(pieces), line, col, offset)
+                    Token(
+                        TokenKind.STRING,
+                        "".join(pieces),
+                        line,
+                        col,
+                        offset,
+                        self.source[offset + 1 : self.index - 1],
+                    )
                 )
                 return
             if char == "\\":
@@ -214,9 +223,31 @@ class _Lexer:
                     pieces.append("\\" + escaped)
                 else:
                     pieces.append(escaped)
+            elif interpolation_depth > 0 and char == '"':
+                pieces.append(char)
+                self._string_interpolation_nested_string(pieces)
             else:
                 pieces.append(char)
+                if char == "$" and self._peek() == "{":
+                    pieces.append(self._advance())
+                    interpolation_depth += 1
+                elif interpolation_depth > 0 and char == "{":
+                    interpolation_depth += 1
+                elif interpolation_depth > 0 and char == "}":
+                    interpolation_depth -= 1
         self._fail("unterminated string", line, col)
+
+    def _string_interpolation_nested_string(self, pieces: list[str]) -> None:
+        while not self._at_end:
+            char = self._advance()
+            pieces.append(char)
+            if char == "\\":
+                if self._at_end:
+                    self._fail("unterminated string escape")
+                pieces.append(self._advance())
+            elif char == '"':
+                return
+        self._fail("unterminated nested string")
 
     def _starts_number(self) -> bool:
         char = self._peek()

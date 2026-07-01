@@ -172,6 +172,8 @@ class VirtualMachine:
                     self._call_resolved_element(frame, instruction.arg)
                 case OpCode.BUILD_LIST:
                     frame.stack.append(_pop_many(frame.stack, instruction.arg))
+                case OpCode.BUILD_STRING:
+                    frame.stack.append(_build_string(frame.stack, instruction.arg))
                 case OpCode.BUILD_TUPLE:
                     frame.stack.append(tuple(_pop_many(frame.stack, instruction.arg)))
                 case OpCode.BUILD_RECORD:
@@ -812,6 +814,20 @@ def _pop_many(stack: list[Any], count: int) -> list[Any]:
     return values
 
 
+def _build_string(stack: list[Any], template: tuple[object, ...]) -> str:
+    expression_count = sum(part is None for part in template)
+    values = iter(_pop_many(stack, expression_count))
+    pieces: list[str] = []
+    for part in template:
+        if part is None:
+            pieces.append(_string_value(next(values)))
+        elif isinstance(part, str):
+            pieces.append(part)
+        else:
+            raise RuntimeError(f"invalid string interpolation part {part!r}")
+    return "".join(pieces)
+
+
 def _load_name(name: str, locals_: dict[str, Any], globals_: dict[str, Any]) -> Any:
     if name in locals_:
         return locals_[name]
@@ -957,6 +973,33 @@ def _format_value(value: Any) -> str:
         )
         return f"{value.type_name}{{{items}}}"
     return repr(value)
+
+
+def _string_value(value: Any) -> str:
+    if isinstance(value, Decimal):
+        if value == value.to_integral_value():
+            return format(value.quantize(Decimal(1)), "f")
+        return format(value.normalize(), "f")
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "[" + ", ".join(_string_value(item) for item in value) + "]"
+    if is_list_like(value):
+        return "<lazy list>"
+    if isinstance(value, tuple):
+        return "(" + ", ".join(_string_value(item) for item in value) + ")"
+    if isinstance(value, dict):
+        items = ", ".join(
+            f"{_string_value(key)}: {_string_value(item)}"
+            for key, item in value.items()
+        )
+        return "{" + items + "}"
+    if isinstance(value, ObjectValue):
+        items = ", ".join(
+            f"{name}: {_string_value(item)}" for name, item in value.fields.items()
+        )
+        return f"{value.type_name}{{{items}}}"
+    return str(value)
 
 
 def _runtime_type_name(value: Any) -> str:

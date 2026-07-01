@@ -161,6 +161,19 @@ triple "H"
 """
         self.assertEqual(execute(source), ["HHH"])
 
+    def test_executes_string_interpolation(self):
+        source = """
+$name = "Valiance"
+"Hello, $name: ${1 + 2}"
+"""
+        self.assertEqual(execute(source), ["Hello, Valiance: 3"])
+
+    def test_string_interpolation_formats_values(self):
+        self.assertEqual(
+            execute('"Values: ${[1, 2]}, ${"text"}"'),
+            ["Values: [1, 2], text"],
+        )
+
     def test_executes_imported_component_definition(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -348,24 +361,24 @@ end
                 """
 [1, 99, 3]
 match =>
-  [1, $x = _, 3] => $x
-  _ => 0
+  [1, $x = _, 3] => "3 items, the middle is ${x}"
+  _ => "no"
 end
 """
             ),
-            [Decimal("99")],
+            ["3 items, the middle is 99"],
         )
         self.assertEqual(
             execute(
                 """
 [1, 2, 3, 4, 6]
 match =>
-  [1, ..., 3, $y = ..., 6] => $y length
-  _ => 0
+  [1, ..., 3, $y = ..., 6] => "Captured ${$y length} item"
+  _ => "no"
 end
 """
             ),
-            [Decimal("1")],
+            ["Captured 1 item"],
         )
 
     def test_executes_match_type_guards_destructure_and_stack_patterns(self):
@@ -375,7 +388,7 @@ end
 6
 match =>
   as :Number if > 5 => "Type match with guard"
-  as y => $y
+  as y => "Default named type match: ${y}"
 end
 """
             ),
@@ -390,12 +403,12 @@ object Pair =>
 end
 Pair(5, 5)
 match =>
-  as :Pair(param, param) => $param
-  _ => 0
+  as :Pair(param, param) => "Destructured object with ${param}"
+  _ => "no"
 end
 """
             ),
-            [Decimal("5")],
+            ["Destructured object with 5"],
         )
         self.assertEqual(
             execute(

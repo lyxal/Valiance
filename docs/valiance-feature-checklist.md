@@ -70,9 +70,9 @@ Current audit total: 269 / 724 items complete (37.2%).
 - [x] Parse double-quoted string literals.
 - [x] Allow literal newlines inside strings.
 - [x] Support escaping quotes, backslashes, and dollar signs.
-- [ ] Support `$identifier` interpolation.
-- [ ] Support `${expression}` interpolation.
-- [ ] Convert interpolated values to their string representations.
+- [x] Support `$identifier` interpolation.
+- [x] Support `${expression}` interpolation.
+- [x] Convert interpolated values to their string representations.
 - [x] Provide the `String` type.
 - [ ] Support string indexing and slicing.
 

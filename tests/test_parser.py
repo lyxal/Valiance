@@ -24,6 +24,7 @@ from valiance.asts import (
     RestPatternNode,
     SetVariableNode,
     SourceLocation,
+    StringInterpolationNode,
     StringLiteralNode,
     Symbol,
     TagApplicationNode,
@@ -89,6 +90,47 @@ class ParserTests(unittest.TestCase):
                 ElementNode(Symbol("+")),
                 SetVariableNode(Symbol("answer")),
             ],
+        )
+
+    def test_parses_string_identifier_interpolation(self):
+        self.assertEqual(
+            parse('"Hello, $name"'),
+            [
+                StringInterpolationNode(
+                    ("Hello, ", (GetVariableNode(Symbol("name")),)),
+                ),
+            ],
+        )
+
+    def test_parses_string_expression_interpolation(self):
+        self.assertEqual(
+            parse('"Count is ${1 + 2}"'),
+            [
+                StringInterpolationNode(
+                    (
+                        "Count is ",
+                        (
+                            NumberLiteralNode("1"),
+                            NumberLiteralNode("2"),
+                            ElementNode(Symbol("+")),
+                        ),
+                    ),
+                ),
+            ],
+        )
+        self.assertEqual(
+            parse('"Hello, ${name}"'),
+            [
+                StringInterpolationNode(
+                    ("Hello, ", (GetVariableNode(Symbol("name")),)),
+                ),
+            ],
+        )
+
+    def test_escaped_dollar_stays_literal_in_string(self):
+        self.assertEqual(
+            parse('"Cost: \\$5"'),
+            [StringLiteralNode("Cost: $5")],
         )
 
     def test_lowers_infix_chain_to_stack_order(self):

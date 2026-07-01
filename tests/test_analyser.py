@@ -25,6 +25,7 @@ from valiance.asts import (
     IfNode,
     ListLiteralNode,
     NumberLiteralNode,
+    StringInterpolationNode,
     StringLiteralNode,
     TagApplicationNode,
     TypedCallNode,
@@ -933,6 +934,22 @@ end
         self.assertIsInstance(typed[-1], TypedCallNode)
         self.assertEqual(typed[-1].overload.params, (String, String))
         self.assertEqual(typed[-1].overload.actual_returns, (String,))
+
+    def test_string_interpolation_has_string_type(self):
+        typed = analyse(
+            [
+                StringInterpolationNode(
+                    (
+                        "x=",
+                        (NumberLiteralNode("1"),),
+                        ", doubled=",
+                        (NumberLiteralNode("2"), ElementNode(DOUBLE)),
+                    )
+                ),
+            ],
+        )
+
+        self.assertEqual(typed[-1].typ, String)
 
     def test_call_node_reports_non_function_values(self):
         analyser = Analyser(Environment())

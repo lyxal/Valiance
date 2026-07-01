@@ -452,7 +452,6 @@ assuming syntax exists, check `docs/valiance-feature-checklist.md` and
 Known parser-facing gaps include:
 
 - `_` placeholders and parent-stack substitution.
-- String interpolation.
 - Quick functions using `'chain`.
 - Indexing and slicing syntax beyond `.field` and `$.field`.
 - Cast syntax such as `as Type` and `as! Type`.
@@ -465,4 +464,3 @@ Known parser-facing gaps include:
 
 When implementing one of these, prefer adding the parser shape first, then
 making the analyser/runtime reject it explicitly if later stages are not ready.
-

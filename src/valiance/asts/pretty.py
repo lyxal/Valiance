@@ -15,6 +15,7 @@ from valiance.asts.nodes import (
     ImportNode,
     NumberLiteralNode,
     SetVariableNode,
+    StringInterpolationNode,
     StringLiteralNode,
     TagApplicationNode,
     TypedCallNode,
@@ -55,6 +56,18 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
         return f"NumberLiteralNode(value={value.value!r}{_location_arg(value)})"
     if isinstance(value, StringLiteralNode):
         return f"StringLiteralNode(value={value.value!r}{_location_arg(value)})"
+    if isinstance(value, StringInterpolationNode):
+        lines = [f"StringInterpolationNode({_location_arg(value)}, parts=["]
+        for part in value.parts:
+            if isinstance(part, str):
+                lines.append(f"  {part!r}")
+            else:
+                lines.append("  expression=[")
+                for node in part:
+                    lines.extend(_indent(_pretty(node, level + 1).splitlines(), 4))
+                lines.append("  ]")
+        lines.append("])")
+        return "\n".join(lines)
     if isinstance(value, ElementNode):
         if not value.modifier_args:
             return f"ElementNode(name={value.name}{_location_arg(value)})"

@@ -39,6 +39,7 @@ from valiance.asts import (
     RestPatternNode,
     ReturnNode,
     SetVariableNode,
+    StringInterpolationNode,
     StringLiteralNode,
     TagApplicationNode,
     TupleLiteralNode,
@@ -95,6 +96,8 @@ class _Compiler:
                 self.emit(OpCode.PUSH_CONST, _number(value, node))
             case StringLiteralNode(value):
                 self.emit(OpCode.PUSH_CONST, value)
+            case StringInterpolationNode(parts):
+                self.string_interpolation(parts)
             case GetVariableNode(name):
                 self.emit(OpCode.LOAD_VAR, name.text)
             case SetVariableNode(name):
@@ -179,6 +182,19 @@ class _Compiler:
         for item in items:
             self.expression(item)
         self.emit(op, len(items))
+
+    def string_interpolation(
+        self,
+        parts: tuple[str | tuple[ASTNode, ...], ...],
+    ) -> None:
+        template: list[str | None] = []
+        for part in parts:
+            if isinstance(part, str):
+                template.append(part)
+                continue
+            self.expression(part)
+            template.append(None)
+        self.emit(OpCode.BUILD_STRING, tuple(template))
 
     def object_declaration(self, node: ObjectNode) -> None:
         match node.kind.text:
@@ -470,6 +486,10 @@ def _literal_expression_value(nodes: tuple[ASTNode, ...]) -> object:
             return _number(value, node)
         case StringLiteralNode(value):
             return value
+        case StringInterpolationNode():
+            raise CompileError(
+                "object and enum default values must be literal values"
+            )
         case _:
             raise CompileError(
                 "object and enum default values must be literal values"
@@ -531,6 +551,8 @@ def _literal_pattern_value(node: ASTNode) -> object:
             return _number(value, node)
         case StringLiteralNode(value):
             return value
+        case StringInterpolationNode():
+            raise CompileError(f"cannot compile interpolated string pattern {node!r}")
         case _:
             raise CompileError(f"cannot compile literal pattern {node!r}")
 

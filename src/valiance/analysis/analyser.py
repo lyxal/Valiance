@@ -29,6 +29,7 @@ from valiance.asts import (
     OrPatternNode,
     RecordLiteralNode,
     RestPatternNode,
+    StringInterpolationNode,
     StringLiteralNode,
     TagApplicationNode,
     TraitRequirementNode,
@@ -532,6 +533,8 @@ class Analyser:
                         TypedNode(node, T.String)
                     )
                 }
+            case StringInterpolationNode():
+                return self._string_interpolation(branch, node)
             case ElementNode():
                 return self._element(branch, node)
             case TagApplicationNode():
@@ -866,6 +869,37 @@ class Analyser:
     ) -> None:
         for overload in _callable_overloads(typed_node.typ):
             self.env.define_overload(name, overload)
+
+    def _string_interpolation(
+        self,
+        branch: AnalysisBranch,
+        node: StringInterpolationNode,
+    ) -> set[AnalysisBranch]:
+        current = BranchSet.one(branch)
+        expression_count = 0
+        for part in node.parts:
+            if isinstance(part, str):
+                continue
+            expression_count += 1
+            current = self.analyse_block(current, part)
+            if not current:
+                return set()
+            if any(not output.stack for output in current):
+                self._diagnose(
+                    "string interpolation expression must leave a value",
+                    node,
+                )
+                return set()
+        return {
+            _replace_branch(
+                output,
+                stack=_pop_stack(output.stack, expression_count).push(T.String),
+                typed_body=branch.typed_body,
+            )
+            .append_typed(TypedNode(node, T.String))
+            for output in current
+            if len(output.stack) >= expression_count
+        }
 
     def _element(
         self,

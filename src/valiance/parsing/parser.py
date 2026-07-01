@@ -43,6 +43,7 @@ from valiance.asts import (
     ReturnNode,
     SetVariableNode,
     SourceLocation,
+    StringInterpolationNode,
     StringLiteralNode,
     Symbol,
     TagApplicationNode,
@@ -548,10 +549,10 @@ class Parser:
             )
         if self._match(TokenKind.STRING):
             token = self._previous
-            return LiteralPatternNode(
-                StringLiteralNode(token.value, location=_loc(token)),
-                location=_loc(token),
-            )
+            string_node = self._string_node(token)
+            if isinstance(string_node, StringLiteralNode):
+                return LiteralPatternNode(string_node, location=_loc(token))
+            return ExpressionPatternNode((string_node,), location=_loc(token))
 
         start = self._current
         expression = self._chain_until(terminators)
@@ -704,7 +705,7 @@ class Parser:
         if self._match(TokenKind.STRING):
             token = self._previous
             return _ChainPiece(
-                (StringLiteralNode(token.value, location=_loc(token)),),
+                (self._string_node(token),),
                 True,
             )
         if self._match(TokenKind.DOLLAR):
@@ -813,6 +814,13 @@ class Parser:
                 is_element=True,
             )
         self._error("expected expression")
+
+    def _string_node(self, token: Token) -> ASTNode:
+        raw = token.raw if token.raw is not None else token.value
+        parts = _string_parts(raw, token)
+        if len(parts) == 1 and isinstance(parts[0], str):
+            return StringLiteralNode(parts[0], location=_loc(token))
+        return StringInterpolationNode(parts, location=_loc(token))
 
     def _qualified_symbol(self, start: Token) -> Symbol:
         parts = [start.value]
@@ -1272,3 +1280,114 @@ def _lower_chain_segment(segment: list[_ChainPiece]) -> tuple[ASTNode, ...]:
             )
 
     return tuple(node for piece in segment for node in piece.nodes)
+
+
+def _string_parts(raw: str, token: Token) -> tuple[str | tuple[ASTNode, ...], ...]:
+    parts: list[str | tuple[ASTNode, ...]] = []
+    literal: list[str] = []
+    index = 0
+    while index < len(raw):
+        char = raw[index]
+        if char == "\\":
+            if index + 1 >= len(raw):
+                literal.append("\\")
+                index += 1
+                continue
+            escaped = raw[index + 1]
+            if escaped in {'"', "\\", "$"}:
+                literal.append(escaped)
+            else:
+                literal.append("\\" + escaped)
+            index += 2
+            continue
+        if char != "$":
+            literal.append(char)
+            index += 1
+            continue
+        if index + 1 < len(raw) and raw[index + 1] == "{":
+            end = _interpolation_end(raw, index + 2, token)
+            expression = raw[index + 2 : end]
+            if literal:
+                parts.append("".join(literal))
+                literal.clear()
+            parsed = _interpolation_expression(expression, token)
+            if not parsed:
+                raise ParseError(
+                    f"empty string interpolation at {token.line}:{token.column}"
+                )
+            parts.append(tuple(parsed))
+            index = end + 1
+            continue
+        if index + 1 < len(raw) and _is_string_ident_start(raw[index + 1]):
+            start = index + 1
+            end = start + 1
+            while end < len(raw) and _is_string_ident_part(raw[end]):
+                end += 1
+            if literal:
+                parts.append("".join(literal))
+                literal.clear()
+            parts.append(
+                (GetVariableNode(Symbol(raw[start:end]), location=_loc(token)),)
+            )
+            index = end
+            continue
+        literal.append("$")
+        index += 1
+    if literal or not parts:
+        parts.append("".join(literal))
+    return tuple(parts)
+
+
+def _interpolation_expression(
+    expression: str,
+    token: Token,
+) -> tuple[ASTNode, ...]:
+    stripped = expression.strip()
+    if stripped and _is_string_ident_start(stripped[0]) and all(
+        _is_string_ident_part(char) for char in stripped[1:]
+    ):
+        return (GetVariableNode(Symbol(stripped), location=_loc(token)),)
+    return tuple(parse(expression))
+
+
+def _interpolation_end(raw: str, start: int, token: Token) -> int:
+    depth = 1
+    index = start
+    while index < len(raw):
+        char = raw[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == '"':
+            index = _skip_raw_string(raw, index + 1, token)
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    raise ParseError(
+        f"unterminated string interpolation at {token.line}:{token.column}"
+    )
+
+
+def _skip_raw_string(raw: str, start: int, token: Token) -> int:
+    index = start
+    while index < len(raw):
+        if raw[index] == "\\":
+            index += 2
+            continue
+        if raw[index] == '"':
+            return index + 1
+        index += 1
+    raise ParseError(f"unterminated nested string at {token.line}:{token.column}")
+
+
+def _is_string_ident_start(char: str) -> bool:
+    return char == "_" or char.isalpha()
+
+
+def _is_string_ident_part(char: str) -> bool:
+    return char == "_" or char.isalpha() or char.isdigit()

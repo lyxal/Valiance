@@ -82,6 +82,13 @@ class StringLiteralNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class StringInterpolationNode(ASTNode):
+    """A string literal with embedded expressions."""
+
+    parts: tuple[str | tuple[ASTNode, ...], ...] = ()
+
+
+@dataclass(frozen=True)
 class ElementNode(ASTNode):
     """An element, such as an operator or function name."""
 

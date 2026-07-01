@@ -18,6 +18,7 @@ class OpCode(Enum):
     CALL = "call"
     CALL_RESOLVED_ELEMENT = "call_resolved_element"
     BUILD_LIST = "build_list"
+    BUILD_STRING = "build_string"
     BUILD_TUPLE = "build_tuple"
     BUILD_RECORD = "build_record"
     BUILD_DICT = "build_dict"
