@@ -17,6 +17,7 @@ class OpCode(Enum):
     MAKE_FUNCTION = "make_function"
     CALL = "call"
     CALL_RESOLVED_ELEMENT = "call_resolved_element"
+    CHECK_CAST = "check_cast"
     BUILD_LIST = "build_list"
     BUILD_STRING = "build_string"
     BUILD_TUPLE = "build_tuple"

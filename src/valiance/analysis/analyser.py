@@ -14,6 +14,7 @@ from valiance.asts import (
     ASTNode,
     AtNode,
     BindingPatternNode,
+    CastNode,
     DefineNode,
     DictLiteralNode,
     ElementNode,
@@ -546,6 +547,8 @@ class Analyser:
                 return self._element(branch, node)
             case TagApplicationNode():
                 return self._tag_application(branch, node)
+            case CastNode():
+                return self._cast(branch, node)
             case FunctionNode():
                 result = self._analyse_function_literal(branch, node)
                 if result is None:
@@ -1054,6 +1057,43 @@ class Analyser:
         stack = T.TypeStack((*branch.stack.items[:-1], tagged))
         return {branch.with_stack(stack).append_typed(TypedNode(node, tagged))}
 
+    def _cast(
+        self,
+        branch: AnalysisBranch,
+        node: CastNode,
+    ) -> set[AnalysisBranch]:
+        target = T.normalize(node.typ)
+        if not branch.stack:
+            self._diagnose(
+                f"empty stack when casting to {T.show(target)}",
+                node,
+            )
+            return {branch.append_typed(TypedNode(node, None))}
+
+        source = branch.stack[-1]
+        if node.checked:
+            if T.assignable(source, target, self.env.context):
+                self._diagnose(
+                    f"checked cast to {T.show(target)} is already statically safe",
+                    node,
+                )
+                return set()
+            if not T.assignable(target, source, self.env.context):
+                self._diagnose(
+                    f"cannot cast {T.show(source)} to {T.show(target)}",
+                    node,
+                )
+                return set()
+        elif not T.assignable(source, target, self.env.context):
+            self._diagnose(
+                f"cannot safely cast {T.show(source)} to {T.show(target)}",
+                node,
+            )
+            return set()
+
+        stack = T.TypeStack((*branch.stack.items[:-1], target))
+        return {branch.with_stack(stack).append_typed(TypedNode(node, target))}
+
     def _call(
         self,
         branch: AnalysisBranch,
@@ -1254,6 +1294,19 @@ class Analyser:
         node: ListLiteralNode,
     ) -> set[AnalysisBranch]:
         if not node.items:
+            if node.typ is not None:
+                typ = T.normalize(node.typ)
+                if not isinstance(typ, T.CollectionType):
+                    self._diagnose(
+                        f"empty list cast needs a list type, got {T.show(typ)}",
+                        node,
+                    )
+                    return set()
+                return {
+                    branch.with_stack(branch.stack.push(typ)).append_typed(
+                        TypedNode(node, typ)
+                    )
+                }
             self._diagnose(
                 "empty list literal requires a type annotation or cast",
                 node,

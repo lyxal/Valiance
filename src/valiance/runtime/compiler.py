@@ -14,6 +14,7 @@ from valiance.asts import (
     AtNode,
     BindingPatternNode,
     BreakNode,
+    CastNode,
     DefineNode,
     DictLiteralNode,
     ElementNode,
@@ -64,7 +65,23 @@ from valiance.runtime.bytecode import (
     Program,
 )
 from valiance.symbols import Symbol
-from valiance.types import FunctionType
+from valiance.types import (
+    ArrayExactType,
+    ArrayMinType,
+    CollectionType,
+    FunctionType,
+    IntersectionType,
+    ListExactType,
+    ListMinType,
+    ListRuggedType,
+    NominalType,
+    NoneTypeNode,
+    TaggedType,
+    TupleType,
+    Type,
+    UnionType,
+    normalize,
+)
 
 
 class CompileError(Exception):
@@ -125,6 +142,9 @@ class _Compiler:
                     self.emit(OpCode.CALL_RESOLVED_ELEMENT, resolved)
             case TagApplicationNode():
                 pass
+            case CastNode(typ, checked):
+                if checked:
+                    self.emit(OpCode.CHECK_CAST, _cast_type_spec(typ))
             case FunctionNode():
                 self.emit(
                     OpCode.MAKE_FUNCTION,
@@ -653,6 +673,32 @@ def _type_pattern_name(typ: object) -> str:
     if not isinstance(typ, NominalType):
         raise CompileError(f"cannot compile match type pattern {typ}")
     return typ.name.text
+
+
+def _cast_type_spec(typ: Type) -> object:
+    typ = normalize(typ)
+    if isinstance(typ, NoneTypeNode):
+        return ("none",)
+    if isinstance(typ, NominalType):
+        return ("nominal", typ.name.text)
+    if isinstance(typ, UnionType):
+        return ("union", tuple(_cast_type_spec(item) for item in typ.items))
+    if isinstance(typ, IntersectionType):
+        return ("intersection", tuple(_cast_type_spec(item) for item in typ.items))
+    if isinstance(typ, TupleType):
+        return ("tuple", tuple(_cast_type_spec(item) for item in typ.params))
+    if isinstance(typ, CollectionType):
+        kind = {
+            ListExactType: "list_exact",
+            ListMinType: "list_min",
+            ListRuggedType: "list_rugged",
+            ArrayExactType: "array_exact",
+            ArrayMinType: "array_min",
+        }[type(typ)]
+        return ("collection", kind, typ.rank, _cast_type_spec(typ.base))
+    if isinstance(typ, TaggedType):
+        return _cast_type_spec(typ.inner)
+    raise CompileError(f"cannot compile checked cast to {typ}")
 
 
 def _is_default_case(patterns: tuple[MatchPatternNode, ...]) -> bool:

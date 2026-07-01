@@ -44,6 +44,7 @@ _OP_TO_BYTE = {
     OpCode.UNFOLD: 0x18,
     OpCode.GET_INDEX: 0x19,
     OpCode.SET_INDEX: 0x1A,
+    OpCode.CHECK_CAST: 0x1B,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 

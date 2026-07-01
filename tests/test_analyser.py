@@ -17,6 +17,7 @@ from valiance.analysis.builtins import BUILTIN_ELEMENTS
 from valiance.asts import (
     BreakNode,
     CallNode,
+    CastNode,
     ElementNode,
     FieldAccessNode,
     ForNode,
@@ -1361,6 +1362,41 @@ $n
             analyser.diagnostics,
             ["empty list literal requires a type annotation or cast"],
         )
+
+    def test_empty_list_cast_supplies_list_type(self):
+        typed = analyse([ListLiteralNode((), C(ListExactType, Number))])
+
+        self.assertEqual(typed[0].typ, C(ListExactType, Number))
+
+    def test_safe_cast_requires_assignability(self):
+        analyser = Analyser(Environment())
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch()),
+            (StringLiteralNode("x"), CastNode(Number)),
+        )
+
+        self.assertEqual(len(branches), 0)
+        self.assertEqual(
+            analyser.diagnostics,
+            ["cannot safely cast String to Number"],
+        )
+
+    def test_checked_cast_narrows_broader_static_type(self):
+        typed = analyse(
+            [
+                ListLiteralNode(
+                    (
+                        (NumberLiteralNode("1"),),
+                        (StringLiteralNode("x"),),
+                    )
+                ),
+                ElementNode(Symbol("head")),
+                CastNode(Number, checked=True),
+            ]
+        )
+
+        self.assertEqual(typed[-1].typ, Number)
 
     def test_list_literal_forks_stack_and_pops_max_consumed_inputs(self):
         analyser = Analyser(default_environment())

@@ -5,6 +5,7 @@ from valiance.asts import (
     AtNode,
     BindingPatternNode,
     BreakNode,
+    CastNode,
     DefineNode,
     ElementNode,
     EnumMemberNode,
@@ -183,6 +184,27 @@ class ParserTests(unittest.TestCase):
                 ElementNode(Symbol("println")),
             ],
         )
+
+    def test_parses_safe_and_checked_casts(self):
+        self.assertEqual(
+            parse("1 as Number"),
+            [
+                NumberLiteralNode("1"),
+                CastNode(Number),
+            ],
+        )
+        self.assertEqual(
+            parse("value as! String"),
+            [
+                ElementNode(Symbol("value")),
+                CastNode(String, checked=True),
+            ],
+        )
+
+    def test_parses_empty_list_cast_as_literal_annotation(self):
+        [node] = parse("[] as Number+")
+
+        self.assertEqual(node, ListLiteralNode((), C(ListExactType, Number)))
 
     def test_parses_parentheses_as_grouping(self):
         self.assertEqual(

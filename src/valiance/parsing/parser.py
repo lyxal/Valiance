@@ -14,6 +14,7 @@ from valiance.asts import (
     AtNode,
     BindingPatternNode,
     BreakNode,
+    CastNode,
     DefineNode,
     DictLiteralNode,
     ElementNode,
@@ -808,12 +809,16 @@ class Parser:
             )
         if self._match(TokenKind.LBRACKET):
             token = self._previous
+            items = self._comma_expressions(TokenKind.RBRACKET)
+            cast = self._empty_list_cast() if not items else None
             return _ChainPiece(
                 (
                     ListLiteralNode(
-                        self._comma_expressions(TokenKind.RBRACKET),
+                        items,
+                        cast.typ if cast is not None else None,
                         location=_loc(token),
                     ),
+                    *((cast,) if cast is not None and cast.checked else ()),
                 ),
                 True,
             )
@@ -876,6 +881,8 @@ class Parser:
             return _ChainPiece((self._foreach(self._previous),), True)
         if self._match_ident("match"):
             return _ChainPiece((self._match_node(self._previous),), True)
+        if self._match_ident("as"):
+            return self._cast(self._previous)
         if self._match_ident("break"):
             token = self._previous
             return _ChainPiece(
@@ -924,6 +931,23 @@ class Parser:
                 is_element=True,
             )
         self._error("expected expression")
+
+    def _cast(self, start: Token) -> _ChainPiece:
+        checked = self._check_op("!")
+        if checked:
+            self._advance()
+        return _ChainPiece(
+            (CastNode(self.parse_type_expression(), checked, location=_loc(start)),),
+        )
+
+    def _empty_list_cast(self) -> CastNode | None:
+        if self._check_ident("as"):
+            start = self._advance()
+            [cast] = self._cast(start).nodes
+            if not isinstance(cast, CastNode):
+                self._error("expected cast")
+            return cast
+        return None
 
     def _string_node(self, token: Token) -> ASTNode:
         raw = token.raw if token.raw is not None else token.value

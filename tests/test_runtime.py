@@ -115,6 +115,22 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotIn(OpCode.LOAD_ELEMENT, ops)
         self.assertEqual(run(program), [Decimal("3")])
 
+    def test_checked_cast_emits_runtime_check(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse('if true => 1 else => "x" end as! String'))
+        self.assertEqual(analyser.diagnostics, [])
+
+        program = compile_program(typed)
+        ops = tuple(instruction.op for instruction in program.main.instructions)
+
+        self.assertIn(OpCode.CHECK_CAST, ops)
+        with self.assertRaises(RuntimeError) as error:
+            run(program)
+        self.assertIn("checked cast failed", str(error.exception))
+
+    def test_empty_list_cast_executes_as_empty_list(self):
+        self.assertEqual(execute("[] as Number+"), [[]])
+
     def test_element_disambiguation_controls_runtime_vectorisation_depth(self):
         self.assertEqual(
             execute("[[1, 2], [3, 4]] +[Number+, _] [10, 20]"),

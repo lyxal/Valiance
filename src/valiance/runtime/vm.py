@@ -170,6 +170,14 @@ class VirtualMachine:
                     self._call_stack_top(frame)
                 case OpCode.CALL_RESOLVED_ELEMENT:
                     self._call_resolved_element(frame, instruction.arg)
+                case OpCode.CHECK_CAST:
+                    value = _pop(frame.stack, "checked cast")
+                    if not _matches_cast_type(value, instruction.arg):
+                        raise RuntimeError(
+                            f"checked cast failed: {_format_value(value)} is "
+                            f"{_runtime_type_name(value)}"
+                        )
+                    frame.stack.append(value)
                 case OpCode.BUILD_LIST:
                     frame.stack.append(_pop_many(frame.stack, instruction.arg))
                 case OpCode.BUILD_STRING:
@@ -1034,6 +1042,65 @@ def _matches_type_pattern(value: Any, pattern: str) -> bool:
     return isinstance(member_name, str) and (
         member_name == pattern or f"{value.type_name}.{member_name}" == pattern
     )
+
+
+def _matches_cast_type(value: Any, spec: object) -> bool:
+    if not isinstance(spec, tuple) or not spec:
+        return False
+    kind = spec[0]
+    if kind == "none":
+        return value is None
+    if kind == "nominal":
+        return isinstance(spec[1], str) and _matches_type_pattern(value, spec[1])
+    if kind == "union":
+        return any(_matches_cast_type(value, item) for item in spec[1])
+    if kind == "intersection":
+        return all(_matches_cast_type(value, item) for item in spec[1])
+    if kind == "tuple":
+        if not isinstance(value, tuple) or len(value) != len(spec[1]):
+            return False
+        return all(
+            _matches_cast_type(item, item_spec)
+            for item, item_spec in zip(value, spec[1], strict=True)
+        )
+    if kind == "collection":
+        _, collection_kind, rank, base = spec
+        if not is_list_like(value):
+            return False
+        return _matches_collection_cast(value, collection_kind, rank, base)
+    return False
+
+
+def _matches_collection_cast(
+    value: Any,
+    kind: str,
+    rank: int,
+    base: object,
+) -> bool:
+    if kind in {"array_exact", "array_min"} and not is_eager_sequence(value):
+        return False
+    if rank <= 0:
+        return _matches_cast_type(value, base)
+    if not is_list_like(value):
+        return False
+    if kind in {"list_exact", "array_exact"}:
+        return all(
+            _matches_collection_cast(item, kind, rank - 1, base)
+            for item in value
+        )
+    if kind in {"list_min", "array_min"}:
+        return all(
+            _matches_collection_cast(item, kind, rank - 1, base)
+            or _matches_collection_cast(item, kind, rank, base)
+            for item in value
+        )
+    if kind == "list_rugged":
+        return all(
+            _matches_cast_type(item, base)
+            or _matches_collection_cast(item, kind, rank, base)
+            for item in value
+        )
+    return False
 
 
 def _bind_match_name(bindings: dict[str, Any], name: str, value: Any) -> bool:

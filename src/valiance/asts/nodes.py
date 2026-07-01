@@ -105,6 +105,14 @@ class TagApplicationNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class CastNode(ASTNode):
+    """Treat the top stack value as a target type."""
+
+    typ: Type
+    checked: bool = False
+
+
+@dataclass(frozen=True)
 class FunctionNode(ASTNode):
     """A function literal."""
 
@@ -341,6 +349,7 @@ class ListLiteralNode(ASTNode):
     """A list literal whose items are stack expressions."""
 
     items: tuple[tuple[ASTNode, ...], ...] = ()
+    typ: Type | None = None
 
 
 @dataclass(frozen=True)

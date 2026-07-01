@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 from valiance.asts.nodes import (
     ASTNode,
+    CastNode,
     ElementNode,
     FieldAccessNode,
     FunctionNode,
@@ -99,6 +100,12 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
         return f"FieldAccessNode(name={value.name}{_location_arg(value)})"
     if isinstance(value, TagApplicationNode):
         return f"TagApplicationNode(tag={_tag_label(value)}{_location_arg(value)})"
+    if isinstance(value, CastNode):
+        bang = "!" if value.checked else ""
+        return (
+            f"CastNode(as{bang} {_type_label(value.typ)}"
+            f"{_location_arg(value)})"
+        )
     return repr(value)
 
 
