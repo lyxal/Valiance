@@ -8,7 +8,12 @@ from decimal import Decimal
 from typing import Any
 
 import valiance.types as T
-from valiance.runtime_values import LazyList, is_finite_list_like, is_list_like
+from valiance.runtime_values import (
+    LazyList,
+    PanicSignal,
+    is_finite_list_like,
+    is_list_like,
+)
 from valiance.symbols import Symbol
 
 INTEGER = Symbol("Integer")
@@ -36,6 +41,7 @@ IS_POSITIVE = Symbol("positive?")
 DOUBLE = Symbol("double")
 TRUE = Symbol("true")
 FALSE = Symbol("false")
+PANIC = Symbol("panic")
 
 TRAIT_IMPLS = (
     (INTEGER, NUMBER),
@@ -141,6 +147,10 @@ def _head(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     for item in args[0]:
         return (item,)
     raise RuntimeError("head requires a non-empty list")
+
+
+def _panic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    raise PanicSignal(args[0])
 
 
 def _truth(value: bool) -> Decimal:
@@ -337,6 +347,10 @@ BUILTIN_ELEMENTS = (
     element(
         FALSE,
         overload((), (T.Boolean,), lambda args, ctx: (Decimal(0),)),
+    ),
+    element(
+        PANIC,
+        overload((T.V("Fault"),), (T.Never(),), _panic),
     ),
     element(
         PRINT,

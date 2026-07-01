@@ -218,6 +218,22 @@ class UnfoldNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class TryHandlerNode(ASTNode):
+    """One panic handler inside a try expression."""
+
+    typ: Type | None = None
+    body: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class TryNode(ASTNode):
+    """A panic-catching try/handle expression."""
+
+    body: tuple[ASTNode, ...] = ()
+    handlers: tuple[TryHandlerNode, ...] = ()
+
+
+@dataclass(frozen=True)
 class AtLevel:
     """One vectorisation stop level in an at expression."""
 

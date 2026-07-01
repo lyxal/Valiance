@@ -456,8 +456,7 @@ Known parser-facing gaps include:
 - Quick functions using `'chain`.
 - Cast syntax such as `as Type` and `as! Type`.
 - Import/module syntax.
-- `try/handle`, `assert`, `unfold`, `spawn`, `concurrent`, `external`, and
-  user-defined `cast` declarations.
+- `spawn`, `concurrent`, `external`, and user-defined `cast` declarations.
 - Generic parameter lists on declarations.
 - Preservation of some parsed declaration details that are currently accepted
   only loosely or discarded.

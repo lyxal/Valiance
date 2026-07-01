@@ -19,6 +19,8 @@ from valiance.asts.nodes import (
     StringInterpolationNode,
     StringLiteralNode,
     TagApplicationNode,
+    TryHandlerNode,
+    TryNode,
     TypedCallNode,
     TypedElementNode,
     TypedFunctionNode,
@@ -53,6 +55,10 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
         return _function_overload_typing(value, level)
     if isinstance(value, FunctionNode):
         return _function_node(value, level)
+    if isinstance(value, TryNode):
+        return _try_node(value, level)
+    if isinstance(value, TryHandlerNode):
+        return _try_handler_node(value, level)
     if isinstance(value, NumberLiteralNode):
         return f"NumberLiteralNode(value={value.value!r}{_location_arg(value)})"
     if isinstance(value, StringLiteralNode):
@@ -186,6 +192,26 @@ def _function_node(value: FunctionNode, level: int) -> str:
     lines.extend(["  ]", ")"])
     if value.location is not None:
         lines.insert(1, f"  location={_location_label(value)},")
+    return "\n".join(lines)
+
+
+def _try_node(value: TryNode, level: int) -> str:
+    lines = ["TryNode(", "  body=["]
+    for node in value.body:
+        lines.extend(_indent(_pretty(node, level + 1).splitlines(), 2))
+    lines.append("  ],")
+    lines.append("  handlers=[")
+    for handler in value.handlers:
+        lines.extend(_indent(_pretty(handler, level + 1).splitlines(), 2))
+    lines.extend(["  ]", ")"])
+    return "\n".join(lines)
+
+
+def _try_handler_node(value: TryHandlerNode, level: int) -> str:
+    lines = [f"TryHandlerNode(type={_type_label(value.typ)}, body=["]
+    for node in value.body:
+        lines.extend(_indent(_pretty(node, level + 1).splitlines()))
+    lines.append("])")
     return "\n".join(lines)
 
 

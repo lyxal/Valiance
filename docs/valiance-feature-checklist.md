@@ -651,13 +651,13 @@ Current audit total: 288 / 724 items complete (39.8%).
 - [ ] Provide success and error variants or constructors.
 - [ ] Provide the `Err` trait.
 - [ ] Provide the `Fault` trait.
-- [ ] Implement panic values and panic propagation.
+- [x] Implement panic values and panic propagation.
 - [ ] Attach `Panic[T]` element tags to panicking operations.
 - [ ] Distinguish intrinsic runtime faults from explicit panic where specified.
-- [ ] Parse `try/handle`.
-- [ ] Match handlers against panic or fault types.
-- [ ] Support recovery values from handlers.
-- [ ] Integrate handler return types with normal stack typing.
+- [x] Parse `try/handle`.
+- [x] Match handlers against panic or fault types.
+- [x] Support recovery values from handlers.
+- [x] Integrate handler return types with normal stack typing.
 - [ ] Provide optional/result propagation using `&`.
 - [ ] Provide the `?` optional/result helper.
 - [ ] Provide the `?!` helper.

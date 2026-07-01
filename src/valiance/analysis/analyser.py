@@ -39,6 +39,7 @@ from valiance.asts import (
     StringLiteralNode,
     TagApplicationNode,
     TraitRequirementNode,
+    TryNode,
     TupleLiteralNode,
     TypedCallNode,
     TypedElementNode,
@@ -653,6 +654,8 @@ class Analyser:
                 return self._foreach(branch, node)
             case MatchNode():
                 return self._match(branch, node)
+            case TryNode():
+                return self._try(branch, node)
             case BreakNode():
                 return self._break(branch, node)
             case _:
@@ -1763,6 +1766,68 @@ class Analyser:
                     .with_variables(variables)
                 )
 
+        if joined is None:
+            return set()
+        return {
+            joined.append_typed(
+                TypedNode(node, _returns_result_type(joined.stack.items))
+            )
+        }
+
+    def _try(
+        self,
+        branch: AnalysisBranch,
+        node: TryNode,
+    ) -> set[AnalysisBranch]:
+        if not node.handlers:
+            self._diagnose("try requires at least one handler", node)
+            return set()
+
+        body_outputs = self.analyse_block(BranchSet.one(branch), node.body)
+        outputs: set[AnalysisBranch] = set(body_outputs.branches)
+        for handler in node.handlers:
+            handler_outputs = self.analyse_block(
+                BranchSet.one(branch),
+                handler.body,
+            )
+            for output in handler_outputs:
+                if output.inputs != branch.inputs:
+                    self._diagnose("try handlers inferred different inputs", handler)
+                    continue
+                handler_result = _returns_result_type(output.stack.items)
+                if handler_result is None:
+                    handler_result = T.NoneType()
+                outputs.add(
+                    _refine_branch_like(branch, output)
+                    .with_stack(
+                        branch.stack.push(
+                            T.N(Symbol("PanicError"), handler_result)
+                        )
+                    )
+                    .append_typed(TypedNode(handler, handler_result))
+                )
+
+        if not outputs:
+            return set()
+
+        joined: AnalysisBranch | None = None
+        for output in outputs:
+            if joined is None:
+                joined = output
+                continue
+            if joined.inputs != output.inputs:
+                self._diagnose("try branches inferred different inputs", node)
+                return set()
+            stack = merge_stacks(joined.stack, output.stack)
+            variables = joined.variables.merge_against(
+                output.variables,
+                branch.variables,
+            )
+            joined = (
+                _refine_branch_like(branch, joined)
+                .with_stack(stack)
+                .with_variables(variables)
+            )
         if joined is None:
             return set()
         return {

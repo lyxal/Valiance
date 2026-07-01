@@ -43,6 +43,9 @@ The runtime implementation is small, but several files must evolve together.
 - Permitted object/record member writes compile to `SET_FIELD`, which returns a
   reconstructed value instead of mutating the original visible value.
 - `TagApplicationNode` is currently a compile-time no-op.
+- `TryNode` compiles to `TRY_BEGIN` / `TRY_END` plus handler jumps. Runtime
+  panics are carried by `PanicSignal` and caught by the nearest active handler
+  whose nominal type name matches, or by a catch-all handler.
 - `ForNode` is not compiled yet.
 - For typed functions with multiple inferred overload bodies, codegen currently
   picks the first typed overload body.
@@ -460,8 +463,8 @@ These are known constraints of the current runtime/codegen layer:
 - Full closure semantics should not be assumed; function values capture the
   current visible globals/locals shallowly at `MAKE_FUNCTION`.
 - Built-in runtime dispatch is useful but not yet a complete multimethod system.
-- Runtime vectorisation errors are plain runtime errors, not a dedicated
-  `VectorisationFault` type.
+- Runtime vectorisation errors are plain runtime errors, not yet dedicated
+  catchable `VectorisationFault` panic values.
 - Generic type information is not preserved in bytecode.
 
 When completing one of these items, update this guide and

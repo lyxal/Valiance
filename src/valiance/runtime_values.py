@@ -25,6 +25,14 @@ class ObjectValue:
     fields: dict[str, Any]
 
 
+class PanicSignal(Exception):
+    """Internal runtime signal carrying a Valiance panic value."""
+
+    def __init__(self, value: Any):
+        super().__init__(value)
+        self.value = value
+
+
 def is_list_like(value: Any) -> bool:
     """Return whether a runtime value behaves like a Valiance list."""
     return (

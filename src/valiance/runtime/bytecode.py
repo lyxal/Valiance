@@ -35,6 +35,9 @@ class OpCode(Enum):
     MATCH_ERROR = "match_error"
     ASSERT_TRUE = "assert_true"
     UNFOLD = "unfold"
+    TRY_BEGIN = "try_begin"
+    TRY_END = "try_end"
+    PANIC = "panic"
     POP = "pop"
     RETURN = "return"
 

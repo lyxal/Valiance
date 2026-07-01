@@ -48,6 +48,8 @@ from valiance.asts import (
     StringInterpolationNode,
     StringLiteralNode,
     TagApplicationNode,
+    TryHandlerNode,
+    TryNode,
     TupleLiteralNode,
     TypedElementNode,
     TypedFunctionNode,
@@ -189,6 +191,8 @@ class _Compiler:
                 self.assert_node(node)
             case MatchNode():
                 self.match_node(node)
+            case TryNode():
+                self.try_node(node)
             case WhileNode():
                 self.while_node(node)
             case UnfoldNode():
@@ -397,6 +401,27 @@ class _Compiler:
         end = len(self.instructions)
         for jump in end_jumps:
             self.patch(jump, end)
+
+    def try_node(self, node: TryNode) -> None:
+        begin = self.emit(OpCode.TRY_BEGIN, ())
+        for body_node in node.body:
+            self.node(body_node)
+        self.emit(OpCode.TRY_END)
+        success_jump = self.emit(OpCode.JUMP, None)
+
+        handlers: list[tuple[str | None, int]] = []
+        end_jumps: list[int] = []
+        for handler in node.handlers:
+            handlers.append((_handler_type_name(handler), len(self.instructions)))
+            for handler_node in handler.body:
+                self.node(handler_node)
+            end_jumps.append(self.emit(OpCode.JUMP, None))
+
+        end = len(self.instructions)
+        self.patch(success_jump, end)
+        for jump in end_jumps:
+            self.patch(jump, end)
+        self.instructions[begin] = Instruction(OpCode.TRY_BEGIN, tuple(handlers))
 
     def while_node(self, node: WhileNode) -> None:
         loop_start = len(self.instructions)
@@ -614,6 +639,15 @@ def _compile_case_patterns(
     patterns: tuple[MatchPatternNode, ...],
 ) -> tuple[object, ...]:
     return tuple(_compile_match_pattern(pattern) for pattern in patterns)
+
+
+def _handler_type_name(handler: TryHandlerNode) -> str | None:
+    if handler.typ is None:
+        return None
+    typ = handler.typ
+    if isinstance(typ, NominalType):
+        return typ.name.text
+    raise CompileError(f"cannot compile handler for non-nominal type {typ}")
 
 
 def _compile_match_pattern(pattern: MatchPatternNode) -> object:

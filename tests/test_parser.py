@@ -34,6 +34,7 @@ from valiance.asts import (
     Symbol,
     TagApplicationNode,
     TraitRequirementNode,
+    TryNode,
     TupleLiteralNode,
     TypePatternNode,
     UnfoldNode,
@@ -530,6 +531,22 @@ end
         [at_node] = parse("at (list+, item) => + end")
         self.assertIsInstance(at_node, AtNode)
         self.assertEqual(at_node.levels[0].depth, 1)
+
+        [try_node] = parse(
+            """
+try =>
+  "boom" panic
+handle String =>
+  "typed"
+handle =>
+  "default"
+end
+"""
+        )
+        self.assertIsInstance(try_node, TryNode)
+        self.assertEqual(len(try_node.handlers), 2)
+        self.assertEqual(try_node.handlers[0].typ, N(Symbol("String")))
+        self.assertIsNone(try_node.handlers[1].typ)
 
     def test_parses_function_literal_and_foreach_break(self):
         program = parse(

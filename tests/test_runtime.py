@@ -551,6 +551,43 @@ $n
         )
         self.assertEqual(stack, [Decimal("2")])
 
+    def test_executes_try_handle_for_panics(self):
+        self.assertEqual(
+            execute(
+                """
+try =>
+  "boom" panic
+handle String =>
+  "handled"
+handle =>
+  "default"
+end
+"""
+            ),
+            ["handled"],
+        )
+
+    def test_try_handle_uses_first_matching_handler(self):
+        self.assertEqual(
+            execute(
+                """
+try =>
+  10 panic
+handle String =>
+  "string"
+handle =>
+  "default"
+end
+"""
+            ),
+            ["default"],
+        )
+
+    def test_uncaught_panic_is_runtime_error(self):
+        with self.assertRaises(RuntimeError) as error:
+            execute('"boom" panic')
+        self.assertIn("uncaught panic: 'boom'", str(error.exception))
+
     def test_println_writes_output_and_consumes_value(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

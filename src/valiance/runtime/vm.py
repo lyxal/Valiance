@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from itertools import zip_longest
 from typing import Any
@@ -18,6 +18,7 @@ from valiance.runtime.bytecode import FunctionCode, FunctionSetCode, OpCode, Pro
 from valiance.runtime_values import (
     LazyList,
     ObjectValue,
+    PanicSignal,
     is_eager_sequence,
     is_list_like,
 )
@@ -60,6 +61,12 @@ class ObjectConstructorValue:
     defaults: dict[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class _PanicHandler:
+    handlers: tuple[tuple[str | None, int], ...]
+    stack_depth: int
+
+
 @dataclass(slots=True)
 class _Frame:
     stack: list[Any]
@@ -67,6 +74,7 @@ class _Frame:
     globals: dict[str, Any]
     cycle_values: tuple[Any, ...] = ()
     cycle_index: int = 0
+    panic_handlers: list[_PanicHandler] = field(default_factory=list)
 
     def source_args(self, arity: int) -> tuple[tuple[Any, ...], int, int]:
         available = min(len(self.stack), arity)
@@ -100,7 +108,10 @@ class VirtualMachine:
 
     def run(self, program: Program) -> list[Any]:
         """Execute a compiled program and return the final stack."""
-        return self.call(FunctionValue(program.main, self.globals), [])
+        try:
+            return self.call(FunctionValue(program.main, self.globals), [])
+        except PanicSignal as exc:
+            raise RuntimeError(f"uncaught panic: {_format_value(exc.value)}") from exc
 
     def call(self, function: FunctionValue, args: list[Any]) -> list[Any]:
         if len(args) != len(function.code.params):
@@ -167,9 +178,23 @@ class VirtualMachine:
                         )
                     )
                 case OpCode.CALL:
-                    self._call_stack_top(frame)
+                    try:
+                        self._call_stack_top(frame)
+                    except PanicSignal as exc:
+                        target = self._handle_panic(frame, exc)
+                        if target is None:
+                            raise
+                        ip = target
+                        continue
                 case OpCode.CALL_RESOLVED_ELEMENT:
-                    self._call_resolved_element(frame, instruction.arg)
+                    try:
+                        self._call_resolved_element(frame, instruction.arg)
+                    except PanicSignal as exc:
+                        target = self._handle_panic(frame, exc)
+                        if target is None:
+                            raise
+                        ip = target
+                        continue
                 case OpCode.CHECK_CAST:
                     value = _pop(frame.stack, "checked cast")
                     if not _matches_cast_type(value, instruction.arg):
@@ -263,12 +288,38 @@ class VirtualMachine:
                         raise RuntimeError("assertion failed")
                 case OpCode.UNFOLD:
                     frame.stack.append(self._unfold(frame, instruction.arg))
+                case OpCode.TRY_BEGIN:
+                    frame.panic_handlers.append(
+                        _PanicHandler(tuple(instruction.arg), len(frame.stack))
+                    )
+                case OpCode.TRY_END:
+                    if frame.panic_handlers:
+                        frame.panic_handlers.pop()
+                case OpCode.PANIC:
+                    value = _pop(frame.stack, "panic")
+                    target = self._handle_panic(
+                        frame,
+                        PanicSignal(value),
+                    )
+                    if target is None:
+                        raise PanicSignal(value)
+                    ip = target
+                    continue
                 case OpCode.POP:
                     _pop(frame.stack, "pop")
                 case OpCode.RETURN:
                     return frame.stack
             ip += 1
         return frame.stack
+
+    def _handle_panic(self, frame: _Frame, panic: PanicSignal) -> int | None:
+        while frame.panic_handlers:
+            handler = frame.panic_handlers.pop()
+            for type_name, target in handler.handlers:
+                if type_name is None or _panic_matches(panic.value, type_name):
+                    del frame.stack[handler.stack_depth :]
+                    return target
+        return None
 
     def _call_stack_top(self, frame: _Frame) -> None:
         callee = _pop(frame.stack, "call")
@@ -593,6 +644,16 @@ def _store_value(existing: Any, value: Any) -> Any:
 
 def _is_function_value(value: Any) -> bool:
     return isinstance(value, (FunctionValue, OverloadedFunctionValue))
+
+
+def _panic_matches(value: Any, type_name: str) -> bool:
+    if isinstance(value, ObjectValue):
+        return value.type_name == type_name
+    if type_name == "String":
+        return isinstance(value, str)
+    if type_name == "Number":
+        return isinstance(value, Decimal)
+    return False
 
 
 def _function_overloads(value: FunctionValue | OverloadedFunctionValue) -> tuple[

@@ -55,6 +55,8 @@ from valiance.asts import (
     Symbol,
     TagApplicationNode,
     TraitRequirementNode,
+    TryHandlerNode,
+    TryNode,
     TupleLiteralNode,
     TypePatternNode,
     UnfoldNode,
@@ -168,6 +170,8 @@ class Parser:
             return (ReturnNode(self._optional_values(), location=_loc(start)),)
         if self._match_ident("match"):
             return (self._match_node(self._previous),)
+        if self._match_ident("try"):
+            return (self._try(self._previous),)
 
         if annotations:
             self._error("annotation must be followed by a declaration")
@@ -478,6 +482,30 @@ class Parser:
         params = self._control_params()
         self._expect(TokenKind.FAT_ARROW)
         return UnfoldNode(condition, params, self._body(), location=_loc(start))
+
+    def _try(self, start: Token) -> TryNode:
+        self._expect(TokenKind.FAT_ARROW)
+        body = self._body({"handle", "end"})
+        handlers: list[TryHandlerNode] = []
+        self._skip_newlines()
+        while self._match_ident("handle"):
+            handler_start = self._previous
+            typ = None
+            if not self._check(TokenKind.FAT_ARROW):
+                typ = self.parse_type_expression()
+            self._expect(TokenKind.FAT_ARROW)
+            handlers.append(
+                TryHandlerNode(
+                    typ,
+                    self._body({"handle", "end"}),
+                    location=_loc(handler_start),
+                )
+            )
+            self._skip_newlines()
+        if not handlers:
+            self._error("try requires at least one handler")
+        self._consume_optional_end()
+        return TryNode(body, tuple(handlers), location=_loc(start))
 
     def _at(self, start: Token) -> AtNode:
         self._expect(TokenKind.LPAREN)
@@ -881,6 +909,8 @@ class Parser:
             return _ChainPiece((self._foreach(self._previous),), True)
         if self._match_ident("match"):
             return _ChainPiece((self._match_node(self._previous),), True)
+        if self._match_ident("try"):
+            return _ChainPiece((self._try(self._previous),), True)
         if self._match_ident("as"):
             return self._cast(self._previous)
         if self._match_ident("break"):
