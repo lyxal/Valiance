@@ -1,6 +1,8 @@
 import unittest
 
 from valiance.asts import (
+    AssertNode,
+    AtNode,
     BindingPatternNode,
     BreakNode,
     DefineNode,
@@ -30,7 +32,9 @@ from valiance.asts import (
     TagApplicationNode,
     TraitRequirementNode,
     TypePatternNode,
+    UnfoldNode,
     VariantMemberNode,
+    WhileNode,
     WildcardPatternNode,
 )
 from valiance.parsing import LexError, ParseError, lex, parse, parse_type
@@ -382,6 +386,42 @@ end
         self.assertEqual(node.condition[0], GetVariableNode(Symbol("n")))
         self.assertEqual(node.then_branch, (NumberLiteralNode("1"),))
         self.assertEqual(node.else_branch[-1], ElementNode(Symbol("-")))
+
+    def test_parses_missing_control_flow_structures(self):
+        [node] = parse(
+            """
+if ($n == 0) => "zero"
+else if ($n == 1) => "one"
+else => "many"
+end
+"""
+        )
+        self.assertIsInstance(node, IfNode)
+        self.assertIsInstance(node.else_branch[0], IfNode)
+
+        [assert_node] = parse(
+            """
+assert =>
+  true
+else =>
+  "nope"
+end
+"""
+        )
+        self.assertIsInstance(assert_node, AssertNode)
+        self.assertEqual(assert_node.else_branch, (StringLiteralNode("nope"),))
+
+        [while_node] = parse("while (> 0) -> (count: Number) => $count 1 - end")
+        self.assertIsInstance(while_node, WhileNode)
+        self.assertEqual(while_node.params[0].name, Symbol("count"))
+
+        [unfold_node] = parse("unfold (< 5) -> (n: Number) => $n 1 + end")
+        self.assertIsInstance(unfold_node, UnfoldNode)
+        self.assertEqual(unfold_node.params[0].name, Symbol("n"))
+
+        [at_node] = parse("at (list+, item) => + end")
+        self.assertIsInstance(at_node, AtNode)
+        self.assertEqual(at_node.levels[0].depth, 1)
 
     def test_parses_function_literal_and_foreach_break(self):
         program = parse(

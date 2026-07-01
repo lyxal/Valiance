@@ -233,6 +233,11 @@ class VirtualMachine:
                         continue
                 case OpCode.MATCH_ERROR:
                     raise RuntimeError("non-exhaustive match at runtime")
+                case OpCode.ASSERT_TRUE:
+                    if not _truthy(_pop(frame.stack, "assert")):
+                        raise RuntimeError("assertion failed")
+                case OpCode.UNFOLD:
+                    frame.stack.append(self._unfold(frame, instruction.arg))
                 case OpCode.POP:
                     _pop(frame.stack, "pop")
                 case OpCode.RETURN:
@@ -316,6 +321,34 @@ class VirtualMachine:
             frame.stack.append(value)
             return
         raise RuntimeError(f"resolved element '{name}' is not callable")
+
+    def _unfold(self, frame: _Frame, config: object) -> LazyList:
+        condition_code, body_code, arity = config
+        state = _pop_many(frame.stack, arity)
+        body = _make_function_value(body_code, frame.globals | frame.locals)
+        condition = (
+            None
+            if condition_code is None
+            else _make_function_value(condition_code, frame.globals | frame.locals)
+        )
+
+        def generated():
+            nonlocal state
+            while True:
+                if condition is not None:
+                    keep_going = self.call_value(condition, list(state))
+                    if not _truthy(keep_going[0]):
+                        return
+                outputs = self.call_value(body, list(state))
+                generated_value = outputs[-1]
+                if arity == 1 and len(outputs) == 1:
+                    state = [generated_value]
+                else:
+                    state = list(outputs[:arity])
+                if generated_value is not None:
+                    yield generated_value
+
+        return LazyList(generated())
 
     def _call_function(
         self,

@@ -9,7 +9,9 @@ from typing import NoReturn
 from valiance.analysis.builtins import BUILTIN_ELEMENTS, runtime_elements
 from valiance.asts import (
     ArrayLiteralNode,
+    AssertNode,
     ASTNode,
+    AtNode,
     BindingPatternNode,
     BreakNode,
     DefineNode,
@@ -47,6 +49,7 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedNode,
     TypePatternNode,
+    UnfoldNode,
     WhileNode,
     WildcardPatternNode,
 )
@@ -155,10 +158,16 @@ class _Compiler:
                 self.emit(OpCode.SET_FIELD, name.text)
             case IfNode():
                 self.if_node(node)
+            case AssertNode():
+                self.assert_node(node)
             case MatchNode():
                 self.match_node(node)
             case WhileNode():
                 self.while_node(node)
+            case UnfoldNode():
+                self.unfold_node(node, typed_node)
+            case AtNode():
+                self.expression(node.body)
             case ForNode():
                 self.unsupported(node, "foreach loops")
             case BreakNode():
@@ -284,6 +293,43 @@ class _Compiler:
         for branch_node in node.else_branch:
             self.node(branch_node)
         self.patch(jump_to_end, len(self.instructions))
+
+    def assert_node(self, node: AssertNode) -> None:
+        for condition_node in node.condition:
+            self.node(condition_node)
+        if not node.else_branch:
+            self.emit(OpCode.ASSERT_TRUE)
+            return
+        jump_to_else = self.emit(OpCode.JUMP_IF_FALSE, None)
+        jump_to_end = self.emit(OpCode.JUMP, None)
+        else_start = len(self.instructions)
+        self.patch(jump_to_else, else_start)
+        for branch_node in node.else_branch:
+            self.node(branch_node)
+        self.patch(jump_to_end, len(self.instructions))
+
+    def unfold_node(self, node: UnfoldNode, typed_node: TypedNode | None) -> None:
+        if node.params is None:
+            self.unsupported(node, "unfold without explicit parameters")
+        body = FunctionNode(
+            params=node.params,
+            body=node.body,
+            location=node.location,
+        )
+        body_code = _compile_function_value(body, "unfold.body")
+        arity = _compiled_function_arity(body_code)
+        condition_code = None
+        if node.condition:
+            params = node.params
+            if params is None:
+                params = tuple(FunctionParam(None) for _ in range(arity))
+            condition = FunctionNode(
+                params=params,
+                body=node.condition,
+                location=node.location,
+            )
+            condition_code = _compile_function_value(condition, "unfold.condition")
+        self.emit(OpCode.UNFOLD, (condition_code, body_code, arity))
 
     def match_node(self, node: MatchNode) -> None:
         case_jumps: list[tuple[int, MatchCaseNode]] = []
@@ -436,6 +482,14 @@ def _function_param_names(ast: FunctionNode, arity: int) -> tuple[str, ...]:
         f"_{index}" if param.name is None else param.name.text
         for index, param in enumerate(ast.params)
     )
+
+
+def _compiled_function_arity(code: FunctionCode | FunctionSetCode) -> int:
+    if isinstance(code, FunctionCode):
+        return len(code.params)
+    if not code.overloads:
+        return 0
+    return len(code.overloads[0].params)
 
 
 def _function_ast(node: FunctionNode | TypedNode) -> FunctionNode:

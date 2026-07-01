@@ -30,6 +30,8 @@ class OpCode(Enum):
     JUMP_IF_FALSE = "jump_if_false"
     JUMP_IF_MATCH = "jump_if_match"
     MATCH_ERROR = "match_error"
+    ASSERT_TRUE = "assert_true"
+    UNFOLD = "unfold"
     POP = "pop"
     RETURN = "return"
 

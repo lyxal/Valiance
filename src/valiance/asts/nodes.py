@@ -158,10 +158,44 @@ class IfNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class AssertNode(ASTNode):
+    """An assertion with an optional else value."""
+
+    condition: tuple[ASTNode, ...] = ()
+    else_branch: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
 class WhileNode(ASTNode):
     """A while loop."""
 
     condition: tuple[ASTNode, ...] = ()
+    params: tuple[FunctionParam, ...] | None = None
+    body: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class UnfoldNode(ASTNode):
+    """A lazy unfold expression."""
+
+    condition: tuple[ASTNode, ...] = ()
+    params: tuple[FunctionParam, ...] | None = None
+    body: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class AtLevel:
+    """One vectorisation stop level in an at expression."""
+
+    name: Symbol
+    depth: int = 0
+
+
+@dataclass(frozen=True)
+class AtNode(ASTNode):
+    """Apply a body with explicit vectorisation stop levels."""
+
+    levels: tuple[AtLevel, ...] = ()
     body: tuple[ASTNode, ...] = ()
 
 

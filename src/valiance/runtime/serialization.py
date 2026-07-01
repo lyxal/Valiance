@@ -40,6 +40,8 @@ _OP_TO_BYTE = {
     OpCode.CALL_RESOLVED_ELEMENT: 0x14,
     OpCode.JUMP_IF_MATCH: 0x15,
     OpCode.MATCH_ERROR: 0x16,
+    OpCode.ASSERT_TRUE: 0x17,
+    OpCode.UNFOLD: 0x18,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 

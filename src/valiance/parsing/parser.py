@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from valiance.asts import (
     AnnotationNode,
     ArrayLiteralNode,
+    AssertNode,
     ASTNode,
+    AtLevel,
+    AtNode,
     BindingPatternNode,
     BreakNode,
     DefineNode,
@@ -50,6 +53,7 @@ from valiance.asts import (
     TraitRequirementNode,
     TupleLiteralNode,
     TypePatternNode,
+    UnfoldNode,
     VariantMemberNode,
     WhileNode,
     WildcardPatternNode,
@@ -108,7 +112,11 @@ class Parser:
         nodes: list[ASTNode] = []
         self._skip_newlines()
         while not self._check(TokenKind.EOF):
-            nodes.extend(self._statement())
+            before = self.index
+            statement = self._statement()
+            if not statement and self.index == before:
+                self._error("expected statement")
+            nodes.extend(statement)
             self._skip_separators()
         return nodes
 
@@ -138,8 +146,14 @@ class Parser:
             return (self._function(self._previous),)
         if self._match_ident("if"):
             return (self._if(self._previous),)
+        if self._match_ident("assert"):
+            return (self._assert(self._previous),)
         if self._match_ident("while"):
             return (self._while(self._previous),)
+        if self._match_ident("unfold"):
+            return (self._unfold(self._previous),)
+        if self._match_ident("at"):
+            return (self._at(self._previous),)
         if self._match_ident("foreach"):
             return (self._foreach(self._previous),)
         if self._match_ident("break"):
@@ -420,21 +434,73 @@ class Parser:
         self._expect(TokenKind.FAT_ARROW)
         then_branch = self._body({"else", "end"})
         else_branch: tuple[ASTNode, ...] = ()
+        self._skip_newlines()
         if self._match_ident("else"):
             if self._match_ident("if"):
                 else_branch = (self._if(self._previous),)
             else:
                 self._expect(TokenKind.FAT_ARROW)
                 else_branch = self._body({"end"})
+                self._skip_newlines()
+                self._consume_optional_end()
         else:
             self._consume_optional_end()
         return IfNode(condition, then_branch, else_branch, location=_loc(start))
 
     def _while(self, start: Token) -> WhileNode:
         condition = self._condition()
-        self._returns()
+        params = self._control_params()
         self._expect(TokenKind.FAT_ARROW)
-        return WhileNode(condition, self._body(), location=_loc(start))
+        return WhileNode(condition, params, self._body(), location=_loc(start))
+
+    def _assert(self, start: Token) -> AssertNode:
+        self._expect(TokenKind.FAT_ARROW)
+        condition = self._body({"else", "end"})
+        else_branch: tuple[ASTNode, ...] = ()
+        self._skip_newlines()
+        if self._match_ident("else"):
+            self._expect(TokenKind.FAT_ARROW)
+            else_branch = self._body({"end"})
+            self._skip_newlines()
+            self._consume_optional_end()
+        else:
+            self._consume_optional_end()
+        return AssertNode(condition, else_branch, location=_loc(start))
+
+    def _unfold(self, start: Token) -> UnfoldNode:
+        condition: tuple[ASTNode, ...] = ()
+        if self._check(TokenKind.LPAREN):
+            condition = self._condition()
+        params = self._control_params()
+        self._expect(TokenKind.FAT_ARROW)
+        return UnfoldNode(condition, params, self._body(), location=_loc(start))
+
+    def _at(self, start: Token) -> AtNode:
+        self._expect(TokenKind.LPAREN)
+        levels: list[AtLevel] = []
+        self._skip_newlines()
+        if self._match(TokenKind.RPAREN):
+            self._expect(TokenKind.FAT_ARROW)
+            return AtNode((), self._body(), location=_loc(start))
+        while True:
+            name = self._symbol("expected at level name")
+            depth = 0
+            while self._check(TokenKind.OP) and self._current.value == "+":
+                self._advance()
+                depth += 1
+            levels.append(AtLevel(name, depth))
+            if self._match(TokenKind.RPAREN):
+                break
+            self._expect(TokenKind.COMMA)
+            self._skip_newlines()
+        self._expect(TokenKind.FAT_ARROW)
+        return AtNode(tuple(levels), self._body(), location=_loc(start))
+
+    def _control_params(self) -> tuple[FunctionParam, ...] | None:
+        if not self._match(TokenKind.ARROW):
+            return None
+        self._expect(TokenKind.LPAREN)
+        return self._params()
 
     def _foreach(self, start: Token) -> ForNode:
         self._expect(TokenKind.LPAREN)
@@ -765,8 +831,14 @@ class Parser:
             return _ChainPiece((self._function(self._previous),), True)
         if self._match_ident("if"):
             return _ChainPiece((self._if(self._previous),), True)
+        if self._match_ident("assert"):
+            return _ChainPiece((self._assert(self._previous),), True)
         if self._match_ident("while"):
             return _ChainPiece((self._while(self._previous),), True)
+        if self._match_ident("unfold"):
+            return _ChainPiece((self._unfold(self._previous),), True)
+        if self._match_ident("at"):
+            return _ChainPiece((self._at(self._previous),), True)
         if self._match_ident("foreach"):
             return _ChainPiece((self._foreach(self._previous),), True)
         if self._match_ident("match"):

@@ -41,6 +41,7 @@ from valiance.types import (
     C,
     DataTag,
     Environment,
+    ExactList,
     Field,
     Fn,
     FunctionType,
@@ -58,6 +59,7 @@ from valiance.types import (
     U,
     UnknownElement,
     V,
+    WithTag,
     optional,
 )
 from valiance.types.default_types import Boolean
@@ -1245,6 +1247,31 @@ getName $joe
         self.assertEqual(len(branches), 1)
         branch = next(iter(branches))
         self.assertEqual(branch.stack, TypeStack((optional(U(Number, String)),)))
+
+    def test_analyses_assert_while_and_unfold(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                """
+$n = 1
+assert => $n 0 > end
+while ($n 3 <) =>
+  $n = $n 1 +
+end
+$n
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Number)
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse("1 unfold (< 5) -> (n: Number) => $n 1 + end"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, WithTag(ExactList(Number), "infinite"))
 
     def test_list_literal_infers_union_item_type(self):
         typed = analyse(

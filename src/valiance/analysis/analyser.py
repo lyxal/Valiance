@@ -10,7 +10,9 @@ from typing import Any
 import valiance.types as T
 from valiance.analysis.builtins import default_environment
 from valiance.asts import (
+    AssertNode,
     ASTNode,
+    AtNode,
     BindingPatternNode,
     DefineNode,
     DictLiteralNode,
@@ -39,6 +41,7 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedNode,
     TypePatternNode,
+    UnfoldNode,
     WildcardPatternNode,
 )
 from valiance.asts.nodes import (
@@ -51,6 +54,7 @@ from valiance.asts.nodes import (
     IfNode,
     ObjectFieldNode,
     SetVariableNode,
+    WhileNode,
 )
 from valiance.modules import ModuleLoader, ModuleLoadError, import_definitions
 from valiance.symbols import Symbol
@@ -627,6 +631,14 @@ class Analyser:
                 return self._field_set(branch, node, name)
             case IfNode():
                 return self._if(branch, node)
+            case AssertNode():
+                return self._assert(branch, node)
+            case WhileNode():
+                return self._while(branch, node)
+            case UnfoldNode():
+                return self._unfold(branch, node)
+            case AtNode():
+                return self._at(branch, node)
             case ForNode():
                 return self._foreach(branch, node)
             case MatchNode():
@@ -1372,6 +1384,161 @@ class Analyser:
             .append_typed(typed_for)
         }
 
+    def _assert(
+        self,
+        branch: AnalysisBranch,
+        node: AssertNode,
+    ) -> set[AnalysisBranch]:
+        condition = self.analyse_block(BranchSet.one(branch), node.condition)
+        condition = condition.require_stack_top_assignable(Boolean, self.env.context)
+        if not condition:
+            self._diagnose("assert condition must be a boolean value", node)
+            return set()
+
+        success = branch.append_typed(TypedNode(node, None))
+        if not node.else_branch:
+            return {success}
+
+        else_outputs = self.analyse_block(BranchSet.one(branch), node.else_branch)
+        error_types = tuple(_top_or_none(output.stack) for output in else_outputs)
+        error_type = T.U(*error_types) if error_types else T.NoneType()
+        assert_error = T.N(Symbol("AssertError"), error_type)
+        return {success.with_stack(success.stack.push(assert_error))}
+
+    def _while(
+        self,
+        branch: AnalysisBranch,
+        node: WhileNode,
+    ) -> set[AnalysisBranch]:
+        loop_input = branch
+        if node.params is not None:
+            params = _params_to_types(node.params)
+            sourced = branch.source_arguments(params)
+            if sourced is None:
+                self._diagnose("while loop inputs do not match stack", node)
+                return set()
+            _, loop_input = sourced
+            loop_input = loop_input.with_stack(loop_input.stack.push(*params))
+            named = tuple(
+                (param.name, typ)
+                for param, typ in zip(node.params, params, strict=True)
+                if param.name is not None
+            )
+            if named:
+                loop_input = loop_input.with_variables(
+                    BranchVariables.from_parameters(
+                        named,
+                        captures=loop_input.variables,
+                    )
+                )
+
+        condition = self.analyse_block(BranchSet.one(loop_input), node.condition)
+        condition = condition.require_stack_top_assignable(Boolean, self.env.context)
+        if not condition:
+            self._diagnose("while condition must be a boolean value", node)
+            return set()
+
+        body_inputs = condition.pop_stack_top()
+        body_outputs = self.analyse_block(body_inputs, node.body)
+        if not body_outputs:
+            return set()
+
+        joined: AnalysisBranch | None = None
+        for output in body_outputs:
+            candidate = output
+            if joined is None:
+                joined = candidate
+                continue
+            if joined.inputs != candidate.inputs:
+                self._diagnose("while body inferred different inputs", node)
+                return set()
+            stack = merge_stacks(joined.stack, candidate.stack)
+            variables = joined.variables.merge_against(
+                candidate.variables,
+                loop_input.variables,
+            )
+            joined = joined.with_stack(stack).with_variables(variables)
+        if joined is None:
+            return set()
+
+        variables = (
+            joined.variables
+            if node.params is None
+            else joined.variables.merge_against(loop_input.variables, branch.variables)
+        )
+        result = _refine_branch_like(branch, joined).with_variables(variables)
+        return {
+            result.append_typed(
+                TypedNode(node, _returns_result_type(result.stack.items))
+            )
+        }
+
+    def _unfold(
+        self,
+        branch: AnalysisBranch,
+        node: UnfoldNode,
+    ) -> set[AnalysisBranch]:
+        body_function = FunctionNode(
+            params=node.params,
+            body=node.body,
+            location=node.location,
+        )
+        body_analysis = self._analyse_function_literal(branch, body_function)
+        if body_analysis is None:
+            return set()
+        body_function_analysis, _ = body_analysis
+
+        results: set[AnalysisBranch] = set()
+        for overload in _callable_overloads(body_function_analysis.typ):
+            if not overload.returns:
+                self._diagnose("unfold body must generate a value", node)
+                continue
+            if node.condition:
+                condition_function = FunctionNode(
+                    params=tuple(
+                        FunctionParam(param.name, typ)
+                        for param, typ in zip(
+                            node.params or (),
+                            overload.params,
+                            strict=False,
+                        )
+                    )
+                    if node.params is not None
+                    else tuple(FunctionParam(None, typ) for typ in overload.params),
+                    body=node.condition,
+                    returns=(Boolean,),
+                    location=node.location,
+                )
+                if self._analyse_function_literal(branch, condition_function) is None:
+                    self._diagnose("unfold condition must return a boolean value", node)
+                    continue
+            sourced = branch.source_arguments(overload.params)
+            if sourced is None:
+                self._diagnose("unfold inputs do not match stack", node)
+                continue
+            _, popped = sourced
+            generated = overload.returns[-1]
+            list_type = T.WithTag(T.ExactList(generated), "infinite")
+            results.add(
+                popped.with_stack(popped.stack.push(list_type)).append_typed(
+                    TypedNode(node, list_type)
+                )
+            )
+        return results
+
+    def _at(
+        self,
+        branch: AnalysisBranch,
+        node: AtNode,
+    ) -> set[AnalysisBranch]:
+        outputs = self.analyse_block(BranchSet.one(branch), node.body)
+        return {
+            output.append_typed(
+                TypedNode(node, _returns_result_type(output.stack.items))
+            )
+            for output in outputs
+        }
+
     def _break(
         self,
         branch: AnalysisBranch,
@@ -1777,7 +1944,11 @@ def _replace_branch(
 def _declared_params(node: FunctionNode) -> tuple[T.Type, ...]:
     if node.params is None:
         return ()
-    return tuple(_param_type(param, index) for index, param in enumerate(node.params))
+    return _params_to_types(node.params)
+
+
+def _params_to_types(params: tuple[FunctionParam, ...]) -> tuple[T.Type, ...]:
+    return tuple(_param_type(param, index) for index, param in enumerate(params))
 
 
 def _function_input_mode(node: FunctionNode) -> InputMode:

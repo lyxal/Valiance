@@ -516,6 +516,13 @@ $n
             [Decimal("0")],
         )
 
+    def test_executes_assert_and_unfold(self):
+        self.assertEqual(execute("assert => true end 5"), [Decimal("5")])
+        stack = execute(
+            "1 unfold (< 4) -> (n: Number) => $n 1 + end | #!infinite | head"
+        )
+        self.assertEqual(stack, [Decimal("2")])
+
     def test_println_writes_output_and_consumes_value(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
