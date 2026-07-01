@@ -3,5 +3,7 @@ object Person =>
   $age: Number
 end
 
-println Person("Joe", 67)
-"Jeff" 10 Person | println
+define getName(person) -> String => $.name
+
+$joe = Person("Joe", 67)
+println getName $joe

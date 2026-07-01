@@ -941,6 +941,7 @@ class Analyser:
                     args,
                     popped,
                     self.env.context,
+                    self.env,
                 )
                 if candidate is not None:
                     applied, candidate_branch = candidate
@@ -1685,9 +1686,10 @@ class Analyser:
     ) -> dict[T.Overload, tuple[TypedNode, ...]]:
         signatures: dict[T.Overload, tuple[TypedNode, ...]] = {}
         for branch in branches:
-            returns = self._function_returns(node, branch.stack)
-            if returns is None:
+            refined = self._function_returns(node, branch)
+            if refined is None:
                 continue
+            returns, branch = refined
             signature = T.Overload(branch.inputs, returns)
             signatures.setdefault(signature, branch.typed_body)
 
@@ -1702,15 +1704,25 @@ class Analyser:
     def _function_returns(
         self,
         node: FunctionNode,
-        stack: T.TypeStack,
-    ) -> tuple[T.Type, ...] | None:
+        branch: AnalysisBranch,
+    ) -> tuple[tuple[T.Type, ...], AnalysisBranch] | None:
         if node.returns is None:
-            return stack.items[-1:] if stack else ()
+            return (branch.stack.items[-1:] if branch.stack else ()), branch
 
         expected = T.TypeStack(node.returns)
-        if not _stack_assignable(stack, expected, self.env.context):
+        actual_returns = _stack_returns(branch.stack, expected)
+        if len(actual_returns) != len(node.returns):
             return None
-        return node.returns
+        substitution = _branch_argument_substitution(
+            actual_returns,
+            node.returns,
+            self.env.context,
+        )
+        if substitution is not None:
+            branch = _specialize_branch_arguments(branch, substitution)
+        if not _stack_assignable(branch.stack, expected, self.env.context):
+            return None
+        return node.returns, branch
 
     def _diagnose(self, message: str, node: ASTNode | None = None) -> None:
         self.diagnostics.append(_diagnostic_message(message, node))
@@ -1933,7 +1945,9 @@ def _apply_overload_to_branch(
     args: tuple[T.Type, ...],
     branch: AnalysisBranch,
     ctx: T.Context,
+    env: T.Environment | None = None,
 ) -> tuple[T.AppliedOverload, AnalysisBranch] | None:
+    args = _row_views_for_arguments(args, overload.params, env)
     substitution = _branch_argument_substitution(args, overload.params, ctx)
     if substitution is None:
         return None
@@ -1958,6 +1972,45 @@ def _apply_overload_to_branch(
         applied.vectorised,
     )
     return applied, specialized_branch
+
+
+def _row_views_for_arguments(
+    args: tuple[T.Type, ...],
+    params: tuple[T.Type, ...],
+    env: T.Environment | None,
+) -> tuple[T.Type, ...]:
+    if env is None:
+        return args
+    return tuple(
+        _row_view_for_argument(arg, param, env)
+        for arg, param in zip(args, params, strict=True)
+    )
+
+
+def _row_view_for_argument(
+    arg: T.Type,
+    param: T.Type,
+    env: T.Environment,
+) -> T.Type:
+    arg = T.normalize(arg)
+    param = T.normalize(param)
+    if not isinstance(param, T.RowType):
+        return arg
+    if isinstance(arg, T.RowType):
+        return arg
+    if not isinstance(arg, T.NominalType):
+        return arg
+    definition = env.lookup_object(arg.name)
+    if definition is None:
+        return arg
+    return T.Row(
+        arg,
+        *(
+            T.Field(attribute.name, attribute.typ)
+            for attribute in definition.attributes
+            if attribute.access.text in {"public", "readable"}
+        ),
+    )
 
 
 def _specialize_branch_arguments(
@@ -2788,6 +2841,13 @@ def _stack_assignable(
     return all(
         T.assignable(a, e, ctx) for a, e in zip(actual_returns, expected, strict=True)
     )
+
+
+def _stack_returns(
+    actual: T.TypeStack,
+    expected: T.TypeStack,
+) -> tuple[T.Type, ...]:
+    return actual.items[-len(expected) :] if expected else ()
 
 
 def _lookup(

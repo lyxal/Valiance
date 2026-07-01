@@ -10,6 +10,7 @@ from valiance.analysis import (
     InputMode,
     analyse,
     analyse_function,
+    analyse_function_details,
     default_environment,
 )
 from valiance.analysis.builtins import BUILTIN_ELEMENTS
@@ -707,6 +708,45 @@ end
         )
 
         self.assertEqual(typ, Fn((Row(V("@1"), Field(BAR, V("@2"))),), (V("@2"),)))
+
+    def test_declared_return_refines_inferred_row_field_type(self):
+        details = analyse_function_details(
+            FunctionNode(body=(FieldAccessNode(NAME),), returns=(String,)),
+            Environment(),
+        )
+
+        self.assertIsNotNone(details)
+        self.assertEqual(
+            details.typ,
+            Fn((Row(V("@1"), Field(NAME, String)),), (String,)),
+        )
+        typed_field = details.overloads[0].body[-1]
+        self.assertEqual(typed_field.typ, String)
+
+    def test_nominal_object_satisfies_inferred_row_element_parameter(self):
+        source = """
+object Person =>
+  $name: String
+  $age: Number
+end
+
+define getName -> String => $.name
+
+$joe = Person("Joe", 67)
+getName $joe
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        definition = typed[1]
+        self.assertIsInstance(definition, TypedFunctionNode)
+        self.assertEqual(
+            definition.typ,
+            Fn((Row(V("@1"), Field(NAME, String)),), (String,)),
+        )
+        self.assertIsInstance(typed[-1], TypedElementNode)
+        self.assertEqual(typed[-1].typ, String)
 
     def test_chained_field_access_refines_nested_row_constraint(self):
         typ = analyse_function(

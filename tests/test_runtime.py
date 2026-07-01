@@ -230,6 +230,66 @@ Person("Ada", 36) $.name
             ["Ada"],
         )
 
+    def test_executes_row_inferred_element_on_nominal_object(self):
+        output = io.StringIO()
+        source = """
+object Person =>
+  $name: String
+  $age: Number
+end
+
+define getName -> String => $.name
+
+$joe = Person("Joe", 67)
+println getName $joe
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "Joe\n")
+
+    def test_field_access_cycles_explicit_named_parameter(self):
+        output = io.StringIO()
+        source = """
+object Person =>
+  $name: String
+  $age: Number
+end
+
+define getName(person) -> String => $.name
+
+$joe = Person("Joe", 67)
+println getName $joe
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "Joe\n")
+
+    def test_field_access_cycles_explicit_nominal_parameter(self):
+        output = io.StringIO()
+        source = """
+object Person =>
+  $name: String
+  $age: Number
+end
+
+define getName(person: Person) -> String => $.name
+
+$joe = Person("Joe", 67)
+println getName $joe
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "Joe\n")
+
     def test_executes_object_field_access_over_lists(self):
         self.assertEqual(
             execute(

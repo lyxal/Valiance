@@ -201,7 +201,16 @@ class VirtualMachine:
                         fields["value"] = value
                     frame.stack.append(ObjectValue(enum_name, fields))
                 case OpCode.GET_FIELD:
-                    receiver = _pop(frame.stack, "field access")
+                    try:
+                        args, stack_count, next_cycle_index = frame.source_args(1)
+                    except _StackUnderflow as exc:
+                        raise RuntimeError(
+                            "stack underflow during field access"
+                        ) from exc
+                    if stack_count:
+                        del frame.stack[-stack_count:]
+                    frame.cycle_index = next_cycle_index
+                    receiver = args[0]
                     frame.stack.append(_get_field(receiver, instruction.arg))
                 case OpCode.SET_FIELD:
                     value = _pop(frame.stack, "field assignment")
