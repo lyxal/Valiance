@@ -31,6 +31,9 @@ from valiance.asts import (
     ImportNode,
     ImportPath,
     ImportSpec,
+    IndexAccessNode,
+    IndexSelector,
+    IndexSetNode,
     ListLiteralNode,
     ListPatternNode,
     LiteralPatternNode,
@@ -776,6 +779,22 @@ class Parser:
             )
         if self._match(TokenKind.DOLLAR):
             return self._variable(self._previous)
+        if self._match_ellipsis():
+            start = self._previous
+            self._expect(TokenKind.DOLLAR)
+            self._expect(TokenKind.LBRACKET)
+            selectors = self._index_selectors()
+            return _ChainPiece(
+                (
+                    *self._selector_expressions(selectors),
+                    IndexAccessNode(
+                        selectors,
+                        spread=True,
+                        location=_loc(start),
+                    ),
+                ),
+                True,
+            )
         if self._match(TokenKind.DOT):
             token = self._previous
             return _ChainPiece(
@@ -905,6 +924,15 @@ class Parser:
         return Symbol(name)
 
     def _variable(self, start: Token) -> _ChainPiece:
+        if self._match(TokenKind.LBRACKET):
+            selectors = self._index_selectors()
+            return _ChainPiece(
+                (
+                    *self._selector_expressions(selectors),
+                    IndexAccessNode(selectors, location=_loc(start)),
+                ),
+                True,
+            )
         if self._match(TokenKind.DOT):
             field = self._symbol("expected field name")
             if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
@@ -929,6 +957,33 @@ class Parser:
                 is_element=True,
             )
         name = self._symbol("expected variable name")
+        if self._match(TokenKind.LBRACKET):
+            selectors = self._index_selectors()
+            if self._match(TokenKind.AUG_ASSIGN):
+                rhs = self._chain_until(_LINE_TERMINATORS)
+                receiver = (GetVariableNode(name, location=_loc(start)),)
+                index_values = self._selector_expressions(selectors)
+                return _ChainPiece(
+                    (
+                        *receiver,
+                        *index_values,
+                        IndexAccessNode(selectors, location=_loc(start)),
+                        *rhs,
+                        *receiver,
+                        *index_values,
+                        IndexSetNode(selectors, location=_loc(start)),
+                        SetVariableNode(name, location=_loc(start)),
+                    ),
+                    True,
+                )
+            return _ChainPiece(
+                (
+                    GetVariableNode(name, location=_loc(start)),
+                    *self._selector_expressions(selectors),
+                    IndexAccessNode(selectors, location=_loc(start)),
+                ),
+                True,
+            )
         if self._match(TokenKind.DOT):
             field = self._symbol("expected field name")
             if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
@@ -970,6 +1025,50 @@ class Parser:
                 True,
             )
         return _ChainPiece((GetVariableNode(name, location=_loc(start)),), True)
+
+    def _index_selectors(self) -> tuple[IndexSelector, ...]:
+        selectors: list[IndexSelector] = []
+        self._skip_newlines()
+        if self._match(TokenKind.RBRACKET):
+            self._error("empty indexing expressions are invalid")
+        while True:
+            start: tuple[ASTNode, ...] = ()
+            stop: tuple[ASTNode, ...] = ()
+            step: tuple[ASTNode, ...] = ()
+            is_slice = False
+            if not self._check(TokenKind.COLON):
+                start = self._chain_until(
+                    {TokenKind.COMMA, TokenKind.COLON, TokenKind.RBRACKET}
+                )
+            if self._match(TokenKind.COLON):
+                is_slice = True
+                if not self._check(
+                    TokenKind.COLON,
+                    TokenKind.COMMA,
+                    TokenKind.RBRACKET,
+                ):
+                    stop = self._chain_until(
+                        {TokenKind.COMMA, TokenKind.COLON, TokenKind.RBRACKET}
+                    )
+                if self._match(TokenKind.COLON):
+                    if not self._check(TokenKind.COMMA, TokenKind.RBRACKET):
+                        step = self._chain_until({TokenKind.COMMA, TokenKind.RBRACKET})
+            selectors.append(IndexSelector(start, stop, step, is_slice))
+            if self._match(TokenKind.RBRACKET):
+                return tuple(selectors)
+            self._expect(TokenKind.COMMA)
+            self._skip_newlines()
+
+    def _selector_expressions(
+        self,
+        selectors: tuple[IndexSelector, ...],
+    ) -> tuple[ASTNode, ...]:
+        nodes: list[ASTNode] = []
+        for selector in selectors:
+            nodes.extend(selector.start)
+            nodes.extend(selector.stop)
+            nodes.extend(selector.step)
+        return tuple(nodes)
 
     def _comma_expressions(self, closer: TokenKind) -> tuple[tuple[ASTNode, ...], ...]:
         items: list[tuple[ASTNode, ...]] = []

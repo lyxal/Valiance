@@ -28,6 +28,9 @@ from valiance.asts import (
     GuardPatternNode,
     IfNode,
     ImportNode,
+    IndexAccessNode,
+    IndexSelector,
+    IndexSetNode,
     ListLiteralNode,
     ListPatternNode,
     LiteralPatternNode,
@@ -156,6 +159,10 @@ class _Compiler:
                 self.emit(OpCode.GET_FIELD, name.text)
             case FieldSetNode(name):
                 self.emit(OpCode.SET_FIELD, name.text)
+            case IndexAccessNode(selectors, spread):
+                self.emit(OpCode.GET_INDEX, _index_spec(selectors, spread))
+            case IndexSetNode(selectors):
+                self.emit(OpCode.SET_INDEX, _index_spec(selectors, False))
             case IfNode():
                 self.if_node(node)
             case AssertNode():
@@ -529,6 +536,24 @@ def _resolved_element_reference(node: TypedNode | None) -> tuple[str, int, int] 
         return None
     vectorised = int(node.overload.vectorised) if node.overload is not None else 0
     return ast.name.text, node.overload_index, vectorised
+
+
+def _index_spec(
+    selectors: tuple[IndexSelector, ...],
+    spread: bool,
+) -> tuple[tuple[int, int, int, int], int]:
+    return (
+        tuple(
+            (
+                int(selector.is_slice),
+                int(bool(selector.start)),
+                int(bool(selector.stop)),
+                int(bool(selector.step)),
+            )
+            for selector in selectors
+        ),
+        int(spread),
+    )
 
 
 def _literal_expression_value(nodes: tuple[ASTNode, ...]) -> object:

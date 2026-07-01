@@ -22,6 +22,9 @@ from valiance.asts import (
     FunctionParam,
     GuardPatternNode,
     ImportNode,
+    IndexAccessNode,
+    IndexSelector,
+    IndexSetNode,
     ListLiteralNode,
     ListPatternNode,
     MatchNode,
@@ -629,6 +632,10 @@ class Analyser:
                 return self._field_access(branch, node, name)
             case FieldSetNode(name):
                 return self._field_set(branch, node, name)
+            case IndexAccessNode():
+                return self._index_access(branch, node)
+            case IndexSetNode():
+                return self._index_set(branch, node)
             case IfNode():
                 return self._if(branch, node)
             case AssertNode():
@@ -1184,6 +1191,61 @@ class Analyser:
                 T.TypeStack(branch.stack.items[:-2]).push(result_type)
             ).append_typed(TypedNode(node, result_type))
         }
+
+    def _index_access(
+        self,
+        branch: AnalysisBranch,
+        node: IndexAccessNode,
+    ) -> set[AnalysisBranch]:
+        selector_values = _selector_value_count(node.selectors)
+        required = selector_values + 1
+        if len(branch.stack) >= required:
+            receiver_type = branch.stack[-required]
+            base_branch = branch.with_stack(T.TypeStack(branch.stack.items[:-required]))
+        elif len(branch.stack) == selector_values:
+            source_branch = branch.with_stack(
+                T.TypeStack(branch.stack.items[: len(branch.stack) - selector_values])
+            )
+            sourced = source_branch.source_arguments((T.V("IndexReceiver"),))
+            if sourced is None:
+                self._diagnose("indexing requires receiver and index value(s)", node)
+                return set()
+            (receiver_type,), base_branch = sourced
+        else:
+            self._diagnose("indexing requires receiver and index value(s)", node)
+            return set()
+        result_type = _indexed_type(receiver_type, node.selectors, node.spread)
+        return {
+            base_branch.with_stack(base_branch.stack.push(result_type)).append_typed(
+                TypedNode(node, result_type)
+            )
+        }
+
+    def _index_set(
+        self,
+        branch: AnalysisBranch,
+        node: IndexSetNode,
+    ) -> set[AnalysisBranch]:
+        selector_values = _selector_value_count(node.selectors)
+        required = selector_values + 2
+        if len(branch.stack) < required:
+            self._diagnose(
+                "indexed assignment requires value, receiver, and index",
+                node,
+            )
+            return set()
+        value_type = branch.stack[-required]
+        receiver_type = branch.stack[-selector_values - 1]
+        item_type = _indexed_type(receiver_type, node.selectors, spread=False)
+        if not T.assignable(value_type, item_type, self.env.context):
+            self._diagnose(
+                f"cannot assign {T.show(value_type)} to indexed item "
+                f"of type {T.show(item_type)}",
+                node,
+            )
+            return set()
+        stack = T.TypeStack(branch.stack.items[:-required]).push(receiver_type)
+        return {branch.with_stack(stack).append_typed(TypedNode(node, receiver_type))}
 
     def _list_literal(
         self,
@@ -2537,6 +2599,52 @@ def _returns_result_type(returns: tuple[T.Type, ...]) -> T.Type | None:
     if len(returns) == 1:
         return returns[0]
     return None
+
+
+def _selector_value_count(selectors: tuple[IndexSelector, ...]) -> int:
+    count = 0
+    for selector in selectors:
+        count += bool(selector.start)
+        count += bool(selector.stop)
+        count += bool(selector.step)
+    return count
+
+
+def _indexed_type(
+    receiver_type: T.Type,
+    selectors: tuple[IndexSelector, ...],
+    spread: bool,
+) -> T.Type:
+    typ = T.normalize(receiver_type)
+    for index, selector in enumerate(selectors):
+        item = typ if selector.is_slice else _single_index_type(typ)
+        if index + 1 < len(selectors):
+            typ = item
+            continue
+        if spread:
+            return item
+        if len(selectors) > 1:
+            return T.ExactList(item)
+        return item
+    return T.V("Indexed")
+
+
+def _single_index_type(typ: T.Type) -> T.Type:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        return _single_index_type(typ.inner)
+    if isinstance(typ, T.UnionType):
+        return T.U(*(_single_index_type(item) for item in typ.items))
+    if isinstance(typ, T.CollectionType):
+        return T.collection_item_type(typ)
+    if isinstance(typ, T.TupleType):
+        return T.U(*typ.params) if typ.params else T.Never()
+    if isinstance(typ, T.NominalType):
+        if typ.name.text == "String":
+            return T.String
+        if typ.name.text == "Dict" and len(typ.args) == 2:
+            return typ.args[1]
+    return T.V("Indexed")
 
 
 def _nominal_name(typ: T.Type) -> Symbol | None:

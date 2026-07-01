@@ -17,6 +17,8 @@ from valiance.asts import (
     ImportNode,
     ImportPath,
     ImportSpec,
+    IndexAccessNode,
+    IndexSetNode,
     ListLiteralNode,
     ListPatternNode,
     MatchNode,
@@ -180,6 +182,27 @@ class ParserTests(unittest.TestCase):
                 ElementNode(Symbol("println")),
             ],
         )
+
+    def test_parses_indexing_forms(self):
+        program = parse("$data[2, 4, 1]\n[1, 2, 3] $[1]\n...$[3, 4]")
+
+        self.assertEqual(program[0], GetVariableNode(Symbol("data")))
+        self.assertEqual(program[4], IndexAccessNode(program[4].selectors))
+        self.assertEqual(len(program[4].selectors), 3)
+        self.assertIsInstance(program[5], ListLiteralNode)
+        self.assertEqual(program[7], IndexAccessNode(program[7].selectors))
+        self.assertTrue(program[-1].spread)
+
+    def test_parses_index_augmented_assignment_as_copy_update(self):
+        program = parse("$data[1] := + 3")
+
+        self.assertEqual(program[0], GetVariableNode(Symbol("data")))
+        self.assertIsInstance(program[2], IndexAccessNode)
+        self.assertEqual(program[3], NumberLiteralNode("3"))
+        self.assertEqual(program[4], ElementNode(Symbol("+")))
+        self.assertEqual(program[5], GetVariableNode(Symbol("data")))
+        self.assertIsInstance(program[7], IndexSetNode)
+        self.assertEqual(program[8], SetVariableNode(Symbol("data")))
 
     def test_parses_colon_modifier_as_function_argument(self):
         program = parse("[1, 2, 3, 4] map: double")

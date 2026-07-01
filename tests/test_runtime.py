@@ -549,6 +549,38 @@ println(triple([1, 2, 3, 4, 5]))
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "15\n[3, 6, 9, 12, 15]\n")
 
+    def test_indexing_lists_slices_dicts_and_spread(self):
+        self.assertEqual(execute("[1, 2, 3] $[1]"), [Decimal("2")])
+        self.assertEqual(
+            execute("$data = [5, 1, 6, 2, 7]\n$data[2, 4, 1]"),
+            [[Decimal("6"), Decimal("7"), Decimal("1")]],
+        )
+        self.assertEqual(
+            execute("$data = [5, 1, 6, 2, 7]\n$data[1:3]"),
+            [[Decimal("1"), Decimal("6"), Decimal("2")]],
+        )
+        self.assertEqual(
+            execute("[[9, 2, 5], [1, 4, 2]] $[[0, 0]:[1, 1]]"),
+            [[[Decimal("9"), Decimal("2")], [Decimal("1"), Decimal("4")]]],
+        )
+        self.assertEqual(execute('dict{"name": "Jeff"} $["name"]'), ["Jeff"])
+        self.assertEqual(
+            execute("[5, 1, 6, 2, 7] ...$[3, 4]"),
+            [Decimal("2"), Decimal("7")],
+        )
+
+    def test_index_augmented_assignment_rebuilds_and_assigns_receiver(self):
+        self.assertEqual(
+            execute("$data = [1, 2, 3]\n$data[1] := + 3\n$data"),
+            [[Decimal("1"), Decimal("5"), Decimal("3")]],
+        )
+
+    def test_indexing_cycles_explicit_parameter_receiver(self):
+        self.assertEqual(
+            execute("define second(:Number+) -> Number => $[1]\nsecond([4, 9])"),
+            [Decimal("9")],
+        )
+
     def test_runtime_element_errors_show_stack_and_attempted_inputs(self):
         program = Program(
             FunctionCode(

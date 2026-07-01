@@ -453,7 +453,6 @@ Known parser-facing gaps include:
 
 - `_` placeholders and parent-stack substitution.
 - Quick functions using `'chain`.
-- Indexing and slicing syntax beyond `.field` and `$.field`.
 - Cast syntax such as `as Type` and `as! Type`.
 - Import/module syntax.
 - `try/handle`, `assert`, `unfold`, `spawn`, `concurrent`, `external`, and

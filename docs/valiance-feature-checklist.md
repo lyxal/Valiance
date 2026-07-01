@@ -9,7 +9,7 @@ Codegen/runtime audit note: as of 2026-06-28, checked runtime items are limited
 to behavior that is compiled to bytecode and executed by the VM, or saved and
 loaded through the portable bytecode format.
 
-Current audit total: 269 / 724 items complete (37.2%).
+Current audit total: 288 / 724 items complete (39.8%).
 
 ## 1. Lexer, parser, and general syntax
 
@@ -74,7 +74,7 @@ Current audit total: 269 / 724 items complete (37.2%).
 - [x] Support `${expression}` interpolation.
 - [x] Convert interpolated values to their string representations.
 - [x] Provide the `String` type.
-- [ ] Support string indexing and slicing.
+- [x] Support string indexing and slicing.
 
 ## 5. Tuples
 
@@ -103,7 +103,7 @@ Current audit total: 269 / 724 items complete (37.2%).
 - [x] Implement dictionaries with runtime-computed keys.
 - [x] Parse `dict{...}` literals.
 - [x] Represent dictionary types as `Dict[key, value]`.
-- [ ] Support dictionary indexing.
+- [x] Support dictionary indexing.
 - [ ] Implement dictionary merging.
 
 ## 7. None, Some, and optional types
@@ -132,8 +132,8 @@ Current audit total: 269 / 724 items complete (37.2%).
 - [x] Pop the maximum required arity across list items during implicit construction.
 - [x] Reject untyped empty-list literals.
 - [ ] Allow empty lists when a type annotation, cast, or typed list constructor supplies the element type.
-- [ ] Support list indexing, slicing, multidimensional indexing, and spread indexing.
-- [ ] Support immutable list updates through indexed assignment syntax.
+- [x] Support list indexing, slicing, multidimensional indexing, and spread indexing.
+- [x] Support immutable list updates through indexed assignment syntax.
 
 ## 9. Arrays
 
@@ -143,7 +143,7 @@ Current audit total: 269 / 724 items complete (37.2%).
 - [ ] Store array rank and shape.
 - [ ] Preserve array results through vectorisation when all applicable inputs and outputs remain arrays.
 - [ ] Produce list results when vectorisation mixes lists and arrays.
-- [ ] Support array indexing and multidimensional slicing.
+- [x] Support array indexing and multidimensional slicing.
 
 ## 10. Type system foundations
 
@@ -364,23 +364,23 @@ Current audit total: 269 / 724 items complete (37.2%).
 
 ## 23. Indexing and slicing
 
-- [ ] Parse stack indexing using `$[index]`.
-- [ ] Use zero-based indexing.
-- [ ] Support negative indices from the end.
+- [x] Parse stack indexing using `$[index]`.
+- [x] Use zero-based indexing.
+- [x] Support negative indices from the end.
 - [ ] Dispatch indexing through the `index` overload mechanism.
-- [ ] Support tuple, list, array, string, and dictionary indexing.
-- [ ] Parse multiple indices and return the selected values as a list.
-- [ ] Parse direct variable indexing.
-- [ ] Parse inclusive slices with start, stop, and step.
-- [ ] Apply default slice values.
-- [ ] Support multidimensional chained indices.
-- [ ] Support multidimensional slices.
+- [x] Support tuple, list, array, string, and dictionary indexing.
+- [x] Parse multiple indices and return the selected values as a list.
+- [x] Parse direct variable indexing.
+- [x] Parse inclusive slices with start, stop, and step.
+- [x] Apply default slice values.
+- [x] Support multidimensional chained indices.
+- [x] Support multidimensional slices.
 - [ ] Raise `SliceFault` for invalid multidimensional slicing.
 - [x] Parse record member access using `$.member`.
-- [ ] Support indexed augmented assignment.
-- [ ] Treat indexed updates as immutable reconstruction.
-- [ ] Parse spread indexing using `...$[...]`.
-- [ ] Push statically known indexed values individually onto the stack.
+- [x] Support indexed augmented assignment.
+- [x] Treat indexed updates as immutable reconstruction.
+- [x] Parse spread indexing using `...$[...]`.
+- [x] Push statically known indexed values individually onto the stack.
 
 ## 24. Pattern matching
 

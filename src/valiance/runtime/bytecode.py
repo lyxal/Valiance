@@ -26,6 +26,8 @@ class OpCode(Enum):
     MAKE_ENUM_MEMBER = "make_enum_member"
     GET_FIELD = "get_field"
     SET_FIELD = "set_field"
+    GET_INDEX = "get_index"
+    SET_INDEX = "set_index"
     JUMP = "jump"
     JUMP_IF_FALSE = "jump_if_false"
     JUMP_IF_MATCH = "jump_if_match"

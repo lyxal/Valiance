@@ -216,6 +216,23 @@ class VirtualMachine:
                     value = _pop(frame.stack, "field assignment")
                     receiver = _pop(frame.stack, "field assignment")
                     frame.stack.append(_set_field(receiver, instruction.arg, value))
+                case OpCode.GET_INDEX:
+                    values = _pop_index_values(frame.stack, instruction.arg)
+                    receiver = _index_receiver(frame)
+                    result = _get_index(receiver, instruction.arg, values)
+                    if instruction.arg[1]:
+                        if not isinstance(result, list):
+                            raise RuntimeError("spread indexing requires a list result")
+                        frame.stack.extend(result)
+                    else:
+                        frame.stack.append(result)
+                case OpCode.SET_INDEX:
+                    values = _pop_index_values(frame.stack, instruction.arg)
+                    receiver = _pop(frame.stack, "indexed assignment")
+                    value = _pop(frame.stack, "indexed assignment")
+                    frame.stack.append(
+                        _set_index(receiver, instruction.arg, values, value)
+                    )
                 case OpCode.JUMP:
                     ip = instruction.arg
                     continue
@@ -912,6 +929,182 @@ def _bind_match_name(bindings: dict[str, Any], name: str, value: Any) -> bool:
 
 def _is_rest_pattern(pattern: object) -> bool:
     return isinstance(pattern, tuple) and bool(pattern) and pattern[0] == "rest"
+
+
+def _pop_index_values(
+    stack: list[Any],
+    spec: tuple[tuple[tuple[int, int, int, int], ...], int],
+) -> list[tuple[bool, Any, Any, Any]]:
+    values = iter(_pop_many(stack, _index_value_count(spec)))
+    selectors = []
+    for is_slice, has_start, has_stop, has_step in spec[0]:
+        start = next(values) if has_start else None
+        stop = next(values) if has_stop else None
+        step = next(values) if has_step else None
+        selectors.append((bool(is_slice), start, stop, step))
+    return selectors
+
+
+def _index_value_count(
+    spec: tuple[tuple[tuple[int, int, int, int], ...], int],
+) -> int:
+    return sum(
+        has_start + has_stop + has_step
+        for _, has_start, has_stop, has_step in spec[0]
+    )
+
+
+def _index_receiver(frame: _Frame) -> Any:
+    if frame.stack:
+        return frame.stack.pop()
+    try:
+        args, stack_count, next_cycle_index = frame.source_args(1)
+    except _StackUnderflow as exc:
+        raise RuntimeError("stack underflow during indexing") from exc
+    if stack_count:
+        del frame.stack[-stack_count:]
+    frame.cycle_index = next_cycle_index
+    return args[0]
+
+
+def _get_index(
+    receiver: Any,
+    spec: tuple[tuple[tuple[int, int, int, int], ...], int],
+    selectors: list[tuple[bool, Any, Any, Any]],
+) -> Any:
+    if len(selectors) > 1 and all(not item[0] for item in selectors):
+        return [_index_path(receiver, item[1]) for item in selectors]
+    result = receiver
+    for is_slice, start, stop, step in selectors:
+        if is_slice:
+            result = _slice_value(result, start, stop, step)
+        else:
+            result = _index_path(result, start)
+    return result
+
+
+def _set_index(
+    receiver: Any,
+    spec: tuple[tuple[tuple[int, int, int, int], ...], int],
+    selectors: list[tuple[bool, Any, Any, Any]],
+    value: Any,
+) -> Any:
+    if len(selectors) != 1 or selectors[0][0]:
+        raise RuntimeError("indexed assignment requires one non-slice index")
+    return _set_index_path(receiver, selectors[0][1], value)
+
+
+def _index_path(receiver: Any, index: Any) -> Any:
+    if _is_path(index):
+        result = receiver
+        for item in index:
+            result = _index_one(result, item)
+        return result
+    return _index_one(receiver, index)
+
+
+def _index_one(receiver: Any, index: Any) -> Any:
+    if isinstance(receiver, dict):
+        try:
+            return receiver[index]
+        except KeyError as exc:
+            raise RuntimeError(f"dictionary has no key {_format_value(index)}") from exc
+    if isinstance(receiver, tuple):
+        return receiver[_int_index(index)]
+    if isinstance(receiver, str):
+        return receiver[_int_index(index)]
+    if is_eager_sequence(receiver):
+        return receiver[_int_index(index)]
+    if is_list_like(receiver):
+        if not isinstance(index, Decimal):
+            raise RuntimeError("lazy list indexing requires a numeric index")
+        target = _int_index(index)
+        if target < 0:
+            raise RuntimeError("lazy list indexing does not support negative indices")
+        for offset, item in enumerate(receiver):
+            if offset == target:
+                return item
+        raise RuntimeError("index out of range")
+    raise RuntimeError("value is not indexable")
+
+
+def _slice_value(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
+    if _is_path(start) or _is_path(stop):
+        return _slice_path(receiver, start, stop, step)
+    if not (is_eager_sequence(receiver) or isinstance(receiver, str)):
+        raise RuntimeError("slicing requires an eager list or string")
+    step_int = 1 if step is None else _int_index(step)
+    if step_int == 0:
+        raise RuntimeError("slice step cannot be 0")
+    length = len(receiver)
+    start_int = 0 if start is None else _normal_index(_int_index(start), length)
+    stop_int = length - 1 if stop is None else _normal_index(_int_index(stop), length)
+    python_stop = stop_int + (1 if step_int > 0 else -1)
+    sliced = receiver[start_int:python_stop:step_int]
+    return "".join(sliced) if isinstance(receiver, str) else list(sliced)
+
+
+def _slice_path(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
+    if not (_is_path(start) and _is_path(stop)):
+        raise RuntimeError("multidimensional slices need start and stop paths")
+    if len(start) != len(stop):
+        raise RuntimeError("multidimensional slice bounds must have the same rank")
+    if not start:
+        return receiver
+    step_value = Decimal(1) if step is None else step
+    head = _slice_value(receiver, start[0], stop[0], step_value)
+    if len(start) == 1:
+        return head
+    return [_slice_path(item, start[1:], stop[1:], step_value) for item in head]
+
+
+def _set_index_path(receiver: Any, index: Any, value: Any) -> Any:
+    if _is_path(index):
+        if not index:
+            return value
+        head, *tail = index
+        current = _index_one(receiver, head)
+        return _set_index_one(receiver, head, _set_index_path(current, tail, value))
+    return _set_index_one(receiver, index, value)
+
+
+def _set_index_one(receiver: Any, index: Any, value: Any) -> Any:
+    if isinstance(receiver, dict):
+        if index not in receiver:
+            raise RuntimeError(f"dictionary has no key {_format_value(index)}")
+        updated = dict(receiver)
+        updated[index] = value
+        return updated
+    if isinstance(receiver, tuple):
+        updated = list(receiver)
+        updated[_int_index(index)] = value
+        return tuple(updated)
+    if isinstance(receiver, str):
+        if not isinstance(value, str) or len(value) != 1:
+            raise RuntimeError("string indexed assignment requires one character")
+        ind = _int_index(index)
+        return receiver[:ind] + value + receiver[ind + 1 :]
+    if is_eager_sequence(receiver):
+        updated = list(receiver)
+        updated[_int_index(index)] = value
+        return updated
+    raise RuntimeError("value is not index-assignable")
+
+
+def _is_path(value: Any) -> bool:
+    return isinstance(value, list)
+
+
+def _int_index(value: Any) -> int:
+    if isinstance(value, Decimal) and value == value.to_integral_value():
+        return int(value)
+    if isinstance(value, int):
+        return value
+    raise RuntimeError("index must be an integer")
+
+
+def _normal_index(index: int, length: int) -> int:
+    return index + length if index < 0 else index
 
 
 def _get_field(receiver: Any, field: str) -> Any:

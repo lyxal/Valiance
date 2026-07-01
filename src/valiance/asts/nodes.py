@@ -141,6 +141,31 @@ class FieldSetNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class IndexSelector:
+    """One index or slice selector inside an indexing expression."""
+
+    start: tuple[ASTNode, ...] = ()
+    stop: tuple[ASTNode, ...] = ()
+    step: tuple[ASTNode, ...] = ()
+    is_slice: bool = False
+
+
+@dataclass(frozen=True)
+class IndexAccessNode(ASTNode):
+    """Read item(s) from the top stack value."""
+
+    selectors: tuple[IndexSelector, ...] = ()
+    spread: bool = False
+
+
+@dataclass(frozen=True)
+class IndexSetNode(ASTNode):
+    """Return a copy of the receiver with an indexed item replaced."""
+
+    selectors: tuple[IndexSelector, ...] = ()
+
+
+@dataclass(frozen=True)
 class CallNode(ASTNode):
     """Call a function with provided arguments, falling back
     to taking values from the stack."""
