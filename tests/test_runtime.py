@@ -32,6 +32,7 @@ def execute(source: str, source_file: Path | None = None):
 class RuntimeTests(unittest.TestCase):
     def test_executes_stack_arithmetic(self):
         self.assertEqual(execute("*(+(1, 2), 3)"), [Decimal("9")])
+        self.assertEqual(execute("(1 + 2) * (3 + 4)"), [Decimal("21")])
 
     def test_vectorises_scalar_overloads_over_lists(self):
         self.assertEqual(
@@ -497,7 +498,7 @@ end
 
     def test_executes_list_tuple_record_and_dict_literals(self):
         self.assertEqual(execute("[1, 2, 3] length"), [Decimal("3")])
-        self.assertEqual(execute('(1, "two")'), [(Decimal("1"), "two")])
+        self.assertEqual(execute('{1, "two"}'), [(Decimal("1"), "two")])
         self.assertEqual(execute("record{x: 5}.x"), [Decimal("5")])
         self.assertEqual(execute('dict{"x": 7}'), [{"x": Decimal("7")}])
 

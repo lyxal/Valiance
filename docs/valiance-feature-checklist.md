@@ -79,7 +79,7 @@ Current audit total: 288 / 724 items complete (39.8%).
 ## 5. Tuples
 
 - [x] Implement fixed-length heterogeneous tuples.
-- [x] Parse tuple literals using `(...)`.
+- [x] Parse tuple literals using `{...}`.
 - [x] Support nested tuples.
 - [x] Represent tuple types using `{...}`.
 - [x] Track tuple lengths at compile time.

@@ -840,12 +840,26 @@ class Parser:
                 (DictLiteralNode(self._dict_entries(), location=_loc(token)),),
                 True,
             )
+        if self._match(TokenKind.LBRACE):
+            token = self._previous
+            return _ChainPiece(
+                (
+                    TupleLiteralNode(
+                        self._comma_expressions(TokenKind.RBRACE),
+                        location=_loc(token),
+                    ),
+                ),
+                True,
+            )
         if self._match(TokenKind.LPAREN):
             token = self._previous
-            items = self._comma_expressions(TokenKind.RPAREN)
-            if len(items) == 1:
-                return _ChainPiece(items[0], True)
-            return _ChainPiece((TupleLiteralNode(items, location=_loc(token)),), True)
+            grouped = self._chain_until({TokenKind.RPAREN})
+            self._expect(TokenKind.RPAREN)
+            if not grouped:
+                raise ParseError(
+                    f"empty grouping is invalid at {token.line}:{token.column}"
+                )
+            return _ChainPiece(grouped, True)
         if self._match_ident("fn"):
             return _ChainPiece((self._function(self._previous),), True)
         if self._match_ident("if"):

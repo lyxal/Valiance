@@ -33,6 +33,7 @@ from valiance.asts import (
     Symbol,
     TagApplicationNode,
     TraitRequirementNode,
+    TupleLiteralNode,
     TypePatternNode,
     UnfoldNode,
     VariantMemberNode,
@@ -181,6 +182,35 @@ class ParserTests(unittest.TestCase):
                 ElementNode(Symbol("length")),
                 ElementNode(Symbol("println")),
             ],
+        )
+
+    def test_parses_parentheses_as_grouping(self):
+        self.assertEqual(
+            parse("(1 + 2) * (3 + 4)"),
+            [
+                NumberLiteralNode("1"),
+                NumberLiteralNode("2"),
+                ElementNode(Symbol("+")),
+                NumberLiteralNode("3"),
+                NumberLiteralNode("4"),
+                ElementNode(Symbol("+")),
+                ElementNode(Symbol("*")),
+            ],
+        )
+
+    def test_parses_braced_tuple_literal(self):
+        [node] = parse("{1, 2, 3, 4}")
+
+        self.assertEqual(
+            node,
+            TupleLiteralNode(
+                (
+                    (NumberLiteralNode("1"),),
+                    (NumberLiteralNode("2"),),
+                    (NumberLiteralNode("3"),),
+                    (NumberLiteralNode("4"),),
+                )
+            ),
         )
 
     def test_parses_indexing_forms(self):

@@ -92,12 +92,12 @@ $brainrot = "6 7"
 - Can contain other tuples.
 - Finite length, known at compile time.
 - Type expressed as `{<types>}`
-- Create with `()`
+- Create with `{}`
 - Example tuples:
 
 ```
-(1, 2, 3) #? {Number, Number, Number}
-("Hello", 5) #? {String, Number}
+{1, 2, 3} #? {Number, Number, Number}
+{"Hello", 5} #? {String, Number}
 ```
 
 ### 1.3.1. Arbitrary Length Tuple Types

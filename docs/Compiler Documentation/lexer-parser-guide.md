@@ -216,7 +216,8 @@ you are changing. Most regressions here look like elements in the wrong order.
 - Array literals: `arr{...}`
 - Record literals: `record{...}`
 - Dictionary literals: `dict{...}`
-- Parentheses and tuple literals
+- Parenthesized grouping: `(...)`
+- Tuple literals: `{...}`
 - Function literals: `fn ... => ...`
 - Control-flow nodes in expression position
 - `break` and `return`
