@@ -94,6 +94,7 @@ class ElementNode(ASTNode):
 
     name: Symbol
     modifier_args: tuple[FunctionNode, ...] = ()
+    disambiguation: tuple[Type | None, ...] = ()
 
 
 @dataclass(frozen=True)

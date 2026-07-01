@@ -644,6 +644,43 @@ def _overload_result_for_args(
     return tuple(C(out_type, ret, vector_rank) for ret in overload.returns)
 
 
+def _vectorisation_excess(argument: Type, expected: Type, ctx: Context) -> int | None:
+    argument_collection = _collection_view(argument)
+    if argument_collection is None:
+        return 0 if compatible(argument, expected, ctx) else None
+    expected_collection = _collection_view(expected)
+    if expected_collection is not None:
+        if not same(argument_collection.base, expected_collection.base):
+            return None
+        excess = argument_collection.rank - expected_collection.rank
+    else:
+        excess = argument_collection.rank
+    return excess if excess >= 0 else None
+
+
+def _wrap_returns_for_vector_depth(
+    returns: tuple[Type, ...],
+    args: tuple[Type, ...],
+    depths: tuple[int, ...],
+) -> tuple[Type, ...]:
+    vector_rank = max(depths, default=0)
+    if vector_rank <= 0:
+        return returns
+    vector_type: CollectionClass | None = None
+    for arg, depth in zip(args, depths, strict=False):
+        if depth <= 0:
+            continue
+        arg_collection = _collection_view(arg)
+        if arg_collection is None:
+            continue
+        if vector_type is None:
+            vector_type = type(arg_collection)
+        elif vector_type is not type(arg_collection):
+            vector_type = ListExactType
+    out_type = ArrayExactType if vector_type is ArrayExactType else ListExactType
+    return tuple(C(out_type, ret, vector_rank) for ret in returns)
+
+
 def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:
     """Return whether compatibility can be achieved through vectorisation."""
     if isinstance(parameter, ExactType):
@@ -708,16 +745,42 @@ def _match_specificity(
 
 
 def apply_overload(
-    overload: Overload, args: tuple[Type, ...], ctx: Context | None = None
+    overload: Overload,
+    args: tuple[Type, ...],
+    ctx: Context | None = None,
+    *,
+    disambiguation: tuple[Type | None, ...] = (),
 ) -> AppliedOverload | None:
     """Apply one overload to concrete argument types, returning details on success."""
     ctx = ctx or Context()
     if len(overload.params) != len(args):
         return None
+    if disambiguation and len(disambiguation) != len(args):
+        return None
+
+    base_args = args
+    vectorised_depths: tuple[int, ...] = ()
+    if disambiguation:
+        depths: list[int] = []
+        adapted_args: list[Type] = []
+        for arg, hint in zip(args, disambiguation, strict=True):
+            if hint is None:
+                depths.append(0)
+                adapted_args.append(arg)
+                continue
+            if not compatible(arg, hint, ctx):
+                return None
+            excess = _vectorisation_excess(arg, hint, ctx)
+            if excess is None:
+                return None
+            depths.append(excess)
+            adapted_args.append(hint)
+        base_args = tuple(adapted_args)
+        vectorised_depths = tuple(depths)
 
     constraints: dict[str, list[Type]] = {}
     deferred_function_args: list[tuple[FunctionType, FunctionType]] = []
-    for param, arg in zip(overload.params, args, strict=False):
+    for param, arg in zip(overload.params, base_args, strict=False):
         if isinstance(param, FunctionType) and isinstance(
             arg, (FunctionType, OverloadSetType, CallSiteCheckedFunctionType)
         ):
@@ -761,19 +824,29 @@ def apply_overload(
     params = tuple(_substitute(param, substitution) for param in overload.params)
     returns = tuple(_substitute(ret, substitution) for ret in overload.returns)
     if not all(
-        compatible(arg, param, ctx) for arg, param in zip(args, params, strict=False)
+        compatible(arg, param, ctx)
+        for arg, param in zip(base_args, params, strict=False)
     ):
         return None
 
-    actual_returns = _overload_result_for_args(Overload(params, returns), args, ctx)
+    actual_returns = _overload_result_for_args(
+        Overload(params, returns),
+        base_args,
+        ctx,
+    )
     if actual_returns is None:
         return None
+    actual_returns = _wrap_returns_for_vector_depth(
+        actual_returns,
+        args,
+        vectorised_depths,
+    )
     # returns = declared returns after generic substitution.
     # actual_returns = returns after call adaptation such as vectorisation.
 
     scores = tuple(
         _match_specificity(arg, param, ctx)
-        for arg, param in zip(args, params, strict=False)
+        for arg, param in zip(base_args, params, strict=False)
     )
     if any(score == Specificity.NO_MATCH for score in scores):
         return None
@@ -785,7 +858,9 @@ def apply_overload(
         returns,
         actual_returns,
         scores,
-        any(score == Specificity.VECTORISED for score in scores),
+        any(score == Specificity.VECTORISED for score in scores)
+        or any(depth > 0 for depth in vectorised_depths),
+        vectorised_depths,
     )
 
 
@@ -955,4 +1030,4 @@ def _tag_requirements_met(
 
 
 def _has_unit_tag(tags: frozenset[DataTag], ctx: Context) -> bool:
-    return any(not tag.absent and tag.name in ctx.unit_tags for tag in tags)
+    return any(not tag.absent and ctx.is_unit_tag(tag.name) for tag in tags)

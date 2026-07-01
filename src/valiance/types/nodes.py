@@ -226,6 +226,7 @@ class AppliedOverload:
     actual_returns: tuple[Type, ...]
     scores: tuple[Specificity, ...]
     vectorised: bool = False
+    vectorised_depths: tuple[int, ...] = ()
 
     def __hash__(self) -> int:
         return hash(
@@ -237,6 +238,7 @@ class AppliedOverload:
                 self.actual_returns,
                 self.scores,
                 self.vectorised,
+                self.vectorised_depths,
             )
         )
 

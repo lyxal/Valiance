@@ -39,6 +39,7 @@ from valiance.types.default_types import Boolean, Number, String
 from valiance.types.environment import (
     AppliedElement,
     ConstructorDefinition,
+    DataTagDefinition,
     EnumDefinition,
     EnumMemberDefinition,
     Environment,
@@ -114,6 +115,7 @@ __all__ = [
     "CollectionType",
     "Context",
     "DataTag",
+    "DataTagDefinition",
     "Environment",
     "EnvironmentApplyResult",
     "ConstructorDefinition",

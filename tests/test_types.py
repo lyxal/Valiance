@@ -5,6 +5,8 @@ from valiance.types import (
     C,
     Context,
     DataTag,
+    DataTagDefinition,
+    Environment,
     ExactList,
     Field,
     Fn,
@@ -17,6 +19,7 @@ from valiance.types import (
     Row,
     Specificity,
     Tagged,
+    TagKind,
     TypeStack,
     TypeVariable,
     U,
@@ -92,6 +95,45 @@ class TypeLibraryTests(unittest.TestCase):
             str(Tagged(C(ListExactType, Number, 2), DataTag("infinite", depth=2))),
             "#infinite++ Number+2",
         )
+
+    def test_environment_stores_tag_declarations_by_symbol_and_kind(self):
+        env = Environment()
+
+        env.add_constructed_tag("infinite")
+        env.add_computed_tag(Symbol("sorted"))
+        env.add_unit_tag("km")
+
+        self.assertEqual(
+            env.lookup_tag(Symbol("infinite")),
+            DataTagDefinition(Symbol("infinite"), TagKind.CONSTRUCTED),
+        )
+        self.assertEqual(
+            env.lookup_tag("sorted"),
+            DataTagDefinition(Symbol("sorted"), TagKind.COMPUTED),
+        )
+        self.assertEqual(
+            env.lookup_tag("km"),
+            DataTagDefinition(Symbol("km"), TagKind.UNIT),
+        )
+
+    def test_child_environment_reads_parent_tag_declarations(self):
+        env = Environment()
+        env.add_constructed_tag("infinite")
+
+        self.assertEqual(
+            env.child_scope().lookup_tag("infinite"),
+            DataTagDefinition(Symbol("infinite"), TagKind.CONSTRUCTED),
+        )
+
+    def test_only_unit_tags_block_erasure_to_untagged_types(self):
+        ctx = Context()
+        ctx.define_tag("infinite", TagKind.CONSTRUCTED)
+        ctx.define_tag("sorted", TagKind.COMPUTED)
+        ctx.define_tag("km", TagKind.UNIT)
+
+        self.assertTrue(assignable(Tagged(Number, "infinite"), Number, ctx))
+        self.assertTrue(assignable(Tagged(Number, "sorted"), Number, ctx))
+        self.assertFalse(assignable(Tagged(Number, "km"), Number, ctx))
 
     def test_readable_type_builders_match_core_constructors(self):
         self.assertEqual(TypeVariable("Item"), V("Item"))

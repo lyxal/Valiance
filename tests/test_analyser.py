@@ -90,6 +90,8 @@ NAME = Symbol("name")
 OP = Symbol("op")
 X = Symbol("x")
 Y = Symbol("y")
+LEFT = Symbol("Left")
+RIGHT = Symbol("Right")
 
 
 class AnalyserTests(unittest.TestCase):
@@ -208,6 +210,36 @@ class AnalyserTests(unittest.TestCase):
             typed[-1].overload.actual_returns,
             (C(ListExactType, Number),),
         )
+
+    def test_element_disambiguation_controls_vectorisation_depth(self):
+        typed = analyse(parse("[[1, 2], [3, 4]] +[Number+, _] [10, 20]"))
+
+        self.assertIsInstance(typed[-1], TypedElementNode)
+        self.assertTrue(typed[-1].overload.vectorised)
+        self.assertEqual(typed[-1].overload.vectorised_depths, (1, 0))
+        self.assertEqual(
+            typed[-1].overload.actual_returns,
+            (C(ListExactType, Number, 2),),
+        )
+
+    def test_element_disambiguation_selects_matching_overload(self):
+        env = Environment()
+        env.add_trait_impl(FOO, LEFT)
+        env.add_trait_impl(FOO, RIGHT)
+        env.define_overload(OP, Overload((N(LEFT),), (Number,)))
+        env.define_overload(OP, Overload((N(RIGHT),), (String,)))
+
+        analyser = Analyser(env)
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((N(FOO),)))),
+            (ElementNode(OP, disambiguation=(N(LEFT),)),),
+        )
+
+        [branch] = branches
+        typed = branch.typed_body
+        self.assertIsInstance(typed[-1], TypedElementNode)
+        self.assertEqual(typed[-1].typ, Number)
+        self.assertEqual(typed[-1].overload_index, 0)
 
     def test_non_inference_element_rejects_ambiguous_overload(self):
         env = Environment()
@@ -1140,6 +1172,34 @@ getName $joe
         )
 
         self.assertEqual(len(branches), 0)
+
+    def test_constructed_tags_satisfy_untagged_concrete_parameters(self):
+        env = Environment()
+        env.add_constructed_tag("infinite")
+        env.define_overload(OP, Overload((Number,), (Number,)))
+        analyser = Analyser(env)
+
+        branches = analyser.analyse_block(
+            BranchSet.one(
+                AnalysisBranch(stack=TypeStack((Tagged(Number, "infinite"),)))
+            ),
+            (ElementNode(OP),),
+        )
+
+        self.assertEqual(len(branches), 1)
+
+    def test_computed_tags_satisfy_untagged_concrete_parameters(self):
+        env = Environment()
+        env.add_computed_tag("sorted")
+        env.define_overload(OP, Overload((Number,), (Number,)))
+        analyser = Analyser(env)
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Tagged(Number, "sorted"),)))),
+            (ElementNode(OP),),
+        )
+
+        self.assertEqual(len(branches), 1)
 
     def test_constructed_tags_do_not_propagate_when_rank_drops(self):
         env = Environment()

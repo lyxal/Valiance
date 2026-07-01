@@ -961,6 +961,7 @@ class Analyser:
                     popped,
                     self.env.context,
                     self.env,
+                    node.disambiguation,
                 )
                 if candidate is not None:
                     applied, candidate_branch = candidate
@@ -2179,6 +2180,7 @@ def _apply_overload_to_branch(
     branch: AnalysisBranch,
     ctx: T.Context,
     env: T.Environment | None = None,
+    disambiguation: tuple[T.Type | None, ...] = (),
 ) -> tuple[T.AppliedOverload, AnalysisBranch] | None:
     args = _row_views_for_arguments(args, overload.params, env)
     substitution = _branch_argument_substitution(args, overload.params, ctx)
@@ -2186,7 +2188,12 @@ def _apply_overload_to_branch(
         return None
     specialized_branch = _specialize_branch_arguments(branch, substitution)
     specialized_args = tuple(_substitute_branch_type(arg, substitution) for arg in args)
-    applied = T.apply_overload(overload, specialized_args, ctx)
+    applied = T.apply_overload(
+        overload,
+        specialized_args,
+        ctx,
+        disambiguation=disambiguation,
+    )
     if applied is None:
         return None
     actual_returns = _apply_data_tag_flow(
@@ -2203,6 +2210,7 @@ def _apply_overload_to_branch(
         actual_returns,
         applied.scores,
         applied.vectorised,
+        applied.vectorised_depths,
     )
     return applied, specialized_branch
 
@@ -2376,12 +2384,12 @@ def _with_data_tags(
         existing = {
             item
             for item in existing
-            if item.name not in ctx.disjoint_tags.get(tag.name, set())
+            if Symbol(item.name) not in ctx.tag_disjoints(tag.name)
         }
         existing.add(tag)
-        parent = ctx.tag_parents.get(tag.name)
+        parent = ctx.tag_parent(tag.name)
         if parent is not None:
-            existing.add(T.DataTag(parent, tag.depth))
+            existing.add(T.DataTag(parent.text, tag.depth))
     return T.Tagged(typ, *sorted(existing)) if existing else typ
 
 

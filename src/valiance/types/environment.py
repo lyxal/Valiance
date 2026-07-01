@@ -127,6 +127,14 @@ class ConstructorDefinition:
         return tuple(field for field in self.fields if field.name not in self.defaults)
 
 
+@dataclass(frozen=True)
+class DataTagDefinition:
+    """One data-tag declaration visible in an environment scope."""
+
+    name: Symbol
+    kind: TagKind
+
+
 @dataclass
 class Environment:
     """Compiler-facing registry for symbols and type relationship facts."""
@@ -150,6 +158,13 @@ class Environment:
     )
     constructors: dict[Symbol, ConstructorDefinition] = field(
         default_factory=dict[Symbol, ConstructorDefinition]
+    )
+    data_tags: dict[Symbol, DataTagDefinition] = field(
+        default_factory=dict[Symbol, DataTagDefinition]
+    )
+    tag_parents: dict[Symbol, Symbol] = field(default_factory=dict[Symbol, Symbol])
+    disjoint_tags: dict[Symbol, set[Symbol]] = field(
+        default_factory=dict[Symbol, set[Symbol]]
     )
 
     def child_scope(self) -> Environment:
@@ -339,25 +354,52 @@ class Environment:
         """Record that a nominal type belongs to a variant."""
         self.context.variant_members[member_name] = variant_name
 
-    def add_unit_tag(self, tag: str) -> None:
+    def define_tag(self, tag: str | Symbol, kind: TagKind) -> None:
+        """Register a data tag declaration visible in this environment."""
+        name = _tag_symbol(tag)
+        self.data_tags[name] = DataTagDefinition(name, kind)
+        self.context.define_tag(name, kind)
+
+    def lookup_tag(self, tag: str | Symbol) -> DataTagDefinition | None:
+        """Return a data tag declaration, if visible."""
+        name = _tag_symbol(tag)
+        if name in self.data_tags:
+            return self.data_tags[name]
+        if self.parent is not None:
+            return self.parent.lookup_tag(name)
+        return None
+
+    def add_unit_tag(self, tag: str | Symbol) -> None:
         """Record a tag that cannot be silently erased."""
-        self.context.define_tag(tag, TagKind.UNIT)
+        self.define_tag(tag, TagKind.UNIT)
 
-    def add_constructed_tag(self, tag: str) -> None:
+    def add_constructed_tag(self, tag: str | Symbol) -> None:
         """Record a sticky constructed data tag."""
-        self.context.define_tag(tag, TagKind.CONSTRUCTED)
+        self.define_tag(tag, TagKind.CONSTRUCTED)
 
-    def add_computed_tag(self, tag: str) -> None:
+    def add_computed_tag(self, tag: str | Symbol) -> None:
         """Record a non-sticky computed data tag."""
-        self.context.define_tag(tag, TagKind.COMPUTED)
+        self.define_tag(tag, TagKind.COMPUTED)
 
-    def add_variant_tag(self, tag: str, parent: str) -> None:
+    def add_variant_tag(self, tag: str | Symbol, parent: str | Symbol) -> None:
         """Record a runtime variant tag with a computed parent tag."""
-        self.context.define_variant_tag(tag, parent)
+        name = _tag_symbol(tag)
+        parent_name = _tag_symbol(parent)
+        self.data_tags[name] = DataTagDefinition(name, TagKind.VARIANT)
+        self.data_tags.setdefault(
+            parent_name,
+            DataTagDefinition(parent_name, TagKind.COMPUTED),
+        )
+        self.tag_parents[name] = parent_name
+        self.context.define_variant_tag(name, parent_name)
 
-    def add_disjoint_tags(self, tag: str, other: str) -> None:
+    def add_disjoint_tags(self, tag: str | Symbol, other: str | Symbol) -> None:
         """Record two data tags that remove each other."""
-        self.context.add_disjoint_tags(tag, other)
+        name = _tag_symbol(tag)
+        other_name = _tag_symbol(other)
+        self.disjoint_tags.setdefault(name, set()).add(other_name)
+        self.disjoint_tags.setdefault(other_name, set()).add(name)
+        self.context.add_disjoint_tags(name, other_name)
 
     def apply(
         self,
@@ -395,3 +437,8 @@ def _failed_application_shape(
     params = overloads[0].params
     return_count = len(overloads[0].returns)
     return params, tuple(NeverType() for _ in range(return_count))
+
+
+def _tag_symbol(name: str | Symbol) -> Symbol:
+    """Normalize parser-facing tag names into symbol-table keys."""
+    return name if isinstance(name, Symbol) else Symbol(name)

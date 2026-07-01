@@ -896,12 +896,14 @@ class Parser:
                     is_element=True,
                 )
             name = self._qualified_symbol(token)
+            disambiguation = self._element_disambiguation(self._previous)
             if self._match(TokenKind.COLON):
                 return _ChainPiece(
                     (
                         ElementNode(
                             name,
                             self._modifier_arguments(token),
+                            disambiguation,
                             location=_loc(token),
                         ),
                     ),
@@ -910,11 +912,14 @@ class Parser:
             if self._match(TokenKind.LPAREN):
                 args = self._argument_expressions(TokenKind.RPAREN)
                 return _ChainPiece(
-                    (*_flatten(args), ElementNode(name, location=_loc(token))),
+                    (
+                        *_flatten(args),
+                        ElementNode(name, (), disambiguation, location=_loc(token)),
+                    ),
                     True,
                 )
             return _ChainPiece(
-                (ElementNode(name, location=_loc(token)),),
+                (ElementNode(name, (), disambiguation, location=_loc(token)),),
                 breaks_chain=name.text.startswith("\\"),
                 is_element=True,
             )
@@ -1103,6 +1108,28 @@ class Parser:
         if self._check(closer):
             self._error("empty argument lists are invalid; use a \\nilad name")
         return self._comma_expressions(closer)
+
+    def _element_disambiguation(self, start: Token) -> tuple[Type | None, ...]:
+        if not self._check(TokenKind.LBRACKET) or self._current.offset != (
+            start.offset + len(start.value)
+        ):
+            return ()
+        self._advance()
+        hints: list[Type | None] = []
+        self._skip_newlines()
+        if self._check(TokenKind.RBRACKET):
+            self._error("empty element disambiguation is invalid")
+        while True:
+            if self._check(TokenKind.IDENT) and self._current.value == "_":
+                self._advance()
+                hints.append(None)
+            else:
+                hints.append(self.parse_type_expression())
+            self._skip_newlines()
+            if self._match(TokenKind.RBRACKET):
+                return tuple(hints)
+            self._expect(TokenKind.COMMA)
+            self._skip_newlines()
 
     def _modifier_arguments(self, start: Token) -> tuple[FunctionNode, ...]:
         if self._match(TokenKind.LPAREN):

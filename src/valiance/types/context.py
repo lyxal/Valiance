@@ -32,10 +32,11 @@ class Context:
     variant_members: dict[Symbol, Symbol] = field(
         default_factory=dict[Symbol, Symbol]
     )
-    data_tags: dict[str, TagKind] = field(default_factory=dict[str, TagKind])
-    tag_parents: dict[str, str] = field(default_factory=dict[str, str])
-    disjoint_tags: dict[str, set[str]] = field(default_factory=dict[str, set[str]])
-    unit_tags: set[str] = field(default_factory=set[str])
+    data_tags: dict[Symbol, TagKind] = field(default_factory=dict[Symbol, TagKind])
+    tag_parents: dict[Symbol, Symbol] = field(default_factory=dict[Symbol, Symbol])
+    disjoint_tags: dict[Symbol, set[Symbol]] = field(
+        default_factory=dict[Symbol, set[Symbol]]
+    )
 
     def implements(self, type_name: Symbol, trait_name: Symbol) -> bool:
         """Return whether a nominal type implements a trait, following parents."""
@@ -53,27 +54,46 @@ class Context:
             pending.extend(self.trait_parents.get(trait, set()))
         return False
 
-    def define_tag(self, name: str, kind: TagKind) -> None:
+    def define_tag(self, name: str | Symbol, kind: TagKind) -> None:
         """Register a data tag category."""
-        self.data_tags[name] = kind
-        if kind is TagKind.UNIT:
-            self.unit_tags.add(name)
+        self.data_tags[_tag_symbol(name)] = kind
 
-    def define_variant_tag(self, name: str, parent: str) -> None:
+    def define_variant_tag(self, name: str | Symbol, parent: str | Symbol) -> None:
         """Register a runtime variant tag and its computed parent."""
-        self.data_tags[name] = TagKind.VARIANT
-        self.tag_parents[name] = parent
-        self.data_tags.setdefault(parent, TagKind.COMPUTED)
+        tag = _tag_symbol(name)
+        parent_tag = _tag_symbol(parent)
+        self.data_tags[tag] = TagKind.VARIANT
+        self.tag_parents[tag] = parent_tag
+        self.data_tags.setdefault(parent_tag, TagKind.COMPUTED)
 
-    def add_disjoint_tags(self, name: str, other: str) -> None:
+    def add_disjoint_tags(self, name: str | Symbol, other: str | Symbol) -> None:
         """Record that applying one tag removes the other."""
-        self.disjoint_tags.setdefault(name, set()).add(other)
-        self.disjoint_tags.setdefault(other, set()).add(name)
+        tag = _tag_symbol(name)
+        other_tag = _tag_symbol(other)
+        self.disjoint_tags.setdefault(tag, set()).add(other_tag)
+        self.disjoint_tags.setdefault(other_tag, set()).add(tag)
 
-    def tag_kind(self, name: str) -> TagKind:
+    def tag_kind(self, name: str | Symbol) -> TagKind:
         """Return a tag's declared kind, defaulting to computed."""
-        return self.data_tags.get(name, TagKind.COMPUTED)
+        return self.data_tags.get(_tag_symbol(name), TagKind.COMPUTED)
 
-    def is_constructed_like_tag(self, name: str) -> bool:
+    def is_constructed_like_tag(self, name: str | Symbol) -> bool:
         """Return whether a tag should stick through ordinary operations."""
         return self.tag_kind(name) in {TagKind.CONSTRUCTED, TagKind.UNIT}
+
+    def tag_parent(self, name: str | Symbol) -> Symbol | None:
+        """Return the computed parent of a variant tag, if declared."""
+        return self.tag_parents.get(_tag_symbol(name))
+
+    def tag_disjoints(self, name: str | Symbol) -> set[Symbol]:
+        """Return tags disjoint with ``name``."""
+        return self.disjoint_tags.get(_tag_symbol(name), set())
+
+    def is_unit_tag(self, name: str | Symbol) -> bool:
+        """Return whether a tag has unit semantics."""
+        return self.tag_kind(name) is TagKind.UNIT
+
+
+def _tag_symbol(name: str | Symbol) -> Symbol:
+    """Normalize parser-facing tag names into symbol-table keys."""
+    return name if isinstance(name, Symbol) else Symbol(name)

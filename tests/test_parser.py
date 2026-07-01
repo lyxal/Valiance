@@ -244,6 +244,39 @@ class ParserTests(unittest.TestCase):
             (FunctionNode(body=(ElementNode(Symbol("double")),)),),
         )
 
+    def test_parses_element_disambiguation_before_call_and_modifier_syntax(self):
+        program = parse("+[Number+, _]([[1, 2]], [10, 20])\nmap[Number]: double")
+
+        self.assertEqual(
+            program[:3],
+            [
+                ListLiteralNode(
+                    (
+                        (
+                            ListLiteralNode(
+                                ((NumberLiteralNode("1"),), (NumberLiteralNode("2"),))
+                            ),
+                        ),
+                    )
+                ),
+                ListLiteralNode(
+                    ((NumberLiteralNode("10"),), (NumberLiteralNode("20"),))
+                ),
+                ElementNode(
+                    Symbol("+"),
+                    disambiguation=(C(ListExactType, Number), None),
+                ),
+            ],
+        )
+        self.assertEqual(
+            program[3],
+            ElementNode(
+                Symbol("map"),
+                (FunctionNode(body=(ElementNode(Symbol("double")),)),),
+                (Number,),
+            ),
+        )
+
     def test_parses_parenthesized_colon_modifier_arguments(self):
         program = parse("fork: (sum, length) /")
 

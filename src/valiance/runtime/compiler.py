@@ -535,6 +535,10 @@ def _resolved_element_reference(node: TypedNode | None) -> tuple[str, int, int] 
     if element is None and ast.name in {item.name for item in BUILTIN_ELEMENTS}:
         return None
     vectorised = int(node.overload.vectorised) if node.overload is not None else 0
+    if node.overload is not None and node.overload.vectorised_depths:
+        return ast.name.text, node.overload_index, vectorised, (
+            *node.overload.vectorised_depths,
+        )
     return ast.name.text, node.overload_index, vectorised
 
 

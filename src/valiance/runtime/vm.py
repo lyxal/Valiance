@@ -287,13 +287,16 @@ class VirtualMachine:
     ) -> None:
         if (
             not isinstance(reference, tuple)
-            or len(reference) not in {2, 3}
+            or len(reference) not in {2, 3, 4}
             or not isinstance(reference[0], str)
             or not isinstance(reference[1], int)
         ):
             raise RuntimeError(f"invalid resolved element reference {reference!r}")
         name, overload_index = reference[:2]
-        vectorised = bool(reference[2]) if len(reference) == 3 else False
+        vectorised = bool(reference[2]) if len(reference) >= 3 else False
+        vectorised_depths = (
+            tuple(int(depth) for depth in reference[3]) if len(reference) == 4 else ()
+        )
         value = _load_name(name, frame.locals, frame.globals)
         if isinstance(value, BuiltinValue):
             try:
@@ -302,7 +305,13 @@ class VirtualMachine:
                 raise RuntimeError(
                     f"resolved element '{name}' has no overload {overload_index}"
                 ) from exc
-            _call_resolved_builtin(value, overload, frame, vectorised)
+            _call_resolved_builtin(
+                value,
+                overload,
+                frame,
+                vectorised,
+                vectorised_depths,
+            )
             return
         if isinstance(value, FunctionValue):
             if overload_index != 0:
@@ -655,6 +664,7 @@ def _call_resolved_builtin(
     overload: BuiltinOverload,
     frame: _Frame,
     vectorised: bool,
+    vectorised_depths: tuple[int, ...] = (),
 ) -> None:
     arity = len(overload.signature.params)
     try:
@@ -668,7 +678,12 @@ def _call_resolved_builtin(
             )
         ) from exc
     if vectorised:
-        vectorized = _call_vectorized_resolved_builtin(overload, args, callee.context)
+        vectorized = _call_vectorized_resolved_builtin(
+            overload,
+            args,
+            callee.context,
+            vectorised_depths,
+        )
         if vectorized is None:
             raise RuntimeError(
                 _format_call_error(
@@ -707,10 +722,18 @@ def _call_vectorized_resolved_builtin(
     overload: BuiltinOverload,
     args: tuple[Any, ...],
     context: RuntimeContext,
+    vectorised_depths: tuple[int, ...] = (),
 ) -> tuple[Any, ...] | None:
     implementation = overload.implementation
     assert implementation is not None
     try:
+        if vectorised_depths:
+            return _vectorize_resolved_depths(
+                implementation,
+                args,
+                context,
+                vectorised_depths,
+            )
         return _vectorize_resolved(implementation, args, context)
     except _CannotVectorize:
         return None
@@ -745,6 +768,32 @@ def _vectorize_resolved(
     if all(is_eager_sequence(arg) for arg in vector_args):
         return _vectorize_eager_resolved(implementation, args, context)
     return (LazyList(_vectorize_lazy_resolved(implementation, args, context)),)
+
+
+def _vectorize_resolved_depths(
+    implementation: Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]],
+    args: tuple[Any, ...],
+    context: RuntimeContext,
+    depths: tuple[int, ...],
+) -> tuple[Any, ...]:
+    if not any(depth > 0 for depth in depths):
+        return _vectorize_resolved(implementation, args, context)
+    vector_args = tuple(
+        arg for arg, depth in zip(args, depths, strict=False) if depth > 0
+    )
+    if not vector_args or not all(is_list_like(arg) for arg in vector_args):
+        raise _CannotVectorize
+    if all(is_eager_sequence(arg) for arg in vector_args):
+        return _vectorize_eager_resolved_depths(implementation, args, context, depths)
+    lazy_items = _vectorize_lazy_resolved_depths(
+        implementation,
+        args,
+        context,
+        depths,
+    )
+    return (
+        LazyList(lazy_items),
+    )
 
 
 def _vectorize_function(
@@ -800,6 +849,39 @@ def _vectorize_eager_resolved(
     return _transpose_vectorized_items(result_items)
 
 
+def _vectorize_eager_resolved_depths(
+    implementation: Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]],
+    args: tuple[Any, ...],
+    context: RuntimeContext,
+    depths: tuple[int, ...],
+) -> tuple[Any, ...]:
+    vector_lengths = {
+        len(arg)
+        for arg, depth in zip(args, depths, strict=False)
+        if depth > 0 and is_eager_sequence(arg)
+    }
+    if len(vector_lengths) != 1:
+        raise RuntimeError("cannot vectorise lists with different lengths")
+
+    item_depths = tuple(max(depth - 1, 0) for depth in depths)
+    result_items = []
+    for index in range(next(iter(vector_lengths))):
+        item_args = tuple(
+            arg[index] if depth > 0 and is_eager_sequence(arg) else arg
+            for arg, depth in zip(args, depths, strict=False)
+        )
+        result_items.append(
+            _vectorize_resolved_depths(
+                implementation,
+                item_args,
+                context,
+                item_depths,
+            )
+        )
+
+    return _transpose_vectorized_items(result_items)
+
+
 def _vectorize_lazy(
     overload: BuiltinOverload,
     args: tuple[Any, ...],
@@ -837,6 +919,40 @@ def _vectorize_lazy_resolved(
         item_iter = iter(items)
         item_args = tuple(next(item_iter) if is_list_like(arg) else arg for arg in args)
         result = _vectorize_resolved(implementation, item_args, context)
+        if len(result) != 1:
+            raise RuntimeError("lazy vectorised overload must return one value")
+        yield result[0]
+
+
+def _vectorize_lazy_resolved_depths(
+    implementation: Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]],
+    args: tuple[Any, ...],
+    context: RuntimeContext,
+    depths: tuple[int, ...],
+):
+    sentinel = object()
+    iterators = tuple(
+        iter(arg) if depth > 0 and is_list_like(arg) else None
+        for arg, depth in zip(args, depths, strict=False)
+    )
+    item_depths = tuple(max(depth - 1, 0) for depth in depths)
+    for items in zip_longest(
+        *(iterator for iterator in iterators if iterator is not None),
+        fillvalue=sentinel,
+    ):
+        if sentinel in items:
+            raise RuntimeError("cannot vectorise lists with different lengths")
+        item_iter = iter(items)
+        item_args = tuple(
+            next(item_iter) if depth > 0 and is_list_like(arg) else arg
+            for arg, depth in zip(args, depths, strict=False)
+        )
+        result = _vectorize_resolved_depths(
+            implementation,
+            item_args,
+            context,
+            item_depths,
+        )
         if len(result) != 1:
             raise RuntimeError("lazy vectorised overload must return one value")
         yield result[0]

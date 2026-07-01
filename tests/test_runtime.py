@@ -115,6 +115,17 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotIn(OpCode.LOAD_ELEMENT, ops)
         self.assertEqual(run(program), [Decimal("3")])
 
+    def test_element_disambiguation_controls_runtime_vectorisation_depth(self):
+        self.assertEqual(
+            execute("[[1, 2], [3, 4]] +[Number+, _] [10, 20]"),
+            [
+                [
+                    [Decimal("11"), Decimal("22")],
+                    [Decimal("13"), Decimal("24")],
+                ]
+            ],
+        )
+
     def test_compiler_emits_resolved_user_defined_element_calls(self):
         source = """
 define add_one(n: Number) -> Number => $n 1 +
