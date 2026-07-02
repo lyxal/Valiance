@@ -37,6 +37,32 @@ The package entry point is available as:
 uv run valiance
 ```
 
+Compile source to bytecode with the default action:
+
+```powershell
+uv run valiance samples/strings.vlnc
+uv run valiance --code '"hello" println' --output C:\tmp\hello.vbc
+```
+
+Run source without writing bytecode:
+
+```powershell
+uv run valiance run samples/strings.vlnc
+```
+
+Inspect compiler stages:
+
+```powershell
+uv run valiance parse samples/strings.vlnc
+uv run valiance analyse samples/strings.vlnc
+```
+
+Run existing bytecode:
+
+```powershell
+uv run valiance run-bytecode C:\tmp\hello.vbc
+```
+
 ## License
 
 Licensed under either of:

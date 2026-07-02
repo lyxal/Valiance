@@ -15,25 +15,34 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertIn("usage: valiance", output.getvalue())
-        self.assertIn("valiance -c <code>", output.getvalue())
+        self.assertIn("valiance [compile] -c <code>", output.getvalue())
+        self.assertIn("valiance run-bytecode <file>", output.getvalue())
         self.assertNotIn("analyse-demo", output.getvalue())
 
-    def test_main_analyses_inline_code(self):
+    def test_main_parses_inline_code(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            exit_code = main(["--code", "1 2 +"])
+            exit_code = main(["parse", "--code", "1 2 +"])
 
         self.assertEqual(exit_code, 0)
         rendered = output.getvalue()
         self.assertIn("Parsed AST:", rendered)
-        self.assertIn("Typed AST:", rendered)
         self.assertIn("ElementNode(name=+, location=1:5)", rendered)
+
+    def test_main_analyses_inline_code(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["analyse", "--code", "1 2 +"])
+
+        self.assertEqual(exit_code, 0)
+        rendered = output.getvalue()
+        self.assertIn("Typed AST:", rendered)
         self.assertIn("TypedNode(type=Number", rendered)
 
     def test_main_runs_inline_code(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            exit_code = main(["--run", "--code", '"hello" println'])
+            exit_code = main(["run", "--code", '"hello" println'])
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(output.getvalue(), "hello\n")
@@ -81,7 +90,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(output.getvalue(), "hello\n")
 
-    def test_main_emits_and_runs_bytecode_file(self):
+    def test_main_compiles_and_runs_bytecode_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             bytecode = Path(tmp) / "sample.vbc"
 
@@ -89,9 +98,10 @@ class MainTests(unittest.TestCase):
             with contextlib.redirect_stdout(emit_output):
                 emit_exit = main(
                     [
+                        "compile",
                         "--code",
                         "[1, 2, 3] + [5, 6, 7]",
-                        "--emit-bytecode",
+                        "--output",
                         str(bytecode),
                     ]
                 )
@@ -100,7 +110,7 @@ class MainTests(unittest.TestCase):
             with contextlib.redirect_stdout(run_output):
                 run_exit = main(
                     [
-                        "--run-bytecode",
+                        "run-bytecode",
                         str(bytecode),
                         "--implicit-output",
                     ]
@@ -108,10 +118,51 @@ class MainTests(unittest.TestCase):
             bytecode_data = bytecode.read_bytes()
 
         self.assertEqual(emit_exit, 0)
-        self.assertEqual(emit_output.getvalue(), "")
+        self.assertIn(f"Wrote bytecode: {bytecode}", emit_output.getvalue())
         self.assertTrue(bytecode_data.startswith(b"VLNCBC"))
         self.assertEqual(run_exit, 0)
         self.assertEqual(run_output.getvalue(), "Stack [\n  0: [6, 8, 10]\n]\n")
+
+    def test_main_compile_is_the_default_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bytecode = Path(tmp) / "inline.vbc"
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "--code",
+                        "[1, 2, 3] + [5, 6, 7]",
+                        "-o",
+                        str(bytecode),
+                    ]
+                )
+
+            bytecode_data = bytecode.read_bytes()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn(f"Wrote bytecode: {bytecode}", output.getvalue())
+        self.assertTrue(bytecode_data.startswith(b"VLNCBC"))
+
+    def test_main_run_does_not_emit_default_bytecode_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "sample.vlnc"
+            source.write_text("[1, 2, 3] + [5, 6, 7]", encoding="utf-8")
+            output_path = Path(tmp) / "sample.vbc"
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "run",
+                        str(source),
+                        "--implicit-output",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertFalse(output_path.exists())
+        self.assertEqual(output.getvalue(), "Stack [\n  0: [6, 8, 10]\n]\n")
 
     def test_main_emits_relative_bytecode_path_next_to_source_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -126,25 +177,23 @@ class MainTests(unittest.TestCase):
                 emit_exit = main(
                     [
                         str(source),
-                        "--emit-bytecode",
-                        "sample.vbc",
                     ]
                 )
 
             bytecode_data = bytecode.read_bytes()
 
         self.assertEqual(emit_exit, 0)
-        self.assertEqual(emit_output.getvalue(), "")
+        self.assertIn(f"Wrote bytecode: {bytecode}", emit_output.getvalue())
         self.assertTrue(bytecode_data.startswith(b"VLNCBC"))
 
-    def test_main_analyses_file(self):
+    def test_main_parses_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "sample.vlnc"
             source.write_text('"hello"', encoding="utf-8")
 
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                exit_code = main([str(source)])
+                exit_code = main(["parse", str(source)])
 
         self.assertEqual(exit_code, 0)
         self.assertIn(

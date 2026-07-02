@@ -39,7 +39,7 @@ codegen, and runtime.
 `src/valiance/asts/pretty.py`
 
 - Debug printer for raw and typed AST. Update it when adding node fields that a
-  human should see in `--analyse-only` output.
+  human should see in `valiance analyse` output.
 
 `tests/test_parser.py`
 

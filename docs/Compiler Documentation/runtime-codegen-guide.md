@@ -103,8 +103,9 @@ The runtime implementation is small, but several files must evolve together.
 `src/valiance/main.py`
 
 - Wires the CLI to analysis, codegen, VM execution, and bytecode files.
-- Relevant flags are `--run`, `--implicit-output`, `--emit-bytecode <file>`, and
-  `--run-bytecode <file>`.
+- Source input compiles by default and emits `.vbc` bytecode.
+- Relevant actions are `compile`, `run`, `run-bytecode`, `parse`, and `analyse`.
+- `run` compiles and executes source without writing bytecode.
 
 ## Core Invariants
 
@@ -403,8 +404,8 @@ This means library callers can still use `run()` without surprise printing.
 The CLI supports two bytecode workflows:
 
 ```powershell
-uv run valiance --code "[1, 2, 3] + [5, 6, 7]" --emit-bytecode C:\tmp\sample.vbc
-uv run valiance --run-bytecode C:\tmp\sample.vbc --implicit-output
+uv run valiance --code "[1, 2, 3] + [5, 6, 7]" --output C:\tmp\sample.vbc
+uv run valiance run-bytecode C:\tmp\sample.vbc --implicit-output
 ```
 
 The bytecode file contains:
@@ -429,7 +430,7 @@ Useful checks when a program analyses but fails at runtime:
 
 1. Inspect the typed AST to confirm analysis selected the expected stack effect.
 2. Inspect `compile_program(typed).main.instructions`.
-3. Run with `--implicit-output` to see the final stack when nothing printed.
+3. Run with `run --implicit-output` to see the final stack when nothing printed.
 4. If dispatch fails, read the runtime error's stack values, stack types, and
    attempted input shapes.
 5. Save and rerun bytecode to distinguish compiler issues from VM/serializer
@@ -438,9 +439,11 @@ Useful checks when a program analyses but fails at runtime:
 Good smoke commands:
 
 ```powershell
-uv run valiance --code "[1, 2, 3] + [5, 6, 7]" --run --implicit-output
-uv run valiance --code "[1, 2, 3] + [5, 6, 7]" --emit-bytecode C:\tmp\sample.vbc
-uv run valiance --run-bytecode C:\tmp\sample.vbc --implicit-output
+uv run valiance run --code "[1, 2, 3] + [5, 6, 7]" --implicit-output
+uv run valiance --code "[1, 2, 3] + [5, 6, 7]" --output C:\tmp\sample.vbc
+uv run valiance run-bytecode C:\tmp\sample.vbc --implicit-output
+uv run valiance parse --code "1 + 2"
+uv run valiance analyse --code "1 + 2"
 ```
 
 Good test commands:
