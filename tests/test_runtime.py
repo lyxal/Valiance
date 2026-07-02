@@ -9,7 +9,14 @@ from tempfile import TemporaryDirectory
 
 from valiance.analysis import Analyser
 from valiance.parsing import parse
-from valiance.runtime import CompileError, RuntimeError, compile_program, run
+from valiance.runtime import (
+    CompileError,
+    RuntimeError,
+    compile_program,
+    dumps,
+    loads,
+    run,
+)
 from valiance.runtime.bytecode import (
     FunctionCode,
     FunctionSetCode,
@@ -17,7 +24,7 @@ from valiance.runtime.bytecode import (
     OpCode,
     Program,
 )
-from valiance.runtime_values import LazyList
+from valiance.runtime_values import LazyList, ObjectValue
 
 
 def execute(source: str, source_file: Path | None = None):
@@ -346,6 +353,39 @@ $.name
             ["Grace"],
         )
 
+    def test_generic_object_runtime_values_keep_type_arguments(self):
+        stack = execute(
+            """
+object[T] Box =>
+  public $value: T
+end
+1
+Box
+$.value = 2
+"""
+        )
+
+        self.assertEqual(len(stack), 1)
+        self.assertIsInstance(stack[0], ObjectValue)
+        self.assertEqual(stack[0].type_name, "Box")
+        self.assertEqual(stack[0].type_args, ("Number",))
+        self.assertEqual(stack[0].fields["value"], Decimal("2"))
+
+    def test_generic_object_type_arguments_survive_bytecode_round_trip(self):
+        source = """
+object[T] Box =>
+  $value: T
+end
+1
+Box
+"""
+        program = compile_program(Analyser().analyse(parse(source)))
+        stack = run(loads(dumps(program)))
+
+        self.assertEqual(len(stack), 1)
+        self.assertIsInstance(stack[0], ObjectValue)
+        self.assertEqual(stack[0].type_args, ("Number",))
+
     def test_executes_enum_member_value_access(self):
         self.assertEqual(
             execute(
@@ -389,6 +429,24 @@ end
             ),
             ["some"],
         )
+
+    def test_generic_variant_runtime_values_keep_type_arguments(self):
+        stack = execute(
+            """
+variant[T] Maybe =>
+  Some => $value: T end
+  None => end
+end
+1
+Some
+"""
+        )
+
+        self.assertEqual(len(stack), 1)
+        self.assertIsInstance(stack[0], ObjectValue)
+        self.assertEqual(stack[0].type_name, "Maybe.Some")
+        self.assertEqual(stack[0].type_args, ("Number",))
+        self.assertEqual(stack[0].fields["value"], Decimal("1"))
 
     def test_executes_match_literal_guard_and_wildcard_patterns(self):
         self.assertEqual(

@@ -220,6 +220,43 @@ The relation layer owns generic solving. If a feature needs to know what `T`
 became in `Function[T -> U]`, use solved overload/application results rather
 than re-solving in the analyser.
 
+### Generic Variance
+
+Nominal generic constructors get declaration-site variance metadata from
+`Context.generic_variance`. Unknown constructors, arity mismatches, and generic
+positions without metadata default to invariant. `Variance.COVARIANT` checks
+`source_arg` assignable to `target_arg`; `Variance.CONTRAVARIANT` checks the
+opposite direction; `Variance.INVARIANT` requires canonical equality.
+
+The analyser publishes variance for object, trait, and variant declarations.
+Explicit markers in declaration generic lists win when present:
+
+```valiance
+object[T: any Vehicle] Box => ...
+object[T: above Vehicle] Sink => ...
+```
+
+When no marker is present, variance is inferred from declaration usage:
+
+- readable fields and returns are positive uses
+- public writable fields count as both positive and negative uses
+- function parameters are negative uses
+- nested function positions flip polarity through parameters
+
+Both positive and negative use makes the parameter invariant. Keep this
+conservative: unknown or unsupported uses should not silently become variant.
+Type syntax parses bare `T` as a nominal name, so the analyser rewrites type
+names that match the declaration's generic parameters into `VarType` before
+registering object attributes, constructors, and requirements.
+
+Generic parameter bounds are stored as `GenericConstraint` records on overloads.
+For `T: Vehicle`, `T: any Vehicle`, or `T: above Vehicle`, overload application
+first solves `T` from the actual arguments, substitutes any solved variables in
+the bound, and then requires the solution to be assignable to the bound. This
+check belongs in `types.relations.apply_overload`, so constrained object
+constructors, generic definitions, and any future constrained overload source
+share the same rule.
+
 ## Collection Types
 
 Valiance has several collection type nodes that look similar but mean different
@@ -300,6 +337,9 @@ Arrays can often be treated as corresponding list types by relation checks:
 - minimum arrays can satisfy minimum list parameters of the same rank
 - vectorisation preserves arrays only when the vectorised inputs are arrays
 - mixing arrays and lists produces list results
+- collection item types are covariant for assignability; for example `Car+` can
+  satisfy `Vehicle+` when `Car` implements `Vehicle`, while rank rules still
+  apply independently
 
 Do not assume arrays are fully implemented runtime rectangular values just
 because the type layer has array rank nodes.

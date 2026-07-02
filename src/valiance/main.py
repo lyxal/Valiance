@@ -19,7 +19,7 @@ from valiance.runtime import (
     loads,
     run,
 )
-from valiance.runtime_values import is_list_like
+from valiance.runtime_values import ObjectValue, is_list_like
 
 DEFAULT_BYTECODE_FILENAME = "out.vbc"
 DEFAULT_BYTECODE_SUFFIX = ".vbc"
@@ -316,7 +316,18 @@ def _format_value(value: Any) -> str:
             for key, item in value.items()
         )
         return "{" + items + "}"
+    if isinstance(value, ObjectValue):
+        items = ", ".join(
+            f"{name}: {_format_value(item)}" for name, item in value.fields.items()
+        )
+        return f"{_object_type_name(value)}{{{items}}}"
     return repr(value)
+
+
+def _object_type_name(value: ObjectValue) -> str:
+    if not value.type_args:
+        return value.type_name
+    return f"{value.type_name}[{', '.join(value.type_args)}]"
 
 
 if __name__ == "__main__":

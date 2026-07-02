@@ -83,6 +83,7 @@ from valiance.types import (
     Type,
     UnionType,
     normalize,
+    show,
 )
 
 
@@ -559,7 +560,14 @@ def _unwrap(node: ASTNode | TypedNode) -> ASTNode:
     return node
 
 
-def _resolved_element_reference(node: TypedNode | None) -> tuple[str, int, int] | None:
+def _resolved_element_reference(
+    node: TypedNode | None,
+) -> (
+    tuple[str, int, int]
+    | tuple[str, int, int, tuple[int, ...]]
+    | tuple[str, int, int, tuple[int, ...], tuple[str, ...]]
+    | None
+):
     if not isinstance(node, TypedElementNode):
         return None
     if node.overload_index is None:
@@ -580,11 +588,29 @@ def _resolved_element_reference(node: TypedNode | None) -> tuple[str, int, int] 
     if element is None and ast.name in {item.name for item in BUILTIN_ELEMENTS}:
         return None
     vectorised = int(node.overload.vectorised) if node.overload is not None else 0
+    type_args = _resolved_constructor_type_args(ast, node)
     if node.overload is not None and node.overload.vectorised_depths:
-        return ast.name.text, node.overload_index, vectorised, (
+        reference = ast.name.text, node.overload_index, vectorised, (
             *node.overload.vectorised_depths,
         )
+        return (*reference, type_args) if type_args else reference
+    if type_args:
+        return ast.name.text, node.overload_index, vectorised, (), type_args
     return ast.name.text, node.overload_index, vectorised
+
+
+def _resolved_constructor_type_args(
+    ast: ElementNode,
+    node: TypedElementNode,
+) -> tuple[str, ...]:
+    if node.overload is None or not node.overload.actual_returns:
+        return ()
+    returned = node.overload.actual_returns[0]
+    if not isinstance(returned, NominalType):
+        return ()
+    if not returned.args:
+        return ()
+    return tuple(show(arg) for arg in returned.args)
 
 
 def _index_spec(

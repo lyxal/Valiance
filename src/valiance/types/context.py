@@ -17,6 +17,14 @@ class TagKind(Enum):
     VARIANT = auto()
 
 
+class Variance(Enum):
+    """How one nominal generic argument participates in subtyping."""
+
+    INVARIANT = auto()
+    COVARIANT = auto()
+    CONTRAVARIANT = auto()
+
+
 @dataclass
 class Context:
     """Mutable registry of relationships needed by type checks."""
@@ -36,6 +44,9 @@ class Context:
     tag_parents: dict[Symbol, Symbol] = field(default_factory=dict[Symbol, Symbol])
     disjoint_tags: dict[Symbol, set[Symbol]] = field(
         default_factory=dict[Symbol, set[Symbol]]
+    )
+    generic_variance: dict[Symbol, tuple[Variance, ...]] = field(
+        default_factory=dict[Symbol, tuple[Variance, ...]]
     )
 
     def implements(self, type_name: Symbol, trait_name: Symbol) -> bool:
@@ -92,6 +103,21 @@ class Context:
     def is_unit_tag(self, name: str | Symbol) -> bool:
         """Return whether a tag has unit semantics."""
         return self.tag_kind(name) is TagKind.UNIT
+
+    def set_generic_variance(
+        self,
+        name: Symbol,
+        variances: tuple[Variance, ...],
+    ) -> None:
+        """Record declaration-site variance for a nominal constructor."""
+        self.generic_variance[name] = variances
+
+    def variance_for(self, name: Symbol, arity: int) -> tuple[Variance, ...]:
+        """Return declared variance, defaulting unknown constructors invariant."""
+        variances = self.generic_variance.get(name, ())
+        if len(variances) != arity:
+            return (Variance.INVARIANT,) * arity
+        return variances
 
 
 def _tag_symbol(name: str | Symbol) -> Symbol:

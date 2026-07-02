@@ -346,7 +346,7 @@ class VirtualMachine:
     ) -> None:
         if (
             not isinstance(reference, tuple)
-            or len(reference) not in {2, 3, 4}
+            or len(reference) not in {2, 3, 4, 5}
             or not isinstance(reference[0], str)
             or not isinstance(reference[1], int)
         ):
@@ -354,7 +354,12 @@ class VirtualMachine:
         name, overload_index = reference[:2]
         vectorised = bool(reference[2]) if len(reference) >= 3 else False
         vectorised_depths = (
-            tuple(int(depth) for depth in reference[3]) if len(reference) == 4 else ()
+            tuple(int(depth) for depth in reference[3]) if len(reference) >= 4 else ()
+        )
+        type_args = (
+            tuple(str(type_arg) for type_arg in reference[4])
+            if len(reference) >= 5
+            else ()
         )
         value = _load_name(name, frame.locals, frame.globals)
         if isinstance(value, BuiltinValue):
@@ -393,7 +398,7 @@ class VirtualMachine:
                 raise RuntimeError(
                     f"resolved constructor '{name}' has no overload {overload_index}"
                 )
-            _call_object_constructor(value, frame)
+            _call_object_constructor(value, frame, type_args)
             return
         if isinstance(value, ObjectValue):
             if overload_index != 0:
@@ -703,7 +708,11 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
     )
 
 
-def _call_object_constructor(callee: ObjectConstructorValue, frame: _Frame) -> None:
+def _call_object_constructor(
+    callee: ObjectConstructorValue,
+    frame: _Frame,
+    type_args: tuple[str, ...] = (),
+) -> None:
     arity = len(callee.required)
     try:
         args, stack_count, next_cycle_index = frame.source_args(arity)
@@ -725,7 +734,7 @@ def _call_object_constructor(callee: ObjectConstructorValue, frame: _Frame) -> N
         raise RuntimeError(
             f"constructor '{callee.type_name}' missing fields: {', '.join(missing)}"
         )
-    frame.stack.append(ObjectValue(callee.type_name, fields))
+    frame.stack.append(ObjectValue(callee.type_name, fields, type_args))
 
 
 def _call_resolved_builtin(
@@ -1380,7 +1389,7 @@ def _set_field(receiver: Any, field: str, value: Any) -> Any:
             raise RuntimeError(f"{receiver.type_name} has no field '{field}'")
         fields = dict(receiver.fields)
         fields[field] = value
-        return ObjectValue(receiver.type_name, fields)
+        return ObjectValue(receiver.type_name, fields, receiver.type_args)
     if isinstance(receiver, dict):
         if field not in receiver:
             raise RuntimeError(f"record has no field '{field}'")
@@ -1413,6 +1422,12 @@ def _show_overload_inputs(overloads: tuple[BuiltinOverload, ...]) -> list[str]:
         "(" + ", ".join(str(param) for param in overload.signature.params) + ")"
         for overload in overloads
     ]
+
+
+def _object_type_name(value: ObjectValue) -> str:
+    if not value.type_args:
+        return value.type_name
+    return f"{value.type_name}[{', '.join(value.type_args)}]"
 
 
 def _format_stack(stack: list[Any]) -> str:
@@ -1450,7 +1465,7 @@ def _format_value(value: Any) -> str:
         items = ", ".join(
             f"{name}: {_format_value(item)}" for name, item in value.fields.items()
         )
-        return f"{value.type_name}{{{items}}}"
+        return f"{_object_type_name(value)}{{{items}}}"
     return repr(value)
 
 
@@ -1477,7 +1492,7 @@ def _string_value(value: Any) -> str:
         items = ", ".join(
             f"{name}: {_string_value(item)}" for name, item in value.fields.items()
         )
-        return f"{value.type_name}{{{items}}}"
+        return f"{_object_type_name(value)}{{{items}}}"
     return str(value)
 
 
@@ -1497,5 +1512,5 @@ def _runtime_type_name(value: Any) -> str:
     if isinstance(value, dict):
         return "record"
     if isinstance(value, ObjectValue):
-        return value.type_name
+        return _object_type_name(value)
     return type(value).__name__

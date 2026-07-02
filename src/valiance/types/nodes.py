@@ -186,11 +186,20 @@ class CallSiteCheckedFunctionType(Type):
 
 
 @dataclass(frozen=True)
+class GenericConstraint:
+    """A bound that a solved generic type variable must satisfy."""
+
+    name: str
+    bound: Type
+
+
+@dataclass(frozen=True)
 class Overload:
     """Element/function overload signature before generic substitution."""
 
     params: tuple[Type, ...]
     returns: tuple[Type, ...]
+    generic_constraints: tuple[GenericConstraint, ...] = ()
 
 
 @dataclass(frozen=True)

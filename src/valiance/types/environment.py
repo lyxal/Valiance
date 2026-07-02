@@ -5,8 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from valiance.symbols import Symbol
-from valiance.types.context import Context, TagKind
-from valiance.types.nodes import NeverType, NominalType, Overload, OverloadSetType, Type
+from valiance.types.context import Context, TagKind, Variance
+from valiance.types.nodes import (
+    GenericConstraint,
+    NeverType,
+    NominalType,
+    Overload,
+    OverloadSetType,
+    Type,
+)
 from valiance.types.stack import StackApplication, TypeStack
 
 
@@ -55,6 +62,7 @@ class ObjectDefinition:
 
     name: Symbol
     generics: tuple[Symbol, ...] = ()
+    generic_variance: tuple[Variance, ...] = ()
     attributes: tuple[ObjectAttribute, ...] = ()
 
     def attribute_type(self, name: Symbol) -> Type | None:
@@ -83,6 +91,7 @@ class TraitDefinition:
 
     name: Symbol
     generics: tuple[Symbol, ...] = ()
+    generic_variance: tuple[Variance, ...] = ()
     requirements: tuple[TraitRequirement, ...] = ()
 
 
@@ -92,6 +101,7 @@ class VariantDefinition:
 
     name: Symbol
     generics: tuple[Symbol, ...] = ()
+    generic_variance: tuple[Variance, ...] = ()
     members: tuple[Symbol, ...] = ()
     requirements: tuple[TraitRequirement, ...] = ()
 
@@ -121,6 +131,7 @@ class ConstructorDefinition:
     name: Symbol
     fields: tuple[ObjectAttribute, ...]
     defaults: frozenset[Symbol] = frozenset()
+    generic_constraints: tuple[GenericConstraint, ...] = ()
 
     @property
     def required_fields(self) -> tuple[ObjectAttribute, ...]:
@@ -177,6 +188,7 @@ class Environment:
         attributes: tuple[ObjectAttribute, ...] = (),
         *,
         generics: tuple[Symbol, ...] = (),
+        generic_variance: tuple[Variance, ...] = (),
     ) -> None:
         """Register or replace an object type visible in this environment."""
         seen: set[Symbol] = set()
@@ -186,7 +198,9 @@ class Environment:
                     f"object {name!r} declares attribute {attribute.name!r} twice"
                 )
             seen.add(attribute.name)
-        self.objects[name] = ObjectDefinition(name, generics, attributes)
+        variances = _generic_variance(generics, generic_variance)
+        self.objects[name] = ObjectDefinition(name, generics, variances, attributes)
+        self.context.set_generic_variance(name, variances)
 
     def lookup_object(self, name: Symbol) -> ObjectDefinition | None:
         """Return an object definition, if one exists in scope."""
@@ -202,11 +216,21 @@ class Environment:
         fields: tuple[ObjectAttribute, ...],
         *,
         defaults: frozenset[Symbol] = frozenset(),
+        result_type: Type | None = None,
+        generic_constraints: tuple[GenericConstraint, ...] = (),
     ) -> None:
         """Register constructor metadata and its overload."""
-        self.constructors[name] = ConstructorDefinition(name, fields, defaults)
+        self.constructors[name] = ConstructorDefinition(
+            name,
+            fields,
+            defaults,
+            generic_constraints,
+        )
         params = tuple(field.typ for field in fields if field.name not in defaults)
-        self.define_overload(name, Overload(params, (NominalType(name),)))
+        self.define_overload(
+            name,
+            Overload(params, (result_type or NominalType(name),), generic_constraints),
+        )
 
     def lookup_constructor(self, name: Symbol) -> ConstructorDefinition | None:
         """Return constructor metadata, if visible."""
@@ -221,10 +245,13 @@ class Environment:
         name: Symbol,
         *,
         generics: tuple[Symbol, ...] = (),
+        generic_variance: tuple[Variance, ...] = (),
         requirements: tuple[TraitRequirement, ...] = (),
     ) -> None:
         """Register a trait definition."""
-        self.traits[name] = TraitDefinition(name, generics, requirements)
+        variances = _generic_variance(generics, generic_variance)
+        self.traits[name] = TraitDefinition(name, generics, variances, requirements)
+        self.context.set_generic_variance(name, variances)
 
     def lookup_trait(self, name: Symbol) -> TraitDefinition | None:
         """Return a trait definition, if visible."""
@@ -240,10 +267,19 @@ class Environment:
         members: tuple[Symbol, ...],
         *,
         generics: tuple[Symbol, ...] = (),
+        generic_variance: tuple[Variance, ...] = (),
         requirements: tuple[TraitRequirement, ...] = (),
     ) -> None:
         """Register a closed variant and its members."""
-        self.variants[name] = VariantDefinition(name, generics, members, requirements)
+        variances = _generic_variance(generics, generic_variance)
+        self.variants[name] = VariantDefinition(
+            name,
+            generics,
+            variances,
+            members,
+            requirements,
+        )
+        self.context.set_generic_variance(name, variances)
         for member in members:
             self.add_variant_member(member, name)
 
@@ -442,3 +478,12 @@ def _failed_application_shape(
 def _tag_symbol(name: str | Symbol) -> Symbol:
     """Normalize parser-facing tag names into symbol-table keys."""
     return name if isinstance(name, Symbol) else Symbol(name)
+
+
+def _generic_variance(
+    generics: tuple[Symbol, ...],
+    variances: tuple[Variance, ...],
+) -> tuple[Variance, ...]:
+    if len(variances) == len(generics):
+        return variances
+    return (Variance.INVARIANT,) * len(generics)

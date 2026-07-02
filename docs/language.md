@@ -1841,8 +1841,13 @@ TokenType.NUMBER.value
 # 16. Generics
 - Type substitution mechanism.
 - There is no type erasure with generics. If something is passed an object with a generic, both object and generic types are available. 
-- For now, generics are invariant. This is to keep the initial design simple. Covariance and contravariance may be added at a later date.
-- When they are added, `define [T: above U]` will be contravariance (any type above or equal to T) and `define [T: any U]` will be covariance (any type of T).
+- Generic constructors are invariant by default.
+- Object, trait, and variant declarations can infer variance from how their generic parameters are used.
+  - Readable fields and returns are covariant positions.
+  - Function parameters are contravariant positions.
+  - Public writable fields count as both covariant and contravariant, so they make the parameter invariant.
+- Variance can also be declared explicitly. `T: above U` is contravariance (any type above or equal to T) and `T: any U` is covariance (any type of T).
+- Collection item types are covariant: for example, `Car+` can be passed where `Vehicle+` is expected if `Car` implements `Vehicle`. Rank rules still apply separately.
 - However, a type can also be constrained to implement certain traits. `T: U` means "generic type `T` which implements `U`"
 
 ## 16.1. `atomic` type marker 

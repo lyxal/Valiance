@@ -10,6 +10,7 @@ from typing import Any
 import valiance.types as T
 from valiance.runtime_values import (
     LazyList,
+    ObjectValue,
     PanicSignal,
     is_finite_list_like,
     is_list_like,
@@ -193,7 +194,18 @@ def _format_value(value: Any) -> str:
             for key, item in value.items()
         )
         return "{" + items + "}"
+    if isinstance(value, ObjectValue):
+        items = ", ".join(
+            f"{name}: {_format_value(item)}" for name, item in value.fields.items()
+        )
+        return f"{_object_type_name(value)}{{{items}}}"
     return str(value)
+
+
+def _object_type_name(value: ObjectValue) -> str:
+    if not value.type_args:
+        return value.type_name
+    return f"{value.type_name}[{', '.join(value.type_args)}]"
 
 
 BUILTIN_ELEMENTS = (

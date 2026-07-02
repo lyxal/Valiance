@@ -60,6 +60,7 @@ from valiance.types import (
     U,
     UnknownElement,
     V,
+    Variance,
     WithTag,
     optional,
 )
@@ -514,6 +515,178 @@ end
             env.lookup_variant(Symbol("Maybe")).members[0],
             Symbol("Maybe.Some"),
         )
+
+    def test_generic_variant_constructor_preserves_type_argument(self):
+        analyser = Analyser(Environment())
+
+        typed = analyser.analyse(
+            parse(
+                """
+variant[T] Maybe =>
+  Some => $value: T end
+  None => end
+end
+1
+Some
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, N(Symbol("Maybe"), Number))
+
+    def test_object_generic_variance_is_inferred_from_readable_fields(self):
+        env = Environment()
+        analyser = Analyser(env)
+
+        typed = analyser.analyse(
+            parse(
+                """
+trait Vehicle => end
+object Car => end
+object Car as Vehicle => end
+object[T] Box =>
+  $value: T
+end
+define accept(box: Box[Vehicle]) -> Box[Vehicle] => $box end
+Car
+Box
+accept
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            env.context.variance_for(Symbol("Box"), 1),
+            (Variance.COVARIANT,),
+        )
+        self.assertEqual(typed[-1].typ, N(Symbol("Box"), N(Symbol("Vehicle"))))
+
+    def test_public_generic_fields_are_inferred_invariant(self):
+        env = Environment()
+        analyser = Analyser(env)
+
+        analyser.analyse(parse("object[T] Cell => public $value: T end"))
+
+        self.assertEqual(
+            env.context.variance_for(Symbol("Cell"), 1),
+            (Variance.INVARIANT,),
+        )
+
+    def test_explicit_generic_variance_marker_overrides_inference(self):
+        env = Environment()
+        analyser = Analyser(env)
+
+        analyser.analyse(parse("object[T: any Vehicle] Cell => public $value: T end"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            env.context.variance_for(Symbol("Cell"), 1),
+            (Variance.COVARIANT,),
+        )
+
+    def test_function_typed_fields_infer_contravariant_generic_use(self):
+        env = Environment()
+        analyser = Analyser(env)
+
+        analyser.analyse(parse("object[T] Sink => $consume: Function[T ->] end"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            env.context.variance_for(Symbol("Sink"), 1),
+            (Variance.CONTRAVARIANT,),
+        )
+
+    def test_generic_object_field_access_substitutes_receiver_argument(self):
+        analyser = Analyser(Environment())
+
+        typed = analyser.analyse(
+            parse(
+                """
+object Car => end
+object[T] Box =>
+  $value: T
+end
+Car
+Box
+$.value
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, N(Symbol("Car")))
+
+    def test_invariant_generic_object_rejects_substituted_supertype_argument(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(
+            parse(
+                """
+trait Vehicle => end
+object Car => end
+object Car as Vehicle => end
+object[T] Cell =>
+  public $value: T
+end
+define accept(cell: Cell[Vehicle]) -> Cell[Vehicle] => $cell end
+Car
+Cell
+accept
+"""
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "no overloads for element 'accept' match stack [Cell[Car]]",
+            analyser.diagnostics[0],
+        )
+
+    def test_generic_object_constraints_are_enforced_on_construction(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(
+            parse(
+                """
+trait Vehicle => end
+object Car => end
+object Car as Vehicle => end
+object[T: Vehicle] Box =>
+  $value: T
+end
+Car
+Box
+"not a vehicle"
+Box
+"""
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("no overloads for element 'Box'", analyser.diagnostics[0])
+
+    def test_generic_function_constraints_are_enforced_on_call(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(
+            parse(
+                """
+trait Vehicle => end
+object Car => end
+object Car as Vehicle => end
+define[T: Vehicle] keep(value: T) -> T => $value
+Car
+keep
+"not a vehicle"
+keep
+"""
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("no overloads for element 'keep'", analyser.diagnostics[0])
 
     def test_enum_declaration_registers_niladic_members(self):
         env = Environment()

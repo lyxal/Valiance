@@ -322,6 +322,7 @@ The type parser currently supports:
 - Union types: `A | B`
 - Intersection types: `A & B`
 - Optional types: `T?`, lowered to `Some[T] | None`
+- Atomic generic views: `T atomic`, lowered to `Atomic(T)`
 - List rank postfixes: `T+`, `T+3`, `T*`, `T*3`, `T~`, `T~3`
 - Array rank postfixes: `T^`, `T^3`, `T>`, `T>3`
 - Data-tagged types: `#sorted Number+`, `#!infinite Number+`
@@ -339,6 +340,33 @@ _type_union
 When adding new type syntax, place it at the correct precedence layer. Do not
 bolt it onto `_type_primary` if it is actually a prefix, postfix, union-like, or
 intersection-like form.
+
+## Generic Parameter Lists
+
+Object-like declarations and function definitions parse generic parameter lists
+before the declaration name:
+
+```valiance
+define[T: Vehicle] keep(value: T) -> T => ...
+object[T] Box => ...
+trait[T: any Vehicle] Readable => ...
+variant[E: above Error] Result => ...
+enum[T] Option => ...
+```
+
+The parser records generic names, optional variance markers, and optional bound
+types on `ObjectNode` and `DefineNode`. `T: any U` records covariance plus the
+bound `U`, `T: above U` records contravariance plus the bound `U`, and plain
+`T: U` records the bound without an explicit variance marker. The analyser
+rewrites matching type names into type variables and attaches bounds to
+constructor/function overloads so overload application validates the solved
+generic type after unification.
+
+This declaration-local generic syntax is separate from ordinary type parsing:
+outside a declaration's generic list, bare `T` is parsed as a nominal type name.
+The analyser rewrites names that match the surrounding declaration's generic
+parameters into type variables before storing object attributes, constructors,
+function definitions, and requirements.
 
 ## Data Tags
 
@@ -457,9 +485,6 @@ Known parser-facing gaps include:
 - Cast syntax such as `as Type` and `as! Type`.
 - Import/module syntax.
 - `spawn`, `concurrent`, `external`, and user-defined `cast` declarations.
-- Generic parameter lists on declarations.
-- Preservation of some parsed declaration details that are currently accepted
-  only loosely or discarded.
 
 When implementing one of these, prefer adding the parser shape first, then
 making the analyser/runtime reject it explicitly if later stages are not ready.

@@ -10,6 +10,7 @@ from valiance.types import (
     ExactList,
     Field,
     Fn,
+    GenericConstraint,
     ListExactType,
     ListMinType,
     N,
@@ -24,6 +25,7 @@ from valiance.types import (
     TypeVariable,
     U,
     V,
+    Variance,
     WithoutTag,
     _combine_all,
     _match_specificity,
@@ -48,10 +50,14 @@ SHAPE = Symbol("Shape")
 FOO = Symbol("Foo")
 BAR = Symbol("bar")
 BAZ = Symbol("baz")
+CAR = Symbol("Car")
+VEHICLE = Symbol("Vehicle")
 
 Number = N(NUMBER)
 String = N(STRING)
 Foo = N(FOO)
+Car = N(CAR)
+Vehicle = N(VEHICLE)
 
 
 class TypeLibraryTests(unittest.TestCase):
@@ -65,6 +71,104 @@ class TypeLibraryTests(unittest.TestCase):
     def test_assignment_does_not_vectorise(self):
         self.assertFalse(assignable(C(ListExactType, Number), Number))
         self.assertTrue(compatible(C(ListExactType, Number), Number))
+
+    def test_collection_item_types_are_covariant(self):
+        ctx = Context(trait_impls={CAR: {VEHICLE}})
+
+        self.assertTrue(
+            assignable(C(ListExactType, Car), C(ListExactType, Vehicle), ctx)
+        )
+        self.assertTrue(
+            assignable(C(ListExactType, Car, 2), C(ListExactType, Vehicle, 2), ctx)
+        )
+        self.assertFalse(
+            assignable(C(ListExactType, Car, 2), C(ListExactType, Vehicle), ctx)
+        )
+        self.assertFalse(
+            assignable(C(ListExactType, Vehicle), C(ListExactType, Car), ctx)
+        )
+
+    def test_nominal_generic_arguments_remain_invariant(self):
+        ctx = Context(trait_impls={CAR: {VEHICLE}})
+        box = Symbol("Box")
+
+        self.assertFalse(assignable(N(box, Car), N(box, Vehicle), ctx))
+
+    def test_nominal_generic_arguments_follow_declared_covariance(self):
+        ctx = Context(trait_impls={CAR: {VEHICLE}})
+        box = Symbol("Box")
+        ctx.set_generic_variance(box, (Variance.COVARIANT,))
+
+        self.assertTrue(assignable(N(box, Car), N(box, Vehicle), ctx))
+        self.assertFalse(assignable(N(box, Vehicle), N(box, Car), ctx))
+
+    def test_nominal_generic_arguments_follow_declared_contravariance(self):
+        ctx = Context(trait_impls={CAR: {VEHICLE}})
+        consumer = Symbol("Consumer")
+        ctx.set_generic_variance(consumer, (Variance.CONTRAVARIANT,))
+
+        self.assertTrue(assignable(N(consumer, Vehicle), N(consumer, Car), ctx))
+        self.assertFalse(assignable(N(consumer, Car), N(consumer, Vehicle), ctx))
+
+    def test_nominal_generic_variance_defaults_to_invariant_on_arity_mismatch(self):
+        ctx = Context(trait_impls={CAR: {VEHICLE}})
+        pair = Symbol("Pair")
+        ctx.set_generic_variance(pair, (Variance.COVARIANT,))
+
+        self.assertFalse(
+            assignable(N(pair, Car, String), N(pair, Vehicle, String), ctx)
+        )
+
+    def test_nominal_generic_arguments_support_mixed_variance(self):
+        ctx = Context(trait_impls={CAR: {VEHICLE}})
+        transformer = Symbol("Transformer")
+        ctx.set_generic_variance(
+            transformer,
+            (Variance.CONTRAVARIANT, Variance.COVARIANT),
+        )
+
+        self.assertTrue(
+            assignable(
+                N(transformer, Vehicle, Car),
+                N(transformer, Car, Vehicle),
+                ctx,
+            )
+        )
+        self.assertFalse(
+            assignable(
+                N(transformer, Car, Vehicle),
+                N(transformer, Vehicle, Car),
+                ctx,
+            )
+        )
+
+    def test_nominal_generic_variance_uses_nested_collection_assignability(self):
+        ctx = Context(trait_impls={CAR: {VEHICLE}})
+        box = Symbol("Box")
+        ctx.set_generic_variance(box, (Variance.COVARIANT,))
+
+        self.assertTrue(
+            assignable(
+                N(box, C(ListExactType, Car)),
+                N(box, C(ListExactType, Vehicle)),
+                ctx,
+            )
+        )
+
+    def test_generic_constraints_are_checked_after_solving(self):
+        ctx = Context(trait_impls={CAR: {VEHICLE}})
+        overload = Overload(
+            (V("T"),),
+            (V("T"),),
+            (GenericConstraint("T", Vehicle),),
+        )
+
+        accepted = apply_overload(overload, (Car,), ctx)
+        rejected = apply_overload(overload, (String,), ctx)
+
+        self.assertIsNotNone(accepted)
+        self.assertEqual(accepted.substitution, {"T": Car})
+        self.assertIsNone(rejected)
 
     def test_nested_list_solves_reduce_t_as_list(self):
         constraints = _solve(C(ListExactType, V("T")), C(ListExactType, Number, 2))

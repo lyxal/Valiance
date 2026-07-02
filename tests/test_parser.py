@@ -44,6 +44,7 @@ from valiance.asts import (
 )
 from valiance.parsing import LexError, ParseError, lex, parse, parse_type
 from valiance.types import (
+    Atomic,
     C,
     DataTag,
     Fn,
@@ -326,6 +327,22 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(node.function.returns, (Number,))
         self.assertEqual(node.function.body[-1], ElementNode(Symbol("*")))
 
+    def test_parses_generic_function_definition_constraints(self):
+        [node] = parse("define[T: Vehicle] keep(value: T) -> T => $value")
+
+        self.assertIsInstance(node, DefineNode)
+        self.assertEqual(node.generics, (Symbol("T"),))
+        self.assertEqual(node.generic_variances, (None,))
+        self.assertEqual(node.generic_constraints, (N(Symbol("Vehicle")),))
+        self.assertEqual(node.function.params[0].typ, N(Symbol("T")))
+        self.assertEqual(node.function.returns, (N(Symbol("T")),))
+
+    def test_parses_atomic_generic_type_marker(self):
+        [node] = parse("define find(needle: T atomic, haystack: T+) => $needle")
+
+        self.assertEqual(node.function.params[0].typ, Atomic(N(Symbol("T"))))
+        self.assertEqual(node.function.params[1].typ, C(ListExactType, N(Symbol("T"))))
+
     def test_parses_imports_with_namespace_alias_and_components(self):
         program = parse(
             """
@@ -420,6 +437,10 @@ end
             ),
         )
         self.assertEqual(person.definitions[0].name, Symbol("label"))
+
+        [box] = parse("object[T: any Vehicle] Box => $value: T end")
+        self.assertEqual(box.generics, (Symbol("T"),))
+        self.assertEqual(box.generic_variances, (Symbol("covariant"),))
 
         [shape] = parse("trait Shape => extend area -> Number end")
         self.assertEqual(

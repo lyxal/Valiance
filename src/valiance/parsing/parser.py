@@ -68,6 +68,7 @@ from valiance.parsing.lexer import Token, TokenKind, lex
 from valiance.types import (
     ArrayExactType,
     ArrayMinType,
+    Atomic,
     C,
     DataTag,
     Fn,
@@ -244,6 +245,7 @@ class Parser:
         visibility: Symbol | None,
         is_multi: bool,
     ) -> DefineNode:
+        generics, generic_variances, generic_constraints = self._generic_parameters()
         name = self._symbol("expected definition name")
         params = self._params() if self._match(TokenKind.LPAREN) else None
         returns = self._returns()
@@ -260,13 +262,16 @@ class Parser:
             annotations,
             is_multi,
             visibility,
+            generics,
+            generic_variances,
+            generic_constraints,
             location=_loc(start),
         )
 
     def _object_like(
         self, start: Token, kind: str, annotations: tuple[ASTNode, ...]
     ) -> ObjectNode:
-        generics = self._generic_names()
+        generics, generic_variances, generic_constraints = self._generic_parameters()
         name = self._symbol("expected object name")
         target = self.parse_type_expression() if self._match_ident("as") else None
         self._expect(TokenKind.FAT_ARROW)
@@ -279,6 +284,8 @@ class Parser:
                 target,
                 enum_members=enum_members,
                 annotations=annotations,
+                generic_variances=generic_variances,
+                generic_constraints=generic_constraints,
                 location=_loc(start),
             )
         fields, definitions, requirements, variants = self._object_body(kind, name)
@@ -293,22 +300,44 @@ class Parser:
             variants,
             (),
             annotations,
+            generic_variances=generic_variances,
+            generic_constraints=generic_constraints,
             location=_loc(start),
         )
 
     def _generic_names(self) -> tuple[Symbol, ...]:
+        names, _, _ = self._generic_parameters()
+        return names
+
+    def _generic_parameters(
+        self,
+    ) -> tuple[tuple[Symbol, ...], tuple[Symbol | None, ...], tuple[Type | None, ...]]:
         if not self._match(TokenKind.LBRACKET):
-            return ()
+            return (), (), ()
         names: list[Symbol] = []
+        variances: list[Symbol | None] = []
+        constraints: list[Type | None] = []
         self._skip_newlines()
         if self._match(TokenKind.RBRACKET):
-            return ()
+            return (), (), ()
         while True:
             names.append(self._symbol("expected generic parameter name"))
+            variance, constraint = self._generic_variance_marker()
+            variances.append(variance)
+            constraints.append(constraint)
             if self._match(TokenKind.RBRACKET):
-                return tuple(names)
+                return tuple(names), tuple(variances), tuple(constraints)
             self._expect(TokenKind.COMMA)
             self._skip_newlines()
+
+    def _generic_variance_marker(self) -> tuple[Symbol | None, Type | None]:
+        if not self._match(TokenKind.COLON):
+            return None, None
+        if self._match_ident("any"):
+            return Symbol("covariant"), self.parse_type_expression()
+        if self._match_ident("above"):
+            return Symbol("contravariant"), self.parse_type_expression()
+        return None, self.parse_type_expression()
 
     def _object_body(
         self,
@@ -1299,30 +1328,36 @@ class Parser:
 
     def _type_postfix(self) -> Type:
         typ = self._type_primary()
-        while self._check(TokenKind.OP) and self._current.value in {
-            "+",
-            "*",
-            "~",
-            "^",
-            ">",
-            "?",
-        }:
-            op = self._advance().value
-            if op == "?":
-                typ = U(N(Symbol("Some"), typ), NoneType())
+        while True:
+            if self._match_ident("atomic"):
+                typ = Atomic(typ)
                 continue
-            rank = 1
-            if self._match(TokenKind.NUMBER):
-                rank = int(self._previous.value)
-            collection = {
-                "+": ListExactType,
-                "*": ListMinType,
-                "~": ListRuggedType,
-                "^": ArrayExactType,
-                ">": ArrayMinType,
-            }.get(op)
-            if collection is not None:
-                typ = C(collection, typ, rank)
+            if self._check(TokenKind.OP) and self._current.value in {
+                "+",
+                "*",
+                "~",
+                "^",
+                ">",
+                "?",
+            }:
+                op = self._advance().value
+                if op == "?":
+                    typ = U(N(Symbol("Some"), typ), NoneType())
+                    continue
+                rank = 1
+                if self._match(TokenKind.NUMBER):
+                    rank = int(self._previous.value)
+                collection = {
+                    "+": ListExactType,
+                    "*": ListMinType,
+                    "~": ListRuggedType,
+                    "^": ArrayExactType,
+                    ">": ArrayMinType,
+                }.get(op)
+                if collection is not None:
+                    typ = C(collection, typ, rank)
+                continue
+            break
         return typ
 
     def _type_primary(self) -> Type:

@@ -34,7 +34,7 @@ from valiance.types.builders import (
     same,
     show,
 )
-from valiance.types.context import Context, TagKind
+from valiance.types.context import Context, TagKind, Variance
 from valiance.types.default_types import Boolean, Number, String
 from valiance.types.environment import (
     AppliedElement,
@@ -62,6 +62,7 @@ from valiance.types.nodes import (
     DataTag,
     ExactType,
     FunctionType,
+    GenericConstraint,
     IntersectionType,
     ListExactType,
     ListMinType,
@@ -128,6 +129,7 @@ __all__ = [
     "Field",
     "Fn",
     "FunctionType",
+    "GenericConstraint",
     "I",
     "IntersectionType",
     "ListExactType",
@@ -169,6 +171,7 @@ __all__ = [
     "U",
     "UnknownElement",
     "VariantDefinition",
+    "Variance",
     "UnionType",
     "V",
     "VarType",

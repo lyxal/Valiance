@@ -20,7 +20,7 @@ from valiance.types.builders import (
     optional,
     same,
 )
-from valiance.types.context import Context
+from valiance.types.context import Context, Variance
 from valiance.types.nodes import (
     AppliedOverload,
     ArrayExactType,
@@ -31,6 +31,7 @@ from valiance.types.nodes import (
     DataTag,
     ExactType,
     FunctionType,
+    GenericConstraint,
     IntersectionType,
     ListExactType,
     ListMinType,
@@ -98,12 +99,8 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
         return subtype(source.base, target, ctx)
 
     if isinstance(source, NominalType) and isinstance(target, NominalType):
-        # Generic nominal types are invariant. Trait/variant relationships are
-        # the only nominal widening currently supported.
         if source.name == target.name and len(source.args) == len(target.args):
-            return all(
-                same(a, b) for a, b in zip(source.args, target.args, strict=False)
-            )
+            return _nominal_args_subtype(source, target, ctx)
         if ctx.implements(source.name, target.name):
             return True
         if ctx.variant_members.get(source.name) == target.name:
@@ -121,6 +118,30 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
         return _collection_subtype(source, target, ctx)
 
     return False
+
+
+def _nominal_args_subtype(
+    source: NominalType,
+    target: NominalType,
+    ctx: Context,
+) -> bool:
+    """Return whether nominal args satisfy declared variance for this constructor."""
+    variances = ctx.variance_for(source.name, len(source.args))
+    for actual, expected, variance in zip(
+        source.args,
+        target.args,
+        variances,
+        strict=True,
+    ):
+        if variance is Variance.COVARIANT:
+            if not assignable(actual, expected, ctx):
+                return False
+        elif variance is Variance.CONTRAVARIANT:
+            if not assignable(expected, actual, ctx):
+                return False
+        elif not same(actual, expected):
+            return False
+    return True
 
 
 def _row_subtype(source: Type, target: RowType, ctx: Context) -> bool:
@@ -148,8 +169,8 @@ def _collection_subtype(source: Type, target: Type, ctx: Context) -> bool:
             remainder = _collection_remainder(
                 type(source), source.base, source.rank - target.rank
             )
-            return same(remainder, target.base)
-    if not same(source.base, target.base):
+            return assignable(remainder, target.base, ctx)
+    if not assignable(source.base, target.base, ctx):
         return False
     sk, tk = type(source), type(target)
     sr, tr = source.rank, target.rank
@@ -505,6 +526,22 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
     return t
 
 
+def _generic_constraints_met(
+    generic_constraints: tuple[GenericConstraint, ...],
+    substitution: dict[str, Type],
+    ctx: Context,
+) -> bool:
+    """Return whether solved generic variables satisfy their declared bounds."""
+    for constraint in generic_constraints:
+        solution = substitution.get(constraint.name)
+        if solution is None:
+            return False
+        bound = _substitute(constraint.bound, substitution)
+        if not assignable(solution, bound, ctx):
+            return False
+    return True
+
+
 def _atomic_of(t: Type) -> Type:
     """Return the atomic base type of a collection-like solved generic."""
     t = normalize(t)
@@ -823,6 +860,12 @@ def apply_overload(
 
     params = tuple(_substitute(param, substitution) for param in overload.params)
     returns = tuple(_substitute(ret, substitution) for ret in overload.returns)
+    if not _generic_constraints_met(
+        overload.generic_constraints,
+        substitution,
+        ctx,
+    ):
+        return None
     if not all(
         compatible(arg, param, ctx)
         for arg, param in zip(base_args, params, strict=False)

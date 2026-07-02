@@ -23,6 +23,7 @@ class ObjectValue:
 
     type_name: str
     fields: dict[str, Any]
+    type_args: tuple[str, ...] = ()
 
 
 class PanicSignal(Exception):

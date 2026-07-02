@@ -465,7 +465,7 @@ Current audit total: 288 / 724 items complete (39.8%).
 ## 27. Custom element definitions
 
 - [x] Parse `define`.
-- [ ] Support generic parameter lists on definitions.
+- [x] Support generic parameter lists on definitions.
 - [x] Support optional parameter lists.
 - [x] Support optional return declarations.
 - [x] Create new executable elements from definitions.
@@ -528,7 +528,7 @@ Current audit total: 288 / 724 items complete (39.8%).
 - [x] Construct variant values.
 - [ ] Access or destructure associated case values.
 - [x] Integrate variants with exhaustive pattern matching.
-- [ ] Support generic variants.
+- [x] Support generic variants.
 
 ## 31. Enums
 
@@ -543,11 +543,16 @@ Current audit total: 288 / 724 items complete (39.8%).
 
 ## 32. Generics and unification
 
-- [ ] Parse generic parameter lists.
-- [ ] Preserve generic types at runtime rather than erasing them.
-- [x] Treat generics as invariant.
-- [ ] Support trait constraints on generic parameters.
-- [ ] Parse the atomic generic marker.
+- [x] Parse generic parameter lists on all declaration kinds.
+- [x] Parse generic parameter lists on object-like declarations.
+- [x] Preserve generic object and variant constructor type arguments at runtime.
+- [x] Default unknown or unsupported nominal generic constructors to invariant.
+- [x] Support declaration-site covariance and contravariance metadata.
+- [x] Infer object-like declaration variance from readable, writable, return,
+      and function-parameter usage.
+- [x] Support covariant collection item assignability.
+- [x] Support trait constraints on generic parameters.
+- [x] Parse the atomic generic marker.
 - [x] Resolve the atomic base type of ranked generic values.
 - [x] Exclude atomic parameter positions from driving unification where specified.
 - [x] Implement generic unification across concrete generic constructors.
@@ -670,14 +675,14 @@ Current audit total: 288 / 724 items complete (39.8%).
 ## 38. `where` clauses and type-level constraints
 
 - [ ] Parse `where` clauses.
-- [ ] Support constraints on generic types.
+- [x] Support constraints on generic types.
 - [ ] Support rank variables.
 - [ ] Bind collection ranks to rank variables.
 - [ ] Support the allowed rank arithmetic and comparisons.
 - [ ] Validate relationships between parameter and return ranks.
 - [ ] Restrict operations in `where` clauses to the specified set.
 - [ ] Reject invalid, unresolved, or unsupported constraints.
-- [ ] Integrate solved constraints with overload selection and unification.
+- [x] Integrate solved constraints with overload selection and unification.
 
 ## 39. Imports and modules
 

@@ -668,12 +668,20 @@ class Analyser:
         name: Symbol,
         function_node: FunctionNode,
     ) -> set[AnalysisBranch]:
+        function_node = _genericize_function_node(function_node, node.generics)
         result = self._analyse_function_literal(branch, function_node)
         if result is None:
             return {branch.append_typed(TypedNode(node, None))}
         function, typed_branch = result
+        generic_constraints = _generic_constraints(
+            node.generics,
+            node.generic_constraints,
+        )
         for overload in _callable_overloads(function.typ):
-            self.env.define_overload(name, overload)
+            self.env.define_overload(
+                name,
+                _with_generic_constraints(overload, generic_constraints),
+            )
         typed_node = TypedFunctionNode(node, function.typ, function.overloads)
         return {typed_branch.append_typed(typed_node)}
 
@@ -721,14 +729,35 @@ class Analyser:
         attributes = tuple(self._object_attribute(field) for field in node.fields)
         if any(attribute is None for attribute in attributes):
             return {branch.append_typed(TypedNode(node, None))}
-        object_attributes = tuple(attribute for attribute in attributes if attribute)
-        self.env.define_object(node.name, object_attributes, generics=node.generics)
+        object_attributes = tuple(
+            _genericize_attribute(attribute, node.generics)
+            for attribute in attributes
+            if attribute
+        )
+        generic_variance = _declared_or_inferred_variance(
+            node.generics,
+            node.generic_variances,
+            object_attributes,
+            (),
+        )
+        generic_constraints = _generic_constraints(
+            node.generics,
+            node.generic_constraints,
+        )
+        self.env.define_object(
+            node.name,
+            object_attributes,
+            generics=node.generics,
+            generic_variance=generic_variance,
+        )
         self.env.define_constructor(
             node.name,
             object_attributes,
             defaults=frozenset(
                 field.name for field in node.fields if field.default
             ),
+            result_type=_declared_nominal(node.name, node.generics),
+            generic_constraints=generic_constraints,
         )
         current = branch.append_typed(TypedNode(node, None))
         for definition in node.definitions:
@@ -741,13 +770,19 @@ class Analyser:
         node: ObjectNode,
     ) -> set[AnalysisBranch]:
         requirements = tuple(
-            requirement
+            _genericize_requirement(requirement, node.generics)
             for item in node.requirements
             if (requirement := _trait_requirement(item)) is not None
         )
         self.env.define_trait(
             node.name,
             generics=node.generics,
+            generic_variance=_declared_or_inferred_variance(
+                node.generics,
+                node.generic_variances,
+                (),
+                requirements,
+            ),
             requirements=requirements,
         )
         if node.target is not None:
@@ -764,8 +799,12 @@ class Analyser:
         branch: AnalysisBranch,
         node: ObjectNode,
     ) -> set[AnalysisBranch]:
+        generic_constraints = _generic_constraints(
+            node.generics,
+            node.generic_constraints,
+        )
         requirements = tuple(
-            requirement
+            _genericize_requirement(requirement, node.generics)
             for item in node.requirements
             if (requirement := _trait_requirement(item)) is not None
         )
@@ -775,21 +814,47 @@ class Analyser:
             members.append(member_name)
             attributes = tuple(self._object_attribute(field) for field in member.fields)
             object_attributes = tuple(
-                attribute for attribute in attributes if attribute
+                _genericize_attribute(attribute, node.generics)
+                for attribute in attributes
+                if attribute
             )
-            self.env.define_object(member_name, object_attributes)
-            self.env.define_constructor(member_name, object_attributes)
-            self.env.define_overload(member.name, T.Overload(
-                tuple(attribute.typ for attribute in object_attributes),
-                (T.N(node.name),),
-            ))
+            variant_type = _declared_nominal(node.name, node.generics)
+            self.env.define_object(
+                member_name,
+                object_attributes,
+                generics=node.generics,
+            )
+            self.env.define_constructor(
+                member_name,
+                object_attributes,
+                result_type=variant_type,
+                generic_constraints=generic_constraints,
+            )
+            self.env.define_overload(
+                member.name,
+                T.Overload(
+                    tuple(attribute.typ for attribute in object_attributes),
+                    (variant_type,),
+                    generic_constraints,
+                ),
+            )
         self.env.define_variant(
             node.name,
             tuple(members),
             generics=node.generics,
+            generic_variance=_declared_or_inferred_variance(
+                node.generics,
+                node.generic_variances,
+                (),
+                requirements,
+            ),
             requirements=requirements,
         )
-        return {branch.append_typed(TypedNode(node, T.N(node.name)))}
+        return {
+            branch.append_typed(
+                TypedNode(node, _declared_nominal(node.name, node.generics))
+            )
+        }
 
     def _enum_definition(
         self,
@@ -806,7 +871,11 @@ class Analyser:
             for member in node.enum_members
         )
         self.env.define_enum(node.name, members, value_type=value_type)
-        return {branch.append_typed(TypedNode(node, T.N(node.name)))}
+        return {
+            branch.append_typed(
+                TypedNode(node, _declared_nominal(node.name, node.generics))
+            )
+        }
 
     def _object_attribute(self, field: ObjectFieldNode) -> T.ObjectAttribute | None:
         if field.typ is not None:
@@ -840,16 +909,20 @@ class Analyser:
         owner: Symbol,
         definition: DefineNode,
     ) -> AnalysisBranch:
-        self_type = T.N(owner)
+        owner_definition = self.env.lookup_object(owner)
+        self_type = _declared_nominal(
+            owner,
+            owner_definition.generics if owner_definition is not None else (),
+        )
         params = (FunctionParam(Symbol("self"), self_type),) + tuple(
             definition.function.params or ()
         )
-        function_node = FunctionNode(
+        function_node = _genericize_function_node(FunctionNode(
             params=params,
             body=definition.function.body,
             returns=definition.function.returns,
             location=definition.function.location,
-        )
+        ), definition.generics)
         self._friendly_owners = self._friendly_owners + (owner,)
         try:
             result = self._analyse_function_literal(branch, function_node)
@@ -858,9 +931,16 @@ class Analyser:
         if result is None:
             return branch.append_typed(TypedNode(definition, None))
         function, typed_branch = result
+        generic_constraints = _generic_constraints(
+            definition.generics,
+            definition.generic_constraints,
+        )
         for name in (definition.name, Symbol(f"{owner}::{definition.name}")):
             for overload in _callable_overloads(function.typ):
-                self.env.define_overload(name, overload)
+                self.env.define_overload(
+                    name,
+                    _with_generic_constraints(overload, generic_constraints),
+                )
         return typed_branch
 
     def _import(
@@ -1946,7 +2026,8 @@ class Analyser:
             return field_type, T.Row(receiver_type, T.Field(name, field_type))
 
         if isinstance(receiver_type, T.NominalType):
-            attribute = self.env.lookup_attribute_definition(receiver_type.name, name)
+            definition = self.env.lookup_object(receiver_type.name)
+            attribute = None if definition is None else definition.attribute(name)
             if attribute is None:
                 return None, None
             if not self._can_access_attribute(
@@ -1955,7 +2036,15 @@ class Analyser:
                 write=write,
             ):
                 return None, None
-            return attribute.typ, None
+            substitution = {
+                generic.text: arg
+                for generic, arg in zip(
+                    definition.generics,
+                    receiver_type.args,
+                    strict=False,
+                )
+            }
+            return _substitute_branch_type(attribute.typ, substitution), None
 
         if isinstance(receiver_type, T.CollectionType):
             field_type, refined_base = self._field_type(
@@ -2574,10 +2663,10 @@ def _branch_argument_substitution(
 ) -> dict[str, T.Type] | None:
     substitution: dict[str, T.Type] = {}
     for arg, param in zip(args, params, strict=True):
-        if T.compatible(arg, param, ctx):
-            continue
         constraints = _solve_branch_argument(arg, param, ctx)
         if constraints is None:
+            if T.compatible(arg, param, ctx):
+                continue
             return None
         for name, typ in constraints.items():
             existing = substitution.get(name)
@@ -2604,10 +2693,12 @@ def _solve_branch_argument(
     def rec(actual: T.Type, expected: T.Type) -> bool:
         actual = T.normalize(actual)
         expected = T.normalize(expected)
-        if T.compatible(actual, expected, ctx):
-            return True
         if isinstance(actual, T.VarType):
             return bind(actual.name, expected)
+        if isinstance(expected, T.VarType):
+            return bind(expected.name, actual)
+        if T.compatible(actual, expected, ctx):
+            return True
         if isinstance(actual, T.RowType):
             if isinstance(expected, T.RowType):
                 if not rec(actual.base, expected.base):
@@ -3079,6 +3170,223 @@ def _trait_requirement(node: TraitRequirementNode) -> T.TraitRequirement | None:
     )
     returns = node.returns or ()
     return T.TraitRequirement(node.name, T.Overload(params, returns))
+
+
+def _declared_nominal(name: Symbol, generics: tuple[Symbol, ...]) -> T.Type:
+    return T.N(name, *(T.V(generic.text) for generic in generics))
+
+
+def _generic_constraints(
+    generics: tuple[Symbol, ...],
+    constraints: tuple[T.Type | None, ...],
+) -> tuple[T.GenericConstraint, ...]:
+    if len(generics) != len(constraints):
+        return ()
+    return tuple(
+        T.GenericConstraint(generic.text, _genericize_type(bound, generics))
+        for generic, bound in zip(generics, constraints, strict=True)
+        if bound is not None
+    )
+
+
+def _with_generic_constraints(
+    overload: T.Overload,
+    constraints: tuple[T.GenericConstraint, ...],
+) -> T.Overload:
+    if not constraints:
+        return overload
+    return T.Overload(
+        overload.params,
+        overload.returns,
+        overload.generic_constraints + constraints,
+    )
+
+
+def _genericize_function_node(
+    function: FunctionNode,
+    generics: tuple[Symbol, ...],
+) -> FunctionNode:
+    if not generics:
+        return function
+    params = None
+    if function.params is not None:
+        params = tuple(
+            FunctionParam(
+                param.name,
+                None if param.typ is None else _genericize_type(param.typ, generics),
+            )
+            for param in function.params
+        )
+    returns = None
+    if function.returns is not None:
+        returns = tuple(_genericize_type(ret, generics) for ret in function.returns)
+    return FunctionNode(
+        params=params,
+        body=function.body,
+        returns=returns,
+        location=function.location,
+    )
+
+
+def _genericize_attribute(
+    attribute: T.ObjectAttribute,
+    generics: tuple[Symbol, ...],
+) -> T.ObjectAttribute:
+    return T.ObjectAttribute(
+        attribute.name,
+        _genericize_type(attribute.typ, generics),
+        attribute.access,
+        attribute.has_default,
+    )
+
+
+def _genericize_requirement(
+    requirement: T.TraitRequirement,
+    generics: tuple[Symbol, ...],
+) -> T.TraitRequirement:
+    return T.TraitRequirement(
+        requirement.name,
+        T.Overload(
+            tuple(
+                _genericize_type(param, generics)
+                for param in requirement.overload.params
+            ),
+            tuple(
+                _genericize_type(ret, generics)
+                for ret in requirement.overload.returns
+            ),
+        ),
+    )
+
+
+def _genericize_type(typ: T.Type, generics: tuple[Symbol, ...]) -> T.Type:
+    names = {generic.text for generic in generics}
+    typ = T.normalize(typ)
+    if isinstance(typ, T.NominalType):
+        if not typ.args and typ.name.text in names:
+            return T.V(typ.name.text)
+        return T.N(
+            typ.name,
+            *(_genericize_type(arg, generics) for arg in typ.args),
+        )
+    if isinstance(typ, T.UnionType):
+        return T.U(*(_genericize_type(item, generics) for item in typ.items))
+    if isinstance(typ, T.IntersectionType):
+        return T.I(*(_genericize_type(item, generics) for item in typ.items))
+    if isinstance(typ, T.TupleType):
+        return T.Tup(*(_genericize_type(item, generics) for item in typ.params))
+    if isinstance(typ, T.RowType):
+        return T.Row(
+            _genericize_type(typ.base, generics),
+            *(
+                T.Field(field.name, _genericize_type(field.typ, generics))
+                for field in typ.fields
+            ),
+        )
+    if isinstance(typ, T.CollectionType):
+        return T.C(type(typ), _genericize_type(typ.base, generics), typ.rank)
+    if isinstance(typ, T.FunctionType):
+        return T.Fn(
+            (_genericize_type(param, generics) for param in typ.params),
+            (_genericize_type(ret, generics) for ret in typ.returns),
+        )
+    if isinstance(typ, T.TaggedType):
+        return T.Tagged(_genericize_type(typ.inner, generics), *typ.tags)
+    if isinstance(typ, T.ExactType):
+        return T.Exact(_genericize_type(typ.inner, generics))
+    if isinstance(typ, T.AtomicType):
+        return T.Atomic(_genericize_type(typ.inner, generics))
+    return typ
+
+
+def _declared_or_inferred_variance(
+    generics: tuple[Symbol, ...],
+    explicit: tuple[Symbol | None, ...],
+    attributes: tuple[T.ObjectAttribute, ...],
+    requirements: tuple[T.TraitRequirement, ...],
+) -> tuple[T.Variance, ...]:
+    inferred = _infer_generic_variance(generics, attributes, requirements)
+    if len(explicit) != len(generics):
+        return inferred
+    return tuple(
+        _variance_from_marker(marker) if marker is not None else inferred[index]
+        for index, marker in enumerate(explicit)
+    )
+
+
+def _variance_from_marker(marker: Symbol) -> T.Variance:
+    if marker.text == "covariant":
+        return T.Variance.COVARIANT
+    if marker.text == "contravariant":
+        return T.Variance.CONTRAVARIANT
+    return T.Variance.INVARIANT
+
+
+def _infer_generic_variance(
+    generics: tuple[Symbol, ...],
+    attributes: tuple[T.ObjectAttribute, ...],
+    requirements: tuple[T.TraitRequirement, ...],
+) -> tuple[T.Variance, ...]:
+    usage = {generic.text: [False, False] for generic in generics}
+    for attribute in attributes:
+        _record_variance_use(attribute.typ, +1, usage)
+        if attribute.access.text == "public":
+            _record_variance_use(attribute.typ, -1, usage)
+    for requirement in requirements:
+        for param in requirement.overload.params:
+            _record_variance_use(param, -1, usage)
+        for ret in requirement.overload.returns:
+            _record_variance_use(ret, +1, usage)
+    variances: list[T.Variance] = []
+    for generic in generics:
+        positive, negative = usage[generic.text]
+        if positive and not negative:
+            variances.append(T.Variance.COVARIANT)
+        elif negative and not positive:
+            variances.append(T.Variance.CONTRAVARIANT)
+        else:
+            variances.append(T.Variance.INVARIANT)
+    return tuple(variances)
+
+
+def _record_variance_use(
+    typ: T.Type,
+    polarity: int,
+    usage: dict[str, list[bool]],
+) -> None:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.VarType):
+        if typ.name in usage:
+            usage[typ.name][0 if polarity > 0 else 1] = True
+        return
+    if isinstance(typ, T.NominalType):
+        for arg in typ.args:
+            _record_variance_use(arg, polarity, usage)
+        return
+    if isinstance(typ, (T.UnionType, T.IntersectionType)):
+        for item in typ.items:
+            _record_variance_use(item, polarity, usage)
+        return
+    if isinstance(typ, T.TupleType):
+        for item in typ.params:
+            _record_variance_use(item, polarity, usage)
+        return
+    if isinstance(typ, T.RowType):
+        _record_variance_use(typ.base, polarity, usage)
+        for field in typ.fields:
+            _record_variance_use(field.typ, polarity, usage)
+        return
+    if isinstance(typ, T.CollectionType):
+        _record_variance_use(typ.base, polarity, usage)
+        return
+    if isinstance(typ, T.FunctionType):
+        for param in typ.params:
+            _record_variance_use(param, -polarity, usage)
+        for ret in typ.returns:
+            _record_variance_use(ret, polarity, usage)
+        return
+    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+        _record_variance_use(typ.inner, polarity, usage)
 
 
 def _anonymous_type_var(branch: AnalysisBranch, offset: int) -> T.Type:

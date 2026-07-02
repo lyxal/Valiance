@@ -274,6 +274,9 @@ class DefineNode(ASTNode):
     annotations: tuple[ASTNode, ...] = ()
     is_multi: bool = False
     visibility: Symbol | None = None
+    generics: tuple[Symbol, ...] = ()
+    generic_variances: tuple[Symbol | None, ...] = ()
+    generic_constraints: tuple[Type | None, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -482,3 +485,5 @@ class ObjectNode(ASTNode):
     variants: tuple[VariantMemberNode, ...] = ()
     enum_members: tuple[EnumMemberNode, ...] = ()
     annotations: tuple[ASTNode, ...] = ()
+    generic_variances: tuple[Symbol | None, ...] = ()
+    generic_constraints: tuple[Type | None, ...] = ()

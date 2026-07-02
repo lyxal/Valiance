@@ -312,6 +312,16 @@ Implementation checklist:
 8. Preserve useful errors if a bytecode file references an unknown element or
    overload id.
 
+Resolved object and variant constructor calls may include instantiated generic
+arguments in the bytecode reference:
+
+```text
+(element_name, overload_index, vectorised, vectorised_depths, type_args)
+```
+
+The VM passes `type_args` to `ObjectValue`, and object field reconstruction must
+preserve them. Older three- and four-item resolved references remain valid.
+
 Be careful with saved bytecode. The current bytecode format encodes positional
 overload indices, so changing built-in overload order is a compatibility
 concern. Prefer explicit stable overload ids before bytecode is treated as
@@ -468,7 +478,8 @@ These are known constraints of the current runtime/codegen layer:
 - Built-in runtime dispatch is useful but not yet a complete multimethod system.
 - Runtime vectorisation errors are plain runtime errors, not yet dedicated
   catchable `VectorisationFault` panic values.
-- Generic type information is not preserved in bytecode.
+- Only resolved object/variant constructor calls currently preserve instantiated
+  generic type arguments in runtime values.
 
 When completing one of these items, update this guide and
 `docs/valiance-feature-checklist.md` in the same change.
