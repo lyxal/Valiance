@@ -102,7 +102,13 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaises(PythonRuntimeError) as error:
             run(program)
 
-        self.assertIn("length requires a finite list", str(error.exception))
+        message = str(error.exception)
+        self.assertIn("length requires a finite list", message)
+        self.assertIn("runtime call:", message)
+        self.assertIn("target: element 'length'", message)
+        self.assertIn("arguments: [<lazy list>]", message)
+        self.assertIn("argument types: [Unknown+]", message)
+        self.assertIn("<main> ip 2: call", message)
 
     def test_executes_element_with_colon_function_argument(self):
         self.assertEqual(
@@ -726,6 +732,38 @@ println(triple([1, 2, 3, 4, 5]))
         self.assertIn("stack types: [String, Number]", message)
         self.assertIn("attempted input shapes:", message)
         self.assertIn("(Number, Number)", message)
+        self.assertIn("runtime context:", message)
+        self.assertIn("<main> ip 3: call", message)
+
+    def test_runtime_errors_show_nested_function_context(self):
+        inner = FunctionCode(
+            (
+                Instruction(OpCode.LOAD_VAR, "value"),
+                Instruction(OpCode.CHECK_CAST, ("nominal", "String")),
+            ),
+            params=("value",),
+            name="bad_cast",
+        )
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.PUSH_CONST, Decimal("1")),
+                    Instruction(OpCode.MAKE_FUNCTION, inner),
+                    Instruction(OpCode.CALL),
+                ),
+                name="<main>",
+            )
+        )
+
+        with self.assertRaises(RuntimeError) as error:
+            run(program)
+
+        message = str(error.exception)
+        self.assertIn("checked cast failed: 1 is Number", message)
+        self.assertIn("target: function 'bad_cast'", message)
+        self.assertIn("arguments: [1]", message)
+        self.assertIn("bad_cast ip 1: check_cast", message)
+        self.assertIn("<main> ip 2: call", message)
 
 
 if __name__ == "__main__":

@@ -64,6 +64,7 @@ from valiance.asts import (
     WhileNode,
     WildcardPatternNode,
 )
+from valiance.diagnostics import DiagnosticError
 from valiance.parsing.lexer import Token, TokenKind, lex
 from valiance.types import (
     ArrayExactType,
@@ -85,7 +86,7 @@ from valiance.types import (
 )
 
 
-class ParseError(SyntaxError):
+class ParseError(DiagnosticError, SyntaxError):
     """Raised when Valiance source cannot be parsed."""
 
 
@@ -1506,7 +1507,7 @@ class Parser:
 
     def _error(self, message: str) -> None:
         token = self._current
-        raise ParseError(f"{message} at {token.line}:{token.column}")
+        raise ParseError(message, line=token.line, column=token.column)
 
 
 _LINE_TERMINATORS: set[TokenKind | str] = {
@@ -1545,14 +1546,18 @@ def _loc(token: Token) -> SourceLocation:
 def _tag_from_token(token: Token) -> DataTag:
     value = token.value
     if not value.startswith("#"):
-        raise ParseError(f"expected data tag at {token.line}:{token.column}")
+        raise ParseError("expected data tag", line=token.line, column=token.column)
     raw = value[1:]
     absent = raw.startswith("!")
     if absent:
         raw = raw[1:]
     name, _, suffix = raw.partition("+")
     if not name:
-        raise ParseError(f"expected data tag name at {token.line}:{token.column}")
+        raise ParseError(
+            "expected data tag name",
+            line=token.line,
+            column=token.column,
+        )
     if not suffix and "+" not in raw:
         depth = 0
     elif suffix.isdecimal():
@@ -1560,7 +1565,11 @@ def _tag_from_token(token: Token) -> DataTag:
     elif set(suffix) <= {"+"}:
         depth = len(suffix) + 1
     else:
-        raise ParseError(f"invalid data tag depth at {token.line}:{token.column}")
+        raise ParseError(
+            "invalid data tag depth",
+            line=token.line,
+            column=token.column,
+        )
     return DataTag(name, depth=depth, absent=absent)
 
 
@@ -1614,7 +1623,9 @@ def _string_parts(raw: str, token: Token) -> tuple[str | tuple[ASTNode, ...], ..
             parsed = _interpolation_expression(expression, token)
             if not parsed:
                 raise ParseError(
-                    f"empty string interpolation at {token.line}:{token.column}"
+                    "empty string interpolation",
+                    line=token.line,
+                    column=token.column,
                 )
             parts.append(tuple(parsed))
             index = end + 1
@@ -1670,7 +1681,9 @@ def _interpolation_end(raw: str, start: int, token: Token) -> int:
                 return index
         index += 1
     raise ParseError(
-        f"unterminated string interpolation at {token.line}:{token.column}"
+        "unterminated string interpolation",
+        line=token.line,
+        column=token.column,
     )
 
 
@@ -1683,7 +1696,11 @@ def _skip_raw_string(raw: str, start: int, token: Token) -> int:
         if raw[index] == '"':
             return index + 1
         index += 1
-    raise ParseError(f"unterminated nested string at {token.line}:{token.column}")
+    raise ParseError(
+        "unterminated nested string",
+        line=token.line,
+        column=token.column,
+    )
 
 
 def _is_string_ident_start(char: str) -> bool:

@@ -47,6 +47,56 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(output.getvalue(), "hello\n")
 
+    def test_main_formats_lex_errors_with_source_context(self):
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            exit_code = main(["run", "--code", '"missing'])
+
+        self.assertEqual(exit_code, 1)
+        rendered = error.getvalue()
+        self.assertIn("Lex error: unterminated string", rendered)
+        self.assertIn("--> <code>:1:1", rendered)
+        self.assertIn('1 | "missing', rendered)
+        self.assertIn("| ^", rendered)
+        self.assertIn("help: Add the missing closing delimiter", rendered)
+
+    def test_main_formats_parse_errors_with_source_context(self):
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            exit_code = main(["run", "--code", "println()"])
+
+        self.assertEqual(exit_code, 1)
+        rendered = error.getvalue()
+        self.assertIn("Parse error: empty argument lists are invalid", rendered)
+        self.assertIn("--> <code>:1:9", rendered)
+        self.assertIn("1 | println()", rendered)
+        self.assertIn("|         ^", rendered)
+
+    def test_main_formats_type_errors_with_source_context_and_help(self):
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            exit_code = main(["run", "--code", "missing"])
+
+        self.assertEqual(exit_code, 1)
+        rendered = error.getvalue()
+        self.assertIn("Type error: unknown element 'missing'", rendered)
+        self.assertIn("--> <code>:1:1", rendered)
+        self.assertIn("1 | missing", rendered)
+        self.assertIn("help: Check the element name", rendered)
+
+    def test_main_formats_runtime_errors_with_context(self):
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            exit_code = main(
+                ["run", "--code", 'if true => 1 else => "x" end as! String']
+            )
+
+        self.assertEqual(exit_code, 1)
+        rendered = error.getvalue()
+        self.assertIn("Runtime error: checked cast failed: 1 is Number", rendered)
+        self.assertIn("runtime context:", rendered)
+        self.assertIn("<main> ip", rendered)
+
     def test_main_implicitly_prints_stack_when_requested(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

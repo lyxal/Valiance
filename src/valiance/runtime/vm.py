@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins as _py_builtins
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -24,8 +25,52 @@ from valiance.runtime_values import (
 )
 
 
-class RuntimeError(Exception):
+class RuntimeError(_py_builtins.RuntimeError):
     """Raised when bytecode execution fails."""
+
+    def __init__(self, message: object) -> None:
+        super().__init__(message)
+        self.message = str(message)
+        self.call_details: list[tuple[str, tuple[Any, ...]]] = []
+        self.execution_contexts: list[_ExecutionContext] = []
+
+    def add_call_detail(self, target: str, args: tuple[Any, ...]) -> None:
+        detail = target, args
+        if detail not in self.call_details:
+            self.call_details.append(detail)
+
+    def add_execution_context(
+        self,
+        function_name: str,
+        ip: int,
+        instruction: object,
+        stack: list[Any],
+    ) -> None:
+        context = _ExecutionContext(function_name, ip, instruction, tuple(stack))
+        if context not in self.execution_contexts:
+            self.execution_contexts.append(context)
+
+    def __str__(self) -> str:
+        lines = [self.message]
+        if self.call_details:
+            lines.append("runtime call:")
+            for target, args in self.call_details:
+                lines.append(f"  - target: {target}")
+                lines.append(f"    arguments: {_format_stack(list(args))}")
+                lines.append(f"    argument types: {_format_stack_types(list(args))}")
+        if self.execution_contexts:
+            lines.append("runtime context:")
+            for context in self.execution_contexts:
+                lines.append(f"  - {_format_execution_context(context)}")
+        return "\n".join(lines)
+
+
+@dataclass(frozen=True, slots=True)
+class _ExecutionContext:
+    function_name: str
+    ip: int
+    instruction: object
+    stack: tuple[Any, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,165 +195,181 @@ class VirtualMachine:
         instructions = code.instructions
         while ip < len(instructions):
             instruction = instructions[ip]
-            match instruction.op:
-                case OpCode.PUSH_CONST:
-                    frame.stack.append(_constant(instruction.arg))
-                case OpCode.LOAD_VAR:
-                    frame.stack.append(
-                        _load_name(instruction.arg, frame.locals, frame.globals)
-                    )
-                case OpCode.STORE_VAR:
-                    value = _pop(
-                        frame.stack,
-                        "store variable",
-                    )
-                    frame.locals[instruction.arg] = _store_value(
-                        frame.locals.get(instruction.arg),
-                        value,
-                    )
-                case OpCode.LOAD_ELEMENT:
-                    frame.stack.append(
-                        _load_name(instruction.arg, frame.locals, frame.globals)
-                    )
-                case OpCode.MAKE_FUNCTION:
-                    frame.stack.append(
-                        _make_function_value(
-                            instruction.arg,
-                            frame.globals | frame.locals,
+            try:
+                match instruction.op:
+                    case OpCode.PUSH_CONST:
+                        frame.stack.append(_constant(instruction.arg))
+                    case OpCode.LOAD_VAR:
+                        frame.stack.append(
+                            _load_name(instruction.arg, frame.locals, frame.globals)
                         )
-                    )
-                case OpCode.CALL:
-                    try:
-                        self._call_stack_top(frame)
-                    except PanicSignal as exc:
-                        target = self._handle_panic(frame, exc)
-                        if target is None:
-                            raise
-                        ip = target
-                        continue
-                case OpCode.CALL_RESOLVED_ELEMENT:
-                    try:
-                        self._call_resolved_element(frame, instruction.arg)
-                    except PanicSignal as exc:
-                        target = self._handle_panic(frame, exc)
-                        if target is None:
-                            raise
-                        ip = target
-                        continue
-                case OpCode.CHECK_CAST:
-                    value = _pop(frame.stack, "checked cast")
-                    if not _matches_cast_type(value, instruction.arg):
-                        raise RuntimeError(
-                            f"checked cast failed: {_format_value(value)} is "
-                            f"{_runtime_type_name(value)}"
+                    case OpCode.STORE_VAR:
+                        value = _pop(
+                            frame.stack,
+                            "store variable",
                         )
-                    frame.stack.append(value)
-                case OpCode.BUILD_LIST:
-                    frame.stack.append(_pop_many(frame.stack, instruction.arg))
-                case OpCode.BUILD_STRING:
-                    frame.stack.append(_build_string(frame.stack, instruction.arg))
-                case OpCode.BUILD_TUPLE:
-                    frame.stack.append(tuple(_pop_many(frame.stack, instruction.arg)))
-                case OpCode.BUILD_RECORD:
-                    values = _pop_many(frame.stack, len(instruction.arg))
-                    frame.stack.append(dict(zip(instruction.arg, values, strict=True)))
-                case OpCode.BUILD_DICT:
-                    values = _pop_many(frame.stack, instruction.arg * 2)
-                    frame.stack.append(
-                        dict(zip(values[::2], values[1::2], strict=True))
-                    )
-                case OpCode.MAKE_OBJECT_CONSTRUCTOR:
-                    type_name, fields, required, defaults = instruction.arg
-                    frame.stack.append(
-                        ObjectConstructorValue(
-                            type_name,
-                            tuple(fields),
-                            tuple(required),
-                            dict(defaults),
+                        frame.locals[instruction.arg] = _store_value(
+                            frame.locals.get(instruction.arg),
+                            value,
                         )
-                    )
-                case OpCode.MAKE_ENUM_MEMBER:
-                    enum_name, member_name, value = instruction.arg
-                    fields = {"name": member_name}
-                    if value is not None:
-                        fields["value"] = value
-                    frame.stack.append(ObjectValue(enum_name, fields))
-                case OpCode.GET_FIELD:
-                    try:
-                        args, stack_count, next_cycle_index = frame.source_args(1)
-                    except _StackUnderflow as exc:
-                        raise RuntimeError(
-                            "stack underflow during field access"
-                        ) from exc
-                    if stack_count:
-                        del frame.stack[-stack_count:]
-                    frame.cycle_index = next_cycle_index
-                    receiver = args[0]
-                    frame.stack.append(_get_field(receiver, instruction.arg))
-                case OpCode.SET_FIELD:
-                    value = _pop(frame.stack, "field assignment")
-                    receiver = _pop(frame.stack, "field assignment")
-                    frame.stack.append(_set_field(receiver, instruction.arg, value))
-                case OpCode.GET_INDEX:
-                    values = _pop_index_values(frame.stack, instruction.arg)
-                    receiver = _index_receiver(frame)
-                    result = _get_index(receiver, instruction.arg, values)
-                    if instruction.arg[1]:
-                        if not isinstance(result, list):
-                            raise RuntimeError("spread indexing requires a list result")
-                        frame.stack.extend(result)
-                    else:
-                        frame.stack.append(result)
-                case OpCode.SET_INDEX:
-                    values = _pop_index_values(frame.stack, instruction.arg)
-                    receiver = _pop(frame.stack, "indexed assignment")
-                    value = _pop(frame.stack, "indexed assignment")
-                    frame.stack.append(
-                        _set_index(receiver, instruction.arg, values, value)
-                    )
-                case OpCode.JUMP:
-                    ip = instruction.arg
-                    continue
-                case OpCode.JUMP_IF_FALSE:
-                    if not _truthy(_pop(frame.stack, "conditional jump")):
+                    case OpCode.LOAD_ELEMENT:
+                        frame.stack.append(
+                            _load_name(instruction.arg, frame.locals, frame.globals)
+                        )
+                    case OpCode.MAKE_FUNCTION:
+                        frame.stack.append(
+                            _make_function_value(
+                                instruction.arg,
+                                frame.globals | frame.locals,
+                            )
+                        )
+                    case OpCode.CALL:
+                        try:
+                            self._call_stack_top(frame)
+                        except PanicSignal as exc:
+                            target = self._handle_panic(frame, exc)
+                            if target is None:
+                                raise
+                            ip = target
+                            continue
+                    case OpCode.CALL_RESOLVED_ELEMENT:
+                        try:
+                            self._call_resolved_element(frame, instruction.arg)
+                        except PanicSignal as exc:
+                            target = self._handle_panic(frame, exc)
+                            if target is None:
+                                raise
+                            ip = target
+                            continue
+                    case OpCode.CHECK_CAST:
+                        value = _pop(frame.stack, "checked cast")
+                        if not _matches_cast_type(value, instruction.arg):
+                            raise RuntimeError(
+                                f"checked cast failed: {_format_value(value)} is "
+                                f"{_runtime_type_name(value)}"
+                            )
+                        frame.stack.append(value)
+                    case OpCode.BUILD_LIST:
+                        frame.stack.append(_pop_many(frame.stack, instruction.arg))
+                    case OpCode.BUILD_STRING:
+                        frame.stack.append(_build_string(frame.stack, instruction.arg))
+                    case OpCode.BUILD_TUPLE:
+                        frame.stack.append(
+                            tuple(_pop_many(frame.stack, instruction.arg))
+                        )
+                    case OpCode.BUILD_RECORD:
+                        values = _pop_many(frame.stack, len(instruction.arg))
+                        frame.stack.append(
+                            dict(zip(instruction.arg, values, strict=True))
+                        )
+                    case OpCode.BUILD_DICT:
+                        values = _pop_many(frame.stack, instruction.arg * 2)
+                        frame.stack.append(
+                            dict(zip(values[::2], values[1::2], strict=True))
+                        )
+                    case OpCode.MAKE_OBJECT_CONSTRUCTOR:
+                        type_name, fields, required, defaults = instruction.arg
+                        frame.stack.append(
+                            ObjectConstructorValue(
+                                type_name,
+                                tuple(fields),
+                                tuple(required),
+                                dict(defaults),
+                            )
+                        )
+                    case OpCode.MAKE_ENUM_MEMBER:
+                        enum_name, member_name, value = instruction.arg
+                        fields = {"name": member_name}
+                        if value is not None:
+                            fields["value"] = value
+                        frame.stack.append(ObjectValue(enum_name, fields))
+                    case OpCode.GET_FIELD:
+                        try:
+                            args, stack_count, next_cycle_index = frame.source_args(1)
+                        except _StackUnderflow as exc:
+                            raise RuntimeError(
+                                "stack underflow during field access"
+                            ) from exc
+                        if stack_count:
+                            del frame.stack[-stack_count:]
+                        frame.cycle_index = next_cycle_index
+                        receiver = args[0]
+                        frame.stack.append(_get_field(receiver, instruction.arg))
+                    case OpCode.SET_FIELD:
+                        value = _pop(frame.stack, "field assignment")
+                        receiver = _pop(frame.stack, "field assignment")
+                        frame.stack.append(_set_field(receiver, instruction.arg, value))
+                    case OpCode.GET_INDEX:
+                        values = _pop_index_values(frame.stack, instruction.arg)
+                        receiver = _index_receiver(frame)
+                        result = _get_index(receiver, instruction.arg, values)
+                        if instruction.arg[1]:
+                            if not isinstance(result, list):
+                                raise RuntimeError(
+                                    "spread indexing requires a list result"
+                                )
+                            frame.stack.extend(result)
+                        else:
+                            frame.stack.append(result)
+                    case OpCode.SET_INDEX:
+                        values = _pop_index_values(frame.stack, instruction.arg)
+                        receiver = _pop(frame.stack, "indexed assignment")
+                        value = _pop(frame.stack, "indexed assignment")
+                        frame.stack.append(
+                            _set_index(receiver, instruction.arg, values, value)
+                        )
+                    case OpCode.JUMP:
                         ip = instruction.arg
                         continue
-                case OpCode.JUMP_IF_MATCH:
-                    patterns, target = instruction.arg
-                    bindings = self._match_patterns(frame, patterns)
-                    if bindings is not None:
-                        del frame.stack[-len(patterns) :]
-                        frame.locals.update(bindings)
+                    case OpCode.JUMP_IF_FALSE:
+                        if not _truthy(_pop(frame.stack, "conditional jump")):
+                            ip = instruction.arg
+                            continue
+                    case OpCode.JUMP_IF_MATCH:
+                        patterns, target = instruction.arg
+                        bindings = self._match_patterns(frame, patterns)
+                        if bindings is not None:
+                            del frame.stack[-len(patterns) :]
+                            frame.locals.update(bindings)
+                            ip = target
+                            continue
+                    case OpCode.MATCH_ERROR:
+                        raise RuntimeError("non-exhaustive match at runtime")
+                    case OpCode.ASSERT_TRUE:
+                        if not _truthy(_pop(frame.stack, "assert")):
+                            raise RuntimeError("assertion failed")
+                    case OpCode.UNFOLD:
+                        frame.stack.append(self._unfold(frame, instruction.arg))
+                    case OpCode.TRY_BEGIN:
+                        frame.panic_handlers.append(
+                            _PanicHandler(tuple(instruction.arg), len(frame.stack))
+                        )
+                    case OpCode.TRY_END:
+                        if frame.panic_handlers:
+                            frame.panic_handlers.pop()
+                    case OpCode.PANIC:
+                        value = _pop(frame.stack, "panic")
+                        target = self._handle_panic(
+                            frame,
+                            PanicSignal(value),
+                        )
+                        if target is None:
+                            raise PanicSignal(value)
                         ip = target
                         continue
-                case OpCode.MATCH_ERROR:
-                    raise RuntimeError("non-exhaustive match at runtime")
-                case OpCode.ASSERT_TRUE:
-                    if not _truthy(_pop(frame.stack, "assert")):
-                        raise RuntimeError("assertion failed")
-                case OpCode.UNFOLD:
-                    frame.stack.append(self._unfold(frame, instruction.arg))
-                case OpCode.TRY_BEGIN:
-                    frame.panic_handlers.append(
-                        _PanicHandler(tuple(instruction.arg), len(frame.stack))
-                    )
-                case OpCode.TRY_END:
-                    if frame.panic_handlers:
-                        frame.panic_handlers.pop()
-                case OpCode.PANIC:
-                    value = _pop(frame.stack, "panic")
-                    target = self._handle_panic(
-                        frame,
-                        PanicSignal(value),
-                    )
-                    if target is None:
-                        raise PanicSignal(value)
-                    ip = target
-                    continue
-                case OpCode.POP:
-                    _pop(frame.stack, "pop")
-                case OpCode.RETURN:
-                    return frame.stack
+                    case OpCode.POP:
+                        _pop(frame.stack, "pop")
+                    case OpCode.RETURN:
+                        return frame.stack
+            except _py_builtins.RuntimeError as exc:
+                error = exc if isinstance(exc, RuntimeError) else RuntimeError(exc)
+                error.add_execution_context(
+                    _function_name(code),
+                    ip,
+                    instruction,
+                    frame.stack,
+                )
+                raise error from exc
             ip += 1
         return frame.stack
 
@@ -462,9 +523,25 @@ class VirtualMachine:
             del frame.stack[-stack_count:]
         frame.cycle_index = next_cycle_index
         if vectorised:
-            frame.stack.extend(_vectorize_function(self, callee, args))
+            try:
+                result = _vectorize_function(self, callee, args)
+            except _py_builtins.RuntimeError as exc:
+                raise _with_call_detail(
+                    exc,
+                    f"function '{_function_name(callee.code)}'",
+                    args,
+                ) from exc
+            frame.stack.extend(result)
         else:
-            frame.stack.extend(self.call(callee, list(args)))
+            try:
+                result = self.call(callee, list(args))
+            except _py_builtins.RuntimeError as exc:
+                raise _with_call_detail(
+                    exc,
+                    f"function '{_function_name(callee.code)}'",
+                    args,
+                ) from exc
+            frame.stack.extend(result)
 
     def _match_patterns(
         self,
@@ -697,7 +774,15 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
         implementation = overload.implementation
         if implementation is None:
             continue
-        frame.stack.extend(implementation(args, callee.context))
+        try:
+            result = implementation(args, callee.context)
+        except _py_builtins.RuntimeError as exc:
+            raise _with_call_detail(
+                exc,
+                f"element '{callee.element.name}'",
+                args,
+            ) from exc
+        frame.stack.extend(result)
         return
     raise RuntimeError(
         _format_call_error(
@@ -731,9 +816,11 @@ def _call_object_constructor(
     fields.update(dict(zip(callee.required, args, strict=True)))
     missing = [name for name in callee.fields if name not in fields]
     if missing:
-        raise RuntimeError(
+        error = RuntimeError(
             f"constructor '{callee.type_name}' missing fields: {', '.join(missing)}"
         )
+        error.add_call_detail(f"constructor '{callee.type_name}'", args)
+        raise error
     frame.stack.append(ObjectValue(callee.type_name, fields, type_args))
 
 
@@ -756,12 +843,19 @@ def _call_resolved_builtin(
             )
         ) from exc
     if vectorised:
-        vectorized = _call_vectorized_resolved_builtin(
-            overload,
-            args,
-            callee.context,
-            vectorised_depths,
-        )
+        try:
+            vectorized = _call_vectorized_resolved_builtin(
+                overload,
+                args,
+                callee.context,
+                vectorised_depths,
+            )
+        except _py_builtins.RuntimeError as exc:
+            raise _with_call_detail(
+                exc,
+                f"element '{callee.element.name}'",
+                args,
+            ) from exc
         if vectorized is None:
             raise RuntimeError(
                 _format_call_error(
@@ -780,7 +874,15 @@ def _call_resolved_builtin(
     frame.cycle_index = next_cycle_index
     implementation = overload.implementation
     assert implementation is not None
-    frame.stack.extend(implementation(args, callee.context))
+    try:
+        result = implementation(args, callee.context)
+    except _py_builtins.RuntimeError as exc:
+        raise _with_call_detail(
+            exc,
+            f"element '{callee.element.name}'",
+            args,
+        ) from exc
+    frame.stack.extend(result)
 
 
 def _call_vectorized_builtin(
@@ -1403,6 +1505,16 @@ def _function_name(code: FunctionCode) -> str:
     return "function" if code.name is None else code.name
 
 
+def _with_call_detail(
+    exc: _py_builtins.RuntimeError,
+    target: str,
+    args: tuple[Any, ...],
+) -> RuntimeError:
+    error = exc if isinstance(exc, RuntimeError) else RuntimeError(exc)
+    error.add_call_detail(target, args)
+    return error
+
+
 def _format_call_error(
     target: str,
     stack: list[Any],
@@ -1415,6 +1527,41 @@ def _format_call_error(
         lines.append("attempted input shapes:")
         lines.extend(f"  - {shape}" for shape in expected_inputs)
     return "\n".join(lines)
+
+
+def _format_execution_context(context: _ExecutionContext) -> str:
+    lines = [
+        f"{context.function_name} ip {context.ip}: "
+        f"{_format_instruction(context.instruction)}"
+    ]
+    lines.append(f"    stack: {_format_stack(list(context.stack))}")
+    lines.append(f"    stack types: {_format_stack_types(list(context.stack))}")
+    return "\n".join(lines)
+
+
+def _format_instruction(instruction: object) -> str:
+    if not hasattr(instruction, "op"):
+        return repr(instruction)
+    op = instruction.op
+    name = op.value if isinstance(op, OpCode) else str(op)
+    arg = getattr(instruction, "arg", None)
+    if arg is None:
+        return name
+    return f"{name} {_format_instruction_arg(arg)}"
+
+
+def _format_instruction_arg(arg: object) -> str:
+    if isinstance(arg, str):
+        return repr(arg)
+    if isinstance(arg, Decimal):
+        return _format_value(arg)
+    if isinstance(arg, tuple):
+        return repr(arg)
+    if isinstance(arg, FunctionCode):
+        return f"<function {_function_name(arg)}>"
+    if isinstance(arg, FunctionSetCode):
+        return f"<function set {len(arg.overloads)} overload(s)>"
+    return repr(arg)
 
 
 def _show_overload_inputs(overloads: tuple[BuiltinOverload, ...]) -> list[str]:

@@ -9,6 +9,7 @@ from typing import Any
 
 from valiance.analysis import Analyser
 from valiance.asts import pretty_ast
+from valiance.diagnostics import from_exception, from_message, render
 from valiance.parsing import LexError, ParseError, Parser, lex
 from valiance.runtime import (
     BytecodeFormatError,
@@ -206,14 +207,22 @@ def _run_source(
 
         if action == "analyse":
             for diagnostic in analyser.diagnostics:
-                print(f"error: {diagnostic}", file=sys.stderr)
+                _print_diagnostic(
+                    from_message("Type error", diagnostic),
+                    source,
+                    source_file,
+                )
             print("Typed AST:")
             print(pretty_ast(typed))
             return 0
 
         if analyser.diagnostics:
             for diagnostic in analyser.diagnostics:
-                print(f"error: {diagnostic}", file=sys.stderr)
+                _print_diagnostic(
+                    from_message("Type error", diagnostic),
+                    source,
+                    source_file,
+                )
             return 1
 
         bytecode = compile_program(typed)
@@ -236,7 +245,7 @@ def _run_source(
         CompileError,
         RuntimeError,
     ) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        _print_exception_diagnostic(exc, source=source, source_file=source_file)
         return 1
 
 
@@ -245,7 +254,7 @@ def _run_bytecode_file(filename: str, *, implicit_output: bool = False) -> int:
         bytecode = loads(Path(filename).read_bytes())
         _run_bytecode(bytecode, implicit_output=implicit_output)
     except (BytecodeFormatError, OSError, RuntimeError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        _print_exception_diagnostic(exc)
         return 1
     return 0
 
@@ -266,6 +275,33 @@ def _resolve_bytecode_output_path(
 
 def _write_bytecode_file(filename: str | Path, data: bytes) -> None:
     Path(filename).write_bytes(data)
+
+
+def _print_exception_diagnostic(
+    exc: BaseException,
+    *,
+    source: str | None = None,
+    source_file: Path | None = None,
+) -> None:
+    if isinstance(exc, LexError):
+        stage = "Lex error"
+    elif isinstance(exc, ParseError):
+        stage = "Parse error"
+    elif isinstance(exc, CompileError):
+        stage = "Compile error"
+    elif isinstance(exc, RuntimeError):
+        stage = "Runtime error"
+    else:
+        stage = "Error"
+    _print_diagnostic(from_exception(stage, exc), source, source_file)
+
+
+def _print_diagnostic(
+    diagnostic,
+    source: str | None = None,
+    source_file: Path | None = None,
+) -> None:
+    print(render(diagnostic, source, source_file=source_file), file=sys.stderr)
 
 
 def _run_bytecode(bytecode, *, implicit_output: bool = False) -> None:

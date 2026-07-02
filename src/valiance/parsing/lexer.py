@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from valiance.diagnostics import DiagnosticError
+
 
 class TokenKind(StrEnum):
     IDENT = "IDENT"
@@ -42,7 +44,7 @@ class Token:
     raw: str | None = None
 
 
-class LexError(SyntaxError):
+class LexError(DiagnosticError, SyntaxError):
     """Raised when Valiance source cannot be tokenized."""
 
 
@@ -339,4 +341,4 @@ class _Lexer:
     def _fail(
         self, message: str, line: int | None = None, col: int | None = None
     ) -> None:
-        raise LexError(f"{message} at {line or self.line}:{col or self.column}")
+        raise LexError(message, line=line or self.line, column=col or self.column)
