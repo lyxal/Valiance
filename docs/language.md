@@ -104,7 +104,8 @@ $brainrot = "6 7"
 
 - Sometimes, it's useful to accept an arbitrary length tuple as a parameter.
 - `{<type>...}` will accept any tuple with that type repeated 0 or more times.
-- `{<type1>, <type2>..., <type3>}` for example is 1 type1, followed by 0 or more type2, followed by type3
+- `{<type1>, <type2>..., <type3>}` is 1 type1, followed by 0 or more type2, followed by type3.
+- Repeated segments can appear before, between, or after fixed segments. More than one repeated segment is allowed, such as `{Number..., String...}`.
 - Arbitrary length tuple types can only be used in parameters. This is open to change, but this restriction is sensible until further exploration is done.
 - Arbitrary length tuples exist only as types. You pass normal tuples around.
 - Arbitrary length tuples can only be passed where other arbitrary length tuples are expected. But fixed length tuples can be passed where an arbitrary length tuple is expected if it matches the expected pattern.
@@ -2688,12 +2689,14 @@ end
 ```
 fn (...) -> ... where (<static expressions>) => ...
 end
+
+define name(...) -> ... where (<static expressions>) => ...
 ```
 
 - The `where` clause is a small stack-based program that runs at compile time. Its results are used to fill in type variables in the return type, and to constrain overload selection.
 - Static expressions are evaluated in order, left to right. The same stack rules apply as everywhere else in Valiance.
-- Variables declared in the where clause can be used in the function body
-- Executed entirely at compile tieme
+- Variables declared in the where clause can be used in the function body.
+- Executed entirely at compile time.
 
 ## 22.1. Rank Variables
 
@@ -2701,8 +2704,9 @@ end
   - `T+$n` in a parameter makes `$n` a read-only rank variable, bound to the rank of the list at the call site.
   - `T+$n` in a return type makes `$n` a mandatory-write rank variable - it must be assigned in the `where` clause.
   - `T+$n` is still an exact rank type.
-  - `T*$n` allows for minimum rank list types to be used
-  - `T~$n` for rugged rank
+  - `T*$n` allows for minimum rank list types to be used.
+  - `T~$n` names a rugged list rank.
+  - `T^$n` and `T>$n` name exact and minimum array ranks.
 
 ## 22.2. Allowed Operations
 
@@ -2712,27 +2716,18 @@ end
 - **Comparison** - `<`, `>`, `<=`, `>=`, `==`, `!=` on numbers; `==`, `!=` on types (no vectorisation).
 - **Boolean operations** - `and`, `or`, `not` on numbers (following the same truthiness rules as the rest of Valiance - `0` is false, all other numbers are true).
 - **Assignment** - `$name = value` to name a computed value for use in return types or later expressions.
-- **Stack manipulation** - `swap`, `pop`, `dup`, `move`, `copy`.
-- **Conditionals** - `if/else` follows normal Valiance semantics. `else` is optional - an `if` without an `else` produces an optional value, and the same optional rules apply as elsewhere in the language.
-- **Optional operations** - since `if` without `else` produces optional values, two operations are available to deal with them:
-  - `?!` - unwrap the optional, or reject the current overload if `None`.
-  - `or` - provide a fallback value if `None`.
+- **Stack manipulation** - `swap`, `pop`, `dup`.
 - **Function introspection** - given a function parameter `$f`:
   - `$f.inputs` - tuple of input types
   - `$f.outputs` - tuple of output types
   - `$f.arity` - number of inputs
   - `$f.multiplicity` - number of outputs
-- **Type tuples** - ordered collections of types. Supported operations:
-  - `append`, `prepend` - add a type to a tuple
-  - `addAll` - merge two tuples
-  - `length` - number of types in the tuple
-  - `contains` - check if a type is present
-  - Indexing - retrieve a type by position
+- **Type tuples and tuple values** - `length` returns the number of entries in a fixed tuple type or tuple value.
 - **Overload assertion** - `?` asserts that a condition holds. If it does not, the current overload is rejected at the call site and overload resolution continues. This is not a runtime assertion. Basically, it's part of overload resolution.
 
 ## 22.3. Restrictions
 
-- Type tuples can only contain types, not values.
+- The implemented static evaluator is intentionally small. The supported operations are the ones listed above.
 - Arbitrary element calls are not allowed - only the operations listed above. This ensures the `where` clause always terminates.
 - Recursive or looping constructs are not allowed for the same reason.
 - `Result` types are not available in the `where` clause - only optionals.
@@ -2744,11 +2739,10 @@ define[T] reshape(xs: T*, shape: Number+) -> T* =>
   #? Implementation here
 end
 
-define[T] reshape(xs: T*, shape: {Number...}) -> T+$n where ($n = $shape length) =>
-  #? Delegate to the normal version
-  reshape($xs, listFrom($shape))
-  as! T+$n #? Unsafe cast because we know reshape has done its job
-end
+define[T] reshape(xs: T*, shape: {Number...}) -> T+$n
+where ($n = length $shape) => $xs as! T+$n
+
+[[1, 2, 3], [4, 5, 6]] reshape {4, 5, 6}
 ```
 
 ```

@@ -78,10 +78,13 @@ from valiance.types import (
     ListRuggedType,
     NominalType,
     NoneTypeNode,
+    Overload,
+    RankVariable,
     TaggedType,
     TupleType,
     Type,
     UnionType,
+    VariadicTupleType,
     normalize,
     show,
 )
@@ -522,7 +525,10 @@ def _compile_function_overload(
         )
     return _Compiler().compile_function(
         overload.body,
-        params=_function_param_names(ast, len(typ.params)),
+        params=(
+            *_function_param_names(ast, len(typ.params)),
+            *_static_param_names(overload),
+        ),
         name=name,
         cycle_params=bool(ast.params),
     )
@@ -535,6 +541,52 @@ def _function_param_names(ast: FunctionNode, arity: int) -> tuple[str, ...]:
         f"_{index}" if param.name is None else param.name.text
         for index, param in enumerate(ast.params)
     )
+
+
+def _static_param_names(overload: FunctionOverloadTyping) -> tuple[str, ...]:
+    source = overload.overload
+    if source is None:
+        return ()
+    names: set[str] = set()
+    if isinstance(source, Overload):
+        for param in source.params:
+            names.update(_rank_var_names_in_type(param))
+        for ret in source.returns:
+            names.update(_rank_var_names_in_type(ret))
+        for node in source.where_clause:
+            if isinstance(node, SetVariableNode):
+                names.add(node.name.text)
+    return tuple(sorted(names))
+
+
+def _rank_var_names_in_type(typ: Type) -> set[str]:
+    typ = normalize(typ)
+    names: set[str] = set()
+    if isinstance(typ, CollectionType):
+        if isinstance(typ.rank, RankVariable):
+            names.add(typ.rank.name)
+        names.update(_rank_var_names_in_type(typ.base))
+    elif isinstance(typ, NominalType):
+        for arg in typ.args:
+            names.update(_rank_var_names_in_type(arg))
+    elif isinstance(typ, FunctionType):
+        for item in typ.params + typ.returns:
+            names.update(_rank_var_names_in_type(item))
+    elif isinstance(typ, TupleType):
+        for item in typ.params:
+            names.update(_rank_var_names_in_type(item))
+    elif isinstance(typ, VariadicTupleType):
+        for item in typ.items:
+            names.update(_rank_var_names_in_type(item.typ))
+    elif isinstance(typ, UnionType):
+        for item in typ.items:
+            names.update(_rank_var_names_in_type(item))
+    elif isinstance(typ, IntersectionType):
+        for item in typ.items:
+            names.update(_rank_var_names_in_type(item))
+    elif isinstance(typ, TaggedType):
+        names.update(_rank_var_names_in_type(typ.inner))
+    return names
 
 
 def _compiled_function_arity(code: FunctionCode | FunctionSetCode) -> int:
@@ -566,6 +618,14 @@ def _resolved_element_reference(
     tuple[str, int, int]
     | tuple[str, int, int, tuple[int, ...]]
     | tuple[str, int, int, tuple[int, ...], tuple[str, ...]]
+    | tuple[
+        str,
+        int,
+        int,
+        tuple[int, ...],
+        tuple[str, ...],
+        tuple[tuple[str, int], ...],
+    ]
     | None
 ):
     if not isinstance(node, TypedElementNode):
@@ -589,13 +649,31 @@ def _resolved_element_reference(
         return None
     vectorised = int(node.overload.vectorised) if node.overload is not None else 0
     type_args = _resolved_constructor_type_args(ast, node)
+    static_values = (
+        node.overload.rank_values
+        if node.overload is not None and node.overload.rank_values
+        else ()
+    )
     if node.overload is not None and node.overload.vectorised_depths:
         reference = ast.name.text, node.overload_index, vectorised, (
             *node.overload.vectorised_depths,
         )
+        if static_values:
+            return (*reference, type_args, static_values)
         return (*reference, type_args) if type_args else reference
     if type_args:
+        if static_values:
+            return (
+                ast.name.text,
+                node.overload_index,
+                vectorised,
+                (),
+                type_args,
+                static_values,
+            )
         return ast.name.text, node.overload_index, vectorised, (), type_args
+    if static_values:
+        return ast.name.text, node.overload_index, vectorised, (), (), static_values
     return ast.name.text, node.overload_index, vectorised
 
 

@@ -21,6 +21,9 @@ from valiance.types import (
     Specificity,
     Tagged,
     TagKind,
+    Tup,
+    TupleTypeItem,
+    TupVariadic,
     TypeStack,
     TypeVariable,
     U,
@@ -326,6 +329,30 @@ class TypeLibraryTests(unittest.TestCase):
             self.assertIsNotNone(result)
             for key, values in result.items():
                 constraints.setdefault(key, []).extend(values)
+        self.assertEqual(_combine_all(constraints["T"]), Number)
+
+    def test_fixed_tuple_assigns_to_arbitrary_length_tuple_pattern(self):
+        numbers_then_string = TupVariadic(
+            TupleTypeItem(Number, repeated=True),
+            TupleTypeItem(String),
+        )
+        numbers_then_strings = TupVariadic(
+            TupleTypeItem(Number, repeated=True),
+            TupleTypeItem(String, repeated=True),
+        )
+
+        self.assertTrue(assignable(Tup(String), numbers_then_string))
+        self.assertTrue(assignable(Tup(Number, Number, String), numbers_then_string))
+        self.assertTrue(assignable(Tup(Number, String, String), numbers_then_strings))
+        self.assertFalse(assignable(Tup(String, Number), numbers_then_string))
+
+    def test_arbitrary_length_tuple_pattern_solves_generics(self):
+        constraints = _solve(
+            TupVariadic(TupleTypeItem(V("T"), repeated=True), TupleTypeItem(String)),
+            Tup(Number, Number, String),
+        )
+
+        self.assertIsNotNone(constraints)
         self.assertEqual(_combine_all(constraints["T"]), Number)
 
     def test_reduce_accepts_plus_via_vectorised_function_compatibility(self):

@@ -319,12 +319,15 @@ The type parser currently supports:
 - Function types: `Function[Number, String -> Number]`
 - Function shorthand: `(Number, String -> Number)`
 - Tuple types: `{Number, String}`
+- Arbitrary-length tuple parameter types: `{Number...}`,
+  `{Number..., String}`, `{Number..., String...}`
 - Union types: `A | B`
 - Intersection types: `A & B`
 - Optional types: `T?`, lowered to `Some[T] | None`
 - Atomic generic views: `T atomic`, lowered to `Atomic(T)`
-- List rank postfixes: `T+`, `T+3`, `T*`, `T*3`, `T~`, `T~3`
-- Array rank postfixes: `T^`, `T^3`, `T>`, `T>3`
+- List rank postfixes: `T+`, `T+3`, `T+$n`, `T*`, `T*3`, `T*$n`,
+  `T~`, `T~3`, `T~$n`
+- Array rank postfixes: `T^`, `T^3`, `T^$n`, `T>`, `T>3`, `T>$n`
 - Data-tagged types: `#sorted Number+`, `#!infinite Number+`
 
 Type parsing is split by precedence:
@@ -340,6 +343,16 @@ _type_union
 When adding new type syntax, place it at the correct precedence layer. Do not
 bolt it onto `_type_primary` if it is actually a prefix, postfix, union-like, or
 intersection-like form.
+
+Arbitrary-length tuple types are only valid while parsing parameter types. The
+parser uses an internal "allow variadic tuple type" flag around function and
+trait parameter parsing. Do not allow `{T...}` in return types, casts,
+disambiguation hints, object fields, or standalone `parse_type(...)` unless the
+language restriction changes.
+
+Tuple ellipsis is parsed after each tuple item, not as a postfix type operator.
+This lets `{A..., B, C...}` lower to a single variadic tuple pattern with mixed
+fixed and repeated segments.
 
 ## Generic Parameter Lists
 

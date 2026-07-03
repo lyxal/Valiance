@@ -96,6 +96,22 @@ class BuiltinValue:
     context: RuntimeContext
 
 
+def _static_reference_values(value: object) -> tuple[Any, ...]:
+    if not isinstance(value, tuple):
+        raise RuntimeError(f"invalid static reference values {value!r}")
+    result: list[Any] = []
+    for item in value:
+        if (
+            not isinstance(item, tuple)
+            or len(item) != 2
+            or not isinstance(item[0], str)
+            or not isinstance(item[1], int)
+        ):
+            raise RuntimeError(f"invalid static reference value {item!r}")
+        result.append(Decimal(item[1]))
+    return tuple(result)
+
+
 @dataclass(frozen=True, slots=True)
 class ObjectConstructorValue:
     """Runtime constructor for nominal structured values."""
@@ -407,7 +423,7 @@ class VirtualMachine:
     ) -> None:
         if (
             not isinstance(reference, tuple)
-            or len(reference) not in {2, 3, 4, 5}
+            or len(reference) not in {2, 3, 4, 5, 6}
             or not isinstance(reference[0], str)
             or not isinstance(reference[1], int)
         ):
@@ -421,6 +437,9 @@ class VirtualMachine:
             tuple(str(type_arg) for type_arg in reference[4])
             if len(reference) >= 5
             else ()
+        )
+        static_values = (
+            _static_reference_values(reference[5]) if len(reference) >= 6 else ()
         )
         value = _load_name(name, frame.locals, frame.globals)
         if isinstance(value, BuiltinValue):
@@ -443,6 +462,7 @@ class VirtualMachine:
                 raise RuntimeError(
                     f"resolved function '{name}' has no overload {overload_index}"
                 )
+            frame.stack.extend(static_values)
             self._call_function(value, frame, vectorised=vectorised)
             return
         if isinstance(value, OverloadedFunctionValue):
@@ -452,6 +472,7 @@ class VirtualMachine:
                 raise RuntimeError(
                     f"resolved function '{name}' has no overload {overload_index}"
                 ) from exc
+            frame.stack.extend(static_values)
             self._call_function(overload, frame, vectorised=vectorised)
             return
         if isinstance(value, ObjectConstructorValue):

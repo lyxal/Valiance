@@ -47,6 +47,7 @@ from valiance.types import (
     Fn,
     FunctionType,
     ListExactType,
+    ListMinType,
     N,
     Never,
     NoMatchingOverload,
@@ -56,6 +57,7 @@ from valiance.types import (
     Overloads,
     Row,
     Tagged,
+    Tup,
     TypeStack,
     U,
     UnknownElement,
@@ -844,6 +846,149 @@ end
                         for overload in overload_set.overloads
                     )
                 )
+
+    def test_where_clause_specializes_return_rank_from_parameter_rank(self):
+        source = """
+define id_rank(xs: Number+$n) -> Number+$n => $xs
+[[1], [2]] id_rank
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, C(ListExactType, Number, 2))
+
+    def test_where_clause_computes_return_rank_from_tuple_length(self):
+        source = """
+define shaped(xs: Number*, shape: {Number, Number}) -> Number+$n
+where ($n = $shape length) => [[1], [2]]
+[1, 2] {2, 1} shaped
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, C(ListExactType, Number, 2))
+        self.assertEqual(
+            typed[-1].overload.params,
+            (C(ListMinType, Number), Tup(Number, Number)),
+        )
+
+    def test_where_clause_computes_rank_from_variadic_tuple_length(self):
+        source = """
+define[T] reshape(xs: T*, shape: {Number...}) -> T+$n
+where ($n = length $shape) => $xs as! T+$n
+[[1, 2, 3], [4, 5, 6]] reshape {4, 5, 6}
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].overload.rank_values, (("n", 3),))
+
+    def test_arbitrary_length_tuple_parameter_matches_mixed_pattern(self):
+        source = """
+define accept(shape: {Number..., String..., Number}) -> String => "ok"
+{1, 2, "x", "y", 3} accept
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, String)
+
+    def test_where_assertion_rejects_current_overload(self):
+        source = """
+define rank_case(xs: Number+$n) -> String where ($n 2 == ?) => "matrix"
+define rank_case(xs: Number+) -> String => "vector"
+[1, 2] rank_case
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, String)
+        self.assertEqual(typed[-1].overload.params, (C(ListExactType, Number),))
+
+    def test_where_clause_supports_arithmetic_min_and_max(self):
+        source = """
+define widen(xs: Number+$n) -> Number+$m
+where ($m = max($n, min(3, 5))) => [[[1]]]
+[[1], [2]] widen
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, C(ListExactType, Number, 3))
+
+    def test_where_clause_supports_boolean_operations(self):
+        source = """
+define middle_rank(xs: Number+$n) -> String
+where (and(1, not(0)) ?) => "middle"
+define middle_rank(xs: Number+) -> String => "fallback"
+[[1], [2]] middle_rank
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, String)
+        self.assertEqual(
+            typed[-1].overload.params,
+            (C(ListExactType, Number, 2),),
+        )
+
+    def test_where_clause_computed_variable_is_visible_in_body(self):
+        source = """
+define next_rank(xs: Number+$n) -> Number where ($m = $n 1 +) => $m
+[[1], [2]] next_rank
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Number)
+
+    def test_where_clause_can_reject_all_overloads(self):
+        source = """
+define only_matrix(xs: Number+$n) -> String where ($n 2 == ?) => "matrix"
+[1, 2] only_matrix
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "no overloads for element 'only_matrix' match",
+            analyser.diagnostics[0],
+        )
+
+    def test_where_clause_rejects_arbitrary_element_calls(self):
+        source = """
+define invalid_static(xs: Number+$n) -> String where ($n double ?) => "bad"
+[[1], [2]] invalid_static
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "no overloads for element 'invalid_static' match",
+            analyser.diagnostics[0],
+        )
+
+    def test_where_clause_introspects_function_parameters(self):
+        source = """
+define arity_rank(f: Function[Number, String -> Number]) -> Number+$n
+where ($n = $f.arity) => [[1]]
+fn (x: Number, y: String) -> Number => 1 end arity_rank
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, C(ListExactType, Number, 2))
 
     def test_function_inference_suppresses_trimmed_branch_diagnostics(self):
         analyser = Analyser(default_environment())

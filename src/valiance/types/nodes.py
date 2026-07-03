@@ -82,6 +82,21 @@ class TupleType(Type):
 
 
 @dataclass(frozen=True)
+class TupleTypeItem:
+    """One item in an arbitrary-length tuple type pattern."""
+
+    typ: Type
+    repeated: bool = False
+
+
+@dataclass(frozen=True)
+class VariadicTupleType(Type):
+    """An arbitrary-length tuple type pattern."""
+
+    items: tuple[TupleTypeItem, ...] = ()
+
+
+@dataclass(frozen=True)
 class RowField:
     """One required field in a row constraint."""
 
@@ -102,7 +117,14 @@ class CollectionType(Type):
     """Base class for collection types with a base type and rank."""
 
     base: Type
-    rank: int = 1
+    rank: int | RankVariable = 1
+
+
+@dataclass(frozen=True, order=True)
+class RankVariable:
+    """A compile-time rank variable used by where clauses."""
+
+    name: str
 
 
 @dataclass(frozen=True)
@@ -200,6 +222,12 @@ class Overload:
     params: tuple[Type, ...]
     returns: tuple[Type, ...]
     generic_constraints: tuple[GenericConstraint, ...] = ()
+    where_clause: tuple[object, ...] = ()
+    param_names: tuple[Symbol | None, ...] = field(
+        default=(),
+        compare=False,
+        hash=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -236,6 +264,7 @@ class AppliedOverload:
     scores: tuple[Specificity, ...]
     vectorised: bool = False
     vectorised_depths: tuple[int, ...] = ()
+    rank_values: tuple[tuple[str, int], ...] = ()
 
     def __hash__(self) -> int:
         return hash(
@@ -248,6 +277,7 @@ class AppliedOverload:
                 self.scores,
                 self.vectorised,
                 self.vectorised_depths,
+                self.rank_values,
             )
         )
 

@@ -322,6 +322,19 @@ arguments in the bytecode reference:
 The VM passes `type_args` to `ObjectValue`, and object field reconstruction must
 preserve them. Older three- and four-item resolved references remain valid.
 
+Resolved user-defined element calls may also include static rank values produced
+by a `where` clause:
+
+```text
+(element_name, overload_index, vectorised, vectorised_depths, type_args, rank_values)
+```
+
+`rank_values` is a tuple of `(name, int)` pairs from
+`AppliedOverload.rank_values`. The VM appends these values as hidden arguments
+when invoking the selected user-defined overload, allowing function bodies to
+read computed static variables such as `$n`. Built-in overloads should not infer
+or recompute these values at runtime.
+
 Be careful with saved bytecode. The current bytecode format encodes positional
 overload indices, so changing built-in overload order is a compatibility
 concern. Prefer explicit stable overload ids before bytecode is treated as

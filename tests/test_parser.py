@@ -51,8 +51,11 @@ from valiance.types import (
     ListExactType,
     N,
     Number,
+    RankVariable,
     String,
     Tagged,
+    TupleTypeItem,
+    TupVariadic,
     same,
 )
 
@@ -342,6 +345,44 @@ class ParserTests(unittest.TestCase):
 
         self.assertEqual(node.function.params[0].typ, Atomic(N(Symbol("T"))))
         self.assertEqual(node.function.params[1].typ, C(ListExactType, N(Symbol("T"))))
+
+    def test_parses_where_clause_and_rank_variables(self):
+        [node] = parse(
+            "define[T] reshape(xs: T*, shape: {Number, Number}) -> T+$n "
+            "where ($n = $shape length) => $xs as! T+$n"
+        )
+
+        self.assertIsInstance(node, DefineNode)
+        self.assertEqual(
+            node.function.returns,
+            (C(ListExactType, N(Symbol("T")), RankVariable("n")),),
+        )
+        self.assertEqual(
+            node.function.where_clause,
+            (
+                GetVariableNode(Symbol("shape")),
+                ElementNode(Symbol("length")),
+                SetVariableNode(Symbol("n")),
+            ),
+        )
+
+    def test_parses_arbitrary_length_tuple_parameter_patterns(self):
+        [node] = parse(
+            "define accept(xs: {Number..., String..., Number}) -> String => \"ok\""
+        )
+
+        self.assertEqual(
+            node.function.params[0].typ,
+            TupVariadic(
+                TupleTypeItem(Number, repeated=True),
+                TupleTypeItem(String, repeated=True),
+                TupleTypeItem(Number),
+            ),
+        )
+
+    def test_rejects_arbitrary_length_tuple_types_outside_parameters(self):
+        with self.assertRaises(ParseError):
+            parse_type("{Number...}")
 
     def test_parses_imports_with_namespace_alias_and_components(self):
         program = parse(

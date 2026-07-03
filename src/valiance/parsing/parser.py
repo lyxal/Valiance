@@ -79,8 +79,11 @@ from valiance.types import (
     ListRuggedType,
     N,
     NoneType,
+    RankVariable,
     Tagged,
     Tup,
+    TupleTypeItem,
+    TupVariadic,
     Type,
     U,
 )
@@ -115,6 +118,7 @@ class Parser:
     def __init__(self, tokens: Iterable[Token]) -> None:
         self.tokens = list(tokens)
         self.index = 0
+        self._allow_variadic_tuple_type = False
 
     def parse_program(self) -> list[ASTNode]:
         nodes: list[ASTNode] = []
@@ -250,6 +254,7 @@ class Parser:
         name = self._symbol("expected definition name")
         params = self._params() if self._match(TokenKind.LPAREN) else None
         returns = self._returns()
+        where_clause = self._where_clause()
         self._expect(TokenKind.FAT_ARROW)
         body = self._body()
         return DefineNode(
@@ -258,6 +263,7 @@ class Parser:
                 params=params,
                 body=body,
                 returns=returns,
+                where_clause=where_clause,
                 location=_loc(start),
             ),
             annotations,
@@ -459,13 +465,24 @@ class Parser:
     def _function(self, start: Token) -> FunctionNode:
         params = self._params() if self._match(TokenKind.LPAREN) else None
         returns = self._returns()
+        where_clause = self._where_clause()
         self._expect(TokenKind.FAT_ARROW)
         return FunctionNode(
             params=params,
             returns=returns,
+            where_clause=where_clause,
             body=self._body(),
             location=_loc(start),
         )
+
+    def _where_clause(self) -> tuple[ASTNode, ...]:
+        self._skip_newlines()
+        if not self._match_ident("where"):
+            return ()
+        self._expect(TokenKind.LPAREN)
+        expressions = self._comma_expressions(TokenKind.RPAREN)
+        self._skip_newlines()
+        return _flatten(expressions)
 
     def _if(self, start: Token) -> IfNode:
         condition = self._condition()
@@ -1279,11 +1296,11 @@ class Parser:
             name: Symbol | None = None
             typ: Type | None = None
             if self._match(TokenKind.COLON):
-                typ = self.parse_type_expression()
+                typ = self._parameter_type()
             elif self._check(TokenKind.IDENT) and self._peek(1).kind == TokenKind.COLON:
                 name = Symbol(self._advance().value)
                 self._expect(TokenKind.COLON)
-                typ = self.parse_type_expression()
+                typ = self._parameter_type()
             else:
                 name = self._symbol("expected parameter")
             params.append(FunctionParam(name, typ))
@@ -1298,11 +1315,22 @@ class Parser:
         if self._check(TokenKind.FAT_ARROW):
             return ()
         returns: list[Type] = []
-        while not self._check(TokenKind.FAT_ARROW, TokenKind.NEWLINE, TokenKind.EOF):
+        while (
+            not self._check(TokenKind.FAT_ARROW, TokenKind.NEWLINE, TokenKind.EOF)
+            and not self._check_ident("where")
+        ):
             returns.append(self.parse_type_expression())
             if not self._match(TokenKind.COMMA):
                 break
         return tuple(returns)
+
+    def _parameter_type(self) -> Type:
+        previous = self._allow_variadic_tuple_type
+        self._allow_variadic_tuple_type = True
+        try:
+            return self.parse_type_expression()
+        finally:
+            self._allow_variadic_tuple_type = previous
 
     def parse_type_expression(self) -> Type:
         return self._type_union()
@@ -1348,6 +1376,10 @@ class Parser:
                 rank = 1
                 if self._match(TokenKind.NUMBER):
                     rank = int(self._previous.value)
+                elif self._match(TokenKind.DOLLAR):
+                    rank = RankVariable(
+                        self._expect(TokenKind.IDENT).value,
+                    )
                 collection = {
                     "+": ListExactType,
                     "*": ListMinType,
@@ -1363,17 +1395,30 @@ class Parser:
 
     def _type_primary(self) -> Type:
         if self._match(TokenKind.LBRACE):
-            items: list[Type] = []
+            items: list[TupleTypeItem] = []
+            has_repeated = False
             if self._match(TokenKind.RBRACE):
                 return N(Symbol("{}"))
             while True:
-                items.append(self.parse_type_expression())
+                item = self.parse_type_expression()
+                repeated = self._match_ellipsis()
+                if repeated:
+                    has_repeated = True
+                    if not self._allow_variadic_tuple_type:
+                        self._error(
+                            "arbitrary-length tuple types are only allowed in "
+                            "parameters"
+                        )
+                items.append(TupleTypeItem(item, repeated))
                 if self._match(TokenKind.RBRACE):
-                    return Tup(*items)
+                    if has_repeated:
+                        return TupVariadic(*items)
+                    return Tup(*(item.typ for item in items))
                 self._expect(TokenKind.COMMA)
         if self._match(TokenKind.IDENT):
             name = self._previous.value
-            while self._match(TokenKind.DOT):
+            while self._check(TokenKind.DOT) and self._peek(1).kind == TokenKind.IDENT:
+                self._advance()
                 name = f"{name}.{self._expect(TokenKind.IDENT).value}"
             if name == "None":
                 return NoneType()

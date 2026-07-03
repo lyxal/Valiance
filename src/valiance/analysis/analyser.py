@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
 from enum import Enum, auto
 from itertools import count, permutations
 from pathlib import Path
@@ -1162,6 +1162,11 @@ class Analyser:
                 )
                 return set()
             if not T.assignable(target, source, self.env.context):
+                if _type_contains_rank_var(target):
+                    stack = T.TypeStack((*branch.stack.items[:-1], target))
+                    return {
+                        branch.with_stack(stack).append_typed(TypedNode(node, target))
+                    }
                 self._diagnose(
                     f"cannot cast {T.show(source)} to {T.show(target)}",
                     node,
@@ -2094,6 +2099,17 @@ class Analyser:
             named_params,
             captures=outer.variables,
         )
+        for name in _static_body_variable_names(node):
+            variables, _diagnostic = variables.write(
+                name,
+                T.Number,
+                block_local=False,
+            )
+            if variables is None:
+                variables = BranchVariables.from_parameters(
+                    named_params,
+                    captures=outer.variables,
+                )
         initial_stack = T.TypeStack(
             params if mode is InputMode.CYCLE_EXPLICIT_PARAMS else ()
         )
@@ -2127,7 +2143,12 @@ class Analyser:
             if refined is None:
                 continue
             returns, branch = refined
-            signature = T.Overload(branch.inputs, returns)
+            signature = T.Overload(
+                branch.inputs,
+                returns,
+                where_clause=node.where_clause,
+                param_names=_function_param_names_for_overload(node, branch.inputs),
+            )
             signatures.setdefault(signature, branch.typed_body)
 
         if len(signatures) <= 1:
@@ -2155,9 +2176,15 @@ class Analyser:
             node.returns,
             self.env.context,
         )
+        if substitution is None and node.where_clause and _contains_rank_var(
+            node.returns
+        ):
+            return node.returns, branch
         if substitution is not None:
             branch = _specialize_branch_arguments(branch, substitution)
         if not _stack_assignable(branch.stack, expected, self.env.context):
+            if node.where_clause and _contains_rank_var(node.returns):
+                return node.returns, branch
             return None
         return node.returns, branch
 
@@ -2217,6 +2244,80 @@ def _declared_params(node: FunctionNode) -> tuple[T.Type, ...]:
     return _params_to_types(node.params)
 
 
+def _function_param_names_for_overload(
+    node: FunctionNode,
+    inputs: tuple[T.Type, ...],
+) -> tuple[Symbol | None, ...]:
+    if node.params is None:
+        return (None,) * len(inputs)
+    names = tuple(param.name for param in node.params)
+    if len(names) < len(inputs):
+        return (None,) * (len(inputs) - len(names)) + names
+    return names
+
+
+def _contains_rank_var(types: tuple[T.Type, ...]) -> bool:
+    return any(_type_contains_rank_var(typ) for typ in types)
+
+
+def _type_contains_rank_var(typ: T.Type) -> bool:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.CollectionType):
+        return isinstance(typ.rank, T.RankVariable) or _type_contains_rank_var(
+            typ.base
+        )
+    if isinstance(typ, T.NominalType):
+        return any(_type_contains_rank_var(arg) for arg in typ.args)
+    if isinstance(typ, (T.UnionType, T.IntersectionType)):
+        return any(_type_contains_rank_var(item) for item in typ.items)
+    if isinstance(typ, T.TupleType):
+        return any(_type_contains_rank_var(item) for item in typ.params)
+    if isinstance(typ, T.VariadicTupleType):
+        return any(_type_contains_rank_var(item.typ) for item in typ.items)
+    if isinstance(typ, T.FunctionType):
+        return _contains_rank_var(typ.params) or _contains_rank_var(typ.returns)
+    if isinstance(typ, T.TaggedType):
+        return _type_contains_rank_var(typ.inner)
+    return False
+
+
+def _static_body_variable_names(node: FunctionNode) -> tuple[Symbol, ...]:
+    names: set[Symbol] = set()
+    for typ in (*_declared_params(node), *(node.returns or ())):
+        names.update(Symbol(name) for name in _rank_var_names_in_type(typ))
+    for where_node in node.where_clause:
+        if isinstance(where_node, SetVariableNode):
+            names.add(where_node.name)
+    return tuple(sorted(names))
+
+
+def _rank_var_names_in_type(typ: T.Type) -> set[str]:
+    typ = T.normalize(typ)
+    names: set[str] = set()
+    if isinstance(typ, T.CollectionType):
+        if isinstance(typ.rank, T.RankVariable):
+            names.add(typ.rank.name)
+        names.update(_rank_var_names_in_type(typ.base))
+    elif isinstance(typ, T.NominalType):
+        for arg in typ.args:
+            names.update(_rank_var_names_in_type(arg))
+    elif isinstance(typ, (T.UnionType, T.IntersectionType)):
+        for item in typ.items:
+            names.update(_rank_var_names_in_type(item))
+    elif isinstance(typ, T.TupleType):
+        for item in typ.params:
+            names.update(_rank_var_names_in_type(item))
+    elif isinstance(typ, T.VariadicTupleType):
+        for item in typ.items:
+            names.update(_rank_var_names_in_type(item.typ))
+    elif isinstance(typ, T.FunctionType):
+        for item in typ.params + typ.returns:
+            names.update(_rank_var_names_in_type(item))
+    elif isinstance(typ, T.TaggedType):
+        names.update(_rank_var_names_in_type(typ.inner))
+    return names
+
+
 def _params_to_types(params: tuple[FunctionParam, ...]) -> tuple[T.Type, ...]:
     return tuple(_param_type(param, index) for index, param in enumerate(params))
 
@@ -2245,10 +2346,11 @@ def _function_analysis_from_signatures(
         FunctionOverloadTyping(
             T.Fn(signature.params, signature.returns),
             signatures[signature],
+            signature,
         )
         for signature in ordered
     )
-    if len(ordered) == 1:
+    if len(ordered) == 1 and not ordered[0].where_clause:
         signature = ordered[0]
         typ = T.Fn(signature.params, signature.returns)
     else:
@@ -2390,6 +2492,12 @@ def _apply_overload_to_branch(
     disambiguation: tuple[T.Type | None, ...] = (),
 ) -> tuple[T.AppliedOverload, AnalysisBranch] | None:
     args = _row_views_for_arguments(args, overload.params, env)
+    original_overload = overload
+    rank_values = _initial_rank_values(overload.params, args)
+    rank_values = _evaluate_where_clause(overload, args, rank_values)
+    if rank_values is None:
+        return None
+    overload = _substitute_overload_ranks(overload, rank_values)
     substitution = _branch_argument_substitution(args, overload.params, ctx)
     if substitution is None:
         return None
@@ -2410,7 +2518,7 @@ def _apply_overload_to_branch(
         ctx,
     )
     applied = T.AppliedOverload(
-        applied.overload,
+        original_overload,
         applied.substitution,
         applied.params,
         applied.returns,
@@ -2418,8 +2526,296 @@ def _apply_overload_to_branch(
         applied.scores,
         applied.vectorised,
         applied.vectorised_depths,
+        tuple(sorted(rank_values.items())),
     )
     return applied, specialized_branch
+
+
+def _initial_rank_values(
+    params: tuple[T.Type, ...],
+    args: tuple[T.Type, ...],
+) -> dict[str, int]:
+    values: dict[str, int] = {}
+    for param, arg in zip(params, args, strict=False):
+        _collect_rank_values(param, arg, values)
+    return values
+
+
+def _collect_rank_values(
+    pattern: T.Type,
+    actual: T.Type,
+    values: dict[str, int],
+) -> None:
+    pattern = T.normalize(pattern)
+    actual = T.normalize(actual)
+    if isinstance(pattern, T.CollectionType) and isinstance(actual, T.CollectionType):
+        if isinstance(pattern.rank, T.RankVariable) and isinstance(actual.rank, int):
+            values.setdefault(pattern.rank.name, actual.rank)
+        _collect_rank_values(pattern.base, actual.base, values)
+    elif isinstance(pattern, T.NominalType) and isinstance(actual, T.NominalType):
+        for left, right in zip(pattern.args, actual.args, strict=False):
+            _collect_rank_values(left, right, values)
+    elif isinstance(pattern, T.FunctionType) and isinstance(actual, T.FunctionType):
+        for left, right in zip(
+            pattern.params + pattern.returns,
+            actual.params + actual.returns,
+            strict=False,
+        ):
+            _collect_rank_values(left, right, values)
+    elif isinstance(pattern, T.TupleType) and isinstance(actual, T.TupleType):
+        for left, right in zip(pattern.params, actual.params, strict=False):
+            _collect_rank_values(left, right, values)
+    elif isinstance(pattern, T.VariadicTupleType) and isinstance(actual, T.TupleType):
+        _match_variadic_tuple_types(
+            pattern,
+            actual,
+            lambda left, right: _collect_rank_values(left, right, values) or True,
+        )
+    elif isinstance(pattern, T.TaggedType):
+        _collect_rank_values(pattern.inner, actual, values)
+    elif isinstance(actual, T.TaggedType):
+        _collect_rank_values(pattern, actual.inner, values)
+
+
+def _match_variadic_tuple_types(
+    pattern: T.VariadicTupleType,
+    actual: T.TupleType,
+    match: Callable[[T.Type, T.Type], bool],
+) -> bool:
+    def rec(pattern_index: int, actual_index: int) -> bool:
+        if pattern_index == len(pattern.items):
+            return actual_index == len(actual.params)
+        item = pattern.items[pattern_index]
+        if item.repeated:
+            if rec(pattern_index + 1, actual_index):
+                return True
+            for index in range(actual_index, len(actual.params)):
+                if not match(item.typ, actual.params[index]):
+                    return False
+                if rec(pattern_index + 1, index + 1):
+                    return True
+            return False
+        return actual_index < len(actual.params) and match(
+            item.typ,
+            actual.params[actual_index],
+        ) and rec(pattern_index + 1, actual_index + 1)
+
+    return rec(0, 0)
+
+
+def _evaluate_where_clause(
+    overload: T.Overload,
+    args: tuple[T.Type, ...],
+    rank_values: dict[str, int],
+) -> dict[str, int] | None:
+    if not overload.where_clause:
+        return rank_values
+    variables: dict[str, StaticValue] = {
+        name: value for name, value in rank_values.items()
+    }
+    for param_name, arg in zip(overload.param_names, args, strict=False):
+        if param_name is not None:
+            variables[param_name.text] = arg
+    stack: list[StaticValue] = []
+    for node in overload.where_clause:
+        if not _static_eval_node(node, stack, variables):
+            return None
+    result = dict(rank_values)
+    for name, value in variables.items():
+        if isinstance(value, int) and not isinstance(value, bool):
+            result[name] = value
+    return result
+
+
+StaticValue = int | bool | T.Type | tuple[T.Type, ...]
+
+
+def _static_eval_node(
+    node: ASTNode,
+    stack: list[StaticValue],
+    variables: dict[str, StaticValue],
+) -> bool:
+    match node:
+        case NumberLiteralNode(value):
+            stack.append(int(value))
+            return True
+        case GetVariableNode(name):
+            value = variables.get(name.text)
+            if value is None:
+                return False
+            stack.append(value)
+            return True
+        case SetVariableNode(name):
+            if not stack:
+                return False
+            variables[name.text] = stack.pop()
+            return True
+        case FieldAccessNode(name):
+            if not stack:
+                return False
+            value = stack.pop()
+            if isinstance(value, T.FunctionType):
+                match name.text:
+                    case "inputs":
+                        stack.append(value.params)
+                        return True
+                    case "outputs":
+                        stack.append(value.returns)
+                        return True
+                    case "arity":
+                        stack.append(len(value.params))
+                        return True
+                    case "multiplicity":
+                        stack.append(len(value.returns))
+                        return True
+            return False
+        case ElementNode(name):
+            return _static_eval_element(name.text, stack)
+        case _:
+            return False
+
+
+def _static_eval_element(name: str, stack: list[StaticValue]) -> bool:
+    def pop_truthy_values(count: int) -> tuple[int | bool, ...] | None:
+        if len(stack) < count:
+            return None
+        values = tuple(stack[-count:])
+        if not all(isinstance(value, (int, bool)) for value in values):
+            return None
+        del stack[-count:]
+        return values
+
+    if name in {"+", "-", "*", "max", "min", "<", ">", "<=", ">=", "==", "!="}:
+        if len(stack) < 2:
+            return False
+        right = stack.pop()
+        left = stack.pop()
+        if name in {"==", "!="}:
+            equal = left == right
+            stack.append(equal if name == "==" else not equal)
+            return True
+        if not (
+            isinstance(left, int)
+            and not isinstance(left, bool)
+            and isinstance(right, int)
+            and not isinstance(right, bool)
+        ):
+            return False
+        match name:
+            case "+":
+                stack.append(left + right)
+            case "-":
+                stack.append(left - right)
+            case "*":
+                stack.append(left * right)
+            case "max":
+                stack.append(max(left, right))
+            case "min":
+                stack.append(min(left, right))
+            case "<":
+                stack.append(left < right)
+            case ">":
+                stack.append(left > right)
+            case "<=":
+                stack.append(left <= right)
+            case ">=":
+                stack.append(left >= right)
+        return True
+    if name == "length":
+        if not stack:
+            return False
+        value = stack.pop()
+        if isinstance(value, T.TupleType):
+            stack.append(len(value.params))
+            return True
+        if isinstance(value, tuple):
+            stack.append(len(value))
+            return True
+        return False
+    if name == "and":
+        values = pop_truthy_values(2)
+        if values is None:
+            return False
+        stack.append(bool(values[0]) and bool(values[1]))
+        return True
+    if name == "or":
+        values = pop_truthy_values(2)
+        if values is None:
+            return False
+        stack.append(bool(values[0]) or bool(values[1]))
+        return True
+    if name == "not":
+        values = pop_truthy_values(1)
+        if values is None:
+            return False
+        stack.append(not bool(values[0]))
+        return True
+    if name == "?":
+        if not stack:
+            return False
+        return bool(stack.pop())
+    if name == "dup":
+        if not stack:
+            return False
+        stack.append(stack[-1])
+        return True
+    if name == "pop":
+        if not stack:
+            return False
+        stack.pop()
+        return True
+    if name == "swap":
+        if len(stack) < 2:
+            return False
+        stack[-1], stack[-2] = stack[-2], stack[-1]
+        return True
+    return False
+
+
+def _substitute_overload_ranks(
+    overload: T.Overload,
+    ranks: dict[str, int],
+) -> T.Overload:
+    return T.Overload(
+        tuple(_substitute_rank_values(param, ranks) for param in overload.params),
+        tuple(_substitute_rank_values(ret, ranks) for ret in overload.returns),
+        overload.generic_constraints,
+        overload.where_clause,
+        overload.param_names,
+    )
+
+
+def _substitute_rank_values(typ: T.Type, ranks: dict[str, int]) -> T.Type:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.CollectionType):
+        rank = typ.rank
+        if isinstance(rank, T.RankVariable):
+            solved = ranks.get(rank.name)
+            rank = solved if solved is not None else rank
+        return T.C(type(typ), _substitute_rank_values(typ.base, ranks), rank)
+    if isinstance(typ, T.NominalType):
+        return T.N(typ.name, *(_substitute_rank_values(arg, ranks) for arg in typ.args))
+    if isinstance(typ, T.UnionType):
+        return T.U(*(_substitute_rank_values(item, ranks) for item in typ.items))
+    if isinstance(typ, T.IntersectionType):
+        return T.I(*(_substitute_rank_values(item, ranks) for item in typ.items))
+    if isinstance(typ, T.TupleType):
+        return T.Tup(*(_substitute_rank_values(item, ranks) for item in typ.params))
+    if isinstance(typ, T.VariadicTupleType):
+        return T.TupVariadic(
+            *(
+                T.TupleTypeItem(_substitute_rank_values(item.typ, ranks), item.repeated)
+                for item in typ.items
+            )
+        )
+    if isinstance(typ, T.FunctionType):
+        return T.Fn(
+            (_substitute_rank_values(item, ranks) for item in typ.params),
+            (_substitute_rank_values(item, ranks) for item in typ.returns),
+        )
+    if isinstance(typ, T.TaggedType):
+        return T.Tagged(_substitute_rank_values(typ.inner, ranks), *typ.tags)
+    return typ
 
 
 def _row_views_for_arguments(
@@ -2748,6 +3144,15 @@ def _solve_branch_argument(
                 rec(left, right)
                 for left, right in zip(actual.params, expected.params, strict=True)
             )
+        if isinstance(actual, T.TupleType) and isinstance(
+            expected,
+            T.VariadicTupleType,
+        ):
+            return _match_variadic_tuple_types(
+                expected,
+                actual,
+                lambda left, right: rec(right, left),
+            )
         return False
 
     return constraints if rec(arg, param) else None
@@ -2769,6 +3174,16 @@ def _substitute_branch_type(typ: T.Type, substitution: dict[str, T.Type]) -> T.T
     if isinstance(typ, T.TupleType):
         return T.Tup(
             *(_substitute_branch_type(item, substitution) for item in typ.params)
+        )
+    if isinstance(typ, T.VariadicTupleType):
+        return T.TupVariadic(
+            *(
+                T.TupleTypeItem(
+                    _substitute_branch_type(item.typ, substitution),
+                    item.repeated,
+                )
+                for item in typ.items
+            )
         )
     if isinstance(typ, T.RowType):
         return T.Row(
@@ -3169,7 +3584,14 @@ def _trait_requirement(node: TraitRequirementNode) -> T.TraitRequirement | None:
         for index, param in enumerate(node.params or ())
     )
     returns = node.returns or ()
-    return T.TraitRequirement(node.name, T.Overload(params, returns))
+    return T.TraitRequirement(
+        node.name,
+        T.Overload(
+            params,
+            returns,
+            param_names=tuple(param.name for param in node.params or ()),
+        ),
+    )
 
 
 def _declared_nominal(name: Symbol, generics: tuple[Symbol, ...]) -> T.Type:
@@ -3199,6 +3621,8 @@ def _with_generic_constraints(
         overload.params,
         overload.returns,
         overload.generic_constraints + constraints,
+        overload.where_clause,
+        overload.param_names,
     )
 
 
@@ -3222,10 +3646,34 @@ def _genericize_function_node(
         returns = tuple(_genericize_type(ret, generics) for ret in function.returns)
     return FunctionNode(
         params=params,
-        body=function.body,
+        body=tuple(_genericize_ast_node(node, generics) for node in function.body),
         returns=returns,
+        where_clause=function.where_clause,
         location=function.location,
     )
+
+
+def _genericize_ast_node(node: ASTNode, generics: tuple[Symbol, ...]) -> ASTNode:
+    updates: dict[str, object] = {}
+    for item in fields(node):
+        value = getattr(node, item.name)
+        updated = _genericize_ast_value(value, generics)
+        if updated is not value:
+            updates[item.name] = updated
+    return replace(node, **updates) if updates else node
+
+
+def _genericize_ast_value(value: object, generics: tuple[Symbol, ...]) -> object:
+    if isinstance(value, T.Type):
+        return _genericize_type(value, generics)
+    if isinstance(value, FunctionParam):
+        typ = None if value.typ is None else _genericize_type(value.typ, generics)
+        return replace(value, typ=typ) if typ is not value.typ else value
+    if isinstance(value, ASTNode):
+        return _genericize_ast_node(value, generics)
+    if isinstance(value, tuple):
+        return tuple(_genericize_ast_value(item, generics) for item in value)
+    return value
 
 
 def _genericize_attribute(
@@ -3255,6 +3703,9 @@ def _genericize_requirement(
                 _genericize_type(ret, generics)
                 for ret in requirement.overload.returns
             ),
+            requirement.overload.generic_constraints,
+            requirement.overload.where_clause,
+            requirement.overload.param_names,
         ),
     )
 
@@ -3275,6 +3726,13 @@ def _genericize_type(typ: T.Type, generics: tuple[Symbol, ...]) -> T.Type:
         return T.I(*(_genericize_type(item, generics) for item in typ.items))
     if isinstance(typ, T.TupleType):
         return T.Tup(*(_genericize_type(item, generics) for item in typ.params))
+    if isinstance(typ, T.VariadicTupleType):
+        return T.TupVariadic(
+            *(
+                T.TupleTypeItem(_genericize_type(item.typ, generics), item.repeated)
+                for item in typ.items
+            )
+        )
     if isinstance(typ, T.RowType):
         return T.Row(
             _genericize_type(typ.base, generics),
@@ -3371,6 +3829,10 @@ def _record_variance_use(
         for item in typ.params:
             _record_variance_use(item, polarity, usage)
         return
+    if isinstance(typ, T.VariadicTupleType):
+        for item in typ.items:
+            _record_variance_use(item.typ, polarity, usage)
+        return
     if isinstance(typ, T.RowType):
         _record_variance_use(typ.base, polarity, usage)
         for field in typ.fields:
@@ -3424,6 +3886,10 @@ def _collect_anonymous_type_indices(typ: T.Type, indices: set[int]) -> None:
     if isinstance(typ, T.TupleType):
         for item in typ.params:
             _collect_anonymous_type_indices(item, indices)
+        return
+    if isinstance(typ, T.VariadicTupleType):
+        for item in typ.items:
+            _collect_anonymous_type_indices(item.typ, indices)
         return
     if isinstance(typ, T.RowType):
         _collect_anonymous_type_indices(typ.base, indices)
@@ -3512,6 +3978,13 @@ def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
         return T.I(*(_refine_type(item, old, new) for item in typ.items))
     if isinstance(typ, T.TupleType):
         return T.Tup(*(_refine_type(item, old, new) for item in typ.params))
+    if isinstance(typ, T.VariadicTupleType):
+        return T.TupVariadic(
+            *(
+                T.TupleTypeItem(_refine_type(item.typ, old, new), item.repeated)
+                for item in typ.items
+            )
+        )
     if isinstance(typ, T.RowType):
         return T.Row(
             _refine_type(typ.base, old, new),

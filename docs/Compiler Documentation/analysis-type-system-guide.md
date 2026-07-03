@@ -378,6 +378,60 @@ T.collection_item_type(T.AtLeastList(T.Number)) == T.U(
 Minimum/rugged lists can leave a union because peeling one rank may expose
 either the base element or another collection at runtime.
 
+## Tuple Types
+
+Fixed tuple types are represented by `T.TupleType` and constructed with
+`T.Tup(...)`.
+
+Arbitrary-length tuple parameter types are represented by
+`T.VariadicTupleType`, whose `items` are `T.TupleTypeItem` records. Each item
+has a `typ` and a `repeated` flag. Use `T.TupVariadic(...)` or
+`T.TupRepeat(item)` rather than constructing the node by hand:
+
+```python
+T.Tup(T.Number, T.String)  # {Number, String}
+T.TupRepeat(T.Number)     # {Number...}
+T.TupVariadic(
+    T.TupleTypeItem(T.Number, repeated=True),
+    T.TupleTypeItem(T.String),
+)                         # {Number..., String}
+```
+
+Variadic tuple types exist only as parameter types. Fixed `TupleType` values can
+be assigned to a variadic tuple parameter when they match the repeated/fixed
+pattern. Variadic-to-variadic assignability is intentionally not generalized;
+callers pass normal fixed tuple values.
+
+Relation checks use backtracking for repeated segments. Keep this in
+`types.relations` so overload application, generic solving, and direct
+assignability all agree on which fixed tuple shapes match a variadic tuple
+parameter.
+
+## Rank Variables And `where` Clauses
+
+Collection ranks may be an `int` or a `RankVariable`. Surface syntax uses
+`$name` after a rank marker, for example `T+$n`, `T*$n`, `T~$n`, `T^$n`, or
+`T>$n`.
+
+`Overload.where_clause` stores the parsed static expression body, and
+`Overload.param_names` maps overload parameters back to source parameter names.
+When an overload is applied, analysis:
+
+1. Binds rank variables that appear in parameter types from the actual argument
+   collection ranks.
+2. Binds source parameter names such as `$shape` to their actual static types.
+3. Evaluates the `where` clause with the small static evaluator.
+4. Substitutes solved rank values into parameters and returns.
+5. Records the solved values in `AppliedOverload.rank_values` so runtime codegen
+   can pass them into user-defined function bodies when needed.
+
+The static evaluator intentionally permits only terminating operations:
+number literals, static variables, assignment, arithmetic (`+`, `-`, `*`,
+`min`, `max`), comparisons, boolean operations, stack operations (`dup`, `pop`,
+`swap`), `length` on fixed tuple types/values, function type introspection, and
+`?` overload assertions. Unknown element calls reject the current overload
+candidate.
+
 ## Optional And Result Normalization
 
 Optional and Result are Valiance-specific enough that future changes should be

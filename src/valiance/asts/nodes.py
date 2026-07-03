@@ -52,6 +52,7 @@ class TypedCallNode(TypedNode):
 class FunctionOverloadTyping:
     typ: Type
     body: tuple[TypedNode, ...]
+    overload: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +120,7 @@ class FunctionNode(ASTNode):
     params: tuple[FunctionParam, ...] | None = None
     body: tuple[ASTNode, ...] = ()
     returns: tuple[Type, ...] | None = None
+    where_clause: tuple[ASTNode, ...] = ()
 
 
 @dataclass(frozen=True)

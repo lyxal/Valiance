@@ -9,7 +9,7 @@ Codegen/runtime audit note: as of 2026-06-28, checked runtime items are limited
 to behavior that is compiled to bytecode and executed by the VM, or saved and
 loaded through the portable bytecode format.
 
-Current audit total: 288 / 724 items complete (39.8%).
+Current audit total: 342 / 728 items complete (47.0%).
 
 ## 1. Lexer, parser, and general syntax
 
@@ -83,12 +83,12 @@ Current audit total: 288 / 724 items complete (39.8%).
 - [x] Support nested tuples.
 - [x] Represent tuple types using `{...}`.
 - [x] Track tuple lengths at compile time.
-- [ ] Support arbitrary-length tuple parameter types using `...`.
-- [ ] Support repeated tuple-type segments before, between, or after fixed segments.
-- [ ] Restrict arbitrary-length tuple types to parameter positions.
-- [ ] Allow compatible fixed tuples where arbitrary-length tuple parameters are expected.
-- [ ] Restrict arbitrary-length tuple values to contexts expecting arbitrary-length tuples.
-- [ ] Trigger call-site type checking for functions containing variadic tuple parameters.
+- [x] Support arbitrary-length tuple parameter types using `...`.
+- [x] Support repeated tuple-type segments before, between, or after fixed segments.
+- [x] Restrict arbitrary-length tuple types to parameter positions.
+- [x] Allow compatible fixed tuples where arbitrary-length tuple parameters are expected.
+- [x] Restrict arbitrary-length tuple values to contexts expecting arbitrary-length tuples.
+- [x] Trigger call-site type checking for functions containing variadic tuple parameters.
 
 ## 6. Records and dictionaries
 
@@ -674,14 +674,14 @@ Current audit total: 288 / 724 items complete (39.8%).
 
 ## 38. `where` clauses and type-level constraints
 
-- [ ] Parse `where` clauses.
+- [x] Parse `where` clauses.
 - [x] Support constraints on generic types.
-- [ ] Support rank variables.
-- [ ] Bind collection ranks to rank variables.
-- [ ] Support the allowed rank arithmetic and comparisons.
-- [ ] Validate relationships between parameter and return ranks.
-- [ ] Restrict operations in `where` clauses to the specified set.
-- [ ] Reject invalid, unresolved, or unsupported constraints.
+- [x] Support rank variables.
+- [x] Bind collection ranks to rank variables.
+- [x] Support the allowed rank arithmetic and comparisons.
+- [x] Validate relationships between parameter and return ranks.
+- [x] Restrict operations in `where` clauses to the specified set.
+- [x] Reject invalid, unresolved, or unsupported constraints.
 - [x] Integrate solved constraints with overload selection and unification.
 
 ## 39. Imports and modules

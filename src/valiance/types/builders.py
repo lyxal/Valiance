@@ -23,12 +23,15 @@ from valiance.types.nodes import (
     NoneTypeNode,
     Overload,
     OverloadSetType,
+    RankVariable,
     RowField,
     RowType,
     TaggedType,
     TupleType,
+    TupleTypeItem,
     Type,
     UnionType,
+    VariadicTupleType,
     VarType,
 )
 
@@ -87,6 +90,20 @@ def Tup(*types: Type) -> Type:
     return TupleType(tuple(types))
 
 
+def TupVariadic(*items: Type | TupleTypeItem) -> Type:
+    """Create an arbitrary-length tuple pattern type."""
+    parts = tuple(
+        item if isinstance(item, TupleTypeItem) else TupleTypeItem(item)
+        for item in items
+    )
+    return VariadicTupleType(parts)
+
+
+def TupRepeat(item: Type) -> Type:
+    """Create a homogeneous arbitrary-length tuple type."""
+    return TupVariadic(TupleTypeItem(item, repeated=True))
+
+
 def Field(name: Symbol, typ: Type) -> RowField:
     """Create one required field for a row-constrained type."""
     return RowField(name, typ)
@@ -97,7 +114,11 @@ def Row(base: Type, *fields: RowField) -> Type:
     return normalize(RowType(base, tuple(fields)))
 
 
-def C(collection_type: CollectionClass, base: Type, rank: int = 1) -> Type:
+def C(
+    collection_type: CollectionClass,
+    base: Type,
+    rank: int | RankVariable = 1,
+) -> Type:
     """Create a collection type with a rank mode, base type, and rank."""
     return collection_type(base, rank)
 
@@ -237,7 +258,11 @@ def normalize(t: Type) -> Type:
 
     if isinstance(t, CollectionType):
         base = normalize(t.base)
-        if isinstance(base, CollectionType):
+        if (
+            isinstance(base, CollectionType)
+            and isinstance(t.rank, int)
+            and isinstance(base.rank, int)
+        ):
             # Surface syntax can produce nested collection nodes, e.g.
             # Number++* parses as (Number+2)*. Collapse those into the weakest
             # rank mode that preserves the meaning: Number*3.
@@ -254,6 +279,11 @@ def normalize(t: Type) -> Type:
 
     if isinstance(t, FunctionType):
         return Fn((normalize(p) for p in t.params), (normalize(r) for r in t.returns))
+
+    if isinstance(t, VariadicTupleType):
+        return VariadicTupleType(
+            tuple(TupleTypeItem(normalize(item.typ), item.repeated) for item in t.items)
+        )
 
     if isinstance(t, NominalType):
         return N(t.name, *(normalize(a) for a in t.args))
@@ -337,6 +367,14 @@ def show(t: Type) -> str:
         return " & ".join(sorted(show(i) for i in t.items))
     if isinstance(t, TupleType):
         return "{" + ", ".join(show(p) for p in t.params) + "}"
+    if isinstance(t, VariadicTupleType):
+        return (
+            "{"
+            + ", ".join(
+                show(item.typ) + ("..." if item.repeated else "") for item in t.items
+            )
+            + "}"
+        )
     if isinstance(t, RowType):
         fields = ", ".join(f".{field.name}: {show(field.typ)}" for field in t.fields)
         return f"{show(t.base)}({fields})"
@@ -348,7 +386,10 @@ def show(t: Type) -> str:
             ArrayExactType: "^",
             ArrayMinType: ">",
         }[type(t)]
-        rank = "" if t.rank == 1 else str(t.rank)
+        if isinstance(t.rank, RankVariable):
+            rank = f"${t.rank.name}"
+        else:
+            rank = "" if t.rank == 1 else str(t.rank)
         return f"{_show_collection_base(t.base)}{suffix}{rank}"
     if isinstance(t, FunctionType):
         params = ", ".join(show(p) for p in t.params)

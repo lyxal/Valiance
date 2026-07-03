@@ -199,8 +199,15 @@ triple 15
 define triple(n: Number) -> Number => $n * 3
 define triple(s: String) -> String => $s + $s + $s
 triple "H"
-"""
+        """
         self.assertEqual(execute(source), ["HHH"])
+
+    def test_where_rank_variable_is_available_in_function_body(self):
+        source = """
+define rank_of(xs: Number+$n) -> Number => $n
+[[1], [2]] rank_of
+"""
+        self.assertEqual(execute(source), [Decimal("2")])
 
     def test_executes_string_interpolation(self):
         source = """

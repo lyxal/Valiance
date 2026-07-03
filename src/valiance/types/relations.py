@@ -48,6 +48,7 @@ from valiance.types.nodes import (
     TupleType,
     Type,
     UnionType,
+    VariadicTupleType,
     VarType,
 )
 from valiance.types.stack import StackApplication, TypeStack
@@ -56,6 +57,40 @@ CollectionClass = type[CollectionType]
 INTEGER = Symbol("Integer")
 NUMBER = Symbol("Number")
 REAL = Symbol("Real")
+
+
+def _match_variadic_tuple(
+    pattern: tuple[object, ...],
+    actual: tuple[Type, ...],
+    match: Callable[[Type, Type], bool],
+) -> bool:
+    """Return whether a fixed tuple matches a repeated tuple pattern."""
+    seen: set[tuple[int, int]] = set()
+
+    def rec(pattern_index: int, actual_index: int) -> bool:
+        state = (pattern_index, actual_index)
+        if state in seen:
+            return False
+        seen.add(state)
+        if pattern_index == len(pattern):
+            return actual_index == len(actual)
+        item = pattern[pattern_index]
+        typ = item.typ
+        if item.repeated:
+            if rec(pattern_index + 1, actual_index):
+                return True
+            for index in range(actual_index, len(actual)):
+                if not match(typ, actual[index]):
+                    return False
+                if rec(pattern_index + 1, index + 1):
+                    return True
+            return False
+        return actual_index < len(actual) and match(typ, actual[actual_index]) and rec(
+            pattern_index + 1,
+            actual_index + 1,
+        )
+
+    return rec(0, 0)
 
 
 def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
@@ -114,6 +149,13 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
             for a, b in zip(source.params, target.params, strict=False)
         )
 
+    if isinstance(source, TupleType) and isinstance(target, VariadicTupleType):
+        return _match_variadic_tuple(
+            target.items,
+            source.params,
+            lambda expected, actual: assignable(actual, expected, ctx),
+        )
+
     if isinstance(source, CollectionType) and isinstance(target, CollectionType):
         return _collection_subtype(source, target, ctx)
 
@@ -165,7 +207,11 @@ def _collection_subtype(source: Type, target: Type, ctx: Context) -> bool:
     ):
         # A minimum/rugged list can satisfy an exact outer-list pattern if the
         # peeled remainder is exactly the expected element type.
-        if source.rank >= target.rank:
+        if (
+            isinstance(source.rank, int)
+            and isinstance(target.rank, int)
+            and source.rank >= target.rank
+        ):
             remainder = _collection_remainder(
                 type(source), source.base, source.rank - target.rank
             )
@@ -182,15 +228,19 @@ def _collection_subtype(source: Type, target: Type, ctx: Context) -> bool:
     if sk is ArrayMinType and tk is ListMinType and sr == tr:
         return True
     if sk in {ListExactType, ArrayExactType} and tk in {ListMinType, ArrayMinType}:
-        return sr >= tr and ((sk is ArrayExactType) == (tk is ArrayMinType))
+        return _rank_ge(sr, tr) and ((sk is ArrayExactType) == (tk is ArrayMinType))
     if tk is ListRuggedType and sk in {
         ListExactType,
         ListMinType,
         ArrayExactType,
         ArrayMinType,
     }:
-        return sr >= tr
+        return _rank_ge(sr, tr)
     return False
+
+
+def _rank_ge(left: object, right: object) -> bool:
+    return isinstance(left, int) and isinstance(right, int) and left >= right
 
 
 def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
@@ -291,6 +341,8 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
             return len(p.params) == len(a.params) and all(
                 rec(x, y) for x, y in zip(p.params, a.params, strict=False)
             )
+        if isinstance(p, VariadicTupleType) and isinstance(a, TupleType):
+            return solve_variadic_tuple(p, a)
         if isinstance(p, FunctionType) and isinstance(a, FunctionType):
             return (
                 len(p.params) == len(a.params)
@@ -316,6 +368,46 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
             return _solve_collection(p, a, add)
         return False
 
+    def solve_variadic_tuple(pattern: VariadicTupleType, actual: TupleType) -> bool:
+        def save() -> dict[str, list[Type]]:
+            return {key: list(values) for key, values in constraints.items()}
+
+        def restore(saved: dict[str, list[Type]]) -> None:
+            constraints.clear()
+            constraints.update(saved)
+
+        def rec_tuple(pattern_index: int, actual_index: int) -> bool:
+            if pattern_index == len(pattern.items):
+                return actual_index == len(actual.params)
+            item = pattern.items[pattern_index]
+            if item.repeated:
+                saved = save()
+                if rec_tuple(pattern_index + 1, actual_index):
+                    return True
+                restore(saved)
+                for index in range(actual_index, len(actual.params)):
+                    if not rec(item.typ, actual.params[index]):
+                        restore(saved)
+                        return False
+                    consumed = save()
+                    if rec_tuple(pattern_index + 1, index + 1):
+                        return True
+                    restore(consumed)
+                restore(saved)
+                return False
+            if actual_index >= len(actual.params):
+                return False
+            saved = save()
+            if rec(item.typ, actual.params[actual_index]) and rec_tuple(
+                pattern_index + 1,
+                actual_index + 1,
+            ):
+                return True
+            restore(saved)
+            return False
+
+        return rec_tuple(0, 0)
+
     return constraints if rec(pattern, actual) else None
 
 
@@ -328,6 +420,8 @@ def _solve_collection(
         # patterns are handled by normal compatibility.
         return same(pattern, actual)
     n, m = pattern.rank, actual.rank
+    if not isinstance(n, int) or not isinstance(m, int):
+        return same(pattern, actual)
     if m < n:
         return False
     diff = m - n
@@ -501,6 +595,13 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
         return I(*(_substitute(i, subst) for i in t.items))
     if isinstance(t, TupleType):
         return Tup(*(_substitute(p, subst) for p in t.params))
+    if isinstance(t, VariadicTupleType):
+        return VariadicTupleType(
+            tuple(
+                type(item)(_substitute(item.typ, subst), item.repeated)
+                for item in t.items
+            )
+        )
     if isinstance(t, RowType):
         return normalize(
             RowType(
@@ -732,6 +833,8 @@ def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:
     if parameter_collection is not None:
         return (
             same(argument_collection.base, parameter_collection.base)
+            and isinstance(argument_collection.rank, int)
+            and isinstance(parameter_collection.rank, int)
             and argument_collection.rank > parameter_collection.rank
         )
     return compatible(argument_collection.base, parameter, ctx)
@@ -1037,6 +1140,8 @@ def _contains_type_var(t: Type) -> bool:
         return any(_contains_type_var(item) for item in t.items)
     if isinstance(t, TupleType):
         return any(_contains_type_var(item) for item in t.params)
+    if isinstance(t, VariadicTupleType):
+        return any(_contains_type_var(item.typ) for item in t.items)
     if isinstance(t, RowType):
         return _contains_type_var(t.base) or any(
             _contains_type_var(field.typ) for field in t.fields
