@@ -571,6 +571,57 @@ Function return rules:
 Multiple viable function signatures become an `OverloadSetType`. The typed
 function node keeps per-overload typed bodies so the typed AST remains useful.
 
+## Call-Site Type Checking
+
+Call-site type checking is not a separate function type. It is triggered by the
+parameter types of an overload:
+
+- a bare unknown-shape `Function`, represented as `T.Fn()`
+- a variadic tuple parameter, represented as `T.VariadicTupleType`
+
+For an unknown-shape function parameter, the definition says "this accepts a
+function, but I cannot prove the body until I know which concrete function was
+passed." The analyser therefore defers validation until an invocation supplies a
+concrete callable type. At that call site it temporarily treats the overload as
+if the parameter had been written with that exact `Function[...]` type and as if
+any needed function arguments had been inferred from the outer stack.
+
+For example, a built-in or user function declared like:
+
+```valiance
+define dip(function: Function) =>
+  $temp = top
+  $function()
+  $temp
+end
+```
+
+can be checked at a call like `1 2 3 dip: +` as though the callable parameter
+were `Function[Number, Number -> Number]`, with the two `Number` inputs sourced
+from the caller's stack and the held value sourced according to the concrete
+`dip` body.
+
+Important invariants:
+
+- The analyser detects CSTC structurally from overload parameter types. Do not
+  add element-name checks for built-ins such as `peek`, `dip`, or `fork`.
+- A single element can have both ordinary overloads and CSTC overloads.
+- User-defined functions and built-ins use the same CSTC path. Built-ins provide
+  a small static helper through `@builtin(..., call_site=...)`; user functions
+  are re-analysed from their typed body at the call site.
+- CSTC functions remain stack-polymorphic. They do not produce one universal
+  inferred function type that works for every callable argument.
+- Modifier argument order matters for CSTC overloads. The analyser does not
+  permute modifier arguments when applying a call-site checked overload.
+- The concrete applied overload records the runtime arity and consumed-count
+  details that codegen needs. This lets `peek` pass stack values to its runtime
+  implementation without consuming those stack values.
+
+Variadic tuple parameters trigger the same deferral because their concrete
+length is known only once the argument tuple type is known. At the call site,
+rank/length-related `where` clauses are evaluated against the fixed tuple shape
+and the resulting rank values are recorded on the applied overload.
+
 ## Literals
 
 List, tuple, record, and dict literals analyse their item expressions from the

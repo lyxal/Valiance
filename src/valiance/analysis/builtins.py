@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -117,10 +117,11 @@ _REGISTRY: dict[str, list[BuiltinOverload]] = {}
 
 
 def builtin(
-    name: str,
+    name: str | Symbol,
     params: tuple[T.Type, ...],
-    returns: tuple[T.Type, ...],
+    returns: tuple[T.Type, ...] = (),
     generic_constraints: tuple[T.GenericConstraint, ...] = (),
+    call_site: Callable[..., T.Overload | None] | None = None,
 ):
     """Register one overload of `name`, implemented by the decorated function.
 
@@ -130,8 +131,17 @@ def builtin(
     """
 
     def register(fn: RuntimeImpl) -> RuntimeImpl:
-        _REGISTRY.setdefault(name, []).append(
-            BuiltinOverload(T.Overload(params, returns, generic_constraints), fn)
+        key = name.text if isinstance(name, Symbol) else name
+        _REGISTRY.setdefault(key, []).append(
+            BuiltinOverload(
+                T.Overload(
+                    params,
+                    returns,
+                    generic_constraints,
+                    call_site_body=call_site,
+                ),
+                fn,
+            )
         )
         return fn
 
@@ -239,9 +249,147 @@ def _is_collection_parameter(typ: T.Type) -> bool:
 # --------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _CallableApplication:
+    overload: T.Overload
+    applied: T.AppliedOverload
+    concrete_type: T.FunctionType
+
+
+def _callable_overloads(typ: T.Type) -> tuple[T.Overload, ...]:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return ()
+        return (T.Overload(typ.params, typ.returns),)
+    if isinstance(typ, T.OverloadSetType):
+        return typ.overloads
+    return ()
+
+
+def _apply_callable(
+    overload: T.Overload,
+    args: tuple[T.Type, ...],
+) -> _CallableApplication | None:
+    applied = T.apply_overload(overload, args)
+    if applied is None:
+        return None
+    return _CallableApplication(
+        overload,
+        applied,
+        T.Fn(applied.params, applied.actual_returns),
+    )
+
+
+def _callable_applications(
+    typ: T.Type,
+    args: tuple[T.Type, ...],
+) -> Iterator[_CallableApplication]:
+    for overload in _callable_overloads(typ):
+        application = _apply_callable(overload, args)
+        if application is not None:
+            yield application
+
+
+def _first_callable_application(
+    typ: T.Type,
+    args: tuple[T.Type, ...],
+) -> _CallableApplication | None:
+    return next(_callable_applications(typ, args), None)
+
+
+def _peek_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+    if not call_params:
+        return None
+    function_type = call_params[-1]
+    stack = call_params[:-1]
+    for candidate in _callable_overloads(function_type):
+        arity = len(candidate.params)
+        if len(stack) < arity:
+            continue
+        args = stack[-arity:] if arity else ()
+        application = _apply_callable(candidate, args)
+        if application is not None:
+            return T.Overload(
+                (*args, application.concrete_type),
+                application.applied.actual_returns,
+                call_site_body=0,
+            )
+    return None
+
+
+def _dip_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+    if not call_params:
+        return None
+    function_type = call_params[-1]
+    stack = call_params[:-1]
+    for candidate in _callable_overloads(function_type):
+        arity = len(candidate.params)
+        if len(stack) < arity + 1:
+            continue
+        args = stack[-arity - 1 : -1] if arity else ()
+        application = _apply_callable(candidate, args)
+        if application is not None:
+            held = stack[-1]
+            return T.Overload(
+                (*args, held, application.concrete_type),
+                (*application.applied.actual_returns, held),
+                call_site_body=arity + 1,
+            )
+    return None
+
+
+def _fork_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+    if len(call_params) < 2:
+        return None
+    left_type, right_type = call_params[-2:]
+    stack = call_params[:-2]
+    for left in _callable_overloads(left_type):
+        for right in _callable_overloads(right_type):
+            arity = len(left.params)
+            if len(right.params) != arity or len(stack) < arity:
+                continue
+            args = stack[-arity:] if arity else ()
+            left_application = _apply_callable(left, args)
+            right_application = _apply_callable(right, args)
+            if left_application is not None and right_application is not None:
+                return T.Overload(
+                    (
+                        *args,
+                        left_application.concrete_type,
+                        right_application.concrete_type,
+                    ),
+                    (
+                        *left_application.applied.actual_returns,
+                        *right_application.applied.actual_returns,
+                    ),
+                    call_site_body=arity,
+                )
+    return None
+
+
 @builtin("dup", (T.V("T"),), (T.V("T"), T.V("T")))
 def _dup(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (args[0], args[0])
+
+
+@builtin("peek", (T.Fn(),), call_site=_peek_call_site)
+def _peek(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    callable_value = args[-1]
+    return ctx.call(callable_value, list(args[:-1]))
+
+
+@builtin("dip", (T.Fn(),), call_site=_dip_call_site)
+def _dip(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    callable_value = args[-1]
+    held = args[-2]
+    return (*ctx.call(callable_value, list(args[:-2])), held)
+
+
+@builtin("fork", (T.Fn(), T.Fn()), call_site=_fork_call_site)
+def _fork(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    *call_args, left, right = args
+    return (*ctx.call(left, list(call_args)), *ctx.call(right, list(call_args)))
 
 
 # --------------------------------------------------------------------------

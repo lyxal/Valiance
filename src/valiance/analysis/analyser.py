@@ -1048,6 +1048,7 @@ class Analyser:
                     self.env.context,
                     self.env,
                     node.disambiguation,
+                    self,
                 )
                 if candidate is not None:
                     applied, candidate_branch = candidate
@@ -1087,7 +1088,11 @@ class Analyser:
                         _returns_result_type(applied.actual_returns),
                         applied,
                         _overload_index(overloads, applied.overload),
-                        tuple(item.typed_node for item in ordered_modifiers),
+                        _specialize_modifier_arguments(
+                            applied,
+                            ordered_modifiers,
+                            self.env.context,
+                        ),
                     )
                 )
             )
@@ -1215,6 +1220,7 @@ class Analyser:
                     args,
                     popped,
                     self.env.context,
+                    analyser=self,
                 )
                 if candidate is not None:
                     candidates.append(candidate)
@@ -2088,6 +2094,9 @@ class Analyser:
         outer: AnalysisBranch,
         node: FunctionNode,
     ) -> tuple[FunctionAnalysis, AnalysisBranch] | None:
+        if _needs_call_site_checking(node):
+            return self._call_site_checked_function(outer, node), outer
+
         params = _declared_params(node)
         mode = _function_input_mode(node)
         named_params = tuple(
@@ -2131,6 +2140,75 @@ class Analyser:
             self.diagnostics.extend(function_analyser.diagnostics)
             return None
         return analysis, outer
+
+    def _call_site_checked_function(
+        self,
+        outer: AnalysisBranch,
+        node: FunctionNode,
+    ) -> FunctionAnalysis:
+        params = _declared_params(node)
+        overload = T.Overload(
+            params,
+            (),
+            param_names=_function_param_names_for_overload(node, params),
+            call_site_body=(outer, node),
+        )
+        typ = T.Overloads(overload)
+        return FunctionAnalysis(
+            typ,
+            (FunctionOverloadTyping(T.Fn(params, ()), (), overload),),
+        )
+
+    def _analyse_function_at_call_site(
+        self,
+        outer: AnalysisBranch,
+        node: FunctionNode,
+        call_params: tuple[T.Type, ...],
+    ) -> FunctionAnalysis | None:
+        declared = tuple(node.params or ())
+        if len(call_params) < len(declared):
+            return None
+        substituted_params = _call_site_substituted_params(
+            declared,
+            call_params[-len(declared) :] if declared else (),
+            self.env.context,
+        )
+        if substituted_params is None:
+            return None
+        call_site_node = FunctionNode(
+            params=substituted_params,
+            body=node.body,
+            returns=node.returns,
+            where_clause=node.where_clause,
+            location=node.location,
+        )
+        explicit_count = len(declared)
+        stack_params = call_params[:-explicit_count] if explicit_count else call_params
+        named_params = tuple(
+            (param.name, typ)
+            for param, typ in zip(
+                substituted_params,
+                call_params[-explicit_count:] if explicit_count else (),
+                strict=False,
+            )
+            if param.name is not None
+        )
+        variables = BranchVariables.from_parameters(
+            named_params,
+            captures=outer.variables,
+        )
+        initial = AnalysisBranch(
+            stack=T.TypeStack(stack_params),
+            inputs=call_params,
+            variables=variables,
+            input_mode=InputMode.NILADIC,
+            origin=outer.origin,
+        )
+        function_analyser = Analyser(self.env)
+        function_analyser._friendly_owners = self._friendly_owners
+        final = function_analyser.analyse_block(BranchSet.one(initial), node.body)
+        signatures = self._function_signatures(call_site_node, final)
+        return _function_analysis_from_signatures(signatures)
 
     def _function_signatures(
         self,
@@ -2244,6 +2322,109 @@ def _declared_params(node: FunctionNode) -> tuple[T.Type, ...]:
     return _params_to_types(node.params)
 
 
+def _needs_call_site_checking(node: FunctionNode) -> bool:
+    if node.params is None:
+        return False
+    return any(_is_call_site_checked_param(param.typ) for param in node.params)
+
+
+def _is_call_site_checked_param(typ: T.Type | None) -> bool:
+    if typ is None:
+        return False
+    typ = T.normalize(typ)
+    if isinstance(typ, T.NominalType):
+        return typ.name == Symbol("Function") and not typ.args
+    if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return True
+        return any(_is_call_site_checked_type(item) for item in typ.params)
+    if isinstance(typ, T.VariadicTupleType):
+        return True
+    return _is_call_site_checked_type(typ)
+
+
+def _is_call_site_checked_type(typ: T.Type) -> bool:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.NominalType):
+        return any(_is_call_site_checked_type(arg) for arg in typ.args)
+    if isinstance(typ, (T.UnionType, T.IntersectionType)):
+        return any(_is_call_site_checked_type(item) for item in typ.items)
+    if isinstance(typ, T.TupleType):
+        return any(_is_call_site_checked_type(item) for item in typ.params)
+    if isinstance(typ, T.VariadicTupleType):
+        return True
+    if isinstance(typ, T.RowType):
+        return _is_call_site_checked_type(typ.base) or any(
+            _is_call_site_checked_type(field.typ) for field in typ.fields
+        )
+    if isinstance(typ, T.CollectionType):
+        return _is_call_site_checked_type(typ.base)
+    if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return True
+        return any(
+            _is_call_site_checked_type(item) for item in typ.params + typ.returns
+        )
+    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _is_call_site_checked_type(typ.inner)
+    return False
+
+
+def _call_site_substituted_params(
+    params: tuple[FunctionParam, ...],
+    actuals: tuple[T.Type, ...],
+    ctx: T.Context,
+) -> tuple[FunctionParam, ...] | None:
+    if len(params) != len(actuals):
+        return None
+    substituted: list[FunctionParam] = []
+    for param, actual in zip(params, actuals, strict=True):
+        typ = param.typ
+        if typ is None:
+            substituted.append(FunctionParam(param.name, actual))
+            continue
+        if not _call_site_placeholder_accepts(typ, actual, ctx):
+            return None
+        substituted.append(
+            FunctionParam(param.name, _call_site_substitute_type(typ, actual))
+        )
+    return tuple(substituted)
+
+
+def _call_site_placeholder_accepts(
+    declared: T.Type,
+    actual: T.Type,
+    ctx: T.Context,
+) -> bool:
+    declared = T.normalize(declared)
+    if _is_bare_function_type(declared):
+        return isinstance(T.normalize(actual), (T.FunctionType, T.OverloadSetType))
+    return T.compatible(actual, declared, ctx)
+
+
+def _call_site_substitute_type(declared: T.Type, actual: T.Type) -> T.Type:
+    declared = T.normalize(declared)
+    if _is_bare_function_type(declared) or isinstance(declared, T.VariadicTupleType):
+        return actual
+    return declared
+
+
+def _is_bare_function_type(typ: T.Type) -> bool:
+    typ = T.normalize(typ)
+    return (
+        isinstance(typ, T.FunctionType)
+        and typ.params is None
+        and typ.returns is None
+    )
+
+
+def _call_site_checked_returns(analysis: FunctionAnalysis) -> tuple[T.Type, ...] | None:
+    overloads = _callable_overloads(analysis.typ)
+    if len(overloads) != 1:
+        return None
+    return overloads[0].returns
+
+
 def _function_param_names_for_overload(
     node: FunctionNode,
     inputs: tuple[T.Type, ...],
@@ -2311,6 +2492,8 @@ def _rank_var_names_in_type(typ: T.Type) -> set[str]:
         for item in typ.items:
             names.update(_rank_var_names_in_type(item.typ))
     elif isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return names
         for item in typ.params + typ.returns:
             names.update(_rank_var_names_in_type(item))
     elif isinstance(typ, T.TaggedType):
@@ -2361,6 +2544,8 @@ def _function_analysis_from_signatures(
 def _callable_overloads(typ: T.Type) -> tuple[T.Overload, ...]:
     typ = T.normalize(typ)
     if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return ()
         return (T.Overload(typ.params, typ.returns),)
     if isinstance(typ, T.OverloadSetType):
         return typ.overloads
@@ -2431,7 +2616,12 @@ def _source_element_arguments(
         return
     stack_args, popped = sourced
 
-    for ordered_modifiers in _unique_permutations(modifier_args):
+    modifier_orders = (
+        (modifier_args,)
+        if _overload_needs_call_site_checking(overload)
+        else _unique_permutations(modifier_args)
+    )
+    for ordered_modifiers in modifier_orders:
         args: list[T.Type] = []
         stack_index = 0
         modifier_index = 0
@@ -2454,6 +2644,53 @@ def _modifier_arity_matches(
     }
 
 
+def _specialize_modifier_arguments(
+    applied: T.AppliedOverload,
+    modifier_args: tuple[ModifierArgumentAnalysis, ...],
+    ctx: T.Context,
+) -> tuple[TypedFunctionNode, ...]:
+    if not modifier_args:
+        return ()
+
+    offset = len(applied.params) - len(applied.overload.params)
+    if offset < 0:
+        return tuple(item.typed_node for item in modifier_args)
+
+    typed_nodes: list[TypedFunctionNode] = []
+    for item, original_index in zip(
+        modifier_args,
+        _modifier_param_indexes(applied.overload.params),
+        strict=True,
+    ):
+        index = offset + original_index
+        expected = applied.params[index] if index < len(applied.params) else None
+        expected = T.normalize(expected) if expected is not None else None
+        if isinstance(expected, T.FunctionType):
+            overloads = tuple(
+                overload
+                for overload in item.typed_node.overloads
+                if _function_overload_matches_type(overload, expected, ctx)
+            )
+            if overloads:
+                typed_nodes.append(
+                    TypedFunctionNode(item.typed_node.node, expected, overloads)
+                )
+                continue
+        typed_nodes.append(item.typed_node)
+    return tuple(typed_nodes)
+
+
+def _function_overload_matches_type(
+    overload: FunctionOverloadTyping,
+    expected: T.FunctionType,
+    ctx: T.Context,
+) -> bool:
+    typ = T.normalize(overload.typ)
+    return isinstance(typ, T.FunctionType) and (
+        T.same(typ, expected) or T.compatible(typ, expected, ctx)
+    )
+
+
 def _show_modifier_counts(overloads: tuple[T.Overload, ...]) -> str:
     counts = sorted(
         {len(_modifier_param_indexes(overload.params)) for overload in overloads}
@@ -2467,8 +2704,13 @@ def _modifier_param_indexes(params: tuple[T.Type, ...]) -> tuple[int, ...]:
     return tuple(
         index
         for index, param in enumerate(params)
-        if isinstance(T.normalize(param), T.FunctionType)
+        if _is_callable_parameter(param)
     )
+
+
+def _is_callable_parameter(param: T.Type) -> bool:
+    param = T.normalize(param)
+    return isinstance(param, T.FunctionType) or _is_bare_function_type(param)
 
 
 def _unique_permutations(
@@ -2490,7 +2732,18 @@ def _apply_overload_to_branch(
     ctx: T.Context,
     env: T.Environment | None = None,
     disambiguation: tuple[T.Type | None, ...] = (),
+    analyser: Analyser | None = None,
 ) -> tuple[T.AppliedOverload, AnalysisBranch] | None:
+    if _overload_needs_call_site_checking(overload):
+        return _apply_call_site_checked_overload(
+            overload,
+            args,
+            branch,
+            ctx,
+            env,
+            disambiguation,
+            analyser,
+        )
     args = _row_views_for_arguments(args, overload.params, env)
     original_overload = overload
     rank_values = _initial_rank_values(overload.params, args)
@@ -2529,6 +2782,132 @@ def _apply_overload_to_branch(
         tuple(sorted(rank_values.items())),
     )
     return applied, specialized_branch
+
+
+def _apply_call_site_checked_overload(
+    overload: T.Overload,
+    args: tuple[T.Type, ...],
+    branch: AnalysisBranch,
+    ctx: T.Context,
+    env: T.Environment | None,
+    disambiguation: tuple[T.Type | None, ...],
+    analyser: Analyser | None,
+) -> tuple[T.AppliedOverload, AnalysisBranch] | None:
+    args = _row_views_for_arguments(args, overload.params, env)
+    if len(args) != len(overload.params):
+        return None
+    if not _call_site_explicit_args_match(overload.params, args, ctx):
+        return None
+    if disambiguation and len(disambiguation) != len(args):
+        return None
+
+    for extra_count in range(len(branch.stack) + 1):
+        stack_args = branch.stack.items[-extra_count:] if extra_count else ()
+        call_params = stack_args + args
+        concrete = _call_site_checked_overload_signature(
+            overload, call_params, ctx, analyser
+        )
+        if concrete is None or len(concrete.params) < len(args):
+            continue
+        consumed_count = _call_site_consumed_count(overload, concrete, extra_count)
+        if consumed_count is None or consumed_count > len(branch.stack):
+            continue
+        concrete_stack_count = len(concrete.params) - len(args)
+        if concrete_stack_count < 0 or concrete_stack_count > len(branch.stack):
+            continue
+        concrete_stack_args = (
+            branch.stack.items[-concrete_stack_count:] if concrete_stack_count else ()
+        )
+        concrete_args = concrete_stack_args + args
+        if len(concrete.params) != len(concrete_args):
+            continue
+        rank_values = _initial_rank_values(concrete.params, concrete_args)
+        rank_values = _evaluate_where_clause(concrete, concrete_args, rank_values)
+        if rank_values is None:
+            continue
+        concrete = _substitute_overload_ranks(concrete, rank_values)
+        candidate = T.apply_overload(concrete, concrete_args, ctx)
+        if candidate is None:
+            continue
+        actual_returns = _apply_data_tag_flow(
+            concrete_args,
+            concrete.returns,
+            candidate.actual_returns,
+            ctx,
+        )
+        applied = T.AppliedOverload(
+            overload,
+            candidate.substitution,
+            concrete.params,
+            concrete.returns,
+            actual_returns,
+            candidate.scores,
+            candidate.vectorised,
+            candidate.vectorised_depths,
+            tuple(sorted(rank_values.items())),
+            consumed_count + len(args),
+        )
+        return applied, branch.with_stack(branch.stack.pop(consumed_count))
+    return None
+
+
+def _overload_needs_call_site_checking(overload: T.Overload) -> bool:
+    return any(_is_call_site_checked_param(param) for param in overload.params)
+
+
+def _call_site_explicit_args_match(
+    params: tuple[T.Type, ...],
+    args: tuple[T.Type, ...],
+    ctx: T.Context,
+) -> bool:
+    return all(
+        _call_site_placeholder_accepts(param, arg, ctx)
+        for param, arg in zip(params, args, strict=True)
+    )
+
+
+def _call_site_checked_overload_signature(
+    overload: T.Overload,
+    call_params: tuple[T.Type, ...],
+    ctx: T.Context,
+    analyser: Analyser | None,
+) -> T.Overload | None:
+    if callable(overload.call_site_body):
+        return overload.call_site_body(call_params)
+    if overload.call_site_body is not None and analyser is not None:
+        outer, node = overload.call_site_body
+        analysis = analyser._analyse_function_at_call_site(outer, node, call_params)
+        if analysis is None:
+            return None
+        overloads = _callable_overloads(analysis.typ)
+        return overloads[0] if len(overloads) == 1 else None
+    if len(call_params) < len(overload.params):
+        return None
+    explicit = call_params[-len(overload.params) :] if overload.params else ()
+    if not _call_site_explicit_args_match(overload.params, explicit, ctx):
+        return None
+    return T.Overload(
+        call_params,
+        overload.returns,
+        overload.generic_constraints,
+        overload.where_clause,
+        (None,) * (len(call_params) - len(overload.params)) + overload.param_names,
+    )
+
+
+def _call_site_consumed_count(
+    overload: T.Overload,
+    concrete: T.Overload,
+    extra_count: int,
+) -> int | None:
+    consumed = (
+        concrete.call_site_body
+        if isinstance(concrete.call_site_body, int)
+        else len(concrete.params) - len(overload.params)
+    )
+    if consumed < 0 or consumed > extra_count:
+        return None
+    return consumed
 
 
 def _initial_rank_values(
@@ -2655,6 +3034,8 @@ def _static_eval_node(
                 return False
             value = stack.pop()
             if isinstance(value, T.FunctionType):
+                if value.params is None or value.returns is None:
+                    return False
                 match name.text:
                     case "inputs":
                         stack.append(value.params)
@@ -2809,6 +3190,8 @@ def _substitute_rank_values(typ: T.Type, ranks: dict[str, int]) -> T.Type:
             )
         )
     if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return typ
         return T.Fn(
             (_substitute_rank_values(item, ranks) for item in typ.params),
             (_substitute_rank_values(item, ranks) for item in typ.returns),
@@ -3217,6 +3600,8 @@ def _substitute_branch_type(typ: T.Type, substitution: dict[str, T.Type]) -> T.T
     if isinstance(typ, T.CollectionType):
         return T.C(type(typ), _substitute_branch_type(typ.base, substitution), typ.rank)
     if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return typ
         return T.Fn(
             (_substitute_branch_type(item, substitution) for item in typ.params),
             (_substitute_branch_type(item, substitution) for item in typ.returns),
@@ -3641,6 +4026,7 @@ def _with_generic_constraints(
         overload.generic_constraints + constraints,
         overload.where_clause,
         overload.param_names,
+        overload.call_site_body,
     )
 
 
@@ -3762,6 +4148,8 @@ def _genericize_type(typ: T.Type, generics: tuple[Symbol, ...]) -> T.Type:
     if isinstance(typ, T.CollectionType):
         return T.C(type(typ), _genericize_type(typ.base, generics), typ.rank)
     if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return typ
         return T.Fn(
             (_genericize_type(param, generics) for param in typ.params),
             (_genericize_type(ret, generics) for ret in typ.returns),
@@ -3918,6 +4306,8 @@ def _collect_anonymous_type_indices(typ: T.Type, indices: set[int]) -> None:
         _collect_anonymous_type_indices(typ.base, indices)
         return
     if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return
         for item in typ.params + typ.returns:
             _collect_anonymous_type_indices(item, indices)
         return
@@ -4014,6 +4404,8 @@ def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
     if isinstance(typ, T.CollectionType):
         return T.C(type(typ), _refine_type(typ.base, old, new), typ.rank)
     if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return typ
         return T.Fn(
             (_refine_type(item, old, new) for item in typ.params),
             (_refine_type(item, old, new) for item in typ.returns),

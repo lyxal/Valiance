@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
+from typing import Any
 
 from valiance.symbols import Symbol
 
@@ -156,8 +156,8 @@ class ArrayMinType(CollectionType):
 class FunctionType(Type):
     """A stack-effect function type."""
 
-    params: tuple[Type, ...] = ()
-    returns: tuple[Type, ...] = ()
+    params: tuple[Type, ...] | None = ()
+    returns: tuple[Type, ...] | None = ()
 
 
 @dataclass(frozen=True)
@@ -199,15 +199,6 @@ class AtomicType(Type):
 
 
 @dataclass(frozen=True)
-class CallSiteCheckedFunctionType(Type):
-    """A callable whose compatibility is decided by a callback."""
-
-    checker: Callable[..., tuple[Type, ...] | None] = field(
-        compare=False, hash=False
-    )
-
-
-@dataclass(frozen=True)
 class GenericConstraint:
     """A bound that a solved generic type variable must satisfy."""
 
@@ -228,6 +219,7 @@ class Overload:
         compare=False,
         hash=False,
     )
+    call_site_body: Any = field(default=None, compare=False, hash=False)
 
 
 @dataclass(frozen=True)
@@ -265,6 +257,7 @@ class AppliedOverload:
     vectorised: bool = False
     vectorised_depths: tuple[int, ...] = ()
     rank_values: tuple[tuple[str, int], ...] = ()
+    runtime_consumed_count: int | None = None
 
     def __hash__(self) -> int:
         return hash(
@@ -278,6 +271,7 @@ class AppliedOverload:
                 self.vectorised,
                 self.vectorised_depths,
                 self.rank_values,
+                self.runtime_consumed_count,
             )
         )
 

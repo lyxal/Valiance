@@ -29,7 +29,6 @@ from valiance.types.nodes import (
     ArrayExactType,
     ArrayMinType,
     AtomicType,
-    CallSiteCheckedFunctionType,
     CollectionType,
     DataTag,
     ExactType,
@@ -391,6 +390,10 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
         if isinstance(p, VariadicTupleType) and isinstance(a, TupleType):
             return solve_variadic_tuple(p, a)
         if isinstance(p, FunctionType) and isinstance(a, FunctionType):
+            if p.params is None or p.returns is None:
+                return True
+            if a.params is None or a.returns is None:
+                return False
             return (
                 len(p.params) == len(a.params)
                 and len(p.returns) == len(a.returns)
@@ -662,6 +665,8 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
     if isinstance(t, CollectionType):
         return normalize(C(type(t), _substitute(t.base, subst), t.rank))
     if isinstance(t, FunctionType):
+        if t.params is None or t.returns is None:
+            return t
         return Fn(
             (_substitute(p, subst) for p in t.params),
             (_substitute(r, subst) for r in t.returns),
@@ -707,6 +712,8 @@ def compatible(argument: Type, parameter: Type, ctx: Context | None = None) -> b
     if isinstance(parameter, FunctionType):
         # Function compatibility is callability-based. A scalar function can be
         # compatible with a vector function type if calling it vectorises.
+        if parameter.params is None or parameter.returns is None:
+            return isinstance(argument, (FunctionType, OverloadSetType))
         return _callable_compatible(argument, parameter, ctx)
     if isinstance(parameter, IntersectionType):
         return all(compatible(argument, p, ctx) for p in parameter.items)
@@ -740,6 +747,8 @@ def compatible(argument: Type, parameter: Type, ctx: Context | None = None) -> b
 def _callable_compatible(argument: Type, parameter: Type, ctx: Context) -> bool:
     """Return whether a callable can act as an expected ``Function[...]`` type."""
     if isinstance(argument, FunctionType):
+        if argument.params is None or argument.returns is None:
+            return parameter.params is None and parameter.returns is None
         actual_returns = _overload_result_for_args(
             Overload(argument.params, argument.returns), parameter.params, ctx
         )
@@ -761,16 +770,6 @@ def _callable_compatible(argument: Type, parameter: Type, ctx: Context) -> bool:
         ]
         return len(matches) == 1 or bool(
             resolve_overload_result(argument.overloads, parameter.params, ctx)
-        )
-    if isinstance(argument, CallSiteCheckedFunctionType):
-        result = argument.checker(parameter.params)
-        return (
-            result is not None
-            and len(result) == len(parameter.returns)
-            and all(
-                compatible(a, p, ctx)
-                for a, p in zip(result, parameter.returns, strict=False)
-            )
         )
     return False
 
@@ -922,10 +921,6 @@ def _match_specificity(
         return Specificity.UNION
     if _can_vectorise(argument, parameter, ctx):
         return Specificity.VECTORISED
-    if isinstance(argument, CallSiteCheckedFunctionType) and compatible(
-        argument, parameter, ctx
-    ):
-        return Specificity.CALL_SITE_CHECKED
     if compatible(argument, parameter, ctx):
         return Specificity.EXACT_GENERIC
     return Specificity.NO_MATCH
@@ -969,7 +964,7 @@ def apply_overload(
     deferred_function_args: list[tuple[FunctionType, FunctionType]] = []
     for param, arg in zip(overload.params, base_args, strict=False):
         if isinstance(param, FunctionType) and isinstance(
-            arg, (FunctionType, OverloadSetType, CallSiteCheckedFunctionType)
+            arg, (FunctionType, OverloadSetType)
         ):
             # Defer function argument solving. Other parameters should usually
             # determine T before we ask whether this callable fits Function[T].
@@ -1196,6 +1191,8 @@ def _contains_type_var(t: Type) -> bool:
     if isinstance(t, CollectionType):
         return _contains_type_var(t.base)
     if isinstance(t, FunctionType):
+        if t.params is None or t.returns is None:
+            return False
         return any(_contains_type_var(item) for item in t.params + t.returns)
     if isinstance(t, (TaggedType, ExactType, AtomicType)):
         return _contains_type_var(t.inner)

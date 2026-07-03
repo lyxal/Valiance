@@ -19,6 +19,7 @@ from valiance.asts import (
     BreakNode,
     CallNode,
     CastNode,
+    DefineNode,
     ElementNode,
     FieldAccessNode,
     ForNode,
@@ -59,6 +60,8 @@ from valiance.types import (
     Row,
     Tagged,
     Tup,
+    TupleTypeItem,
+    TupVariadic,
     TypeStack,
     U,
     UnknownElement,
@@ -1370,6 +1373,150 @@ getName $joe
         self.assertIsInstance(typed[-1], TypedCallNode)
         self.assertEqual(typed[-1].overload.params, (String, String))
         self.assertEqual(typed[-1].overload.actual_returns, (String,))
+
+    def test_function_with_generic_function_parameter_is_call_site_checked(self):
+        typ = analyse_function(
+            FunctionNode(
+                params=(FunctionParam(Symbol("f"), Fn()),),
+                body=(CallNode(),),
+            ),
+            default_environment(),
+        )
+
+        self.assertEqual(len(typ.overloads), 1)
+        self.assertEqual(typ.overloads[0].params, (Fn(),))
+        self.assertIsNotNone(typ.overloads[0].call_site_body)
+
+    def test_call_site_checked_function_uses_concrete_stack_parameter_types(self):
+        analyser = Analyser()
+        function_name = Symbol("callit")
+        function_param = Symbol("function")
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            (
+                DefineNode(
+                    function_name,
+                    FunctionNode(
+                        params=(FunctionParam(function_param, Fn()),),
+                        body=(GetVariableNode(function_param), CallNode()),
+                    ),
+                ),
+                FunctionNode(body=(ElementNode(DOUBLE),)),
+                ElementNode(function_name),
+            ),
+        )
+
+        branch = next(iter(branches))
+        typed = branch.typed_body[-1]
+        self.assertIsInstance(typed, TypedElementNode)
+        self.assertEqual(typed.overload.params, (Number, Fn((Number,), (Number,))))
+        self.assertEqual(typed.overload.actual_returns, (Number,))
+
+    def test_call_site_checked_function_rejects_incompatible_call_site_body(self):
+        analyser = Analyser()
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            (
+                DefineNode(
+                    Symbol("bad_callit"),
+                    FunctionNode(
+                        params=(FunctionParam(Symbol("f"), Fn()),),
+                        body=(
+                            StringLiteralNode("x"),
+                            GetVariableNode(Symbol("f")),
+                            CallNode(),
+                        ),
+                    ),
+                ),
+                FunctionNode(body=(ElementNode(DOUBLE),)),
+                ElementNode(Symbol("bad_callit")),
+            ),
+        )
+
+        self.assertFalse(branches)
+
+    def test_dip_peek_and_fork_exercise_concrete_function_arguments(self):
+        analyser = Analyser()
+        peek = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Number, Number)))),
+            tuple(parse("peek: *")),
+        )
+        self.assertEqual(
+            next(iter(peek)).stack,
+            TypeStack((Number, Number, Number)),
+        )
+
+        dip = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Number, Number, Number)))),
+            tuple(parse("dip: *")),
+        )
+        self.assertEqual(next(iter(dip)).stack, TypeStack((Number, Number)))
+
+        fork = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            (
+                ElementNode(
+                    Symbol("fork"),
+                    modifier_args=(
+                        FunctionNode(body=(ElementNode(DOUBLE),)),
+                        FunctionNode(body=(ElementNode(IS_POSITIVE),)),
+                    ),
+                ),
+            ),
+        )
+        self.assertEqual(next(iter(fork)).stack, TypeStack((Number, Boolean)))
+
+    def test_user_defined_call_site_checked_function_uses_outer_stack_inputs(self):
+        function_name = Symbol("callit")
+        function_param = Symbol("function")
+        analyser = Analyser()
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch()),
+            (
+                DefineNode(
+                    function_name,
+                    FunctionNode(
+                        params=(
+                            FunctionParam(function_param, Fn()),
+                        ),
+                        body=(GetVariableNode(function_param), CallNode()),
+                    ),
+                ),
+                NumberLiteralNode("1"),
+                FunctionNode(body=(ElementNode(DOUBLE),)),
+                ElementNode(function_name),
+            ),
+        )
+
+        self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
+
+    def test_variadic_tuple_parameter_is_call_site_checked_and_substituted(self):
+        function_name = Symbol("accept")
+        xs = Symbol("xs")
+        analyser = Analyser()
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Tup(Number, String),)))),
+            (
+                DefineNode(
+                    function_name,
+                    FunctionNode(
+                        params=(
+                            FunctionParam(
+                                xs,
+                                TupVariadic(
+                                    TupleTypeItem(Number, repeated=True),
+                                    TupleTypeItem(String),
+                                ),
+                            ),
+                        ),
+                        body=(GetVariableNode(xs),),
+                    ),
+                ),
+                ElementNode(function_name),
+            ),
+        )
+
+        self.assertEqual(next(iter(branches)).stack, TypeStack((Tup(Number, String),)))
 
     def test_string_interpolation_has_string_type(self):
         typed = analyse(

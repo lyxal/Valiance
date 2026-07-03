@@ -7,12 +7,14 @@ from dataclasses import dataclass, field
 from valiance.symbols import Symbol
 from valiance.types.context import Context, TagKind, Variance
 from valiance.types.nodes import (
+    FunctionType,
     GenericConstraint,
     NeverType,
     NominalType,
     Overload,
     OverloadSetType,
     Type,
+    VariadicTupleType,
 )
 from valiance.types.stack import StackApplication, TypeStack
 
@@ -350,14 +352,23 @@ class Environment:
         """Append one overload to a named overload set."""
         candidates = self.overloads.setdefault(name, [])
         if candidates:
+            fixed_candidates = tuple(
+                candidate
+                for candidate in candidates
+                if not _is_call_site_checked(candidate)
+            )
             expected_arity = len(candidates[0].params)
-            expected_returns = len(candidates[0].returns)
             if len(overload.params) != expected_arity:
                 raise ValueError(
                     f"overloads for {name!r} must all take {expected_arity} "
                     f"inputs, got {len(overload.params)}"
                 )
-            if len(overload.returns) != expected_returns:
+            if (
+                fixed_candidates
+                and not _is_call_site_checked(overload)
+                and len(overload.returns) != len(fixed_candidates[0].returns)
+            ):
+                expected_returns = len(fixed_candidates[0].returns)
                 raise ValueError(
                     f"overloads for {name!r} must all return {expected_returns} "
                     f"values, got {len(overload.returns)}"
@@ -478,6 +489,20 @@ def _failed_application_shape(
     params = overloads[0].params
     return_count = len(overloads[0].returns)
     return params, tuple(NeverType() for _ in range(return_count))
+
+
+def _is_call_site_checked(overload: Overload) -> bool:
+    return any(_is_call_site_checked_type(param) for param in overload.params)
+
+
+def _is_call_site_checked_type(typ: Type) -> bool:
+    if isinstance(typ, FunctionType) and typ.params is None and typ.returns is None:
+        return True
+    if isinstance(typ, VariadicTupleType):
+        return True
+    return False
+
+
 
 
 def _tag_symbol(name: str | Symbol) -> Symbol:

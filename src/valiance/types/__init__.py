@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from valiance.types.builders import (
-    CSTC,
     AtLeastArray,
     AtLeastList,
     Atomic,
@@ -60,7 +59,6 @@ from valiance.types.nodes import (
     ArrayExactType,
     ArrayMinType,
     AtomicType,
-    CallSiteCheckedFunctionType,
     CollectionType,
     DataTag,
     ExactType,
@@ -117,8 +115,6 @@ __all__ = [
     "AtLeastList",
     "Boolean",
     "C",
-    "CSTC",
-    "CallSiteCheckedFunctionType",
     "CollectionType",
     "Context",
     "DataTag",

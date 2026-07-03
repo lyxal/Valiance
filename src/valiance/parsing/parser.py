@@ -1441,6 +1441,8 @@ class Parser:
                         self._expect(TokenKind.COMMA)
             if name == "Function" and args:
                 return args[0]
+            if name == "Function":
+                return Fn()
             return N(Symbol(name), *args)
         if self._match(TokenKind.LPAREN):
             params: list[Type] = []

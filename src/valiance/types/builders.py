@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 
 from valiance.symbols import Symbol
 from valiance.types.nodes import (
     ArrayExactType,
     ArrayMinType,
     AtomicType,
-    CallSiteCheckedFunctionType,
     CollectionType,
     DataTag,
     ExactType,
@@ -155,9 +154,14 @@ def AtLeastArray(base: Type, rank: int = 1) -> Type:
     return C(ArrayMinType, base, rank)
 
 
-def Fn(params: Iterable[Type], returns: Iterable[Type]) -> Type:
+def Fn(
+    params: Iterable[Type] | None = None,
+    returns: Iterable[Type] | None = None,
+) -> Type:
     """Create a stack-effect function type."""
-    return FunctionType(tuple(params), tuple(returns))
+    if params is None and returns is None:
+        return FunctionType(None, None)
+    return FunctionType(tuple(params or ()), tuple(returns or ()))
 
 
 def Overloads(*overloads: Overload) -> Type:
@@ -191,11 +195,6 @@ def Exact(inner: Type) -> Type:
 def Atomic(var: Type) -> Type:
     """Create an atomic-view marker for a type variable."""
     return AtomicType(var)
-
-
-def CSTC(checker: Callable[..., tuple[Type, ...] | None]) -> Type:
-    """Create a call-site-checked function value backed by a checker callback."""
-    return CallSiteCheckedFunctionType(checker)
 
 
 def optional(inner: Type) -> Type:
@@ -288,7 +287,12 @@ def normalize(t: Type) -> Type:
         )
 
     if isinstance(t, FunctionType):
-        return Fn((normalize(p) for p in t.params), (normalize(r) for r in t.returns))
+        if t.params is None and t.returns is None:
+            return t
+        return Fn(
+            (normalize(p) for p in t.params or ()),
+            (normalize(r) for r in t.returns or ()),
+        )
 
     if isinstance(t, VariadicTupleType):
         return VariadicTupleType(
@@ -441,6 +445,8 @@ def show(t: Type) -> str:
             rank = "" if t.rank == 1 else str(t.rank)
         return f"{_show_collection_base(t.base)}{suffix}{rank}"
     if isinstance(t, FunctionType):
+        if t.params is None and t.returns is None:
+            return "Function"
         params = ", ".join(show(p) for p in t.params)
         returns = ", ".join(show(r) for r in t.returns)
         return f"Function[{params} -> {returns}]"
@@ -451,8 +457,6 @@ def show(t: Type) -> str:
             show(Fn(overload.params, overload.returns)) for overload in t.overloads
         )
         return f"OverloadSet[{entries}]"
-    if isinstance(t, CallSiteCheckedFunctionType):
-        return "CallSiteCheckedFunction"
     return type(t).__name__
 
 

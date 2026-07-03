@@ -272,6 +272,83 @@ Use the helpers from `valiance.runtime_values` for collection validation. Do not
 write new runtime built-ins that check only `isinstance(value, list)` unless the
 operation truly requires Python's eager list object specifically.
 
+### Adding A Call-Site Checked Built-In
+
+Use call-site type checking when a built-in accepts a function whose stack shape
+is not known from the built-in's declared overload. The declared overload should
+use bare `T.Fn()` for each unknown function parameter:
+
+```python
+@builtin("dip", (T.Fn(),), call_site=_dip_call_site)
+def _dip(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    callable_value = args[-1]
+    held = args[-2]
+    return (*ctx.call(callable_value, list(args[:-2])), held)
+```
+
+`T.Fn()` means unknown-shape `Function`, not `Function[ -> ]`. This structurally
+marks the overload as call-site checked. The analyser will not try to prove the
+declared overload body for every possible function. Instead, at each element
+call it substitutes the concrete modifier type, pulls any required extra inputs
+from the outer stack, and checks that concrete shape.
+
+A call-site helper receives `call_params`, which are the concrete outer-stack
+types being considered followed by the explicit built-in parameters. It returns
+a concrete `T.Overload` or `None`. The returned overload must:
+
+1. Use concrete `Function[...]` types in the function-parameter slots.
+2. Include every type passed to the runtime implementation in `params`.
+3. Set `call_site_body` to the number of outer-stack values consumed, excluding
+   explicit modifier/function arguments.
+4. Return `None` when the concrete function(s) cannot apply to the proposed
+   stack types.
+
+`peek`, `dip`, and `fork` show the three common consumption patterns:
+
+- `peek` passes the inspected stack values and function to runtime, but consumes
+  no outer-stack values, so its concrete overload uses `call_site_body=0`.
+- `dip` consumes the function's arguments plus the held value, so it uses
+  `call_site_body=arity + 1`.
+- `fork` passes one shared argument slice to two functions and consumes that
+  slice once, so it uses `call_site_body=arity`.
+
+Use the shared helpers in `builtins.py` when writing the call-site helper:
+
+- `_callable_overloads(type)` opens a concrete `Function[...]` or overload set.
+- `_apply_callable(overload, args)` checks one candidate and returns the applied
+  overload plus the concrete `Function[...]` type to put back in the signature.
+- `_callable_applications(type, args)` iterates all successful applications.
+
+A future `correspond` built-in that applies two functions to corresponding
+argument groups could follow the same pattern. For example, if
+`3 4 5 6 | correspond: (+, -)` should return `7, -1`, the call-site helper
+would split the candidate stack suffix into the argument tuple for `+` and the
+argument tuple for `-`, call `_apply_callable(...)` for each modifier, then
+return a concrete overload like:
+
+```python
+T.Overload(
+    (*left_args, *right_args, left_application.concrete_type, right_application.concrete_type),
+    (*left_application.applied.actual_returns, *right_application.applied.actual_returns),
+    call_site_body=len(left_args) + len(right_args),
+)
+```
+
+The runtime implementation should mirror the same concrete stack contract:
+
+```python
+@builtin("correspond", (T.Fn(), T.Fn()), call_site=_correspond_call_site)
+def _correspond(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    *call_args, left, right = args
+    left_args = call_args[: len(call_args) // 2]
+    right_args = call_args[len(call_args) // 2 :]
+    return (*ctx.call(left, list(left_args)), *ctx.call(right, list(right_args)))
+```
+
+If the split is not always half-and-half, encode that rule in both the call-site
+helper and runtime implementation. Do not put element-name special cases in the
+analyser; the `@builtin(..., call_site=...)` registration is the extension point.
+
 ## Adding an Opcode
 
 An opcode change crosses the bytecode model, compiler, VM, serializer, and

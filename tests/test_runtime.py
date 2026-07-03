@@ -191,6 +191,17 @@ ParseError
             [Decimal("2"), Decimal("4"), Decimal("6")],
         )
 
+    def test_executes_call_site_checked_builtins(self):
+        self.assertEqual(
+            execute("1 2 peek: +"),
+            [Decimal("1"), Decimal("2"), Decimal("3")],
+        )
+        self.assertEqual(execute("1 2 3 dip: +"), [Decimal("3"), Decimal("3")])
+        self.assertEqual(
+            execute("2 fork: (double, double)"),
+            [Decimal("4"), Decimal("4")],
+        )
+
     def test_compiler_emits_resolved_builtin_element_calls(self):
         analyser = Analyser()
         typed = analyser.analyse(parse("1 2 +"))

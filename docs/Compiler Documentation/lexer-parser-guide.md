@@ -330,6 +330,7 @@ The type parser currently supports:
 
 - Named types: `Number`, `String`, `Result[Number, String]`
 - `None`
+- Bare function type: `Function`, lowered to unknown-shape `T.Fn()`
 - Function types: `Function[Number, String -> Number]`
 - Function shorthand: `(Number, String -> Number)`
 - Tuple types: `{Number, String}`
@@ -363,6 +364,10 @@ parser uses an internal "allow variadic tuple type" flag around function and
 trait parameter parsing. Do not allow `{T...}` in return types, casts,
 disambiguation hints, object fields, or standalone `parse_type(...)` unless the
 language restriction changes.
+
+Bare `Function` is intentionally different from `Function[ -> ]`. The former is
+an unknown-shape callable and triggers call-site type checking when it appears in
+an overload parameter. The latter is a concrete niladic function type.
 
 Tuple ellipsis is parsed after each tuple item, not as a postfix type operator.
 This lets `{A..., B, C...}` lower to a single variadic tuple pattern with mixed

@@ -208,8 +208,16 @@ class VirtualMachine:
     def call_value(self, value: Any, args: list[Any]) -> list[Any]:
         if isinstance(value, FunctionValue):
             return self.call(value, args)
-        if isinstance(value, OverloadedFunctionValue) and len(value.overloads) == 1:
-            return self.call(value.overloads[0], args)
+        if isinstance(value, OverloadedFunctionValue):
+            if len(value.overloads) == 1:
+                return self.call(value.overloads[0], args)
+            matches = tuple(
+                overload
+                for overload in value.overloads
+                if len(overload.code.params) == len(args)
+            )
+            if len(matches) == 1:
+                return self.call(matches[0], args)
         raise RuntimeError(f"cannot call value {value!r}")
 
     def execute(
@@ -440,7 +448,7 @@ class VirtualMachine:
     ) -> None:
         if (
             not isinstance(reference, tuple)
-            or len(reference) not in {2, 3, 4, 5, 6}
+            or len(reference) not in {2, 3, 4, 5, 6, 7, 8}
             or not isinstance(reference[0], str)
             or not isinstance(reference[1], int)
         ):
@@ -458,6 +466,8 @@ class VirtualMachine:
         static_values = (
             _static_reference_values(reference[5]) if len(reference) >= 6 else ()
         )
+        arity_override = int(reference[6]) if len(reference) >= 7 else None
+        consumed_override = int(reference[7]) if len(reference) >= 8 else None
         value = _load_name(name, frame.locals, frame.globals)
         if isinstance(value, BuiltinValue):
             try:
@@ -472,6 +482,8 @@ class VirtualMachine:
                 frame,
                 vectorised,
                 vectorised_depths,
+                arity_override,
+                consumed_override,
             )
             return
         if isinstance(value, FunctionValue):
@@ -876,8 +888,14 @@ def _call_resolved_builtin(
     frame: _Frame,
     vectorised: bool,
     vectorised_depths: tuple[int, ...] = (),
+    arity_override: int | None = None,
+    consumed_override: int | None = None,
 ) -> None:
-    arity = len(overload.signature.params)
+    arity = (
+        arity_override
+        if arity_override is not None
+        else len(overload.signature.params)
+    )
     try:
         args, stack_count, next_cycle_index = frame.source_args(arity)
     except _StackUnderflow as exc:
@@ -888,6 +906,11 @@ def _call_resolved_builtin(
                 _show_overload_inputs((overload,)),
             )
         ) from exc
+    consumed_count = (
+        min(consumed_override, stack_count)
+        if consumed_override is not None
+        else stack_count
+    )
     if vectorised:
         try:
             vectorized = _call_vectorized_resolved_builtin(
@@ -910,13 +933,13 @@ def _call_resolved_builtin(
                     _show_overload_inputs((overload,)),
                 )
             )
-        if stack_count:
-            del frame.stack[-stack_count:]
+        if consumed_count:
+            del frame.stack[-consumed_count:]
         frame.cycle_index = next_cycle_index
         frame.stack.extend(vectorized)
         return
-    if stack_count:
-        del frame.stack[-stack_count:]
+    if consumed_count:
+        del frame.stack[-consumed_count:]
     frame.cycle_index = next_cycle_index
     implementation = overload.implementation
     assert implementation is not None

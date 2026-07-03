@@ -577,6 +577,8 @@ def _rank_var_names_in_type(typ: Type) -> set[str]:
         for arg in typ.args:
             names.update(_rank_var_names_in_type(arg))
     elif isinstance(typ, FunctionType):
+        if typ.params is None or typ.returns is None:
+            return names
         for item in typ.params + typ.returns:
             names.update(_rank_var_names_in_type(item))
     elif isinstance(typ, TupleType):
@@ -633,6 +635,16 @@ def _resolved_element_reference(
         tuple[str, ...],
         tuple[tuple[str, int], ...],
     ]
+    | tuple[
+        str,
+        int,
+        int,
+        tuple[int, ...],
+        tuple[str, ...],
+        tuple[tuple[str, int], ...],
+        int,
+        int | None,
+    ]
     | None
 ):
     if not isinstance(node, TypedElementNode):
@@ -665,6 +677,22 @@ def _resolved_element_reference(
         if node.overload is not None and node.overload.rank_values
         else ()
     )
+    if (
+        element is not None
+        and node.overload is not None
+        and len(node.overload.params)
+        != len(element.definitions[node.overload_index].signature.params)
+    ):
+        return (
+            runtime_name,
+            node.overload_index,
+            vectorised,
+            (),
+            (),
+            static_values,
+            len(node.overload.params),
+            node.overload.runtime_consumed_count,
+        )
     if node.overload is not None and node.overload.vectorised_depths:
         reference = runtime_name, node.overload_index, vectorised, (
             *node.overload.vectorised_depths,

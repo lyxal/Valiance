@@ -572,6 +572,27 @@ end
         self.assertEqual(node.then_branch, (NumberLiteralNode("1"),))
         self.assertEqual(node.else_branch[-1], ElementNode(Symbol("-")))
 
+    def test_single_line_else_body_does_not_require_end(self):
+        program = parse(
+            """
+if ($name == "Joe") => "You're Joe!"
+else => "Who are you?"
+println
+"""
+        )
+
+        self.assertEqual(len(program), 2)
+        self.assertIsInstance(program[0], IfNode)
+        self.assertEqual(
+            program[0].then_branch,
+            (StringLiteralNode("You're Joe!"),),
+        )
+        self.assertEqual(
+            program[0].else_branch,
+            (StringLiteralNode("Who are you?"),),
+        )
+        self.assertEqual(program[1], ElementNode(Symbol("println")))
+
     def test_parses_missing_control_flow_structures(self):
         [node] = parse(
             """
