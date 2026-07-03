@@ -137,6 +137,11 @@ def _print(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return ()
 
 
+def _println(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    ctx.output(_format_value(args[0]) + "\n")
+    return ()
+
+
 def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     if not is_list_like(args[0]):
         raise RuntimeError("map requires a list")
@@ -548,7 +553,7 @@ BUILTIN_ELEMENTS = (
     ),
     element(
         PRINTLN,
-        overload((T.V("T"),), (), _print),
+        overload((T.V("T"),), (), _println),
     ),
     element(
         SOME,

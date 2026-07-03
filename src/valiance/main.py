@@ -317,7 +317,7 @@ class _OutputTracker:
 
     def __call__(self, value: str) -> None:
         self.did_print = True
-        print(value)
+        print(value, end="")
 
 
 def _format_stack(stack: list[Any]) -> str:

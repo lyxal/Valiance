@@ -1,7 +1,7 @@
 define[T] makeOptional(x: T) =>
-  if (1 == 1) => None
+  if (1 == 0) => None
   else => $x
   end
 end
 
-makeOptional(5) ?
+print ? makeOptional 5
