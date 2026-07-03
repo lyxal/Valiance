@@ -138,9 +138,17 @@ vectorisation. Codegen can inspect `typed_node.overload.vectorised` on
 vectorised call shape.
 
 Runtime checks may still be needed for values whose static type permits several
-runtime shapes, such as finite list lengths. Those checks belong inside the
+runtime shapes that the signature alone does not disambiguate, such as whether
+a list is non-empty for `head`, or which case of an optional/Result union a
+value actually is for `&`, `?`, and `?!`. Those checks belong inside the
 selected overload implementation and should validate assumptions made by that
 overload; they should not choose a different overload.
+
+Do not re-check what the signature already guarantees. A parameter typed
+`T.ExactList(...)` guarantees list shape; `T.WithoutTag(..., "infinite")`
+guarantees finiteness; a `T.Fn(...)` parameter guarantees its return arity.
+Overload implementations should not re-validate any of these at runtime --
+that work is analysis's job, not the implementation's.
 
 The VM stack is ordered bottom to top.
 
@@ -178,52 +186,87 @@ When dispatch fails, keep enough information to debug:
 
 ## Adding a Built-In Element
 
-Add new built-ins in `src/valiance/analysis/builtins.py`.
+Add new built-ins in `src/valiance/analysis/builtins.py`, using the
+`@builtin(...)` decorator. There is no `Symbol` constant to add and no tuple
+to hand-edit. `BUILTIN_ELEMENTS` still exists as a module-level export for
+callers that want the full catalogue directly, but it is derived from the
+registry at import time (`BUILTIN_ELEMENTS = _all_elements()`) after every
+`@builtin(...)` / `declare_overload(...)` call has run -- treat it as
+read-only and never append to it by hand.
 
-1. Add a `Symbol` constant near the other built-in names.
-2. Add an `element(...)` entry to `BUILTIN_ELEMENTS`.
-3. Add one or more `overload(...)` entries.
-4. Provide a runtime implementation for overloads that should execute.
-5. Put value-shape checks that cannot be proven statically inside the runtime
-   implementation.
-6. Add analyser and runtime tests.
+1. Write the runtime implementation as a function with signature
+   `(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]`.
+2. Decorate it with `@builtin(name, params, returns, generic_constraints=())`,
+   where `name` is a plain string (e.g. `"square"`, not a `Symbol`).
+3. If the element has multiple overloads that share one implementation, stack
+   `@builtin(...)` multiple times on the same function -- one application per
+   overload. Decorator stacking applies bottom-up, so the overload closest to
+   `def` registers first; keep that in mind if overload order matters (see
+   "Resolved Overload Codegen" below).
+4. If overloads have different implementations, decorate separate functions
+   with the same `name` string instead.
+5. If an overload is analyser-visible but has no runtime behaviour yet, use
+   `declare_overload(name, params, returns, generic_constraints=())` instead
+   of `@builtin(...)` -- there is no function to decorate.
+6. Put value-shape checks inside the implementation only for things the
+   signature cannot prove -- see the "Core Invariants" note above. Do not
+   duplicate checks the type system already guarantees.
+7. Add analyser and runtime tests.
 
-Example shape:
+Example shape, single overload:
 
 ```python
-SQUARE = Symbol("square")
+@builtin("square", (T.Number,), (T.Number,))
+def _square(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (args[0] * args[0],)
+```
 
-element(
-    SQUARE,
-    overload(
-        (T.Number,),
-        (T.Number,),
-        lambda args, ctx: (args[0] * args[0],),
+Example shape, multiple overloads sharing one implementation:
+
+```python
+@builtin("==", (T.Number, T.Number), (T.Boolean,))
+@builtin("==", (T.String, T.String), (T.Boolean,))
+def _equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (_truth(args[0] == args[1]),)
+```
+
+Example shape, an overload with no runtime implementation:
+
+```python
+declare_overload(
+    "/",
+    (
+        T.ExactList(T.TypeVariable("Item")),
+        T.Fn(
+            (T.TypeVariable("Item"), T.TypeVariable("Item")),
+            (T.TypeVariable("Item"),),
+        ),
     ),
+    (T.TypeVariable("Item"),),
 )
 ```
 
-For richer runtime validation:
+Example of genuine runtime validation -- something the signature cannot
+guarantee, unlike list shape or finiteness:
 
 ```python
+@builtin("head", (T.ExactList(T.TypeVariable("Item")),), (T.TypeVariable("Item"),))
 def _head(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    if not is_list_like(args[0]):
-        raise RuntimeError("head requires a list")
-    return (next(iter(args[0])),)
-
-
-element(
-    HEAD,
-    overload(
-        (T.ExactList(T.TypeVariable("Item")),),
-        (T.TypeVariable("Item"),),
-        _head,
-    ),
-)
+    for item in args[0]:
+        return (item,)
+    raise RuntimeError("head requires a non-empty list")
 ```
 
-Prefer named helper functions once behaviour is more than a tiny lambda. This
-keeps overload entries readable as the built-in catalogue grows.
+Prefer named, decorated functions over inline lambdas once behaviour is more
+than a one-liner. This keeps the catalogue readable as it grows, and gives
+each overload a stable Python name for stack traces and tests.
+
+Every builtin implementation is only ever invoked dynamically through the
+registry, so pyright cannot see its call sites and will flag each one with
+`reportUnusedFunction`. This is a false positive inherent to the pattern; it
+is suppressed once, file-wide, with a `# pyright: reportUnusedFunction=false`
+comment near the top of `builtins.py`. Do not add per-function
+`# pyright: ignore[...]` comments to work around it.
 
 Use the helpers from `valiance.runtime_values` for collection validation. Do not
 write new runtime built-ins that check only `isinstance(value, list)` unless the
@@ -429,12 +472,15 @@ Do not hardcode arithmetic vectorisation in `+`, `*`, or the compiler. Keep it
 generic so future scalar built-ins get the same behaviour.
 
 List-consuming built-ins should preserve laziness when possible. For example,
-`map` returns an eager Python list for finite list-like inputs and a `LazyList`
-for lazy inputs; `head` consumes only the first item; `length` requires a
-finite list-like value and rejects lazy/infinite lists at runtime. Runtime value
-formatters fully iterate list-like values by default, including lazy and
-potentially infinite values. The CLI `--preview-lists` flag opts runtime output
-and implicit stack output into bounded list previews.
+`map` always returns a `LazyList`, regardless of whether the input was finite
+or lazy -- it does not eagerly materialise finite inputs, and callers that
+need an eager list can drive the `LazyList` themselves; `head` consumes only
+the first item; `length`'s parameter type is
+`T.WithoutTag(T.ExactList(...), "infinite")`, so a finite list-like value is
+already guaranteed by analysis and `length` does not re-check it at runtime.
+Runtime value formatters fully iterate list-like values by default, including
+lazy and potentially infinite values. The CLI `--preview-lists` flag opts
+runtime output and implicit stack output into bounded list previews.
 
 ## Implicit Output
 

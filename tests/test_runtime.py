@@ -173,18 +173,22 @@ ParseError
             run(program)
 
         message = str(error.exception)
-        self.assertIn("length requires a finite list", message)
-        self.assertIn("runtime call:", message)
-        self.assertIn("target: element 'length'", message)
-        self.assertIn("arguments: [[1, 2, 3, 4, 5", message)
+        self.assertIn("cannot call element 'length'", message)
+        self.assertIn("attempted input shapes:", message)
+        self.assertIn("(#!infinite Item+)", message)
+        self.assertIn("stack: [[1, 2, 3, 4, 5", message)
         self.assertIn("100, ...]]", message)
-        self.assertIn("argument types: [Unknown+]", message)
+        self.assertIn("stack types: [Unknown+]", message)
         self.assertIn("<main> ip 2: call", message)
 
     def test_executes_element_with_colon_function_argument(self):
+        stack = execute("[1, 2, 3] map: double")
+
+        self.assertEqual(len(stack), 1)
+        self.assertIsInstance(stack[0], LazyList)
         self.assertEqual(
-            execute("[1, 2, 3] map: double"),
-            [[Decimal("2"), Decimal("4"), Decimal("6")]],
+            list(stack[0]),
+            [Decimal("2"), Decimal("4"), Decimal("6")],
         )
 
     def test_compiler_emits_resolved_builtin_element_calls(self):

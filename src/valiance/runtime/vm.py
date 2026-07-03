@@ -967,6 +967,8 @@ def _call_vectorized_builtin(
 ) -> tuple[Any, ...] | None:
     if overload.implementation is None or not any(is_list_like(arg) for arg in args):
         return None
+    if not overload.runtime_vector_matches(args):
+        return None
     try:
         return _vectorize(overload, args, context)
     except _CannotVectorize:
