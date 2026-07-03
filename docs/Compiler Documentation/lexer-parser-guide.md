@@ -224,6 +224,20 @@ you are changing. Most regressions here look like elements in the wrong order.
 - Data-tag application: `#tag` and `#!tag`
 - Elements, element call syntax, niladic element names, and `:` modifiers
 
+Qualified element names are parsed by `_qualified_symbol`. Supported forms
+include namespace qualification with dots, object-friendly qualification with
+`::`, and the built-in escape namespace:
+
+```text
+utils.double
+Foo::bar
+*::+
+*::Some
+```
+
+The token after `::` may be an identifier or operator. This is required for
+built-in operator access such as `*::+`.
+
 Keep `_term()` focused on choosing a syntactic form. Put nested parsing in
 helper methods such as `_record_fields`, `_dict_entries`, or
 `_modifier_arguments`.

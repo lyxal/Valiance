@@ -25,6 +25,8 @@ ERR = Symbol("Err")
 FAULT = Symbol("Fault")
 OK = Symbol("OK")
 RESULT = Symbol("Result")
+NONE = Symbol("None")
+SOME = Symbol("Some")
 
 DUP = Symbol("dup")
 AMPERSAND = Symbol("&")
@@ -227,6 +229,14 @@ def _question_bang(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
     return _question(args, ctx)
 
 
+def _some(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (ObjectValue("Some", {"value": args[0]}),)
+
+
+def _none(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (ObjectValue("None", {}),)
+
+
 def _truth(value: bool) -> Decimal:
     return Decimal(1) if value else Decimal(0)
 
@@ -310,8 +320,7 @@ def _is_err_value(value: Any) -> bool:
 
 def _is_none_value(value: Any) -> bool:
     return value is None or (
-        isinstance(value, ObjectValue)
-        and value.type_name.rsplit(".", 1)[-1] == "None"
+        isinstance(value, ObjectValue) and value.type_name.rsplit(".", 1)[-1] == "None"
     )
 
 
@@ -540,6 +549,14 @@ BUILTIN_ELEMENTS = (
     element(
         PRINTLN,
         overload((T.V("T"),), (), _print),
+    ),
+    element(
+        SOME,
+        overload((T.V("T"),), (T.Some(T.V("T")),), _some),
+    ),
+    element(
+        NONE,
+        overload((), (T.NoneType(),), _none),
     ),
 )
 

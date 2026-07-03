@@ -482,7 +482,7 @@ class Analyser:
         module_loader: ModuleLoader | None = None,
         source_file: Path | None = None,
     ):
-        self.env = env or default_environment()
+        self.env = env if env is not None else default_environment().child_scope()
         self.module_loader = module_loader or ModuleLoader()
         self.source_file = source_file
         self.diagnostics: list[str] = []
@@ -3061,6 +3061,8 @@ def _branch_argument_substitution(
     for arg, param in zip(args, params, strict=True):
         constraints = _solve_branch_argument(arg, param, ctx)
         if constraints is None:
+            constraints = _solve_type_argument(arg, param)
+        if constraints is None:
             if T.compatible(arg, param, ctx):
                 continue
             return None
@@ -3069,6 +3071,22 @@ def _branch_argument_substitution(
             if existing is not None and not T.same(existing, typ):
                 return None
             substitution[name] = typ
+    return substitution
+
+
+def _solve_type_argument(
+    arg: T.Type,
+    param: T.Type,
+) -> dict[str, T.Type] | None:
+    solved = T._solve(param, arg)
+    if solved is None:
+        return None
+    substitution: dict[str, T.Type] = {}
+    for name, values in solved.items():
+        combined = T._combine_all(values)
+        if combined is None:
+            return None
+        substitution[name] = combined
     return substitution
 
 

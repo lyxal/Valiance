@@ -91,6 +91,20 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(execute("OK(1) ?"), [Decimal("1")])
         self.assertEqual(execute("OK(1) ?!"), [Decimal("1")])
 
+    def test_builtin_qualified_element_bypasses_user_shadowing(self):
+        self.assertEqual(
+            execute(
+                """
+variant Maybe =>
+  Some => $value: Number end
+end
+*::Some(1)
+?
+"""
+            ),
+            [Decimal("1")],
+        )
+
     def test_question_short_circuits_error_from_current_function(self):
         stack = execute(
             """

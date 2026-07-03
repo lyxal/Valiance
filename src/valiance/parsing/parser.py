@@ -1040,7 +1040,10 @@ class Parser:
             parts.append(self._advance().value)
         name = ".".join(parts)
         if self._match(TokenKind.DOUBLE_COLON):
-            name = f"{name}::{self._expect(TokenKind.IDENT).value}"
+            if not self._match(TokenKind.IDENT, TokenKind.OP):
+                self._error("expected qualified element name")
+            token = self._previous
+            name = f"{name}::{token.value}"
         return Symbol(name)
 
     def _variable(self, start: Token) -> _ChainPiece:

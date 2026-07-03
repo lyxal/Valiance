@@ -9,7 +9,7 @@ Codegen/runtime audit note: as of 2026-06-28, checked runtime items are limited
 to behavior that is compiled to bytecode and executed by the VM, or saved and
 loaded through the portable bytecode format.
 
-Current audit total: 349 / 728 items complete (47.9%).
+Current audit total: 351 / 729 items complete (48.1%).
 
 ## 1. Lexer, parser, and general syntax
 
@@ -241,7 +241,8 @@ Current audit total: 349 / 728 items complete (47.9%).
 - [x] Support vectorising matches.
 - [x] Support intersection and trait-implementation matches.
 - [x] Support rank and union matches.
-- [ ] Allow module-scoped overloads to supersede imported and built-in overloads.
+- [x] Allow module-scoped overloads to supersede imported and built-in overloads.
+- [x] Provide `*::<element>` syntax for explicitly accessing built-in overloads.
 
 ## 16. Element call syntax
 

@@ -13,6 +13,7 @@ from valiance.analysis import (
     analyse_function_details,
     default_environment,
 )
+from valiance.analysis.analyser import _branch_argument_substitution
 from valiance.analysis.builtins import BUILTIN_ELEMENTS
 from valiance.asts import (
     BreakNode,
@@ -344,6 +345,18 @@ class AnalyserTests(unittest.TestCase):
 
         self.assertEqual(child.overloads_for(PLUS), env.overloads_for(PLUS))
         self.assertEqual(child.lookup_attribute(FOO, BAR), String)
+
+    def test_child_scope_overloads_shadow_parent_unless_builtin_qualified(self):
+        env = Environment()
+        env.define_overload(PLUS, Overload((Number, Number), (Number,)))
+        child = env.child_scope()
+        child.define_overload(PLUS, Overload((String, String), (String,)))
+
+        self.assertEqual(
+            child.overloads_for(PLUS),
+            (Overload((String, String), (String,)),),
+        )
+        self.assertEqual(child.overloads_for(Symbol("*::+")), env.overloads_for(PLUS))
 
     def test_analyser_can_analyse_one_branch_block(self):
         analyser = Analyser(Environment())
@@ -1321,6 +1334,15 @@ getName $joe
         self.assertEqual(typed[-1].overload.params, (Number, Number))
         self.assertEqual(typed[-1].overload.actual_returns, (Number,))
         self.assertFalse(typed[-1].overload.vectorised)
+
+    def test_branch_substitution_solves_generic_optional_payload(self):
+        substitution = _branch_argument_substitution(
+            (optional(Number),),
+            (optional(V("T")),),
+            default_environment().context,
+        )
+
+        self.assertEqual(substitution, {"T": Number})
 
     def test_call_node_falls_back_to_stack_values_for_missing_arguments(self):
         typed = analyse(

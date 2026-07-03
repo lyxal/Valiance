@@ -523,6 +523,20 @@ end
     def test_parses_object_friendly_qualified_element_name(self):
         self.assertEqual(parse("Foo::bar"), [ElementNode(Symbol("Foo::bar"))])
 
+    def test_parses_builtin_qualified_element_name(self):
+        self.assertEqual(
+            parse("*::Some(1)"),
+            [NumberLiteralNode("1"), ElementNode(Symbol("*::Some"))],
+        )
+        self.assertEqual(
+            parse("1 2 *::+"),
+            [
+                NumberLiteralNode("1"),
+                NumberLiteralNode("2"),
+                ElementNode(Symbol("*::+")),
+            ],
+        )
+
     def test_inline_function_body_consumes_trailing_end(self):
         [node] = parse("fn => + | double end")
 

@@ -175,6 +175,18 @@ The analyser owns how overload application transforms branches.
 
 When updating stack state after a call, use `actual_returns`.
 
+Overload lookup is scope-sensitive. `Analyser()` creates a child environment
+whose parent is the built-in environment. `Environment.overloads_for(name)`
+returns local/user overloads when any are present; otherwise it falls back to
+the parent environment. This means user-defined elements shadow built-ins
+instead of merging with them.
+
+Use the `*::element` spelling to explicitly request the parent built-in
+overloads. For example, `Some(1)` can call a user-defined `Some`, while
+`*::Some(1)` calls the built-in optional constructor. The parser stores this as
+`Symbol("*::Some")`; codegen strips the `*::` prefix for runtime built-in
+references.
+
 The typed AST carries the selected overload for overload-resolved operations.
 Element applications use `TypedElementNode`; call expressions use
 `TypedCallNode`.

@@ -366,10 +366,15 @@ class Environment:
 
     def overloads_for(self, name: Symbol) -> tuple[Overload, ...]:
         """Return the overload candidates registered for ``name``."""
+        if name.text.startswith("*::"):
+            builtin_name = Symbol(name.text.removeprefix("*::"))
+            if self.parent is None:
+                return tuple(self.overloads.get(builtin_name, ()))
+            return self.parent.overloads_for(name)
         local = tuple(self.overloads.get(name, ()))
-        if self.parent is None:
+        if local or self.parent is None:
             return local
-        return local + self.parent.overloads_for(name)
+        return self.parent.overloads_for(name)
 
     def value_type(self, name: Symbol) -> Type | None:
         """Return the overload-set type of a named callable value."""

@@ -642,17 +642,21 @@ def _resolved_element_reference(
     ast = node.node
     if not isinstance(ast, ElementNode):
         return None
+    runtime_name = ast.name.text.removeprefix("*::")
     elements = runtime_elements()
-    element = elements.get(ast.name.text)
+    element = elements.get(runtime_name)
     if element is not None:
         if not 0 <= node.overload_index < len(element.definitions):
             return None
         if element.definitions[node.overload_index].implementation is None:
             raise CompileError(
                 f"cannot compile static-only overload {node.overload_index} "
-                f"of built-in element '{ast.name.text}'"
+                f"of built-in element '{runtime_name}'"
             )
-    if element is None and ast.name in {item.name for item in BUILTIN_ELEMENTS}:
+    if (
+        element is None
+        and Symbol(runtime_name) in {item.name for item in BUILTIN_ELEMENTS}
+    ):
         return None
     vectorised = int(node.overload.vectorised) if node.overload is not None else 0
     type_args = _resolved_constructor_type_args(ast, node)
@@ -662,7 +666,7 @@ def _resolved_element_reference(
         else ()
     )
     if node.overload is not None and node.overload.vectorised_depths:
-        reference = ast.name.text, node.overload_index, vectorised, (
+        reference = runtime_name, node.overload_index, vectorised, (
             *node.overload.vectorised_depths,
         )
         if static_values:
@@ -671,17 +675,17 @@ def _resolved_element_reference(
     if type_args:
         if static_values:
             return (
-                ast.name.text,
+                runtime_name,
                 node.overload_index,
                 vectorised,
                 (),
                 type_args,
                 static_values,
             )
-        return ast.name.text, node.overload_index, vectorised, (), type_args
+        return runtime_name, node.overload_index, vectorised, (), type_args
     if static_values:
-        return ast.name.text, node.overload_index, vectorised, (), (), static_values
-    return ast.name.text, node.overload_index, vectorised
+        return runtime_name, node.overload_index, vectorised, (), (), static_values
+    return runtime_name, node.overload_index, vectorised
 
 
 def _resolved_constructor_type_args(

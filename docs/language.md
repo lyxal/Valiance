@@ -1300,6 +1300,7 @@ at (_) => getOrElse(0)
 - Functions need to be called, whereas elements are called immediately
 - `define` allows for custom elements to be defined, ready to be used just like any other element.
 - If an element already exists, `define` adds a new module-scoped overload to the element. Note that module-scope overloads overwrite imported and built-in element overloads.
+  - Use `*::<element>` to explicitly access the built-in overloads when a user-defined element shadows them, for example `*::Some(1)` or `1 2 *::+`.
   - Otherwise, a new element is created.
 - Syntax:
 
