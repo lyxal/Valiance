@@ -9,7 +9,7 @@ Codegen/runtime audit note: as of 2026-06-28, checked runtime items are limited
 to behavior that is compiled to bytecode and executed by the VM, or saved and
 loaded through the portable bytecode format.
 
-Current audit total: 342 / 728 items complete (47.0%).
+Current audit total: 349 / 728 items complete (47.9%).
 
 ## 1. Lexer, parser, and general syntax
 
@@ -652,10 +652,10 @@ Current audit total: 342 / 728 items complete (47.0%).
 
 ## 37. Error handling
 
-- [ ] Provide the generic `Result[T, E]` type.
-- [ ] Provide success and error variants or constructors.
-- [ ] Provide the `Err` trait.
-- [ ] Provide the `Fault` trait.
+- [x] Provide the generic `Result[T, E]` type.
+- [x] Provide success and error variants or constructors.
+- [x] Provide the `Err` trait.
+- [x] Provide the `Fault` trait.
 - [x] Implement panic values and panic propagation.
 - [ ] Attach `Panic[T]` element tags to panicking operations.
 - [ ] Distinguish intrinsic runtime faults from explicit panic where specified.
@@ -663,9 +663,9 @@ Current audit total: 342 / 728 items complete (47.0%).
 - [x] Match handlers against panic or fault types.
 - [x] Support recovery values from handlers.
 - [x] Integrate handler return types with normal stack typing.
-- [ ] Provide optional/result propagation using `&`.
-- [ ] Provide the `?` optional/result helper.
-- [ ] Provide the `?!` helper.
+- [x] Provide optional/result propagation using `&`.
+- [x] Provide the `?` optional/result helper.
+- [x] Provide the `?!` helper.
 - [ ] Preserve nested optional and result semantics through these helpers.
 - [ ] Provide `AssertError`.
 - [ ] Provide `VectorisationFault`.

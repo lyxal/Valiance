@@ -751,6 +751,27 @@ end
 
         self.assertEqual(typ, Fn((Number, Number), (Number,)))
 
+    def test_result_question_unwraps_success_type(self):
+        typed = analyse(
+            parse(
+                """
+object ParseError => end
+object ParseError as Err => end
+define unwrap(x: Result[Number, ParseError]) -> Number =>
+  $x ?
+end
+"""
+            )
+        )
+
+        self.assertEqual(
+            typed[-1].typ,
+            Fn(
+                (N(Symbol("Result"), Number, N(Symbol("ParseError"))),),
+                (Number,),
+            ),
+        )
+
     def test_function_infers_overload_set_when_missing_inputs_are_ambiguous(self):
         typed = analyse([FunctionNode(body=(ElementNode(PLUS),))])
 

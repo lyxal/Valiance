@@ -38,6 +38,7 @@ class OpCode(Enum):
     TRY_BEGIN = "try_begin"
     TRY_END = "try_end"
     PANIC = "panic"
+    TRY_UNWRAP = "try_unwrap"
     POP = "pop"
     RETURN = "return"
 

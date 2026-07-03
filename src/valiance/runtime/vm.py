@@ -373,6 +373,9 @@ class VirtualMachine:
                             raise PanicSignal(value)
                         ip = target
                         continue
+                    case OpCode.TRY_UNWRAP:
+                        if _try_unwrap(frame.stack):
+                            return frame.stack
                     case OpCode.POP:
                         _pop(frame.stack, "pop")
                     case OpCode.RETURN:
@@ -904,6 +907,35 @@ def _call_resolved_builtin(
             args,
         ) from exc
     frame.stack.extend(result)
+
+
+def _try_unwrap(stack: list[Any]) -> bool:
+    value = _pop(stack, "?")
+    if _is_none_result_value(value) or _is_error_result_value(value):
+        stack.append(value)
+        return True
+    if isinstance(value, ObjectValue):
+        short_name = value.type_name.rsplit(".", 1)[-1]
+        if value.type_name == "OK" or short_name in {"OK", "Some"}:
+            stack.append(value.fields.get("value"))
+            return False
+    stack.append(value)
+    return False
+
+
+def _is_none_result_value(value: Any) -> bool:
+    return value is None or (
+        isinstance(value, ObjectValue)
+        and value.type_name.rsplit(".", 1)[-1] == "None"
+    )
+
+
+def _is_error_result_value(value: Any) -> bool:
+    return isinstance(value, ObjectValue) and (
+        value.type_name == "Err"
+        or value.type_name.endswith("Error")
+        or value.type_name.rsplit(".", 1)[-1].endswith("Error")
+    )
 
 
 def _call_vectorized_builtin(

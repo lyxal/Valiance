@@ -21,6 +21,7 @@ class BytecodeSerializationTests(unittest.TestCase):
                     Instruction(OpCode.BUILD_STRING, ("value=", None)),
                     Instruction(OpCode.BUILD_TUPLE, 2),
                     Instruction(OpCode.CALL_RESOLVED_ELEMENT, ("+", 0, 0)),
+                    Instruction(OpCode.TRY_UNWRAP),
                     Instruction(OpCode.RETURN),
                 ),
                 name="<main>",

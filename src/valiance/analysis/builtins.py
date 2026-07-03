@@ -21,8 +21,13 @@ INTEGER = Symbol("Integer")
 NUMBER = Symbol("Number")
 REAL = Symbol("Real")
 STRING = Symbol("String")
+ERR = Symbol("Err")
+FAULT = Symbol("Fault")
+OK = Symbol("OK")
+RESULT = Symbol("Result")
 
 DUP = Symbol("dup")
+AMPERSAND = Symbol("&")
 HEAD = Symbol("head")
 LENGTH = Symbol("length")
 MAP = Symbol("map")
@@ -43,10 +48,16 @@ DOUBLE = Symbol("double")
 TRUE = Symbol("true")
 FALSE = Symbol("false")
 PANIC = Symbol("panic")
+QUESTION = Symbol("?")
+QUESTION_BANG = Symbol("?!")
 
 TRAIT_IMPLS = (
     (INTEGER, NUMBER),
     (REAL, NUMBER),
+    (Symbol("AssertError"), ERR),
+    (Symbol("PanicError"), ERR),
+    (Symbol("UnwrappedNoneFault"), FAULT),
+    (Symbol("UnwrappedResultFault"), FAULT),
 )
 
 
@@ -102,9 +113,13 @@ def overload(
     params: tuple[T.Type, ...],
     returns: tuple[T.Type, ...],
     implementation: RuntimeImpl | None = None,
+    generic_constraints: tuple[T.GenericConstraint, ...] = (),
 ) -> BuiltinOverload:
     """Declare one stack-effect overload."""
-    return BuiltinOverload(T.Overload(params, returns), implementation)
+    return BuiltinOverload(
+        T.Overload(params, returns, generic_constraints),
+        implementation,
+    )
 
 
 def _binary(func: Callable[[Any, Any], Any]) -> RuntimeImpl:
@@ -154,6 +169,64 @@ def _panic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     raise PanicSignal(args[0])
 
 
+def _ok(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (ObjectValue("OK", {"value": args[0]}),)
+
+
+def _and_then(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    value, callable_value = args
+    if _is_none_value(value):
+        return (value,)
+    present = _present_value(value)
+    if present is not _MISSING:
+        called = ctx.call(callable_value, [present])
+        if len(called) != 1:
+            raise RuntimeError("& function must return exactly one value")
+        return (called[0],)
+    if _is_ok_value(value):
+        called = ctx.call(callable_value, [value.fields["value"]])
+        if len(called) != 1:
+            raise RuntimeError("& function must return exactly one value")
+        result = called[0]
+        if _is_ok_value(result) or _is_err_value(result):
+            return (result,)
+        return (_ok((result,), ctx)[0],)
+    if _is_err_value(value):
+        return (value,)
+    raise RuntimeError("& requires an optional or Result value")
+
+
+def _question(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    value = args[0]
+    if _is_none_value(value) or _is_err_value(value):
+        return (value,)
+    present = _present_value(value)
+    if present is not _MISSING:
+        return (present,)
+    if _is_ok_value(value):
+        return (value.fields["value"],)
+    return (value,)
+
+
+def _question_bang(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    value = args[0]
+    if _is_none_value(value):
+        raise PanicSignal(
+            ObjectValue(
+                "UnwrappedNoneFault",
+                {"message": "Tried to unwrap optional"},
+            )
+        )
+    if _is_err_value(value):
+        raise PanicSignal(
+            ObjectValue(
+                "UnwrappedResultFault",
+                {"message": "Tried to unwrap Result, found Error"},
+            )
+        )
+    return _question(args, ctx)
+
+
 def _truth(value: bool) -> Decimal:
     return Decimal(1) if value else Decimal(0)
 
@@ -169,7 +242,15 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
             return isinstance(value, Decimal)
         if typ.name == STRING:
             return isinstance(value, str)
+        if typ.name == OK:
+            return _is_ok_value(value)
+        if typ.name == RESULT:
+            return _is_ok_value(value) or _is_err_value(value)
+        if typ.name == ERR:
+            return _is_err_value(value)
         return True
+    if isinstance(typ, T.UnionType):
+        return any(_runtime_assignable(value, item) for item in typ.items)
     if isinstance(typ, T.CollectionType):
         return is_list_like(value)
     return True
@@ -208,6 +289,40 @@ def _object_type_name(value: ObjectValue) -> str:
     return f"{value.type_name}[{', '.join(value.type_args)}]"
 
 
+_MISSING = object()
+
+
+def _is_ok_value(value: Any) -> bool:
+    return (
+        isinstance(value, ObjectValue)
+        and value.type_name == "OK"
+        and "value" in value.fields
+    )
+
+
+def _is_err_value(value: Any) -> bool:
+    return isinstance(value, ObjectValue) and (
+        value.type_name == "Err"
+        or value.type_name.endswith("Error")
+        or value.type_name.rsplit(".", 1)[-1].endswith("Error")
+    )
+
+
+def _is_none_value(value: Any) -> bool:
+    return value is None or (
+        isinstance(value, ObjectValue)
+        and value.type_name.rsplit(".", 1)[-1] == "None"
+    )
+
+
+def _present_value(value: Any) -> Any:
+    if not isinstance(value, ObjectValue):
+        return _MISSING
+    if value.type_name == "Some" or value.type_name.rsplit(".", 1)[-1] == "Some":
+        return value.fields.get("value", _MISSING)
+    return _MISSING
+
+
 BUILTIN_ELEMENTS = (
     element(
         DUP,
@@ -216,6 +331,10 @@ BUILTIN_ELEMENTS = (
             (T.V("T"), T.V("T")),
             lambda args, ctx: (args[0], args[0]),
         ),
+    ),
+    element(
+        OK,
+        overload((T.V("T"),), (T.OKType(T.V("T")),), _ok),
     ),
     element(
         PLUS,
@@ -281,6 +400,56 @@ BUILTIN_ELEMENTS = (
             ),
             (T.ExactList(T.TypeVariable("Mapped")),),
             _map,
+        ),
+    ),
+    element(
+        AMPERSAND,
+        overload(
+            (
+                T.optional(T.TypeVariable("T")),
+                T.Fn((T.TypeVariable("T"),), (T.TypeVariable("U"),)),
+            ),
+            (T.optional(T.TypeVariable("U")),),
+            _and_then,
+        ),
+        overload(
+            (
+                T.Result(T.TypeVariable("T"), T.TypeVariable("E")),
+                T.Fn((T.TypeVariable("T"),), (T.TypeVariable("U"),)),
+            ),
+            (T.Result(T.TypeVariable("U"), T.TypeVariable("E")),),
+            _and_then,
+        ),
+        overload(
+            (
+                T.TypeVariable("E"),
+                T.Fn((T.TypeVariable("T"),), (T.TypeVariable("U"),)),
+            ),
+            (T.TypeVariable("E"),),
+            _and_then,
+            (T.GenericConstraint("E", T.N(ERR)),),
+        ),
+    ),
+    element(
+        QUESTION,
+        overload((T.optional(T.TypeVariable("T")),), (T.TypeVariable("T"),), _question),
+        overload(
+            (T.Result(T.TypeVariable("T"), T.TypeVariable("E")),),
+            (T.TypeVariable("T"),),
+            _question,
+        ),
+    ),
+    element(
+        QUESTION_BANG,
+        overload(
+            (T.optional(T.TypeVariable("T")),),
+            (T.TypeVariable("T"),),
+            _question_bang,
+        ),
+        overload(
+            (T.Result(T.TypeVariable("T"), T.TypeVariable("E")),),
+            (T.TypeVariable("T"),),
+            _question_bang,
         ),
     ),
     element(
@@ -378,6 +547,13 @@ BUILTIN_ELEMENTS = (
 def default_environment() -> T.Environment:
     """Build an environment populated with Valiance's built-in elements."""
     env = T.Environment()
+    env.define_trait(ERR)
+    env.define_trait(FAULT)
+    env.context.set_generic_variance(OK, (T.Variance.COVARIANT,))
+    env.context.set_generic_variance(
+        RESULT,
+        (T.Variance.COVARIANT, T.Variance.COVARIANT),
+    )
     for type_name, trait_name in TRAIT_IMPLS:
         env.add_trait_impl(type_name, trait_name)
     for item in BUILTIN_ELEMENTS:

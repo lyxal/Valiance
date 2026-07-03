@@ -15,6 +15,7 @@ from valiance.types import (
     ListMinType,
     N,
     NoneType,
+    OKType,
     Overload,
     Overloads,
     Row,
@@ -55,12 +56,14 @@ BAR = Symbol("bar")
 BAZ = Symbol("baz")
 CAR = Symbol("Car")
 VEHICLE = Symbol("Vehicle")
+PARSE_ERROR = Symbol("ParseError")
 
 Number = N(NUMBER)
 String = N(STRING)
 Foo = N(FOO)
 Car = N(CAR)
 Vehicle = N(VEHICLE)
+ParseError = N(PARSE_ERROR)
 
 
 class TypeLibraryTests(unittest.TestCase):
@@ -172,6 +175,20 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertIsNotNone(accepted)
         self.assertEqual(accepted.substitution, {"T": Car})
         self.assertIsNone(rejected)
+
+    def test_result_union_simplifies_success_and_error_members(self):
+        self.assertEqual(U(Number, ParseError), N(Symbol("Result"), Number, ParseError))
+        self.assertEqual(
+            U(OKType(Number), OKType(String), ParseError),
+            N(Symbol("Result"), U(Number, String), ParseError),
+        )
+
+    def test_ok_and_error_values_assign_to_result(self):
+        result = N(Symbol("Result"), Number, ParseError)
+
+        self.assertTrue(assignable(OKType(Number), result))
+        self.assertTrue(assignable(ParseError, result))
+        self.assertFalse(assignable(String, result))
 
     def test_nested_list_solves_reduce_t_as_list(self):
         constraints = _solve(C(ListExactType, V("T")), C(ListExactType, Number, 2))

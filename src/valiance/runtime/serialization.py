@@ -48,6 +48,7 @@ _OP_TO_BYTE = {
     OpCode.TRY_BEGIN: 0x1C,
     OpCode.TRY_END: 0x1D,
     OpCode.PANIC: 0x1E,
+    OpCode.TRY_UNWRAP: 0x1F,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 

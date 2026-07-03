@@ -6,6 +6,9 @@ from collections.abc import Callable, Iterable
 
 from valiance.symbols import Symbol
 from valiance.types.builders import (
+    ERR,
+    OK,
+    RESULT,
     C,
     Fn,
     I,
@@ -134,9 +137,13 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
         return subtype(source.base, target, ctx)
 
     if isinstance(source, NominalType) and isinstance(target, NominalType):
+        if target.name == RESULT and len(target.args) == 2:
+            return _source_subtypes_result(source, target, ctx)
         if source.name == target.name and len(source.args) == len(target.args):
             return _nominal_args_subtype(source, target, ctx)
         if ctx.implements(source.name, target.name):
+            return True
+        if target.name == ERR and _is_builtin_err(source):
             return True
         if ctx.variant_members.get(source.name) == target.name:
             return True
@@ -252,6 +259,20 @@ def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
     if same(source, target) or subtype(source, target, ctx):
         return True
 
+    if (
+        isinstance(target, NominalType)
+        and target.name == RESULT
+        and len(target.args) == 2
+    ):
+        ok, err = target.args
+        if (
+            isinstance(source, NominalType)
+            and source.name == OK
+            and len(source.args) == 1
+        ):
+            return assignable(source.args[0], ok, ctx)
+        return assignable(source, ok, ctx) or assignable(source, err, ctx)
+
     if _is_optional(target):
         # Assignment can implicitly wrap a present value into Some[T], and None
         # can be stored in any optional.
@@ -266,6 +287,21 @@ def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
         return any(assignable(source, t, ctx) for t in target.items)
 
     return False
+
+
+def _source_subtypes_result(
+    source: NominalType,
+    target: NominalType,
+    ctx: Context,
+) -> bool:
+    ok, err = target.args
+    if source.name == OK and len(source.args) == 1:
+        return assignable(source.args[0], ok, ctx)
+    return assignable(source, ok, ctx) or assignable(source, err, ctx)
+
+
+def _is_builtin_err(source: NominalType) -> bool:
+    return not source.args and source.name.text.endswith("Error")
 
 
 def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
@@ -318,6 +354,17 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
             constraints.update(matches[0])
             return True
         if isinstance(p, NominalType) and isinstance(a, NominalType):
+            if p.name == RESULT and len(p.args) == 2:
+                if a.name == OK and len(a.args) == 1:
+                    if not rec(p.args[0], a.args[0]):
+                        return False
+                    if isinstance(normalize(p.args[1]), VarType):
+                        add(normalize(p.args[1]).name, NeverType())
+                    return True
+                if _is_builtin_err(a):
+                    if isinstance(normalize(p.args[0]), VarType):
+                        add(normalize(p.args[0]).name, NeverType())
+                    return rec(p.args[1], a)
             return (
                 p.name == a.name
                 and len(p.args) == len(a.args)

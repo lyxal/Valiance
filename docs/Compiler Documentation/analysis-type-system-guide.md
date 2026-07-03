@@ -483,33 +483,59 @@ small changes here affect overload resolution.
 
 ### Result
 
-`Result` currently exists as a nominal generic constructor:
+The implemented Result shape uses explicit success values plus error-like
+nominal values:
 
 ```python
 T.Result(ok, err)
+T.OKType(ok)
 ```
 
-It normalizes like other nominal types: its generic arguments are normalized,
-but there is no special Result-union rewrite in the current implementation.
+`T.Result(ok, err)` is represented as `NominalType(Symbol("Result"), (ok, err))`.
+`T.OKType(ok)` is represented as `NominalType(Symbol("OK"), (ok,))`.
 
-This means:
+The normalizer performs a conservative Result rewrite for unions that contain at
+least one success-like item and at least one error-like item:
 
 ```text
-Result[Number, String]
+Number | ParseError -> Result[Number, ParseError]
+OK[Number] | OK[String] | ParseError -> Result[Number | String, ParseError]
+Result[Number, ParseError] | String -> Result[Number | String, ParseError]
 ```
 
-is represented as:
+Error-like types are currently recognized by a narrow built-in convention:
 
-```python
-NominalType(Symbol("Result"), (Number, String))
-```
+- the nominal `Err` type itself
+- non-generic nominal types whose names end with `Error`
 
-Do not assume that unions such as `T | E` automatically become
-`Result[T, E]`. That is future design intent, not current analyser behavior.
+The standard environment also defines the built-in `Err` trait and records
+`AssertError` and `PanicError` as implementations. User code can add explicit
+implementations with normal `object MyError as Err => ...` syntax; the current
+normalizer is still name-convention based because `normalize(...)` does not take
+an environment.
 
-If adding Result normalization later, keep it separate from ordinary union
-normalization until the error trait hierarchy exists. Otherwise the type layer
-will incorrectly rewrite ordinary unions into Results.
+Assignability and overload solving know the Result success/error split:
+
+- `OK[T]` is assignable to `Result[T, E]`.
+- an error type is assignable to `Result[T, E]` through the error side.
+- `OK[T]` can solve a `Result[T, E]` parameter, leaving unconstrained `E` as
+  `Never` when needed.
+- an error value can solve a `Result[T, E]` parameter through `E`, leaving
+  unconstrained `T` as `Never` when needed.
+
+The built-in helper elements are defined in `analysis/builtins.py`:
+
+- `OK`: wraps a value in a runtime `ObjectValue("OK", {"value": value})`.
+- `&`: maps present optional values and `OK` values through a callable, while
+  preserving `None` and error values.
+- `?`: unwraps present optional values and `OK` values; at runtime it
+  short-circuits from the current function on `None` or error values.
+- `?!`: unwraps like `?`, but panics with `UnwrappedNoneFault` or
+  `UnwrappedResultFault` instead of short-circuiting.
+
+Do not broaden `_is_err_nominal` casually. Rewriting ordinary unions into
+`Result` is intentionally conservative because it changes overload resolution
+and display.
 
 ## Function Literals
 

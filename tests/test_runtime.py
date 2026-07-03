@@ -87,6 +87,62 @@ class RuntimeTests(unittest.TestCase):
 
         self.assertEqual(run(program), [1])
 
+    def test_result_ok_constructor_and_question_unwrap(self):
+        self.assertEqual(execute("OK(1) ?"), [Decimal("1")])
+        self.assertEqual(execute("OK(1) ?!"), [Decimal("1")])
+
+    def test_question_short_circuits_error_from_current_function(self):
+        stack = execute(
+            """
+object ParseError => end
+object ParseError as Err => end
+define maybe_double(x: Result[Number, ParseError]) -> Number =>
+  $x ?
+  double
+end
+ParseError
+maybe_double
+"""
+        )
+
+        self.assertEqual(len(stack), 1)
+        self.assertIsInstance(stack[0], ObjectValue)
+        self.assertEqual(stack[0].type_name, "ParseError")
+
+    def test_question_bang_panics_on_result_error(self):
+        with self.assertRaises(RuntimeError) as error:
+            execute(
+                """
+object ParseError => end
+object ParseError as Err => end
+ParseError
+?!
+"""
+            )
+
+        self.assertIn("UnwrappedResultFault", str(error.exception))
+
+    def test_result_and_then_maps_ok_and_preserves_error(self):
+        ok_stack = execute("OK(2) &: double")
+
+        self.assertEqual(len(ok_stack), 1)
+        self.assertIsInstance(ok_stack[0], ObjectValue)
+        self.assertEqual(ok_stack[0].type_name, "OK")
+        self.assertEqual(ok_stack[0].fields["value"], Decimal("4"))
+
+        err_stack = execute(
+            """
+object ParseError => end
+object ParseError as Err => end
+ParseError
+&: double
+"""
+        )
+
+        self.assertEqual(len(err_stack), 1)
+        self.assertIsInstance(err_stack[0], ObjectValue)
+        self.assertEqual(err_stack[0].type_name, "ParseError")
+
     def test_runtime_length_rejects_lazy_lists(self):
         program = Program(
             FunctionCode(

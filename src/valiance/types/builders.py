@@ -37,7 +37,9 @@ from valiance.types.nodes import (
 
 CollectionClass = type[CollectionType]
 SOME = Symbol("Some")
+OK = Symbol("OK")
 RESULT = Symbol("Result")
+ERR = Symbol("Err")
 
 
 def Never() -> Type:
@@ -68,6 +70,11 @@ def TypeVariable(name: str) -> Type:
 def Some(inner: Type) -> Type:
     """Create the explicit ``Some[T]`` wrapper used by optional types."""
     return N(SOME, inner)
+
+
+def OKType(inner: Type) -> Type:
+    """Create the explicit ``OK[T]`` wrapper used by Result success values."""
+    return N(OK, inner)
 
 
 def Result(ok: Type, err: Type) -> Type:
@@ -240,6 +247,9 @@ def normalize(t: Type) -> Type:
                 flat.add(item)
         if not flat:
             return Never()
+        result = _normalize_result_union(flat)
+        if result is not None:
+            return result
         if len(flat) == 1:
             return next(iter(flat))
         return UnionType(frozenset(flat))
@@ -295,6 +305,45 @@ def normalize(t: Type) -> Type:
         return TaggedType(inner, t.tags)
 
     return t
+
+
+def _normalize_result_union(items: set[Type]) -> Type | None:
+    ok_items: list[Type] = []
+    err_items: list[Type] = []
+    saw_explicit_ok = False
+    for item in items:
+        if isinstance(item, NominalType) and item.name == OK and len(item.args) == 1:
+            ok_items.append(item.args[0])
+            saw_explicit_ok = True
+        elif _is_err_nominal(item):
+            err_items.append(item)
+        elif (
+            isinstance(item, NominalType)
+            and item.name == RESULT
+            and len(item.args) == 2
+        ):
+            ok_items.append(item.args[0])
+            err_items.append(item.args[1])
+        else:
+            ok_items.append(item)
+
+    if not err_items or not ok_items:
+        if saw_explicit_ok and ok_items and not err_items:
+            ok = U(*ok_items) if len(ok_items) > 1 else ok_items[0]
+            return OKType(ok)
+        return None
+
+    ok = U(*ok_items) if len(ok_items) > 1 else ok_items[0]
+    err = U(*err_items) if len(err_items) > 1 else err_items[0]
+    return Result(ok, err)
+
+
+def _is_err_nominal(t: Type) -> bool:
+    return (
+        isinstance(t, NominalType)
+        and not t.args
+        and (t.name == ERR or t.name.text.endswith("Error"))
+    )
 
 
 def _normalize_row_fields(fields: tuple[RowField, ...]) -> tuple[RowField, ...]:

@@ -329,6 +329,29 @@ by a `where` clause:
 (element_name, overload_index, vectorised, vectorised_depths, type_args, rank_values)
 ```
 
+### `?` Result/Optional Short-Circuiting
+
+The analyser resolves the built-in `?` element with ordinary overload metadata,
+but the compiler does not emit it as `CALL_RESOLVED_ELEMENT`. A resolved `?`
+lowers to:
+
+```text
+TRY_UNWRAP
+```
+
+The VM pops the top value:
+
+- `OK{value: x}` and `Some{value: x}` push `x` and continue.
+- `None` or an error-like object is pushed back and the current function returns
+  immediately.
+- any other value is pushed back unchanged.
+
+This is intentionally a bytecode primitive because the short-circuit target is
+the current frame, not just the built-in implementation. The non-short-circuit
+helper `?!` remains a normal resolved built-in: it unwraps success values and
+panics with `UnwrappedNoneFault` or `UnwrappedResultFault` for absent/error
+values.
+
 `rank_values` is a tuple of `(name, int)` pairs from
 `AppliedOverload.rank_values`. The VM appends these values as hidden arguments
 when invoking the selected user-defined overload, allowing function bodies to

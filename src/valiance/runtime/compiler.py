@@ -140,6 +140,13 @@ class _Compiler:
                     args = typed_node.modifier_args
                 for arg in args:
                     self.node(arg)
+                if (
+                    isinstance(typed_node, TypedElementNode)
+                    and typed_node.overload_index is not None
+                    and name.text == "?"
+                ):
+                    self.emit(OpCode.TRY_UNWRAP)
+                    return
                 resolved = _resolved_element_reference(typed_node)
                 if resolved is None:
                     self.emit(OpCode.LOAD_ELEMENT, name.text)
