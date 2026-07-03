@@ -12,6 +12,7 @@ from valiance.runtime_values import (
     LazyList,
     ObjectValue,
     PanicSignal,
+    format_runtime_value,
     is_finite_list_like,
     is_list_like,
 )
@@ -52,6 +53,7 @@ FALSE = Symbol("false")
 PANIC = Symbol("panic")
 QUESTION = Symbol("?")
 QUESTION_BANG = Symbol("?!")
+RANGE = Symbol("range")
 
 TRAIT_IMPLS = (
     (INTEGER, NUMBER),
@@ -69,6 +71,7 @@ class RuntimeContext:
 
     output: Callable[[str], None]
     call: Callable[[Any, list[Any]], list[Any]]
+    format_value: Callable[[Any], str] = format_runtime_value
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
@@ -133,12 +136,12 @@ def _comparison(func: Callable[[Any, Any], bool]) -> RuntimeImpl:
 
 
 def _print(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    ctx.output(_format_value(args[0]))
+    ctx.output(ctx.format_value(args[0]))
     return ()
 
 
 def _println(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    ctx.output(_format_value(args[0]) + "\n")
+    ctx.output(ctx.format_value(args[0]) + "\n")
     return ()
 
 
@@ -242,6 +245,11 @@ def _none(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (ObjectValue("None", {}),)
 
 
+def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    start, stop = args
+    return (LazyList(range(int(start), int(stop) + 1)),)
+
+
 def _truth(value: bool) -> Decimal:
     return Decimal(1) if value else Decimal(0)
 
@@ -269,39 +277,6 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
     if isinstance(typ, T.CollectionType):
         return is_list_like(value)
     return True
-
-
-def _format_value(value: Any) -> str:
-    if isinstance(value, Decimal):
-        if value == value.to_integral_value():
-            return format(value.quantize(Decimal(1)), "f")
-        return format(value.normalize(), "f")
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list):
-        return "[" + ", ".join(_format_value(item) for item in value) + "]"
-    if is_list_like(value):
-        return "<lazy list>"
-    if isinstance(value, tuple):
-        return "(" + ", ".join(_format_value(item) for item in value) + ")"
-    if isinstance(value, dict):
-        items = ", ".join(
-            f"{_format_value(key)}: {_format_value(item)}"
-            for key, item in value.items()
-        )
-        return "{" + items + "}"
-    if isinstance(value, ObjectValue):
-        items = ", ".join(
-            f"{name}: {_format_value(item)}" for name, item in value.fields.items()
-        )
-        return f"{_object_type_name(value)}{{{items}}}"
-    return str(value)
-
-
-def _object_type_name(value: ObjectValue) -> str:
-    if not value.type_args:
-        return value.type_name
-    return f"{value.type_name}[{', '.join(value.type_args)}]"
 
 
 _MISSING = object()
@@ -562,6 +537,10 @@ BUILTIN_ELEMENTS = (
     element(
         NONE,
         overload((), (T.NoneType(),), _none),
+    ),
+    element(
+        RANGE,
+        overload((T.Number, T.Number), (T.ExactList(T.Number),), _range),
     ),
 )
 

@@ -432,7 +432,9 @@ List-consuming built-ins should preserve laziness when possible. For example,
 `map` returns an eager Python list for finite list-like inputs and a `LazyList`
 for lazy inputs; `head` consumes only the first item; `length` requires a
 finite list-like value and rejects lazy/infinite lists at runtime. Runtime value
-formatters print lazy lists as `<lazy list>` rather than forcing iteration.
+formatters fully iterate list-like values by default, including lazy and
+potentially infinite values. The CLI `--preview-lists` flag opts runtime output
+and implicit stack output into bounded list previews.
 
 ## Implicit Output
 

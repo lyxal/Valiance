@@ -176,7 +176,8 @@ ParseError
         self.assertIn("length requires a finite list", message)
         self.assertIn("runtime call:", message)
         self.assertIn("target: element 'length'", message)
-        self.assertIn("arguments: [<lazy list>]", message)
+        self.assertIn("arguments: [[1, 2, 3, 4, 5", message)
+        self.assertIn("100, ...]]", message)
         self.assertIn("argument types: [Unknown+]", message)
         self.assertIn("<main> ip 2: call", message)
 
@@ -736,6 +737,15 @@ end
 
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "hello\n")
+
+    def test_println_formats_finite_lazy_range_as_full_list(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            stack = execute("println range(1, 100)")
+
+        expected = "[" + ", ".join(str(index) for index in range(1, 101)) + "]\n"
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), expected)
 
     def test_explicit_function_params_cycle_on_runtime_underflow(self):
         output = io.StringIO()

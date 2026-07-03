@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +19,7 @@ from valiance.runtime import (
     loads,
     run,
 )
-from valiance.runtime_values import ObjectValue, is_list_like
+from valiance.runtime_values import DIAGNOSTIC_LIST_PREVIEW_LIMIT, format_runtime_value
 
 DEFAULT_BYTECODE_FILENAME = "out.vbc"
 DEFAULT_BYTECODE_SUFFIX = ".vbc"
@@ -48,6 +47,7 @@ options:
   -c, --code <code>   use inline Valiance code instead of a source file
   -o, --output <file> write compiled bytecode to this file
   --implicit-output   print the final stack if execution prints nothing
+  --preview-lists     preview lazy lists instead of forcing full output
 """
 
 
@@ -66,6 +66,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_bytecode_file(
             parsed.bytecode_file,
             implicit_output=parsed.implicit_output,
+            preview_lists=parsed.preview_lists,
         )
 
     source = parsed.code
@@ -82,6 +83,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         bytecode_output=parsed.output,
         source_file=source_file,
         implicit_output=parsed.implicit_output,
+        preview_lists=parsed.preview_lists,
     )
 
 
@@ -101,6 +103,7 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
     parser.add_argument("--emit-bytecode", dest="legacy_output")
     parser.add_argument("--run-bytecode", dest="legacy_bytecode_file")
     parser.add_argument("--implicit-output", action="store_true")
+    parser.add_argument("--preview-lists", action="store_true")
     parser.add_argument("file", nargs="?")
     parser.add_argument("-h", "--help", action="store_true")
 
@@ -170,6 +173,9 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
     if parsed.implicit_output and parsed.action not in {"run"}:
         print("error: --implicit-output is only valid for run actions", file=sys.stderr)
         return None
+    if parsed.preview_lists and parsed.action not in {"run", "run-bytecode"}:
+        print("error: --preview-lists is only valid for run actions", file=sys.stderr)
+        return None
     if parsed.code is not None and parsed.file is not None:
         print("error: pass either a file or --code, not both", file=sys.stderr)
         return None
@@ -193,6 +199,7 @@ def _run_source(
     bytecode_output: str | None = None,
     source_file: Path | None = None,
     implicit_output: bool = False,
+    preview_lists: bool = False,
 ) -> int:
     try:
         tokens = lex(source)
@@ -227,7 +234,11 @@ def _run_source(
 
         bytecode = compile_program(typed)
         if action == "run":
-            _run_bytecode(bytecode, implicit_output=implicit_output)
+            _run_bytecode(
+                bytecode,
+                implicit_output=implicit_output,
+                preview_lists=preview_lists,
+            )
             return 0
 
         if action != "compile":
@@ -249,10 +260,19 @@ def _run_source(
         return 1
 
 
-def _run_bytecode_file(filename: str, *, implicit_output: bool = False) -> int:
+def _run_bytecode_file(
+    filename: str,
+    *,
+    implicit_output: bool = False,
+    preview_lists: bool = False,
+) -> int:
     try:
         bytecode = loads(Path(filename).read_bytes())
-        _run_bytecode(bytecode, implicit_output=implicit_output)
+        _run_bytecode(
+            bytecode,
+            implicit_output=implicit_output,
+            preview_lists=preview_lists,
+        )
     except (BytecodeFormatError, OSError, RuntimeError) as exc:
         _print_exception_diagnostic(exc)
         return 1
@@ -304,11 +324,17 @@ def _print_diagnostic(
     print(render(diagnostic, source, source_file=source_file), file=sys.stderr)
 
 
-def _run_bytecode(bytecode, *, implicit_output: bool = False) -> None:
+def _run_bytecode(
+    bytecode,
+    *,
+    implicit_output: bool = False,
+    preview_lists: bool = False,
+) -> None:
     output = _OutputTracker()
-    stack = run(bytecode, output=output)
+    preview_limit = DIAGNOSTIC_LIST_PREVIEW_LIMIT if preview_lists else None
+    stack = run(bytecode, output=output, list_preview_limit=preview_limit)
     if implicit_output and not output.did_print:
-        print(_format_stack(stack))
+        print(_format_stack(stack, preview_limit=preview_limit))
 
 
 class _OutputTracker:
@@ -320,50 +346,23 @@ class _OutputTracker:
         print(value, end="")
 
 
-def _format_stack(stack: list[Any]) -> str:
+def _format_stack(stack: list[Any], *, preview_limit: int | None = None) -> str:
     if not stack:
         return "Stack []"
     lines = ["Stack ["]
     for index, value in enumerate(stack):
-        lines.append(f"  {index}: {_format_value(value)}")
+        lines.append(f"  {index}: {_format_value(value, preview_limit=preview_limit)}")
     lines.append("]")
     return "\n".join(lines)
 
 
-def _format_value(value: Any) -> str:
-    if isinstance(value, Decimal):
-        if value == value.to_integral_value():
-            return format(value.quantize(Decimal(1)), "f")
-        return format(value.normalize(), "f")
-    if isinstance(value, str):
-        return repr(value)
-    if isinstance(value, list):
-        return "[" + ", ".join(_format_value(item) for item in value) + "]"
-    if is_list_like(value):
-        return "<lazy list>"
-    if isinstance(value, tuple):
-        inner = ", ".join(_format_value(item) for item in value)
-        if len(value) == 1:
-            inner += ","
-        return f"({inner})"
-    if isinstance(value, dict):
-        items = ", ".join(
-            f"{_format_value(key)}: {_format_value(item)}"
-            for key, item in value.items()
-        )
-        return "{" + items + "}"
-    if isinstance(value, ObjectValue):
-        items = ", ".join(
-            f"{name}: {_format_value(item)}" for name, item in value.fields.items()
-        )
-        return f"{_object_type_name(value)}{{{items}}}"
-    return repr(value)
-
-
-def _object_type_name(value: ObjectValue) -> str:
-    if not value.type_args:
-        return value.type_name
-    return f"{value.type_name}[{', '.join(value.type_args)}]"
+def _format_value(value: Any, *, preview_limit: int | None = None) -> str:
+    return format_runtime_value(
+        value,
+        quote_strings=True,
+        tuple_single_comma=True,
+        lazy_preview_limit=preview_limit,
+    )
 
 
 if __name__ == "__main__":

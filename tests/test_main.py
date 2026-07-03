@@ -130,6 +130,38 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(output.getvalue(), "Stack [\n  0: [6, 8, 10]\n]\n")
 
+    def test_main_implicitly_prints_finite_lazy_range_as_full_list(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(
+                [
+                    "--run",
+                    "--implicit-output",
+                    "--code",
+                    "range(1, 100)",
+                ]
+            )
+
+        expected = "[" + ", ".join(str(index) for index in range(1, 101)) + "]"
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), f"Stack [\n  0: {expected}\n]\n")
+
+    def test_main_preview_lists_caps_runtime_printing(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(
+                [
+                    "run",
+                    "--preview-lists",
+                    "--code",
+                    "println range(1, 101)",
+                ]
+            )
+
+        expected = "[" + ", ".join(str(index) for index in range(1, 101)) + ", ...]\n"
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), expected)
+
     def test_main_implicit_output_does_not_duplicate_explicit_prints(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

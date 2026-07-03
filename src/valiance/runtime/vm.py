@@ -17,9 +17,11 @@ from valiance.analysis.builtins import (
 )
 from valiance.runtime.bytecode import FunctionCode, FunctionSetCode, OpCode, Program
 from valiance.runtime_values import (
+    DIAGNOSTIC_LIST_PREVIEW_LIMIT,
     LazyList,
     ObjectValue,
     PanicSignal,
+    format_runtime_value,
     is_eager_sequence,
     is_list_like,
 )
@@ -160,10 +162,22 @@ class _StackUnderflow(Exception):
 class VirtualMachine:
     """A small stack-based bytecode interpreter."""
 
-    def __init__(self, *, output: Callable[[str], None] | None = None) -> None:
-        self.output = print if output is None else output
+    def __init__(
+        self,
+        *,
+        output: Callable[[str], None] | None = None,
+        list_preview_limit: int | None = None,
+    ) -> None:
+        self.output = (lambda value: print(value, end="")) if output is None else output
+        self.format_value = lambda value: format_runtime_value(
+            value,
+            lazy_preview_limit=list_preview_limit,
+        )
         self.globals = {
-            name: BuiltinValue(element, RuntimeContext(self.output, self.call_value))
+            name: BuiltinValue(
+                element,
+                RuntimeContext(self.output, self.call_value, self.format_value),
+            )
             for name, element in runtime_elements().items()
         }
 
@@ -722,9 +736,17 @@ class VirtualMachine:
         return bool(result) and _truthy(result[-1])
 
 
-def run(program: Program, *, output: Callable[[str], None] | None = None) -> list[Any]:
+def run(
+    program: Program,
+    *,
+    output: Callable[[str], None] | None = None,
+    list_preview_limit: int | None = None,
+) -> list[Any]:
     """Execute a bytecode program with a fresh VM."""
-    return VirtualMachine(output=output).run(program)
+    return VirtualMachine(
+        output=output,
+        list_preview_limit=list_preview_limit,
+    ).run(program)
 
 
 def _make_function_value(
@@ -1040,7 +1062,7 @@ def _vectorize_function(
     return _vectorize_resolved(
         implementation,
         args,
-        RuntimeContext(vm.output, vm.call_value),
+        RuntimeContext(vm.output, vm.call_value, vm.format_value),
     )
 
 
@@ -1643,57 +1665,15 @@ def _format_stack_types(stack: list[Any]) -> str:
 
 
 def _format_value(value: Any) -> str:
-    if isinstance(value, Decimal):
-        if value == value.to_integral_value():
-            return format(value.quantize(Decimal(1)), "f")
-        return format(value.normalize(), "f")
-    if isinstance(value, str):
-        return repr(value)
-    if isinstance(value, list):
-        return "[" + ", ".join(_format_value(item) for item in value) + "]"
-    if is_list_like(value):
-        return "<lazy list>"
-    if isinstance(value, tuple):
-        return "(" + ", ".join(_format_value(item) for item in value) + ")"
-    if isinstance(value, dict):
-        items = ", ".join(
-            f"{_format_value(key)}: {_format_value(item)}"
-            for key, item in value.items()
-        )
-        return "{" + items + "}"
-    if isinstance(value, ObjectValue):
-        items = ", ".join(
-            f"{name}: {_format_value(item)}" for name, item in value.fields.items()
-        )
-        return f"{_object_type_name(value)}{{{items}}}"
-    return repr(value)
+    return format_runtime_value(
+        value,
+        quote_strings=True,
+        lazy_preview_limit=DIAGNOSTIC_LIST_PREVIEW_LIMIT,
+    )
 
 
 def _string_value(value: Any) -> str:
-    if isinstance(value, Decimal):
-        if value == value.to_integral_value():
-            return format(value.quantize(Decimal(1)), "f")
-        return format(value.normalize(), "f")
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list):
-        return "[" + ", ".join(_string_value(item) for item in value) + "]"
-    if is_list_like(value):
-        return "<lazy list>"
-    if isinstance(value, tuple):
-        return "(" + ", ".join(_string_value(item) for item in value) + ")"
-    if isinstance(value, dict):
-        items = ", ".join(
-            f"{_string_value(key)}: {_string_value(item)}"
-            for key, item in value.items()
-        )
-        return "{" + items + "}"
-    if isinstance(value, ObjectValue):
-        items = ", ".join(
-            f"{name}: {_string_value(item)}" for name, item in value.fields.items()
-        )
-        return f"{_object_type_name(value)}{{{items}}}"
-    return str(value)
+    return format_runtime_value(value)
 
 
 def _runtime_type_name(value: Any) -> str:
