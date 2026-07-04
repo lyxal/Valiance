@@ -15,7 +15,7 @@ from valiance.runtime.bytecode import (
     Program,
 )
 
-MAGIC = b"VLNCBC\x05"
+MAGIC = b"VLNCBC\x06"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -154,6 +154,7 @@ class _Writer:
     def function(self, function: FunctionCode) -> None:
         self.optional_string(function.name)
         self.u8(1 if function.cycle_params else 0)
+        self.u8(1 if function.recursive else 0)
         self.u32(len(function.params))
         for param in function.params:
             self.string(param)
@@ -237,6 +238,9 @@ class _Reader:
         cycle_params = self.u8()
         if cycle_params not in {0, 1}:
             raise BytecodeFormatError(f"invalid function cycle flag {cycle_params}")
+        recursive = self.u8()
+        if recursive not in {0, 1}:
+            raise BytecodeFormatError(f"invalid function recursive flag {recursive}")
         params = tuple(self.string() for _ in range(self.u32()))
         element_tags = tuple(self.string() for _ in range(self.u32()))
         instructions = []
@@ -253,4 +257,5 @@ class _Reader:
             name,
             bool(cycle_params),
             element_tags,
+            bool(recursive),
         )

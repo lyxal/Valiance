@@ -31,7 +31,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x05"))
+        self.assertTrue(data.startswith(b"VLNCBC\x06"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)
@@ -52,6 +52,17 @@ class BytecodeSerializationTests(unittest.TestCase):
                     Instruction(OpCode.RETURN),
                 ),
                 name="<main>",
+            )
+        )
+
+        self.assertEqual(loads(dumps(program)), program)
+
+    def test_serializes_recursive_function_flag(self):
+        program = Program(
+            FunctionCode(
+                (Instruction(OpCode.RETURN),),
+                name="loop",
+                recursive=True,
             )
         )
 

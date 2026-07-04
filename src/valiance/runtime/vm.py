@@ -931,11 +931,18 @@ def _make_function_value(
     globals_: dict[str, Any],
 ) -> FunctionValue | OverloadedFunctionValue:
     if isinstance(code, FunctionCode):
-        return FunctionValue(code, globals_)
+        value = FunctionValue(code, globals_)
+        if code.recursive:
+            value.globals["this"] = value
+        return value
     if isinstance(code, FunctionSetCode):
-        return OverloadedFunctionValue(
+        value = OverloadedFunctionValue(
             tuple(FunctionValue(overload, globals_) for overload in code.overloads)
         )
+        for overload in value.overloads:
+            if overload.code.recursive:
+                overload.globals["this"] = value
+        return value
     raise RuntimeError(f"invalid function bytecode value {code!r}")
 
 

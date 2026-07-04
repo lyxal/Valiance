@@ -96,6 +96,7 @@ class ElementNode(ASTNode):
     name: Symbol
     modifier_args: tuple[FunctionNode, ...] = ()
     disambiguation: tuple[Type | None, ...] = ()
+    annotations: tuple[ASTNode, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -122,6 +123,7 @@ class FunctionNode(ASTNode):
     returns: tuple[Type, ...] | None = None
     where_clause: tuple[ASTNode, ...] = ()
     element_tags: frozenset[ElementTag] = field(default_factory=frozenset[ElementTag])
+    annotations: tuple[ASTNode, ...] = ()
 
 
 @dataclass(frozen=True)

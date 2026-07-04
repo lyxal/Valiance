@@ -8,6 +8,7 @@ from typing import NoReturn
 
 from valiance.analysis.builtins import BUILTIN_ELEMENTS, runtime_elements
 from valiance.asts import (
+    AnnotationNode,
     ArrayLiteralNode,
     AssertNode,
     ASTNode,
@@ -113,6 +114,7 @@ class _Compiler:
         name: str | None = None,
         cycle_params: bool = False,
         element_tags: tuple[str, ...] = (),
+        recursive: bool = False,
     ) -> FunctionCode:
         for node in body:
             self.node(node)
@@ -123,6 +125,7 @@ class _Compiler:
             name,
             cycle_params,
             element_tags,
+            recursive,
         )
 
     def node(self, node: ASTNode | TypedNode) -> None:
@@ -161,6 +164,9 @@ class _Compiler:
                     self.emit(OpCode.CALL)
                 else:
                     self.emit(OpCode.CALL_RESOLVED_ELEMENT, resolved)
+                tupled_count = _tupled_element_return_count(node, typed_node)
+                if tupled_count is not None:
+                    self.emit(OpCode.BUILD_TUPLE, tupled_count)
             case TagApplicationNode():
                 pass
             case CastNode(typ, checked):
@@ -305,13 +311,17 @@ class _Compiler:
         self.emit(OpCode.STORE_VAR, name.rsplit(".", 1)[-1])
 
     def friendly_definition(self, owner: str, definition: DefineNode) -> None:
+        body = definition.function.body
+        if _definition_has_annotation(definition, "self"):
+            body = (*body, GetVariableNode(Symbol("self")))
         function = FunctionNode(
             params=(FunctionParam(Symbol("self")),)
             + tuple(definition.function.params or ()),
-            body=definition.function.body,
+            body=body,
             returns=definition.function.returns,
             where_clause=definition.function.where_clause,
             element_tags=definition.function.element_tags,
+            annotations=definition.function.annotations,
             location=definition.function.location,
         )
         node = DefineNode(
@@ -575,6 +585,7 @@ def _compile_function_node(
         name=name,
         cycle_params=bool(ast.params),
         element_tags=_function_element_tag_names(node),
+        recursive=_function_is_recursive(ast),
     )
 
 
@@ -590,13 +601,11 @@ def _compile_function_overload(
         )
     return _Compiler().compile_function(
         overload.body,
-        params=(
-            *_function_param_names(ast, len(typ.params)),
-            *_static_param_names(overload),
-        ),
+        params=(*_overload_param_names(ast, overload), *_static_param_names(overload)),
         name=name,
         cycle_params=bool(ast.params),
         element_tags=_function_element_tag_names(overload.typ),
+        recursive=_function_is_recursive(ast),
     )
 
 
@@ -607,6 +616,22 @@ def _function_param_names(ast: FunctionNode, arity: int) -> tuple[str, ...]:
         f"_{index}" if param.name is None else param.name.text
         for index, param in enumerate(ast.params)
     )
+
+
+def _overload_param_names(
+    ast: FunctionNode,
+    overload: FunctionOverloadTyping,
+) -> tuple[str, ...]:
+    source = overload.overload
+    typ = overload.typ
+    if isinstance(source, Overload) and source.param_names:
+        return tuple(
+            f"_{index}" if name is None else name.text
+            for index, name in enumerate(source.param_names)
+        )
+    if not isinstance(typ, FunctionType) or typ.params is None:
+        return ()
+    return _function_param_names(ast, len(typ.params))
 
 
 def _static_param_names(overload: FunctionOverloadTyping) -> tuple[str, ...]:
@@ -714,6 +739,37 @@ def _function_element_tag_names(
             sorted(str(tag.name) for tag in ast.element_tags if not tag.absent)
         )
     return ()
+
+
+def _function_is_recursive(ast: FunctionNode) -> bool:
+    return any(
+        isinstance(annotation, AnnotationNode)
+        and annotation.name.text == "recursive"
+        for annotation in ast.annotations
+    )
+
+
+def _definition_has_annotation(definition: DefineNode, name: str) -> bool:
+    return any(
+        isinstance(annotation, AnnotationNode)
+        and annotation.name.text == name
+        for annotation in definition.annotations
+    )
+
+
+def _tupled_element_return_count(
+    node: ElementNode,
+    typed_node: TypedNode | None,
+) -> int | None:
+    if not any(
+        isinstance(annotation, AnnotationNode)
+        and annotation.name.text == "@@tupled"
+        for annotation in node.annotations
+    ):
+        return None
+    if isinstance(typed_node, TypedElementNode) and typed_node.overload is not None:
+        return len(typed_node.overload.actual_returns)
+    return None
 
 
 def _unwrap(node: ASTNode | TypedNode) -> ASTNode:

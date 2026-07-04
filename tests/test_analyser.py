@@ -1353,6 +1353,29 @@ getName $joe
 
         self.assertEqual(typed[0].typ, Fn((Number, Number), (Number,)))
 
+    def test_return_all_annotation_returns_full_function_stack(self):
+        typed = analyse(parse("@returnAll define pair => 1 2\npair"))
+
+        self.assertEqual(typed[0].typ, Fn((), (Number, Number)))
+        self.assertEqual(typed[-1].overload.actual_returns, (Number, Number))
+
+    def test_error_annotation_reports_selected_overload_message(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                '@error("no strings") define bad(x: String) -> String => $x\n'
+                '"hi" bad'
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, ["2:6: no strings"])
+
+    def test_tupled_element_annotation_wraps_static_returns(self):
+        typed = analyse(parse("define pair -> Number, Number => 1 2\n@@tupled pair"))
+
+        self.assertEqual(typed[-1].typ, Tup(Number, Number))
+
     def test_call_node_calls_function_from_stack_with_explicit_arguments(self):
         typed = analyse(
             [

@@ -10,6 +10,7 @@ from typing import Any
 import valiance.types as T
 from valiance.analysis.builtins import default_environment
 from valiance.asts import (
+    AnnotationNode,
     AssertNode,
     ASTNode,
     AtNode,
@@ -551,6 +552,8 @@ class Analyser:
             case CastNode():
                 return self._cast(branch, node)
             case FunctionNode():
+                if not self._validate_annotations(node.annotations, "fn", node):
+                    return {branch.append_typed(TypedNode(node, None))}
                 result = self._analyse_function_literal(branch, node)
                 if result is None:
                     return {branch.append_typed(TypedNode(node, None))}
@@ -668,6 +671,9 @@ class Analyser:
         name: Symbol,
         function_node: FunctionNode,
     ) -> set[AnalysisBranch]:
+        if not self._validate_annotations(node.annotations, "define", node):
+            return {branch.append_typed(TypedNode(node, None))}
+        function_node = _apply_definition_annotations(function_node, node.annotations)
         function_node = _genericize_function_node(function_node, node.generics)
         declared_overload = (
             _fully_typed_overload(function_node)
@@ -687,11 +693,29 @@ class Analyser:
             node.generics,
             node.generic_constraints,
         )
-        for overload in _callable_overloads(function.typ):
+        overload_typings = list(function.overloads)
+        for typing in function.overloads:
+            if not isinstance(typing.overload, T.Overload):
+                continue
+            overload = typing.overload
             overload = _with_generic_constraints(overload, generic_constraints)
+            overload = _with_annotation_metadata(overload, node.annotations)
             if overload not in self.env.overloads_for(name):
                 self.env.define_overload(name, overload)
-        typed_node = TypedFunctionNode(node, function.typ, function.overloads)
+            original_index = _overload_index(self.env.overloads_for(name), overload)
+            if _has_annotation(node.annotations, "commutative"):
+                for generated in _commutative_overloads(overload):
+                    if generated not in self.env.overloads_for(name):
+                        self.env.define_overload(name, generated)
+                    overload_typings.append(
+                        _commutative_overload_typing(
+                            name,
+                            overload,
+                            generated,
+                            original_index or 0,
+                        )
+                    )
+        typed_node = TypedFunctionNode(node, function.typ, tuple(overload_typings))
         return {typed_branch.append_typed(typed_node)}
 
     def _object_declaration(
@@ -918,6 +942,8 @@ class Analyser:
         owner: Symbol,
         definition: DefineNode,
     ) -> AnalysisBranch:
+        if not self._validate_annotations(definition.annotations, "define", definition):
+            return branch.append_typed(TypedNode(definition, None))
         owner_definition = self.env.lookup_object(owner)
         self_type = _declared_nominal(
             owner,
@@ -926,14 +952,19 @@ class Analyser:
         params = (FunctionParam(Symbol("self"), self_type),) + tuple(
             definition.function.params or ()
         )
-        function_node = _genericize_function_node(FunctionNode(
-            params=params,
-            body=definition.function.body,
-            returns=definition.function.returns,
-            where_clause=definition.function.where_clause,
-            element_tags=definition.function.element_tags,
-            location=definition.function.location,
-        ), definition.generics)
+        function_node = _apply_definition_annotations(
+            FunctionNode(
+                params=params,
+                body=definition.function.body,
+                returns=definition.function.returns,
+                where_clause=definition.function.where_clause,
+                element_tags=definition.function.element_tags,
+                annotations=definition.function.annotations,
+                location=definition.function.location,
+            ),
+            definition.annotations,
+        )
+        function_node = _genericize_function_node(function_node, definition.generics)
         self._friendly_owners = self._friendly_owners + (owner,)
         try:
             result = self._analyse_function_literal(branch, function_node)
@@ -947,10 +978,15 @@ class Analyser:
             definition.generic_constraints,
         )
         for name in (definition.name, Symbol(f"{owner}::{definition.name}")):
-            for overload in _callable_overloads(function.typ):
+            for typing in function.overloads:
+                if not isinstance(typing.overload, T.Overload):
+                    continue
                 self.env.define_overload(
                     name,
-                    _with_generic_constraints(overload, generic_constraints),
+                    _with_annotation_metadata(
+                        _with_generic_constraints(typing.overload, generic_constraints),
+                        definition.annotations,
+                    ),
                 )
         return typed_branch
 
@@ -1026,6 +1062,12 @@ class Analyser:
         if not overloads:
             self._diagnose(f"unknown element '{node.name}'", node)
             return set()
+        if not _valid_element_annotations(node.annotations):
+            self._diagnose(
+                f"unsupported element annotation on '{node.name}'",
+                node,
+            )
+            return set()
 
         modifier_args = self._modifier_argument_types(branch, node)
         if modifier_args is None:
@@ -1091,13 +1133,15 @@ class Analyser:
 
         results: set[AnalysisBranch] = set()
         for applied, popped, ordered_modifiers in winners:
+            if applied.overload.annotation_error is not None:
+                self._diagnose(applied.overload.annotation_error, node)
+                continue
+            actual_returns = _annotated_element_returns(node, applied.actual_returns)
             results.add(
-                popped.with_stack(
-                    popped.stack.push(*applied.actual_returns)
-                ).append_typed(
+                popped.with_stack(popped.stack.push(*actual_returns)).append_typed(
                     TypedElementNode(
                         node,
-                        _returns_result_type(applied.actual_returns),
+                        _returns_result_type(actual_returns),
                         applied,
                         _overload_index(overloads, applied.overload),
                         _specialize_modifier_arguments(
@@ -2140,6 +2184,25 @@ class Analyser:
             named_params,
             captures=outer.variables,
         )
+        recursive_overload = _recursive_overload(node, params)
+        if _has_annotation(node.annotations, "recursive"):
+            if recursive_overload is None:
+                self._diagnose(
+                    "@recursive requires explicit parameter and return types",
+                    node,
+                )
+                return None
+            variables, _diagnostic = variables.write(
+                Symbol("this"),
+                T.Fn(
+                    recursive_overload.params,
+                    recursive_overload.returns,
+                    recursive_overload.element_tags,
+                ),
+                block_local=False,
+            )
+            if variables is None:
+                return None
         for name in _static_body_variable_names(node):
             variables, _diagnostic = variables.write(
                 name,
@@ -2163,7 +2226,14 @@ class Analyser:
             origin=outer.origin,
         )
 
-        function_analyser = Analyser(self.env)
+        function_env = self.env
+        if recursive_overload is not None and _has_annotation(
+            node.annotations,
+            "recursive",
+        ):
+            function_env = self.env.child_scope()
+            function_env.define_overload(Symbol("this"), recursive_overload)
+        function_analyser = Analyser(function_env)
         function_analyser._friendly_owners = self._friendly_owners
         final = function_analyser.analyse_block(BranchSet.one(initial), node.body)
         signatures = self._function_signatures(node, final)
@@ -2184,6 +2254,7 @@ class Analyser:
             (),
             param_names=_function_param_names_for_overload(node, params),
             call_site_body=(outer, node),
+            annotation_error=_annotation_error_message(node.annotations),
         )
         typ = T.Overloads(overload)
         return FunctionAnalysis(
@@ -2263,6 +2334,7 @@ class Analyser:
                     set(node.element_tags)
                     | set(_typed_body_element_tags(branch.typed_body))
                 ),
+                annotation_error=_annotation_error_message(node.annotations),
             )
             signatures.setdefault(signature, branch.typed_body)
 
@@ -2279,6 +2351,8 @@ class Analyser:
         node: FunctionNode,
         branch: AnalysisBranch,
     ) -> tuple[tuple[T.Type, ...], AnalysisBranch] | None:
+        if _has_annotation(node.annotations, "returnAll"):
+            return branch.stack.items, branch
         if node.returns is None:
             return (branch.stack.items[-1:] if branch.stack else ()), branch
 
@@ -2302,6 +2376,52 @@ class Analyser:
                 return node.returns, branch
             return None
         return node.returns, branch
+
+    def _validate_annotations(
+        self,
+        annotations: tuple[ASTNode, ...],
+        target: str,
+        node: ASTNode,
+    ) -> bool:
+        allowed = {
+            "define": {
+                "recursive",
+                "self",
+                "error",
+                "warn",
+                "deprecated",
+                "returnAll",
+                "commutative",
+            },
+            "fn": {"recursive", "returnAll"},
+        }.get(target, set())
+        ok = True
+        for annotation in annotations:
+            if not isinstance(annotation, AnnotationNode):
+                continue
+            if annotation.name.text not in allowed:
+                self._diagnose(
+                    f"annotation '@{annotation.name}' cannot be used on {target}",
+                    annotation,
+                )
+                ok = False
+        if _has_annotation(annotations, "returnAll"):
+            function = node.function if isinstance(node, DefineNode) else node
+            if isinstance(function, FunctionNode) and function.returns is not None:
+                self._diagnose(
+                    "@returnAll cannot be used with an explicit return type",
+                    node,
+                )
+                ok = False
+        if _has_annotation(annotations, "commutative") and isinstance(
+            node,
+            DefineNode,
+        ):
+            params = node.function.params or ()
+            if any(param.name is None for param in params):
+                self._diagnose("@commutative requires named parameters", node)
+                ok = False
+        return ok
 
     def _diagnose(self, message: str, node: ASTNode | None = None) -> None:
         self.diagnostics.append(_diagnostic_message(message, node))
@@ -2371,6 +2491,7 @@ def _fully_typed_overload(node: FunctionNode) -> T.Overload | None:
         where_clause=node.where_clause,
         param_names=_function_param_names_for_overload(node, params),
         element_tags=node.element_tags,
+        annotation_error=_annotation_error_message(node.annotations),
     )
 
 
@@ -3102,6 +3223,7 @@ def _call_site_checked_overload_signature(
         overload.where_clause,
         (None,) * (len(call_params) - len(overload.params)) + overload.param_names,
         element_tags=overload.element_tags,
+        annotation_error=overload.annotation_error,
     )
 
 
@@ -3392,6 +3514,7 @@ def _substitute_overload_ranks(
         frozenset(
             _substitute_rank_values_in_element_tags(overload.element_tags, ranks)
         ),
+        overload.annotation_error,
     )
 
 
@@ -4295,6 +4418,173 @@ def _with_generic_constraints(
         overload.param_names,
         overload.call_site_body,
         overload.element_tags,
+        overload.annotation_error,
+    )
+
+
+def _annotation_nodes(annotations: tuple[ASTNode, ...]) -> tuple[AnnotationNode, ...]:
+    return tuple(
+        annotation
+        for annotation in annotations
+        if isinstance(annotation, AnnotationNode)
+    )
+
+
+def _has_annotation(annotations: tuple[ASTNode, ...], name: str) -> bool:
+    return any(
+        annotation.name.text == name
+        for annotation in _annotation_nodes(annotations)
+    )
+
+
+def _annotation_error_message(annotations: tuple[ASTNode, ...]) -> str | None:
+    for annotation in _annotation_nodes(annotations):
+        if annotation.name.text != "error":
+            continue
+        for arg in annotation.args:
+            if isinstance(arg, StringLiteralNode):
+                return arg.value
+        return "annotated overload is unavailable"
+    return None
+
+
+def _with_annotation_metadata(
+    overload: T.Overload,
+    annotations: tuple[ASTNode, ...],
+) -> T.Overload:
+    message = _annotation_error_message(annotations)
+    if message is None and not _has_annotation(annotations, "commutative"):
+        return overload
+    return T.Overload(
+        overload.params,
+        overload.returns,
+        overload.generic_constraints,
+        overload.where_clause,
+        overload.param_names,
+        overload.call_site_body,
+        overload.element_tags,
+        message,
+    )
+
+
+def _valid_element_annotations(annotations: tuple[ASTNode, ...]) -> bool:
+    return all(
+        isinstance(annotation, AnnotationNode)
+        and annotation.name.text in {"@@tupled"}
+        for annotation in annotations
+    )
+
+
+def _annotated_element_returns(
+    node: ElementNode,
+    returns: tuple[T.Type, ...],
+) -> tuple[T.Type, ...]:
+    if _has_annotation(node.annotations, "@@tupled"):
+        return (T.Tup(*returns),)
+    return returns
+
+
+def _apply_definition_annotations(
+    function: FunctionNode,
+    annotations: tuple[ASTNode, ...],
+) -> FunctionNode:
+    merged = function.annotations + annotations
+    body = function.body
+    returns = function.returns
+    if _has_annotation(annotations, "self") and function.params:
+        self_param = function.params[0]
+        if self_param.name == Symbol("self"):
+            body = (*body, GetVariableNode(Symbol("self"), location=function.location))
+            returns = (
+                (*returns, self_param.typ)
+                if returns is not None and self_param.typ is not None
+                else returns
+            )
+    if (
+        merged == function.annotations
+        and body == function.body
+        and returns == function.returns
+    ):
+        return function
+    return replace(function, annotations=merged, body=body, returns=returns)
+
+
+def _recursive_overload(
+    node: FunctionNode,
+    params: tuple[T.Type, ...],
+) -> T.Overload | None:
+    if node.returns is None:
+        return None
+    return T.Overload(
+        params,
+        node.returns,
+        where_clause=node.where_clause,
+        param_names=_function_param_names_for_overload(node, params),
+        element_tags=node.element_tags,
+        annotation_error=_annotation_error_message(node.annotations),
+    )
+
+
+def _commutative_overloads(overload: T.Overload) -> tuple[T.Overload, ...]:
+    if len(overload.params) < 2:
+        return ()
+    generated: list[T.Overload] = []
+    seen: set[tuple[T.Type, ...]] = {overload.params}
+    names = overload.param_names or tuple(None for _ in overload.params)
+    for order in permutations(range(len(overload.params))):
+        if order == tuple(range(len(overload.params))):
+            continue
+        params = tuple(overload.params[index] for index in order)
+        if params in seen:
+            continue
+        seen.add(params)
+        generated.append(
+            T.Overload(
+                params,
+                overload.returns,
+                overload.generic_constraints,
+                overload.where_clause,
+                tuple(names[index] for index in order),
+                ("commutative", tuple(order)),
+                overload.element_tags,
+                overload.annotation_error,
+            )
+        )
+    return tuple(generated)
+
+
+def _commutative_overload_typing(
+    name: Symbol,
+    original: T.Overload,
+    generated: T.Overload,
+    original_index: int,
+) -> FunctionOverloadTyping:
+    body: list[TypedNode] = []
+    names = original.param_names or tuple(None for _ in original.params)
+    for param_name, typ in zip(names, original.params, strict=True):
+        if param_name is None:
+            continue
+        body.append(TypedNode(GetVariableNode(param_name), typ))
+    body.append(
+        TypedElementNode(
+            ElementNode(name),
+            _returns_result_type(original.returns),
+            T.AppliedOverload(
+                original,
+                {},
+                original.params,
+                original.returns,
+                original.returns,
+                (),
+                element_tags=original.element_tags,
+            ),
+            original_index,
+        )
+    )
+    return FunctionOverloadTyping(
+        T.Fn(generated.params, generated.returns, generated.element_tags),
+        tuple(body),
+        generated,
     )
 
 
@@ -4324,6 +4614,7 @@ def _genericize_function_node(
         element_tags=frozenset(
             _genericize_element_tags(function.element_tags, generics)
         ),
+        annotations=function.annotations,
         location=function.location,
     )
 

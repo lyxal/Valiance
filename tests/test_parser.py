@@ -1,6 +1,7 @@
 import unittest
 
 from valiance.asts import (
+    AnnotationNode,
     AssertNode,
     AtNode,
     BindingPatternNode,
@@ -216,6 +217,22 @@ class ParserTests(unittest.TestCase):
         [node] = parse("[] as Number+")
 
         self.assertEqual(node, ListLiteralNode((), C(ListExactType, Number)))
+
+    def test_parses_function_and_element_annotations(self):
+        [function] = parse("@recursive fn (:Number) -> Number => this")
+        [element] = parse("@@tupled foo")
+
+        self.assertEqual(
+            function.annotations,
+            (AnnotationNode(Symbol("recursive")),),
+        )
+        self.assertEqual(
+            element,
+            ElementNode(
+                Symbol("foo"),
+                annotations=(AnnotationNode(Symbol("@@tupled")),),
+            ),
+        )
 
     def test_parses_parentheses_as_grouping(self):
         self.assertEqual(

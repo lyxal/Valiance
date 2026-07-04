@@ -382,6 +382,65 @@ $value add_one
             [Decimal("42")],
         )
 
+    def test_recursive_function_code_binds_this_at_runtime(self):
+        inner = FunctionCode(
+            (
+                Instruction(OpCode.LOAD_ELEMENT, "this"),
+                Instruction(OpCode.RETURN),
+            ),
+            recursive=True,
+        )
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.MAKE_FUNCTION, inner),
+                    Instruction(OpCode.CALL),
+                    Instruction(OpCode.RETURN),
+                )
+            )
+        )
+
+        [value] = run(program)
+
+        self.assertIs(value.globals["this"], value)
+
+    def test_tupled_annotation_wraps_element_returns_at_runtime(self):
+        self.assertEqual(
+            execute(
+                """
+define pair -> Number, Number => 1 2
+@@tupled pair
+"""
+            ),
+            [(Decimal("1"), Decimal("2"))],
+        )
+
+    def test_commutative_annotation_generates_runtime_wrapper(self):
+        self.assertEqual(
+            execute(
+                """
+@commutative define choose(left: Number, right: String) -> String => $right
+"ok" 1 choose
+"""
+            ),
+            ["ok"],
+        )
+
+    def test_self_annotation_returns_object_friendly_receiver(self):
+        stack = execute(
+            """
+object Box =>
+  $value: Number
+  @self define touch => end
+end
+Box(7)
+touch
+$.value
+"""
+        )
+
+        self.assertEqual(stack, [Decimal("7")])
+
     def test_executes_object_default_constructor_and_field_access(self):
         self.assertEqual(
             execute(

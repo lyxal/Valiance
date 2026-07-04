@@ -231,6 +231,7 @@ class Overload:
     )
     call_site_body: Any = field(default=None, compare=False, hash=False)
     element_tags: frozenset[ElementTag] = field(default_factory=frozenset[ElementTag])
+    annotation_error: str | None = None
 
 
 @dataclass(frozen=True)

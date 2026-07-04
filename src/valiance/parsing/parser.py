@@ -171,7 +171,7 @@ class Parser:
                 self._object_like(self._previous, self._previous.value, annotations),
             )
         if self._match_ident("fn"):
-            return (self._function(self._previous),)
+            return (self._function(self._previous, annotations),)
         if self._match_ident("if"):
             return (self._if(self._previous),)
         if self._match_ident("assert"):
@@ -286,6 +286,7 @@ class Parser:
                 returns=returns,
                 where_clause=where_clause,
                 element_tags=frozenset(element_tags),
+                annotations=annotations,
                 location=_loc(start),
             ),
             annotations,
@@ -484,7 +485,11 @@ class Parser:
         self._consume_optional_end()
         return tuple(members)
 
-    def _function(self, start: Token) -> FunctionNode:
+    def _function(
+        self,
+        start: Token,
+        annotations: tuple[ASTNode, ...] = (),
+    ) -> FunctionNode:
         params = self._params() if self._match(TokenKind.LPAREN) else None
         element_tags = self._function_element_tags()
         returns = self._returns()
@@ -495,6 +500,7 @@ class Parser:
             returns=returns,
             where_clause=where_clause,
             element_tags=element_tags,
+            annotations=annotations,
             body=self._body(),
             location=_loc(start),
         )
@@ -985,6 +991,49 @@ class Parser:
                     f"empty grouping is invalid at {token.line}:{token.column}"
                 )
             return _ChainPiece(grouped, True)
+        if self._check(TokenKind.AT) and self._peek(1).kind is TokenKind.AT:
+            start = self._advance()
+            self._advance()
+            annotation_name = self._symbol("expected annotation name")
+            annotation = AnnotationNode(
+                Symbol(f"@@{annotation_name.text}"),
+                (),
+                location=_loc(start),
+            )
+            if not self._match(TokenKind.IDENT, TokenKind.OP):
+                self._error("element annotation must be followed by an element")
+            token = self._previous
+            name = (
+                self._operator_run(token)
+                if token.kind is TokenKind.OP
+                else self._qualified_symbol(token)
+            )
+            disambiguation = self._element_disambiguation(self._previous)
+            return _ChainPiece(
+                (
+                    ElementNode(
+                        name,
+                        (),
+                        disambiguation,
+                        (annotation,),
+                        location=_loc(token),
+                    ),
+                ),
+                is_element=True,
+            )
+        if self._match(TokenKind.AT):
+            start = self._previous
+            name = self._symbol("expected annotation name")
+            args: tuple[ASTNode, ...] = ()
+            if self._match(TokenKind.LPAREN):
+                args = _flatten(self._argument_expressions(TokenKind.RPAREN))
+            annotation = AnnotationNode(name, args, location=_loc(start))
+            if not self._match_ident("fn"):
+                self._error("annotation must be followed by fn in expression position")
+            return _ChainPiece(
+                (self._function(self._previous, (annotation,)),),
+                True,
+            )
         if self._match_ident("fn"):
             return _ChainPiece((self._function(self._previous),), True)
         if self._match_ident("if"):
@@ -1355,7 +1404,8 @@ class Parser:
 
     def _annotations(self) -> tuple[ASTNode, ...]:
         annotations: list[ASTNode] = []
-        while self._match(TokenKind.AT):
+        while self._check(TokenKind.AT) and self._peek(1).kind is not TokenKind.AT:
+            self._advance()
             start = self._previous
             name = self._symbol("expected annotation name")
             args: tuple[ASTNode, ...] = ()
