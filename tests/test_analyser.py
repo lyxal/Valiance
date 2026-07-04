@@ -2097,6 +2097,26 @@ $n
             ["1:1: module 'math' has no public component 'hidden'"],
         )
 
+    def test_imports_python_backed_standard_library_namespace(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse('import { std.regex }\n"a+" "aaa" regex.matches')
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Boolean)
+
+    def test_python_backed_standard_library_runtime_names_are_not_global(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse('"a+" "aaa" std.regex.matches'))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["1:12: unknown element 'std.regex.matches'"],
+        )
+
     def test_inline_code_cannot_use_local_imports_without_source_file(self):
         analyser = Analyser(module_loader=ModuleLoader())
 

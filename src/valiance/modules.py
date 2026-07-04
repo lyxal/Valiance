@@ -56,28 +56,44 @@ class ModuleLoader:
         current_file: Path | None = None,
     ) -> ModuleExports:
         source_file = self.resolve(path, current_file=current_file)
+        native_exports = _native_std_exports(path)
         if source_file in self._cache:
             return self._cache[source_file]
         if source_file in self._loading:
             return ModuleExports(_module_name(path))
+        if native_exports is not None and not source_file.exists():
+            return native_exports
         self._loading.add(source_file)
         try:
             source = source_file.read_text(encoding="utf-8")
             program = parse(source)
             from valiance.analysis import Analyser
+            from valiance.analysis.builtins import default_environment
+            from valiance.stdlib_native import install_native_stdlib
 
-            analyser = Analyser(module_loader=self, source_file=source_file)
+            env = None
+            if path.parts and path.parts[0] == "std":
+                env = install_native_stdlib(
+                    default_environment().child_scope(),
+                    path.parts[-1],
+                )
+            analyser = Analyser(env=env, module_loader=self, source_file=source_file)
             typed = analyser.analyse(program)
             if analyser.diagnostics:
                 joined = "; ".join(analyser.diagnostics)
                 raise ModuleLoadError(f"{source_file}: {joined}")
+            definitions = _module_definitions(program, typed)
+            if native_exports is not None:
+                definitions = native_exports.definitions + definitions
             exports = ModuleExports(
                 _module_name(path),
-                _module_definitions(program, typed),
+                definitions,
             )
             self._cache[source_file] = exports
             return exports
         except OSError as exc:
+            if native_exports is not None:
+                return native_exports
             message = f"could not read module {source_file}: {exc}"
             raise ModuleLoadError(message) from exc
         finally:
@@ -212,3 +228,16 @@ def _module_name(path: ImportPath) -> str:
     if path.root == Symbol("~"):
         return "~" + ".".join(path.parts)
     return ".".join(path.parts)
+
+
+def _native_std_exports(path: ImportPath) -> ModuleExports | None:
+    if path.root is not None:
+        return None
+    if len(path.parts) != 2 or path.parts[0] != "std":
+        return None
+    from valiance.stdlib_native import native_module_exports
+
+    exports = native_module_exports(path.parts[1])
+    if isinstance(exports, ModuleExports):
+        return exports
+    return None

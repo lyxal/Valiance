@@ -153,6 +153,25 @@ T.Fn((T.TypeVariable("Item"),), (T.TypeVariable("Mapped"),))
 Avoid reaching for `T.C(...)`, `T.V(...)`, or raw `T.DataTag(...)` in built-ins
 unless the readable helper does not exist yet.
 
+Standard-library modules are separate from built-ins. Do not add importable
+stdlib functions to `analysis/builtins.py` just because their runtime behavior is
+implemented in Python. Built-ins are globally available; stdlib functions must be
+imported through `import { std.name }`.
+
+Stdlib modules live in `src/valiance/std` and can be authored three ways:
+
+- Python-only: `module.py` declares functions with `@stdlib_element(...)`.
+- Valiance-only: `module.vlnc` contains ordinary `public define` declarations.
+- Mixed: `module.py` provides private native hooks and `module.vlnc` provides
+  Valiance definitions that call those hooks.
+
+`ModuleLoader` is the analysis boundary for this. For `std.foo`, it first asks
+`valiance.stdlib_native` for Python-backed exports. If `src/valiance/std/foo.vlnc`
+also exists, the loader analyses it in an environment that contains only that
+module's native hooks, then combines the Python and Valiance exports. The native
+hook names are therefore visible while analysing the stdlib module itself, but
+ordinary user code still sees them only through imported module exports.
+
 ## Element Application
 
 Element application happens in `Analyser._element`:

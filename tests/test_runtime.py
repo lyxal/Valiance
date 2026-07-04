@@ -366,6 +366,59 @@ $name = "Valiance"
 
         self.assertEqual(stack, [Decimal("42")])
 
+    def test_executes_python_backed_standard_library_regex_helpers(self):
+        stack = execute(
+            """
+import { std.regex }
+"a+" "aaa" regex.matches
+"[0-9]+" "abc123" regex.first
+"[,-]" "a,b-c" regex.split
+"""
+        )
+
+        self.assertEqual(len(stack), 3)
+        self.assertEqual(stack[0], Decimal("1"))
+        self.assertIsInstance(stack[1], ObjectValue)
+        self.assertEqual(stack[1].type_name, "Some")
+        self.assertEqual(stack[1].fields["value"], "123")
+        self.assertEqual(stack[2], ["a", "b", "c"])
+
+    def test_executes_python_backed_standard_library_trig_helpers(self):
+        stack = execute(
+            """
+import { std.trig }
+0 trig.sin
+0 trig.cos
+trig.pi
+"""
+        )
+
+        self.assertEqual(stack[0], Decimal("0.0"))
+        self.assertEqual(stack[1], Decimal("1.0"))
+        self.assertGreater(stack[2], Decimal("3.14"))
+
+    def test_executes_valiance_only_standard_library_module(self):
+        stack = execute(
+            """
+import { std.arithmetic }
+5 arithmetic.square
+3 arithmetic.cube
+"""
+        )
+
+        self.assertEqual(stack, [Decimal("25"), Decimal("27")])
+
+    def test_executes_mixed_python_and_valiance_standard_library_module(self):
+        stack = execute(
+            """
+import { std.text }
+"  hi  " text.trim
+"  hi  " text.exclaim
+"""
+        )
+
+        self.assertEqual(stack, ["hi", "hi!"])
+
     def test_compiler_requires_typed_nodes(self):
         with self.assertRaises(CompileError):
             compile_program(parse("1"))

@@ -105,6 +105,19 @@ The runtime implementation is small, but several files must evolve together.
 - `default_environment()` publishes static overloads to the analyser.
 - `runtime_elements()` publishes runtime-capable built-ins to the VM.
 
+`src/valiance/stdlib_native.py`
+
+- Declares Python-backed standard-library functions without making them
+  globally available built-ins.
+- `@stdlib_element(...)` records importable native functions for modules under
+  `src/valiance/std`.
+- `native_module_exports()` synthesizes typed function exports for Python-only
+  stdlib modules.
+- `install_native_stdlib()` installs one std module's private native hooks while
+  analysing a mixed `.py` + `.vlnc` stdlib module.
+- `runtime_stdlib_elements()` publishes native stdlib hooks to the VM runtime
+  globals so imported wrapper functions can execute.
+
 `src/valiance/main.py`
 
 - Wires the CLI to analysis, codegen, VM execution, and bytecode files.
@@ -127,6 +140,14 @@ Built-ins have one source of truth.
 Do not reintroduce separate static-only and runtime-only definitions for the
 same element. Add built-ins in `analysis/builtins.py` so the analyser and VM see
 the same element set.
+
+Standard-library functions are not built-ins.
+
+If an operation must be imported from `std.*`, put Python-backed declarations in
+`src/valiance/std/<module>.py` with `@stdlib_element(...)`, Valiance definitions
+in `src/valiance/std/<module>.vlnc`, or both. Do not put these operations in
+`analysis/builtins.py`; that would make them globally visible and bypass the
+module system.
 
 Overload resolution should be a compile-time decision.
 
@@ -295,6 +316,47 @@ comment near the top of `builtins.py`. Do not add per-function
 Use the helpers from `valiance.runtime_values` for collection validation. Do not
 write new runtime built-ins that check only `isinstance(value, list)` unless the
 operation truly requires Python's eager list object specifically.
+
+## Adding A Python-Backed Standard Library Function
+
+Use this path for importable stdlib modules such as `std.regex` and `std.trig`.
+The implementation lives beside any Valiance source for that module, not in the
+built-in catalogue.
+
+1. Add or update `src/valiance/std/<module>.py`.
+2. Import `stdlib_element` from `valiance.stdlib_native` and readable type
+   builders from `valiance.types as T`.
+3. Write a runtime implementation with the same shape as built-ins:
+   `(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]`.
+4. Decorate it with `@stdlib_element(name, params, returns, param_names=...)`.
+5. If the module also has Valiance definitions, add
+   `src/valiance/std/<module>.vlnc` and use ordinary `public define`
+   declarations. That `.vlnc` file may call native hooks as `std.module.name`;
+   those names are available only while analysing that stdlib module.
+6. Add analyser/runtime tests that import the module through `import { std.foo }`
+   rather than calling the native hook directly.
+
+Example Python-only stdlib function:
+
+```python
+@stdlib_element("sin", (T.Number,), (T.Number,), param_names=("n",))
+def _sin(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (Decimal(str(math.sin(float(args[0])))),)
+```
+
+Example mixed stdlib module:
+
+```python
+@stdlib_element("trim", (T.String,), (T.String,), param_names=("value",))
+def _trim(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (args[0].strip(),)
+```
+
+```valiance
+public define exclaim(value: String) -> String =>
+  $value | std.text.trim | + "!"
+end
+```
 
 ### Adding A Call-Site Checked Built-In
 

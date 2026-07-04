@@ -25,6 +25,7 @@ from valiance.runtime_values import (
     is_eager_sequence,
     is_list_like,
 )
+from valiance.stdlib_native import runtime_stdlib_elements
 
 
 class RuntimeError(_py_builtins.RuntimeError):
@@ -215,7 +216,9 @@ class VirtualMachine:
                 element,
                 RuntimeContext(self.output, self.call_value, self.format_value),
             )
-            for name, element in runtime_elements().items()
+            for name, element in (
+                runtime_elements() | runtime_stdlib_elements()
+            ).items()
         }
 
     def run(self, program: Program) -> list[Any]:

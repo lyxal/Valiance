@@ -596,7 +596,10 @@ Known parser-facing gaps include:
 - `_` placeholders and parent-stack substitution.
 - Quick functions using `'chain`.
 - Cast syntax such as `as Type` and `as! Type`.
-- Import/module syntax.
+- Advanced import/module syntax such as selective overload imports,
+  `except` exclusions, package imports, and tag-associated imports. Basic import
+  blocks, namespace imports, component imports, relative source imports, and
+  `std.*` imports are implemented.
 - `spawn`, `concurrent`, `external`, and user-defined `cast` declarations.
 
 When implementing one of these, prefer adding the parser shape first, then

@@ -1,0 +1,7 @@
+public define square(n: Number) -> Number =>
+  $n $n *
+end
+
+public define cube(n: Number) -> Number =>
+  $n $n * $n *
+end

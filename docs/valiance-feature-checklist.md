@@ -9,7 +9,7 @@ Codegen/runtime audit note: as of 2026-06-28, checked runtime items are limited
 to behavior that is compiled to bytecode and executed by the VM, or saved and
 loaded through the portable bytecode format.
 
-Current audit total: 367 / 729 items complete (50.3%).
+Current audit total: 383 / 734 items complete (52.2%).
 
 ## 1. Lexer, parser, and general syntax
 
@@ -687,21 +687,21 @@ Current audit total: 367 / 729 items complete (50.3%).
 
 ## 39. Imports and modules
 
-- [ ] Treat each source file as a module.
-- [ ] Parse import blocks.
-- [ ] Support importing entire namespaces.
-- [ ] Support importing individual components.
-- [ ] Support importing several components using bracket syntax.
+- [x] Treat each source file as a module.
+- [x] Parse import blocks.
+- [x] Support importing entire namespaces.
+- [x] Support importing individual components.
+- [x] Support importing several components using bracket syntax.
 - [ ] Support selective element-overload imports.
 - [ ] Support generic wildcard overload signatures in imports.
 - [ ] Support importing object-to-trait implementations.
-- [ ] Support local relative module paths.
-- [ ] Support project-root-relative paths using `~`.
-- [ ] Support standard-library paths beginning with `std`.
+- [x] Support local relative module paths.
+- [x] Support project-root-relative paths using `~`.
+- [x] Support standard-library paths beginning with `std`.
 - [ ] Support VCS package paths.
 - [ ] Support installed-package paths beginning with `@`.
-- [ ] Support namespace-qualified access.
-- [ ] Keep imports private by default.
+- [x] Support namespace-qualified access.
+- [x] Keep imports private by default.
 - [ ] Support public re-exports.
 - [ ] Detect conflicting imported overloads.
 - [ ] Detect conflicting imported trait implementations.
@@ -877,4 +877,9 @@ Current audit total: 367 / 729 items complete (50.3%).
 - [ ] Provide type inspection required by matching and multimethods.
 - [ ] Provide standard fault, result, option, task, and channel types.
 - [ ] Provide the standard traits referenced by the language.
-- [ ] Provide the `std` module namespace and module-resolution behavior.
+- [x] Provide the `std` module namespace and module-resolution behavior.
+- [x] Provide Python-backed standard-library modules using `@stdlib_element`.
+- [x] Support Valiance-only standard-library modules.
+- [x] Support mixed Python and Valiance standard-library modules.
+- [x] Provide initial `std.regex` helpers.
+- [x] Provide initial `std.trig` helpers.
