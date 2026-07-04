@@ -14,6 +14,7 @@ from valiance.analysis import (
     default_environment,
 )
 from valiance.analysis.analyser import _branch_argument_substitution
+from valiance.analysis.annotations import AnnotationSpec, register_annotation
 from valiance.analysis.builtins import BUILTIN_ELEMENTS
 from valiance.asts import (
     BreakNode,
@@ -69,6 +70,7 @@ from valiance.types import (
     V,
     Variance,
     WithTag,
+    assignable,
     optional,
 )
 from valiance.types.default_types import Boolean
@@ -1375,6 +1377,50 @@ getName $joe
         typed = analyse(parse("define pair -> Number, Number => 1 2\n@@tupled pair"))
 
         self.assertEqual(typed[-1].typ, Tup(Number, Number))
+
+    def test_err_type_annotation_adds_message_field_and_err_impl(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("@errType object DivisionByZeroError => end"))
+
+        error_type = N(Symbol("DivisionByZeroError"))
+        definition = analyser.env.lookup_object(Symbol("DivisionByZeroError"))
+        self.assertIsNotNone(definition)
+        self.assertEqual(definition.attribute_type(Symbol("message")), String)
+        self.assertTrue(assignable(error_type, N(Symbol("Err")), analyser.env.context))
+        self.assertTrue(analyser.env.overloads_for(Symbol("message")))
+
+    def test_err_type_variant_marks_members_and_parent_as_err(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+@errType variant DBError =>
+  ConnectionClosedError => end
+end
+"""
+            )
+        )
+
+        self.assertTrue(
+            assignable(N(Symbol("DBError")), N(Symbol("Err")), analyser.env.context)
+        )
+        self.assertTrue(
+            assignable(
+                N(Symbol("DBError.ConnectionClosedError")),
+                N(Symbol("Err")),
+                analyser.env.context,
+            )
+        )
+
+    def test_annotation_registry_accepts_external_specs(self):
+        register_annotation(AnnotationSpec("pluginCheck", frozenset({"define"})))
+        analyser = Analyser()
+
+        analyser.analyse(parse("@pluginCheck define value -> Number => 1"))
+
+        self.assertEqual(analyser.diagnostics, [])
 
     def test_call_node_calls_function_from_stack_with_explicit_arguments(self):
         typed = analyse(

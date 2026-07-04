@@ -18,6 +18,12 @@ Ordinary, non-inference analysis is just the one-branch case.
   Declares the default element environment and runtime implementations for
   built-ins.
 
+- `src/valiance/analysis/annotations.py`
+  Declares the compiler annotation registry and built-in annotation handlers.
+  New compiler-owned annotations should register `AnnotationSpec` values here;
+  future plugin loading should call the same `register_annotation(...)` hook
+  rather than adding annotation names directly to the analyser.
+
 - `src/valiance/types/nodes.py`
   Defines the type model dataclasses.
 
@@ -755,6 +761,46 @@ tag upward.
 The parser accepts explicit function element tags and `eager define` attaches
 `Eager`. Full source declarations for property/companion element tags and the
 rule preventing direct user attachment of companion tags are still future work.
+
+## Annotations
+
+Annotations are parsed as `AnnotationNode` values and handled through
+`analysis/annotations.py`. The analyser calls the registry at four extension
+points:
+
+- validation for a target kind such as `define`, `fn`, `object`, `variant`, or
+  `element`
+- function rewriting before function analysis
+- object/variant rewriting before declaration analysis
+- overload metadata rewriting before overloads are registered
+
+This keeps annotation behavior out of the analyser dispatch. To add a built-in
+annotation, register an `AnnotationSpec` in `annotations.py`; future
+user-defined compiler plugins should be able to register specs through the same
+`register_annotation(...)` API.
+
+Implemented annotations:
+
+- `@recursive`: allows a function with explicit parameter and return types to
+  bind `this` to the current recursive callable.
+- `@self`: for object-friendly definitions, appends `$self` to the function
+  body and return type when possible.
+- `@@tupled`: element annotation that wraps all selected element returns into a
+  fixed tuple.
+- `@error`: stores an annotation-provided compile-time error on the overload;
+  using a matching overload reports that message.
+- `@returnAll`: changes omitted-return inference to return every remaining
+  stack value.
+- `@commutative`: generates argument-order overload permutations and typed
+  wrapper bodies for named parameters.
+- `@errType`: on objects, inserts a `message: String` field, synthesizes a
+  `message -> String` object-friendly element, and records an `Err`
+  implementation. On variants, it adds a `message: String` field to each member
+  and records `Err` implementations for the parent variant and generated member
+  types.
+
+Warnings are still represented only as accepted annotations (`@warn` and
+`@deprecated`) because the analyser currently has no warning channel.
 
 ## Row Polymorphism And Fields
 

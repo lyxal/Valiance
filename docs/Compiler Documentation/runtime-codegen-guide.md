@@ -31,6 +31,8 @@ The runtime implementation is small, but several files must evolve together.
   analysed function type.
 - `FunctionCode.cycle_params` enables the stack-underflow parameter cycling used
   by explicit-parameter functions such as `define triple(:Number) => * 3`.
+- `FunctionCode.recursive` marks functions produced from `@recursive`; the VM
+  binds `this` to the created function value when this flag is set.
 
 `src/valiance/runtime/compiler.py`
 
@@ -53,6 +55,10 @@ The runtime implementation is small, but several files must evolve together.
   analysed break result shape.
 - For typed functions with multiple inferred overload bodies, codegen currently
   picks the first typed overload body.
+- `@@tupled` element annotations compile as the resolved element call followed
+  by `BUILD_TUPLE` over the selected overload's return arity.
+- Object-friendly `@self` definitions are mirrored in codegen so synthesized
+  receiver returns survive into runtime bytecode.
 
 `src/valiance/runtime/vm.py`
 
@@ -88,12 +94,14 @@ The runtime implementation is small, but several files must evolve together.
 `src/valiance/runtime/serialization.py`
 
 - Encodes `Program` as portable binary bytecode.
-- The current magic/version marker is `b"VLNCBC\x05"`.
+- The current magic/version marker is `b"VLNCBC\x06"`.
 - Opcodes are one byte each in `_OP_TO_BYTE`.
 - Instruction arguments are tagged binary values, not Python pickle, repr, or
   JSON.
 - Nested `FunctionCode` values are serialized as tagged values, which is how
   function literals survive bytecode round trips.
+- Function records include the `recursive` flag. Bump the magic/version marker
+  again if function metadata changes incompatibly.
 
 `src/valiance/analysis/builtins.py`
 

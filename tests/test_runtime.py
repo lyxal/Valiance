@@ -494,6 +494,18 @@ $.value
 
         self.assertEqual(stack, [Decimal("7")])
 
+    def test_err_type_annotation_synthesizes_runtime_message_element(self):
+        self.assertEqual(
+            execute(
+                """
+@errType object DivisionByZeroError => end
+DivisionByZeroError("division by zero")
+message
+"""
+            ),
+            ["division by zero"],
+        )
+
     def test_executes_object_default_constructor_and_field_access(self):
         self.assertEqual(
             execute(

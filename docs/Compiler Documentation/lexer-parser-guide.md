@@ -24,6 +24,9 @@ codegen, and runtime.
 - Owns source-to-AST lowering and type-expression parsing.
 - Converts chain syntax into normal stack-order AST.
 - Attaches `SourceLocation` to parser-produced AST nodes.
+- Parses `@name` annotations before declarations/function literals and
+  `@@name` annotations before element calls. Semantics live in
+  `analysis/annotations.py`, not in the parser.
 
 `src/valiance/asts/nodes.py`
 
@@ -247,6 +250,8 @@ you are changing. Most regressions here look like elements in the wrong order.
 - `break` and `return`
 - Data-tag application: `#tag` and `#!tag`
 - Elements, element call syntax, niladic element names, and `:` modifiers
+- Function annotations such as `@recursive fn ...`
+- Element annotations such as `@@tupled foo`
 - Whitespace-free runs of `OP` tokens, merged by `_operator_run()` into one
   `Symbol`; whitespace ends the run
 
@@ -564,6 +569,13 @@ Do not silently accept empty call syntax.
 Use `_argument_expressions`, not `_comma_expressions`, for element calls,
 variable calls, annotation arguments, and other places where empty parentheses
 would imply niladic behavior.
+
+Do not give annotations parser semantics.
+
+The parser records `AnnotationNode` values on declarations, function literals,
+and annotated element nodes. Validation and behavior belong in
+`analysis/annotations.py` so built-in annotations and future compiler-plugin
+annotations use the same extension point.
 
 
 Do not infer adjacency from whitespace-skipping lookahead.

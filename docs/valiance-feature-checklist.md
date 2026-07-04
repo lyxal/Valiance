@@ -1,15 +1,6 @@
 # Valiance feature checklist
 
-Analysis audit note: as of 2026-06-28, checked items include parser support
-and static-analysis/type-system support that exists in the current
-implementation. Runtime-only behavior and source syntax that is merely planned
-remain unchecked unless the analyser can reason about it today.
-
-Codegen/runtime audit note: as of 2026-06-28, checked runtime items are limited
-to behavior that is compiled to bytecode and executed by the VM, or saved and
-loaded through the portable bytecode format.
-
-Current audit total: 383 / 734 items complete (52.2%).
+Current audit total: 398 / 734 items complete (54.2%).
 
 ## 1. Lexer, parser, and general syntax
 
@@ -618,27 +609,29 @@ Current audit total: 383 / 734 items complete (52.2%).
 ## 35. Annotations
 
 - [x] Parse annotations on definitions.
-- [ ] Implement `@recursive`.
+- [x] Parse annotations on function literals and element invocations.
+- [x] Provide an extensible Python annotation registry for built-ins and future compiler plugins.
+- [x] Implement `@recursive`.
 - [ ] Enforce recursive-call restrictions unless `@recursive` is present.
-- [ ] Implement `@self`.
-- [ ] Supply or transform the implicit object receiver as specified.
-- [ ] Implement `@@tupled`.
+- [x] Implement `@self`.
+- [x] Supply or transform the implicit object receiver as specified.
+- [x] Implement `@@tupled`.
 - [ ] Generate tuple-taking forms as specified.
-- [ ] Implement `@error`.
-- [ ] Emit compile errors using annotation-provided diagnostics.
+- [x] Implement `@error`.
+- [x] Emit compile errors using annotation-provided diagnostics.
 - [ ] Implement `@warn`.
 - [ ] Emit compile warnings using annotation-provided diagnostics.
 - [ ] Implement `@deprecated`.
 - [ ] Emit deprecation diagnostics at use sites.
-- [ ] Implement `@returnAll`.
-- [ ] Return all remaining function-stack values where requested.
-- [ ] Implement `@errType`.
-- [ ] Apply error-type transformations or constraints.
+- [x] Implement `@returnAll`.
+- [x] Return all remaining function-stack values where requested.
+- [x] Implement `@errType`.
+- [x] Apply implemented error-type transformations or constraints.
 - [ ] Implement `@mustcall`.
 - [ ] Warn or error when marked results are discarded.
-- [ ] Implement `@commutative`.
-- [ ] Generate every required argument-order overload permutation.
-- [ ] Apply normal overload resolution to generated permutations.
+- [x] Implement `@commutative`.
+- [x] Generate every required argument-order overload permutation.
+- [x] Apply normal overload resolution to generated permutations.
 
 ## 36. Multimethods
 
