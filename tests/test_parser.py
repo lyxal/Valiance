@@ -47,6 +47,7 @@ from valiance.types import (
     Atomic,
     C,
     DataTag,
+    ElementTag,
     Fn,
     ListExactType,
     N,
@@ -329,6 +330,14 @@ class ParserTests(unittest.TestCase):
         self.assertTrue(same(node.function.params[0].typ, Number))
         self.assertEqual(node.function.returns, (Number,))
         self.assertEqual(node.function.body[-1], ElementNode(Symbol("*")))
+
+    def test_parses_eager_define_element_tag(self):
+        [node] = parse("eager define log(value: Number) -> => $value println")
+
+        self.assertEqual(
+            node.function.element_tags,
+            frozenset((ElementTag(Symbol("Eager")),)),
+        )
 
     def test_parses_generic_function_definition_constraints(self):
         [node] = parse("define[T: Vehicle] keep(value: T) -> T => $value")
@@ -752,6 +761,17 @@ end
                 parse_type("Function[Number, String -> Number]"),
                 Fn((Number, String), (Number,)),
             )
+        )
+        self.assertEqual(
+            parse_type("Function[Number -> ]<Eager, !Panic[String]>"),
+            Fn(
+                (Number,),
+                (),
+                (
+                    ElementTag(Symbol("Eager")),
+                    ElementTag(Symbol("Panic"), (String,), absent=True),
+                ),
+            ),
         )
         self.assertTrue(
             same(

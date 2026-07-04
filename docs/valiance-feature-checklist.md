@@ -9,7 +9,7 @@ Codegen/runtime audit note: as of 2026-06-28, checked runtime items are limited
 to behavior that is compiled to bytecode and executed by the VM, or saved and
 loaded through the portable bytecode format.
 
-Current audit total: 351 / 729 items complete (48.1%).
+Current audit total: 367 / 729 items complete (50.3%).
 
 ## 1. Lexer, parser, and general syntax
 
@@ -598,22 +598,22 @@ Current audit total: 351 / 729 items complete (48.1%).
 
 ## 34. Element tags and effects
 
-- [ ] Support sticky element tags that propagate to callers.
-- [ ] Support generic parameters on element tags.
-- [ ] Represent element tags after function types using `<...>`.
-- [ ] Represent required tag absence using `!Tag`.
+- [x] Support sticky element tags that propagate to callers.
+- [x] Support generic parameters on element tags.
+- [x] Represent element tags after function types using `<...>`.
+- [x] Represent required tag absence using `!Tag`.
 - [ ] Parse property element-tag declarations.
 - [ ] Parse companion element-tag declarations.
-- [ ] Support built-in property tags including `IO`, `Random`, `Panic[T]`, and `Memoizable`.
-- [ ] Support built-in companion tags including `Eager` and `Memoized`.
-- [ ] Allow users to attach property tags.
+- [x] Support built-in property tags including `IO`, `Random`, `Panic[T]`, and `Memoizable`.
+- [x] Support built-in companion tags including `Eager` and `Memoized`.
+- [x] Allow users to attach property tags.
 - [ ] Prevent users from directly attaching companion tags.
-- [ ] Infer unspecified property tags.
+- [x] Infer unspecified property tags.
 - [ ] Validate explicitly declared property-tag sets.
 - [ ] Reject undeclared effects used inside explicitly constrained definitions.
-- [ ] Allow explicitly declared effects even when no tagged operation is called.
+- [x] Allow explicitly declared effects even when no tagged operation is called.
 - [ ] Support element-tag disjoint rules.
-- [ ] Propagate effect information through functions and higher-order calls.
+- [x] Propagate effect information through functions and higher-order calls.
 
 ## 35. Annotations
 
@@ -658,7 +658,7 @@ Current audit total: 351 / 729 items complete (48.1%).
 - [x] Provide the `Err` trait.
 - [x] Provide the `Fault` trait.
 - [x] Implement panic values and panic propagation.
-- [ ] Attach `Panic[T]` element tags to panicking operations.
+- [x] Attach `Panic[T]` element tags to panicking operations.
 - [ ] Distinguish intrinsic runtime faults from explicit panic where specified.
 - [x] Parse `try/handle`.
 - [x] Match handlers against panic or fault types.
@@ -766,12 +766,12 @@ Current audit total: 351 / 729 items complete (48.1%).
 
 ## 42. Eager evaluation — deferred design area
 
-- [ ] Parse eager definitions or eager markers.
-- [ ] Attach the `Eager` companion tag.
-- [ ] Trigger eager execution under the specified conditions.
-- [ ] Preserve eager behavior through higher-order function calls.
+- [x] Parse eager definitions or eager markers.
+- [x] Attach the `Eager` companion tag.
+- [x] Trigger eager execution under the specified conditions.
+- [x] Preserve eager behavior through higher-order function calls.
 - [ ] Integrate eagerness with vectorisation.
-- [ ] Integrate eagerness with effect-tag propagation.
+- [x] Integrate eagerness with effect-tag propagation.
 - [ ] Enforce restrictions associated with eager functions.
 - [ ] Prevent direct user attachment of the `Eager` companion tag.
 

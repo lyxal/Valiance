@@ -6,6 +6,9 @@ from valiance.types import (
     Context,
     DataTag,
     DataTagDefinition,
+    ElementTag,
+    ElementTagDefinition,
+    ElementTagKind,
     Environment,
     ExactList,
     Field,
@@ -248,6 +251,31 @@ class TypeLibraryTests(unittest.TestCase):
             env.child_scope().lookup_tag("infinite"),
             DataTagDefinition(Symbol("infinite"), TagKind.CONSTRUCTED),
         )
+
+    def test_environment_stores_element_tag_declarations(self):
+        env = Environment()
+
+        env.add_property_element_tag("IO")
+        env.add_companion_element_tag(Symbol("Eager"))
+
+        self.assertEqual(
+            env.lookup_element_tag("IO"),
+            ElementTagDefinition(Symbol("IO"), ElementTagKind.PROPERTY),
+        )
+        self.assertEqual(
+            env.child_scope().lookup_element_tag("Eager"),
+            ElementTagDefinition(Symbol("Eager"), ElementTagKind.COMPANION),
+        )
+
+    def test_function_element_tag_requirements_affect_compatibility(self):
+        eager = ElementTag(Symbol("Eager"))
+        not_eager = ElementTag(Symbol("Eager"), absent=True)
+
+        tagged = Fn((Number,), (), (eager,))
+
+        self.assertTrue(compatible(tagged, Fn((Number,), (), (eager,))))
+        self.assertFalse(compatible(tagged, Fn((Number,), (), (not_eager,))))
+        self.assertFalse(compatible(Fn((Number,), ()), Fn((Number,), (), (eager,))))
 
     def test_only_unit_tags_block_erasure_to_untagged_types(self):
         ctx = Context()

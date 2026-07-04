@@ -15,7 +15,7 @@ from valiance.runtime.bytecode import (
     Program,
 )
 
-MAGIC = b"VLNCBC\x04"
+MAGIC = b"VLNCBC\x05"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -152,6 +152,9 @@ class _Writer:
         self.u32(len(function.params))
         for param in function.params:
             self.string(param)
+        self.u32(len(function.element_tags))
+        for tag in function.element_tags:
+            self.string(tag)
         self.u32(len(function.instructions))
         for instruction in function.instructions:
             try:
@@ -230,6 +233,7 @@ class _Reader:
         if cycle_params not in {0, 1}:
             raise BytecodeFormatError(f"invalid function cycle flag {cycle_params}")
         params = tuple(self.string() for _ in range(self.u32()))
+        element_tags = tuple(self.string() for _ in range(self.u32()))
         instructions = []
         for _ in range(self.u32()):
             op_byte = self.u8()
@@ -238,4 +242,10 @@ class _Reader:
             except KeyError as exc:
                 raise BytecodeFormatError(f"unknown bytecode op {op_byte}") from exc
             instructions.append(Instruction(op, self.value()))
-        return FunctionCode(tuple(instructions), params, name, bool(cycle_params))
+        return FunctionCode(
+            tuple(instructions),
+            params,
+            name,
+            bool(cycle_params),
+            element_tags,
+        )

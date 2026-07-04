@@ -11,6 +11,7 @@ from valiance.types.nodes import (
     AtomicType,
     CollectionType,
     DataTag,
+    ElementTag,
     ExactType,
     FunctionType,
     IntersectionType,
@@ -157,11 +158,13 @@ def AtLeastArray(base: Type, rank: int = 1) -> Type:
 def Fn(
     params: Iterable[Type] | None = None,
     returns: Iterable[Type] | None = None,
+    element_tags: Iterable[ElementTag | str] = (),
 ) -> Type:
     """Create a stack-effect function type."""
+    tags = frozenset(_element_tag(tag) for tag in element_tags)
     if params is None and returns is None:
-        return FunctionType(None, None)
-    return FunctionType(tuple(params or ()), tuple(returns or ()))
+        return FunctionType(None, None, tags)
+    return FunctionType(tuple(params or ()), tuple(returns or ()), tags)
 
 
 def Overloads(*overloads: Overload) -> Type:
@@ -292,6 +295,7 @@ def normalize(t: Type) -> Type:
         return Fn(
             (normalize(p) for p in t.params or ()),
             (normalize(r) for r in t.returns or ()),
+            t.element_tags,
         )
 
     if isinstance(t, VariadicTupleType):
@@ -446,10 +450,13 @@ def show(t: Type) -> str:
         return f"{_show_collection_base(t.base)}{suffix}{rank}"
     if isinstance(t, FunctionType):
         if t.params is None and t.returns is None:
-            return "Function"
+            return _show_function_with_tags("Function", t.element_tags)
         params = ", ".join(show(p) for p in t.params)
         returns = ", ".join(show(r) for r in t.returns)
-        return f"Function[{params} -> {returns}]"
+        return _show_function_with_tags(
+            f"Function[{params} -> {returns}]",
+            t.element_tags,
+        )
     if isinstance(t, TaggedType):
         return f"{' '.join(_show_tag(tag) for tag in sorted(t.tags))} {show(t.inner)}"
     if isinstance(t, OverloadSetType):
@@ -473,6 +480,27 @@ def _tag(tag: TagSpec) -> DataTag:
     absent = tag.startswith("!")
     name = tag[1:] if absent else tag
     return DataTag(name, absent=absent)
+
+
+def _element_tag(tag: ElementTag | str) -> ElementTag:
+    if isinstance(tag, ElementTag):
+        return tag
+    absent = tag.startswith("!")
+    name = tag[1:] if absent else tag
+    return ElementTag(Symbol(name), absent=absent)
+
+
+def _show_function_with_tags(base: str, tags: frozenset[ElementTag]) -> str:
+    if not tags:
+        return base
+    return f"{base}<{', '.join(_show_element_tag(tag) for tag in sorted(tags))}>"
+
+
+def _show_element_tag(tag: ElementTag) -> str:
+    prefix = "!" if tag.absent else ""
+    if not tag.args:
+        return f"{prefix}{tag.name}"
+    return f"{prefix}{tag.name}[{', '.join(show(arg) for arg in tag.args)}]"
 
 
 def _show_tag(tag: DataTag) -> str:

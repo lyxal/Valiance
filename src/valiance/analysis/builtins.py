@@ -122,6 +122,7 @@ def builtin(
     returns: tuple[T.Type, ...] = (),
     generic_constraints: tuple[T.GenericConstraint, ...] = (),
     call_site: Callable[..., T.Overload | None] | None = None,
+    element_tags: tuple[T.ElementTag, ...] = (),
 ):
     """Register one overload of `name`, implemented by the decorated function.
 
@@ -139,6 +140,7 @@ def builtin(
                     returns,
                     generic_constraints,
                     call_site_body=call_site,
+                    element_tags=frozenset(element_tags),
                 ),
                 fn,
             )
@@ -153,10 +155,19 @@ def declare_overload(
     params: tuple[T.Type, ...],
     returns: tuple[T.Type, ...],
     generic_constraints: tuple[T.GenericConstraint, ...] = (),
+    element_tags: tuple[T.ElementTag, ...] = (),
 ) -> None:
     """Register a signature for `name` with no runtime implementation yet."""
     _REGISTRY.setdefault(name, []).append(
-        BuiltinOverload(T.Overload(params, returns, generic_constraints), None)
+        BuiltinOverload(
+            T.Overload(
+                params,
+                returns,
+                generic_constraints,
+                element_tags=frozenset(element_tags),
+            ),
+            None,
+        )
     )
 
 
@@ -165,6 +176,8 @@ def declare_overload(
 # --------------------------------------------------------------------------
 
 _MISSING = object()
+EAGER_TAG = T.ElementTag(Symbol("Eager"))
+IO_TAG = T.ElementTag(Symbol("IO"))
 
 
 def _truth(value: bool) -> Decimal:
@@ -244,6 +257,14 @@ def _is_collection_parameter(typ: T.Type) -> bool:
     return isinstance(typ, T.CollectionType)
 
 
+def _callable_has_element_tag(value: Any, tag: str) -> bool:
+    code = getattr(value, "code", None)
+    if code is not None and tag in getattr(code, "element_tags", ()):
+        return True
+    overloads = getattr(value, "overloads", ())
+    return any(_callable_has_element_tag(overload, tag) for overload in overloads)
+
+
 # --------------------------------------------------------------------------
 # Core stack operations
 # --------------------------------------------------------------------------
@@ -261,7 +282,7 @@ def _callable_overloads(typ: T.Type) -> tuple[T.Overload, ...]:
     if isinstance(typ, T.FunctionType):
         if typ.params is None or typ.returns is None:
             return ()
-        return (T.Overload(typ.params, typ.returns),)
+        return (T.Overload(typ.params, typ.returns, element_tags=typ.element_tags),)
     if isinstance(typ, T.OverloadSetType):
         return typ.overloads
     return ()
@@ -277,7 +298,7 @@ def _apply_callable(
     return _CallableApplication(
         overload,
         applied,
-        T.Fn(applied.params, applied.actual_returns),
+        T.Fn(applied.params, applied.actual_returns, overload.element_tags),
     )
 
 
@@ -365,6 +386,27 @@ def _fork_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
                     ),
                     call_site_body=arity,
                 )
+    return None
+
+
+def _eager_map_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+    if len(call_params) != 2:
+        return None
+    list_type, function_type = call_params
+    item_type = T.collection_item_type(list_type)
+    if item_type is None:
+        return None
+    for application in _callable_applications(function_type, (item_type,)):
+        if application.applied.actual_returns:
+            continue
+        if EAGER_TAG not in application.concrete_type.element_tags:
+            continue
+        return T.Overload(
+            (list_type, application.concrete_type),
+            (),
+            call_site_body=0,
+            element_tags=frozenset((EAGER_TAG,)),
+        )
     return None
 
 
@@ -508,7 +550,25 @@ def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
             mapped = ctx.call(args[1], [item])
             yield mapped[0]
 
+    if _callable_has_element_tag(args[1], "Eager"):
+        return (list(mapped_items()),)
     return (LazyList(mapped_items()),)
+
+
+@builtin(
+    "map",
+    (
+        T.ExactList(T.TypeVariable("Item")),
+        T.Fn(),
+    ),
+    (),
+    call_site=_eager_map_call_site,
+    element_tags=(EAGER_TAG,),
+)
+def _map_eager_effect(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    for item in args[0]:
+        ctx.call(args[1], [item])
+    return ()
 
 
 @builtin(
@@ -645,19 +705,24 @@ def _question_bang(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
 # --------------------------------------------------------------------------
 
 
-@builtin("print", (T.V("T"),), ())
+@builtin("print", (T.V("T"),), (), element_tags=(EAGER_TAG, IO_TAG))
 def _print(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     ctx.output(ctx.format_value(args[0]))
     return ()
 
 
-@builtin("println", (T.V("T"),), ())
+@builtin("println", (T.V("T"),), (), element_tags=(EAGER_TAG, IO_TAG))
 def _println(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     ctx.output(ctx.format_value(args[0]) + "\n")
     return ()
 
 
-@builtin("panic", (T.V("Fault"),), (T.Never(),))
+@builtin(
+    "panic",
+    (T.V("Fault"),),
+    (T.Never(),),
+    element_tags=(T.ElementTag(Symbol("Panic"), (T.V("Fault"),)),),
+)
 def _panic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     raise PanicSignal(args[0])
 
@@ -684,6 +749,10 @@ BUILTIN_ELEMENTS: tuple[BuiltinElement, ...] = _all_elements()
 def default_environment() -> T.Environment:
     """Build an environment populated with Valiance's built-in elements."""
     env = T.Environment()
+    for name in ("IO", "Random", "Panic", "Memoizable"):
+        env.add_property_element_tag(name)
+    for name in ("Eager", "Memoized"):
+        env.add_companion_element_tag(name)
     env.define_trait(ERR)
     env.define_trait(FAULT)
     env.context.set_generic_variance(OK, (T.Variance.COVARIANT,))

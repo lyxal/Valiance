@@ -31,6 +31,7 @@ from valiance.types.nodes import (
     AtomicType,
     CollectionType,
     DataTag,
+    ElementTag,
     ExactType,
     FunctionType,
     GenericConstraint,
@@ -666,10 +667,11 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
         return normalize(C(type(t), _substitute(t.base, subst), t.rank))
     if isinstance(t, FunctionType):
         if t.params is None or t.returns is None:
-            return t
+            return Fn(None, None, _substitute_element_tags(t.element_tags, subst))
         return Fn(
             (_substitute(p, subst) for p in t.params),
             (_substitute(r, subst) for r in t.returns),
+            _substitute_element_tags(t.element_tags, subst),
         )
     if isinstance(t, TaggedType):
         return Tagged(_substitute(t.inner, subst), *t.tags)
@@ -747,6 +749,11 @@ def compatible(argument: Type, parameter: Type, ctx: Context | None = None) -> b
 def _callable_compatible(argument: Type, parameter: Type, ctx: Context) -> bool:
     """Return whether a callable can act as an expected ``Function[...]`` type."""
     if isinstance(argument, FunctionType):
+        if not _element_tag_requirements_met(
+            argument.element_tags,
+            parameter.element_tags,
+        ):
+            return False
         if argument.params is None or argument.returns is None:
             return parameter.params is None and parameter.returns is None
         actual_returns = _overload_result_for_args(
@@ -768,6 +775,8 @@ def _callable_compatible(argument: Type, parameter: Type, ctx: Context) -> bool:
             for o in argument.overloads
             if _overload_callable_compatible(o, parameter, ctx)
         ]
+        if parameter.element_tags:
+            return bool(matches)
         return len(matches) == 1 or bool(
             resolve_overload_result(argument.overloads, parameter.params, ctx)
         )
@@ -778,6 +787,8 @@ def _overload_callable_compatible(
     overload: Overload, expected: Type, ctx: Context
 ) -> bool:
     """Return whether one overload can be used as an expected function type."""
+    if not _element_tag_requirements_met(overload.element_tags, expected.element_tags):
+        return False
     if len(overload.params) != len(expected.params) or len(overload.returns) != len(
         expected.returns
     ):
@@ -1049,6 +1060,7 @@ def apply_overload(
         any(score == Specificity.VECTORISED for score in scores)
         or any(depth > 0 for depth in vectorised_depths),
         vectorised_depths,
+        element_tags=overload.element_tags,
     )
 
 
@@ -1192,8 +1204,10 @@ def _contains_type_var(t: Type) -> bool:
         return _contains_type_var(t.base)
     if isinstance(t, FunctionType):
         if t.params is None or t.returns is None:
-            return False
-        return any(_contains_type_var(item) for item in t.params + t.returns)
+            return _element_tags_contain_type_var(t.element_tags)
+        return any(_contains_type_var(item) for item in t.params + t.returns) or (
+            _element_tags_contain_type_var(t.element_tags)
+        )
     if isinstance(t, (TaggedType, ExactType, AtomicType)):
         return _contains_type_var(t.inner)
     return False
@@ -1219,6 +1233,38 @@ def _tag_requirements_met(
         elif positive not in actual:
             return False
     return True
+
+
+def _element_tag_requirements_met(
+    actual: frozenset[ElementTag],
+    required: frozenset[ElementTag],
+) -> bool:
+    for tag in required:
+        positive = ElementTag(tag.name, tag.args)
+        if tag.absent:
+            if positive in actual:
+                return False
+        elif positive not in actual:
+            return False
+    return True
+
+
+def _substitute_element_tags(
+    tags: frozenset[ElementTag],
+    subst: dict[str, Type],
+) -> tuple[ElementTag, ...]:
+    return tuple(
+        ElementTag(
+            tag.name,
+            tuple(_substitute(arg, subst) for arg in tag.args),
+            tag.absent,
+        )
+        for tag in tags
+    )
+
+
+def _element_tags_contain_type_var(tags: frozenset[ElementTag]) -> bool:
+    return any(_contains_type_var(arg) for tag in tags for arg in tag.args)
 
 
 def _has_unit_tag(tags: frozenset[DataTag], ctx: Context) -> bool:

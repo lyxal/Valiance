@@ -344,6 +344,8 @@ The type parser currently supports:
   `T~`, `T~3`, `T~$n`
 - Array rank postfixes: `T^`, `T^3`, `T^$n`, `T>`, `T>3`, `T>$n`
 - Data-tagged types: `#sorted Number+`, `#!infinite Number+`
+- Function element tags after function types:
+  `Function[Number -> ]<Eager, !Panic[String]>`
 
 Type parsing is split by precedence:
 
@@ -368,6 +370,11 @@ language restriction changes.
 Bare `Function` is intentionally different from `Function[ -> ]`. The former is
 an unknown-shape callable and triggers call-site type checking when it appears in
 an overload parameter. The latter is a concrete niladic function type.
+
+Element tags on function types are parsed after the `Function[...]` shape using
+angle brackets. `!Tag` records a required tag absence. Tag arguments reuse
+ordinary type parsing, so `Panic[String]` stores `String` as a type argument
+rather than as text.
 
 Tuple ellipsis is parsed after each tuple item, not as a postfix type operator.
 This lets `{A..., B, C...}` lower to a single variadic tuple pattern with mixed
@@ -399,6 +406,17 @@ outside a declaration's generic list, bare `T` is parsed as a nominal type name.
 The analyser rewrites names that match the surrounding declaration's generic
 parameters into type variables before storing object attributes, constructors,
 function definitions, and requirements.
+
+Function declarations may also carry element tags after the parameter list and
+before the return arrow:
+
+```valiance
+define log(value: String)<IO> -> () => print(value)
+eager define show(value: String) -> () => println(value)
+```
+
+The `eager define` spelling records the same parsed function node with the
+`Eager` element tag attached.
 
 ## Data Tags
 

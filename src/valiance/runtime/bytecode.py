@@ -59,6 +59,7 @@ class FunctionCode:
     params: tuple[str, ...] = ()
     name: str | None = None
     cycle_params: bool = False
+    element_tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

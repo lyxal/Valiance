@@ -27,6 +27,8 @@ The runtime implementation is small, but several files must evolve together.
 - Defines the bytecode data model: `Program`, `FunctionCode`, `Instruction`,
   and `OpCode`.
 - `FunctionCode.params` stores explicit parameter names.
+- `FunctionCode.element_tags` stores runtime function tag names copied from the
+  analysed function type.
 - `FunctionCode.cycle_params` enables the stack-underflow parameter cycling used
   by explicit-parameter functions such as `define triple(:Number) => * 3`.
 
@@ -84,7 +86,7 @@ The runtime implementation is small, but several files must evolve together.
 `src/valiance/runtime/serialization.py`
 
 - Encodes `Program` as portable binary bytecode.
-- The current magic/version marker is `b"VLNCBC\x02"`.
+- The current magic/version marker is `b"VLNCBC\x05"`.
 - Opcodes are one byte each in `_OP_TO_BYTE`.
 - Instruction arguments are tagged binary values, not Python pickle, repr, or
   JSON.
@@ -96,6 +98,7 @@ The runtime implementation is small, but several files must evolve together.
 - This is the shared built-in catalogue for static analysis and runtime.
 - `BuiltinElement` groups all overloads for one element name.
 - `BuiltinOverload.signature` is the analyser-visible stack effect.
+- `BuiltinOverload.element_tags` is the analyser-visible element tag set.
 - `BuiltinOverload.implementation` is the runtime implementation.
 - `default_environment()` publishes static overloads to the analyser.
 - `runtime_elements()` publishes runtime-capable built-ins to the VM.
@@ -131,6 +134,11 @@ identifies the selected overload slot directly. The VM then executes that
 selected overload instead of repeating overload resolution from runtime value
 shapes. Built-in elements select a built-in overload slot; user-defined elements
 select a compiled function overload slot from `FunctionSetCode`.
+
+Resolved element references are serialized as tuples for bytecode portability,
+but VM code should decode them into `_ResolvedElementReference` before use.
+Avoid indexing the raw tuple directly; the tuple layout is a bytecode boundary,
+and positional magic numbers make compatibility changes fragile.
 
 `AppliedOverload.vectorised` records whether overload application required
 vectorisation. Codegen can inspect `typed_node.overload.vectorised` on
@@ -213,6 +221,11 @@ read-only and never append to it by hand.
    duplicate checks the type system already guarantees.
 7. Add analyser and runtime tests.
 
+If a built-in has observable side effects or must not be delayed, give it
+element tags through the decorator. For example, `print` and `println` are
+tagged `Eager` and `IO`; `length` is intentionally not eager because it can be
+used inside a lazy function without causing side effects.
+
 Example shape, single overload:
 
 ```python
@@ -244,6 +257,15 @@ declare_overload(
     ),
     (T.TypeVariable("Item"),),
 )
+```
+
+Example shape, eager side-effecting built-in:
+
+```python
+@builtin("println", (T.V("T"),), (), element_tags=(EAGER_TAG, IO_TAG))
+def _println(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    ctx.print(format_runtime_value(args[0]))
+    return ()
 ```
 
 Example of genuine runtime validation -- something the signature cannot
@@ -555,6 +577,9 @@ need an eager list can drive the `LazyList` themselves; `head` consumes only
 the first item; `length`'s parameter type is
 `T.WithoutTag(T.ExactList(...), "infinite")`, so a finite list-like value is
 already guaranteed by analysis and `length` does not re-check it at runtime.
+The exception is an eager callable argument: `map: println` is materialised at
+the call site because the callable carries the `Eager` element tag and must run
+immediately.
 Runtime value formatters fully iterate list-like values by default, including
 lazy and potentially infinite values. The CLI `--preview-lists` flag opts
 runtime output and implicit stack output into bounded list previews.
@@ -583,7 +608,8 @@ The bytecode file contains:
 
 1. The magic/version marker.
 2. The top-level `FunctionCode`.
-3. Function name, parameter cycle flag, parameters, and instructions.
+3. Function name, parameter cycle flag, parameters, element tags, and
+   instructions.
 4. One-byte opcodes and tagged instruction arguments.
 
 When editing the serializer, preserve these properties:

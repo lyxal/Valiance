@@ -72,7 +72,9 @@ from valiance.types import (
     Atomic,
     C,
     DataTag,
+    ElementTag,
     Fn,
+    FunctionType,
     I,
     ListExactType,
     ListMinType,
@@ -136,6 +138,7 @@ class Parser:
         annotations = self._annotations()
         visibility: Symbol | None = None
         is_multi = False
+        eager = False
         if self._match_ident("public", "private"):
             visibility = Symbol(self._previous.value)
         if self._match_ident("import"):
@@ -147,9 +150,21 @@ class Parser:
             )
         if self._match_ident("multi"):
             is_multi = True
+        if self._match_ident("eager"):
+            eager = True
 
         if self._match_ident("define"):
-            return (self._define(self._previous, annotations, visibility, is_multi),)
+            return (
+                self._define(
+                    self._previous,
+                    annotations,
+                    visibility,
+                    is_multi,
+                    eager=eager,
+                ),
+            )
+        if eager:
+            self._error("eager must be followed by define")
         if self._match_ident("object", "trait", "variant", "enum"):
             return (
                 self._object_like(self._previous, self._previous.value, annotations),
@@ -249,10 +264,15 @@ class Parser:
         annotations: tuple[ASTNode, ...],
         visibility: Symbol | None,
         is_multi: bool,
+        *,
+        eager: bool = False,
     ) -> DefineNode:
         generics, generic_variances, generic_constraints = self._generic_parameters()
         name = self._symbol("expected definition name")
         params = self._params() if self._match(TokenKind.LPAREN) else None
+        element_tags = set(self._function_element_tags())
+        if eager:
+            element_tags.add(ElementTag(Symbol("Eager")))
         returns = self._returns()
         where_clause = self._where_clause()
         self._expect(TokenKind.FAT_ARROW)
@@ -264,6 +284,7 @@ class Parser:
                 body=body,
                 returns=returns,
                 where_clause=where_clause,
+                element_tags=frozenset(element_tags),
                 location=_loc(start),
             ),
             annotations,
@@ -464,6 +485,7 @@ class Parser:
 
     def _function(self, start: Token) -> FunctionNode:
         params = self._params() if self._match(TokenKind.LPAREN) else None
+        element_tags = self._function_element_tags()
         returns = self._returns()
         where_clause = self._where_clause()
         self._expect(TokenKind.FAT_ARROW)
@@ -471,9 +493,16 @@ class Parser:
             params=params,
             returns=returns,
             where_clause=where_clause,
+            element_tags=element_tags,
             body=self._body(),
             location=_loc(start),
         )
+
+    def _function_element_tags(self) -> frozenset[ElementTag]:
+        if not self._check_op("<"):
+            return frozenset()
+        self._advance()
+        return self._element_tag_list()
 
     def _where_clause(self) -> tuple[ASTNode, ...]:
         self._skip_newlines()
@@ -1361,6 +1390,12 @@ class Parser:
     def _type_postfix(self) -> Type:
         typ = self._type_primary()
         while True:
+            if self._check_op("<"):
+                self._advance()
+                if not isinstance(typ, FunctionType):
+                    self._error("element tags can only be attached to function types")
+                typ = FunctionType(typ.params, typ.returns, self._element_tag_list())
+                continue
             if self._match_ident("atomic"):
                 typ = Atomic(typ)
                 continue
@@ -1461,6 +1496,30 @@ class Parser:
             self._expect(TokenKind.RPAREN)
             return Fn(params, returns)
         self._error("expected type")
+
+    def _element_tag_list(self) -> frozenset[ElementTag]:
+        tags: list[ElementTag] = []
+        if self._check_op(">"):
+            self._advance()
+            return frozenset()
+        while True:
+            absent = self._check_op("!")
+            if absent:
+                self._advance()
+            name = self._symbol("expected element tag name")
+            args: list[Type] = []
+            if self._match(TokenKind.LBRACKET):
+                if not self._match(TokenKind.RBRACKET):
+                    while True:
+                        args.append(self.parse_type_expression())
+                        if self._match(TokenKind.RBRACKET):
+                            break
+                        self._expect(TokenKind.COMMA)
+            tags.append(ElementTag(name, tuple(args), absent))
+            if self._check_op(">"):
+                self._advance()
+                return frozenset(tags)
+            self._expect(TokenKind.COMMA)
 
     def _type_list_until(self, terminators: set[TokenKind]) -> tuple[Type, ...]:
         items: list[Type] = []
@@ -1573,6 +1632,10 @@ _LINE_TERMINATORS: set[TokenKind | str] = {
 
 def _flatten(items: tuple[tuple[ASTNode, ...], ...]) -> tuple[ASTNode, ...]:
     return tuple(node for item in items for node in item)
+
+
+def _element_tags(*names: str) -> frozenset[ElementTag]:
+    return frozenset(ElementTag(Symbol(name)) for name in names)
 
 
 def _append_object_body_item(

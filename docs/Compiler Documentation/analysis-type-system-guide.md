@@ -137,6 +137,7 @@ still separate.
 - trait implementations and trait parents
 - variant membership
 - data tag declarations and disjointness
+- element tag declarations
 
 Do not put mutable local variables in `Environment`.
 
@@ -198,6 +199,11 @@ the displayed type:
 - selected overload signature
 - substituted parameter types
 - substituted declared returns
+- substituted element tags
+
+Applied overloads also carry the element tags contributed by the selected
+operation. The analyser treats those as sticky effect facts: if a function body
+calls an `IO` operation, the inferred function type also carries `IO`.
 - actual returns after vectorisation/tag flow
 - for elements, the overload index within the element definition, which lets
   codegen find the runtime implementation without re-resolving overloads by type
@@ -571,6 +577,12 @@ Function return rules:
 Multiple viable function signatures become an `OverloadSetType`. The typed
 function node keeps per-overload typed bodies so the typed AST remains useful.
 
+Function types can carry element tags. Explicit tags written on a function are
+combined with tags inferred from the function body and with tags propagated from
+callable arguments. For example, `println` contributes `Eager` and `IO`, so a
+function that calls `println` gets those tags even if it did not write them
+explicitly.
+
 ## Call-Site Type Checking
 
 Call-site type checking is not a separate function type. It is triggered by the
@@ -692,6 +704,38 @@ The analyser applies data tag flow after overload application:
 - disjoint tags replace incompatible existing tags
 
 Use `T.WithTag(...)` and `T.WithoutTag(...)` for readable signatures.
+
+## Element Tags
+
+Element tags are represented by `ElementTag`:
+
+```python
+ElementTag(name: Symbol, args: tuple[Type, ...] = (), absent: bool = False)
+```
+
+They attach to `FunctionType`, `Overload`, and `AppliedOverload`. Do not model
+them as strings: tag arguments such as `Panic[Fault]` need normal type
+substitution, and absent requirements such as `!Panic` participate in function
+compatibility.
+
+The default environment predeclares the currently supported tags:
+
+- property tags: `IO`, `Random`, `Panic[T]`, `Memoizable`
+- companion tags: `Eager`, `Memoized`
+
+Positive element tags require the called function to carry a matching positive
+tag. Absent tags reject a matching positive tag. This lets parameter types such
+as `Function[T -> U]<!Eager>` accept only non-eager callables.
+
+Element tags propagate from resolved element calls and from concrete callable
+arguments used by call-site type checking. This is why `map: println` is eager:
+`println` is tagged `Eager`, `map`'s call-site checked overload sees that
+callable argument, and the resulting applied overload/function type carries the
+tag upward.
+
+The parser accepts explicit function element tags and `eager define` attaches
+`Eager`. Full source declarations for property/companion element tags and the
+rule preventing direct user attachment of companion tags are still future work.
 
 ## Row Polymorphism And Fields
 

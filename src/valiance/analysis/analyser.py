@@ -921,6 +921,8 @@ class Analyser:
             params=params,
             body=definition.function.body,
             returns=definition.function.returns,
+            where_clause=definition.function.where_clause,
+            element_tags=definition.function.element_tags,
             location=definition.function.location,
         ), definition.generics)
         self._friendly_owners = self._friendly_owners + (owner,)
@@ -1691,6 +1693,7 @@ class Analyser:
         body_function = FunctionNode(
             params=node.params,
             body=node.body,
+            element_tags=frozenset(),
             location=node.location,
         )
         body_analysis = self._analyse_function_literal(branch, body_function)
@@ -1717,6 +1720,7 @@ class Analyser:
                     else tuple(FunctionParam(None, typ) for typ in overload.params),
                     body=node.condition,
                     returns=(Boolean,),
+                    element_tags=frozenset(),
                     location=node.location,
                 )
                 if self._analyse_function_literal(branch, condition_function) is None:
@@ -2180,6 +2184,7 @@ class Analyser:
             body=node.body,
             returns=node.returns,
             where_clause=node.where_clause,
+            element_tags=node.element_tags,
             location=node.location,
         )
         explicit_count = len(declared)
@@ -2226,6 +2231,10 @@ class Analyser:
                 returns,
                 where_clause=node.where_clause,
                 param_names=_function_param_names_for_overload(node, branch.inputs),
+                element_tags=frozenset(
+                    set(node.element_tags)
+                    | set(_typed_body_element_tags(branch.typed_body))
+                ),
             )
             signatures.setdefault(signature, branch.typed_body)
 
@@ -2527,7 +2536,7 @@ def _function_analysis_from_signatures(
     )
     overload_typings = tuple(
         FunctionOverloadTyping(
-            T.Fn(signature.params, signature.returns),
+            T.Fn(signature.params, signature.returns, signature.element_tags),
             signatures[signature],
             signature,
         )
@@ -2535,7 +2544,7 @@ def _function_analysis_from_signatures(
     )
     if len(ordered) == 1 and not ordered[0].where_clause:
         signature = ordered[0]
-        typ = T.Fn(signature.params, signature.returns)
+        typ = T.Fn(signature.params, signature.returns, signature.element_tags)
     else:
         typ = T.Overloads(*ordered)
     return FunctionAnalysis(typ, overload_typings)
@@ -2546,10 +2555,22 @@ def _callable_overloads(typ: T.Type) -> tuple[T.Overload, ...]:
     if isinstance(typ, T.FunctionType):
         if typ.params is None or typ.returns is None:
             return ()
-        return (T.Overload(typ.params, typ.returns),)
+        return (T.Overload(typ.params, typ.returns, element_tags=typ.element_tags),)
     if isinstance(typ, T.OverloadSetType):
         return typ.overloads
     return ()
+
+
+def _typed_body_element_tags(body: tuple[TypedNode, ...]) -> tuple[T.ElementTag, ...]:
+    tags: set[T.ElementTag] = set()
+    for node in body:
+        if isinstance(node, TypedElementNode) and node.overload is not None:
+            tags.update(tag for tag in node.overload.element_tags if not tag.absent)
+        elif isinstance(node, TypedCallNode) and node.overload is not None:
+            tags.update(tag for tag in node.overload.element_tags if not tag.absent)
+        if isinstance(node, TypedFunctionNode):
+            continue
+    return tuple(sorted(tags))
 
 
 def _best_candidates(
@@ -2780,6 +2801,7 @@ def _apply_overload_to_branch(
         applied.vectorised,
         applied.vectorised_depths,
         tuple(sorted(rank_values.items())),
+        element_tags=_propagated_element_tags(overload, specialized_args),
     )
     return applied, specialized_branch
 
@@ -2846,6 +2868,7 @@ def _apply_call_site_checked_overload(
             candidate.vectorised_depths,
             tuple(sorted(rank_values.items())),
             consumed_count + len(args),
+            element_tags=_propagated_element_tags(concrete, concrete_args),
         )
         return applied, branch.with_stack(branch.stack.pop(consumed_count))
     return None
@@ -2892,6 +2915,7 @@ def _call_site_checked_overload_signature(
         overload.generic_constraints,
         overload.where_clause,
         (None,) * (len(call_params) - len(overload.params)) + overload.param_names,
+        element_tags=overload.element_tags,
     )
 
 
@@ -2908,6 +2932,21 @@ def _call_site_consumed_count(
     if consumed < 0 or consumed > extra_count:
         return None
     return consumed
+
+
+def _propagated_element_tags(
+    overload: T.Overload,
+    args: tuple[T.Type, ...],
+) -> frozenset[T.ElementTag]:
+    tags = {tag for tag in overload.element_tags if not tag.absent}
+    for arg in args:
+        arg = T.normalize(arg)
+        if isinstance(arg, T.FunctionType):
+            tags.update(tag for tag in arg.element_tags if not tag.absent)
+        elif isinstance(arg, T.OverloadSetType):
+            for candidate in arg.overloads:
+                tags.update(tag for tag in candidate.element_tags if not tag.absent)
+    return frozenset(tags)
 
 
 def _initial_rank_values(
@@ -3163,6 +3202,10 @@ def _substitute_overload_ranks(
         overload.generic_constraints,
         overload.where_clause,
         overload.param_names,
+        overload.call_site_body,
+        frozenset(
+            _substitute_rank_values_in_element_tags(overload.element_tags, ranks)
+        ),
     )
 
 
@@ -3191,14 +3234,33 @@ def _substitute_rank_values(typ: T.Type, ranks: dict[str, int]) -> T.Type:
         )
     if isinstance(typ, T.FunctionType):
         if typ.params is None or typ.returns is None:
-            return typ
+            return T.Fn(
+                None,
+                None,
+                _substitute_rank_values_in_element_tags(typ.element_tags, ranks),
+            )
         return T.Fn(
             (_substitute_rank_values(item, ranks) for item in typ.params),
             (_substitute_rank_values(item, ranks) for item in typ.returns),
+            _substitute_rank_values_in_element_tags(typ.element_tags, ranks),
         )
     if isinstance(typ, T.TaggedType):
         return T.Tagged(_substitute_rank_values(typ.inner, ranks), *typ.tags)
     return typ
+
+
+def _substitute_rank_values_in_element_tags(
+    tags: frozenset[T.ElementTag],
+    ranks: dict[str, int],
+) -> tuple[T.ElementTag, ...]:
+    return tuple(
+        T.ElementTag(
+            tag.name,
+            tuple(_substitute_rank_values(arg, ranks) for arg in tag.args),
+            tag.absent,
+        )
+        for tag in tags
+    )
 
 
 def _row_views_for_arguments(
@@ -3601,10 +3663,15 @@ def _substitute_branch_type(typ: T.Type, substitution: dict[str, T.Type]) -> T.T
         return T.C(type(typ), _substitute_branch_type(typ.base, substitution), typ.rank)
     if isinstance(typ, T.FunctionType):
         if typ.params is None or typ.returns is None:
-            return typ
+            return T.Fn(
+                None,
+                None,
+                _substitute_branch_element_tags(typ.element_tags, substitution),
+            )
         return T.Fn(
             (_substitute_branch_type(item, substitution) for item in typ.params),
             (_substitute_branch_type(item, substitution) for item in typ.returns),
+            _substitute_branch_element_tags(typ.element_tags, substitution),
         )
     if isinstance(typ, T.TaggedType):
         return T.Tagged(_substitute_branch_type(typ.inner, substitution), *typ.tags)
@@ -3613,6 +3680,20 @@ def _substitute_branch_type(typ: T.Type, substitution: dict[str, T.Type]) -> T.T
     if isinstance(typ, T.AtomicType):
         return T.Atomic(_substitute_branch_type(typ.inner, substitution))
     return typ
+
+
+def _substitute_branch_element_tags(
+    tags: frozenset[T.ElementTag],
+    substitution: dict[str, T.Type],
+) -> tuple[T.ElementTag, ...]:
+    return tuple(
+        T.ElementTag(
+            tag.name,
+            tuple(_substitute_branch_type(arg, substitution) for arg in tag.args),
+            tag.absent,
+        )
+        for tag in tags
+    )
 
 
 def _dominates(
@@ -4027,6 +4108,7 @@ def _with_generic_constraints(
         overload.where_clause,
         overload.param_names,
         overload.call_site_body,
+        overload.element_tags,
     )
 
 
@@ -4053,6 +4135,9 @@ def _genericize_function_node(
         body=tuple(_genericize_ast_node(node, generics) for node in function.body),
         returns=returns,
         where_clause=function.where_clause,
+        element_tags=frozenset(
+            _genericize_element_tags(function.element_tags, generics)
+        ),
         location=function.location,
     )
 
@@ -4149,10 +4234,15 @@ def _genericize_type(typ: T.Type, generics: tuple[Symbol, ...]) -> T.Type:
         return T.C(type(typ), _genericize_type(typ.base, generics), typ.rank)
     if isinstance(typ, T.FunctionType):
         if typ.params is None or typ.returns is None:
-            return typ
+            return T.Fn(
+                None,
+                None,
+                _genericize_element_tags(typ.element_tags, generics),
+            )
         return T.Fn(
             (_genericize_type(param, generics) for param in typ.params),
             (_genericize_type(ret, generics) for ret in typ.returns),
+            _genericize_element_tags(typ.element_tags, generics),
         )
     if isinstance(typ, T.TaggedType):
         return T.Tagged(_genericize_type(typ.inner, generics), *typ.tags)
@@ -4161,6 +4251,20 @@ def _genericize_type(typ: T.Type, generics: tuple[Symbol, ...]) -> T.Type:
     if isinstance(typ, T.AtomicType):
         return T.Atomic(_genericize_type(typ.inner, generics))
     return typ
+
+
+def _genericize_element_tags(
+    tags: frozenset[T.ElementTag],
+    generics: tuple[Symbol, ...],
+) -> tuple[T.ElementTag, ...]:
+    return tuple(
+        T.ElementTag(
+            tag.name,
+            tuple(_genericize_type(arg, generics) for arg in tag.args),
+            tag.absent,
+        )
+        for tag in tags
+    )
 
 
 def _declared_or_inferred_variance(
@@ -4248,10 +4352,18 @@ def _record_variance_use(
         _record_variance_use(typ.base, polarity, usage)
         return
     if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            for tag in typ.element_tags:
+                for arg in tag.args:
+                    _record_variance_use(arg, polarity, usage)
+            return
         for param in typ.params:
             _record_variance_use(param, -polarity, usage)
         for ret in typ.returns:
             _record_variance_use(ret, polarity, usage)
+        for tag in typ.element_tags:
+            for arg in tag.args:
+                _record_variance_use(arg, polarity, usage)
         return
     if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
         _record_variance_use(typ.inner, polarity, usage)

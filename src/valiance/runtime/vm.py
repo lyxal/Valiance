@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
 from itertools import zip_longest
-from typing import Any
+from typing import Any, cast
 
 from valiance.analysis.builtins import (
     BuiltinElement,
@@ -98,6 +98,25 @@ class BuiltinValue:
     context: RuntimeContext
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedElementReference:
+    """Decoded CALL_RESOLVED_ELEMENT reference.
+
+    The serialized representation is a compact positional tuple for bytecode
+    stability. VM dispatch should use this named shape instead of indexing the
+    tuple directly.
+    """
+
+    name: str
+    overload_index: int
+    vectorised: bool = False
+    vectorised_depths: tuple[int, ...] = ()
+    type_args: tuple[str, ...] = ()
+    static_values: tuple[Any, ...] = ()
+    arity_override: int | None = None
+    consumed_override: int | None = None
+
+
 def _static_reference_values(value: object) -> tuple[Any, ...]:
     if not isinstance(value, tuple):
         raise RuntimeError(f"invalid static reference values {value!r}")
@@ -157,6 +176,16 @@ class _Frame:
 
 class _StackUnderflow(Exception):
     """Internal signal for trying another runtime overload shape."""
+
+
+_RESOLVED_REFERENCE_MIN_SIZE = 2
+_RESOLVED_REFERENCE_MAX_SIZE = 8
+_RESOLVED_REFERENCE_VECTORISED = 2
+_RESOLVED_REFERENCE_VECTORISED_DEPTHS = 3
+_RESOLVED_REFERENCE_TYPE_ARGS = 4
+_RESOLVED_REFERENCE_STATIC_VALUES = 5
+_RESOLVED_REFERENCE_ARITY_OVERRIDE = 6
+_RESOLVED_REFERENCE_CONSUMED_OVERRIDE = 7
 
 
 class VirtualMachine:
@@ -446,82 +475,78 @@ class VirtualMachine:
         frame: _Frame,
         reference: object,
     ) -> None:
-        if (
-            not isinstance(reference, tuple)
-            or len(reference) not in {2, 3, 4, 5, 6, 7, 8}
-            or not isinstance(reference[0], str)
-            or not isinstance(reference[1], int)
-        ):
-            raise RuntimeError(f"invalid resolved element reference {reference!r}")
-        name, overload_index = reference[:2]
-        vectorised = bool(reference[2]) if len(reference) >= 3 else False
-        vectorised_depths = (
-            tuple(int(depth) for depth in reference[3]) if len(reference) >= 4 else ()
-        )
-        type_args = (
-            tuple(str(type_arg) for type_arg in reference[4])
-            if len(reference) >= 5
-            else ()
-        )
-        static_values = (
-            _static_reference_values(reference[5]) if len(reference) >= 6 else ()
-        )
-        arity_override = int(reference[6]) if len(reference) >= 7 else None
-        consumed_override = int(reference[7]) if len(reference) >= 8 else None
-        value = _load_name(name, frame.locals, frame.globals)
+        resolved = _decode_resolved_element_reference(reference)
+        value = _load_name(resolved.name, frame.locals, frame.globals)
         if isinstance(value, BuiltinValue):
-            try:
-                overload = value.element.definitions[overload_index]
-            except IndexError as exc:
-                raise RuntimeError(
-                    f"resolved element '{name}' has no overload {overload_index}"
-                ) from exc
-            _call_resolved_builtin(
-                value,
-                overload,
-                frame,
-                vectorised,
-                vectorised_depths,
-                arity_override,
-                consumed_override,
-            )
+            self._call_resolved_builtin_value(value, frame, resolved)
             return
         if isinstance(value, FunctionValue):
-            if overload_index != 0:
-                raise RuntimeError(
-                    f"resolved function '{name}' has no overload {overload_index}"
-                )
-            frame.stack.extend(static_values)
-            self._call_function(value, frame, vectorised=vectorised)
+            self._call_resolved_function_value(value, frame, resolved)
             return
         if isinstance(value, OverloadedFunctionValue):
-            try:
-                overload = value.overloads[overload_index]
-            except IndexError as exc:
-                raise RuntimeError(
-                    f"resolved function '{name}' has no overload {overload_index}"
-                ) from exc
-            frame.stack.extend(static_values)
-            self._call_function(overload, frame, vectorised=vectorised)
+            self._call_resolved_overloaded_function(value, frame, resolved)
             return
         if isinstance(value, ObjectConstructorValue):
-            if overload_index != 0:
-                raise RuntimeError(
-                    f"resolved constructor '{name}' has no overload {overload_index}"
-                )
-            _call_object_constructor(value, frame, type_args)
+            _require_single_resolved_slot(resolved, "constructor")
+            _call_object_constructor(value, frame, resolved.type_args)
             return
         if isinstance(value, ObjectValue):
-            if overload_index != 0:
-                raise RuntimeError(
-                    f"resolved enum member '{name}' has no overload {overload_index}"
-                )
+            _require_single_resolved_slot(resolved, "enum member")
             frame.stack.append(value)
             return
-        if overload_index == 0 and not callable(value):
+        if resolved.overload_index == 0 and not callable(value):
             frame.stack.append(value)
             return
-        raise RuntimeError(f"resolved element '{name}' is not callable")
+        raise RuntimeError(f"resolved element '{resolved.name}' is not callable")
+
+    def _call_resolved_builtin_value(
+        self,
+        value: BuiltinValue,
+        frame: _Frame,
+        reference: _ResolvedElementReference,
+    ) -> None:
+        try:
+            overload = value.element.definitions[reference.overload_index]
+        except IndexError as exc:
+            raise RuntimeError(
+                f"resolved element '{reference.name}' has no overload "
+                f"{reference.overload_index}"
+            ) from exc
+        _call_resolved_builtin(
+            value,
+            overload,
+            frame,
+            reference.vectorised,
+            reference.vectorised_depths,
+            reference.arity_override,
+            reference.consumed_override,
+        )
+
+    def _call_resolved_function_value(
+        self,
+        value: FunctionValue,
+        frame: _Frame,
+        reference: _ResolvedElementReference,
+    ) -> None:
+        _require_single_resolved_slot(reference, "function")
+        frame.stack.extend(reference.static_values)
+        self._call_function(value, frame, vectorised=reference.vectorised)
+
+    def _call_resolved_overloaded_function(
+        self,
+        value: OverloadedFunctionValue,
+        frame: _Frame,
+        reference: _ResolvedElementReference,
+    ) -> None:
+        try:
+            overload = value.overloads[reference.overload_index]
+        except IndexError as exc:
+            raise RuntimeError(
+                f"resolved function '{reference.name}' has no overload "
+                f"{reference.overload_index}"
+            ) from exc
+        frame.stack.extend(reference.static_values)
+        self._call_function(overload, frame, vectorised=reference.vectorised)
 
     def _unfold(self, frame: _Frame, config: object) -> LazyList:
         condition_code, body_code, arity = config
@@ -759,6 +784,90 @@ def run(
         output=output,
         list_preview_limit=list_preview_limit,
     ).run(program)
+
+
+def _decode_resolved_element_reference(reference: object) -> _ResolvedElementReference:
+    if not _is_resolved_reference_tuple(reference):
+        raise RuntimeError(f"invalid resolved element reference {reference!r}")
+    parts = cast(tuple[object, ...], reference)
+    return _ResolvedElementReference(
+        name=cast(str, parts[0]),
+        overload_index=cast(int, parts[1]),
+        vectorised=_optional_reference_bool(
+            parts,
+            _RESOLVED_REFERENCE_VECTORISED,
+        ),
+        vectorised_depths=_optional_reference_int_tuple(
+            parts,
+            _RESOLVED_REFERENCE_VECTORISED_DEPTHS,
+        ),
+        type_args=_optional_reference_str_tuple(
+            parts,
+            _RESOLVED_REFERENCE_TYPE_ARGS,
+        ),
+        static_values=(
+            _static_reference_values(parts[_RESOLVED_REFERENCE_STATIC_VALUES])
+            if len(parts) > _RESOLVED_REFERENCE_STATIC_VALUES
+            else ()
+        ),
+        arity_override=_optional_reference_int(
+            parts,
+            _RESOLVED_REFERENCE_ARITY_OVERRIDE,
+        ),
+        consumed_override=_optional_reference_int(
+            parts,
+            _RESOLVED_REFERENCE_CONSUMED_OVERRIDE,
+        ),
+    )
+
+
+def _is_resolved_reference_tuple(reference: object) -> bool:
+    return (
+        isinstance(reference, tuple)
+        and _RESOLVED_REFERENCE_MIN_SIZE
+        <= len(reference)
+        <= _RESOLVED_REFERENCE_MAX_SIZE
+        and isinstance(reference[0], str)
+        and isinstance(reference[1], int)
+    )
+
+
+def _optional_reference_bool(reference: tuple[object, ...], index: int) -> bool:
+    return bool(reference[index]) if len(reference) > index else False
+
+
+def _optional_reference_int(reference: tuple[object, ...], index: int) -> int | None:
+    return int(reference[index]) if len(reference) > index else None
+
+
+def _optional_reference_int_tuple(
+    reference: tuple[object, ...],
+    index: int,
+) -> tuple[int, ...]:
+    if len(reference) <= index:
+        return ()
+    return tuple(int(depth) for depth in reference[index])
+
+
+def _optional_reference_str_tuple(
+    reference: tuple[object, ...],
+    index: int,
+) -> tuple[str, ...]:
+    if len(reference) <= index:
+        return ()
+    return tuple(str(type_arg) for type_arg in reference[index])
+
+
+def _require_single_resolved_slot(
+    reference: _ResolvedElementReference,
+    target_kind: str,
+) -> None:
+    if reference.overload_index == 0:
+        return
+    raise RuntimeError(
+        f"resolved {target_kind} '{reference.name}' has no overload "
+        f"{reference.overload_index}"
+    )
 
 
 def _make_function_value(

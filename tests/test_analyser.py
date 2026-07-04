@@ -43,6 +43,7 @@ from valiance.types import (
     AppliedElement,
     C,
     DataTag,
+    ElementTag,
     Environment,
     ExactList,
     Field,
@@ -148,6 +149,23 @@ class AnalyserTests(unittest.TestCase):
             map_result.application.stack,
             TypeStack((C(ListExactType, String),)),
         )
+
+    def test_default_environment_predefines_element_tags(self):
+        env = default_environment()
+
+        self.assertIsNotNone(env.lookup_element_tag("IO"))
+        self.assertIsNotNone(env.lookup_element_tag("Eager"))
+
+    def test_eager_tag_propagates_from_called_element(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse("define log(value: Number) -> => $value println")
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertIn(ElementTag(Symbol("Eager")), typed[0].typ.element_tags)
+        self.assertIn(ElementTag(Symbol("IO")), typed[0].typ.element_tags)
 
     def test_modifier_arguments_bind_to_function_parameters(self):
         env = default_environment()

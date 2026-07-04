@@ -152,12 +152,22 @@ class ArrayMinType(CollectionType):
     """An array with at least the specified rank."""
 
 
+@dataclass(frozen=True, order=True)
+class ElementTag:
+    """An element/function tag requirement or propagated effect fact."""
+
+    name: Symbol
+    args: tuple[Type, ...] = ()
+    absent: bool = False
+
+
 @dataclass(frozen=True)
 class FunctionType(Type):
     """A stack-effect function type."""
 
     params: tuple[Type, ...] | None = ()
     returns: tuple[Type, ...] | None = ()
+    element_tags: frozenset[ElementTag] = field(default_factory=frozenset[ElementTag])
 
 
 @dataclass(frozen=True)
@@ -220,6 +230,7 @@ class Overload:
         hash=False,
     )
     call_site_body: Any = field(default=None, compare=False, hash=False)
+    element_tags: frozenset[ElementTag] = field(default_factory=frozenset[ElementTag])
 
 
 @dataclass(frozen=True)
@@ -258,6 +269,7 @@ class AppliedOverload:
     vectorised_depths: tuple[int, ...] = ()
     rank_values: tuple[tuple[str, int], ...] = ()
     runtime_consumed_count: int | None = None
+    element_tags: frozenset[ElementTag] = field(default_factory=frozenset[ElementTag])
 
     def __hash__(self) -> int:
         return hash(
@@ -272,6 +284,7 @@ class AppliedOverload:
                 self.vectorised_depths,
                 self.rank_values,
                 self.runtime_consumed_count,
+                self.element_tags,
             )
         )
 

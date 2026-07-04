@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum, auto
 
 from valiance.symbols import Symbol
 from valiance.types.context import Context, TagKind, Variance
@@ -35,6 +36,21 @@ class UnknownElement(EnvironmentApplyResult):
     """No overload set exists for the requested element name."""
 
     name: Symbol
+
+
+class ElementTagKind(Enum):
+    """Static categories for element/function tags."""
+
+    PROPERTY = auto()
+    COMPANION = auto()
+
+
+@dataclass(frozen=True)
+class ElementTagDefinition:
+    """One element-tag declaration visible in an environment scope."""
+
+    name: Symbol
+    kind: ElementTagKind
 
 
 @dataclass(frozen=True)
@@ -174,6 +190,9 @@ class Environment:
     )
     data_tags: dict[Symbol, DataTagDefinition] = field(
         default_factory=dict[Symbol, DataTagDefinition]
+    )
+    element_tags: dict[Symbol, ElementTagDefinition] = field(
+        default_factory=dict[Symbol, ElementTagDefinition]
     )
     tag_parents: dict[Symbol, Symbol] = field(default_factory=dict[Symbol, Symbol])
     disjoint_tags: dict[Symbol, set[Symbol]] = field(
@@ -420,6 +439,32 @@ class Environment:
         if self.parent is not None:
             return self.parent.lookup_tag(name)
         return None
+
+    def define_element_tag(
+        self,
+        tag: str | Symbol,
+        kind: ElementTagKind,
+    ) -> None:
+        """Register an element tag declaration visible in this environment."""
+        name = _tag_symbol(tag)
+        self.element_tags[name] = ElementTagDefinition(name, kind)
+
+    def lookup_element_tag(self, tag: str | Symbol) -> ElementTagDefinition | None:
+        """Return an element tag declaration, if visible."""
+        name = _tag_symbol(tag)
+        if name in self.element_tags:
+            return self.element_tags[name]
+        if self.parent is not None:
+            return self.parent.lookup_element_tag(name)
+        return None
+
+    def add_property_element_tag(self, tag: str | Symbol) -> None:
+        """Record a user-attachable element tag."""
+        self.define_element_tag(tag, ElementTagKind.PROPERTY)
+
+    def add_companion_element_tag(self, tag: str | Symbol) -> None:
+        """Record a system-attached companion element tag."""
+        self.define_element_tag(tag, ElementTagKind.COMPANION)
 
     def add_unit_tag(self, tag: str | Symbol) -> None:
         """Record a tag that cannot be silently erased."""

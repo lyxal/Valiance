@@ -191,6 +191,15 @@ ParseError
             [Decimal("2"), Decimal("4"), Decimal("6")],
         )
 
+    def test_eager_map_with_println_executes_immediately(self):
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            stack = execute("[1, 2, 3] map: println")
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "1\n2\n3\n")
+
     def test_executes_call_site_checked_builtins(self):
         self.assertEqual(
             execute("1 2 peek: +"),
@@ -484,6 +493,15 @@ Box
         self.assertEqual(len(stack), 1)
         self.assertIsInstance(stack[0], ObjectValue)
         self.assertEqual(stack[0].type_args, ("Number",))
+
+    def test_function_element_tags_survive_bytecode_round_trip(self):
+        source = "eager define log(value: Number) -> => $value println"
+        program = compile_program(Analyser().analyse(parse(source)))
+        restored = loads(dumps(program))
+        maker = restored.main.instructions[0]
+
+        self.assertEqual(maker.op, OpCode.MAKE_FUNCTION)
+        self.assertIn("Eager", maker.arg.element_tags)
 
     def test_executes_enum_member_value_access(self):
         self.assertEqual(

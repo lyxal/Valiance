@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from valiance.symbols import Symbol
-from valiance.types import AppliedOverload, DataTag, Type
+from valiance.types import AppliedOverload, DataTag, ElementTag, Type
 
 
 @dataclass(frozen=True)
@@ -121,6 +121,7 @@ class FunctionNode(ASTNode):
     body: tuple[ASTNode, ...] = ()
     returns: tuple[Type, ...] | None = None
     where_clause: tuple[ASTNode, ...] = ()
+    element_tags: frozenset[ElementTag] = field(default_factory=frozenset[ElementTag])
 
 
 @dataclass(frozen=True)

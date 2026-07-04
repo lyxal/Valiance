@@ -111,11 +111,18 @@ class _Compiler:
         params: tuple[str, ...] = (),
         name: str | None = None,
         cycle_params: bool = False,
+        element_tags: tuple[str, ...] = (),
     ) -> FunctionCode:
         for node in body:
             self.node(node)
         self.emit(OpCode.RETURN)
-        return FunctionCode(tuple(self.instructions), params, name, cycle_params)
+        return FunctionCode(
+            tuple(self.instructions),
+            params,
+            name,
+            cycle_params,
+            element_tags,
+        )
 
     def node(self, node: ASTNode | TypedNode) -> None:
         typed_node = node if isinstance(node, TypedNode) else None
@@ -302,6 +309,8 @@ class _Compiler:
             + tuple(definition.function.params or ()),
             body=definition.function.body,
             returns=definition.function.returns,
+            where_clause=definition.function.where_clause,
+            element_tags=definition.function.element_tags,
             location=definition.function.location,
         )
         node = DefineNode(
@@ -517,6 +526,7 @@ def _compile_function_node(
         params=params,
         name=name,
         cycle_params=bool(ast.params),
+        element_tags=_function_element_tag_names(node),
     )
 
 
@@ -538,6 +548,7 @@ def _compile_function_overload(
         ),
         name=name,
         cycle_params=bool(ast.params),
+        element_tags=_function_element_tag_names(overload.typ),
     )
 
 
@@ -613,6 +624,22 @@ def _function_ast(node: FunctionNode | TypedNode) -> FunctionNode:
     if not isinstance(ast, FunctionNode):
         raise CompileError(f"cannot compile function from {type(ast).__name__}")
     return ast
+
+
+def _function_element_tag_names(
+    node: FunctionNode | TypedNode | Type,
+) -> tuple[str, ...]:
+    typ = node.typ if isinstance(node, TypedNode) else node
+    if isinstance(typ, FunctionType):
+        return tuple(
+            sorted(str(tag.name) for tag in typ.element_tags if not tag.absent)
+        )
+    ast = _unwrap(node) if isinstance(node, (FunctionNode, TypedNode)) else None
+    if isinstance(ast, FunctionNode):
+        return tuple(
+            sorted(str(tag.name) for tag in ast.element_tags if not tag.absent)
+        )
+    return ()
 
 
 def _unwrap(node: ASTNode | TypedNode) -> ASTNode:
