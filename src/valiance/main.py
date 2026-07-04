@@ -232,7 +232,7 @@ def _run_source(
                     source,
                     source_file,
                 )
-            print(typed_source(typed))
+            print(typed_source(typed, source))
             return 0
 
         if analyser.diagnostics:

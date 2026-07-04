@@ -46,7 +46,23 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         rendered = output.getvalue()
-        self.assertIn("define double(n: Number) -> Number =>", rendered)
+        self.assertEqual(
+            rendered,
+            "define double(n: Number) -> Number => $n 2 *\n",
+        )
+
+    def test_main_annotates_restored_source_chains_only_at_signatures(self):
+        output = io.StringIO()
+        source = "define foo => 0 - | positive?\nprintln foo 60"
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["annotate", "--code", source])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            output.getvalue(),
+            "define foo(_0: Number) -> #boolean Number => 0 - | positive?\n"
+            "println foo 60\n",
+        )
 
     def test_main_runs_inline_code(self):
         output = io.StringIO()
