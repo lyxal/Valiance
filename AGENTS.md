@@ -15,3 +15,8 @@ Windows notes for future agents:
 
 When checking the final diff/status to "give you a clean summary of what changed and where", don't worry about running the git commands. Just give the summary based on the
 changes, not the git output - that saves time.
+
+When implementing features, don't leave them half finished. "Just for now" type patches lead to legacy cruft that will need to be refactored anyway.
+
+Make language feature implementations as extensible as possible. Don't hardcode tuple layouts, lengths, strings, etc.
+
