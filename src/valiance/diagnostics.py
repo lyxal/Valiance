@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TextIO
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +44,11 @@ class Diagnostic:
     help: str | None = None
 
 
+_RESET = "\033[0m"
+_BOLD = "\033[1m"
+_RED = "\033[31m"
+_YELLOW = "\033[33m"
+_BLUE = "\033[34m"
 _LOCATION_PREFIX = re.compile(r"^(?P<line>\d+):(?P<column>\d+):\s*(?P<message>.*)$")
 
 
@@ -79,28 +86,43 @@ def render(
     source: str | None = None,
     *,
     source_file: Path | None = None,
+    color: bool = False,
 ) -> str:
     """Render a compiler diagnostic with source context when available."""
-    lines = [f"{diagnostic.stage}: {diagnostic.message}"]
+    lines = [f"{_style_stage(diagnostic.stage, color)}: {diagnostic.message}"]
     if diagnostic.location is not None:
         label = "<code>" if source_file is None else str(source_file)
+        location = diagnostic.location
         lines.append(
-            f"  --> {label}:{diagnostic.location.line}:{diagnostic.location.column}"
+            _style(
+                f"  --> {label}:{location.line}:{location.column}",
+                _BLUE,
+                color,
+            )
         )
         if source is not None:
             snippet = _source_line(source, diagnostic.location.line)
             if snippet is not None:
                 gutter_width = len(str(diagnostic.location.line))
                 caret_column = max(diagnostic.location.column, 1)
-                lines.append(f"{' ' * gutter_width} |")
-                lines.append(f"{diagnostic.location.line} | {snippet}")
+                blank_gutter = f"{' ' * gutter_width} |"
+                line_gutter = f"{diagnostic.location.line} |"
+                caret = _style("^", _diagnostic_color(diagnostic.stage), color)
+                lines.append(_style(blank_gutter, _BLUE, color))
+                lines.append(f"{_style(line_gutter, _BLUE, color)} {snippet}")
                 lines.append(
-                    f"{' ' * gutter_width} | "
-                    f"{' ' * (caret_column - 1)}^"
+                    f"{_style(blank_gutter, _BLUE, color)} "
+                    f"{' ' * (caret_column - 1)}{caret}"
                 )
     if diagnostic.help is not None:
-        lines.append(f"  help: {diagnostic.help}")
+        lines.append(f"  {_style('help', _BOLD, color)}: {diagnostic.help}")
     return "\n".join(lines)
+
+
+def should_color(stream: TextIO | None = None) -> bool:
+    """Return whether diagnostics should use ANSI color for this stream."""
+    stream = sys.stderr if stream is None else stream
+    return bool(getattr(stream, "isatty", lambda: False)())
 
 
 def _source_line(source: str, line: int) -> str | None:
@@ -108,6 +130,20 @@ def _source_line(source: str, line: int) -> str | None:
     if line < 1 or line > len(lines):
         return None
     return lines[line - 1].replace("\t", "    ")
+
+
+def _style(text: str, code: str, enabled: bool) -> str:
+    if not enabled:
+        return text
+    return f"{code}{text}{_RESET}"
+
+
+def _diagnostic_color(stage: str) -> str:
+    return _YELLOW if "warning" in stage.lower() else _RED
+
+
+def _style_stage(stage: str, color: bool) -> str:
+    return _style(stage, _BOLD + _diagnostic_color(stage), color)
 
 
 def _help_for(message: str) -> str | None:

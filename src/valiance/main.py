@@ -8,7 +8,7 @@ from typing import Any
 
 from valiance.analysis import Analyser
 from valiance.asts import pretty_ast, typed_source
-from valiance.diagnostics import from_exception, from_message, render
+from valiance.diagnostics import from_exception, from_message, render, should_color
 from valiance.parsing import LexError, ParseError, Parser, lex
 from valiance.runtime import (
     BytecodeFormatError,
@@ -215,26 +215,22 @@ def _run_source(
         typed = analyser.analyse(program)
 
         if action == "analyse":
-            for diagnostic in analyser.diagnostics:
-                _print_diagnostic(
-                    from_message("Type error", diagnostic),
-                    source,
-                    source_file,
-                )
+            _print_analyser_messages(analyser, source, source_file)
             print("Typed AST:")
             print(pretty_ast(typed))
             return 0
 
         if action == "annotate":
-            for diagnostic in analyser.diagnostics:
-                _print_diagnostic(
-                    from_message("Type error", diagnostic),
-                    source,
-                    source_file,
-                )
+            _print_analyser_messages(analyser, source, source_file)
             print(typed_source(typed, source))
             return 0
 
+        for warning in analyser.warnings:
+            _print_diagnostic(
+                from_message("Type warning", warning),
+                source,
+                source_file,
+            )
         if analyser.diagnostics:
             for diagnostic in analyser.diagnostics:
                 _print_diagnostic(
@@ -333,7 +329,34 @@ def _print_diagnostic(
     source: str | None = None,
     source_file: Path | None = None,
 ) -> None:
-    print(render(diagnostic, source, source_file=source_file), file=sys.stderr)
+    print(
+        render(
+            diagnostic,
+            source,
+            source_file=source_file,
+            color=should_color(sys.stderr),
+        ),
+        file=sys.stderr,
+    )
+
+
+def _print_analyser_messages(
+    analyser: Analyser,
+    source: str,
+    source_file: Path | None,
+) -> None:
+    for warning in analyser.warnings:
+        _print_diagnostic(
+            from_message("Type warning", warning),
+            source,
+            source_file,
+        )
+    for diagnostic in analyser.diagnostics:
+        _print_diagnostic(
+            from_message("Type error", diagnostic),
+            source,
+            source_file,
+        )
 
 
 def _run_bytecode(

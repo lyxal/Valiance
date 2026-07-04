@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from valiance.diagnostics import Diagnostic, SourceLocation, render
 from valiance.main import main
 
 
@@ -108,6 +109,31 @@ class MainTests(unittest.TestCase):
         self.assertIn("--> <code>:1:1", rendered)
         self.assertIn("1 | missing", rendered)
         self.assertIn("help: Check the element name", rendered)
+
+    def test_main_formats_type_warnings_without_failing(self):
+        output = io.StringIO()
+        error = io.StringIO()
+        source = '@warn("use newer") define old -> Number => 1\nold | println'
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
+            exit_code = main(["run", "--code", source])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), "1\n")
+        rendered = error.getvalue()
+        self.assertIn("Type warning: use newer", rendered)
+        self.assertIn("--> <code>:2:1", rendered)
+        self.assertNotIn("\033[", rendered)
+
+    def test_diagnostic_rendering_can_use_colour(self):
+        rendered = render(
+            Diagnostic("Type warning", "careful", SourceLocation(1, 2)),
+            "ab",
+            color=True,
+        )
+
+        self.assertIn("\033[1m\033[33mType warning\033[0m", rendered)
+        self.assertIn("\033[34m  --> <code>:1:2\033[0m", rendered)
+        self.assertIn("\033[33m^\033[0m", rendered)
 
     def test_main_formats_runtime_errors_with_context(self):
         error = io.StringIO()

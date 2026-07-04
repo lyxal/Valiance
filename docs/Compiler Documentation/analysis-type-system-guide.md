@@ -798,8 +798,9 @@ Implemented annotations:
   and records `Err` implementations for the parent variant and generated member
   types.
 
-Warnings are still represented only as accepted annotations (`@warn` and
-`@deprecated`) because the analyser currently has no warning channel.
+- `@warn` and `@deprecated`: attach non-fatal call-site warnings to selected
+  overloads. A string argument customizes the warning text; otherwise the
+  compiler uses a default warning message.
 
 ## Row Polymorphism And Fields
 
@@ -839,8 +840,9 @@ manually iterating through AST nodes.
 
 ## Diagnostics
 
-The analyser currently stores diagnostic strings. Use `_diagnose(message, node)`
-so source locations are included when available.
+The analyser stores error and warning strings separately. Use
+`_diagnose(message, node)` for fatal compiler diagnostics and `_warn(message,
+node)` for non-fatal warnings so source locations are included when available.
 
 For speculative inference, avoid emitting diagnostics for branches that are
 cleanly trimmed. Diagnostics should explain final invalid programs, not every

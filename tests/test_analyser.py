@@ -1373,6 +1373,27 @@ getName $joe
 
         self.assertEqual(analyser.diagnostics, ["2:6: no strings"])
 
+    def test_warn_annotation_reports_selected_overload_warning(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                '@warn("prefer safer") define old(x: Number) -> Number => $x\n'
+                "1 old"
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(analyser.warnings, ["2:3: prefer safer"])
+
+    def test_deprecated_annotation_has_default_warning(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("@deprecated define old -> Number => 1\nold"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(analyser.warnings, ["2:1: selected overload is deprecated"])
+
     def test_tupled_element_annotation_wraps_static_returns(self):
         typed = analyse(parse("define pair -> Number, Number => 1 2\n@@tupled pair"))
 

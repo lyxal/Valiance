@@ -146,6 +146,19 @@ def annotation_error_message(annotations: tuple[ASTNode, ...]) -> str | None:
     return None
 
 
+def annotation_warning_message(annotations: tuple[ASTNode, ...]) -> str | None:
+    for annotation in annotation_nodes(annotations):
+        if annotation.name.text not in {"warn", "deprecated"}:
+            continue
+        for arg in annotation.args:
+            if isinstance(arg, StringLiteralNode):
+                return arg.value
+        if annotation.name.text == "deprecated":
+            return "selected overload is deprecated"
+        return "selected overload has a warning"
+    return None
+
+
 def valid_element_annotations(annotations: tuple[ASTNode, ...]) -> bool:
     return (
         DEFAULT_REGISTRY.validate(annotations, "element", ElementNode(Symbol("_")))
@@ -185,6 +198,7 @@ def commutative_overloads(overload: T.Overload) -> tuple[T.Overload, ...]:
                 ("commutative", tuple(order)),
                 overload.element_tags,
                 overload.annotation_error,
+                overload.annotation_warning,
             )
         )
     return tuple(generated)
@@ -238,6 +252,7 @@ def recursive_overload(
         param_names=_function_param_names_for_overload(node, params),
         element_tags=node.element_tags,
         annotation_error=annotation_error_message(node.annotations),
+        annotation_warning=annotation_warning_message(node.annotations),
     )
 
 
@@ -311,6 +326,16 @@ def _error_overload_transform(
     return replace(overload, annotation_error=message)
 
 
+def _warning_overload_transform(
+    overload: T.Overload,
+    annotations: tuple[AnnotationNode, ...],
+) -> T.Overload:
+    message = annotation_warning_message(annotations)
+    if message is None:
+        return overload
+    return replace(overload, annotation_warning=message)
+
+
 def _err_type_object_transform(
     node: ObjectNode,
     annotations: tuple[AnnotationNode, ...],
@@ -374,8 +399,20 @@ def _install_builtin_annotations() -> None:
             transform_overload=_error_overload_transform,
         )
     )
-    register_annotation(AnnotationSpec("warn", frozenset({"define"})))
-    register_annotation(AnnotationSpec("deprecated", frozenset({"define"})))
+    register_annotation(
+        AnnotationSpec(
+            "warn",
+            frozenset({"define"}),
+            transform_overload=_warning_overload_transform,
+        )
+    )
+    register_annotation(
+        AnnotationSpec(
+            "deprecated",
+            frozenset({"define"}),
+            transform_overload=_warning_overload_transform,
+        )
+    )
     register_annotation(
         AnnotationSpec(
             "returnAll",

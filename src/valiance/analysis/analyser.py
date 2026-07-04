@@ -487,6 +487,7 @@ class Analyser:
         self.module_loader = module_loader or ModuleLoader()
         self.source_file = source_file
         self.diagnostics: list[str] = []
+        self.warnings: list[str] = []
         self._friendly_owners: tuple[Symbol, ...] = ()
 
     def analyse(self, program: list[ASTNode]) -> list[TypedNode]:
@@ -1151,6 +1152,8 @@ class Analyser:
             if applied.overload.annotation_error is not None:
                 self._diagnose(applied.overload.annotation_error, node)
                 continue
+            if applied.overload.annotation_warning is not None:
+                self._warn(applied.overload.annotation_warning, node)
             actual_returns = annotation_hooks.annotated_element_returns(
                 node,
                 applied.actual_returns,
@@ -2258,7 +2261,9 @@ class Analyser:
         analysis = _function_analysis_from_signatures(signatures)
         if analysis is None:
             self.diagnostics.extend(function_analyser.diagnostics)
+            self.warnings.extend(function_analyser.warnings)
             return None
+        self.warnings.extend(function_analyser.warnings)
         return analysis, outer
 
     def _call_site_checked_function(
@@ -2273,6 +2278,9 @@ class Analyser:
             param_names=_function_param_names_for_overload(node, params),
             call_site_body=(outer, node),
             annotation_error=annotation_hooks.annotation_error_message(node.annotations),
+            annotation_warning=annotation_hooks.annotation_warning_message(
+                node.annotations
+            ),
         )
         typ = T.Overloads(overload)
         return FunctionAnalysis(
@@ -2352,7 +2360,12 @@ class Analyser:
                     set(node.element_tags)
                     | set(_typed_body_element_tags(branch.typed_body))
                 ),
-            annotation_error=annotation_hooks.annotation_error_message(node.annotations),
+                annotation_error=annotation_hooks.annotation_error_message(
+                    node.annotations
+                ),
+                annotation_warning=annotation_hooks.annotation_warning_message(
+                    node.annotations
+                ),
             )
             signatures.setdefault(signature, branch.typed_body)
 
@@ -2412,6 +2425,9 @@ class Analyser:
 
     def _diagnose(self, message: str, node: ASTNode | None = None) -> None:
         self.diagnostics.append(_diagnostic_message(message, node))
+
+    def _warn(self, message: str, node: ASTNode | None = None) -> None:
+        self.warnings.append(_diagnostic_message(message, node))
 
 
 def analyse(
@@ -2479,6 +2495,7 @@ def _fully_typed_overload(node: FunctionNode) -> T.Overload | None:
         param_names=_function_param_names_for_overload(node, params),
         element_tags=node.element_tags,
         annotation_error=annotation_hooks.annotation_error_message(node.annotations),
+        annotation_warning=annotation_hooks.annotation_warning_message(node.annotations),
     )
 
 
@@ -3211,6 +3228,7 @@ def _call_site_checked_overload_signature(
         (None,) * (len(call_params) - len(overload.params)) + overload.param_names,
         element_tags=overload.element_tags,
         annotation_error=overload.annotation_error,
+        annotation_warning=overload.annotation_warning,
     )
 
 
@@ -3502,6 +3520,7 @@ def _substitute_overload_ranks(
             _substitute_rank_values_in_element_tags(overload.element_tags, ranks)
         ),
         overload.annotation_error,
+        overload.annotation_warning,
     )
 
 
@@ -4406,6 +4425,7 @@ def _with_generic_constraints(
         overload.call_site_body,
         overload.element_tags,
         overload.annotation_error,
+        overload.annotation_warning,
     )
 
 
