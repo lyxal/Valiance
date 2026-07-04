@@ -12,3 +12,6 @@ Windows notes for future agents:
 - If Git reports dubious ownership for this checkout, avoid changing global Git
   config. Use a per-command override, for example
   `git -c safe.directory=C:/.../Valiance-Lang status --short`.
+
+When checking the final diff/status to "give you a clean summary of what changed and where", don't worry about running the git commands. Just give the summary based on the
+changes, not the git output - that saves time.
