@@ -332,6 +332,7 @@ fine inside relation tests or generic type-manipulation code.
 Number+   == ExactList(Number, 1)
 Number+2  == ExactList(Number, 2)
 Number++  == ExactList(Number, 2)
+Number+++++ == ExactList(Number, 5)
 ```
 
 Exact ranks do not freely widen to other exact ranks. `Number+2` is not the same
@@ -345,6 +346,7 @@ as `Number+`.
 ```text
 Number*   == AtLeastList(Number, 1)
 Number*3  == AtLeastList(Number, 3)
+Number*** == AtLeastList(Number, 3)
 ```
 
 An exact list can satisfy a compatible minimum-rank list if its rank is high
@@ -359,6 +361,7 @@ syntax uses `~`:
 ```text
 Number~   == RuggedList(Number, 1)
 Number~2  == RuggedList(Number, 2)
+Number~~~~ == RuggedList(Number, 4)
 ```
 
 Rugged rank is weaker than exact/minimum list structure. When generic
@@ -389,21 +392,17 @@ because the type layer has array rank nodes.
 
 ### Nested Collection Normalization
 
-`normalize` collapses nested collection nodes when rank modes have a clear
-combined meaning. For example, surface syntax can produce nested nodes like
-`(Number+2)*`; normalization collapses this into the weakest shape that
-preserves meaning.
+Surface type syntax rejects mixed rank postfixes unless the outer marker is a
+direct superset of the inner marker. For example, `Number+*` is accepted as
+`Number**`, and `Number^>` is accepted as `Number>>`, but `Number*+`,
+`Number+~`, and `Number^+` are errors. Optional postfixes are a meaningful
+barrier, so `Number+?+` and `Number+?*` describe collections of optional
+ranked lists and are valid.
 
-The important rule: when exact/minimum/rugged ranks mix, the weaker outer
-meaning usually wins:
-
-- exact + exact keeps exact
-- any minimum involvement generally widens to minimum
-- any rugged list involvement widens to rugged
-- arrays wrapped by list syntax become list-shaped
-
-Use `T.normalize(...)` before comparing types structurally. Use `T.same(...)`
-for canonical equality.
+`normalize` still collapses nested collection nodes when they are created by
+type builders or generic solving and the rank modes have a clear combined
+meaning. Use `T.normalize(...)` before comparing types structurally. Use
+`T.same(...)` for canonical equality.
 
 ### Collection Item Types
 

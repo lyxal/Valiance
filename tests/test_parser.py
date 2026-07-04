@@ -51,6 +51,7 @@ from valiance.types import (
     ElementTag,
     Fn,
     ListExactType,
+    ListMinType,
     N,
     Number,
     RankVariable,
@@ -810,6 +811,30 @@ end
                 parse_type("#!infinite Number+"),
                 Tagged(C(ListExactType, Number), DataTag("infinite", absent=True)),
             )
+        )
+
+    def test_parses_numeric_rank_postfix_shorthand(self):
+        self.assertTrue(same(parse_type("Number++"), parse_type("Number+2")))
+        self.assertTrue(same(parse_type("Number+++++"), parse_type("Number+5")))
+        self.assertTrue(same(parse_type("Number***"), parse_type("Number*3")))
+        self.assertTrue(same(parse_type("Number~~~~"), parse_type("Number~4")))
+        self.assertTrue(same(parse_type("Number?3"), parse_type("Number???")))
+
+    def test_rank_postfix_minimum_widens_exact(self):
+        self.assertTrue(same(parse_type("Number+*"), parse_type("Number**")))
+        self.assertTrue(same(parse_type("Number+2*"), parse_type("Number*3")))
+
+    def test_mixed_rank_postfixes_need_optional_barrier(self):
+        for source in ("Number*+", "Number+~", "Number^+"):
+            with self.subTest(source=source):
+                with self.assertRaises(ParseError):
+                    parse_type(source)
+
+        self.assertTrue(
+            same(parse_type("Number+?+"), C(ListExactType, parse_type("Number+?")))
+        )
+        self.assertTrue(
+            same(parse_type("Number+?*"), C(ListMinType, parse_type("Number+?")))
         )
 
 

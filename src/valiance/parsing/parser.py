@@ -1504,44 +1504,79 @@ class Parser:
             }:
                 op_token = self._advance()
                 op = op_token.value
+                rank = self._type_postfix_rank(op_token, op)
                 if op == "?":
-                    typ = U(N(Symbol("Some"), typ), NoneType())
+                    if isinstance(rank, RankVariable):
+                        self._error("optional type depth cannot use a rank variable")
+                    typ = _optionalize_type(typ, rank)
                     continue
-                rank = 1
-                if self._match(TokenKind.NUMBER):
-                    rank = int(self._previous.value)
-                elif self._match(TokenKind.DOLLAR):
-                    rank = RankVariable(
-                        self._expect(TokenKind.IDENT).value,
-                    )
-                else:
-                    # Only fold contiguous, whitespace-free operator
-                    # characters into the rank count. `Number++` is rank 2,
-                    # but `Number+ +` (or `Number+ ++`, etc.) stops counting
-                    # at the whitespace boundary, since a space-separated
-                    # run is a fresh operator, not a rank continuation.
-                    prev_tok = op_token
-                    while (
-                        self._check(TokenKind.OP)
-                        and self._current.value == op
-                        and self._adjacent(prev_tok, self._current)
-                    ):
-                        prev_tok = self._advance()
-                        rank += 1
-                collection: CollectionType | None = {
+                collection: type[CollectionType] | None = {
                     "+": ListExactType,
                     "*": ListMinType,
                     "~": ListRuggedType,
                     "^": ArrayExactType,
                     ">": ArrayMinType,
-                }.get(
-                    op
-                )  # type: ignore
+                }.get(op)
                 if collection is not None:
-                    typ = C(collection, typ, rank)
+                    typ = self._apply_collection_postfix(
+                        typ,
+                        collection,
+                        rank,
+                        op_token,
+                    )
                 continue
             break
         return typ
+
+    def _type_postfix_rank(
+        self, op_token: Token, op: str
+    ) -> int | RankVariable:
+        if self._match(TokenKind.NUMBER):
+            return int(self._previous.value)
+        if op != "?" and self._match(TokenKind.DOLLAR):
+            return RankVariable(self._expect(TokenKind.IDENT).value)
+
+        # Only fold contiguous, whitespace-free operator characters into the
+        # rank count. `Number++` is rank 2, but `Number+ +` stops counting at
+        # the whitespace boundary, since a space-separated run is a fresh
+        # operator, not a rank continuation.
+        rank = 1
+        prev_tok = op_token
+        while (
+            self._check(TokenKind.OP)
+            and self._current.value == op
+            and self._adjacent(prev_tok, self._current)
+        ):
+            prev_tok = self._advance()
+            rank += 1
+        return rank
+
+    def _apply_collection_postfix(
+        self,
+        typ: Type,
+        collection: type[CollectionType],
+        rank: int | RankVariable,
+        token: Token,
+    ) -> Type:
+        if not isinstance(typ, CollectionType):
+            return C(collection, typ, rank)
+
+        inner_collection = type(typ)
+        if (
+            isinstance(typ.rank, int)
+            and isinstance(rank, int)
+            and _collection_postfix_superset(inner_collection, collection)
+        ):
+            return C(collection, typ.base, typ.rank + rank)
+
+        if inner_collection is collection:
+            return C(collection, typ, rank)
+
+        raise ParseError(
+            "cannot combine rank type suffixes without an optional barrier",
+            line=token.line,
+            column=token.column,
+        )
 
     def _type_primary(self) -> Type:
         if self._match(TokenKind.LBRACE):
@@ -1570,8 +1605,20 @@ class Parser:
             while self._check(TokenKind.DOT) and self._peek(1).kind == TokenKind.IDENT:
                 self._advance()
                 name = f"{name}.{self._expect(TokenKind.IDENT).value}"
+            optional_depth = 0
+            if name.endswith("?"):
+                bare_name = name.rstrip("?")
+                optional_depth = len(name) - len(bare_name)
+                name = bare_name
+                if (
+                    optional_depth == 1
+                    and self._check(TokenKind.NUMBER)
+                    and self._adjacent(self._previous, self._current)
+                ):
+                    optional_depth = int(self._advance().value)
             if name == "None":
-                return NoneType()
+                typ = NoneType()
+                return _optionalize_type(typ, optional_depth)
             args: list[Type] = []
             if self._match(TokenKind.LBRACKET):
                 if name == "Function":
@@ -1579,7 +1626,7 @@ class Parser:
                     self._expect(TokenKind.ARROW)
                     returns = self._type_list_until({TokenKind.RBRACKET})
                     self._expect(TokenKind.RBRACKET)
-                    return Fn(params, returns)
+                    return _optionalize_type(Fn(params, returns), optional_depth)
                 if not self._match(TokenKind.RBRACKET):
                     while True:
                         args.append(self.parse_type_expression())
@@ -1587,10 +1634,10 @@ class Parser:
                             break
                         self._expect(TokenKind.COMMA)
             if name == "Function" and args:
-                return args[0]
+                return _optionalize_type(args[0], optional_depth)
             if name == "Function":
-                return Fn()
-            return N(Symbol(name), *args)
+                return _optionalize_type(Fn(), optional_depth)
+            return _optionalize_type(N(Symbol(name), *args), optional_depth)
         if self._match(TokenKind.LPAREN):
             params: list[Type] = []
             if not self._check(TokenKind.ARROW):
@@ -1776,6 +1823,24 @@ def _flatten(items: tuple[tuple[ASTNode, ...], ...]) -> tuple[ASTNode, ...]:
 
 def _element_tags(*names: str) -> frozenset[ElementTag]:
     return frozenset(ElementTag(Symbol(name)) for name in names)
+
+
+def _collection_postfix_superset(
+    inner: type[CollectionType],
+    outer: type[CollectionType],
+) -> bool:
+    if inner is outer:
+        return True
+    return (inner, outer) in {
+        (ListExactType, ListMinType),
+        (ArrayExactType, ArrayMinType),
+    }
+
+
+def _optionalize_type(typ: Type, depth: int) -> Type:
+    for _ in range(depth):
+        typ = U(N(Symbol("Some"), typ), NoneType())
+    return typ
 
 
 def _append_object_body_item(

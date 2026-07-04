@@ -294,6 +294,8 @@ record{x: 3, y: 4}
 
 - The Valiance definition of `T?` is `Some[T] | None`
 - Notably, this definition allows for a meaningful definition of `T??` as `Some[T?] | None` or `Some[Some[T] | None] | None`.
+- Numeric optional-depth shorthand is valid: `T?3` means the same thing as
+  `T???`.
 - However, that requires a lot of wrapping of values in `Some`. This can get verbose and noisy quickly.
 - Therefore, `T|None` is also considered `T?`. The `T` is automatically wrapped in `Some`
 - Note that `T|None|None` does not equal `T??`. It equals `T?`, because the `None|None` simplifies to `None`. You would need `Some[T?] | None` to get `T??`.

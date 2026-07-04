@@ -390,11 +390,16 @@ The type parser currently supports:
   `{Number..., String}`, `{Number..., String...}`
 - Union types: `A | B`
 - Intersection types: `A & B`
-- Optional types: `T?`, lowered to `Some[T] | None`
+- Optional types: `T?`, `T???`, `T?3`, lowered to nested `Some[T] | None`
 - Atomic generic views: `T atomic`, lowered to `Atomic(T)`
 - List rank postfixes: `T+`, `T+3`, `T+$n`, `T*`, `T*3`, `T*$n`,
   `T~`, `T~3`, `T~$n`
 - Array rank postfixes: `T^`, `T^3`, `T^$n`, `T>`, `T>3`, `T>$n`
+- Contiguous repeated rank/optional markers count as numeric shorthand:
+  `T++ == T+2`, `T*** == T*3`, `T~~~~ == T~4`, `T??? == T?3`
+- Mixed rank postfixes are rejected unless the outer marker is a direct
+  superset, such as `T+* == T**`. Optional postfixes are a barrier, so
+  `T+?+` and `T+?*` are valid.
 - Data-tagged types: `#sorted Number+`, `#!infinite Number+`
 - Function element tags after function types:
   `Function[Number -> ]<Eager, !Panic[String]>`
