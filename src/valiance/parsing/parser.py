@@ -71,6 +71,7 @@ from valiance.types import (
     ArrayMinType,
     Atomic,
     C,
+    CollectionType,
     DataTag,
     ElementTag,
     Fn,
@@ -678,7 +679,11 @@ class Parser:
         terminators: set[TokenKind],
     ) -> MatchPatternNode:
         options = [self._match_pattern_atom(terminators | {TokenKind.PIPE})]
-        while self._check(TokenKind.PIPE) and self._peek(1).kind is TokenKind.PIPE:
+        while (
+            self._check(TokenKind.PIPE)
+            and self._peek(1).kind is TokenKind.PIPE
+            and self._adjacent(self._current, self._peek(1))
+        ):
             self._advance()
             self._advance()
             options.append(self._match_pattern_atom(terminators | {TokenKind.PIPE}))
@@ -779,9 +784,7 @@ class Parser:
                     )
                 )
             else:
-                fields.append(
-                    self._match_pattern({TokenKind.COMMA, TokenKind.RPAREN})
-                )
+                fields.append(self._match_pattern({TokenKind.COMMA, TokenKind.RPAREN}))
             if self._match(TokenKind.RPAREN):
                 return tuple(fields)
             self._expect(TokenKind.COMMA)
@@ -1008,7 +1011,11 @@ class Parser:
                     (TagApplicationNode(_tag_from_token(token), location=_loc(token)),),
                     is_element=True,
                 )
-            name = self._qualified_symbol(token)
+            name = (
+                self._operator_run(token)
+                if token.kind is TokenKind.OP
+                else self._qualified_symbol(token)
+            )
             disambiguation = self._element_disambiguation(self._previous)
             if self._match(TokenKind.COLON):
                 return _ChainPiece(
@@ -1064,10 +1071,36 @@ class Parser:
 
     def _qualified_symbol(self, start: Token) -> Symbol:
         parts = [start.value]
-        while self._check(TokenKind.DOT) and self._peek(1).kind == TokenKind.IDENT:
+        while self._check(TokenKind.DOT) and self._peek(1).kind in (
+            TokenKind.IDENT,
+            TokenKind.OP,
+        ):
             self._advance()
             parts.append(self._advance().value)
         name = ".".join(parts)
+        if self._match(TokenKind.DOUBLE_COLON):
+            if not self._match(TokenKind.IDENT, TokenKind.OP):
+                self._error("expected qualified element name")
+            token = self._previous
+            name = f"{name}::{token.value}"
+        return Symbol(name)
+
+    def _operator_run(self, start: Token) -> Symbol:
+        """Greedily merge a whitespace-free run of OP tokens into one name.
+
+        The lexer emits a single-character OP token per operator character
+        (so that e.g. `Number++` can distinguish a rank-2 list type from two
+        separate unary operators). Here in expression/element position we
+        glue an unbroken, whitespace-free run of such tokens back together
+        into a single operator name, e.g. `+` `+` (adjacent) -> `++`, while a
+        run broken by whitespace (`+ +`) stays as two separate operators.
+        """
+        parts = [start.value]
+        last = start
+        while self._check(TokenKind.OP) and self._adjacent(last, self._current):
+            last = self._advance()
+            parts.append(last.value)
+        name = "".join(parts)
         if self._match(TokenKind.DOUBLE_COLON):
             if not self._match(TokenKind.IDENT, TokenKind.OP):
                 self._error("expected qualified element name")
@@ -1347,10 +1380,9 @@ class Parser:
         if self._check(TokenKind.FAT_ARROW):
             return ()
         returns: list[Type] = []
-        while (
-            not self._check(TokenKind.FAT_ARROW, TokenKind.NEWLINE, TokenKind.EOF)
-            and not self._check_ident("where")
-        ):
+        while not self._check(
+            TokenKind.FAT_ARROW, TokenKind.NEWLINE, TokenKind.EOF
+        ) and not self._check_ident("where"):
             returns.append(self.parse_type_expression())
             if not self._match(TokenKind.COMMA):
                 break
@@ -1407,7 +1439,8 @@ class Parser:
                 ">",
                 "?",
             }:
-                op = self._advance().value
+                op_token = self._advance()
+                op = op_token.value
                 if op == "?":
                     typ = U(N(Symbol("Some"), typ), NoneType())
                     continue
@@ -1418,13 +1451,29 @@ class Parser:
                     rank = RankVariable(
                         self._expect(TokenKind.IDENT).value,
                     )
-                collection = {
+                else:
+                    # Only fold contiguous, whitespace-free operator
+                    # characters into the rank count. `Number++` is rank 2,
+                    # but `Number+ +` (or `Number+ ++`, etc.) stops counting
+                    # at the whitespace boundary, since a space-separated
+                    # run is a fresh operator, not a rank continuation.
+                    prev_tok = op_token
+                    while (
+                        self._check(TokenKind.OP)
+                        and self._current.value == op
+                        and self._adjacent(prev_tok, self._current)
+                    ):
+                        prev_tok = self._advance()
+                        rank += 1
+                collection: CollectionType | None = {
                     "+": ListExactType,
                     "*": ListMinType,
                     "~": ListRuggedType,
                     "^": ArrayExactType,
                     ">": ArrayMinType,
-                }.get(op)
+                }.get(
+                    op
+                )  # type: ignore
                 if collection is not None:
                     typ = C(collection, typ, rank)
                 continue
@@ -1554,8 +1603,7 @@ class Parser:
         if self._current.kind in terminators:
             return True
         return (
-            self._current.kind is TokenKind.IDENT
-            and self._current.value in terminators
+            self._current.kind is TokenKind.IDENT and self._current.value in terminators
         )
 
     def _match_ident(self, *values: str) -> bool:
@@ -1565,10 +1613,14 @@ class Parser:
         return False
 
     def _match_ellipsis(self) -> bool:
+        if not self._check(TokenKind.DOT):
+            return False
+        first, second, third = self._current, self._peek(1), self._peek(2)
         if (
-            self._check(TokenKind.DOT)
-            and self._peek(1).kind is TokenKind.DOT
-            and self._peek(2).kind is TokenKind.DOT
+            second.kind is TokenKind.DOT
+            and self._adjacent(first, second)
+            and third.kind is TokenKind.DOT
+            and self._adjacent(second, third)
         ):
             self._advance()
             self._advance()
@@ -1581,6 +1633,16 @@ class Parser:
 
     def _check_op(self, value: str) -> bool:
         return self._check(TokenKind.OP) and self._current.value == value
+
+    def _adjacent(self, first: Token, second: Token) -> bool:
+        """Whether `second` immediately follows `first` with no whitespace.
+
+        This is the whitespace-significance check used anywhere a run of
+        identical/related tokens must be contiguous to count as one unit
+        (operator merging, `...`, `||`, and type-rank counting) rather than
+        being separated (even by a single space) into distinct units.
+        """
+        return second.offset == first.offset + len(first.value)
 
     def _match(self, *kinds: TokenKind) -> bool:
         if self._check(*kinds):
@@ -1597,14 +1659,29 @@ class Parser:
         self._error(f"expected {kind.value}")
 
     def _advance(self) -> Token:
-        token = self._current
-        if not self._check(TokenKind.EOF):
+        while (
+            self.index < len(self.tokens) - 1
+            and self.tokens[self.index].kind is TokenKind.WHITESPACE
+        ):
+            self.index += 1
+        token = self.tokens[self.index]
+        if token.kind is not TokenKind.EOF:
             self.index += 1
         return token
 
     def _peek(self, ahead: int = 0) -> Token:
-        pos = min(self.index + ahead, len(self.tokens) - 1)
-        return self.tokens[pos]
+        pos = self.index
+        remaining = ahead
+        while True:
+            while (
+                pos < len(self.tokens) - 1
+                and self.tokens[pos].kind is TokenKind.WHITESPACE
+            ):
+                pos += 1
+            if remaining == 0:
+                return self.tokens[pos]
+            pos += 1
+            remaining -= 1
 
     @property
     def _current(self) -> Token:
@@ -1768,8 +1845,10 @@ def _interpolation_expression(
     token: Token,
 ) -> tuple[ASTNode, ...]:
     stripped = expression.strip()
-    if stripped and _is_string_ident_start(stripped[0]) and all(
-        _is_string_ident_part(char) for char in stripped[1:]
+    if (
+        stripped
+        and _is_string_ident_start(stripped[0])
+        and all(_is_string_ident_part(char) for char in stripped[1:])
     ):
         return (GetVariableNode(Symbol(stripped), location=_loc(token)),)
     return tuple(parse(expression))

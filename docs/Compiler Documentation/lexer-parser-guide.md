@@ -75,7 +75,8 @@ and `column`, and emits tokens with line, column, and absolute offset.
 
 Important token rules:
 
-- Spaces, tabs, and carriage returns are ignored.
+- Spaces, tabs, and carriage returns are emitted as `TokenKind.WHITESPACE`. The
+  parser skips these tokens centrally during cursor movement and lookahead.
 - `\n` emits `TokenKind.NEWLINE`.
 - `#?` starts a single-line comment.
 - `#/ ... /#` is a nested multiline comment.
@@ -88,7 +89,10 @@ Important token rules:
   literal form such as `3i4`.
 - Alphanumeric identifiers use `_` or alphabetic start characters followed by
   `_`, alphabetic characters, or digits.
-- Symbolic operators are made from `_OP_CHARS`.
+- Symbolic operators are made from `_OP_CHARS`. `_operator()` emits exactly one
+  single-character `OP` token per source character, with that character's own
+  offset. It must not emit growing, overlapping substrings such as `+` and `++`
+  from the same starting offset.
 - Backslash-prefixed niladic names such as `\foo` are emitted as a single `OP`
   token.
 
@@ -101,6 +105,9 @@ When adding tokens:
    relevant.
 
 Do not make the parser infer token boundaries that the lexer can know cleanly.
+For symbolic operators, however, the lexer deliberately preserves character-level
+boundaries. The parser uses token offsets and whitespace to decide when adjacent
+`OP` characters form one element symbol.
 
 ## AST Locations
 
@@ -125,13 +132,30 @@ diagnostic feature depends on the source position.
 
 ## Parser Model
 
-The parser is recursive descent over a token list. It exposes a small cursor API:
+The parser is recursive descent over a token list. Its constructor materializes the
+token iterator once; do not add debug iteration before `list(tokens)`, because
+consuming the iterator there would leave the parser with an empty or truncated
+stream.
+
+It exposes a small cursor API:
 
 - `_current`, `_previous`, and `_peek(ahead)`
+- `_advance()` and `_peek(ahead)` skip `WHITESPACE` transparently, so every
+  lookahead depth refers to meaningful tokens rather than raw list positions
 - `_match(...)` to consume optional token kinds
 - `_expect(kind)` to require a token kind
 - `_match_ident(...)` and `_check_ident(...)` for keyword-like identifiers
 - `_error(message)` to raise `ParseError` at the current token
+
+Whitespace handling belongs in `_advance()` and `_peek()`. Do not reintroduce a
+separate `_consume_whitespace` step in `_check`, `_expect`, or individual grammar
+methods. Central skipping keeps `_peek(1)`, `_peek(2)`, and deeper lookahead
+consistent.
+
+The exception is syntax where whitespace itself is significant. `_adjacent(first,
+second)` is the single authority for deciding whether two tokens touch in source,
+using their offsets and token widths. Grammar code should call `_adjacent` rather
+than reproducing offset arithmetic.
 
 Keywords such as `define`, `fn`, `if`, and `while` are currently lexed as
 ordinary `IDENT` tokens and recognized by parser methods. Do not add keyword
@@ -223,6 +247,8 @@ you are changing. Most regressions here look like elements in the wrong order.
 - `break` and `return`
 - Data-tag application: `#tag` and `#!tag`
 - Elements, element call syntax, niladic element names, and `:` modifiers
+- Whitespace-free runs of `OP` tokens, merged by `_operator_run()` into one
+  `Symbol`; whitespace ends the run
 
 Qualified element names are parsed by `_qualified_symbol`. Supported forms
 include namespace qualification with dots, object-friendly qualification with
@@ -241,6 +267,27 @@ built-in operator access such as `*::+`.
 Keep `_term()` focused on choosing a syntactic form. Put nested parsing in
 helper methods such as `_record_fields`, `_dict_entries`, or
 `_modifier_arguments`.
+
+### Adjacency-sensitive syntax
+
+Because ordinary cursor movement skips whitespace, syntax that requires touching
+tokens must check source adjacency explicitly. Consecutive tokens are treated as
+one construct only when `_adjacent(first, second)` succeeds.
+
+Current adjacency-sensitive cases include:
+
+- `_operator_run()`, which merges only a whitespace-free run of `OP` tokens into
+  one element symbol. For example, (`+`+`+` -> `++`), while `+ +` remains two
+  symbols.
+- `_match_ellipsis()`, where all three `.` tokens must be adjacent. `...` is an
+  ellipsis; `. . .` is not.
+- The `||` branch in `_match_pattern()`, where the two pipe tokens must touch.
+- Rank continuation in `_type_postfix()`, where repeated rank operator tokens are
+  counted only while each next token is adjacent to the previous one.
+
+When adding another multi-token spelling, first decide whether whitespace may split
+it. If not, use `_adjacent` for every consecutive pair rather than relying on
+`_peek()` alone.
 
 ## Blocks
 
@@ -378,7 +425,8 @@ rather than as text.
 
 Tuple ellipsis is parsed after each tuple item, not as a postfix type operator.
 This lets `{A..., B, C...}` lower to a single variadic tuple pattern with mixed
-fixed and repeated segments.
+fixed and repeated segments. The three dots must be pairwise adjacent; whitespace
+breaks the ellipsis.
 
 ## Generic Parameter Lists
 
@@ -516,6 +564,21 @@ Do not silently accept empty call syntax.
 Use `_argument_expressions`, not `_comma_expressions`, for element calls,
 variable calls, annotation arguments, and other places where empty parentheses
 would imply niladic behavior.
+
+
+Do not infer adjacency from whitespace-skipping lookahead.
+
+`_peek()` intentionally hides `WHITESPACE`, so seeing two punctuation tokens in
+successive lookahead positions does not prove that they touched in source. Use
+`_adjacent` for operator runs, ellipses, `||`, rank continuation, and any future
+whitespace-sensitive multi-token spelling.
+
+Do not merge operators in the lexer.
+
+`_operator()` must emit one `OP` token per character with correct offsets. Emitting
+growing substrings creates overlapping duplicate tokens and prevents the parser
+from making reliable adjacency decisions. Operator-symbol merging belongs in
+`_operator_run()`.
 
 Do not forget source locations.
 

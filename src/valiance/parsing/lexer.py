@@ -13,6 +13,7 @@ class TokenKind(StrEnum):
     NUMBER = "NUMBER"
     STRING = "STRING"
     NEWLINE = "NEWLINE"
+    WHITESPACE = "WHITESPACE"
     EOF = "EOF"
     ARROW = "->"
     FAT_ARROW = "=>"
@@ -85,7 +86,7 @@ class _Lexer:
         while not self._at_end:
             char = self._peek()
             if char in " \t\r":
-                self._advance()
+                self._emit(TokenKind.WHITESPACE, self._advance())
             elif char == "\n":
                 self._emit(TokenKind.NEWLINE, self._advance())
             elif char == "#":
@@ -298,6 +299,8 @@ class _Lexer:
         self._advance()
         while self._is_ident_part(self._peek()):
             self._advance()
+        while self._peek() == "?":
+            self._advance()
         self.tokens.append(
             Token(TokenKind.IDENT, self.source[offset : self.index], line, col, offset)
         )
@@ -320,15 +323,24 @@ class _Lexer:
                     )
                 )
                 return
+        # Emit exactly one OP token per operator character, each spanning
+        # only that character. This is deliberate: the parser is the layer
+        # that decides whether an adjacent run of these single-char tokens
+        # (e.g. "+" "+") should be treated as one merged operator ("++") or
+        # as two separate ones, based on whether whitespace sits between
+        # them (see Parser._adjacent / Parser._operator_run). The lexer
+        # must not pre-merge them, or that distinction is lost before the
+        # parser ever sees it.
         while self._peek() in _OP_CHARS:
             if self._peek() == "=" and self._peek(1) == ">":
                 break
-            self._advance()
+            char_line, char_col, char_offset = self.line, self.column, self.index
+            char = self._advance()
+            self.tokens.append(
+                Token(TokenKind.OP, char, char_line, char_col, char_offset)
+            )
         if self.index == offset:
             self._advance()
-        self.tokens.append(
-            Token(TokenKind.OP, self.source[offset : self.index], line, col, offset)
-        )
 
     @staticmethod
     def _is_ident_start(char: str) -> bool:
