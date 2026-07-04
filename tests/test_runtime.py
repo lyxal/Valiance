@@ -200,6 +200,15 @@ ParseError
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "1\n2\n3\n")
 
+    def test_pipe_after_map_modifier_prints_mapped_list_once(self):
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            stack = execute("[1, 2, 3, 4] map: * 2 | println")
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "[2, 4, 6, 8]\n")
+
     def test_executes_call_site_checked_builtins(self):
         self.assertEqual(
             execute("1 2 peek: +"),

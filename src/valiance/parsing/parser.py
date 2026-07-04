@@ -872,6 +872,19 @@ class Parser:
         nodes.extend(_lower_chain_segment(segment))
         return tuple(nodes)
 
+    def _chain_segment_until(
+        self,
+        terminators: set[TokenKind | str],
+    ) -> tuple[ASTNode, ...]:
+        segment: list[_ChainPiece] = []
+        self._skip_newlines()
+        while not self._at_terminator(terminators):
+            piece = self._term()
+            segment.append(piece)
+            if piece.breaks_chain:
+                break
+        return tuple(_lower_chain_segment(segment))
+
     def _term(self) -> _ChainPiece:
         if self._match(TokenKind.NUMBER):
             token = self._previous
@@ -1304,7 +1317,7 @@ class Parser:
                 for body in self._argument_expressions(TokenKind.RPAREN)
             )
 
-        body = self._chain_until(_LINE_TERMINATORS)
+        body = self._chain_segment_until(_LINE_TERMINATORS | {TokenKind.PIPE})
         if not body:
             self._error("expected modifier function body")
         return (FunctionNode(body=body, location=_loc(start)),)

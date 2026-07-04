@@ -277,6 +277,32 @@ class ParserTests(unittest.TestCase):
             (FunctionNode(body=(ElementNode(Symbol("double")),)),),
         )
 
+    def test_pipe_after_colon_modifier_returns_to_outer_chain(self):
+        program = parse("[1, 2, 3, 4] map: * 2 | println")
+
+        self.assertIsInstance(program[0], ListLiteralNode)
+        self.assertEqual(program[1].name, Symbol("map"))
+        self.assertEqual(
+            program[1].modifier_args,
+            (
+                FunctionNode(
+                    body=(NumberLiteralNode("2"), ElementNode(Symbol("*"))),
+                ),
+            ),
+        )
+        self.assertEqual(program[2], ElementNode(Symbol("println")))
+
+        program = parse("[1, 2, 3, 4] map: * 2 println")
+        self.assertEqual(
+            program[1].modifier_args,
+            (
+                FunctionNode(
+                    body=(NumberLiteralNode("2"), ElementNode(Symbol("*"))),
+                ),
+            ),
+        )
+        self.assertEqual(program[2], ElementNode(Symbol("println")))
+
     def test_parses_element_disambiguation_before_call_and_modifier_syntax(self):
         program = parse("+[Number+, _]([[1, 2]], [10, 20])\nmap[Number]: double")
 
