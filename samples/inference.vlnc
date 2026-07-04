@@ -1,0 +1,2 @@
+define foo => 0 - | positive?
+println foo 60

@@ -100,9 +100,10 @@ class _LoopPatch:
 
 
 class _Compiler:
-    def __init__(self) -> None:
+    def __init__(self, *, break_as_signal: bool = False) -> None:
         self.instructions: list[Instruction] = []
         self.loops: list[_LoopPatch] = []
+        self.break_as_signal = break_as_signal
 
     def compile_function(
         self,
@@ -216,9 +217,9 @@ class _Compiler:
             case UnfoldNode():
                 self.unfold_node(node, typed_node)
             case AtNode():
-                self.expression(node.body)
+                self.at_node(node)
             case ForNode():
-                self.unsupported(node, "foreach loops")
+                self.foreach_node(node)
             case BreakNode():
                 self.break_node(node)
             case ReturnNode(values):
@@ -382,6 +383,27 @@ class _Compiler:
             condition_code = _compile_function_value(condition, "unfold.condition")
         self.emit(OpCode.UNFOLD, (condition_code, body_code, arity))
 
+    def at_node(self, node: AtNode) -> None:
+        self.emit(OpCode.CYCLE_BEGIN, (None, 0))
+        self.expression(node.body)
+        self.emit(OpCode.CYCLE_END)
+
+    def foreach_node(self, node: ForNode) -> None:
+        params = (FunctionParam(node.variable),)
+        if node.index_variable is not None:
+            params += (FunctionParam(node.index_variable),)
+        body = FunctionNode(
+            params=params,
+            body=node.body,
+            location=node.location,
+        )
+        body_code = _compile_function_node(body, "foreach.body", break_as_signal=True)
+        completion_count = max(1, _max_break_values(node.body))
+        self.emit(
+            OpCode.FOREACH,
+            (body_code, 1 if node.index_variable else 0, completion_count),
+        )
+
     def match_node(self, node: MatchNode) -> None:
         case_jumps: list[tuple[int, MatchCaseNode]] = []
         default_case: MatchCaseNode | None = None
@@ -444,6 +466,25 @@ class _Compiler:
         self.instructions[begin] = Instruction(OpCode.TRY_BEGIN, tuple(handlers))
 
     def while_node(self, node: WhileNode) -> None:
+        if node.params is not None:
+            condition = FunctionNode(
+                params=node.params,
+                body=node.condition,
+                location=node.location,
+            )
+            body = FunctionNode(
+                params=node.params,
+                body=node.body,
+                location=node.location,
+            )
+            condition_code = _compile_function_node(condition, "while.condition")
+            body_code = _compile_function_node(
+                body,
+                "while.body",
+                break_as_signal=True,
+            )
+            self.emit(OpCode.WHILE, (condition_code, body_code, len(node.params)))
+            return
         loop_start = len(self.instructions)
         self.loops.append(_LoopPatch([]))
         for condition_node in node.condition:
@@ -459,6 +500,11 @@ class _Compiler:
             self.patch(jump, loop_end)
 
     def break_node(self, node: BreakNode) -> None:
+        if self.break_as_signal:
+            for value in node.values:
+                self.node(value)
+            self.emit(OpCode.LOOP_BREAK)
+            return
         if not self.loops:
             self.unsupported(node, "break outside a loop")
         for value in node.values:
@@ -513,6 +559,8 @@ def _compile_function_value(
 def _compile_function_node(
     node: FunctionNode | TypedNode,
     name: str | None = None,
+    *,
+    break_as_signal: bool = False,
 ) -> FunctionCode:
     ast = _function_ast(node)
     params = ()
@@ -521,7 +569,7 @@ def _compile_function_node(
             f"_{index}" if param.name is None else param.name.text
             for index, param in enumerate(ast.params)
         )
-    return _Compiler().compile_function(
+    return _Compiler(break_as_signal=break_as_signal).compile_function(
         ast.body,
         params=params,
         name=name,
@@ -624,6 +672,32 @@ def _function_ast(node: FunctionNode | TypedNode) -> FunctionNode:
     if not isinstance(ast, FunctionNode):
         raise CompileError(f"cannot compile function from {type(ast).__name__}")
     return ast
+
+
+def _max_break_values(nodes: tuple[ASTNode, ...]) -> int:
+    return max((_node_max_break_values(node) for node in nodes), default=0)
+
+
+def _node_max_break_values(node: ASTNode) -> int:
+    best = 0
+    if isinstance(node, BreakNode):
+        best = len(node.values)
+    for value in node.__dict__.values():
+        if isinstance(value, ASTNode):
+            best = max(best, _node_max_break_values(value))
+        if isinstance(value, tuple):
+            best = max(best, _tuple_max_break_values(value))
+    return best
+
+
+def _tuple_max_break_values(values: tuple[object, ...]) -> int:
+    best = 0
+    for value in values:
+        if isinstance(value, ASTNode):
+            best = max(best, _node_max_break_values(value))
+        if isinstance(value, tuple):
+            best = max(best, _tuple_max_break_values(value))
+    return best
 
 
 def _function_element_tag_names(

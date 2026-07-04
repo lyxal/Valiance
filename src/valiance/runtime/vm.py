@@ -157,8 +157,11 @@ class _Frame:
     cycle_values: tuple[Any, ...] = ()
     cycle_index: int = 0
     panic_handlers: list[_PanicHandler] = field(default_factory=list)
+    cycle_scopes: list[tuple[tuple[Any, ...], int]] = field(default_factory=list)
 
     def source_args(self, arity: int) -> tuple[tuple[Any, ...], int, int]:
+        if arity == 0:
+            return (), 0, self.cycle_index
         available = min(len(self.stack), arity)
         missing = arity - available
         stack_args = tuple(self.stack[-available:]) if available else ()
@@ -176,6 +179,11 @@ class _Frame:
 
 class _StackUnderflow(Exception):
     """Internal signal for trying another runtime overload shape."""
+
+
+@dataclass(frozen=True, slots=True)
+class _LoopBreak(Exception):
+    values: tuple[Any, ...]
 
 
 _RESOLVED_REFERENCE_MIN_SIZE = 2
@@ -275,10 +283,12 @@ class VirtualMachine:
                             frame.stack,
                             "store variable",
                         )
-                        frame.locals[instruction.arg] = _store_value(
+                        stored = _store_value(
                             frame.locals.get(instruction.arg),
                             value,
                         )
+                        frame.locals[instruction.arg] = stored
+                        _bind_recursive_value(stored, instruction.arg)
                     case OpCode.LOAD_ELEMENT:
                         frame.stack.append(
                             _load_name(instruction.arg, frame.locals, frame.globals)
@@ -407,6 +417,18 @@ class VirtualMachine:
                             raise RuntimeError("assertion failed")
                     case OpCode.UNFOLD:
                         frame.stack.append(self._unfold(frame, instruction.arg))
+                    case OpCode.WHILE:
+                        self._while(frame, instruction.arg)
+                    case OpCode.CYCLE_BEGIN:
+                        _enter_cycle(frame, instruction.arg)
+                    case OpCode.CYCLE_END:
+                        _exit_cycle(frame)
+                    case OpCode.FOREACH:
+                        self._foreach(frame, instruction.arg)
+                    case OpCode.LOOP_BREAK:
+                        if instruction.arg is None:
+                            raise _LoopBreak(tuple(frame.stack))
+                        raise _LoopBreak(tuple(_pop_many(frame.stack, instruction.arg)))
                     case OpCode.TRY_BEGIN:
                         frame.panic_handlers.append(
                             _PanicHandler(tuple(instruction.arg), len(frame.stack))
@@ -550,7 +572,7 @@ class VirtualMachine:
 
     def _unfold(self, frame: _Frame, config: object) -> LazyList:
         condition_code, body_code, arity = config
-        state = _pop_many(frame.stack, arity)
+        state = list(_source_args(frame, arity, "unfold"))
         body = _make_function_value(body_code, frame.globals | frame.locals)
         condition = (
             None
@@ -575,6 +597,40 @@ class VirtualMachine:
                     yield generated_value
 
         return LazyList(generated())
+
+    def _while(self, frame: _Frame, config: object) -> None:
+        condition_code, body_code, arity = config
+        state = list(_source_args(frame, arity, "while"))
+        condition = _make_function_value(condition_code, frame.globals | frame.locals)
+        body = _make_function_value(body_code, frame.globals | frame.locals)
+        while True:
+            keep_going = self.call_value(condition, list(state))
+            if not keep_going or not _truthy(keep_going[-1]):
+                frame.stack.extend(state)
+                return
+            try:
+                outputs = self.call_value(body, list(state))
+            except _LoopBreak as signal:
+                frame.stack.extend(signal.values)
+                return
+            state = list(outputs[:arity])
+
+    def _foreach(self, frame: _Frame, config: object) -> None:
+        body_code, has_index, completion_count = config
+        iterable = _source_args(frame, 1, "foreach")[0]
+        if not is_list_like(iterable):
+            raise RuntimeError("foreach requires a list value")
+        body = _make_function_value(body_code, frame.globals | frame.locals)
+        for index, item in enumerate(iterable):
+            args = [item]
+            if has_index:
+                args.append(Decimal(index))
+            try:
+                self.call_value(body, args)
+            except _LoopBreak as signal:
+                frame.stack.extend(signal.values)
+                return
+        frame.stack.extend(ObjectValue("None", {}) for _ in range(completion_count))
 
     def _call_function(
         self,
@@ -883,12 +939,55 @@ def _make_function_value(
     raise RuntimeError(f"invalid function bytecode value {code!r}")
 
 
+def _source_args(frame: _Frame, arity: int, context: str) -> tuple[Any, ...]:
+    try:
+        args, stack_count, next_cycle_index = frame.source_args(arity)
+    except _StackUnderflow as exc:
+        raise RuntimeError(f"stack underflow during {context}") from exc
+    if stack_count:
+        del frame.stack[-stack_count:]
+    frame.cycle_index = next_cycle_index
+    return args
+
+
+def _enter_cycle(frame: _Frame, spec: object) -> None:
+    if not isinstance(spec, tuple) or len(spec) != 2:
+        raise RuntimeError(f"invalid cycle scope {spec!r}")
+    arity, seed_stack = spec
+    if arity is None:
+        values = tuple(frame.stack)
+    elif isinstance(arity, int):
+        values = _source_args(frame, arity, "cycle scope")
+    else:
+        raise RuntimeError(f"invalid cycle arity {arity!r}")
+    frame.cycle_scopes.append((frame.cycle_values, frame.cycle_index))
+    frame.cycle_values = values
+    frame.cycle_index = 0
+    if seed_stack:
+        frame.stack.extend(values)
+
+
+def _exit_cycle(frame: _Frame) -> None:
+    if not frame.cycle_scopes:
+        raise RuntimeError("cycle scope underflow")
+    frame.cycle_values, frame.cycle_index = frame.cycle_scopes.pop()
+
+
 def _store_value(existing: Any, value: Any) -> Any:
     if _is_function_value(existing) and _is_function_value(value):
         return OverloadedFunctionValue(
             _function_overloads(existing) + _function_overloads(value)
         )
     return value
+
+
+def _bind_recursive_value(value: Any, name: str) -> None:
+    if isinstance(value, FunctionValue):
+        value.globals[name] = value
+        return
+    if isinstance(value, OverloadedFunctionValue):
+        for overload in value.overloads:
+            overload.globals[name] = value
 
 
 def _is_function_value(value: Any) -> bool:

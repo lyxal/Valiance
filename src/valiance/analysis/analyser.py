@@ -669,6 +669,16 @@ class Analyser:
         function_node: FunctionNode,
     ) -> set[AnalysisBranch]:
         function_node = _genericize_function_node(function_node, node.generics)
+        declared_overload = (
+            _fully_typed_overload(function_node)
+            if not node.generics and _body_references_element(function_node.body, name)
+            else None
+        )
+        if (
+            declared_overload is not None
+            and declared_overload not in self.env.overloads_for(name)
+        ):
+            self.env.define_overload(name, declared_overload)
         result = self._analyse_function_literal(branch, function_node)
         if result is None:
             return {branch.append_typed(TypedNode(node, None))}
@@ -678,10 +688,9 @@ class Analyser:
             node.generic_constraints,
         )
         for overload in _callable_overloads(function.typ):
-            self.env.define_overload(
-                name,
-                _with_generic_constraints(overload, generic_constraints),
-            )
+            overload = _with_generic_constraints(overload, generic_constraints)
+            if overload not in self.env.overloads_for(name):
+                self.env.define_overload(name, overload)
         typed_node = TypedFunctionNode(node, function.typ, function.overloads)
         return {typed_branch.append_typed(typed_node)}
 
@@ -1042,6 +1051,7 @@ class Analyser:
                 branch,
                 overload,
                 modifier_args,
+                self.env.context,
             ):
                 candidate = _apply_overload_to_branch(
                     overload,
@@ -1570,6 +1580,14 @@ class Analyser:
             )
             return set()
         body_branch = branch.with_stack(branch.stack.pop())
+        cycle_params = (item_type,)
+        if node.index_variable is not None:
+            cycle_params = (item_type, T.Number)
+        body_branch = _replace_branch(
+            body_branch,
+            input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
+            cycle_params=cycle_params,
+        )
         body_branch = body_branch.with_variables(
             body_branch.variables.with_block_local(node.variable, item_type)
         )
@@ -1643,6 +1661,11 @@ class Analyser:
                         captures=loop_input.variables,
                     )
                 )
+            loop_input = _replace_branch(
+                loop_input,
+                input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
+                cycle_params=params,
+            )
 
         condition = self.analyse_block(BranchSet.one(loop_input), node.condition)
         condition = condition.require_stack_top_assignable(Boolean, self.env.context)
@@ -1745,7 +1768,12 @@ class Analyser:
         branch: AnalysisBranch,
         node: AtNode,
     ) -> set[AnalysisBranch]:
-        outputs = self.analyse_block(BranchSet.one(branch), node.body)
+        body_branch = _replace_branch(
+            branch,
+            input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
+            cycle_params=branch.stack.items,
+        )
+        outputs = self.analyse_block(BranchSet.one(body_branch), node.body)
         return {
             output.append_typed(
                 TypedNode(node, _returns_result_type(output.stack.items))
@@ -2331,6 +2359,47 @@ def _declared_params(node: FunctionNode) -> tuple[T.Type, ...]:
     return _params_to_types(node.params)
 
 
+def _fully_typed_overload(node: FunctionNode) -> T.Overload | None:
+    if node.params is None or node.returns is None:
+        return None
+    if any(param.typ is None for param in node.params):
+        return None
+    params = tuple(param.typ for param in node.params if param.typ is not None)
+    return T.Overload(
+        params,
+        node.returns,
+        where_clause=node.where_clause,
+        param_names=_function_param_names_for_overload(node, params),
+        element_tags=node.element_tags,
+    )
+
+
+def _body_references_element(body: tuple[ASTNode, ...], name: Symbol) -> bool:
+    return any(_node_references_element(node, name) for node in body)
+
+
+def _node_references_element(node: ASTNode, name: Symbol) -> bool:
+    if isinstance(node, ElementNode) and node.name == name:
+        return True
+    for item in fields(node):
+        value = getattr(node, item.name)
+        if isinstance(value, ASTNode):
+            if _node_references_element(value, name):
+                return True
+        elif isinstance(value, tuple) and _tuple_references_element(value, name):
+            return True
+    return False
+
+
+def _tuple_references_element(value: tuple[object, ...], name: Symbol) -> bool:
+    for item in value:
+        if isinstance(item, ASTNode) and _node_references_element(item, name):
+            return True
+        if isinstance(item, tuple) and _tuple_references_element(item, name):
+            return True
+    return False
+
+
 def _needs_call_site_checking(node: FunctionNode) -> bool:
     if node.params is None:
         return False
@@ -2609,6 +2678,7 @@ def _source_element_arguments(
     branch: AnalysisBranch,
     overload: T.Overload,
     modifier_args: tuple[ModifierArgumentAnalysis, ...],
+    ctx: T.Context,
 ) -> Iterator[
     tuple[
         tuple[T.Type, ...],
@@ -2636,6 +2706,9 @@ def _source_element_arguments(
     if sourced is None:
         return
     stack_args, popped = sourced
+    stack_substitution = _branch_argument_substitution(stack_args, stack_params, ctx)
+    if stack_substitution is None:
+        return
 
     modifier_orders = (
         (modifier_args,)
@@ -2643,17 +2716,130 @@ def _source_element_arguments(
         else _unique_permutations(modifier_args)
     )
     for ordered_modifiers in modifier_orders:
-        args: list[T.Type] = []
-        stack_index = 0
-        modifier_index = 0
-        for index in range(len(overload.params)):
-            if index in modifier_indexes:
-                args.append(ordered_modifiers[modifier_index].typ)
-                modifier_index += 1
-            else:
-                args.append(stack_args[stack_index])
-                stack_index += 1
-        yield tuple(args), popped, ordered_modifiers
+        for substitution, specialized_modifiers in _specialized_modifier_orders(
+            overload.params,
+            modifier_indexes,
+            ordered_modifiers,
+            stack_substitution,
+            ctx,
+        ):
+            specialized_stack_args = tuple(
+                _substitute_branch_type(arg, substitution) for arg in stack_args
+            )
+            specialized_popped = _specialize_branch_arguments(popped, substitution)
+            yield (
+                _merge_element_arguments(
+                    overload.params,
+                    modifier_indexes,
+                    specialized_stack_args,
+                    specialized_modifiers,
+                ),
+                specialized_popped,
+                specialized_modifiers,
+            )
+
+
+def _merge_element_arguments(
+    params: tuple[T.Type, ...],
+    modifier_indexes: tuple[int, ...],
+    stack_args: tuple[T.Type, ...],
+    modifiers: tuple[ModifierArgumentAnalysis, ...],
+) -> tuple[T.Type, ...]:
+    args: list[T.Type] = []
+    stack_index = 0
+    modifier_index = 0
+    modifier_index_set = set(modifier_indexes)
+    for index in range(len(params)):
+        if index in modifier_index_set:
+            args.append(modifiers[modifier_index].typ)
+            modifier_index += 1
+        else:
+            args.append(stack_args[stack_index])
+            stack_index += 1
+    return tuple(args)
+
+
+def _specialized_modifier_orders(
+    params: tuple[T.Type, ...],
+    modifier_indexes: tuple[int, ...],
+    modifiers: tuple[ModifierArgumentAnalysis, ...],
+    substitution: dict[str, T.Type],
+    ctx: T.Context,
+) -> Iterator[tuple[dict[str, T.Type], tuple[ModifierArgumentAnalysis, ...]]]:
+    if not modifier_indexes:
+        yield substitution, ()
+        return
+
+    def rec(
+        position: int,
+        current_substitution: dict[str, T.Type],
+        current_modifiers: tuple[ModifierArgumentAnalysis, ...],
+    ) -> Iterator[tuple[dict[str, T.Type], tuple[ModifierArgumentAnalysis, ...]]]:
+        if position == len(modifier_indexes):
+            yield current_substitution, current_modifiers
+            return
+        param_index = modifier_indexes[position]
+        expected = _substitute_branch_type(params[param_index], current_substitution)
+        for modifier, modifier_substitution in _modifier_variants_for_expected(
+            modifiers[position],
+            expected,
+            ctx,
+        ):
+            merged = _merge_substitutions(current_substitution, modifier_substitution)
+            if merged is None:
+                continue
+            yield from rec(position + 1, merged, current_modifiers + (modifier,))
+
+    yield from rec(0, substitution, ())
+
+
+def _modifier_variants_for_expected(
+    modifier: ModifierArgumentAnalysis,
+    expected: T.Type,
+    ctx: T.Context,
+) -> Iterator[tuple[ModifierArgumentAnalysis, dict[str, T.Type]]]:
+    expected = T.normalize(expected)
+    if not isinstance(expected, T.FunctionType) or _is_bare_function_type(expected):
+        if T.compatible(modifier.typ, expected, ctx):
+            yield modifier, {}
+        return
+
+    for overload in modifier.typed_node.overloads:
+        typ = T.normalize(overload.typ)
+        if not isinstance(typ, T.FunctionType):
+            continue
+        substitution = _branch_argument_substitution((typ,), (expected,), ctx)
+        if substitution is None:
+            continue
+        concrete_expected = _substitute_branch_type(expected, substitution)
+        if not isinstance(T.normalize(concrete_expected), T.FunctionType):
+            continue
+        if not _function_overload_matches_type(overload, concrete_expected, ctx):
+            continue
+        yield (
+            ModifierArgumentAnalysis(
+                concrete_expected,
+                TypedFunctionNode(
+                    modifier.typed_node.node,
+                    concrete_expected,
+                    (overload,),
+                ),
+            ),
+            substitution,
+        )
+
+
+def _merge_substitutions(
+    left: dict[str, T.Type],
+    right: dict[str, T.Type],
+) -> dict[str, T.Type] | None:
+    merged = dict(left)
+    for name, typ in right.items():
+        existing = merged.get(name)
+        if existing is not None and not T.same(existing, typ):
+            return None
+        merged[name] = typ
+    return merged
 
 
 def _modifier_arity_matches(

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from valiance.analysis import Analyser
-from valiance.asts import pretty_ast
+from valiance.asts import pretty_ast, typed_source
 from valiance.diagnostics import from_exception, from_message, render
 from valiance.parsing import LexError, ParseError, Parser, lex
 from valiance.runtime import (
@@ -24,7 +24,7 @@ from valiance.runtime_values import DIAGNOSTIC_LIST_PREVIEW_LIMIT, format_runtim
 DEFAULT_BYTECODE_FILENAME = "out.vbc"
 DEFAULT_BYTECODE_SUFFIX = ".vbc"
 
-_SOURCE_ACTIONS = {"compile", "run", "parse", "analyse", "analyze"}
+_SOURCE_ACTIONS = {"compile", "run", "parse", "analyse", "analyze", "annotate"}
 _BYTECODE_ACTIONS = {"run-bytecode"}
 _ACTIONS = _SOURCE_ACTIONS | _BYTECODE_ACTIONS
 
@@ -35,6 +35,7 @@ HELP = """usage: valiance [compile] <file> [-o <file>]
        valiance run-bytecode <file>
        valiance parse <file>
        valiance analyse <file>
+       valiance annotate <file>
 
 actions:
   compile             compile source to bytecode; default action
@@ -42,6 +43,7 @@ actions:
   run-bytecode        execute an existing bytecode file
   parse               print the parsed AST
   analyse             print the typed AST
+  annotate            print source with inferred type annotations
 
 options:
   -c, --code <code>   use inline Valiance code instead of a source file
@@ -221,6 +223,16 @@ def _run_source(
                 )
             print("Typed AST:")
             print(pretty_ast(typed))
+            return 0
+
+        if action == "annotate":
+            for diagnostic in analyser.diagnostics:
+                _print_diagnostic(
+                    from_message("Type error", diagnostic),
+                    source,
+                    source_file,
+                )
+            print(typed_source(typed))
             return 0
 
         if analyser.diagnostics:

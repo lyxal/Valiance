@@ -211,6 +211,20 @@ ParseError
             [Decimal("4"), Decimal("4")],
         )
 
+    def test_executes_reduce_slash_overload(self):
+        self.assertEqual(execute("[1, 2, 3, 4] /: +"), [Decimal("10")])
+
+    def test_fork_runtime_passes_suffix_to_shorter_modifier(self):
+        self.assertEqual(
+            execute(
+                """
+define keep_name(name: String, n: Number) -> String => $name
+"tag" 2 fork: (keep_name, double)
+"""
+            ),
+            ["tag", Decimal("4")],
+        )
+
     def test_compiler_emits_resolved_builtin_element_calls(self):
         analyser = Analyser()
         typed = analyser.analyse(parse("1 2 +"))
@@ -715,6 +729,134 @@ while ($n 0 >) =>
 end
 $n
 """
+            ),
+            [Decimal("0")],
+        )
+        self.assertEqual(
+            execute("0 while (< 3) -> (n: Number) => 1 + end"),
+            [Decimal("3")],
+        )
+
+    def test_runtime_loop_forms_cycle_explicit_inputs(self):
+        self.assertEqual(
+            run(
+                Program(
+                    FunctionCode(
+                        (
+                            Instruction(OpCode.PUSH_CONST, Decimal("2")),
+                            Instruction(OpCode.CYCLE_BEGIN, (None, 0)),
+                            Instruction(
+                                OpCode.CALL_RESOLVED_ELEMENT,
+                                ("+", 1, 0),
+                            ),
+                            Instruction(OpCode.CYCLE_END),
+                            Instruction(OpCode.RETURN),
+                        ),
+                        name="<main>",
+                    )
+                )
+            ),
+            [Decimal("4")],
+        )
+        self.assertEqual(
+            execute(
+                """
+define first_generated(n: Number) -> Number =>
+  unfold (< 3) -> (x: Number) => 1 + end | #!infinite | head
+end
+1 first_generated
+"""
+            ),
+            [Decimal("2")],
+        )
+        self.assertEqual(
+            execute("[1, 2] foreach (n) => if ($n 10 >) => break ($n) end end"),
+            [ObjectValue("None", {})],
+        )
+
+    def test_foreach_and_while_break_return_values(self):
+        self.assertEqual(
+            execute(
+                """
+[1, 2, 3] foreach (n) =>
+  if ($n 2 ==) =>
+    break ($n, $n double)
+  end
+end
+"""
+            ),
+            [Decimal("2"), Decimal("4")],
+        )
+        self.assertEqual(
+            execute(
+                """
+[1] foreach (n) =>
+  if (false) =>
+    break ($n, $n)
+  end
+end
+"""
+            ),
+            [ObjectValue("None", {}), ObjectValue("None", {})],
+        )
+        self.assertEqual(
+            execute(
+                """
+0 while (< 10) -> (n: Number) =>
+  if ($n 3 ==) =>
+    break ($n)
+  else =>
+    1 +
+  end
+end
+"""
+            ),
+            [Decimal("3")],
+        )
+
+    def test_typed_recursive_definitions_call_themselves_at_runtime(self):
+        self.assertEqual(
+            run(
+                Program(
+                    FunctionCode(
+                        (
+                            Instruction(
+                                OpCode.MAKE_FUNCTION,
+                                FunctionCode(
+                                    (
+                                        Instruction(OpCode.LOAD_VAR, "n"),
+                                        Instruction(OpCode.PUSH_CONST, Decimal("0")),
+                                        Instruction(
+                                            OpCode.CALL_RESOLVED_ELEMENT,
+                                            (">", 0, 0),
+                                        ),
+                                        Instruction(OpCode.JUMP_IF_FALSE, 11),
+                                        Instruction(OpCode.LOAD_VAR, "n"),
+                                        Instruction(OpCode.PUSH_CONST, Decimal("1")),
+                                        Instruction(OpCode.LOAD_ELEMENT, "-"),
+                                        Instruction(OpCode.CALL),
+                                        Instruction(OpCode.LOAD_ELEMENT, "countdown"),
+                                        Instruction(OpCode.CALL),
+                                        Instruction(OpCode.JUMP, 12),
+                                        Instruction(OpCode.PUSH_CONST, Decimal("0")),
+                                        Instruction(OpCode.RETURN),
+                                    ),
+                                    params=("n",),
+                                    name="countdown",
+                                    cycle_params=True,
+                                ),
+                            ),
+                            Instruction(OpCode.STORE_VAR, "countdown"),
+                            Instruction(OpCode.PUSH_CONST, Decimal("3")),
+                            Instruction(
+                                OpCode.CALL_RESOLVED_ELEMENT,
+                                ("countdown", 0, 0),
+                            ),
+                            Instruction(OpCode.RETURN),
+                        ),
+                        name="<main>",
+                    )
+                )
             ),
             [Decimal("0")],
         )

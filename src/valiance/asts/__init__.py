@@ -67,6 +67,7 @@ from valiance.asts.nodes import (
     WildcardPatternNode,
 )
 from valiance.asts.pretty import pretty_ast
+from valiance.asts.source import typed_source
 from valiance.symbols import Symbol
 
 __all__ = [
@@ -131,6 +132,7 @@ __all__ = [
     "TypedElementNode",
     "TypedFunctionNode",
     "TypedNode",
+    "typed_source",
     "VariantMemberNode",
     "WhileNode",
     "WildcardPatternNode",

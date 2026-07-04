@@ -77,12 +77,17 @@ class LexerTests(unittest.TestCase):
 
         self.assertEqual(tokens[0].value, "\\foo")
 
+    def test_lexes_predicate_identifier_as_one_token(self):
+        tokens = lex("positive?")
+
+        self.assertEqual(tokens[0].value, "positive?")
+
     def test_lexes_data_tags_as_one_token(self):
         tokens = lex("#sorted #!infinite #infinite++")
 
         self.assertEqual(
             [token.value for token in tokens[:-1]],
-            ["#sorted", "#!infinite", "#infinite++"],
+            ["#sorted", " ", "#!infinite", " ", "#infinite++"],
         )
 
     def test_unterminated_string_is_error(self):
@@ -377,7 +382,7 @@ class ParserTests(unittest.TestCase):
 
     def test_parses_arbitrary_length_tuple_parameter_patterns(self):
         [node] = parse(
-            "define accept(xs: {Number..., String..., Number}) -> String => \"ok\""
+            'define accept(xs: {Number..., String..., Number}) -> String => "ok"'
         )
 
         self.assertEqual(
@@ -394,14 +399,12 @@ class ParserTests(unittest.TestCase):
             parse_type("{Number...}")
 
     def test_parses_imports_with_namespace_alias_and_components(self):
-        program = parse(
-            """
+        program = parse("""
 public import {
   utils as u,
   math.[double, triple as t]
 }
-"""
-        )
+""")
 
         self.assertEqual(
             program,
@@ -463,15 +466,13 @@ public import {
         self.assertEqual(program[-1].tag, DataTag("sorted"))
 
     def test_parses_object_trait_variant_and_enum_declarations(self):
-        [person] = parse(
-            """
+        [person] = parse("""
 object Person =>
   $name: String
   public $age: Number = 0
   define label => $self.name
 end
-"""
-        )
+""")
 
         self.assertEqual(person.name, Symbol("Person"))
         self.assertEqual(
@@ -498,16 +499,14 @@ end
             (TraitRequirementNode(Symbol("area"), returns=(Number,)),),
         )
 
-        [option] = parse(
-            """
+        [option] = parse("""
 variant Option =>
   Some =>
     $value: Number
   end
   None => end
 end
-"""
-        )
+""")
         self.assertEqual(
             option.variants,
             (
@@ -566,15 +565,13 @@ end
         self.assertEqual(program[2].location, SourceLocation(2, 5, 5))
 
     def test_parses_multiline_if_else(self):
-        [node] = parse(
-            """
+        [node] = parse("""
 if ($n == 0) =>
   1
 else =>
   $n 1 -
 end
-"""
-        )
+""")
 
         self.assertIsInstance(node, IfNode)
         self.assertEqual(node.condition[0], GetVariableNode(Symbol("n")))
@@ -582,13 +579,11 @@ end
         self.assertEqual(node.else_branch[-1], ElementNode(Symbol("-")))
 
     def test_single_line_else_body_does_not_require_end(self):
-        program = parse(
-            """
+        program = parse("""
 if ($name == "Joe") => "You're Joe!"
 else => "Who are you?"
 println
-"""
-        )
+""")
 
         self.assertEqual(len(program), 2)
         self.assertIsInstance(program[0], IfNode)
@@ -603,26 +598,22 @@ println
         self.assertEqual(program[1], ElementNode(Symbol("println")))
 
     def test_parses_missing_control_flow_structures(self):
-        [node] = parse(
-            """
+        [node] = parse("""
 if ($n == 0) => "zero"
 else if ($n == 1) => "one"
 else => "many"
 end
-"""
-        )
+""")
         self.assertIsInstance(node, IfNode)
         self.assertIsInstance(node.else_branch[0], IfNode)
 
-        [assert_node] = parse(
-            """
+        [assert_node] = parse("""
 assert =>
   true
 else =>
   "nope"
 end
-"""
-        )
+""")
         self.assertIsInstance(assert_node, AssertNode)
         self.assertEqual(assert_node.else_branch, (StringLiteralNode("nope"),))
 
@@ -638,8 +629,7 @@ end
         self.assertIsInstance(at_node, AtNode)
         self.assertEqual(at_node.levels[0].depth, 1)
 
-        [try_node] = parse(
-            """
+        [try_node] = parse("""
 try =>
   "boom" panic
 handle String =>
@@ -647,22 +637,19 @@ handle String =>
 handle =>
   "default"
 end
-"""
-        )
+""")
         self.assertIsInstance(try_node, TryNode)
         self.assertEqual(len(try_node.handlers), 2)
         self.assertEqual(try_node.handlers[0].typ, N(Symbol("String")))
         self.assertIsNone(try_node.handlers[1].typ)
 
     def test_parses_function_literal_and_foreach_break(self):
-        program = parse(
-            """
+        program = parse("""
 fn (:Number) => +
 $xs foreach (x, i) =>
   if ($x == 3) => break ($x, $i)
 end
-"""
-        )
+""")
 
         self.assertIsInstance(program[0], FunctionNode)
         self.assertIsInstance(program[2], ForNode)
@@ -673,14 +660,12 @@ end
         self.assertIsInstance(loop.body[0].then_branch[0], BreakNode)
 
     def test_parses_match_type_and_default_cases(self):
-        [node] = parse(
-            """
+        [node] = parse("""
 match =>
   as :Colour.RED => "red"
   default => "other"
 end
-"""
-        )
+""")
 
         self.assertIsInstance(node, MatchNode)
         self.assertEqual(node.cases[0].pattern_type, N(Symbol("Colour.RED")))
@@ -689,65 +674,57 @@ end
         self.assertEqual(node.cases[1].body, (StringLiteralNode("other"),))
 
     def test_parses_match_pattern_examples(self):
-        [node] = parse(
-            """
+        [node] = parse("""
 match =>
   10 => "ten"
   if > 5 => "big"
   _ => "small"
 end
-"""
-        )
+""")
         self.assertEqual(len(node.cases), 3)
         self.assertIsInstance(node.cases[1].patterns[0], GuardPatternNode)
         self.assertIsInstance(node.cases[2].patterns[0], WildcardPatternNode)
 
-        [node] = parse(
-            """
+        [node] = parse("""
 match =>
   [1, _, 3] => "a"
   [1, $x = _, 3] => "b"
   [1, ..., 3] => "c"
   [1, ..., 3, $y = ..., 6] => "d"
 end
-"""
-        )
+""")
         self.assertIsInstance(node.cases[0].patterns[0], ListPatternNode)
         self.assertIsInstance(node.cases[1].patterns[0].items[1], BindingPatternNode)
         self.assertIsInstance(node.cases[2].patterns[0].items[1], RestPatternNode)
         self.assertIsInstance(node.cases[3].patterns[0].items[3], BindingPatternNode)
 
-        [node] = parse(
-            """
+        [node] = parse("""
 match =>
   as x: OtherType => "named"
   as :Number if > 5 => "guarded"
   as :Obj(param, param) => "obj"
   as y => "default"
 end
-"""
-        )
+""")
         self.assertIsInstance(node.cases[0].patterns[0], TypePatternNode)
         self.assertEqual(node.cases[0].patterns[0].name, Symbol("x"))
         self.assertTrue(node.cases[1].patterns[0].guard)
         self.assertEqual(len(node.cases[2].patterns[0].fields), 2)
 
-        [node] = parse(
-            """
+        [node] = parse("""
 match =>
   1, 2 => "stack"
   3 || 4, 5 || 6 => "alts"
   if > 10 || if < 4, [1, 2, 3] => "mixed"
   _, _ => "default"
 end
-"""
-        )
+""")
         self.assertEqual(len(node.cases[0].patterns), 2)
         self.assertIsInstance(node.cases[1].patterns[0], OrPatternNode)
         self.assertIsInstance(node.cases[2].patterns[0], OrPatternNode)
 
     def test_parses_list_literal_as_item_expressions(self):
-        [node] = parse("[1, +(2, 3), \"x\"]")
+        [node] = parse('[1, +(2, 3), "x"]')
 
         self.assertIsInstance(node, ListLiteralNode)
         self.assertEqual(node.items[0], (NumberLiteralNode("1"),))

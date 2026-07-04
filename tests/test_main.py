@@ -39,6 +39,15 @@ class MainTests(unittest.TestCase):
         self.assertIn("Typed AST:", rendered)
         self.assertIn("TypedNode(type=Number", rendered)
 
+    def test_main_annotates_inline_code(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["annotate", "--code", "define double(n) => $n 2 *"])
+
+        self.assertEqual(exit_code, 0)
+        rendered = output.getvalue()
+        self.assertIn("define double(n: Number) -> Number =>", rendered)
+
     def test_main_runs_inline_code(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

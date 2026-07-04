@@ -367,12 +367,14 @@ def _fork_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     stack = call_params[:-2]
     for left in _callable_overloads(left_type):
         for right in _callable_overloads(right_type):
-            arity = len(left.params)
-            if len(right.params) != arity or len(stack) < arity:
+            arity = max(len(left.params), len(right.params))
+            if len(stack) < arity:
                 continue
             args = stack[-arity:] if arity else ()
-            left_application = _apply_callable(left, args)
-            right_application = _apply_callable(right, args)
+            left_args = args[-len(left.params) :] if left.params else ()
+            right_args = args[-len(right.params) :] if right.params else ()
+            left_application = _apply_callable(left, left_args)
+            right_application = _apply_callable(right, right_args)
             if left_application is not None and right_application is not None:
                 return T.Overload(
                     (
@@ -431,7 +433,21 @@ def _dip(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("fork", (T.Fn(), T.Fn()), call_site=_fork_call_site)
 def _fork(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     *call_args, left, right = args
-    return (*ctx.call(left, list(call_args)), *ctx.call(right, list(call_args)))
+    left_arity = _runtime_callable_arity(left)
+    right_arity = _runtime_callable_arity(right)
+    left_args = call_args[-left_arity:] if left_arity else []
+    right_args = call_args[-right_arity:] if right_arity else []
+    return (*ctx.call(left, list(left_args)), *ctx.call(right, list(right_args)))
+
+
+def _runtime_callable_arity(value: Any) -> int:
+    code = getattr(value, "code", None)
+    if code is not None:
+        return len(getattr(code, "params", ()))
+    overloads = getattr(value, "overloads", ())
+    if overloads:
+        return max(_runtime_callable_arity(overload) for overload in overloads)
+    return 0
 
 
 # --------------------------------------------------------------------------
@@ -465,9 +481,7 @@ def _slash(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (args[0] / args[1],)
 
 
-# List-reduce form of `/` is known to the analyser but has no runtime
-# implementation yet.
-declare_overload(
+@builtin(
     "/",
     (
         T.ExactList(T.TypeVariable("Item")),
@@ -478,6 +492,18 @@ declare_overload(
     ),
     (T.TypeVariable("Item"),),
 )
+def _reduce(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    iterator = iter(args[0])
+    try:
+        result = next(iterator)
+    except StopIteration as exc:
+        raise RuntimeError("reduce requires a non-empty list") from exc
+    for item in iterator:
+        called = ctx.call(args[1], [result, item])
+        if len(called) != 1:
+            raise RuntimeError("reduce function must return exactly one value")
+        result = called[0]
+    return (result,)
 
 
 @builtin("double", (T.Number,), (T.Number,))

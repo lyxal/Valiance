@@ -195,6 +195,17 @@ class AnalyserTests(unittest.TestCase):
         self.assertIsInstance(modifier, TypedFunctionNode)
         self.assertEqual(modifier.typ, Fn((Number,), (Number,)))
 
+    def test_modifier_function_refines_inferred_generic_inputs(self):
+        typed = analyse(parse("define sum => /: +"))
+
+        self.assertEqual(
+            typed[0].typ,
+            Overloads(
+                Overload((C(ListExactType, Number),), (Number,)),
+                Overload((C(ListExactType, String),), (String,)),
+            ),
+        )
+
     def test_colon_function_arguments_must_match_function_parameter_count(self):
         analyser = Analyser()
 
@@ -1483,6 +1494,52 @@ getName $joe
             ),
         )
         self.assertEqual(next(iter(fork)).stack, TypeStack((Number, Boolean)))
+
+    def test_fork_pops_maximum_modifier_parameter_count(self):
+        analyser = Analyser()
+
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((String, Number)))),
+            (
+                ElementNode(
+                    Symbol("fork"),
+                    modifier_args=(
+                        FunctionNode(
+                            params=(
+                                FunctionParam(NAME, String),
+                                FunctionParam(Symbol("n"), Number),
+                            ),
+                            body=(GetVariableNode(NAME),),
+                            returns=(String,),
+                        ),
+                        FunctionNode(body=(ElementNode(DOUBLE),)),
+                    ),
+                ),
+            ),
+        )
+
+        self.assertEqual(next(iter(branches)).stack, TypeStack((String, Number)))
+
+    def test_positive_predicate_analyses_as_one_element(self):
+        typed = analyse(parse("1 positive?"))
+
+        self.assertEqual(typed[-1].typ, Boolean)
+
+    def test_fully_typed_definition_can_call_itself(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+define countdown(n: Number) -> Number =>
+  if ($n 0 >) => $n 1 - countdown else => 0 end
+end
+3 countdown
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
 
     def test_user_defined_call_site_checked_function_uses_outer_stack_inputs(self):
         function_name = Symbol("callit")
