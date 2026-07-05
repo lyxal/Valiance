@@ -482,6 +482,8 @@ class VirtualMachine:
                                 result = frame.stack
                                 frame.stack = []
                                 return self._finalize_frame(frame, result)
+                        case OpCode.STACK_SHUFFLE:
+                            _stack_shuffle(frame, instruction.arg, self)
                         case OpCode.POP:
                             _release_value(_pop(frame.stack, "pop"), self)
                         case OpCode.RETURN:
@@ -1480,6 +1482,78 @@ def _call_resolved_builtin(
         _release_stack_tail(frame.stack, consumed_count, callee.context.call.__self__)
     frame.cycle_index = next_cycle_index
     frame.stack.extend(result)
+
+
+def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
+    mode, prestack, poststack = _stack_shuffle_spec(spec)
+    arity = len(prestack)
+    try:
+        args, stack_count, next_cycle_index = frame.source_args(arity)
+    except _StackUnderflow as exc:
+        raise RuntimeError(f"stack underflow during {mode}") from exc
+
+    labelled = {
+        label: value
+        for label, value in zip(prestack, args, strict=True)
+        if label is not None
+    }
+    outputs = tuple(labelled[label] for label in poststack)
+    if mode == "copy":
+        for value in outputs:
+            _retain_value(value)
+        frame.cycle_index = next_cycle_index
+        frame.stack.extend(outputs)
+        return
+
+    output_counts = Counter(poststack)
+    stack_arg_start = arity - stack_count
+    retained_outputs: set[str] = set()
+    for index, label in enumerate(prestack):
+        if label is None:
+            if index < stack_arg_start:
+                _retain_value(args[index])
+            continue
+        count = output_counts[label]
+        retains = count if index < stack_arg_start else max(count - 1, 0)
+        for _ in range(retains):
+            _retain_value(args[index])
+        if count:
+            retained_outputs.add(label)
+
+    if stack_count:
+        _pop_many(frame.stack, stack_count)
+    frame.cycle_index = next_cycle_index
+    for index, (label, value) in enumerate(zip(prestack, args, strict=True)):
+        if label is None:
+            frame.stack.append(value)
+        elif index >= stack_arg_start and label not in retained_outputs:
+            _release_value(value, vm)
+    frame.stack.extend(outputs)
+
+
+def _stack_shuffle_spec(
+    spec: object,
+) -> tuple[str, tuple[str | None, ...], tuple[str, ...]]:
+    if not isinstance(spec, tuple) or len(spec) != 3:
+        raise RuntimeError(f"invalid stack shuffle spec {spec!r}")
+    mode, prestack, poststack = spec
+    if mode not in {"copy", "move"}:
+        raise RuntimeError(f"invalid stack shuffle mode {mode!r}")
+    if not isinstance(prestack, tuple) or not all(
+        label is None or isinstance(label, str) for label in prestack
+    ):
+        raise RuntimeError(f"invalid stack shuffle prestack {prestack!r}")
+    if not isinstance(poststack, tuple) or not all(
+        isinstance(label, str) for label in poststack
+    ):
+        raise RuntimeError(f"invalid stack shuffle poststack {poststack!r}")
+    labels = {label for label in prestack if label is not None}
+    for label in poststack:
+        if label not in labels:
+            raise RuntimeError(
+                f"stack shuffle poststack label {label!r} is not in prestack"
+            )
+    return mode, prestack, poststack
 
 
 def _extract_object_field(receiver: ObjectValue, field: str, vm: VirtualMachine) -> Any:

@@ -126,6 +126,15 @@ class CastNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class StackShuffleNode(ASTNode):
+    """Copy or move labelled values from the top stack segment."""
+
+    mode: Symbol
+    prestack: tuple[Symbol | None, ...] = ()
+    poststack: tuple[Symbol, ...] = ()
+
+
+@dataclass(frozen=True)
 class FunctionNode(ASTNode):
     """A function literal."""
 

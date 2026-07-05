@@ -51,6 +51,7 @@ from valiance.asts import (
     ReturnNode,
     SetVariableNode,
     SourceLocation,
+    StackShuffleNode,
     StringInterpolationNode,
     StringLiteralNode,
     Symbol,
@@ -95,6 +96,9 @@ from valiance.types import (
 
 class ParseError(DiagnosticError, SyntaxError):
     """Raised when Valiance source cannot be parsed."""
+
+
+_EXPANDED_SKIP = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1077,6 +1081,8 @@ class Parser:
                 (ReturnNode(self._optional_values(), location=_loc(token)),),
                 True,
             )
+        if self._check_ident("copy", "move") and self._peek(1).kind is TokenKind.LPAREN:
+            return _ChainPiece((self._stack_shuffle(),), True)
         if self._match(TokenKind.IDENT, TokenKind.OP):
             token = self._previous
             if token.value.startswith("#"):
@@ -1116,6 +1122,68 @@ class Parser:
                 is_element=True,
             )
         self._error("expected expression")
+
+    def _stack_shuffle(self) -> StackShuffleNode:
+        start = self._advance()
+        mode = Symbol(start.value)
+        self._expect(TokenKind.LPAREN)
+        prestack = self._shuffle_labels(allow_skip=True)
+        self._expect(TokenKind.ARROW)
+        poststack = tuple(self._non_skip_shuffle_labels())
+        self._expect(TokenKind.RPAREN)
+        seen: set[Symbol] = set()
+        for label in prestack:
+            if label is None:
+                continue
+            if label in seen:
+                raise ParseError(
+                    f"duplicate prestack label '{label}'",
+                    line=start.line,
+                    column=start.column,
+                )
+            seen.add(label)
+        missing = tuple(label for label in poststack if label not in seen)
+        if missing:
+            raise ParseError(
+                f"poststack label '{missing[0]}' was not declared in prestack",
+                line=start.line,
+                column=start.column,
+            )
+        return StackShuffleNode(mode, prestack, poststack, location=_loc(start))
+
+    def _non_skip_shuffle_labels(self) -> tuple[Symbol, ...]:
+        return tuple(
+            label
+            for label in self._shuffle_labels(allow_skip=True)
+            if label is not None
+        )
+
+    def _shuffle_labels(self, *, allow_skip: bool) -> tuple[Symbol | None, ...]:
+        labels: list[Symbol | None] = []
+        self._skip_newlines()
+        if self._check(TokenKind.ARROW, TokenKind.RPAREN):
+            return ()
+        while True:
+            label = self._shuffle_label(allow_skip=allow_skip)
+            if label is not _EXPANDED_SKIP:
+                labels.append(label)
+            else:
+                labels.extend(None for _ in range(_expanded_skip_count(self._previous)))
+            self._skip_newlines()
+            if not self._match(TokenKind.COMMA):
+                return tuple(labels)
+            self._skip_newlines()
+
+    def _shuffle_label(self, *, allow_skip: bool) -> Symbol | None | object:
+        token = self._expect(TokenKind.IDENT)
+        value = token.value
+        if value == "_":
+            if allow_skip:
+                return None
+            self._error("'_' cannot be used here")
+        if value.startswith("_") and value[1:].isdecimal():
+            return _EXPANDED_SKIP
+        return Symbol(value)
 
     def _cast(self, start: Token) -> _ChainPiece:
         checked = self._check_op("!")
@@ -1931,6 +1999,13 @@ def _flatten(items: tuple[tuple[ASTNode, ...], ...]) -> tuple[ASTNode, ...]:
 
 def _element_tags(*names: str) -> frozenset[ElementTag]:
     return frozenset(ElementTag(Symbol(name)) for name in names)
+
+
+def _expanded_skip_count(token: Token) -> int:
+    value = token.value
+    if value.startswith("_") and value[1:].isdecimal():
+        return int(value[1:])
+    return 0
 
 
 def _collection_postfix_superset(

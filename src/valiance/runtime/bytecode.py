@@ -40,6 +40,7 @@ class OpCode(Enum):
     TRY_END = "try_end"
     PANIC = "panic"
     TRY_UNWRAP = "try_unwrap"
+    STACK_SHUFFLE = "stack_shuffle"
     CYCLE_BEGIN = "cycle_begin"
     CYCLE_END = "cycle_end"
     FOREACH = "foreach"

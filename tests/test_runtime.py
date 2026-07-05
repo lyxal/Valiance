@@ -41,6 +41,30 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(execute("*(+(1, 2), 3)"), [Decimal("9")])
         self.assertEqual(execute("(1 + 2) * (3 + 4)"), [Decimal("21")])
 
+    def test_executes_stack_shuffle_copy_and_move(self):
+        self.assertEqual(
+            execute("1 2 3 4\ncopy(a, b -> a, b, b)"),
+            [
+                Decimal("1"),
+                Decimal("2"),
+                Decimal("3"),
+                Decimal("4"),
+                Decimal("3"),
+                Decimal("4"),
+                Decimal("4"),
+            ],
+        )
+        self.assertEqual(
+            execute("1 2 3 4\nmove(a, _, b -> a, a, b)"),
+            [
+                Decimal("1"),
+                Decimal("3"),
+                Decimal("2"),
+                Decimal("2"),
+                Decimal("4"),
+            ],
+        )
+
     def test_optional_arguments_use_ecs_overrides_at_runtime(self):
         self.assertEqual(
             execute(
@@ -679,6 +703,23 @@ end
 $file = WriteFile
 $file
 $file
+"""
+            )
+
+        self.assertIn("uncaught panic: DuplicationFault", str(caught.exception))
+        self.assertIn("Writeable files cannot be duplicated", str(caught.exception))
+
+    def test_stack_shuffle_copy_triggers_duplication_fault(self):
+        with self.assertRaises(RuntimeError) as caught:
+            execute(
+                """
+object WriteFile =>
+  @error("Writeable files cannot be duplicated")
+  define dup => end
+end
+
+WriteFile
+copy(file -> file)
 """
             )
 

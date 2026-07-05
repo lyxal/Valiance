@@ -46,6 +46,7 @@ from valiance.asts import (
     RestPatternNode,
     ReturnNode,
     SetVariableNode,
+    StackShuffleNode,
     StringInterpolationNode,
     StringLiteralNode,
     TagApplicationNode,
@@ -184,6 +185,8 @@ class _Compiler:
             case CastNode(typ, checked):
                 if checked:
                     self.emit(OpCode.CHECK_CAST, _cast_type_spec(typ))
+            case StackShuffleNode():
+                self.emit(OpCode.STACK_SHUFFLE, _stack_shuffle_spec(node))
             case FunctionNode():
                 self.emit(
                     OpCode.MAKE_FUNCTION,
@@ -998,6 +1001,16 @@ def _index_spec(
             for selector in selectors
         ),
         int(spread),
+    )
+
+
+def _stack_shuffle_spec(
+    node: StackShuffleNode,
+) -> tuple[str, tuple[str | None, ...], tuple[str, ...]]:
+    return (
+        node.mode.text,
+        tuple(None if label is None else label.text for label in node.prestack),
+        tuple(label.text for label in node.poststack),
     )
 
 

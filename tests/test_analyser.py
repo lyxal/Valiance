@@ -30,6 +30,7 @@ from valiance.asts import (
     IfNode,
     ListLiteralNode,
     NumberLiteralNode,
+    StackShuffleNode,
     StringInterpolationNode,
     StringLiteralNode,
     TagApplicationNode,
@@ -109,6 +110,38 @@ RIGHT = Symbol("Right")
 
 
 class AnalyserTests(unittest.TestCase):
+    def test_stack_shuffle_copy_preserves_stack_and_pushes_labelled_copies(self):
+        branches = Analyser().analyse_node(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((String, Bool, Number)))),
+            StackShuffleNode(
+                Symbol("copy"),
+                (Symbol("a"), Symbol("b")),
+                (Symbol("a"), Symbol("b"), Symbol("b")),
+            ),
+        )
+
+        self.assertEqual(
+            next(iter(branches)).stack,
+            TypeStack((String, Bool, Number, Bool, Number, Number)),
+        )
+
+    def test_stack_shuffle_move_removes_labelled_values_and_keeps_skips(self):
+        branches = Analyser().analyse_node(
+            BranchSet.one(
+                AnalysisBranch(stack=TypeStack((String, Bool, Integer, Number)))
+            ),
+            StackShuffleNode(
+                Symbol("move"),
+                (Symbol("a"), None, Symbol("b")),
+                (Symbol("a"), Symbol("a"), Symbol("b")),
+            ),
+        )
+
+        self.assertEqual(
+            next(iter(branches)).stack,
+            TypeStack((String, Integer, Bool, Bool, Number)),
+        )
+
     def test_default_environment_includes_builtin_plus(self):
         typed = analyse(
             [

@@ -17,6 +17,7 @@ from valiance.asts.nodes import (
     ImportNode,
     NumberLiteralNode,
     SetVariableNode,
+    StackShuffleNode,
     StringInterpolationNode,
     StringLiteralNode,
     TagApplicationNode,
@@ -27,6 +28,7 @@ from valiance.asts.nodes import (
     TypedFunctionNode,
     TypedNode,
 )
+from valiance.symbols import Symbol
 from valiance.types import Type
 
 
@@ -125,6 +127,13 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
         return (
             f"CastNode(as{bang} {_type_label(value.typ)}"
             f"{_location_arg(value)})"
+        )
+    if isinstance(value, StackShuffleNode):
+        prestack = ", ".join(_shuffle_label(label) for label in value.prestack)
+        poststack = ", ".join(str(label) for label in value.poststack)
+        return (
+            f"StackShuffleNode(mode={value.mode}, "
+            f"{prestack} -> {poststack}{_location_arg(value)})"
         )
     return repr(value)
 
@@ -285,6 +294,10 @@ def _tag_label(node: TagApplicationNode) -> str:
     prefix = "#!" if node.tag.absent else "#"
     depth = "+" * node.tag.depth
     return f"{prefix}{node.tag.name}{depth}"
+
+
+def _shuffle_label(label: Symbol | None) -> str:
+    return "_" if label is None else str(label)
 
 
 def _indent(lines: list[str], spaces: int = 2) -> list[str]:

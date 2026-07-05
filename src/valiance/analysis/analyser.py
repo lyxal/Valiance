@@ -39,6 +39,7 @@ from valiance.asts import (
     OrPatternNode,
     RecordLiteralNode,
     RestPatternNode,
+    StackShuffleNode,
     StringInterpolationNode,
     StringLiteralNode,
     TagApplicationNode,
@@ -582,6 +583,8 @@ class Analyser:
                 return self._tag_application(branch, node)
             case CastNode():
                 return self._cast(branch, node)
+            case StackShuffleNode():
+                return self._stack_shuffle(branch, node)
             case FunctionNode():
                 if not self._validate_annotations(node.annotations, "fn", node):
                     return {branch.append_typed(TypedNode(node, None))}
@@ -1250,6 +1253,44 @@ class Analyser:
                 )
             )
         return results
+
+    def _stack_shuffle(
+        self,
+        branch: AnalysisBranch,
+        node: StackShuffleNode,
+    ) -> set[AnalysisBranch]:
+        params = tuple(
+            T.V(f"_shuffle_{index}") for index, _ in enumerate(node.prestack)
+        )
+        sourced = branch.source_arguments(params)
+        if sourced is None:
+            self._diagnose(
+                f"stack underflow for {node.mode}; expected "
+                f"{len(node.prestack)} value(s)",
+                node,
+            )
+            return set()
+        args, popped = sourced
+        labelled = {
+            label: typ
+            for label, typ in zip(node.prestack, args, strict=True)
+            if label is not None
+        }
+        post_types = tuple(labelled[label] for label in node.poststack)
+        if node.mode == Symbol("copy"):
+            stack = branch.stack.push(*post_types)
+        else:
+            kept = tuple(
+                typ
+                for label, typ in zip(node.prestack, args, strict=True)
+                if label is None
+            )
+            stack = popped.stack.push(*kept, *post_types)
+        return {
+            popped.with_stack(stack).append_typed(
+                TypedNode(node, _returns_result_type(post_types))
+            )
+        }
 
     def _element_call(
         self,

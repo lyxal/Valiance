@@ -257,14 +257,14 @@ Current audit total: 398 / 734 items complete (54.2%).
 - [x] Provide `dup`.
 - [ ] Provide `swap`.
 - [ ] Provide `pop`.
-- [ ] Parse and execute `copy(prestack -> poststack)`.
-- [ ] Parse and execute `move(prestack -> poststack)`.
-- [ ] Support duplicate post-stack labels.
-- [ ] Pop every labelled pre-stack value for `move`, including unused labels.
-- [ ] Support `_` as an ignored pre-stack label.
-- [ ] Reject duplicate non-underscore pre-stack labels.
-- [ ] Support `_n` shorthand for repeated ignored labels.
-- [ ] Interpret pre-stack labels from the top of the stack.
+- [x] Parse and execute `copy(prestack -> poststack)`.
+- [x] Parse and execute `move(prestack -> poststack)`.
+- [x] Support duplicate post-stack labels.
+- [x] Pop every labelled pre-stack value for `move`, including unused labels.
+- [x] Support `_` as an ignored pre-stack label.
+- [x] Reject duplicate non-underscore pre-stack labels.
+- [x] Support `_n` shorthand for repeated ignored labels.
+- [x] Interpret pre-stack labels from the top of the stack.
 
 ## 18. Functions
 

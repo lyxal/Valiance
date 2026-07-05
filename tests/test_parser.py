@@ -31,6 +31,7 @@ from valiance.asts import (
     RestPatternNode,
     SetVariableNode,
     SourceLocation,
+    StackShuffleNode,
     StringInterpolationNode,
     StringLiteralNode,
     Symbol,
@@ -100,6 +101,24 @@ class LexerTests(unittest.TestCase):
 
 
 class ParserTests(unittest.TestCase):
+    def test_parses_stack_shuffle_copy_and_expands_skips(self):
+        self.assertEqual(
+            parse("copy(a, _2, b -> a, b, b)"),
+            [
+                StackShuffleNode(
+                    Symbol("copy"),
+                    (Symbol("a"), None, None, Symbol("b")),
+                    (Symbol("a"), Symbol("b"), Symbol("b")),
+                )
+            ],
+        )
+
+    def test_rejects_invalid_stack_shuffle_labels(self):
+        with self.assertRaises(ParseError):
+            parse("move(a, a -> a)")
+        with self.assertRaises(ParseError):
+            parse("copy(a -> b)")
+
     def test_parses_basic_stack_chain_and_element_call_syntax(self):
         program = parse('println("hello")\n$answer = +(40, 2)')
 
