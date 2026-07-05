@@ -289,8 +289,8 @@ Current audit total: 398 / 734 items complete (54.2%).
 - [x] Implement argument cycling for explicitly declared parameters.
 - [x] Disable argument cycling when parameters are inferred.
 - [x] Disable argument cycling for explicitly zero-parameter functions.
-- [ ] Implement closure capture by value.
-- [ ] Preserve captured values after the defining scope exits.
+- [x] Implement closure capture by value.
+- [x] Preserve captured values after the defining scope exits.
 - [ ] Parse quick functions using `'chain`.
 - [ ] Make quick functions equivalent to `fn => chain`.
 
@@ -462,7 +462,7 @@ Current audit total: 398 / 734 items complete (54.2%).
 - [x] Support optional return declarations.
 - [x] Create new executable elements from definitions.
 - [ ] Add module-scoped overloads to existing elements.
-- [ ] Capture visible variables at definition evaluation time.
+- [x] Capture visible variables at definition evaluation time.
 - [ ] Support trailing optional parameters with default expressions.
 - [ ] Restrict optional element arguments to explicit call syntax.
 - [ ] Allow function-valued optionals through `:` syntax.
@@ -489,10 +489,10 @@ Current audit total: 398 / 734 items complete (54.2%).
 - [x] Reconstruct immutable object values after writes.
 - [ ] Support optional-member access behavior.
 - [ ] Provide `$self` in object-associated definitions.
-- [ ] Parse destructors named with the object’s destructor form.
-- [ ] Run destructors according to object lifetime rules.
-- [ ] Enforce destructor constraints.
-- [ ] Account for objects during stack copying, moving, and disposal.
+- [x] Parse destructors named with the object’s destructor form.
+- [x] Run destructors according to object lifetime rules.
+- [x] Enforce destructor constraints.
+- [x] Account for objects during stack copying, moving, and disposal.
 - [ ] Support shared-state objects.
 - [ ] Enforce shared-state access and update rules.
 
@@ -627,7 +627,7 @@ Current audit total: 398 / 734 items complete (54.2%).
 - [x] Return all remaining function-stack values where requested.
 - [x] Implement `@errType`.
 - [x] Apply implemented error-type transformations or constraints.
-- [ ] Implement `@mustcall`.
+- [x] Implement `@mustcall`.
 - [ ] Warn or error when marked results are discarded.
 - [x] Implement `@commutative`.
 - [x] Generate every required argument-order overload permutation.

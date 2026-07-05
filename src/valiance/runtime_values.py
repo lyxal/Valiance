@@ -3,29 +3,56 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence, Sized
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from itertools import islice
 from typing import Any
 
 
-@dataclass(frozen=True)
+@dataclass
 class LazyList:
     """A list-like value backed by an iterable that may be lazy or infinite."""
 
     iterable: Iterable[Any]
+    owned_values: tuple[Any, ...] = field(default=(), compare=False, repr=False)
+    refcount: int = field(default=1, compare=False, repr=False)
 
     def __iter__(self):
         return iter(self.iterable)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
+class ObjectRuntimeType:
+    """Runtime lifecycle metadata attached to nominal object values."""
+
+    destructor_name: str | None = None
+    pop_name: str | None = None
+    dup_name: str | None = None
+    dup_error: str | None = None
+    mustcall_mode: str | None = None
+    mustcall_methods: tuple[str, ...] = ()
+
+
+@dataclass
 class ObjectValue:
     """A nominal structured runtime value."""
 
     type_name: str
     fields: dict[str, Any]
     type_args: tuple[str, ...] = ()
+    runtime_type: ObjectRuntimeType | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
+    refcount: int = field(default=1, compare=False, repr=False)
+    mustcall_called: frozenset[str] = field(
+        default_factory=frozenset,
+        compare=False,
+        repr=False,
+    )
+    cleaning_up: bool = field(default=False, compare=False, repr=False)
+    destroyed: bool = field(default=False, compare=False, repr=False)
 
 
 class PanicSignal(Exception):

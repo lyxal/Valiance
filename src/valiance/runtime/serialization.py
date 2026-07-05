@@ -15,7 +15,7 @@ from valiance.runtime.bytecode import (
     Program,
 )
 
-MAGIC = b"VLNCBC\x06"
+MAGIC = b"VLNCBC\x07"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,

@@ -44,6 +44,8 @@ The runtime implementation is small, but several files must evolve together.
 - Object and variant declarations compile constructor globals with
   `MAKE_OBJECT_CONSTRUCTOR`; enum members compile constants with
   `MAKE_ENUM_MEMBER` and optional backing-value globals.
+- `MAKE_OBJECT_CONSTRUCTOR` also carries runtime lifecycle metadata for
+  destructors, custom `pop`, duplication faults, and `@mustcall` cleanup rules.
 - Permitted object/record member writes compile to `SET_FIELD`, which returns a
   reconstructed value instead of mutating the original visible value.
 - `TagApplicationNode` is currently a compile-time no-op.
@@ -94,7 +96,7 @@ The runtime implementation is small, but several files must evolve together.
 `src/valiance/runtime/serialization.py`
 
 - Encodes `Program` as portable binary bytecode.
-- The current magic/version marker is `b"VLNCBC\x06"`.
+- The current magic/version marker is `b"VLNCBC\x07"`.
 - Opcodes are one byte each in `_OP_TO_BYTE`.
 - Instruction arguments are tagged binary values, not Python pickle, repr, or
   JSON.
@@ -731,8 +733,6 @@ These are known constraints of the current runtime/codegen layer:
   are runtime-dispatched.
 - Runtime arrays are currently represented like lists.
 - Function overload codegen chooses the first typed overload body.
-- Full closure semantics should not be assumed; function values capture the
-  current visible globals/locals shallowly at `MAKE_FUNCTION`.
 - Built-in runtime dispatch is useful but not yet a complete multimethod system.
 - Runtime vectorisation errors are plain runtime errors, not yet dedicated
   catchable `VectorisationFault` panic values.

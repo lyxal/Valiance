@@ -105,6 +105,10 @@ class _Compiler:
         self.instructions: list[Instruction] = []
         self.loops: list[_LoopPatch] = []
         self.break_as_signal = break_as_signal
+        self.object_runtime_metadata: dict[
+            str,
+            tuple[str | None, str | None, str | None, str | None, str | None, tuple[str, ...]],
+        ] = {}
 
     def compile_function(
         self,
@@ -264,12 +268,22 @@ class _Compiler:
     def object_declaration(self, node: ObjectNode) -> None:
         match node.kind.text:
             case "object":
+                self.object_runtime_metadata[node.name.text] = (
+                    _object_runtime_metadata(node.name.text, node.annotations, node.definitions)
+                )
                 self.object_constructor(node.name.text, node.fields)
                 for definition in node.definitions:
                     self.friendly_definition(node.name.text, definition)
             case "variant":
                 for member in node.variants:
                     runtime_name = f"{node.name}.{member.name}"
+                    self.object_runtime_metadata[runtime_name] = (
+                        _object_runtime_metadata(
+                            runtime_name,
+                            node.annotations,
+                            member.definitions,
+                        )
+                    )
                     self.object_constructor(runtime_name, member.fields)
                     for definition in member.definitions:
                         self.friendly_definition(runtime_name, definition)
@@ -306,7 +320,13 @@ class _Compiler:
         )
         self.emit(
             OpCode.MAKE_OBJECT_CONSTRUCTOR,
-            (name, tuple(field_names), required, tuple(default_values)),
+            (
+                name,
+                tuple(field_names),
+                required,
+                tuple(default_values),
+                self.object_runtime_metadata.get(name, (None, None, None, None, None, ())),
+            ),
         )
         self.emit(OpCode.STORE_VAR, name.rsplit(".", 1)[-1])
 
@@ -755,6 +775,74 @@ def _definition_has_annotation(definition: DefineNode, name: str) -> bool:
         and annotation.name.text == name
         for annotation in definition.annotations
     )
+
+
+def _object_runtime_metadata(
+    name: str,
+    annotations: tuple[ASTNode, ...],
+    definitions: tuple[DefineNode, ...],
+) -> tuple[str | None, str | None, str | None, str | None, str | None, tuple[str, ...]]:
+    destructor_name = None
+    pop_name = None
+    dup_name = None
+    dup_error = None
+    for definition in definitions:
+        if definition.name.text == f"~{name.rsplit('.', 1)[-1]}":
+            destructor_name = f"{name}::{definition.name.text}"
+        elif definition.name.text == "pop":
+            pop_name = f"{name}::pop"
+        elif definition.name.text == "dup":
+            dup_name = f"{name}::dup"
+            dup_error = _annotation_message(definition.annotations, "error")
+    mustcall_mode, mustcall_methods = _mustcall_annotation_metadata(annotations)
+    return (
+        destructor_name,
+        pop_name,
+        dup_name,
+        dup_error,
+        mustcall_mode,
+        mustcall_methods,
+    )
+
+
+def _mustcall_annotation_metadata(
+    annotations: tuple[ASTNode, ...],
+) -> tuple[str | None, tuple[str, ...]]:
+    for annotation in annotations:
+        if not isinstance(annotation, AnnotationNode):
+            continue
+        if annotation.name.text != "mustcall":
+            continue
+        kwargs = dict(annotation.kwargs)
+        for key in ("all", "any"):
+            value = kwargs.get(Symbol(key))
+            methods = _string_list_literal(value)
+            if methods is not None:
+                return key, methods
+    return None, ()
+
+
+def _string_list_literal(value: ASTNode | None) -> tuple[str, ...] | None:
+    if not isinstance(value, ListLiteralNode):
+        return None
+    methods: list[str] = []
+    for item in value.items:
+        if len(item) != 1 or not isinstance(item[0], StringLiteralNode):
+            return None
+        methods.append(item[0].value)
+    return tuple(methods)
+
+
+def _annotation_message(annotations: tuple[ASTNode, ...], name: str) -> str | None:
+    for annotation in annotations:
+        if not isinstance(annotation, AnnotationNode):
+            continue
+        if annotation.name.text != name:
+            continue
+        for arg in annotation.args:
+            if isinstance(arg, StringLiteralNode):
+                return arg.value
+    return None
 
 
 def _tupled_element_return_count(

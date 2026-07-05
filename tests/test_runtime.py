@@ -494,6 +494,21 @@ $.value
 
         self.assertEqual(stack, [Decimal("7")])
 
+    def test_nested_function_closure_keeps_captured_outer_value(self):
+        self.assertEqual(
+            execute(
+                """
+define makeMultiplier(factor: Number) =>
+  fn (:Number) => * $factor
+end
+
+$double = makeMultiplier(2)
+double(5)
+"""
+            ),
+            [Decimal("10")],
+        )
+
     def test_err_type_annotation_synthesizes_runtime_message_element(self):
         self.assertEqual(
             execute(
@@ -607,6 +622,67 @@ $.name
             ),
             ["Grace"],
         )
+
+    def test_object_destructor_runs_when_last_reference_leaves_scope(self):
+        output = io.StringIO()
+        source = """
+object Temp =>
+  $name: String
+  define ~Temp => $self.name println
+end
+
+define makeTemp =>
+  $value = Temp("released")
+end
+
+makeTemp
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "released\n")
+
+    def test_unduplicatable_object_raises_duplication_fault(self):
+        with self.assertRaises(RuntimeError) as caught:
+            execute(
+                """
+object WriteFile =>
+  @error("Writeable files cannot be duplicated")
+  define dup => end
+end
+
+$file = WriteFile
+$file
+$file
+"""
+            )
+
+        self.assertIn("uncaught panic: DuplicationFault", str(caught.exception))
+        self.assertIn("Writeable files cannot be duplicated", str(caught.exception))
+
+    def test_mustcall_cleanup_fault_still_runs_destructor(self):
+        output = io.StringIO()
+        source = """
+@mustcall(any = ["commit"])
+object Tx =>
+  define commit => $self
+  define ~Tx => "released" println
+end
+
+define leak =>
+  $tx = Tx
+end
+
+leak
+"""
+
+        with self.assertRaises(RuntimeError) as caught, contextlib.redirect_stdout(output):
+            execute(source)
+
+        self.assertIn("uncaught panic: CleanupFault", str(caught.exception))
+        self.assertEqual(output.getvalue(), "released\n")
 
     def test_generic_object_runtime_values_keep_type_arguments(self):
         stack = execute(

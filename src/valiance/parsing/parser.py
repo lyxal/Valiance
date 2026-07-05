@@ -998,6 +998,7 @@ class Parser:
             annotation = AnnotationNode(
                 Symbol(f"@@{annotation_name.text}"),
                 (),
+                (),
                 location=_loc(start),
             )
             if not self._match(TokenKind.IDENT, TokenKind.OP):
@@ -1025,9 +1026,10 @@ class Parser:
             start = self._previous
             name = self._symbol("expected annotation name")
             args: tuple[ASTNode, ...] = ()
+            kwargs: tuple[tuple[Symbol, ASTNode], ...] = ()
             if self._match(TokenKind.LPAREN):
-                args = _flatten(self._argument_expressions(TokenKind.RPAREN))
-            annotation = AnnotationNode(name, args, location=_loc(start))
+                args, kwargs = self._annotation_arguments(TokenKind.RPAREN)
+            annotation = AnnotationNode(name, args, kwargs, location=_loc(start))
             if not self._match_ident("fn"):
                 self._error("annotation must be followed by fn in expression position")
             return _ChainPiece(
@@ -1409,11 +1411,41 @@ class Parser:
             start = self._previous
             name = self._symbol("expected annotation name")
             args: tuple[ASTNode, ...] = ()
+            kwargs: tuple[tuple[Symbol, ASTNode], ...] = ()
             if self._match(TokenKind.LPAREN):
-                args = _flatten(self._argument_expressions(TokenKind.RPAREN))
-            annotations.append(AnnotationNode(name, args, location=_loc(start)))
+                args, kwargs = self._annotation_arguments(TokenKind.RPAREN)
+            annotations.append(AnnotationNode(name, args, kwargs, location=_loc(start)))
             self._skip_newlines()
         return tuple(annotations)
+
+    def _annotation_arguments(
+        self,
+        closer: TokenKind,
+    ) -> tuple[tuple[ASTNode, ...], tuple[tuple[Symbol, ASTNode], ...]]:
+        args: list[ASTNode] = []
+        kwargs: list[tuple[Symbol, ASTNode]] = []
+        self._skip_newlines()
+        if self._match(closer):
+            return (), ()
+        while True:
+            self._skip_newlines()
+            if self._check(TokenKind.IDENT) and self._peek(1).kind is TokenKind.ASSIGN:
+                key = Symbol(self._advance().value)
+                self._expect(TokenKind.ASSIGN)
+                value = self._annotation_argument_value({TokenKind.COMMA, closer})
+                kwargs.append((key, value))
+            else:
+                args.append(self._annotation_argument_value({TokenKind.COMMA, closer}))
+            self._skip_newlines()
+            if self._match(closer):
+                return tuple(args), tuple(kwargs)
+            self._expect(TokenKind.COMMA)
+
+    def _annotation_argument_value(self, terminators: set[TokenKind]) -> ASTNode:
+        values = self._chain_until(terminators)
+        if len(values) != 1:
+            self._error("annotation arguments must contain exactly one expression")
+        return values[0]
 
     def _params(self) -> tuple[FunctionParam, ...]:
         params: list[FunctionParam] = []
@@ -1691,6 +1723,14 @@ class Parser:
         return tuple(items)
 
     def _symbol(self, message: str) -> Symbol:
+        if (
+            self._check(TokenKind.OP)
+            and self._current.value in {"~", "&"}
+            and self._peek(1).kind is TokenKind.IDENT
+            and self._adjacent(self._current, self._peek(1))
+        ):
+            prefix = self._advance().value
+            return Symbol(prefix + self._expect(TokenKind.IDENT).value)
         if self._match(TokenKind.IDENT, TokenKind.OP):
             return Symbol(self._previous.value)
         self._error(message)

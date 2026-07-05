@@ -572,6 +572,23 @@ end
             ),
         )
 
+    def test_parses_object_destructor_and_mustcall_annotation(self):
+        [tx] = parse(
+            """
+@mustcall(all = ["commit"])
+object Tx =>
+  define commit => end
+  define ~Tx => end
+end
+"""
+        )
+
+        [annotation] = tx.annotations
+        self.assertEqual(annotation.name, Symbol("mustcall"))
+        self.assertEqual(annotation.args, ())
+        self.assertEqual(annotation.kwargs[0][0], Symbol("all"))
+        self.assertEqual(tx.definitions[1].name, Symbol("~Tx"))
+
     def test_parses_object_friendly_qualified_element_name(self):
         self.assertEqual(parse("Foo::bar"), [ElementNode(Symbol("Foo::bar"))])
 

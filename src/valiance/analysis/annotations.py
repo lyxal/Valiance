@@ -16,6 +16,7 @@ from valiance.asts import (
     FunctionNode,
     FunctionOverloadTyping,
     GetVariableNode,
+    ListLiteralNode,
     ObjectFieldNode,
     ObjectNode,
     StringLiteralNode,
@@ -298,6 +299,27 @@ def _validate_commutative(
     return ()
 
 
+def _validate_mustcall(
+    annotation: AnnotationNode,
+    target: str,
+    node: ASTNode,
+) -> tuple[str, ...]:
+    del target, node
+    kwargs = dict(annotation.kwargs)
+    has_all = Symbol("all") in kwargs
+    has_any = Symbol("any") in kwargs
+    if has_all == has_any:
+        return ("@mustcall requires exactly one of all=[...] or any=[...]",)
+    key = Symbol("all") if has_all else Symbol("any")
+    value = kwargs[key]
+    if not isinstance(value, ListLiteralNode):
+        return ("@mustcall expects a list literal of method names",)
+    for item in value.items:
+        if len(item) != 1 or not isinstance(item[0], StringLiteralNode):
+            return ("@mustcall method names must be string literals",)
+    return ()
+
+
 def _self_transform(
     function: FunctionNode,
     annotations: tuple[AnnotationNode, ...],
@@ -425,6 +447,13 @@ def _install_builtin_annotations() -> None:
             "commutative",
             frozenset({"define"}),
             validate=_validate_commutative,
+        )
+    )
+    register_annotation(
+        AnnotationSpec(
+            "mustcall",
+            frozenset({"object", "variant"}),
+            validate=_validate_mustcall,
         )
     )
     register_annotation(

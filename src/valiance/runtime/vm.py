@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins as _py_builtins
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -19,6 +20,7 @@ from valiance.runtime.bytecode import FunctionCode, FunctionSetCode, OpCode, Pro
 from valiance.runtime_values import (
     DIAGNOSTIC_LIST_PREVIEW_LIMIT,
     LazyList,
+    ObjectRuntimeType,
     ObjectValue,
     PanicSignal,
     format_runtime_value,
@@ -76,19 +78,22 @@ class _ExecutionContext:
     stack: tuple[Any, ...]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class FunctionValue:
     """A function closure."""
 
     code: FunctionCode
     globals: dict[str, Any]
+    owned_names: frozenset[str] = frozenset()
+    refcount: int = 1
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class OverloadedFunctionValue:
     """A closure with one compiled body per statically analysed overload."""
 
     overloads: tuple[FunctionValue, ...]
+    refcount: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +147,7 @@ class ObjectConstructorValue:
     fields: tuple[str, ...]
     required: tuple[str, ...]
     defaults: dict[str, Any]
+    runtime_type: ObjectRuntimeType | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,229 +277,280 @@ class VirtualMachine:
         frame = _Frame(list(initial_stack or ()), locals_, globals_, cycle_values)
         ip = 0
         instructions = code.instructions
-        while ip < len(instructions):
-            instruction = instructions[ip]
-            try:
-                match instruction.op:
-                    case OpCode.PUSH_CONST:
-                        frame.stack.append(_constant(instruction.arg))
-                    case OpCode.LOAD_VAR:
-                        frame.stack.append(
-                            _load_name(instruction.arg, frame.locals, frame.globals)
-                        )
-                    case OpCode.STORE_VAR:
-                        value = _pop(
-                            frame.stack,
-                            "store variable",
-                        )
-                        stored = _store_value(
-                            frame.locals.get(instruction.arg),
-                            value,
-                        )
-                        frame.locals[instruction.arg] = stored
-                        _bind_recursive_value(stored, instruction.arg)
-                    case OpCode.LOAD_ELEMENT:
-                        frame.stack.append(
-                            _load_name(instruction.arg, frame.locals, frame.globals)
-                        )
-                    case OpCode.MAKE_FUNCTION:
-                        frame.stack.append(
-                            _make_function_value(
-                                instruction.arg,
-                                frame.globals | frame.locals,
-                            )
-                        )
-                    case OpCode.CALL:
-                        try:
-                            self._call_stack_top(frame)
-                        except PanicSignal as exc:
-                            target = self._handle_panic(frame, exc)
-                            if target is None:
-                                raise
-                            ip = target
-                            continue
-                    case OpCode.CALL_RESOLVED_ELEMENT:
-                        try:
-                            self._call_resolved_element(frame, instruction.arg)
-                        except PanicSignal as exc:
-                            target = self._handle_panic(frame, exc)
-                            if target is None:
-                                raise
-                            ip = target
-                            continue
-                    case OpCode.CHECK_CAST:
-                        value = _pop(frame.stack, "checked cast")
-                        if not _matches_cast_type(value, instruction.arg):
-                            raise RuntimeError(
-                                f"checked cast failed: {_format_value(value)} is "
-                                f"{_runtime_type_name(value)}"
-                            )
-                        frame.stack.append(value)
-                    case OpCode.BUILD_LIST:
-                        frame.stack.append(_pop_many(frame.stack, instruction.arg))
-                    case OpCode.BUILD_STRING:
-                        frame.stack.append(_build_string(frame.stack, instruction.arg))
-                    case OpCode.BUILD_TUPLE:
-                        frame.stack.append(
-                            tuple(_pop_many(frame.stack, instruction.arg))
-                        )
-                    case OpCode.BUILD_RECORD:
-                        values = _pop_many(frame.stack, len(instruction.arg))
-                        frame.stack.append(
-                            dict(zip(instruction.arg, values, strict=True))
-                        )
-                    case OpCode.BUILD_DICT:
-                        values = _pop_many(frame.stack, instruction.arg * 2)
-                        frame.stack.append(
-                            dict(zip(values[::2], values[1::2], strict=True))
-                        )
-                    case OpCode.MAKE_OBJECT_CONSTRUCTOR:
-                        type_name, fields, required, defaults = instruction.arg
-                        frame.stack.append(
-                            ObjectConstructorValue(
-                                type_name,
-                                tuple(fields),
-                                tuple(required),
-                                dict(defaults),
-                            )
-                        )
-                    case OpCode.MAKE_ENUM_MEMBER:
-                        enum_name, member_name, value = instruction.arg
-                        fields = {"name": member_name}
-                        if value is not None:
-                            fields["value"] = value
-                        frame.stack.append(ObjectValue(enum_name, fields))
-                    case OpCode.GET_FIELD:
-                        try:
-                            args, stack_count, next_cycle_index = frame.source_args(1)
-                        except _StackUnderflow as exc:
-                            raise RuntimeError(
-                                "stack underflow during field access"
-                            ) from exc
-                        if stack_count:
-                            del frame.stack[-stack_count:]
-                        frame.cycle_index = next_cycle_index
-                        receiver = args[0]
-                        frame.stack.append(_get_field(receiver, instruction.arg))
-                    case OpCode.SET_FIELD:
-                        value = _pop(frame.stack, "field assignment")
-                        receiver = _pop(frame.stack, "field assignment")
-                        frame.stack.append(_set_field(receiver, instruction.arg, value))
-                    case OpCode.GET_INDEX:
-                        values = _pop_index_values(frame.stack, instruction.arg)
-                        receiver = _index_receiver(frame)
-                        result = _get_index(receiver, instruction.arg, values)
-                        if instruction.arg[1]:
-                            if not isinstance(result, list):
-                                raise RuntimeError(
-                                    "spread indexing requires a list result"
+        try:
+            while ip < len(instructions):
+                instruction = instructions[ip]
+                try:
+                    match instruction.op:
+                        case OpCode.PUSH_CONST:
+                            frame.stack.append(_constant(instruction.arg))
+                        case OpCode.LOAD_VAR:
+                            frame.stack.append(
+                                _retain_value(
+                                    _load_name(
+                                        instruction.arg,
+                                        frame.locals,
+                                        frame.globals,
+                                    )
                                 )
-                            frame.stack.extend(result)
-                        else:
-                            frame.stack.append(result)
-                    case OpCode.SET_INDEX:
-                        values = _pop_index_values(frame.stack, instruction.arg)
-                        receiver = _pop(frame.stack, "indexed assignment")
-                        value = _pop(frame.stack, "indexed assignment")
-                        frame.stack.append(
-                            _set_index(receiver, instruction.arg, values, value)
-                        )
-                    case OpCode.JUMP:
-                        ip = instruction.arg
-                        continue
-                    case OpCode.JUMP_IF_FALSE:
-                        if not _truthy(_pop(frame.stack, "conditional jump")):
+                            )
+                        case OpCode.STORE_VAR:
+                            value = _pop(frame.stack, "store variable")
+                            existing = frame.locals.get(instruction.arg)
+                            stored = _store_value(existing, value)
+                            if existing is not None:
+                                _release_value(existing, self)
+                            frame.locals[instruction.arg] = stored
+                            if code.name == "<main>":
+                                frame.globals[instruction.arg] = stored
+                            _bind_recursive_value(stored, instruction.arg)
+                        case OpCode.LOAD_ELEMENT:
+                            frame.stack.append(
+                                _retain_value(
+                                    _load_name(
+                                        instruction.arg,
+                                        frame.locals,
+                                        frame.globals,
+                                    )
+                                )
+                            )
+                        case OpCode.MAKE_FUNCTION:
+                            frame.stack.append(
+                                _make_function_value(
+                                    instruction.arg,
+                                    frame.globals,
+                                    frame.locals,
+                                )
+                            )
+                        case OpCode.CALL:
+                            try:
+                                self._call_stack_top(frame)
+                            except PanicSignal as exc:
+                                target = self._handle_panic(frame, exc)
+                                if target is None:
+                                    raise
+                                ip = target
+                                continue
+                        case OpCode.CALL_RESOLVED_ELEMENT:
+                            try:
+                                self._call_resolved_element(frame, instruction.arg)
+                            except PanicSignal as exc:
+                                target = self._handle_panic(frame, exc)
+                                if target is None:
+                                    raise
+                                ip = target
+                                continue
+                        case OpCode.CHECK_CAST:
+                            value = _pop(frame.stack, "checked cast")
+                            if not _matches_cast_type(value, instruction.arg):
+                                raise RuntimeError(
+                                    f"checked cast failed: {_format_value(value)} is "
+                                    f"{_runtime_type_name(value)}"
+                                )
+                            frame.stack.append(value)
+                        case OpCode.BUILD_LIST:
+                            frame.stack.append(_pop_many(frame.stack, instruction.arg))
+                        case OpCode.BUILD_STRING:
+                            frame.stack.append(_build_string(frame.stack, instruction.arg))
+                        case OpCode.BUILD_TUPLE:
+                            frame.stack.append(
+                                tuple(_pop_many(frame.stack, instruction.arg))
+                            )
+                        case OpCode.BUILD_RECORD:
+                            values = _pop_many(frame.stack, len(instruction.arg))
+                            frame.stack.append(
+                                dict(zip(instruction.arg, values, strict=True))
+                            )
+                        case OpCode.BUILD_DICT:
+                            values = _pop_many(frame.stack, instruction.arg * 2)
+                            frame.stack.append(
+                                dict(zip(values[::2], values[1::2], strict=True))
+                            )
+                        case OpCode.MAKE_OBJECT_CONSTRUCTOR:
+                            type_name, fields, required, defaults, runtime_meta = (
+                                instruction.arg
+                            )
+                            frame.stack.append(
+                                ObjectConstructorValue(
+                                    type_name,
+                                    tuple(fields),
+                                    tuple(required),
+                                    dict(defaults),
+                                    _object_runtime_type(runtime_meta),
+                                )
+                            )
+                        case OpCode.MAKE_ENUM_MEMBER:
+                            enum_name, member_name, value = instruction.arg
+                            fields = {"name": member_name}
+                            if value is not None:
+                                fields["value"] = value
+                            frame.stack.append(ObjectValue(enum_name, fields))
+                        case OpCode.GET_FIELD:
+                            try:
+                                args, stack_count, next_cycle_index = frame.source_args(1)
+                            except _StackUnderflow as exc:
+                                raise RuntimeError(
+                                    "stack underflow during field access"
+                                ) from exc
+                            if stack_count:
+                                del frame.stack[-stack_count:]
+                            frame.cycle_index = next_cycle_index
+                            receiver = args[0]
+                            if isinstance(receiver, ObjectValue):
+                                frame.stack.append(
+                                    _extract_object_field(receiver, instruction.arg, self)
+                                )
+                            else:
+                                frame.stack.append(_get_field(receiver, instruction.arg))
+                        case OpCode.SET_FIELD:
+                            value = _pop(frame.stack, "field assignment")
+                            receiver = _pop(frame.stack, "field assignment")
+                            frame.stack.append(
+                                _set_field(receiver, instruction.arg, value)
+                            )
+                        case OpCode.GET_INDEX:
+                            values = _pop_index_values(frame.stack, instruction.arg)
+                            receiver = _index_receiver(frame)
+                            result = _get_index(receiver, instruction.arg, values)
+                            if instruction.arg[1]:
+                                if not isinstance(result, list):
+                                    raise RuntimeError(
+                                        "spread indexing requires a list result"
+                                    )
+                                frame.stack.extend(result)
+                            else:
+                                frame.stack.append(result)
+                        case OpCode.SET_INDEX:
+                            values = _pop_index_values(frame.stack, instruction.arg)
+                            receiver = _pop(frame.stack, "indexed assignment")
+                            value = _pop(frame.stack, "indexed assignment")
+                            frame.stack.append(
+                                _set_index(receiver, instruction.arg, values, value)
+                            )
+                        case OpCode.JUMP:
                             ip = instruction.arg
                             continue
-                    case OpCode.JUMP_IF_MATCH:
-                        patterns, target = instruction.arg
-                        bindings = self._match_patterns(frame, patterns)
-                        if bindings is not None:
-                            del frame.stack[-len(patterns) :]
-                            frame.locals.update(bindings)
+                        case OpCode.JUMP_IF_FALSE:
+                            if not _truthy(_pop(frame.stack, "conditional jump")):
+                                ip = instruction.arg
+                                continue
+                        case OpCode.JUMP_IF_MATCH:
+                            patterns, target = instruction.arg
+                            bindings = self._match_patterns(frame, patterns)
+                            if bindings is not None:
+                                _release_stack_tail(frame.stack, len(patterns), self)
+                                frame.locals.update(bindings)
+                                ip = target
+                                continue
+                        case OpCode.MATCH_ERROR:
+                            raise RuntimeError("non-exhaustive match at runtime")
+                        case OpCode.ASSERT_TRUE:
+                            if not _truthy(_pop(frame.stack, "assert")):
+                                raise RuntimeError("assertion failed")
+                        case OpCode.UNFOLD:
+                            frame.stack.append(self._unfold(frame, instruction.arg))
+                        case OpCode.WHILE:
+                            self._while(frame, instruction.arg)
+                        case OpCode.CYCLE_BEGIN:
+                            _enter_cycle(frame, instruction.arg)
+                        case OpCode.CYCLE_END:
+                            _exit_cycle(frame)
+                        case OpCode.FOREACH:
+                            self._foreach(frame, instruction.arg)
+                        case OpCode.LOOP_BREAK:
+                            if instruction.arg is None:
+                                raise _LoopBreak(tuple(frame.stack))
+                            raise _LoopBreak(
+                                tuple(_pop_many(frame.stack, instruction.arg))
+                            )
+                        case OpCode.TRY_BEGIN:
+                            frame.panic_handlers.append(
+                                _PanicHandler(tuple(instruction.arg), len(frame.stack))
+                            )
+                        case OpCode.TRY_END:
+                            if frame.panic_handlers:
+                                frame.panic_handlers.pop()
+                        case OpCode.PANIC:
+                            value = _pop(frame.stack, "panic")
+                            target = self._handle_panic(frame, PanicSignal(value))
+                            if target is None:
+                                raise PanicSignal(value)
                             ip = target
                             continue
-                    case OpCode.MATCH_ERROR:
-                        raise RuntimeError("non-exhaustive match at runtime")
-                    case OpCode.ASSERT_TRUE:
-                        if not _truthy(_pop(frame.stack, "assert")):
-                            raise RuntimeError("assertion failed")
-                    case OpCode.UNFOLD:
-                        frame.stack.append(self._unfold(frame, instruction.arg))
-                    case OpCode.WHILE:
-                        self._while(frame, instruction.arg)
-                    case OpCode.CYCLE_BEGIN:
-                        _enter_cycle(frame, instruction.arg)
-                    case OpCode.CYCLE_END:
-                        _exit_cycle(frame)
-                    case OpCode.FOREACH:
-                        self._foreach(frame, instruction.arg)
-                    case OpCode.LOOP_BREAK:
-                        if instruction.arg is None:
-                            raise _LoopBreak(tuple(frame.stack))
-                        raise _LoopBreak(tuple(_pop_many(frame.stack, instruction.arg)))
-                    case OpCode.TRY_BEGIN:
-                        frame.panic_handlers.append(
-                            _PanicHandler(tuple(instruction.arg), len(frame.stack))
-                        )
-                    case OpCode.TRY_END:
-                        if frame.panic_handlers:
-                            frame.panic_handlers.pop()
-                    case OpCode.PANIC:
-                        value = _pop(frame.stack, "panic")
-                        target = self._handle_panic(
-                            frame,
-                            PanicSignal(value),
-                        )
-                        if target is None:
-                            raise PanicSignal(value)
-                        ip = target
-                        continue
-                    case OpCode.TRY_UNWRAP:
-                        if _try_unwrap(frame.stack):
-                            return frame.stack
-                    case OpCode.POP:
-                        _pop(frame.stack, "pop")
-                    case OpCode.RETURN:
-                        return frame.stack
-            except _py_builtins.RuntimeError as exc:
-                error = exc if isinstance(exc, RuntimeError) else RuntimeError(exc)
-                error.add_execution_context(
-                    _function_name(code),
-                    ip,
-                    instruction,
-                    frame.stack,
-                )
-                raise error from exc
-            ip += 1
-        return frame.stack
+                        case OpCode.TRY_UNWRAP:
+                            if _try_unwrap(frame.stack, self):
+                                result = frame.stack
+                                frame.stack = []
+                                return self._finalize_frame(frame, result)
+                        case OpCode.POP:
+                            _release_value(_pop(frame.stack, "pop"), self)
+                        case OpCode.RETURN:
+                            result = frame.stack
+                            frame.stack = []
+                            return self._finalize_frame(frame, result)
+                except _py_builtins.RuntimeError as exc:
+                    error = exc if isinstance(exc, RuntimeError) else RuntimeError(exc)
+                    error.add_execution_context(
+                        _function_name(code),
+                        ip,
+                        instruction,
+                        frame.stack,
+                    )
+                    raise error from exc
+                ip += 1
+            result = frame.stack
+            frame.stack = []
+            return self._finalize_frame(frame, result)
+        except Exception:
+            self._discard_frame(frame)
+            raise
+
+    def _finalize_frame(self, frame: _Frame, result: list[Any]) -> list[Any]:
+        for name, value in tuple(frame.locals.items()):
+            _release_value(value, self)
+            del frame.locals[name]
+        return result
+
+    def _discard_frame(self, frame: _Frame) -> None:
+        _release_stack_tail(frame.stack, len(frame.stack), self)
+        for name, value in tuple(frame.locals.items()):
+            _release_value(value, self)
+            del frame.locals[name]
 
     def _handle_panic(self, frame: _Frame, panic: PanicSignal) -> int | None:
         while frame.panic_handlers:
             handler = frame.panic_handlers.pop()
             for type_name, target in handler.handlers:
                 if type_name is None or _panic_matches(panic.value, type_name):
-                    del frame.stack[handler.stack_depth :]
+                    _release_stack_tail(
+                        frame.stack,
+                        len(frame.stack) - handler.stack_depth,
+                        self,
+                    )
                     return target
         return None
 
     def _call_stack_top(self, frame: _Frame) -> None:
         callee = _pop(frame.stack, "call")
-        if isinstance(callee, BuiltinValue):
-            _call_builtin(callee, frame)
-            return
-        if isinstance(callee, FunctionValue):
-            self._call_function(callee, frame)
-            return
-        if isinstance(callee, ObjectConstructorValue):
-            _call_object_constructor(callee, frame)
-            return
-        if isinstance(callee, OverloadedFunctionValue):
-            if len(callee.overloads) == 1:
-                self._call_function(callee.overloads[0], frame)
+        try:
+            if isinstance(callee, BuiltinValue):
+                _call_builtin(callee, frame)
                 return
-            raise RuntimeError("cannot call overloaded function without resolved slot")
-        raise RuntimeError(f"cannot call value {callee!r}")
+            if isinstance(callee, FunctionValue):
+                self._call_function(callee, frame)
+                return
+            if isinstance(callee, ObjectConstructorValue):
+                _call_object_constructor(callee, frame)
+                return
+            if isinstance(callee, OverloadedFunctionValue):
+                if len(callee.overloads) == 1:
+                    self._call_function(callee.overloads[0], frame)
+                    return
+                raise RuntimeError("cannot call overloaded function without resolved slot")
+            raise RuntimeError(f"cannot call value {callee!r}")
+        finally:
+            if isinstance(callee, (FunctionValue, OverloadedFunctionValue)):
+                _release_value(callee, self)
 
     def _call_resolved_element(
         self,
@@ -517,10 +574,10 @@ class VirtualMachine:
             return
         if isinstance(value, ObjectValue):
             _require_single_resolved_slot(resolved, "enum member")
-            frame.stack.append(value)
+            frame.stack.append(_retain_value(value))
             return
         if resolved.overload_index == 0 and not callable(value):
-            frame.stack.append(value)
+            frame.stack.append(_retain_value(value))
             return
         raise RuntimeError(f"resolved element '{resolved.name}' is not callable")
 
@@ -576,11 +633,11 @@ class VirtualMachine:
     def _unfold(self, frame: _Frame, config: object) -> LazyList:
         condition_code, body_code, arity = config
         state = list(_source_args(frame, arity, "unfold"))
-        body = _make_function_value(body_code, frame.globals | frame.locals)
+        body = _make_function_value(body_code, frame.globals, frame.locals)
         condition = (
             None
             if condition_code is None
-            else _make_function_value(condition_code, frame.globals | frame.locals)
+            else _make_function_value(condition_code, frame.globals, frame.locals)
         )
 
         def generated():
@@ -604,8 +661,8 @@ class VirtualMachine:
     def _while(self, frame: _Frame, config: object) -> None:
         condition_code, body_code, arity = config
         state = list(_source_args(frame, arity, "while"))
-        condition = _make_function_value(condition_code, frame.globals | frame.locals)
-        body = _make_function_value(body_code, frame.globals | frame.locals)
+        condition = _make_function_value(condition_code, frame.globals, frame.locals)
+        body = _make_function_value(body_code, frame.globals, frame.locals)
         while True:
             keep_going = self.call_value(condition, list(state))
             if not keep_going or not _truthy(keep_going[-1]):
@@ -623,7 +680,7 @@ class VirtualMachine:
         iterable = _source_args(frame, 1, "foreach")[0]
         if not is_list_like(iterable):
             raise RuntimeError("foreach requires a list value")
-        body = _make_function_value(body_code, frame.globals | frame.locals)
+        body = _make_function_value(body_code, frame.globals, frame.locals)
         for index, item in enumerate(iterable):
             args = [item]
             if has_index:
@@ -665,6 +722,7 @@ class VirtualMachine:
                     f"function '{_function_name(callee.code)}'",
                     args,
                 ) from exc
+            _mark_mustcall_method(args, result, callee)
             frame.stack.extend(result)
         else:
             try:
@@ -675,6 +733,7 @@ class VirtualMachine:
                     f"function '{_function_name(callee.code)}'",
                     args,
                 ) from exc
+            _mark_mustcall_method(args, result, callee)
             frame.stack.extend(result)
 
     def _match_patterns(
@@ -932,15 +991,22 @@ def _require_single_resolved_slot(
 def _make_function_value(
     code: object,
     globals_: dict[str, Any],
+    locals_: dict[str, Any] | None = None,
 ) -> FunctionValue | OverloadedFunctionValue:
+    captured = dict(globals_)
+    local_values = {} if locals_ is None else dict(locals_)
+    captured.update(local_values)
+    owned_names = frozenset(local_values)
+    for name in owned_names:
+        captured[name] = _retain_value(captured[name])
     if isinstance(code, FunctionCode):
-        value = FunctionValue(code, globals_)
+        value = FunctionValue(code, captured, owned_names)
         if code.recursive:
             value.globals["this"] = value
         return value
     if isinstance(code, FunctionSetCode):
         value = OverloadedFunctionValue(
-            tuple(FunctionValue(overload, globals_) for overload in code.overloads)
+            tuple(FunctionValue(overload, captured, owned_names) for overload in code.overloads)
         )
         for overload in value.overloads:
             if overload.code.recursive:
@@ -985,6 +1051,8 @@ def _exit_cycle(frame: _Frame) -> None:
 
 def _store_value(existing: Any, value: Any) -> Any:
     if _is_function_value(existing) and _is_function_value(value):
+        for overload in _function_overloads(existing) + _function_overloads(value):
+            _retain_value(overload)
         return OverloadedFunctionValue(
             _function_overloads(existing) + _function_overloads(value)
         )
@@ -1002,6 +1070,229 @@ def _bind_recursive_value(value: Any, name: str) -> None:
 
 def _is_function_value(value: Any) -> bool:
     return isinstance(value, (FunctionValue, OverloadedFunctionValue))
+
+
+def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
+    if value is None:
+        return None
+    if not isinstance(value, tuple) or len(value) != 6:
+        raise RuntimeError(f"invalid object runtime metadata {value!r}")
+    return ObjectRuntimeType(
+        destructor_name=cast(str | None, value[0]),
+        pop_name=cast(str | None, value[1]),
+        dup_name=cast(str | None, value[2]),
+        dup_error=cast(str | None, value[3]),
+        mustcall_mode=cast(str | None, value[4]),
+        mustcall_methods=cast(tuple[str, ...], value[5]),
+    )
+
+
+def _release_stack_tail(stack: list[Any], count: int, vm: VirtualMachine) -> None:
+    if count <= 0:
+        return
+    values = _pop_many(stack, count)
+    for value in values:
+        _release_value(value, vm)
+
+
+def _retain_value(value: Any) -> Any:
+    if isinstance(value, LazyList):
+        value.refcount += 1
+        return value
+    if isinstance(value, ObjectValue):
+        if value.destroyed:
+            raise RuntimeError(f"use after destruction of {_object_type_name(value)}")
+        if (
+            value.runtime_type is not None
+            and value.runtime_type.dup_error is not None
+            and value.refcount >= 1
+        ):
+            raise PanicSignal(
+                _fault_object("DuplicationFault", value.runtime_type.dup_error)
+            )
+        value.refcount += 1
+        return value
+    if isinstance(value, FunctionValue):
+        value.refcount += 1
+        return value
+    if isinstance(value, OverloadedFunctionValue):
+        value.refcount += 1
+        return value
+    if isinstance(value, list):
+        for item in value:
+            _retain_value(item)
+        return value
+    if isinstance(value, tuple):
+        for item in value:
+            _retain_value(item)
+        return value
+    if isinstance(value, dict):
+        for item in value.values():
+            _retain_value(item)
+        return value
+    return value
+
+
+def _release_value(value: Any, vm: VirtualMachine) -> None:
+    if isinstance(value, LazyList):
+        value.refcount -= 1
+        if value.refcount > 0:
+            return
+        for item in value.owned_values:
+            _release_value(item, vm)
+        return
+    if isinstance(value, ObjectValue):
+        value.refcount -= 1
+        if value.refcount > 0:
+            return
+        if value.cleaning_up:
+            return
+        _run_object_cleanup(value, vm)
+        return
+    if isinstance(value, FunctionValue):
+        value.refcount -= 1
+        if value.refcount > 0:
+            return
+        for name in value.owned_names:
+            if name in value.globals:
+                _release_value(value.globals[name], vm)
+        value.globals.clear()
+        return
+    if isinstance(value, OverloadedFunctionValue):
+        value.refcount -= 1
+        if value.refcount > 0:
+            return
+        for overload in value.overloads:
+            _release_value(overload, vm)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _release_value(item, vm)
+        return
+    if isinstance(value, tuple):
+        for item in value:
+            _release_value(item, vm)
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            _release_value(item, vm)
+
+
+def _run_object_cleanup(value: ObjectValue, vm: VirtualMachine) -> None:
+    if value.destroyed:
+        return
+    value.cleaning_up = True
+    runtime = value.runtime_type
+    pop_error: PanicSignal | None = None
+    if runtime is not None and runtime.pop_name is not None:
+        try:
+            vm.call_value(_load_name(runtime.pop_name, {}, vm.globals), [_retain_value(value)])
+        except PanicSignal as exc:
+            pop_error = exc
+    if runtime is not None and not _mustcall_satisfied(value):
+        pop_error = PanicSignal(_fault_object("CleanupFault", _cleanup_fault_message(value)))
+    if runtime is not None and runtime.destructor_name is not None:
+        try:
+            vm.call_value(
+                _load_name(runtime.destructor_name, {}, vm.globals),
+                [_retain_value(value)],
+            )
+        except PanicSignal as exc:
+            raise RuntimeError(
+                f"destructor for {_object_type_name(value)} must not panic"
+            ) from exc
+    value.cleaning_up = False
+    value.destroyed = True
+    for item in value.fields.values():
+        _release_value(item, vm)
+    if pop_error is not None:
+        raise pop_error
+
+
+def _mustcall_satisfied(value: ObjectValue) -> bool:
+    runtime = value.runtime_type
+    if runtime is None or runtime.mustcall_mode is None or not runtime.mustcall_methods:
+        return True
+    called = value.mustcall_called
+    required = set(runtime.mustcall_methods)
+    if runtime.mustcall_mode == "all":
+        return required.issubset(called)
+    if runtime.mustcall_mode == "any":
+        return bool(required & set(called))
+    return True
+
+
+def _cleanup_fault_message(value: ObjectValue) -> str:
+    runtime = value.runtime_type
+    if runtime is None or not runtime.mustcall_methods:
+        return f"{_object_type_name(value)} was dropped without required cleanup"
+    names = ", ".join(runtime.mustcall_methods)
+    return f"{_object_type_name(value)} requires one of: {names}"
+
+
+def _fault_object(type_name: str, message: str) -> ObjectValue:
+    return ObjectValue(type_name, {"message": message})
+
+
+def _mark_mustcall_method(
+    args: tuple[Any, ...],
+    result: list[Any] | tuple[Any, ...],
+    callee: FunctionValue,
+) -> None:
+    if not args or not isinstance(args[0], ObjectValue):
+        return
+    runtime = args[0].runtime_type
+    if runtime is None or not runtime.mustcall_methods:
+        return
+    method_name = _function_name(callee.code).rsplit("::", 1)[-1]
+    if method_name not in runtime.mustcall_methods:
+        return
+    called = frozenset((*args[0].mustcall_called, method_name))
+    args[0].mustcall_called = called
+    for value in result:
+        if isinstance(value, ObjectValue) and value.type_name == args[0].type_name:
+            value.mustcall_called = called
+
+
+def _finalize_builtin_result_ownership(
+    args: tuple[Any, ...],
+    result: tuple[Any, ...],
+) -> None:
+    counts: Counter[int] = Counter()
+    values: dict[int, Any] = {}
+    arg_ids = {
+        id(value)
+        for value in args
+        if isinstance(value, (ObjectValue, FunctionValue, OverloadedFunctionValue, list, tuple, dict))
+    }
+    for value in result:
+        if not isinstance(
+            value,
+            (ObjectValue, FunctionValue, OverloadedFunctionValue, list, tuple, dict),
+        ):
+            continue
+        ident = id(value)
+        counts[ident] += 1
+        values[ident] = value
+    for ident, count in counts.items():
+        retains = count if ident in arg_ids else count - 1
+        for _ in range(max(retains, 0)):
+            _retain_value(values[ident])
+
+
+def _bind_lazy_result_owners(args: tuple[Any, ...], result: tuple[Any, ...]) -> tuple[Any, ...]:
+    bound: list[Any] = []
+    for value in result:
+        if not isinstance(value, LazyList):
+            bound.append(value)
+            continue
+        owned: list[Any] = []
+        for arg in args:
+            retained = _retain_value(arg)
+            owned.append(retained)
+        value.owned_values = tuple(owned)
+        bound.append(value)
+    return tuple(bound)
 
 
 def _panic_matches(value: Any, type_name: str) -> bool:
@@ -1039,14 +1330,13 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
             vectorized = _call_vectorized_builtin(overload, args, callee.context)
             if vectorized is None:
                 continue
+            vectorized = _bind_lazy_result_owners(args, vectorized)
+            _finalize_builtin_result_ownership(args, vectorized)
             if stack_count:
-                del frame.stack[-stack_count:]
+                _release_stack_tail(frame.stack, stack_count, callee.context.call.__self__)
             frame.cycle_index = next_cycle_index
             frame.stack.extend(vectorized)
             return
-        if stack_count:
-            del frame.stack[-stack_count:]
-        frame.cycle_index = next_cycle_index
         implementation = overload.implementation
         if implementation is None:
             continue
@@ -1058,6 +1348,11 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
                 f"element '{callee.element.name}'",
                 args,
             ) from exc
+        result = _bind_lazy_result_owners(args, result)
+        _finalize_builtin_result_ownership(args, result)
+        if stack_count:
+            _release_stack_tail(frame.stack, stack_count, callee.context.call.__self__)
+        frame.cycle_index = next_cycle_index
         frame.stack.extend(result)
         return
     raise RuntimeError(
@@ -1097,7 +1392,14 @@ def _call_object_constructor(
         )
         error.add_call_detail(f"constructor '{callee.type_name}'", args)
         raise error
-    frame.stack.append(ObjectValue(callee.type_name, fields, type_args))
+    frame.stack.append(
+        ObjectValue(
+            callee.type_name,
+            fields,
+            type_args,
+            runtime_type=callee.runtime_type,
+        )
+    )
 
 
 def _call_resolved_builtin(
@@ -1151,14 +1453,13 @@ def _call_resolved_builtin(
                     _show_overload_inputs((overload,)),
                 )
             )
+        vectorized = _bind_lazy_result_owners(args, vectorized)
+        _finalize_builtin_result_ownership(args, vectorized)
         if consumed_count:
-            del frame.stack[-consumed_count:]
+            _release_stack_tail(frame.stack, consumed_count, callee.context.call.__self__)
         frame.cycle_index = next_cycle_index
         frame.stack.extend(vectorized)
         return
-    if consumed_count:
-        del frame.stack[-consumed_count:]
-    frame.cycle_index = next_cycle_index
     implementation = overload.implementation
     assert implementation is not None
     try:
@@ -1169,10 +1470,25 @@ def _call_resolved_builtin(
             f"element '{callee.element.name}'",
             args,
         ) from exc
+    result = _bind_lazy_result_owners(args, result)
+    _finalize_builtin_result_ownership(args, result)
+    if consumed_count:
+        _release_stack_tail(frame.stack, consumed_count, callee.context.call.__self__)
+    frame.cycle_index = next_cycle_index
     frame.stack.extend(result)
 
 
-def _try_unwrap(stack: list[Any]) -> bool:
+def _extract_object_field(receiver: ObjectValue, field: str, vm: VirtualMachine) -> Any:
+    try:
+        value = receiver.fields[field]
+    except KeyError as exc:
+        raise RuntimeError(f"{receiver.type_name} has no field '{field}'") from exc
+    retained = _retain_value(value)
+    _release_value(receiver, vm)
+    return retained
+
+
+def _try_unwrap(stack: list[Any], vm: VirtualMachine) -> bool:
     value = _pop(stack, "?")
     if _is_none_result_value(value) or _is_error_result_value(value):
         stack.append(value)
@@ -1180,7 +1496,9 @@ def _try_unwrap(stack: list[Any]) -> bool:
     if isinstance(value, ObjectValue):
         short_name = value.type_name.rsplit(".", 1)[-1]
         if value.type_name == "OK" or short_name in {"OK", "Some"}:
-            stack.append(value.fields.get("value"))
+            retained = _retain_value(value.fields.get("value"))
+            _release_value(value, vm)
+            stack.append(retained)
             return False
     stack.append(value)
     return False
@@ -1809,7 +2127,13 @@ def _set_field(receiver: Any, field: str, value: Any) -> Any:
             raise RuntimeError(f"{receiver.type_name} has no field '{field}'")
         fields = dict(receiver.fields)
         fields[field] = value
-        return ObjectValue(receiver.type_name, fields, receiver.type_args)
+        return ObjectValue(
+            receiver.type_name,
+            fields,
+            receiver.type_args,
+            runtime_type=receiver.runtime_type,
+            mustcall_called=receiver.mustcall_called,
+        )
     if isinstance(receiver, dict):
         if field not in receiver:
             raise RuntimeError(f"record has no field '{field}'")

@@ -466,6 +466,28 @@ Person("Ada", 36) $.name
         )
         self.assertTrue(analyser.env.overloads_for(Symbol("Person::label")))
 
+    def test_object_mustcall_methods_must_exist(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                """
+@mustcall(all = ["commit"])
+object Tx =>
+  define rollback => end
+end
+"""
+            )
+        )
+
+        self.assertIsNone(typed[0].typ)
+        self.assertTrue(
+            any(
+                "@mustcall method 'commit' is not defined on Tx" in message
+                for message in analyser.diagnostics
+            )
+        )
+
     def test_object_member_access_levels_are_enforced(self):
         private_read = Analyser(Environment())
         private_read.analyse(

@@ -359,6 +359,7 @@ class AnnotationNode(ASTNode):
 
     name: Symbol
     args: tuple[ASTNode, ...] = ()
+    kwargs: tuple[tuple[Symbol, ASTNode], ...] = ()
 
 
 @dataclass(frozen=True)

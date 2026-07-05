@@ -11,6 +11,7 @@ import valiance.analysis.annotations as annotation_hooks
 import valiance.types as T
 from valiance.analysis.builtins import default_environment
 from valiance.asts import (
+    AnnotationNode,
     AssertNode,
     ASTNode,
     AtNode,
@@ -750,6 +751,8 @@ class Analyser:
         branch: AnalysisBranch,
         node: ObjectNode,
     ) -> set[AnalysisBranch]:
+        if not self._validate_object_lifecycle(node):
+            return {branch.append_typed(TypedNode(node, None))}
         if node.target is not None:
             if node.fields:
                 self._diagnose(
@@ -808,6 +811,33 @@ class Analyser:
         for definition in node.definitions:
             current = self._register_friendly_definition(current, node.name, definition)
         return {current}
+
+    def _validate_object_lifecycle(self, node: ObjectNode) -> bool:
+        ok = True
+        mustcall = _mustcall_methods(node.annotations)
+        defined = {definition.name.text for definition in node.definitions}
+        for method in mustcall:
+            if method not in defined:
+                self._diagnose(
+                    f"@mustcall method '{method}' is not defined on {node.name}",
+                    node,
+                )
+                ok = False
+        destructor_name = f"~{node.name.text.rsplit('.', 1)[-1]}"
+        destructors = [
+            definition for definition in node.definitions if definition.name.text.startswith("~")
+        ]
+        for definition in destructors:
+            if definition.name.text != destructor_name:
+                self._diagnose(
+                    f"destructor for {node.name} must be named '{destructor_name}'",
+                    definition,
+                )
+                ok = False
+            if definition.function.params:
+                self._diagnose("destructors cannot declare explicit parameters", definition)
+                ok = False
+        return ok
 
     def _trait_definition(
         self,
@@ -4898,6 +4928,26 @@ def _assignment_error(
         f"cannot assign {T.show(source)} to variable '{name}' "
         f"of type {T.show(target)}"
     )
+
+
+def _mustcall_methods(annotations: tuple[ASTNode, ...]) -> tuple[str, ...]:
+    for annotation in annotations:
+        if not isinstance(annotation, AnnotationNode):
+            continue
+        if annotation.name.text != "mustcall":
+            continue
+        kwargs = dict(annotation.kwargs)
+        for key in (Symbol("all"), Symbol("any")):
+            value = kwargs.get(key)
+            if not isinstance(value, ListLiteralNode):
+                continue
+            methods: list[str] = []
+            for item in value.items:
+                if len(item) != 1 or not isinstance(item[0], StringLiteralNode):
+                    return ()
+                methods.append(item[0].value)
+            return tuple(methods)
+    return ()
 
 
 def _set_item(
