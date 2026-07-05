@@ -448,6 +448,17 @@ $value add_one
             [Decimal("42")],
         )
 
+    def test_executes_explicitly_typed_variables(self):
+        self.assertEqual(
+            execute(
+                """
+$value: Number = 41
+$value 1 +
+"""
+            ),
+            [Decimal("42")],
+        )
+
     def test_recursive_function_code_binds_this_at_runtime(self):
         inner = FunctionCode(
             (
@@ -691,7 +702,9 @@ end
 leak
 """
 
-        with self.assertRaises(RuntimeError) as caught, contextlib.redirect_stdout(output):
+        with self.assertRaises(RuntimeError) as caught, contextlib.redirect_stdout(
+            output
+        ):
             execute(source)
 
         self.assertIn("uncaught panic: CleanupFault", str(caught.exception))

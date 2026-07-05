@@ -60,6 +60,7 @@ from valiance.types import (
     Tagged,
     TupleTypeItem,
     TupVariadic,
+    optional,
     same,
 )
 
@@ -119,6 +120,21 @@ class ParserTests(unittest.TestCase):
                 SetVariableNode(Symbol("answer")),
             ],
         )
+
+    def test_parses_explicit_variable_type_annotation(self):
+        program = parse("$n: Number? = 5")
+
+        self.assertEqual(
+            program,
+            [
+                NumberLiteralNode("5"),
+                SetVariableNode(Symbol("n"), optional(Number)),
+            ],
+        )
+
+    def test_variable_type_annotation_requires_assignment(self):
+        with self.assertRaises(ParseError):
+            parse("$n: Number")
 
     def test_parses_string_identifier_interpolation(self):
         self.assertEqual(

@@ -593,10 +593,10 @@ class Analyser:
                         TypedNode(node, typ)
                     )
                 }
-            case SetVariableNode(name):
+            case SetVariableNode(name, declared_type):
                 if not branch.stack:
                     if branch.input_mode is InputMode.INFER_INPUTS:
-                        inferred = T.V(f"_inferred_{name}")
+                        inferred = declared_type or T.V(f"_inferred_{name}")
                         variables, diagnostic = branch.variables.write(
                             name,
                             inferred,
@@ -621,9 +621,23 @@ class Analyser:
                         )
                     }
                 value_type = branch.stack[-1]
+                variable_type = declared_type or value_type
+                if declared_type is not None and not T.assignable(
+                    value_type,
+                    declared_type,
+                    self.env.context,
+                ):
+                    self._diagnose(
+                        f"cannot assign {T.show(value_type)} to variable '{name}' "
+                        f"of declared type {T.show(declared_type)}",
+                        node,
+                    )
+                    return {
+                        branch.append_typed(TypedNode(node, None))
+                    }
                 variables, diagnostic = branch.variables.write(
                     name,
-                    value_type,
+                    variable_type,
                     block_local=True,
                     ctx=self.env.context,
                 )
@@ -636,7 +650,7 @@ class Analyser:
                 return {
                     branch.with_variables(variables)
                     .with_stack(branch.stack.pop())
-                    .append_typed(TypedNode(node, value_type))
+                    .append_typed(TypedNode(node, variable_type))
                 }
             case FieldAccessNode(name):
                 return self._field_access(branch, node, name)

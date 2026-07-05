@@ -300,7 +300,8 @@ def _node_source(node: ASTNode) -> str:
     if isinstance(node, GetVariableNode):
         return f"${node.name}"
     if isinstance(node, SetVariableNode):
-        return f"${node.name} ="
+        declared = "" if node.declared_type is None else f": {show(node.declared_type)}"
+        return f"${node.name}{declared} ="
     if isinstance(node, ElementNode):
         return str(node.name)
     if isinstance(node, ListLiteralNode):

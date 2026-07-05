@@ -1263,6 +1263,9 @@ class Parser:
                 ),
                 True,
             )
+        declared_type = None
+        if self._match(TokenKind.COLON):
+            declared_type = self.parse_type_expression()
         if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
             op = self._previous.kind
             rhs = self._chain_until(_LINE_TERMINATORS)
@@ -1272,10 +1275,23 @@ class Parser:
                 else ()
             )
             return _ChainPiece(
-                (*prefix, *rhs, SetVariableNode(name, location=_loc(start))),
+                (
+                    *prefix,
+                    *rhs,
+                    SetVariableNode(
+                        name,
+                        declared_type,
+                        location=_loc(start),
+                    ),
+                ),
                 True,
             )
-        if self._check(TokenKind.LPAREN) and self._adjacent(self._previous, self._current):
+        if declared_type is not None:
+            self._error("expected '=' after variable type annotation")
+        if self._check(TokenKind.LPAREN) and self._adjacent(
+            self._previous,
+            self._current,
+        ):
             self._advance()
             args = self._argument_expressions(TokenKind.RPAREN)
             return _ChainPiece(

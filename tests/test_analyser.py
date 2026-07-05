@@ -1362,6 +1362,24 @@ getName $joe
         self.assertEqual(variables.read(ITEM), Number)
         self.assertIsNone(variables.drop_block_locals().read(ITEM))
 
+    def test_explicit_variable_type_sets_declared_type(self):
+        typed = analyse(parse("$n: Number? = 5\n$n"))
+
+        self.assertEqual(typed[-1].typ, optional(Number))
+
+    def test_explicit_variable_type_rejects_incompatible_initializer(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse('$n: Number = "five"'))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "1:1: cannot assign String to variable 'n' "
+                "of declared type Number"
+            ],
+        )
+
     def test_function_return_annotation_must_match(self):
         env = Environment()
         node = FunctionNode(body=(NumberLiteralNode("1"),), returns=(String,))

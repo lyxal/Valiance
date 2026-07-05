@@ -110,7 +110,12 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
         visibility = ", public=True" if value.public else ""
         return f"ImportNode(specs={value.specs!r}{visibility}{_location_arg(value)})"
     if isinstance(value, SetVariableNode):
-        return f"SetVariableNode(name={value.name}{_location_arg(value)})"
+        declared = (
+            ""
+            if value.declared_type is None
+            else f", declared_type={value.declared_type}"
+        )
+        return f"SetVariableNode(name={value.name}{declared}{_location_arg(value)})"
     if isinstance(value, FieldAccessNode):
         return f"FieldAccessNode(name={value.name}{_location_arg(value)})"
     if isinstance(value, TagApplicationNode):

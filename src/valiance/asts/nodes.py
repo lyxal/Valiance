@@ -149,6 +149,7 @@ class SetVariableNode(ASTNode):
     """Assign the top stack value to a variable."""
 
     name: Symbol
+    declared_type: Type | None = None
 
 
 @dataclass(frozen=True)
