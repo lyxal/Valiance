@@ -37,7 +37,7 @@ OK = Symbol("OK")
 RESULT = Symbol("Result")
 
 TRAIT_IMPLS = (
-    (INTEGER, NUMBER),
+    (INTEGER, REAL),
     (REAL, NUMBER),
     (Symbol("AssertError"), ERR),
     (Symbol("PanicError"), ERR),
@@ -228,6 +228,10 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
     if isinstance(typ, T.NominalType):
         if typ.name == NUMBER:
             return isinstance(value, Decimal)
+        if typ.name == REAL:
+            return isinstance(value, Decimal)
+        if typ.name == INTEGER:
+            return isinstance(value, Decimal) and value == value.to_integral_value()
         if typ.name == STRING:
             return isinstance(value, str)
         if typ.name == OK:

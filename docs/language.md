@@ -46,8 +46,9 @@ Which equals
 - Imaginary parts supported too.
 - Can also have `${x}e{$y}` for `x * 10 ** y`. Just `e{y}` is a syntax error. `y` can be any real number.
 
-- 4 Number types, each more general than the last. An `Integer` represents a whole number. A `Real` represents a number with a decimal portion. `Number` is the overarching type for all numbers.
-- Notably, `Integer` is sugar for `#integer Number`, and `Real` is sugar for `#real Number`.
+- Numeric types form an explicit hierarchy: `Integer <: Real <: Number`. An
+  `Integer` represents a whole number, `Real` represents a number with no
+  complex part, and `Number` is the overarching type for all numbers.
 - Some example numbers:
 
 ```
@@ -1571,7 +1572,7 @@ end
 
 ```
 object Counter =>
-  $count: #integer Number = 0
+  $count: Integer = 0
   define increment =>
     $self.count := + 1
     $self

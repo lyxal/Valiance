@@ -37,7 +37,7 @@ from valiance.types.builders import (
     show,
 )
 from valiance.types.context import Context, TagKind, Variance
-from valiance.types.default_types import Boolean, Number, String
+from valiance.types.default_types import Boolean, Integer, Number, Real, String
 from valiance.types.environment import (
     AppliedElement,
     ConstructorDefinition,
@@ -139,6 +139,7 @@ __all__ = [
     "FunctionType",
     "GenericConstraint",
     "I",
+    "Integer",
     "IntersectionType",
     "ListExactType",
     "ListMinType",
@@ -162,6 +163,7 @@ __all__ = [
     "RankVariable",
     "ResolvedOverload",
     "Result",
+    "Real",
     "Row",
     "RowField",
     "RowType",

@@ -1300,6 +1300,10 @@ def _panic_matches(value: Any, type_name: str) -> bool:
         return value.type_name == type_name
     if type_name == "String":
         return isinstance(value, str)
+    if type_name == "Integer":
+        return isinstance(value, Decimal) and value == value.to_integral_value()
+    if type_name == "Real":
+        return isinstance(value, Decimal)
     if type_name == "Number":
         return isinstance(value, Decimal)
     return False
@@ -1836,6 +1840,10 @@ def _truthy(value: Any) -> bool:
 
 
 def _matches_type_pattern(value: Any, pattern: str) -> bool:
+    if pattern == "Integer":
+        return isinstance(value, Decimal) and value == value.to_integral_value()
+    if pattern == "Real":
+        return isinstance(value, Decimal)
     if pattern == "Number":
         return isinstance(value, Decimal)
     if pattern == "String":
@@ -2245,7 +2253,7 @@ def _string_value(value: Any) -> str:
 
 def _runtime_type_name(value: Any) -> str:
     if isinstance(value, Decimal):
-        return "Number"
+        return "Integer" if value == value.to_integral_value() else "Real"
     if isinstance(value, str):
         return "String"
     if isinstance(value, list):

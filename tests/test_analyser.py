@@ -76,12 +76,15 @@ from valiance.types import (
 from valiance.types.default_types import Boolean
 
 NUMBER = Symbol("Number")
+REAL = Symbol("Real")
 STRING = Symbol("String")
 BOOL = Symbol("Bool")
 BAX = Symbol("Bax")
 INTEGER = Symbol("Integer")
 
 Number = N(NUMBER)
+Real = N(REAL)
+Integer = N(INTEGER)
 String = N(STRING)
 Bool = N(BOOL)
 PLUS = Symbol("+")
@@ -115,7 +118,19 @@ class AnalyserTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual([node.typ for node in typed], [Number, Number, Number])
+        self.assertEqual([node.typ for node in typed], [Integer, Integer, Number])
+
+    def test_number_literals_infer_integer_or_real_precision(self):
+        typed = analyse(
+            [
+                NumberLiteralNode("1"),
+                NumberLiteralNode("1.5"),
+                NumberLiteralNode("1e-2"),
+                NumberLiteralNode("1e2"),
+            ],
+        )
+
+        self.assertEqual([node.typ for node in typed], [Integer, Real, Real, Integer])
 
     def test_builtin_elements_are_declared_before_installation(self):
         names = {element.name for element in BUILTIN_ELEMENTS}
@@ -195,7 +210,7 @@ class AnalyserTests(unittest.TestCase):
         self.assertEqual(len(typed[-1].modifier_args), 1)
         modifier = typed[-1].modifier_args[0]
         self.assertIsInstance(modifier, TypedFunctionNode)
-        self.assertEqual(modifier.typ, Fn((Number,), (Number,)))
+        self.assertEqual(modifier.typ, Fn((Integer,), (Number,)))
 
     def test_modifier_function_refines_inferred_generic_inputs(self):
         typed = analyse(parse("define sum => /: +"))
@@ -231,7 +246,7 @@ class AnalyserTests(unittest.TestCase):
             env,
         )
 
-        self.assertEqual([node.typ for node in typed], [Number, Number, Number])
+        self.assertEqual([node.typ for node in typed], [Integer, Integer, Number])
         self.assertIsInstance(typed[-1], TypedElementNode)
         self.assertEqual(typed[-1].overload_index, 0)
         self.assertEqual(
@@ -400,7 +415,7 @@ class AnalyserTests(unittest.TestCase):
         )
 
         self.assertEqual(len(branches), 1)
-        self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
+        self.assertEqual(next(iter(branches)).stack, TypeStack((Integer,)))
 
     def test_branch_set_condition_validation_pops_control_value(self):
         analyser = Analyser(Environment())
@@ -415,7 +430,7 @@ class AnalyserTests(unittest.TestCase):
         self.assertEqual(len(branches), 1)
         branch = next(iter(branches))
         self.assertEqual(branch.stack, TypeStack())
-        self.assertEqual([node.typ for node in branch.typed_body], [Number])
+        self.assertEqual([node.typ for node in branch.typed_body], [Integer])
 
     def test_branch_set_condition_validation_rejects_any_non_bool_path(self):
         env = Environment()
@@ -604,7 +619,7 @@ Some
         )
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, N(Symbol("Maybe"), Number))
+        self.assertEqual(typed[-1].typ, N(Symbol("Maybe"), Integer))
 
     def test_object_generic_variance_is_inferred_from_readable_fields(self):
         env = Environment()
@@ -1104,7 +1119,7 @@ fn (x: Number, y: String) -> Number => 1 end arity_rank
             Environment(),
         )
 
-        self.assertEqual(typ, Fn((), (Number,)))
+        self.assertEqual(typ, Fn((), (Integer,)))
 
     def test_omitted_returns_keep_only_top_stack_value(self):
         env = Environment()
@@ -1115,7 +1130,7 @@ fn (x: Number, y: String) -> Number => 1 end arity_rank
 
         typ = analyse_function(node, env)
 
-        self.assertEqual(typ, Fn((), (Number,)))
+        self.assertEqual(typ, Fn((), (Integer,)))
 
     def test_explicit_empty_returns_return_no_values(self):
         env = Environment()
@@ -1328,6 +1343,14 @@ getName $joe
         self.assertIsNone(diagnostic)
         self.assertEqual(updated.read(X), Number)
 
+    def test_branch_variables_widen_mutable_numeric_reassignment(self):
+        variables = BranchVariables(function_locals=((X, Integer),))
+
+        updated, diagnostic = variables.write(X, Number)
+
+        self.assertIsNone(diagnostic)
+        self.assertEqual(updated.read(X), Number)
+
     def test_branch_variables_check_existing_block_local_assignment(self):
         variables = BranchVariables(block_locals=((ITEM, Number),))
 
@@ -1398,8 +1421,8 @@ getName $joe
     def test_return_all_annotation_returns_full_function_stack(self):
         typed = analyse(parse("@returnAll define pair => 1 2\npair"))
 
-        self.assertEqual(typed[0].typ, Fn((), (Number, Number)))
-        self.assertEqual(typed[-1].overload.actual_returns, (Number, Number))
+        self.assertEqual(typed[0].typ, Fn((), (Integer, Integer)))
+        self.assertEqual(typed[-1].overload.actual_returns, (Integer, Integer))
 
     def test_error_annotation_reports_selected_overload_message(self):
         analyser = Analyser()
@@ -1515,9 +1538,9 @@ end
             ],
         )
 
-        self.assertEqual(typed[0].typ, Number)
+        self.assertEqual(typed[0].typ, Integer)
         self.assertIsInstance(typed[1], TypedFunctionNode)
-        self.assertEqual(typed[2].typ, Number)
+        self.assertEqual(typed[2].typ, Integer)
         self.assertEqual(typed[3].typ, Number)
 
     def test_call_node_resolves_overloaded_function_type(self):
@@ -2001,7 +2024,7 @@ end
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             [node.typ for node in typed],
-            [C(ListExactType, Number), Number, None],
+            [C(ListExactType, Integer), Number, None],
         )
 
     def test_length_rejects_infinite_list(self):
@@ -2014,7 +2037,7 @@ end
             analyser.diagnostics,
             [
                 "1:25: no overloads for element 'length' match stack [#infinite "
-                "Number+]; available overloads: Function[#!infinite Item+ -> Number]"
+                "Integer+]; available overloads: Function[#!infinite Item+ -> Number]"
             ],
         )
 
@@ -2054,6 +2077,34 @@ end
         self.assertEqual(branch.stack, TypeStack((optional(Number),)))
         self.assertIsNone(branch.break_type)
 
+    def test_list_indexing_requires_integer_index(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("[1, 2] $[1.5]"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["1:8: list indexing requires Integer index value(s)"],
+        )
+
+    def test_sum_accumulator_widens_from_integer_initializer(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                """
+define sum =>
+  $res = 0
+  foreach (item) => $res := + $item
+  $res
+end
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[0].typ, Fn((C(ListExactType, Number),), (Number,)))
+
     def test_for_loop_collects_break_types_from_if_branches(self):
         env = Environment()
         env.define_overload(COND, Overload((), (Boolean,)))
@@ -2077,7 +2128,7 @@ end
 
         self.assertEqual(len(branches), 1)
         branch = next(iter(branches))
-        self.assertEqual(branch.stack, TypeStack((optional(U(Number, String)),)))
+        self.assertEqual(branch.stack, TypeStack((optional(U(Integer, String)),)))
 
     def test_analyses_assert_while_and_unfold(self):
         analyser = Analyser()
@@ -2117,7 +2168,7 @@ $n
             Environment(),
         )
 
-        self.assertEqual(typed[0].typ, C(ListExactType, U(Number, String)))
+        self.assertEqual(typed[0].typ, C(ListExactType, U(Integer, String)))
 
     def test_empty_list_literal_requires_annotation_or_cast(self):
         analyser = Analyser(Environment())

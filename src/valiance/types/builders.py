@@ -40,6 +40,9 @@ SOME = Symbol("Some")
 OK = Symbol("OK")
 RESULT = Symbol("Result")
 ERR = Symbol("Err")
+NUMBER = Symbol("Number")
+REAL = Symbol("Real")
+INTEGER = Symbol("Integer")
 
 
 def Never() -> Type:
@@ -252,6 +255,7 @@ def normalize(t: Type) -> Type:
         result = _normalize_result_union(flat)
         if result is not None:
             return result
+        flat = _normalize_numeric_union(flat)
         if len(flat) == 1:
             return next(iter(flat))
         return UnionType(frozenset(flat))
@@ -344,6 +348,30 @@ def _normalize_result_union(items: set[Type]) -> Type | None:
     ok = U(*ok_items) if len(ok_items) > 1 else ok_items[0]
     err = U(*err_items) if len(err_items) > 1 else err_items[0]
     return Result(ok, err)
+
+
+def _normalize_numeric_union(items: set[Type]) -> set[Type]:
+    names = {
+        item.name
+        for item in items
+        if isinstance(item, NominalType) and not item.args
+    }
+    remove: set[Type] = set()
+    if NUMBER in names:
+        remove.update(
+            item
+            for item in items
+            if isinstance(item, NominalType)
+            and not item.args
+            and item.name in {INTEGER, REAL}
+        )
+    elif REAL in names:
+        remove.update(
+            item
+            for item in items
+            if isinstance(item, NominalType) and not item.args and item.name == INTEGER
+        )
+    return items - remove
 
 
 def _is_err_nominal(t: Type) -> bool:

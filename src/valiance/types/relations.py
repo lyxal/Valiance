@@ -147,7 +147,9 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
             return True
         if ctx.variant_members.get(source.name) == target.name:
             return True
-        if source.name in {INTEGER, REAL} and target.name == NUMBER:
+        if source.name == INTEGER and target.name in {REAL, NUMBER}:
+            return True
+        if source.name == REAL and target.name == NUMBER:
             return True
 
     if isinstance(source, TupleType) and isinstance(target, TupleType):
@@ -395,19 +397,33 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
                 return True
             if a.params is None or a.returns is None:
                 return False
-            return (
-                len(p.params) == len(a.params)
-                and len(p.returns) == len(a.returns)
-                and all(
-                    rec(x, y)
-                    for x, y in zip(
-                        p.params + p.returns, a.params + a.returns, strict=False
-                    )
-                )
+            if len(p.params) != len(a.params) or len(p.returns) != len(a.returns):
+                return False
+            for expected, actual in zip(p.params, a.params, strict=False):
+                if _contains_type_var(expected):
+                    if not rec(expected, actual):
+                        return False
+                elif not compatible(expected, actual):
+                    return False
+            return all(
+                rec(expected, actual)
+                for expected, actual in zip(p.returns, a.returns, strict=False)
             )
         if isinstance(p, FunctionType) and isinstance(a, OverloadSetType):
-            # Overloaded callables are checked after other generics are known.
-            # Solving through every overload here would guess too early.
+            matches: list[dict[str, list[Type]]] = []
+            for overload in a.overloads:
+                saved = {key: list(values) for key, values in constraints.items()}
+                candidate = Fn(overload.params, overload.returns, overload.element_tags)
+                if rec(p, candidate):
+                    matches.append(
+                        {key: list(values) for key, values in constraints.items()}
+                    )
+                constraints.clear()
+                constraints.update(saved)
+            if len(matches) != 1:
+                return False
+            constraints.clear()
+            constraints.update(matches[0])
             return True
         if isinstance(p, TaggedType):
             if not isinstance(a, TaggedType):
@@ -550,6 +566,10 @@ def _combine(a: Type, b: Type) -> Type | None:
     a, b = normalize(a), normalize(b)
     if same(a, b):
         return a
+    if assignable(a, b):
+        return b
+    if assignable(b, a):
+        return a
     if _is_optional(a) and _is_optional(b):
         ai, bi = _optional_inner(a), _optional_inner(b)
         if ai is None:
@@ -561,11 +581,14 @@ def _combine(a: Type, b: Type) -> Type | None:
     if (
         isinstance(a, CollectionType)
         and isinstance(b, CollectionType)
-        and same(a.base, b.base)
+        and _combine(a.base, b.base) is not None
     ):
         # Collection solutions can widen from exact to minimum/rugged when
         # multiple constraints need one shared generic type.
-        return _combine_collections(a, b)
+        return _combine_collections(
+            type(a)(_combine(a.base, b.base), a.rank),
+            type(b)(_combine(a.base, b.base), b.rank),
+        )
     return None
 
 
@@ -614,6 +637,10 @@ def merge_types(a: Type, b: Type) -> Type:
         return optional(b)
     if isinstance(normalize(b), NoneTypeNode):
         return optional(a)
+    if assignable(a, b):
+        return b
+    if assignable(b, a):
+        return a
     return U(a, b)
 
 
@@ -845,7 +872,7 @@ def _vectorisation_excess(argument: Type, expected: Type, ctx: Context) -> int |
         return 0 if compatible(argument, expected, ctx) else None
     expected_collection = _collection_view(expected)
     if expected_collection is not None:
-        if not same(argument_collection.base, expected_collection.base):
+        if not compatible(argument_collection.base, expected_collection.base, ctx):
             return None
         excess = argument_collection.rank - expected_collection.rank
     else:
@@ -889,7 +916,7 @@ def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:
         return False
     if parameter_collection is not None:
         return (
-            same(argument_collection.base, parameter_collection.base)
+            compatible(argument_collection.base, parameter_collection.base, ctx)
             and isinstance(argument_collection.rank, int)
             and isinstance(parameter_collection.rank, int)
             and argument_collection.rank > parameter_collection.rank
@@ -972,15 +999,16 @@ def apply_overload(
         vectorised_depths = tuple(depths)
 
     constraints: dict[str, list[Type]] = {}
-    deferred_function_args: list[tuple[FunctionType, FunctionType]] = []
+    deferred_function_args: list[
+        tuple[FunctionType, FunctionType | OverloadSetType]
+    ] = []
     for param, arg in zip(overload.params, base_args, strict=False):
         if isinstance(param, FunctionType) and isinstance(
             arg, (FunctionType, OverloadSetType)
         ):
             # Defer function argument solving. Other parameters should usually
             # determine T before we ask whether this callable fits Function[T].
-            if isinstance(arg, FunctionType):
-                deferred_function_args.append((param, arg))
+            deferred_function_args.append((param, arg))
             continue
         result = _solve(param, arg)
         if result is None:
@@ -998,10 +1026,19 @@ def apply_overload(
         substitution[key] = combined
 
     for param, arg in deferred_function_args:
-        substituted_param = _substitute(param, substitution)
-        if not _contains_type_var(substituted_param):
-            continue
-        result = _solve(substituted_param, arg)
+        if isinstance(arg, OverloadSetType):
+            result = _solve(param, arg)
+        else:
+            substituted_param = _substitute(param, substitution)
+            if (
+                not _contains_type_var(substituted_param)
+                and compatible(arg, substituted_param, ctx)
+            ):
+                continue
+            result = _solve(
+                substituted_param if _contains_type_var(substituted_param) else param,
+                arg,
+            )
         if result is None:
             return None
         for key, values in result.items():

@@ -38,7 +38,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         rendered = output.getvalue()
         self.assertIn("Typed AST:", rendered)
-        self.assertIn("TypedNode(type=Number", rendered)
+        self.assertIn("TypedNode(type=Integer", rendered)
 
     def test_main_annotates_inline_code(self):
         output = io.StringIO()
@@ -144,7 +144,7 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         rendered = error.getvalue()
-        self.assertIn("Runtime error: checked cast failed: 1 is Number", rendered)
+        self.assertIn("Runtime error: checked cast failed: 1 is Integer", rendered)
         self.assertIn("runtime context:", rendered)
         self.assertIn("<main> ip", rendered)
 

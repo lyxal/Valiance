@@ -51,6 +51,8 @@ from valiance.types import (
 )
 
 NUMBER = Symbol("Number")
+REAL = Symbol("Real")
+INTEGER = Symbol("Integer")
 STRING = Symbol("String")
 CIRCLE = Symbol("Circle")
 SHAPE = Symbol("Shape")
@@ -62,6 +64,8 @@ VEHICLE = Symbol("Vehicle")
 PARSE_ERROR = Symbol("ParseError")
 
 Number = N(NUMBER)
+Real = N(REAL)
+Integer = N(INTEGER)
 String = N(STRING)
 Foo = N(FOO)
 Car = N(CAR)
@@ -80,6 +84,13 @@ class TypeLibraryTests(unittest.TestCase):
     def test_assignment_does_not_vectorise(self):
         self.assertFalse(assignable(C(ListExactType, Number), Number))
         self.assertTrue(compatible(C(ListExactType, Number), Number))
+
+    def test_numeric_nominal_hierarchy_is_integer_real_number(self):
+        self.assertTrue(assignable(Integer, Real))
+        self.assertTrue(assignable(Integer, Number))
+        self.assertTrue(assignable(Real, Number))
+        self.assertFalse(assignable(Real, Integer))
+        self.assertFalse(assignable(Number, Real))
 
     def test_collection_item_types_are_covariant(self):
         ctx = Context(trait_impls={CAR: {VEHICLE}})

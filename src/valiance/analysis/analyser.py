@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, fields, replace
+from decimal import Decimal, InvalidOperation
 from enum import Enum, auto
 from itertools import count, permutations
 from pathlib import Path
@@ -143,20 +144,32 @@ class BranchVariables:
         ctx = ctx or T.Context()
         existing_block_local = _lookup(self.block_locals, name)
         if existing_block_local is not None:
+            stored_type = _assignment_stored_type(existing_block_local, typ, ctx)
             diagnostic = _assignment_error(name, typ, existing_block_local, ctx)
             if diagnostic is not None:
                 return None, diagnostic
-            return self, None
+            if T.same(stored_type, existing_block_local):
+                return self, None
+            return (
+                BranchVariables(
+                    function_locals=self.function_locals,
+                    parameters=self.parameters,
+                    captures=self.captures,
+                    block_locals=_set_item(self.block_locals, name, stored_type),
+                ),
+                None,
+            )
         if _lookup(self.parameters, name) is not None:
             return None, f"cannot assign to read-only parameter '{name}'"
         existing_function_local = _lookup(self.function_locals, name)
         if existing_function_local is not None:
+            stored_type = _assignment_stored_type(existing_function_local, typ, ctx)
             diagnostic = _assignment_error(name, typ, existing_function_local, ctx)
             if diagnostic is not None:
                 return None, diagnostic
             return (
                 BranchVariables(
-                    function_locals=self.function_locals,
+                    function_locals=_set_item(self.function_locals, name, stored_type),
                     parameters=self.parameters,
                     captures=self.captures,
                     block_locals=self.block_locals,
@@ -238,10 +251,24 @@ class BranchVariables:
                 locals_by_name[name] = (
                     left if left == right else T.merge_types(left, right)
                 )
+        block_locals_by_name: dict[Symbol, T.Type] = {}
+        before_block_names = {name for name, _ in before.block_locals}
+        for name in before_block_names:
+            left = _lookup(self.block_locals, name) or _lookup(
+                before.block_locals, name
+            )
+            right = _lookup(other.block_locals, name) or _lookup(
+                before.block_locals, name
+            )
+            if left is not None and right is not None:
+                block_locals_by_name[name] = (
+                    left if left == right else T.merge_types(left, right)
+                )
         return BranchVariables(
             function_locals=_sorted_items(locals_by_name.items()),
             parameters=before.parameters,
             captures=before.captures,
+            block_locals=_sorted_items(block_locals_by_name.items()),
         )
 
 
@@ -534,10 +561,11 @@ class Analyser:
         node: ASTNode,
     ) -> set[AnalysisBranch]:
         match node:
-            case NumberLiteralNode(_):
+            case NumberLiteralNode(value):
+                typ = _number_literal_type(value)
                 return {
-                    branch.with_stack(branch.stack.push(T.Number)).append_typed(
-                        TypedNode(node, T.Number)
+                    branch.with_stack(branch.stack.push(typ)).append_typed(
+                        TypedNode(node, typ)
                     )
                 }
             case StringLiteralNode(_):
@@ -1380,7 +1408,7 @@ class Analyser:
                     node,
                 )
                 return set()
-            if not T.assignable(target, source, self.env.context):
+            if not _types_overlap(source, target, self.env.context):
                 if _type_contains_rank_var(target):
                     stack = T.TypeStack((*branch.stack.items[:-1], target))
                     return {
@@ -1563,6 +1591,15 @@ class Analyser:
         else:
             self._diagnose("indexing requires receiver and index value(s)", node)
             return set()
+        index_types = branch.stack.items[-selector_values:] if selector_values else ()
+        if not _selectors_assignable(
+            receiver_type,
+            node.selectors,
+            index_types,
+            self.env.context,
+        ):
+            self._diagnose("list indexing requires Integer index value(s)", node)
+            return set()
         result_type = _indexed_type(receiver_type, node.selectors, node.spread)
         return {
             base_branch.with_stack(base_branch.stack.push(result_type)).append_typed(
@@ -1585,16 +1622,35 @@ class Analyser:
             return set()
         value_type = branch.stack[-required]
         receiver_type = branch.stack[-selector_values - 1]
+        index_types = branch.stack.items[-selector_values:] if selector_values else ()
+        if not _selectors_assignable(
+            receiver_type,
+            node.selectors,
+            index_types,
+            self.env.context,
+        ):
+            self._diagnose("list indexing requires Integer index value(s)", node)
+            return set()
         item_type = _indexed_type(receiver_type, node.selectors, spread=False)
-        if not T.assignable(value_type, item_type, self.env.context):
+        updated_receiver_type = _indexed_assignment_type(
+            receiver_type,
+            node.selectors,
+            value_type,
+            self.env.context,
+        )
+        if updated_receiver_type is None:
             self._diagnose(
                 f"cannot assign {T.show(value_type)} to indexed item "
                 f"of type {T.show(item_type)}",
                 node,
             )
             return set()
-        stack = T.TypeStack(branch.stack.items[:-required]).push(receiver_type)
-        return {branch.with_stack(stack).append_typed(TypedNode(node, receiver_type))}
+        stack = T.TypeStack(branch.stack.items[:-required]).push(updated_receiver_type)
+        return {
+            branch.with_stack(stack).append_typed(
+                TypedNode(node, updated_receiver_type)
+            )
+        }
 
     def _list_literal(
         self,
@@ -1769,10 +1825,16 @@ class Analyser:
         return tuple(item_options)
 
     def _foreach(self, branch: AnalysisBranch, node: ForNode) -> set[AnalysisBranch]:
+        consumes_stack_iterable = bool(branch.stack)
         if not branch.stack:
-            self._diagnose("for loop requires iterable on the stack", node)
-            return set()
-        iterable_type = branch.stack[-1]
+            item = _anonymous_type_var(branch, 1)
+            sourced = branch.source_arguments((T.ExactList(item),))
+            if sourced is None:
+                self._diagnose("for loop requires iterable on the stack", node)
+                return set()
+            (iterable_type,), branch = sourced
+        else:
+            iterable_type = branch.stack[-1]
         item_type = T.collection_item_type(iterable_type)
         if not item_type:
             self._diagnose(
@@ -1781,10 +1843,11 @@ class Analyser:
                 node,
             )
             return set()
-        body_branch = branch.with_stack(branch.stack.pop())
+        body_stack = branch.stack.pop() if consumes_stack_iterable else branch.stack
+        body_branch = branch.with_stack(body_stack)
         cycle_params = (item_type,)
         if node.index_variable is not None:
-            cycle_params = (item_type, T.Number)
+            cycle_params = (item_type, T.Integer)
         body_branch = _replace_branch(
             body_branch,
             input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
@@ -1795,19 +1858,39 @@ class Analyser:
         )
         if node.index_variable is not None:
             body_branch = body_branch.with_variables(
-                body_branch.variables.with_block_local(node.index_variable, T.Number)
+                body_branch.variables.with_block_local(node.index_variable, T.Integer)
             )
 
         body_outputs = self.analyse_block(BranchSet.one(body_branch), node.body)
         if not body_outputs:
             return set()
+        refined_item_type = _loop_variable_output_type(node.variable, body_outputs)
+        if (
+            refined_item_type is not None
+            and _contains_type_var(item_type)
+            and not T.same(item_type, refined_item_type)
+        ):
+            body_branch = body_branch.refine_type(item_type, refined_item_type)
+            body_outputs = BranchSet(
+                frozenset(
+                    output.refine_type(item_type, refined_item_type)
+                    for output in body_outputs
+                )
+            )
         break_types = tuple(
             output.break_type
             for output in body_outputs
             if output.break_type is not None
         )
         result_type = _loop_break_result_type(break_types)
-        variables = _merge_loop_variables(body_branch.variables, body_outputs)
+        loop_locals = (node.variable,) + (
+            (node.index_variable,) if node.index_variable is not None else ()
+        )
+        variables = _merge_loop_variables(
+            body_branch.variables,
+            body_outputs,
+            loop_locals,
+        )
         typed_for = TypedNode(node, result_type)
         return {
             _refine_branch_like(branch, body_branch)
@@ -2822,6 +2905,33 @@ def _type_contains_rank_var(typ: T.Type) -> bool:
     if isinstance(typ, T.TaggedType):
         return _type_contains_rank_var(typ.inner)
     return False
+
+
+def _contains_type_var(typ: T.Type) -> bool:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.VarType):
+        return True
+    if isinstance(typ, T.CollectionType):
+        return _contains_type_var(typ.base)
+    if isinstance(typ, T.NominalType):
+        return any(_contains_type_var(arg) for arg in typ.args)
+    if isinstance(typ, (T.UnionType, T.IntersectionType)):
+        return any(_contains_type_var(item) for item in typ.items)
+    if isinstance(typ, T.TupleType):
+        return any(_contains_type_var(item) for item in typ.params)
+    if isinstance(typ, T.VariadicTupleType):
+        return any(_contains_type_var(item.typ) for item in typ.items)
+    if isinstance(typ, T.FunctionType):
+        return _contains_type_var_in_stack(typ.params) or _contains_type_var_in_stack(
+            typ.returns
+        )
+    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _contains_type_var(typ.inner)
+    return False
+
+
+def _contains_type_var_in_stack(types: tuple[T.Type, ...] | None) -> bool:
+    return types is not None and any(_contains_type_var(typ) for typ in types)
 
 
 def _static_body_variable_names(node: FunctionNode) -> tuple[Symbol, ...]:
@@ -4312,6 +4422,94 @@ def _indexed_type(
     return T.V("Indexed")
 
 
+def _selectors_assignable(
+    receiver_type: T.Type,
+    selectors: tuple[IndexSelector, ...],
+    index_types: tuple[T.Type, ...],
+    ctx: T.Context,
+) -> bool:
+    expected = _selector_expected_types(receiver_type, selectors)
+    return len(expected) == len(index_types) and all(
+        T.assignable(actual, target, ctx)
+        for actual, target in zip(index_types, expected, strict=True)
+    )
+
+
+def _selector_expected_types(
+    receiver_type: T.Type,
+    selectors: tuple[IndexSelector, ...],
+) -> tuple[T.Type, ...]:
+    typ = T.normalize(receiver_type)
+    expected: list[T.Type] = []
+    for selector in selectors:
+        key_type = _single_index_key_type(typ)
+        slice_bound_type = T.U(T.Integer, T.ExactList(T.Integer))
+        if selector.start:
+            expected.append(slice_bound_type if selector.is_slice else key_type)
+        if selector.stop:
+            expected.append(slice_bound_type)
+        if selector.step:
+            expected.append(T.Integer)
+        typ = typ if selector.is_slice else _single_index_type(typ)
+    return tuple(expected)
+
+
+def _indexed_assignment_type(
+    receiver_type: T.Type,
+    selectors: tuple[IndexSelector, ...],
+    value_type: T.Type,
+    ctx: T.Context,
+) -> T.Type | None:
+    if len(selectors) != 1 or selectors[0].is_slice:
+        item_type = _indexed_type(receiver_type, selectors, spread=False)
+        return receiver_type if T.assignable(value_type, item_type, ctx) else None
+    return _single_index_assignment_type(receiver_type, value_type, ctx)
+
+
+def _single_index_assignment_type(
+    receiver_type: T.Type,
+    value_type: T.Type,
+    ctx: T.Context,
+) -> T.Type | None:
+    typ = T.normalize(receiver_type)
+    if isinstance(typ, T.TaggedType):
+        updated = _single_index_assignment_type(typ.inner, value_type, ctx)
+        return None if updated is None else T.Tagged(updated, *typ.tags)
+    if isinstance(typ, T.CollectionType):
+        if T.assignable(value_type, typ.base, ctx):
+            return receiver_type
+        if T.assignable(typ.base, value_type, ctx):
+            return T.C(type(typ), value_type, typ.rank)
+        return None
+    if isinstance(typ, T.NominalType):
+        if typ.name.text == "Dict" and len(typ.args) == 2:
+            key, item = typ.args
+            if T.assignable(value_type, item, ctx):
+                return receiver_type
+            if T.assignable(item, value_type, ctx):
+                return T.N(typ.name, key, value_type)
+            return None
+        if typ.name.text == "String":
+            return receiver_type if T.assignable(value_type, T.String, ctx) else None
+    item_type = _single_index_type(receiver_type)
+    return receiver_type if T.assignable(value_type, item_type, ctx) else None
+
+
+def _single_index_key_type(typ: T.Type) -> T.Type:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        return _single_index_key_type(typ.inner)
+    if isinstance(typ, T.UnionType):
+        return T.U(*(_single_index_key_type(item) for item in typ.items))
+    if (
+        isinstance(typ, T.NominalType)
+        and typ.name.text == "Dict"
+        and len(typ.args) == 2
+    ):
+        return typ.args[0]
+    return T.Integer
+
+
 def _single_index_type(typ: T.Type) -> T.Type:
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
@@ -4604,13 +4802,49 @@ def _pop_stack(stack: T.TypeStack, count: int) -> T.TypeStack:
 def _merge_loop_variables(
     before: BranchVariables,
     outputs: BranchSet,
+    loop_locals: tuple[Symbol, ...],
 ) -> BranchVariables:
-    merged = before.drop_block_locals()
+    before_loop = _drop_named_block_locals(before, loop_locals)
+    merged = before_loop
     for output in outputs:
         merged = merged.merge_against(
-            output.variables.drop_block_locals(),
-            before.drop_block_locals(),
+            _drop_named_block_locals(output.variables, loop_locals),
+            before_loop,
         )
+    return merged
+
+
+def _drop_named_block_locals(
+    variables: BranchVariables,
+    names: tuple[Symbol, ...],
+) -> BranchVariables:
+    blocked = set(names)
+    return BranchVariables(
+        function_locals=variables.function_locals,
+        parameters=variables.parameters,
+        captures=variables.captures,
+        block_locals=tuple(
+            (name, typ)
+            for name, typ in variables.block_locals
+            if name not in blocked
+        ),
+    )
+
+
+def _loop_variable_output_type(
+    name: Symbol,
+    outputs: BranchSet,
+) -> T.Type | None:
+    types = tuple(
+        typ
+        for output in outputs
+        if (typ := output.variables.read(name)) is not None
+    )
+    if not types:
+        return None
+    merged = types[0]
+    for typ in types[1:]:
+        merged = T.merge_types(merged, typ)
     return merged
 
 
@@ -4647,6 +4881,30 @@ def _trait_requirement(node: TraitRequirementNode) -> T.TraitRequirement | None:
 
 def _declared_nominal(name: Symbol, generics: tuple[Symbol, ...]) -> T.Type:
     return T.N(name, *(T.V(generic.text) for generic in generics))
+
+
+def _types_overlap(source: T.Type, target: T.Type, ctx: T.Context) -> bool:
+    source = T.normalize(source)
+    target = T.normalize(target)
+    if T.assignable(source, target, ctx) or T.assignable(target, source, ctx):
+        return True
+    if isinstance(source, T.UnionType):
+        return any(_types_overlap(item, target, ctx) for item in source.items)
+    if isinstance(target, T.UnionType):
+        return any(_types_overlap(source, item, ctx) for item in target.items)
+    return False
+
+
+def _number_literal_type(value: str) -> T.Type:
+    if "i" in value.lower():
+        return T.Number
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation:
+        return T.Number
+    if parsed == parsed.to_integral_value():
+        return T.Integer
+    return T.Real
 
 
 def _generic_constraints(
@@ -5168,12 +5426,24 @@ def _assignment_error(
     target: T.Type,
     ctx: T.Context,
 ) -> str | None:
-    if T.assignable(source, target, ctx):
+    if _assignment_stored_type(target, source, ctx) is not None:
         return None
     return (
         f"cannot assign {T.show(source)} to variable '{name}' "
         f"of type {T.show(target)}"
     )
+
+
+def _assignment_stored_type(
+    existing: T.Type,
+    source: T.Type,
+    ctx: T.Context,
+) -> T.Type | None:
+    if T.assignable(source, existing, ctx):
+        return existing
+    if T.assignable(existing, source, ctx):
+        return source
+    return None
 
 
 def _mustcall_methods(annotations: tuple[ASTNode, ...]) -> tuple[str, ...]:

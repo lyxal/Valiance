@@ -724,7 +724,7 @@ $.value = 2
         self.assertEqual(len(stack), 1)
         self.assertIsInstance(stack[0], ObjectValue)
         self.assertEqual(stack[0].type_name, "Box")
-        self.assertEqual(stack[0].type_args, ("Number",))
+        self.assertEqual(stack[0].type_args, ("Integer",))
         self.assertEqual(stack[0].fields["value"], Decimal("2"))
 
     def test_generic_object_type_arguments_survive_bytecode_round_trip(self):
@@ -740,7 +740,7 @@ Box
 
         self.assertEqual(len(stack), 1)
         self.assertIsInstance(stack[0], ObjectValue)
-        self.assertEqual(stack[0].type_args, ("Number",))
+        self.assertEqual(stack[0].type_args, ("Integer",))
 
     def test_function_element_tags_survive_bytecode_round_trip(self):
         source = "eager define log(value: Number) -> => $value println"
@@ -810,7 +810,7 @@ Some
         self.assertEqual(len(stack), 1)
         self.assertIsInstance(stack[0], ObjectValue)
         self.assertEqual(stack[0].type_name, "Maybe.Some")
-        self.assertEqual(stack[0].type_args, ("Number",))
+        self.assertEqual(stack[0].type_args, ("Integer",))
         self.assertEqual(stack[0].fields["value"], Decimal("1"))
 
     def test_executes_match_literal_guard_and_wildcard_patterns(self):
@@ -1225,7 +1225,7 @@ println(triple([1, 2, 3, 4, 5]))
         message = str(error.exception)
         self.assertIn("cannot call element '-'", message)
         self.assertIn("stack: ['x', 1]", message)
-        self.assertIn("stack types: [String, Number]", message)
+        self.assertIn("stack types: [String, Integer]", message)
         self.assertIn("attempted input shapes:", message)
         self.assertIn("(Number, Number)", message)
         self.assertIn("runtime context:", message)
@@ -1255,7 +1255,7 @@ println(triple([1, 2, 3, 4, 5]))
             run(program)
 
         message = str(error.exception)
-        self.assertIn("checked cast failed: 1 is Number", message)
+        self.assertIn("checked cast failed: 1 is Integer", message)
         self.assertIn("target: function 'bad_cast'", message)
         self.assertIn("arguments: [1]", message)
         self.assertIn("bad_cast ip 1: check_cast", message)
