@@ -232,10 +232,17 @@ calls an `IO` operation, the inferred function type also carries `IO`.
 - actual returns after vectorisation/tag flow
 - for elements, the overload index within the element definition, which lets
   codegen find the runtime implementation without re-resolving overloads by type
+- optional-parameter defaults copied from `define` declarations on
+  `Overload.param_defaults`
 
 Keep this on typed metadata, not on the raw parser `ElementNode`. Parser AST
 nodes should remain syntax. Do not make the runtime compiler repeat type-level
 overload resolution as a workaround.
+
+Raw `ElementNode.call_args` still matters during analysis: ECS calls preserve
+which arguments were named, positional, or `_` placeholders. The analyser uses
+that structure to lower optional defaults only for ECS calls. Ordinary stack
+calls still require the full non-modifier arity.
 
 ## Type Relations
 
@@ -455,8 +462,10 @@ Collection ranks may be an `int` or a `RankVariable`. Surface syntax uses
 `$name` after a rank marker, for example `T+$n`, `T*$n`, `T~$n`, `T^$n`, or
 `T>$n`.
 
-`Overload.where_clause` stores the parsed static expression body, and
-`Overload.param_names` maps overload parameters back to source parameter names.
+`Overload.where_clause` stores the parsed static expression body,
+`Overload.param_names` maps overload parameters back to source parameter names,
+and `Overload.param_defaults` stores any trailing `define` defaults for ECS
+lowering.
 When an overload is applied, analysis:
 
 1. Binds rank variables that appear in parameter types from the actual argument

@@ -723,7 +723,7 @@ external("math.dll") define sqrt(:Number as FFI.float) -> FFI.float as Number =>
 
 ## 6.8. Quick Functions
 
-- `'` before an chain wraps that chain in a function
+- `'` before the next chain segment wraps that segment in a function
 - `'chain` == `fn => chain`
 - E.g.
 
@@ -1330,11 +1330,13 @@ end
 	- For example, you might want `sort(list)` to do normal sorting, and `sort(list, key=function)` to sort by a function
 - Problem is that the fixed arity requirement of overloads means you can't have `sort[T] (T+) -> T+` and `sort[T, U impl Comparable] (T+, Function[T, U]) -> T+` on the same element.
 	- Fine for sorting, but sometimes it can get complicated
-- Additionally, specifying when to take optional parameters from the stack can be a little unruly
-	- When do values get considered part of the function call.
+- Additionally, taking optional parameters from the stack would make the stack effect of a call context-sensitive.
+	- That defeats the point of using fixed arity to reason about stack behaviour.
 - However: there is one way to unambiguously specify the arguments to a element: ECS.
-- Using that, `define` allows for parameters at the end of an element definition to be given a default value. This makes those parameters optional
-	- They can then only be specified using ECS.
+- Using that, `define` allows trailing parameters at the end of an element definition to be given a default value. This makes those parameters optional for ECS calls.
+	- Optional arguments do not change the plain stack arity of the element.
+	- A plain stack call still behaves as though every non-`:` parameter is required.
+	- Optional arguments are supplied only through ECS.
 	- Function arguments can be specified with `:` syntax though.
 		- _ALL_ function arguments must be specified though
 - `= <value>` after a parameter declares the default value
@@ -1343,8 +1345,8 @@ end
 ```
 define[T, U: Comparable] sort(:T+, key: Function[T -> U] = 'top) -> T+ => ... end
 
-[4, 1, 3] sort #? Calls with default key
-fn => negate end [4, 1, 3] sort #? Still calls with default key
+[4, 1, 3] sort(_) #? Calls with default key
+[4, 1, 3] sort #? Compile error - plain calls still expect full stack arity
 [4, 1, 3] sort: negate #? Overwrite key
 [4, 1, 3] sort(_, 'negate) #? Overwrite key
 [4, 1, 3] sort(key = 'negate) #? Explicit name

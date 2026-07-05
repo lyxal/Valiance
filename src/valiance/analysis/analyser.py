@@ -1153,31 +1153,24 @@ class Analyser:
             ]
         ] = []
         for overload in overloads:
-            prepared = _prepare_default_argument_branches(
+            for args, popped, ordered_modifiers in _source_element_arguments(
                 branch,
                 overload,
-                bool(node.modifier_args),
-                self,
-            )
-            for prepared_branch in prepared:
-                for args, popped, ordered_modifiers in _source_element_arguments(
-                    prepared_branch,
+                modifier_args,
+                self.env.context,
+            ):
+                candidate = _apply_overload_to_branch(
                     overload,
-                    modifier_args,
+                    args,
+                    popped,
                     self.env.context,
-                ):
-                    candidate = _apply_overload_to_branch(
-                        overload,
-                        args,
-                        popped,
-                        self.env.context,
-                        self.env,
-                        node.disambiguation,
-                        self,
-                    )
-                    if candidate is not None:
-                        applied, candidate_branch = candidate
-                        candidates.append((applied, candidate_branch, ordered_modifiers))
+                    self.env,
+                    node.disambiguation,
+                    self,
+                )
+                if candidate is not None:
+                    applied, candidate_branch = candidate
+                    candidates.append((applied, candidate_branch, ordered_modifiers))
 
         stack_before = branch.stack
         winners = _best_candidates(candidates)
@@ -3042,46 +3035,6 @@ def _prepare_element_call_branches(
         return ()
     current = BranchSet.one(branch)
     for expression in ordered:
-        current = current.extend_block(expression, analyser)
-        if not current:
-            return ()
-    return tuple(current)
-
-
-def _prepare_default_argument_branches(
-    branch: AnalysisBranch,
-    overload: T.Overload,
-    has_modifier_args: bool,
-    analyser: Analyser,
-) -> tuple[AnalysisBranch, ...]:
-    param_defaults = overload.param_defaults
-    if not param_defaults:
-        return (branch,)
-    non_modifier_indexes = tuple(
-        index
-        for index in range(len(overload.params))
-        if not has_modifier_args or index not in _modifier_param_indexes(overload.params)
-    )
-    if not non_modifier_indexes:
-        return (branch,)
-    missing = max(0, len(non_modifier_indexes) - len(branch.stack))
-    if missing <= 0:
-        return (branch,)
-    defaultable_suffix: list[int] = []
-    for index in reversed(non_modifier_indexes):
-        if index >= len(param_defaults) or param_defaults[index] is None:
-            break
-        defaultable_suffix.append(index)
-    defaultable_suffix.reverse()
-    if not defaultable_suffix:
-        return (branch,)
-    default_needed = min(missing, len(defaultable_suffix))
-    ordered_defaults = tuple(
-        cast("tuple[ASTNode, ...]", param_defaults[index])
-        for index in defaultable_suffix[-default_needed:]
-    )
-    current = BranchSet.one(branch)
-    for expression in ordered_defaults:
         current = current.extend_block(expression, analyser)
         if not current:
             return ()

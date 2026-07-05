@@ -41,17 +41,16 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(execute("*(+(1, 2), 3)"), [Decimal("9")])
         self.assertEqual(execute("(1 + 2) * (3 + 4)"), [Decimal("21")])
 
-    def test_optional_arguments_use_defaults_and_ecs_overrides_at_runtime(self):
+    def test_optional_arguments_use_ecs_overrides_at_runtime(self):
         self.assertEqual(
             execute(
                 """
 define pick(a: Number, b: Number = 2) -> Number => $a $b +
-3 pick
 3 pick(b = 4)
 3 pick(_, 5)
 """
             ),
-            [Decimal("5"), Decimal("7"), Decimal("8")],
+            [Decimal("7"), Decimal("8")],
         )
 
     def test_vectorises_scalar_overloads_over_lists(self):

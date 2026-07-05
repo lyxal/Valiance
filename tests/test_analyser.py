@@ -1533,7 +1533,7 @@ end
         self.assertEqual(typed[-1].overload.params, (String, String))
         self.assertEqual(typed[-1].overload.actual_returns, (String,))
 
-    def test_trailing_default_parameters_apply_to_plain_element_calls(self):
+    def test_optional_parameters_do_not_change_plain_element_arity(self):
         analyser = Analyser()
         branches = analyser.analyse_block(
             BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
@@ -1547,8 +1547,14 @@ pick
             ),
         )
 
-        self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
+        self.assertFalse(branches)
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "3:1: no overloads for element 'pick' match stack [Number]; "
+                "available overloads: Function[Number, Number -> Number]"
+            ],
+        )
 
     def test_optional_parameters_can_be_overridden_with_named_ecs(self):
         analyser = Analyser()

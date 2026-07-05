@@ -246,6 +246,7 @@ you are changing. Most regressions here look like elements in the wrong order.
 - Parenthesized grouping: `(...)`
 - Tuple literals: `{...}`
 - Function literals: `fn ... => ...`
+- Quick functions: `'chain`
 - Control-flow nodes in expression position
 - `break` and `return`
 - Data-tag application: `#tag` and `#!tag`
@@ -373,6 +374,21 @@ functions in `ElementNode.modifier_args`. Do not emit modifier functions as
 ordinary preceding stack values; the analyser matches bound modifier functions
 to function-typed parameters by overload.
 
+## ECS Call Arguments And Optional Defaults
+
+Adjacent `foo(...)` syntax parses as an `ElementNode` with structured
+`call_args`, not as ordinary expression nodes inserted into the surrounding
+chain.
+
+- Positional ECS arguments store `CallArgument(value=...)`.
+- Named ECS arguments such as `foo(bar = 1)` store `CallArgument(name=bar, ...)`.
+- `_` placeholders store `CallArgument(placeholder=True)` so later optional ECS
+  arguments can skip earlier positions.
+
+This structure matters because optional defaults are an ECS-only feature. The
+parser should preserve which arguments were named, positional, or placeholders
+instead of flattening them into normal stack expressions.
+
 ## Type Parser
 
 `parse_type(source)` uses the same token stream but calls
@@ -475,6 +491,10 @@ eager define show(value: String) -> () => println(value)
 
 The `eager define` spelling records the same parsed function node with the
 `Eager` element tag attached.
+
+Only `define` parameter lists may currently attach trailing `= <expr>` defaults.
+Those defaults are recorded on `FunctionParam.default` for later ECS lowering;
+they do not change ordinary stack-call arity.
 
 ## Data Tags
 
