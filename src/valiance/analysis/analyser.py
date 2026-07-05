@@ -3679,7 +3679,14 @@ def _static_eval_node(
                         stack.append(len(value.returns))
                         return True
             return False
-        case ElementNode(name):
+        case ElementNode(name, _, _, call_args):
+            if call_args:
+                for arg in call_args:
+                    if arg.placeholder or arg.name is not None:
+                        return False
+                    for value_node in arg.value:
+                        if not _static_eval_node(value_node, stack, variables):
+                            return False
             return _static_eval_element(name.text, stack)
         case _:
             return False

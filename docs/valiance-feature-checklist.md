@@ -291,8 +291,8 @@ Current audit total: 398 / 734 items complete (54.2%).
 - [x] Disable argument cycling for explicitly zero-parameter functions.
 - [x] Implement closure capture by value.
 - [x] Preserve captured values after the defining scope exits.
-- [ ] Parse quick functions using `'chain`.
-- [ ] Make quick functions equivalent to `fn => chain`.
+- [x] Parse quick functions using `'chain`.
+- [x] Make quick functions equivalent to `fn => chain`.
 
 ## 19. Function type inference and call-site checking
 
@@ -463,11 +463,11 @@ Current audit total: 398 / 734 items complete (54.2%).
 - [x] Create new executable elements from definitions.
 - [ ] Add module-scoped overloads to existing elements.
 - [x] Capture visible variables at definition evaluation time.
-- [ ] Support trailing optional parameters with default expressions.
-- [ ] Restrict optional element arguments to explicit call syntax.
-- [ ] Allow function-valued optionals through `:` syntax.
-- [ ] Support named optional arguments.
-- [ ] Allow omission of unrelated optional arguments.
+- [x] Support trailing optional parameters with default expressions.
+- [x] Restrict optional element arguments to explicit call syntax.
+- [x] Allow function-valued optionals through `:` syntax.
+- [x] Support named optional arguments.
+- [x] Allow omission of unrelated optional arguments.
 - [x] Enforce identical arity and multiplicity across overloads.
 
 ## 28. Objects

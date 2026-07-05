@@ -147,6 +147,14 @@ class _Compiler:
             case SetVariableNode(name):
                 self.emit(OpCode.STORE_VAR, name.text)
             case ElementNode(name, modifier_args):
+                if typed_node is None and node.call_args:
+                    for arg in node.call_args:
+                        if arg.placeholder or arg.name is not None:
+                            raise CompileError(
+                                "named or placeholder element call arguments require "
+                                "resolved typed compilation"
+                            )
+                        self.expression(arg.value)
                 args: tuple[ASTNode | TypedNode, ...] = modifier_args
                 if (
                     isinstance(typed_node, TypedElementNode)

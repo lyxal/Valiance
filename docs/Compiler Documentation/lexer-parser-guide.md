@@ -611,7 +611,6 @@ assuming syntax exists, check `docs/valiance-feature-checklist.md` and
 Known parser-facing gaps include:
 
 - `_` placeholders and parent-stack substitution.
-- Quick functions using `'chain`.
 - Cast syntax such as `as Type` and `as! Type`.
 - Advanced import/module syntax such as selective overload imports,
   `except` exclusions, package imports, and tag-associated imports. Basic import
