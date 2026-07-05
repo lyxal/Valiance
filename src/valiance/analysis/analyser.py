@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, fields, replace
 from enum import Enum, auto
 from itertools import count, permutations
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import valiance.analysis.annotations as annotation_hooks
 import valiance.types as T
@@ -16,6 +16,7 @@ from valiance.asts import (
     ASTNode,
     AtNode,
     BindingPatternNode,
+    CallArgument,
     CastNode,
     DefineNode,
     DictLiteralNode,
@@ -1127,6 +1128,9 @@ class Analyser:
             )
             return set()
 
+        if node.call_args:
+            return self._element_call(branch, node, overloads, modifier_args)
+
         candidates: list[
             tuple[
                 T.AppliedOverload,
@@ -1135,24 +1139,31 @@ class Analyser:
             ]
         ] = []
         for overload in overloads:
-            for args, popped, ordered_modifiers in _source_element_arguments(
+            prepared = _prepare_default_argument_branches(
                 branch,
                 overload,
-                modifier_args,
-                self.env.context,
-            ):
-                candidate = _apply_overload_to_branch(
+                bool(node.modifier_args),
+                self,
+            )
+            for prepared_branch in prepared:
+                for args, popped, ordered_modifiers in _source_element_arguments(
+                    prepared_branch,
                     overload,
-                    args,
-                    popped,
+                    modifier_args,
                     self.env.context,
-                    self.env,
-                    node.disambiguation,
-                    self,
-                )
-                if candidate is not None:
-                    applied, candidate_branch = candidate
-                    candidates.append((applied, candidate_branch, ordered_modifiers))
+                ):
+                    candidate = _apply_overload_to_branch(
+                        overload,
+                        args,
+                        popped,
+                        self.env.context,
+                        self.env,
+                        node.disambiguation,
+                        self,
+                    )
+                    if candidate is not None:
+                        applied, candidate_branch = candidate
+                        candidates.append((applied, candidate_branch, ordered_modifiers))
 
         stack_before = branch.stack
         winners = _best_candidates(candidates)
@@ -1173,6 +1184,95 @@ class Analyser:
                 f"ambiguous overloads for element '{node.name}' with stack "
                 f"{_show_stack(stack_before)}; candidates: "
                 f"{_show_applied_overloads(winners)}",
+                node,
+            )
+            return set()
+
+        results: set[AnalysisBranch] = set()
+        for applied, popped, ordered_modifiers in winners:
+            if applied.overload.annotation_error is not None:
+                self._diagnose(applied.overload.annotation_error, node)
+                continue
+            if applied.overload.annotation_warning is not None:
+                self._warn(applied.overload.annotation_warning, node)
+            actual_returns = annotation_hooks.annotated_element_returns(
+                node,
+                applied.actual_returns,
+            )
+            results.add(
+                popped.with_stack(popped.stack.push(*actual_returns)).append_typed(
+                    TypedElementNode(
+                        node,
+                        _returns_result_type(actual_returns),
+                        applied,
+                        _overload_index(overloads, applied.overload),
+                        _specialize_modifier_arguments(
+                            applied,
+                            ordered_modifiers,
+                            self.env.context,
+                        ),
+                    )
+                )
+            )
+        return results
+
+    def _element_call(
+        self,
+        branch: AnalysisBranch,
+        node: ElementNode,
+        overloads: tuple[T.Overload, ...],
+        modifier_args: tuple[ModifierArgumentAnalysis, ...],
+    ) -> set[AnalysisBranch]:
+        candidates: list[
+            tuple[
+                T.AppliedOverload,
+                AnalysisBranch,
+                tuple[ModifierArgumentAnalysis, ...],
+            ]
+        ] = []
+        for overload in overloads:
+            prepared = _prepare_element_call_branches(
+                branch,
+                overload,
+                node.call_args,
+                bool(node.modifier_args),
+                self,
+            )
+            for prepared_branch in prepared:
+                for args, popped, ordered_modifiers in _source_element_arguments(
+                    prepared_branch,
+                    overload,
+                    modifier_args,
+                    self.env.context,
+                ):
+                    candidate = _apply_overload_to_branch(
+                        overload,
+                        args,
+                        popped,
+                        self.env.context,
+                        self.env,
+                        node.disambiguation,
+                        self,
+                    )
+                    if candidate is not None:
+                        applied, candidate_branch = candidate
+                        candidates.append((applied, candidate_branch, ordered_modifiers))
+
+        winners = _best_candidates(candidates)
+        if not winners:
+            self._diagnose(
+                f"no overloads for element '{node.name}' match explicit call syntax",
+                node,
+            )
+            return set()
+        if (
+            len(winners) > 1
+            and branch.input_mode is not InputMode.INFER_INPUTS
+            and not _winners_specialize_inputs(winners, branch)
+        ):
+            self._diagnose(
+                f"ambiguous overloads for element '{node.name}' with explicit call "
+                f"syntax; candidates: {_show_applied_overloads(winners)}",
                 node,
             )
             return set()
@@ -2311,6 +2411,7 @@ class Analyser:
             annotation_warning=annotation_hooks.annotation_warning_message(
                 node.annotations
             ),
+            param_defaults=_function_param_defaults_for_overload(node, params),
         )
         typ = T.Overloads(overload)
         return FunctionAnalysis(
@@ -2395,6 +2496,10 @@ class Analyser:
                 ),
                 annotation_warning=annotation_hooks.annotation_warning_message(
                     node.annotations
+                ),
+                param_defaults=_function_param_defaults_for_overload(
+                    node,
+                    branch.inputs,
                 ),
             )
             signatures.setdefault(signature, branch.typed_body)
@@ -2526,6 +2631,7 @@ def _fully_typed_overload(node: FunctionNode) -> T.Overload | None:
         element_tags=node.element_tags,
         annotation_error=annotation_hooks.annotation_error_message(node.annotations),
         annotation_warning=annotation_hooks.annotation_warning_message(node.annotations),
+        param_defaults=_function_param_defaults_for_overload(node, params),
     )
 
 
@@ -2614,12 +2720,16 @@ def _call_site_substituted_params(
     for param, actual in zip(params, actuals, strict=True):
         typ = param.typ
         if typ is None:
-            substituted.append(FunctionParam(param.name, actual))
+            substituted.append(FunctionParam(param.name, actual, param.default))
             continue
         if not _call_site_placeholder_accepts(typ, actual, ctx):
             return None
         substituted.append(
-            FunctionParam(param.name, _call_site_substitute_type(typ, actual))
+            FunctionParam(
+                param.name,
+                _call_site_substitute_type(typ, actual),
+                param.default,
+            )
         )
     return tuple(substituted)
 
@@ -2668,6 +2778,18 @@ def _function_param_names_for_overload(
     if len(names) < len(inputs):
         return (None,) * (len(inputs) - len(names)) + names
     return names
+
+
+def _function_param_defaults_for_overload(
+    node: FunctionNode,
+    inputs: tuple[T.Type, ...],
+) -> tuple[tuple[object, ...] | None, ...]:
+    if node.params is None:
+        return (None,) * len(inputs)
+    defaults = tuple(param.default or None for param in node.params)
+    if len(defaults) < len(inputs):
+        return (None,) * (len(inputs) - len(defaults)) + defaults
+    return defaults
 
 
 def _contains_rank_var(types: tuple[T.Type, ...]) -> bool:
@@ -2892,6 +3014,130 @@ def _source_element_arguments(
                 specialized_popped,
                 specialized_modifiers,
             )
+
+
+def _prepare_element_call_branches(
+    branch: AnalysisBranch,
+    overload: T.Overload,
+    call_args: tuple[CallArgument, ...],
+    has_modifier_args: bool,
+    analyser: Analyser,
+) -> tuple[AnalysisBranch, ...]:
+    ordered = _ordered_element_call_arguments(overload, call_args, has_modifier_args)
+    if ordered is None:
+        return ()
+    current = BranchSet.one(branch)
+    for expression in ordered:
+        current = current.extend_block(expression, analyser)
+        if not current:
+            return ()
+    return tuple(current)
+
+
+def _prepare_default_argument_branches(
+    branch: AnalysisBranch,
+    overload: T.Overload,
+    has_modifier_args: bool,
+    analyser: Analyser,
+) -> tuple[AnalysisBranch, ...]:
+    param_defaults = overload.param_defaults
+    if not param_defaults:
+        return (branch,)
+    non_modifier_indexes = tuple(
+        index
+        for index in range(len(overload.params))
+        if not has_modifier_args or index not in _modifier_param_indexes(overload.params)
+    )
+    if not non_modifier_indexes:
+        return (branch,)
+    missing = max(0, len(non_modifier_indexes) - len(branch.stack))
+    if missing <= 0:
+        return (branch,)
+    defaultable_suffix: list[int] = []
+    for index in reversed(non_modifier_indexes):
+        if index >= len(param_defaults) or param_defaults[index] is None:
+            break
+        defaultable_suffix.append(index)
+    defaultable_suffix.reverse()
+    if not defaultable_suffix:
+        return (branch,)
+    default_needed = min(missing, len(defaultable_suffix))
+    ordered_defaults = tuple(
+        cast("tuple[ASTNode, ...]", param_defaults[index])
+        for index in defaultable_suffix[-default_needed:]
+    )
+    current = BranchSet.one(branch)
+    for expression in ordered_defaults:
+        current = current.extend_block(expression, analyser)
+        if not current:
+            return ()
+    return tuple(current)
+
+
+def _ordered_element_call_arguments(
+    overload: T.Overload,
+    call_args: tuple[CallArgument, ...],
+    has_modifier_args: bool,
+) -> tuple[tuple[ASTNode, ...], ...] | None:
+    param_count = len(overload.params)
+    if param_count == 0:
+        return () if not call_args else None
+    param_names = overload.param_names or (None,) * param_count
+    param_defaults = overload.param_defaults or (None,) * param_count
+    if len(param_names) < param_count:
+        param_names = (None,) * (param_count - len(param_names)) + param_names
+    if len(param_defaults) < param_count:
+        param_defaults = (None,) * (param_count - len(param_defaults)) + param_defaults
+
+    modifier_indexes = (
+        set(_modifier_param_indexes(overload.params)) if has_modifier_args else set()
+    )
+    assignments: list[CallArgument | tuple[ASTNode, ...] | None] = [None] * param_count
+    cursor = 0
+
+    for arg in call_args:
+        if arg.name is not None:
+            try:
+                index = next(
+                    candidate
+                    for candidate, name in enumerate(param_names)
+                    if name == arg.name
+                )
+            except StopIteration:
+                return None
+            if index in modifier_indexes or assignments[index] is not None:
+                return None
+            if param_defaults[index] is None:
+                return None
+            assignments[index] = arg
+            continue
+
+        while cursor < param_count and (
+            cursor in modifier_indexes or assignments[cursor] is not None
+        ):
+            cursor += 1
+        if cursor >= param_count:
+            return None
+        assignments[cursor] = arg
+        cursor += 1
+
+    ordered: list[tuple[ASTNode, ...]] = []
+    for index in range(param_count):
+        if index in modifier_indexes:
+            continue
+        assigned = assignments[index]
+        if isinstance(assigned, CallArgument):
+            if assigned.placeholder:
+                continue
+            ordered.append(assigned.value)
+            continue
+        if assigned is not None:
+            ordered.append(assigned)
+            continue
+        default = param_defaults[index]
+        if default is not None:
+            ordered.append(cast("tuple[ASTNode, ...]", default))
+    return tuple(ordered)
 
 
 def _merge_element_arguments(
@@ -3259,6 +3505,7 @@ def _call_site_checked_overload_signature(
         element_tags=overload.element_tags,
         annotation_error=overload.annotation_error,
         annotation_warning=overload.annotation_warning,
+        param_defaults=(None,) * len(call_params),
     )
 
 
@@ -3551,6 +3798,7 @@ def _substitute_overload_ranks(
         ),
         overload.annotation_error,
         overload.annotation_warning,
+        overload.param_defaults,
     )
 
 
@@ -4456,6 +4704,7 @@ def _with_generic_constraints(
         overload.element_tags,
         overload.annotation_error,
         overload.annotation_warning,
+        overload.param_defaults,
     )
 
 
@@ -4471,6 +4720,10 @@ def _genericize_function_node(
             FunctionParam(
                 param.name,
                 None if param.typ is None else _genericize_type(param.typ, generics),
+                tuple(
+                    cast(ASTNode, _genericize_ast_node(node, generics))
+                    for node in param.default
+                ),
             )
             for param in function.params
         )
@@ -4505,7 +4758,21 @@ def _genericize_ast_value(value: object, generics: tuple[Symbol, ...]) -> object
         return _genericize_type(value, generics)
     if isinstance(value, FunctionParam):
         typ = None if value.typ is None else _genericize_type(value.typ, generics)
-        return replace(value, typ=typ) if typ is not value.typ else value
+        default = tuple(
+            cast(ASTNode, _genericize_ast_node(node, generics))
+            for node in value.default
+        )
+        if typ is value.typ and default == value.default:
+            return value
+        return replace(value, typ=typ, default=default)
+    if isinstance(value, CallArgument):
+        default = tuple(
+            cast(ASTNode, _genericize_ast_node(node, generics))
+            for node in value.value
+        )
+        if default == value.value:
+            return value
+        return replace(value, value=default)
     if isinstance(value, ASTNode):
         return _genericize_ast_node(value, generics)
     if isinstance(value, tuple):
@@ -4543,6 +4810,11 @@ def _genericize_requirement(
             requirement.overload.generic_constraints,
             requirement.overload.where_clause,
             requirement.overload.param_names,
+            requirement.overload.call_site_body,
+            requirement.overload.element_tags,
+            requirement.overload.annotation_error,
+            requirement.overload.annotation_warning,
+            requirement.overload.param_defaults,
         ),
     )
 

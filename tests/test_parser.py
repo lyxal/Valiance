@@ -6,6 +6,7 @@ from valiance.asts import (
     AtNode,
     BindingPatternNode,
     BreakNode,
+    CallArgument,
     CastNode,
     DefineNode,
     ElementNode,
@@ -104,11 +105,17 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(
             program,
             [
-                StringLiteralNode("hello"),
-                ElementNode(Symbol("println")),
-                NumberLiteralNode("40"),
-                NumberLiteralNode("2"),
-                ElementNode(Symbol("+")),
+                ElementNode(
+                    Symbol("println"),
+                    call_args=(CallArgument(value=(StringLiteralNode("hello"),)),),
+                ),
+                ElementNode(
+                    Symbol("+"),
+                    call_args=(
+                        CallArgument(value=(NumberLiteralNode("40"),)),
+                        CallArgument(value=(NumberLiteralNode("2"),)),
+                    ),
+                ),
                 SetVariableNode(Symbol("answer")),
             ],
         )
@@ -249,6 +256,18 @@ class ParserTests(unittest.TestCase):
             ],
         )
 
+    def test_parses_quick_function(self):
+        program = parse("[1, 2, 3] '< 5 filter")
+
+        self.assertIsInstance(program[0], ListLiteralNode)
+        self.assertEqual(
+            program[1],
+            FunctionNode(
+                body=(NumberLiteralNode("5"), ElementNode(Symbol("<"))),
+            ),
+        )
+        self.assertEqual(program[2], ElementNode(Symbol("filter")))
+
     def test_parses_braced_tuple_literal(self):
         [node] = parse("{1, 2, 3, 4}")
 
@@ -325,28 +344,42 @@ class ParserTests(unittest.TestCase):
         program = parse("+[Number+, _]([[1, 2]], [10, 20])\nmap[Number]: double")
 
         self.assertEqual(
-            program[:3],
-            [
-                ListLiteralNode(
-                    (
-                        (
+            program[0],
+            ElementNode(
+                Symbol("+"),
+                disambiguation=(C(ListExactType, Number), None),
+                call_args=(
+                    CallArgument(
+                        value=(
                             ListLiteralNode(
-                                ((NumberLiteralNode("1"),), (NumberLiteralNode("2"),))
+                                (
+                                    (
+                                        ListLiteralNode(
+                                            (
+                                                (NumberLiteralNode("1"),),
+                                                (NumberLiteralNode("2"),),
+                                            )
+                                        ),
+                                    ),
+                                )
                             ),
-                        ),
-                    )
+                        )
+                    ),
+                    CallArgument(
+                        value=(
+                            ListLiteralNode(
+                                (
+                                    (NumberLiteralNode("10"),),
+                                    (NumberLiteralNode("20"),),
+                                )
+                            ),
+                        )
+                    ),
                 ),
-                ListLiteralNode(
-                    ((NumberLiteralNode("10"),), (NumberLiteralNode("20"),))
-                ),
-                ElementNode(
-                    Symbol("+"),
-                    disambiguation=(C(ListExactType, Number), None),
-                ),
-            ],
+            ),
         )
         self.assertEqual(
-            program[3],
+            program[1],
             ElementNode(
                 Symbol("map"),
                 (FunctionNode(body=(ElementNode(Symbol("double")),)),),
@@ -379,6 +412,12 @@ class ParserTests(unittest.TestCase):
         self.assertTrue(same(node.function.params[0].typ, Number))
         self.assertEqual(node.function.returns, (Number,))
         self.assertEqual(node.function.body[-1], ElementNode(Symbol("*")))
+
+    def test_parses_trailing_default_define_parameters(self):
+        [node] = parse("define pick(a: Number, b: Number = 2) -> Number => $a")
+
+        self.assertEqual(node.function.params[0].default, ())
+        self.assertEqual(node.function.params[1].default, (NumberLiteralNode("2"),))
 
     def test_parses_eager_define_element_tag(self):
         [node] = parse("eager define log(value: Number) -> => $value println")
@@ -490,8 +529,12 @@ public import {
         self.assertEqual(
             node.function.body,
             (
-                StringLiteralNode("Hello, World!"),
-                ElementNode(Symbol("println")),
+                ElementNode(
+                    Symbol("println"),
+                    call_args=(
+                        CallArgument(value=(StringLiteralNode("Hello, World!"),)),
+                    ),
+                ),
             ),
         )
 
@@ -595,7 +638,12 @@ end
     def test_parses_builtin_qualified_element_name(self):
         self.assertEqual(
             parse("*::Some(1)"),
-            [NumberLiteralNode("1"), ElementNode(Symbol("*::Some"))],
+            [
+                ElementNode(
+                    Symbol("*::Some"),
+                    call_args=(CallArgument(value=(NumberLiteralNode("1"),)),),
+                )
+            ],
         )
         self.assertEqual(
             parse("1 2 *::+"),
@@ -789,7 +837,16 @@ end
 
         self.assertIsInstance(node, ListLiteralNode)
         self.assertEqual(node.items[0], (NumberLiteralNode("1"),))
-        self.assertEqual(node.items[1][-1], ElementNode(Symbol("+")))
+        self.assertEqual(
+            node.items[1][-1],
+            ElementNode(
+                Symbol("+"),
+                call_args=(
+                    CallArgument(value=(NumberLiteralNode("2"),)),
+                    CallArgument(value=(NumberLiteralNode("3"),)),
+                ),
+            ),
+        )
         self.assertEqual(node.items[2], (StringLiteralNode("x"),))
 
     def test_parses_type_syntax(self):

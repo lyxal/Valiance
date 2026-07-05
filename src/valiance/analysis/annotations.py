@@ -200,6 +200,9 @@ def commutative_overloads(overload: T.Overload) -> tuple[T.Overload, ...]:
                 overload.element_tags,
                 overload.annotation_error,
                 overload.annotation_warning,
+                tuple(overload.param_defaults[index] for index in order)
+                if overload.param_defaults
+                else (),
             )
         )
     return tuple(generated)
@@ -254,6 +257,11 @@ def recursive_overload(
         element_tags=node.element_tags,
         annotation_error=annotation_error_message(node.annotations),
         annotation_warning=annotation_warning_message(node.annotations),
+        param_defaults=(
+            tuple(param.default or None for param in node.params)
+            if node.params is not None
+            else (None,) * len(params)
+        ),
     )
 
 

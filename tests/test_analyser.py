@@ -1515,6 +1515,57 @@ end
         self.assertEqual(typed[-1].overload.params, (String, String))
         self.assertEqual(typed[-1].overload.actual_returns, (String,))
 
+    def test_trailing_default_parameters_apply_to_plain_element_calls(self):
+        analyser = Analyser()
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            tuple(
+                parse(
+                    """
+define pick(a: Number, b: Number = 2) -> Number => $a $b +
+pick
+"""
+                )
+            ),
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
+
+    def test_optional_parameters_can_be_overridden_with_named_ecs(self):
+        analyser = Analyser()
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            tuple(
+                parse(
+                    """
+define pick(a: Number, b: Number = 2) -> Number => $a $b +
+pick(b = 3)
+"""
+                )
+            ),
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
+
+    def test_optional_parameters_can_be_overridden_with_placeholder_ecs(self):
+        analyser = Analyser()
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            tuple(
+                parse(
+                    """
+define pick(a: Number, b: Number = 2) -> Number => $a $b +
+pick(_, 4)
+"""
+                )
+            ),
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
+
     def test_function_with_generic_function_parameter_is_call_site_checked(self):
         typ = analyse_function(
             FunctionNode(

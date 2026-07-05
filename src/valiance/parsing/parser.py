@@ -14,6 +14,7 @@ from valiance.asts import (
     AtNode,
     BindingPatternNode,
     BreakNode,
+    CallArgument,
     CastNode,
     DefineNode,
     DictLiteralNode,
@@ -270,7 +271,7 @@ class Parser:
     ) -> DefineNode:
         generics, generic_variances, generic_constraints = self._generic_parameters()
         name = self._symbol("expected definition name")
-        params = self._params() if self._match(TokenKind.LPAREN) else None
+        params = self._params(allow_defaults=True) if self._match(TokenKind.LPAREN) else None
         element_tags = set(self._function_element_tags())
         if eager:
             element_tags.add(ElementTag(Symbol("Eager")))
@@ -1010,12 +1011,14 @@ class Parser:
                 else self._qualified_symbol(token)
             )
             disambiguation = self._element_disambiguation(self._previous)
+            call_anchor = self._previous
             return _ChainPiece(
                 (
                     ElementNode(
                         name,
                         (),
                         disambiguation,
+                        (),
                         (annotation,),
                         location=_loc(token),
                     ),
@@ -1038,6 +1041,12 @@ class Parser:
             )
         if self._match_ident("fn"):
             return _ChainPiece((self._function(self._previous),), True)
+        if self._match(TokenKind.QUOTE):
+            start = self._previous
+            body = self._chain_segment_until(_LINE_TERMINATORS | {TokenKind.PIPE})
+            if not body:
+                self._error("expected quick function body")
+            return _ChainPiece((FunctionNode(body=body, location=_loc(start)),), True)
         if self._match_ident("if"):
             return _ChainPiece((self._if(self._previous),), True)
         if self._match_ident("assert"):
@@ -1081,6 +1090,7 @@ class Parser:
                 else self._qualified_symbol(token)
             )
             disambiguation = self._element_disambiguation(self._previous)
+            call_anchor = self._previous
             if self._match(TokenKind.COLON):
                 return _ChainPiece(
                     (
@@ -1088,22 +1098,20 @@ class Parser:
                             name,
                             self._modifier_arguments(token),
                             disambiguation,
+                            (),
                             location=_loc(token),
                         ),
                     ),
                     True,
                 )
-            if self._match(TokenKind.LPAREN):
-                args = self._argument_expressions(TokenKind.RPAREN)
+            if self._check(TokenKind.LPAREN) and self._adjacent(call_anchor, self._current):
+                self._advance()
                 return _ChainPiece(
-                    (
-                        *_flatten(args),
-                        ElementNode(name, (), disambiguation, location=_loc(token)),
-                    ),
+                    (ElementNode(name, (), disambiguation, self._call_arguments(), location=_loc(token)),),
                     True,
                 )
             return _ChainPiece(
-                (ElementNode(name, (), disambiguation, location=_loc(token)),),
+                (ElementNode(name, (), disambiguation, (), location=_loc(token)),),
                 breaks_chain=name.text.startswith("\\"),
                 is_element=True,
             )
@@ -1267,7 +1275,8 @@ class Parser:
                 (*prefix, *rhs, SetVariableNode(name, location=_loc(start))),
                 True,
             )
-        if self._match(TokenKind.LPAREN):
+        if self._check(TokenKind.LPAREN) and self._adjacent(self._previous, self._current):
+            self._advance()
             args = self._argument_expressions(TokenKind.RPAREN)
             return _ChainPiece(
                 (*_flatten(args), GetVariableNode(name, location=_loc(start))),
@@ -1338,6 +1347,38 @@ class Parser:
         if self._check(closer):
             self._error("empty argument lists are invalid; use a \\nilad name")
         return self._comma_expressions(closer)
+
+    def _call_arguments(self) -> tuple[CallArgument, ...]:
+        args: list[CallArgument] = []
+        self._skip_newlines()
+        if self._check(TokenKind.RPAREN):
+            self._error("empty argument lists are invalid; use a \\nilad name")
+        while True:
+            self._skip_newlines()
+            if self._check(TokenKind.IDENT) and self._current.value == "_" and (
+                self._peek(1).kind in {TokenKind.COMMA, TokenKind.RPAREN}
+            ):
+                self._advance()
+                args.append(CallArgument(placeholder=True))
+            elif (
+                self._check(TokenKind.IDENT)
+                and self._peek(1).kind is TokenKind.ASSIGN
+            ):
+                name = Symbol(self._advance().value)
+                self._expect(TokenKind.ASSIGN)
+                value = self._chain_until({TokenKind.COMMA, TokenKind.RPAREN})
+                if not value:
+                    self._error("expected named argument value")
+                args.append(CallArgument(name, value))
+            else:
+                value = self._chain_until({TokenKind.COMMA, TokenKind.RPAREN})
+                if not value:
+                    self._error("expected argument")
+                args.append(CallArgument(None, value))
+            self._skip_newlines()
+            if self._match(TokenKind.RPAREN):
+                return tuple(args)
+            self._expect(TokenKind.COMMA)
 
     def _element_disambiguation(self, start: Token) -> tuple[Type | None, ...]:
         if not self._check(TokenKind.LBRACKET) or self._current.offset != (
@@ -1447,14 +1488,16 @@ class Parser:
             self._error("annotation arguments must contain exactly one expression")
         return values[0]
 
-    def _params(self) -> tuple[FunctionParam, ...]:
+    def _params(self, *, allow_defaults: bool = False) -> tuple[FunctionParam, ...]:
         params: list[FunctionParam] = []
+        seen_default = False
         self._skip_newlines()
         if self._check(TokenKind.RPAREN):
             self._error("empty parameter lists are invalid; use a \\nilad name")
         while True:
             name: Symbol | None = None
             typ: Type | None = None
+            default: tuple[ASTNode, ...] = ()
             if self._match(TokenKind.COLON):
                 typ = self._parameter_type()
             elif self._check(TokenKind.IDENT) and self._peek(1).kind == TokenKind.COLON:
@@ -1463,7 +1506,16 @@ class Parser:
                 typ = self._parameter_type()
             else:
                 name = self._symbol("expected parameter")
-            params.append(FunctionParam(name, typ))
+            if self._match(TokenKind.ASSIGN):
+                if not allow_defaults:
+                    self._error("parameter defaults are only allowed on define")
+                default = self._chain_until({TokenKind.COMMA, TokenKind.RPAREN})
+                if not default:
+                    self._error("expected default parameter value")
+                seen_default = True
+            elif seen_default:
+                self._error("parameters with defaults must be trailing")
+            params.append(FunctionParam(name, typ, default))
             if self._match(TokenKind.RPAREN):
                 return tuple(params)
             self._expect(TokenKind.COMMA)

@@ -66,6 +66,16 @@ class FunctionParam:
 
     name: Symbol | None = None
     typ: Type | None = None
+    default: tuple[ASTNode, ...] = ()
+
+
+@dataclass(frozen=True)
+class CallArgument:
+    """One explicit element-call argument."""
+
+    name: Symbol | None = None
+    value: tuple[ASTNode, ...] = ()
+    placeholder: bool = False
 
 
 @dataclass(frozen=True)
@@ -96,6 +106,7 @@ class ElementNode(ASTNode):
     name: Symbol
     modifier_args: tuple[FunctionNode, ...] = ()
     disambiguation: tuple[Type | None, ...] = ()
+    call_args: tuple[CallArgument, ...] = ()
     annotations: tuple[ASTNode, ...] = ()
 
 

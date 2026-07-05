@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 from valiance.asts.nodes import (
     ASTNode,
+    CallArgument,
     CastNode,
     ElementNode,
     FieldAccessNode,
@@ -82,18 +83,26 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
                 "_" if hint is None else str(hint) for hint in value.disambiguation
             )
             disambiguation = f", disambiguation=[{hints}]"
-        if not value.modifier_args:
+        if not value.modifier_args and not value.call_args:
             return (
                 f"ElementNode(name={value.name}{disambiguation}"
                 f"{_location_arg(value)})"
             )
         lines = [
             f"ElementNode(name={value.name}{disambiguation}"
-            f"{_location_arg(value)}, modifier_args=["
+            f"{_location_arg(value)}"
         ]
-        for arg in value.modifier_args:
-            lines.extend(_indent(_pretty(arg, level + 1).splitlines()))
-        lines.append("])")
+        if value.call_args:
+            lines.append("  call_args=[")
+            for arg in value.call_args:
+                lines.append(f"    {_call_argument_label(arg)}")
+            lines.append("  ]")
+        if value.modifier_args:
+            lines.append("  modifier_args=[")
+            for arg in value.modifier_args:
+                lines.extend(_indent(_pretty(arg, level + 1).splitlines(), 4))
+            lines.append("  ]")
+        lines.append(")")
         return "\n".join(lines)
     if isinstance(value, GetVariableNode):
         return f"GetVariableNode(name={value.name}{_location_arg(value)})"
@@ -224,7 +233,24 @@ def _params_label(params: tuple[FunctionParam, ...] | None) -> str:
 def _param_label(param: FunctionParam) -> str:
     name = "_" if param.name is None else str(param.name)
     typ = "infer" if param.typ is None else str(param.typ)
-    return f"{name}: {typ}"
+    if not param.default:
+        return f"{name}: {typ}"
+    return f"{name}: {typ} = {_nodes_label(param.default)}"
+
+
+def _call_argument_label(arg: CallArgument) -> str:
+    if arg.placeholder:
+        return "_"
+    value = _nodes_label(arg.value)
+    if arg.name is None:
+        return value
+    return f"{arg.name} = {value}"
+
+
+def _nodes_label(nodes: tuple[ASTNode, ...]) -> str:
+    if len(nodes) == 1:
+        return _pretty(nodes[0], 0)
+    return "[" + ", ".join(_pretty(node, 0) for node in nodes) + "]"
 
 
 def _types_label(types: tuple[Type, ...] | None) -> str:

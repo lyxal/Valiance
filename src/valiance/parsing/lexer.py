@@ -32,6 +32,7 @@ class TokenKind(StrEnum):
     PIPE = "|"
     AT = "@"
     DOLLAR = "$"
+    QUOTE = "'"
     OP = "OP"
 
 
@@ -62,6 +63,7 @@ _SINGLE = {
     "|": TokenKind.PIPE,
     "@": TokenKind.AT,
     "$": TokenKind.DOLLAR,
+    "'": TokenKind.QUOTE,
 }
 
 _OP_CHARS = set("+-*%!?=/<>~&^")

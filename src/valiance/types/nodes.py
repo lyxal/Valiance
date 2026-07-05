@@ -233,6 +233,11 @@ class Overload:
     element_tags: frozenset[ElementTag] = field(default_factory=frozenset[ElementTag])
     annotation_error: str | None = None
     annotation_warning: str | None = None
+    param_defaults: tuple[tuple[object, ...] | None, ...] = field(
+        default=(),
+        compare=False,
+        hash=False,
+    )
 
 
 @dataclass(frozen=True)
