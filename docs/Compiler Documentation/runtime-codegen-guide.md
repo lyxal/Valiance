@@ -232,8 +232,7 @@ Add new built-ins in `src/valiance/analysis/builtins.py`, using the
 to hand-edit. `BUILTIN_ELEMENTS` still exists as a module-level export for
 callers that want the full catalogue directly, but it is derived from the
 registry at import time (`BUILTIN_ELEMENTS = _all_elements()`) after every
-`@builtin(...)` / `declare_overload(...)` call has run -- treat it as
-read-only and never append to it by hand.
+`@builtin(...)` call has run -- treat it as read-only and never append to it by hand.
 
 1. Write the runtime implementation as a function with signature
    `(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]`.
@@ -244,11 +243,9 @@ read-only and never append to it by hand.
    overload. Decorator stacking applies bottom-up, so the overload closest to
    `def` registers first; keep that in mind if overload order matters (see
    "Resolved Overload Codegen" below).
-4. If overloads have different implementations, decorate separate functions
+4. If there are other names for the built-in, add `@alias(...)` decorators after the `@builtin(...)` decorators.
+5. If overloads have different implementations, decorate separate functions
    with the same `name` string instead.
-5. If an overload is analyser-visible but has no runtime behaviour yet, use
-   `declare_overload(name, params, returns, generic_constraints=())` instead
-   of `@builtin(...)` -- there is no function to decorate.
 6. Put value-shape checks inside the implementation only for things the
    signature cannot prove -- see the "Core Invariants" note above. Do not
    duplicate checks the type system already guarantees.
@@ -274,22 +271,6 @@ Example shape, multiple overloads sharing one implementation:
 @builtin("==", (T.String, T.String), (T.Boolean,))
 def _equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (_truth(args[0] == args[1]),)
-```
-
-Example shape, an overload with no runtime implementation:
-
-```python
-declare_overload(
-    "/",
-    (
-        T.ExactList(T.TypeVariable("Item")),
-        T.Fn(
-            (T.TypeVariable("Item"), T.TypeVariable("Item")),
-            (T.TypeVariable("Item"),),
-        ),
-    ),
-    (T.TypeVariable("Item"),),
-)
 ```
 
 Example shape, eager side-effecting built-in:

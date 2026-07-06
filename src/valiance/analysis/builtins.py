@@ -109,10 +109,7 @@ class BuiltinElement:
 # `_REGISTRY` collects one `BuiltinOverload` per (name, signature) pair.
 # `@builtin(...)` appends to it, and can be stacked on a single function
 # when several overloads share one implementation, or applied separately
-# to distinct functions when they don't. `declare_overload(...)` is the
-# only exception: it registers a signature with no implementation, for
-# overloads the analyser should know about before a runtime behaviour
-# exists.
+# to distinct functions when they don't.
 # --------------------------------------------------------------------------
 
 _REGISTRY: dict[str, list[BuiltinOverload]] = {}
@@ -126,51 +123,52 @@ def builtin(
     call_site: Callable[..., T.Overload | None] | None = None,
     element_tags: tuple[T.ElementTag, ...] = (),
 ):
-    """Register one overload of `name`, implemented by the decorated function.
-
-    Stack multiple `@builtin(...)` applications on the same function when
-    those overloads share an implementation; decorate separate functions
-    with the same name when they don't.
-    """
+    """Register one overload of `name`, implemented by the decorated function."""
 
     def register(fn: RuntimeImpl) -> RuntimeImpl:
-        key = name.text if isinstance(name, Symbol) else name
-        _REGISTRY.setdefault(key, []).append(
-            BuiltinOverload(
-                T.Overload(
-                    params,
-                    returns,
-                    generic_constraints,
-                    call_site_body=call_site,
-                    element_tags=frozenset(element_tags),
-                ),
-                fn,
-            )
+        overload = BuiltinOverload(
+            T.Overload(
+                params,
+                returns,
+                generic_constraints,
+                call_site_body=call_site,
+                element_tags=frozenset(element_tags),
+            ),
+            fn,
         )
+
+        aliases: tuple[str, ...] = getattr(fn, _ALIAS_ATTR, ())
+        names = dict.fromkeys((_name_key(name), *aliases))
+
+        for key in names:
+            _REGISTRY.setdefault(key, []).append(overload)
+
         return fn
 
     return register
 
 
-def declare_overload(
-    name: str,
-    params: tuple[T.Type, ...],
-    returns: tuple[T.Type, ...],
-    generic_constraints: tuple[T.GenericConstraint, ...] = (),
-    element_tags: tuple[T.ElementTag, ...] = (),
-) -> None:
-    """Register a signature for `name` with no runtime implementation yet."""
-    _REGISTRY.setdefault(name, []).append(
-        BuiltinOverload(
-            T.Overload(
-                params,
-                returns,
-                generic_constraints,
-                element_tags=frozenset(element_tags),
-            ),
-            None,
-        )
-    )
+_ALIAS_ATTR = "__builtin_aliases__"
+
+
+def _name_key(name: str | Symbol) -> str:
+    return name.text if isinstance(name, Symbol) else name
+
+
+def alias(*names: str | Symbol):
+    """Add alternative names to all @builtin overloads on this function."""
+
+    if not names:
+        raise ValueError("alias() requires at least one name")
+
+    keys = tuple(dict.fromkeys(_name_key(name) for name in names))
+
+    def decorate(fn: RuntimeImpl) -> RuntimeImpl:
+        existing: tuple[str, ...] = getattr(fn, _ALIAS_ATTR, ())
+        setattr(fn, _ALIAS_ATTR, tuple(dict.fromkeys((*existing, *keys))))
+        return fn
+
+    return decorate
 
 
 # --------------------------------------------------------------------------
@@ -574,7 +572,8 @@ def _slash(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     ),
     (T.TypeVariable("Item"),),
 )
-def _reduce(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+@alias("fold")
+def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     iterator = iter(args[0])
     try:
         result = next(iterator)
@@ -582,8 +581,6 @@ def _reduce(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         raise RuntimeError("reduce requires a non-empty list") from exc
     for item in iterator:
         called = ctx.call(args[1], [result, item])
-        if len(called) != 1:
-            raise RuntimeError("reduce function must return exactly one value")
         result = called[0]
     return (result,)
 
@@ -684,6 +681,7 @@ def _map_eager_effect(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
     (T.WithoutTag(T.ExactList(T.TypeVariable("Item")), "infinite"),),
     (T.Number,),
 )
+@alias("len")
 def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (Decimal(len(args[0])),)
 
@@ -859,8 +857,8 @@ def _all_elements() -> tuple[BuiltinElement, ...]:
 
 # Public, for callers that want the full built-in catalogue directly (e.g.
 # `from valiance.analysis.builtins import BUILTIN_ELEMENTS`). This is derived
-# from `_REGISTRY` once, at import time, after every `@builtin(...)` /
-# `declare_overload(...)` call above has run -- it is not hand-maintained.
+# from `_REGISTRY` once, at import time, after every `@builtin(...)` call above has run
+# -- it is not hand-maintained.
 BUILTIN_ELEMENTS: tuple[BuiltinElement, ...] = _all_elements()
 
 
