@@ -142,6 +142,52 @@ class AnalyserTests(unittest.TestCase):
             TypeStack((String, Integer, Bool, Bool, Number)),
         )
 
+    def test_stack_shuffle_copy_rejects_uncopyable_object(self):
+        analyser = Analyser()
+        analyser.analyse(
+            parse(
+                """
+object WriteFile =>
+  @error("Writeable files cannot be duplicated")
+  define dup => end
+end
+
+WriteFile
+copy(file -> file)
+"""
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("cannot copy value of type WriteFile", analyser.diagnostics[0])
+        self.assertIn(
+            "Writeable files cannot be duplicated",
+            analyser.diagnostics[0],
+        )
+
+    def test_stack_shuffle_move_rejects_uncopyable_repeated_output(self):
+        analyser = Analyser()
+        analyser.analyse(
+            parse(
+                """
+object WriteFile =>
+  @error("Writeable files cannot be duplicated")
+  define dup => end
+end
+
+WriteFile
+move(file -> file, file)
+"""
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("cannot copy value of type WriteFile", analyser.diagnostics[0])
+        self.assertIn(
+            "Writeable files cannot be duplicated",
+            analyser.diagnostics[0],
+        )
+
     def test_default_environment_includes_builtin_plus(self):
         typed = analyse(
             [

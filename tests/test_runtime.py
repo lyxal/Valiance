@@ -709,23 +709,6 @@ $file
         self.assertIn("uncaught panic: DuplicationFault", str(caught.exception))
         self.assertIn("Writeable files cannot be duplicated", str(caught.exception))
 
-    def test_stack_shuffle_copy_triggers_duplication_fault(self):
-        with self.assertRaises(RuntimeError) as caught:
-            execute(
-                """
-object WriteFile =>
-  @error("Writeable files cannot be duplicated")
-  define dup => end
-end
-
-WriteFile
-copy(file -> file)
-"""
-            )
-
-        self.assertIn("uncaught panic: DuplicationFault", str(caught.exception))
-        self.assertIn("Writeable files cannot be duplicated", str(caught.exception))
-
     def test_mustcall_cleanup_fault_still_runs_destructor(self):
         output = io.StringIO()
         source = """

@@ -1276,6 +1276,23 @@ class Analyser:
             for label, typ in zip(node.prestack, args, strict=True)
             if label is not None
         }
+        stack_arg_start = len(node.prestack) - min(
+            len(branch.stack),
+            len(node.prestack),
+        )
+        copy_errors = tuple(
+            _copy_diagnostic(typ, self.env)
+            for typ in _copied_stack_shuffle_types(
+                node,
+                args,
+                labelled,
+                stack_arg_start,
+            )
+        )
+        for error in copy_errors:
+            if error is not None:
+                self._diagnose(error, node)
+                return set()
         post_types = tuple(labelled[label] for label in node.poststack)
         if node.mode == Symbol("copy"):
             stack = branch.stack.push(*post_types)
@@ -4934,6 +4951,82 @@ def _types_overlap(source: T.Type, target: T.Type, ctx: T.Context) -> bool:
     if isinstance(target, T.UnionType):
         return any(_types_overlap(source, item, ctx) for item in target.items)
     return False
+
+
+def _copied_stack_shuffle_types(
+    node: StackShuffleNode,
+    args: tuple[T.Type, ...],
+    labelled: dict[Symbol, T.Type],
+    stack_arg_start: int,
+) -> tuple[T.Type, ...]:
+    if node.mode == Symbol("copy"):
+        return tuple(dict.fromkeys(labelled[label] for label in node.poststack))
+
+    copied: list[T.Type] = []
+    counts: dict[Symbol, int] = {}
+    for label in node.poststack:
+        counts[label] = counts.get(label, 0) + 1
+
+    for index, (label, typ) in enumerate(zip(node.prestack, args, strict=True)):
+        if label is None:
+            if index < stack_arg_start:
+                copied.append(typ)
+            continue
+        count = counts.get(label, 0)
+        retains = count if index < stack_arg_start else max(count - 1, 0)
+        if retains:
+            copied.append(typ)
+    return tuple(dict.fromkeys(copied))
+
+
+def _copy_diagnostic(typ: T.Type, env: T.Environment) -> str | None:
+    reason = _noncopyable_reason(typ, env)
+    if reason is None:
+        return None
+    return f"cannot copy value of type {T.show(typ)}: {reason}"
+
+
+def _noncopyable_reason(typ: T.Type, env: T.Environment) -> str | None:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        return _noncopyable_reason(typ.inner, env)
+    if isinstance(typ, T.UnionType):
+        for item in typ.items:
+            reason = _noncopyable_reason(item, env)
+            if reason is not None:
+                return reason
+        return None
+    if isinstance(typ, T.IntersectionType):
+        for item in typ.items:
+            reason = _noncopyable_reason(item, env)
+            if reason is not None:
+                return reason
+        return None
+    if isinstance(typ, T.CollectionType):
+        return _noncopyable_reason(typ.base, env)
+    if isinstance(typ, T.TupleType):
+        for item in typ.params:
+            reason = _noncopyable_reason(item, env)
+            if reason is not None:
+                return reason
+        return None
+    if isinstance(typ, T.VariadicTupleType):
+        for item in typ.items:
+            reason = _noncopyable_reason(item.typ, env)
+            if reason is not None:
+                return reason
+        return None
+    if isinstance(typ, T.NominalType):
+        return _nominal_copy_error(typ.name, env)
+    return None
+
+
+def _nominal_copy_error(name: Symbol, env: T.Environment) -> str | None:
+    overloads = env.overloads_for(Symbol(f"{name}::dup"))
+    for overload in overloads:
+        if overload.annotation_error is not None:
+            return overload.annotation_error
+    return None
 
 
 def _number_literal_type(value: str) -> T.Type:

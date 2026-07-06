@@ -1097,7 +1097,7 @@ def _release_stack_tail(stack: list[Any], count: int, vm: VirtualMachine) -> Non
         _release_value(value, vm)
 
 
-def _retain_value(value: Any) -> Any:
+def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
     if isinstance(value, LazyList):
         value.refcount += 1
         return value
@@ -1105,7 +1105,8 @@ def _retain_value(value: Any) -> Any:
         if value.destroyed:
             raise RuntimeError(f"use after destruction of {_object_type_name(value)}")
         if (
-            value.runtime_type is not None
+            check_duplication
+            and value.runtime_type is not None
             and value.runtime_type.dup_error is not None
             and value.refcount >= 1
         ):
@@ -1122,15 +1123,15 @@ def _retain_value(value: Any) -> Any:
         return value
     if isinstance(value, list):
         for item in value:
-            _retain_value(item)
+            _retain_value(item, check_duplication=check_duplication)
         return value
     if isinstance(value, tuple):
         for item in value:
-            _retain_value(item)
+            _retain_value(item, check_duplication=check_duplication)
         return value
     if isinstance(value, dict):
         for item in value.values():
-            _retain_value(item)
+            _retain_value(item, check_duplication=check_duplication)
         return value
     return value
 
@@ -1500,7 +1501,7 @@ def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
     outputs = tuple(labelled[label] for label in poststack)
     if mode == "copy":
         for value in outputs:
-            _retain_value(value)
+            _retain_value(value, check_duplication=False)
         frame.cycle_index = next_cycle_index
         frame.stack.extend(outputs)
         return
@@ -1511,12 +1512,12 @@ def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
     for index, label in enumerate(prestack):
         if label is None:
             if index < stack_arg_start:
-                _retain_value(args[index])
+                _retain_value(args[index], check_duplication=False)
             continue
         count = output_counts[label]
         retains = count if index < stack_arg_start else max(count - 1, 0)
         for _ in range(retains):
-            _retain_value(args[index])
+            _retain_value(args[index], check_duplication=False)
         if count:
             retained_outputs.add(label)
 
