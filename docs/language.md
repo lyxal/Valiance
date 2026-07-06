@@ -1039,7 +1039,7 @@ end
 ```
 match =>
   [1, _, 3] => "3 items, don't know the middle"
-  [1, $x = _, 3] => "3 items, the middle is ${x}"
+  [1, $x = _, 3] => "3 items, the middle is ${$x}"
   [1, ..., 3] => "Who knows how many items, but the first is 1, the last is 3"
   [1, ..., 3, $y = ..., 6] => "Similar deal, but y is a list"
 end
@@ -1214,14 +1214,14 @@ Examples
 ```
 $count = 0
 while ($count < 10) =>
-  println("Count is ${count}")
+  println("Count is ${$count}")
   $count := increment
 end
 
 #? Functionally equivalent to
 
 0 while (< 10) =>
-  println("Count is {top}")
+  println("Count is ${top}")
   increment
 end
 ```

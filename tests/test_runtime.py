@@ -88,6 +88,10 @@ define pick(a: Number, b: Number = 2) -> Number => $a $b +
             [[Decimal("11"), Decimal("12"), Decimal("13")]],
         )
 
+    def test_repeats_strings_with_number_on_either_side(self):
+        self.assertEqual(execute('3 "ha" *'), ["hahaha"])
+        self.assertEqual(execute('"ha" 3 *'), ["hahaha"])
+
     def test_vectorises_scalar_overloads_over_lazy_lists(self):
         program = Program(
             FunctionCode(
@@ -365,7 +369,7 @@ define same(x, y) => $x $y +
         maker = program.main.instructions[0]
         self.assertEqual(maker.op, OpCode.MAKE_FUNCTION)
         self.assertIsInstance(maker.arg, FunctionSetCode)
-        self.assertEqual(len(maker.arg.overloads), 2)
+        self.assertEqual(len(maker.arg.overloads), 6)
         self.assertEqual(run(program), [Decimal("3")])
 
     def test_repeated_defines_merge_user_defined_overloads(self):
@@ -923,7 +927,7 @@ end
                 """
 [1, 99, 3]
 match =>
-  [1, $x = _, 3] => "3 items, the middle is ${x}"
+  [1, $x = _, 3] => "3 items, the middle is ${$x}"
   _ => "no"
 end
 """
@@ -950,7 +954,7 @@ end
 6
 match =>
   as :Number if > 5 => "Type match with guard"
-  as y => "Default named type match: ${y}"
+  as y => "Default named type match: ${$y}"
 end
 """
             ),
@@ -965,7 +969,7 @@ object Pair =>
 end
 Pair(5, 5)
 match =>
-  as :Pair(param, param) => "Destructured object with ${param}"
+  as :Pair(param, param) => "Destructured object with ${$param}"
   _ => "no"
 end
 """
@@ -996,6 +1000,43 @@ end
             ),
             ["mixed"],
         )
+        self.assertEqual(
+            execute(
+                """
+define classify =>
+  match =>
+    1, "x" => "hit"
+    _, _ => "miss"
+  end
+end
+classify("x", 1)
+"""
+            ),
+            ["hit"],
+        )
+
+    def test_fizzbuzz_match_maps_inferred_and_explicit_functions(self):
+        source = """
+range(1, 15) map {function}
+  match =>
+    if % 15 == 0 => "FizzBuzz"
+    if %  5 == 0 => "Buzz"
+    if %  3 == 0 => "Fizz"
+               _ => "${{top}}"
+  end
+end
+
+println
+"""
+        expected = (
+            "[1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14, "
+            "FizzBuzz]\n"
+        )
+        for function in ("fn =>", "fn (n: Integer) =>"):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(execute(source.format(function=function)), [])
+            self.assertEqual(output.getvalue(), expected)
 
     def test_executes_list_tuple_record_and_dict_literals(self):
         self.assertEqual(execute("[1, 2, 3] length"), [Decimal("3")])
@@ -1299,7 +1340,10 @@ println(triple([1, 2, 3, 4, 5]))
         with contextlib.redirect_stdout(output):
             execute("'+ | println")
 
-        self.assertEqual(output.getvalue(), "<overloaded function [2, 2]>\n")
+        self.assertEqual(
+            output.getvalue(),
+            "<overloaded function [2, 2, 2, 2, 2, 2]>\n",
+        )
 
         program = Program(
             FunctionCode(

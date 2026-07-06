@@ -43,6 +43,7 @@ class OpCode(Enum):
     STACK_SHUFFLE = "stack_shuffle"
     CYCLE_BEGIN = "cycle_begin"
     CYCLE_END = "cycle_end"
+    SOURCE_ARGS = "source_args"
     FOREACH = "foreach"
     LOOP_BREAK = "loop_break"
     POP = "pop"

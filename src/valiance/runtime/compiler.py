@@ -483,6 +483,9 @@ class _Compiler:
         )
 
     def match_node(self, node: MatchNode) -> None:
+        arity = _match_arity(node)
+        if arity:
+            self.emit(OpCode.SOURCE_ARGS, arity)
         case_jumps: list[tuple[int, MatchCaseNode]] = []
         default_case: MatchCaseNode | None = None
         for case in node.cases:
@@ -511,12 +514,14 @@ class _Compiler:
             self.patch_match(default_jump, len(self.instructions))
             for branch_node in default_case.body:
                 self.node(branch_node)
+            self.emit(OpCode.CYCLE_END)
             end_jumps.append(self.emit(OpCode.JUMP, None))
 
         for jump, case in case_jumps:
             self.patch_match(jump, len(self.instructions))
             for branch_node in case.body:
                 self.node(branch_node)
+            self.emit(OpCode.CYCLE_END)
             end_jumps.append(self.emit(OpCode.JUMP, None))
         end = len(self.instructions)
         for jump in end_jumps:
@@ -1088,6 +1093,15 @@ def _compile_case_patterns(
     patterns: tuple[MatchPatternNode, ...],
 ) -> tuple[object, ...]:
     return tuple(_compile_match_pattern(pattern) for pattern in patterns)
+
+
+def _match_arity(node: MatchNode) -> int | None:
+    if not node.cases:
+        return None
+    arities = {len(case.patterns) for case in node.cases}
+    if len(arities) != 1:
+        return None
+    return next(iter(arities))
 
 
 def _handler_type_name(handler: TryHandlerNode) -> str | None:

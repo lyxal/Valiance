@@ -214,7 +214,21 @@ class ParserTests(unittest.TestCase):
             parse('"Hello, ${name}"'),
             [
                 StringInterpolationNode(
-                    ("Hello, ", (GetVariableNode(Symbol("name")),)),
+                    ("Hello, ", (ElementNode(Symbol("name")),)),
+                ),
+            ],
+        )
+        self.assertEqual(
+            parse('"Hello, ${lower | trim}"'),
+            [
+                StringInterpolationNode(
+                    (
+                        "Hello, ",
+                        (
+                            ElementNode(Symbol("lower")),
+                            ElementNode(Symbol("trim")),
+                        ),
+                    ),
                 ),
             ],
         )

@@ -357,7 +357,7 @@ class VirtualMachine:
                         case OpCode.LOAD_ELEMENT:
                             frame.stack.append(
                                 _retain_value(
-                                    _load_name(
+                                    _load_element_name(
                                         instruction.arg,
                                         frame.locals,
                                         frame.globals,
@@ -486,10 +486,16 @@ class VirtualMachine:
                                 continue
                         case OpCode.JUMP_IF_MATCH:
                             patterns, target = instruction.arg
-                            bindings = self._match_patterns(frame, patterns)
-                            if bindings is not None:
+                            match_result = self._match_patterns(frame, patterns)
+                            if match_result is not None:
+                                bindings, values = match_result
                                 _release_stack_tail(frame.stack, len(patterns), self)
                                 frame.locals.update(bindings)
+                                frame.cycle_scopes.append(
+                                    (frame.cycle_values, frame.cycle_index)
+                                )
+                                frame.cycle_values = values
+                                frame.cycle_index = 0
                                 ip = target
                                 continue
                         case OpCode.MATCH_ERROR:
@@ -505,6 +511,13 @@ class VirtualMachine:
                             _enter_cycle(frame, instruction.arg)
                         case OpCode.CYCLE_END:
                             _exit_cycle(frame)
+                        case OpCode.SOURCE_ARGS:
+                            args = _source_args(
+                                frame,
+                                instruction.arg,
+                                "argument source",
+                            )
+                            frame.stack.extend(args)
                         case OpCode.FOREACH:
                             self._foreach(frame, instruction.arg)
                         case OpCode.LOOP_BREAK:
@@ -793,15 +806,17 @@ class VirtualMachine:
         self,
         frame: _Frame,
         patterns: tuple[object, ...],
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any], tuple[Any, ...]] | None:
         if len(frame.stack) < len(patterns):
             return None
         bindings: dict[str, Any] = {}
         values = tuple(reversed(frame.stack[-len(patterns) :]))
+        if values:
+            bindings["top"] = values[0]
         for pattern, value in zip(patterns, values, strict=True):
             if not self._match_pattern(value, pattern, bindings):
                 return None
-        return bindings
+        return bindings, values
 
     def _match_pattern(
         self,
@@ -1965,6 +1980,18 @@ def _load_name(name: str, locals_: dict[str, Any], globals_: dict[str, Any]) -> 
         return locals_[name]
     if name in globals_:
         return globals_[name]
+    raise RuntimeError(f"undefined name '{name}'")
+
+
+def _load_element_name(
+    name: str,
+    locals_: dict[str, Any],
+    globals_: dict[str, Any],
+) -> Any:
+    if name in globals_:
+        return globals_[name]
+    if name in locals_:
+        return locals_[name]
     raise RuntimeError(f"undefined name '{name}'")
 
 

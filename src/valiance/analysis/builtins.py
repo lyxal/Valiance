@@ -442,6 +442,11 @@ def _dup(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (args[0], args[0])
 
 
+@builtin("top", (T.V("T"),), (T.V("T"),))
+def _top(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (args[0],)
+
+
 @builtin("peek", (T.Fn(),), call_site=_peek_call_site)
 def _peek(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     callable_value = args[-1]
@@ -530,14 +535,14 @@ def _multiply(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin("*", (T.Integer, T.String), (T.String,))
 def _string_repeat(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    return (args[0] * args[1],)
+    return (int(args[0]) * args[1],)
 
 
 @builtin("*", (T.String, T.Integer), (T.String,))
 def _string_repeat_reverse(
     args: tuple[Any, ...], ctx: RuntimeContext
 ) -> tuple[Any, ...]:
-    return (args[0] * args[1],)
+    return (args[0] * int(args[1]),)
 
 
 @builtin("%", (T.Integer, T.Integer), (T.Integer,))
@@ -693,7 +698,7 @@ def _head(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("range", (T.Integer, T.Integer), (T.ExactList(T.Integer),))
 def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     start, stop = args
-    return (LazyList(range(int(start), int(stop) + 1)),)
+    return (LazyList(Decimal(item) for item in range(int(start), int(stop) + 1)),)
 
 
 # --------------------------------------------------------------------------
@@ -828,6 +833,16 @@ def _println(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _panic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     raise PanicSignal(args[0])
+
+
+# --------------------------------------------------------------------------
+# Strings
+# --------------------------------------------------------------------------
+
+
+@builtin("toString", (T.V("T"),), (T.String,))
+def _to_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (ctx.format_value(args[0]),)
 
 
 # --------------------------------------------------------------------------

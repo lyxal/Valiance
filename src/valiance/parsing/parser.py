@@ -2220,13 +2220,6 @@ def _interpolation_expression(
     expression: str,
     token: Token,
 ) -> tuple[ASTNode, ...]:
-    stripped = expression.strip()
-    if (
-        stripped
-        and _is_string_ident_start(stripped[0])
-        and all(_is_string_ident_part(char) for char in stripped[1:])
-    ):
-        return (GetVariableNode(Symbol(stripped), location=_loc(token)),)
     return tuple(parse(expression))
 
 

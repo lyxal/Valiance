@@ -15,7 +15,7 @@ from valiance.runtime.bytecode import (
     Program,
 )
 
-MAGIC = b"VLNCBC\x08"
+MAGIC = b"VLNCBC\x09"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -55,6 +55,7 @@ _OP_TO_BYTE = {
     OpCode.FOREACH: 0x23,
     OpCode.LOOP_BREAK: 0x24,
     OpCode.WHILE: 0x25,
+    OpCode.SOURCE_ARGS: 0x26,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 

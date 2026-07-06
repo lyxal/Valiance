@@ -197,7 +197,7 @@ move(file -> file, file)
             ],
         )
 
-        self.assertEqual([node.typ for node in typed], [Integer, Integer, Number])
+        self.assertEqual([node.typ for node in typed], [Integer, Integer, Integer])
 
     def test_number_literals_infer_integer_or_real_precision(self):
         typed = analyse(
@@ -297,7 +297,9 @@ move(file -> file, file)
         self.assertEqual(
             typed[0].typ,
             Overloads(
+                Overload((C(ListExactType, Integer),), (Integer,)),
                 Overload((C(ListExactType, Number),), (Number,)),
+                Overload((C(ListExactType, Real),), (Real,)),
                 Overload((C(ListExactType, String),), (String,)),
             ),
         )
@@ -341,7 +343,7 @@ move(file -> file, file)
         self.assertTrue(typed[-1].overload.vectorised)
         self.assertEqual(
             typed[-1].overload.actual_returns,
-            (C(ListExactType, Number),),
+            (C(ListExactType, Integer),),
         )
 
     def test_element_disambiguation_controls_vectorisation_depth(self):
@@ -914,6 +916,45 @@ end
 
         self.assertEqual(typ, Fn((Number, Number), (Number,)))
 
+    def test_match_infers_missing_inputs_from_multiple_patterns(self):
+        typ = analyse_function(
+            FunctionNode(
+                body=tuple(
+                    parse(
+                        """
+match =>
+  1, "x" => "hit"
+  _, _ => "miss"
+end
+"""
+                    )
+                )
+            ),
+            Environment(),
+        )
+
+        self.assertEqual(typ, Fn((String, Number), (String,)))
+
+    def test_match_requires_cases_to_have_same_arity(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(
+            parse(
+                """
+1 2
+match =>
+  1, 2 => "two"
+  _ => "one"
+end
+"""
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["3:1: match cases must match the same number of values"],
+        )
+
     def test_result_question_unwraps_success_type(self):
         typed = analyse(
             parse(
@@ -941,7 +982,11 @@ end
         self.assertEqual(
             typed[0].typ,
             Overloads(
+                Overload((Integer, Integer), (Integer,)),
+                Overload((Integer, Real), (Real,)),
                 Overload((Number, Number), (Number,)),
+                Overload((Real, Integer), (Real,)),
+                Overload((Real, Real), (Real,)),
                 Overload((String, String), (String,)),
             ),
         )
@@ -961,7 +1006,22 @@ end
         self.assertEqual(
             typed[0].typ,
             Overloads(
+                Overload((Integer,), (Integer,)),
                 Overload((Number,), (Number,)),
+                Overload((Real,), (Real,)),
+                Overload((String,), (String,)),
+            ),
+        )
+
+    def test_unannotated_parameter_keeps_distinct_literal_specializations(self):
+        typed = analyse(parse("define double(n) => $n 2 *"))
+
+        self.assertEqual(
+            typed[0].typ,
+            Overloads(
+                Overload((Integer,), (Integer,)),
+                Overload((Number,), (Number,)),
+                Overload((Real,), (Real,)),
                 Overload((String,), (String,)),
             ),
         )
@@ -984,7 +1044,9 @@ end
         self.assertEqual(
             function.typ,
             Overloads(
+                Overload((Integer,), (Integer,)),
                 Overload((Number,), (Number,)),
+                Overload((Real,), (Real,)),
                 Overload((String,), (String,)),
             ),
         )
@@ -994,7 +1056,12 @@ end
                 [body_node.typ for body_node in overload.body]
                 for overload in function.overloads
             ],
-            [[Number, Number, Number], [String, String, String]],
+            [
+                [Integer, Integer, Integer],
+                [Number, Number, Number],
+                [Real, Real, Real],
+                [String, String, String],
+            ],
         )
 
     def test_overloaded_function_node_keeps_typed_body_per_overload(self):
@@ -1005,7 +1072,11 @@ end
         self.assertEqual(
             [overload.typ for overload in function.overloads],
             [
+                Fn((Integer, Integer), (Integer,)),
+                Fn((Integer, Real), (Real,)),
                 Fn((Number, Number), (Number,)),
+                Fn((Real, Integer), (Real,)),
+                Fn((Real, Real), (Real,)),
                 Fn((String, String), (String,)),
             ],
         )
@@ -1014,7 +1085,7 @@ end
                 [body_node.typ for body_node in overload.body]
                 for overload in function.overloads
             ],
-            [[Number], [String]],
+            [[Integer], [Real], [Number], [Real], [Real], [String]],
         )
 
     def test_overloaded_function_node_drops_never_returning_overloads(self):
@@ -1181,7 +1252,16 @@ fn (x: Number, y: String) -> Number => 1 end arity_rank
             FunctionNode(body=(ElementNode(PLUS), ElementNode(DOUBLE)))
         )
 
-        self.assertEqual(typ, Fn((Number, Number), (Number,)))
+        self.assertEqual(
+            typ,
+            Overloads(
+                Overload((Integer, Integer), (Number,)),
+                Overload((Integer, Real), (Number,)),
+                Overload((Number, Number), (Number,)),
+                Overload((Real, Integer), (Number,)),
+                Overload((Real, Real), (Number,)),
+            ),
+        )
         self.assertEqual(analyser.diagnostics, [])
 
     def test_function_empty_params_do_not_infer_missing_inputs(self):
@@ -1614,10 +1694,10 @@ end
             ],
         )
 
-        self.assertEqual(typed[-1].typ, Number)
+        self.assertEqual(typed[-1].typ, Integer)
         self.assertIsInstance(typed[-1], TypedCallNode)
-        self.assertEqual(typed[-1].overload.params, (Number, Number))
-        self.assertEqual(typed[-1].overload.actual_returns, (Number,))
+        self.assertEqual(typed[-1].overload.params, (Integer, Integer))
+        self.assertEqual(typed[-1].overload.actual_returns, (Integer,))
         self.assertFalse(typed[-1].overload.vectorised)
 
     def test_branch_substitution_solves_generic_optional_payload(self):
@@ -1641,7 +1721,7 @@ end
         self.assertEqual(typed[0].typ, Integer)
         self.assertIsInstance(typed[1], TypedFunctionNode)
         self.assertEqual(typed[2].typ, Integer)
-        self.assertEqual(typed[3].typ, Number)
+        self.assertEqual(typed[3].typ, Integer)
 
     def test_call_node_resolves_overloaded_function_type(self):
         typed = analyse(
@@ -1668,8 +1748,8 @@ end
         typed = analyse(parse("'+ | call(1, 2)"))
 
         self.assertIsInstance(typed[-1], TypedElementNode)
-        self.assertEqual(typed[-1].typ, Number)
-        self.assertEqual(typed[-1].overload.actual_returns, (Number,))
+        self.assertEqual(typed[-1].typ, Integer)
+        self.assertEqual(typed[-1].overload.actual_returns, (Integer,))
         self.assertEqual(len(typed[-1].overload.params), 3)
 
     def test_optional_parameters_do_not_change_plain_element_arity(self):
@@ -2263,7 +2343,7 @@ $n
         )
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, Number)
+        self.assertEqual(typed[-1].typ, Integer)
 
         analyser = Analyser()
         typed = analyser.analyse(parse("1 unfold (< 5) -> (n: Number) => $n 1 + end"))

@@ -1186,7 +1186,10 @@ def apply_overload_candidates_to_stack(
 
     winners = []
     for candidate in candidates:
-        if not any(_dominates(other.scores, candidate.scores) for other in candidates):
+        if not any(
+            _application_dominates(other, candidate, ctx)
+            for other in candidates
+        ):
             winners.append(candidate)
     return tuple(winners)
 
@@ -1215,7 +1218,10 @@ def resolve_overload_result(
         # Specificity is a partial order, not a summed score. If two candidates
         # each win on different parameters, neither dominates and the call is
         # ambiguous.
-        if not any(_dominates(other.scores, candidate.scores) for other in candidates):
+        if not any(
+            _resolved_overload_dominates(other, candidate, ctx)
+            for other in candidates
+        ):
             winners.append(candidate)
     return winners[0] if len(winners) == 1 else None
 
@@ -1255,6 +1261,94 @@ def _dominates(a: tuple[Specificity, ...], b: tuple[Specificity, ...]) -> bool:
     return all(x <= y for x, y in zip(a, b, strict=False)) and any(
         x < y for x, y in zip(a, b, strict=False)
     )
+
+
+def _application_dominates(
+    left: StackApplication,
+    right: StackApplication,
+    ctx: Context,
+) -> bool:
+    return _overload_match_dominates(
+        left.scores,
+        left.params,
+        right.scores,
+        right.params,
+        ctx,
+    )
+
+
+def _resolved_overload_dominates(
+    left: ResolvedOverload,
+    right: ResolvedOverload,
+    ctx: Context,
+) -> bool:
+    return _overload_match_dominates(
+        left.scores,
+        left.params,
+        right.scores,
+        right.params,
+        ctx,
+    )
+
+
+def _overload_match_dominates(
+    left_scores: tuple[Specificity, ...],
+    left_params: tuple[Type, ...],
+    right_scores: tuple[Specificity, ...],
+    right_params: tuple[Type, ...],
+    ctx: Context,
+) -> bool:
+    if _dominates(left_scores, right_scores):
+        return True
+    if left_scores != right_scores:
+        return False
+    return _params_more_specific(left_params, right_params, ctx)
+
+
+def _params_more_specific(
+    left: tuple[Type, ...],
+    right: tuple[Type, ...],
+    ctx: Context,
+) -> bool:
+    return all(
+        _type_more_specific_or_same(left_item, right_item, ctx)
+        for left_item, right_item in zip(left, right, strict=False)
+    ) and any(
+        not _type_more_specific_or_same(right_item, left_item, ctx)
+        for left_item, right_item in zip(left, right, strict=False)
+    )
+
+
+def _type_more_specific_or_same(left: Type, right: Type, ctx: Context) -> bool:
+    left = normalize(left)
+    right = normalize(right)
+    if same(left, right) or subtype(left, right, ctx):
+        return True
+    if isinstance(left, FunctionType) and isinstance(right, FunctionType):
+        if left.params is None or left.returns is None:
+            return right.params is None and right.returns is None
+        if right.params is None or right.returns is None:
+            return True
+        if len(left.params) != len(right.params) or len(left.returns) != len(
+            right.returns
+        ):
+            return False
+        return all(
+            _type_more_specific_or_same(left_item, right_item, ctx)
+            for left_item, right_item in zip(
+                left.params,
+                right.params,
+                strict=True,
+            )
+        ) and all(
+            _type_more_specific_or_same(left_item, right_item, ctx)
+            for left_item, right_item in zip(
+                left.returns,
+                right.returns,
+                strict=True,
+            )
+        )
+    return False
 
 
 def _tag_requirements_met(

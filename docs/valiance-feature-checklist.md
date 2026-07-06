@@ -377,8 +377,8 @@ Current audit total: 398 / 734 items complete (54.2%).
 ## 24. Pattern matching
 
 - [x] Parse `match` blocks.
-- [ ] Support matching one or more stack values.
-- [ ] Require every case to match the same number of values.
+- [x] Support matching one or more stack values.
+- [x] Require every case to match the same number of values.
 - [x] Support literal patterns.
 - [x] Support predicate patterns using `if`.
 - [x] Support list-structure patterns.

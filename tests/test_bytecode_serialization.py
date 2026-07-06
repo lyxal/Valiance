@@ -23,6 +23,7 @@ class BytecodeSerializationTests(unittest.TestCase):
                     Instruction(OpCode.CALL_RESOLVED_ELEMENT, ("+", 0, 0)),
                     Instruction(OpCode.TRY_UNWRAP),
                     Instruction(OpCode.STACK_SHUFFLE, ("copy", ("x",), ("x",))),
+                    Instruction(OpCode.SOURCE_ARGS, 1),
                     Instruction(OpCode.RETURN),
                 ),
                 name="<main>",
@@ -32,7 +33,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x08"))
+        self.assertTrue(data.startswith(b"VLNCBC\x09"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)

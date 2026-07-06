@@ -32,6 +32,7 @@ from valiance.asts import (
     IndexSetNode,
     ListLiteralNode,
     ListPatternNode,
+    LiteralPatternNode,
     MatchNode,
     MatchPatternNode,
     NumberLiteralNode,
@@ -708,9 +709,7 @@ class Analyser:
                         f"of declared type {T.show(declared_type)}",
                         node,
                     )
-                    return {
-                        branch.append_typed(TypedNode(node, None))
-                    }
+                    return {branch.append_typed(TypedNode(node, None))}
                 variables, diagnostic = branch.variables.write(
                     name,
                     variable_type,
@@ -896,9 +895,7 @@ class Analyser:
         self.env.define_constructor(
             node.name,
             object_attributes,
-            defaults=frozenset(
-                field.name for field in node.fields if field.default
-            ),
+            defaults=frozenset(field.name for field in node.fields if field.default),
             result_type=_declared_nominal(node.name, node.generics),
             generic_constraints=generic_constraints,
         )
@@ -920,7 +917,9 @@ class Analyser:
                 ok = False
         destructor_name = f"~{node.name.text.rsplit('.', 1)[-1]}"
         destructors = [
-            definition for definition in node.definitions if definition.name.text.startswith("~")
+            definition
+            for definition in node.definitions
+            if definition.name.text.startswith("~")
         ]
         for definition in destructors:
             if definition.name.text != destructor_name:
@@ -930,7 +929,9 @@ class Analyser:
                 )
                 ok = False
             if definition.function.params:
-                self._diagnose("destructors cannot declare explicit parameters", definition)
+                self._diagnose(
+                    "destructors cannot declare explicit parameters", definition
+                )
                 ok = False
         return ok
 
@@ -1188,8 +1189,7 @@ class Analyser:
                 output,
                 stack=_pop_stack(output.stack, expression_count).push(T.String),
                 typed_body=branch.typed_body,
-            )
-            .append_typed(TypedNode(node, T.String))
+            ).append_typed(TypedNode(node, T.String))
             for output in current
             if len(output.stack) >= expression_count
         }
@@ -1256,7 +1256,7 @@ class Analyser:
                     candidates.append((applied, candidate_branch, ordered_modifiers))
 
         stack_before = branch.stack
-        winners = _best_candidates(candidates)
+        winners = _best_candidates(candidates, branch)
         if not winners:
             self._diagnose(
                 f"no overloads for element '{node.name}' match stack "
@@ -1412,7 +1412,7 @@ class Analyser:
                             )
                         )
 
-        winners = _best_candidates(candidates)
+        winners = _best_candidates(candidates, branch)
         if not winners:
             self._diagnose(
                 f"no overloads for element '{node.name}' match explicit call syntax",
@@ -1520,7 +1520,7 @@ class Analyser:
                 )
             candidates.extend(branch_candidates)
 
-        winners = _best_candidates(candidates)
+        winners = _best_candidates(candidates, branch)
         if not winners:
             self._diagnose(
                 "no overloads for element 'call' match explicit call syntax",
@@ -1542,8 +1542,9 @@ class Analyser:
         results: set[AnalysisBranch] = set()
         for applied, popped, call_arg_order, call_overload_index in winners:
             results.add(
-                popped.with_stack(popped.stack.push(*applied.actual_returns))
-                .append_typed(
+                popped.with_stack(
+                    popped.stack.push(*applied.actual_returns)
+                ).append_typed(
                     TypedElementNode(
                         node,
                         _returns_result_type(applied.actual_returns),
@@ -1684,7 +1685,7 @@ class Analyser:
                 if candidate is not None:
                     candidates.append(candidate)
 
-        winners = _best_candidates(candidates)
+        winners = _best_candidates(candidates, callable_popped)
         if not winners:
             self._diagnose(
                 f"no overloads for call target {T.show(callable_type)} match stack "
@@ -1768,9 +1769,7 @@ class Analyser:
                 return {branch.with_diagnostic(diagnostic)}
             if variables is None:
                 return {
-                    branch.with_diagnostic(
-                        f"cannot assign to variable '{target.name}'"
-                    )
+                    branch.with_diagnostic(f"cannot assign to variable '{target.name}'")
                 }
         return {
             branch.with_variables(variables)
@@ -2290,16 +2289,18 @@ class Analyser:
                 continue
             if node.condition:
                 condition_function = FunctionNode(
-                    params=tuple(
-                        FunctionParam(param.name, typ)
-                        for param, typ in zip(
-                            node.params or (),
-                            overload.params,
-                            strict=False,
+                    params=(
+                        tuple(
+                            FunctionParam(param.name, typ)
+                            for param, typ in zip(
+                                node.params or (),
+                                overload.params,
+                                strict=False,
+                            )
                         )
-                    )
-                    if node.params is not None
-                    else tuple(FunctionParam(None, typ) for typ in overload.params),
+                        if node.params is not None
+                        else tuple(FunctionParam(None, typ) for typ in overload.params)
+                    ),
                     body=node.condition,
                     returns=(Boolean,),
                     element_tags=frozenset(),
@@ -2404,24 +2405,55 @@ class Analyser:
         branch: AnalysisBranch,
         node: MatchNode,
     ) -> set[AnalysisBranch]:
-        if not branch.stack:
-            self._diagnose("match requires a value on the stack", node)
-            return set()
         if not node.cases:
             self._diagnose("match requires at least one case", node)
             return set()
 
-        subject_type = branch.stack[-1]
-        body_input = branch.with_stack(branch.stack.pop())
-        if not self._match_is_exhaustive(subject_type, node):
+        arity = _match_arity(node)
+        if arity is None:
+            self._diagnose("match cases must match the same number of values", node)
+            return set()
+        if arity == 0:
+            self._diagnose("match requires at least one pattern per case", node)
+            return set()
+
+        subject_params = tuple(
+            reversed(
+                tuple(
+                    _match_subject_pattern_type(branch, node, index)
+                    for index in range(arity)
+                )
+            )
+        )
+        sourced = branch.source_arguments(subject_params)
+        if sourced is None:
+            self._diagnose(
+                f"match requires {arity} value{'s' if arity != 1 else ''} "
+                "on the stack",
+                node,
+            )
+            return set()
+        stack_subjects, body_input = sourced
+        subject_types = tuple(reversed(stack_subjects))
+        if not self._match_is_exhaustive(subject_types, node):
             return set()
 
         joined: AnalysisBranch | None = None
         for case in node.cases:
             case_input = body_input.with_variables(
-                _match_case_variables(body_input.variables, case.patterns)
+                _match_case_variables(
+                    body_input.variables,
+                    case.patterns,
+                    subject_types,
+                )
             )
-            if not self._match_guards_are_valid(subject_type, case.patterns, node):
+            case_input = _replace_branch(
+                case_input,
+                input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
+                cycle_params=subject_types,
+                cycle_index=0,
+            )
+            if not self._match_guards_are_valid(subject_types, case.patterns, node):
                 return set()
             case_outputs = self.analyse_block(BranchSet.one(case_input), case.body)
             for output in case_outputs:
@@ -2431,22 +2463,40 @@ class Analyser:
                     if typ is None:
                         typ = _returns_result_type(candidate.stack.items)
                     candidate = candidate.append_typed(TypedNode(node, typ))
+                candidate = _replace_branch(
+                    candidate,
+                    typed_body=body_input.typed_body,
+                    input_mode=body_input.input_mode,
+                    cycle_params=body_input.cycle_params,
+                    cycle_index=body_input.cycle_index,
+                )
                 if joined is None:
                     joined = candidate
                     continue
                 if joined.inputs != candidate.inputs:
-                    self._diagnose("match cases inferred different inputs", node)
-                    return set()
+                    merged_inputs = _merge_branch_inputs(
+                        joined.inputs,
+                        candidate.inputs,
+                    )
+                    if merged_inputs is None:
+                        self._diagnose("match cases inferred different inputs", node)
+                        return set()
+                else:
+                    merged_inputs = joined.inputs
                 stack = merge_stacks(joined.stack, candidate.stack)
                 variables = joined.variables.merge_against(
                     candidate.variables,
                     body_input.variables,
                 )
-                joined = (
+                base = (
                     _refine_branch_like(branch, joined)
-                    .with_stack(stack)
-                    .with_variables(variables)
+                    if len(branch.inputs) == len(joined.inputs)
+                    else joined
                 )
+                joined = (
+                    base.with_stack(stack).with_variables(variables)
+                )
+                joined = _replace_branch(joined, inputs=merged_inputs)
 
         if joined is None:
             return set()
@@ -2482,9 +2532,7 @@ class Analyser:
                 outputs.add(
                     _refine_branch_like(branch, output)
                     .with_stack(
-                        branch.stack.push(
-                            T.N(Symbol("PanicError"), handler_result)
-                        )
+                        branch.stack.push(T.N(Symbol("PanicError"), handler_result))
                     )
                     .append_typed(TypedNode(handler, handler_result))
                 )
@@ -2520,12 +2568,12 @@ class Analyser:
 
     def _match_guards_are_valid(
         self,
-        subject_type: T.Type,
+        subject_types: tuple[T.Type, ...],
         patterns: tuple[MatchPatternNode, ...],
         node: MatchNode,
     ) -> bool:
-        guards = tuple(_match_pattern_guards(patterns))
-        for guard in guards:
+        guards = tuple(_match_pattern_guards(patterns, subject_types))
+        for guard, subject_type in guards:
             guard_input = AnalysisBranch(
                 stack=T.TypeStack((subject_type,)),
                 variables=BranchVariables(),
@@ -2538,12 +2586,23 @@ class Analyser:
                 return False
         return True
 
-    def _match_is_exhaustive(self, subject_type: T.Type, node: MatchNode) -> bool:
+    def _match_is_exhaustive(
+        self,
+        subject_types: tuple[T.Type, ...],
+        node: MatchNode,
+    ) -> bool:
         if any(
             case.is_default or _is_default_match_case(case.patterns)
             for case in node.cases
         ):
             return True
+        if len(subject_types) != 1:
+            self._diagnose(
+                "match without default requires one enum or variant value",
+                node,
+            )
+            return False
+        subject_type = subject_types[0]
         closed_name = _nominal_name(subject_type)
         if closed_name is None:
             self._diagnose("match without default requires enum or variant value", node)
@@ -2556,8 +2615,7 @@ class Analyser:
             resolved
             for case in node.cases
             for pattern_type in _match_case_pattern_types(case.patterns)
-            if (resolved := _resolve_closed_member(expected, pattern_type))
-            is not None
+            if (resolved := _resolve_closed_member(expected, pattern_type)) is not None
         }
         missing = tuple(member for member in expected if member not in covered)
         if missing:
@@ -2771,7 +2829,9 @@ class Analyser:
             (),
             param_names=_function_param_names_for_overload(node, params),
             call_site_body=(outer, node),
-            annotation_error=annotation_hooks.annotation_error_message(node.annotations),
+            annotation_error=annotation_hooks.annotation_error_message(
+                node.annotations
+            ),
             annotation_warning=annotation_hooks.annotation_warning_message(
                 node.annotations
             ),
@@ -2895,8 +2955,10 @@ class Analyser:
             node.returns,
             self.env.context,
         )
-        if substitution is None and node.where_clause and _contains_rank_var(
-            node.returns
+        if (
+            substitution is None
+            and node.where_clause
+            and _contains_rank_var(node.returns)
         ):
             return node.returns, branch
         if substitution is not None:
@@ -2994,7 +3056,9 @@ def _fully_typed_overload(node: FunctionNode) -> T.Overload | None:
         param_names=_function_param_names_for_overload(node, params),
         element_tags=node.element_tags,
         annotation_error=annotation_hooks.annotation_error_message(node.annotations),
-        annotation_warning=annotation_hooks.annotation_warning_message(node.annotations),
+        annotation_warning=annotation_hooks.annotation_warning_message(
+            node.annotations
+        ),
         param_defaults=_function_param_defaults_for_overload(node, params),
     )
 
@@ -3119,9 +3183,7 @@ def _call_site_substitute_type(declared: T.Type, actual: T.Type) -> T.Type:
 def _is_bare_function_type(typ: T.Type) -> bool:
     typ = T.normalize(typ)
     return (
-        isinstance(typ, T.FunctionType)
-        and typ.params is None
-        and typ.returns is None
+        isinstance(typ, T.FunctionType) and typ.params is None and typ.returns is None
     )
 
 
@@ -3163,9 +3225,7 @@ def _contains_rank_var(types: tuple[T.Type, ...]) -> bool:
 def _type_contains_rank_var(typ: T.Type) -> bool:
     typ = T.normalize(typ)
     if isinstance(typ, T.CollectionType):
-        return isinstance(typ.rank, T.RankVariable) or _type_contains_rank_var(
-            typ.base
-        )
+        return isinstance(typ.rank, T.RankVariable) or _type_contains_rank_var(typ.base)
     if isinstance(typ, T.NominalType):
         return any(_type_contains_rank_var(arg) for arg in typ.args)
     if isinstance(typ, (T.UnionType, T.IntersectionType)):
@@ -3312,17 +3372,106 @@ def _typed_body_element_tags(body: tuple[TypedNode, ...]) -> tuple[T.ElementTag,
 
 def _best_candidates(
     candidates: Iterable[tuple[Any, ...]],
+    original: AnalysisBranch | None = None,
 ) -> tuple[tuple[Any, ...], ...]:
     ordered = list(candidates)
     winners: list[tuple[Any, ...]] = []
     for candidate in ordered:
-        applied = candidate[0]
         if not any(
-            other is not candidate and _dominates(other[0].scores, applied.scores)
+            other is not candidate
+            and _candidate_dominates(other, candidate)
+            and not _preserve_distinct_inferred_specializations(
+                other,
+                candidate,
+                original,
+            )
             for other in ordered
         ):
             winners.append(candidate)
     return tuple(winners)
+
+
+def _candidate_dominates(
+    left: tuple[Any, ...],
+    right: tuple[Any, ...],
+) -> bool:
+    left_applied = left[0]
+    right_applied = right[0]
+    if _dominates(left_applied.scores, right_applied.scores):
+        return True
+    if left_applied.scores != right_applied.scores:
+        return False
+    return _params_more_specific(left_applied.params, right_applied.params)
+
+
+def _params_more_specific(
+    left: tuple[T.Type, ...],
+    right: tuple[T.Type, ...],
+) -> bool:
+    return all(
+        _type_more_specific_or_same(left_item, right_item)
+        for left_item, right_item in zip(left, right, strict=False)
+    ) and any(
+        not _type_more_specific_or_same(right_item, left_item)
+        for left_item, right_item in zip(left, right, strict=False)
+    )
+
+
+def _type_more_specific_or_same(left: T.Type, right: T.Type) -> bool:
+    left = T.normalize(left)
+    right = T.normalize(right)
+    if T.same(left, right) or T.assignable(left, right):
+        return True
+    if isinstance(left, T.FunctionType) and isinstance(right, T.FunctionType):
+        if left.params is None or left.returns is None:
+            return right.params is None and right.returns is None
+        if right.params is None or right.returns is None:
+            return True
+        if len(left.params) != len(right.params) or len(left.returns) != len(
+            right.returns
+        ):
+            return False
+        return all(
+            _type_more_specific_or_same(left_item, right_item)
+            for left_item, right_item in zip(
+                left.params,
+                right.params,
+                strict=True,
+            )
+        ) and all(
+            _type_more_specific_or_same(left_item, right_item)
+            for left_item, right_item in zip(
+                left.returns,
+                right.returns,
+                strict=True,
+            )
+        )
+    return False
+
+
+def _preserve_distinct_inferred_specializations(
+    left: tuple[Any, ...],
+    right: tuple[Any, ...],
+    original: AnalysisBranch | None,
+) -> bool:
+    if original is None:
+        return False
+    left_key = _inferred_specialization_key(left[1], original)
+    right_key = _inferred_specialization_key(right[1], original)
+    return left_key is not None and right_key is not None and left_key != right_key
+
+
+def _inferred_specialization_key(
+    branch: AnalysisBranch,
+    original: AnalysisBranch,
+) -> tuple[object, ...] | None:
+    if branch.inputs != original.inputs:
+        return ("inputs", branch.inputs)
+    if branch.cycle_params != original.cycle_params:
+        return ("cycle_params", branch.cycle_params)
+    if branch.variables != original.variables:
+        return ("variables", branch.variables)
+    return None
 
 
 def _winners_specialize_inputs(
@@ -3409,7 +3558,7 @@ def _source_element_arguments(
                 ),
                 specialized_popped,
                 specialized_modifiers,
-        )
+            )
 
 
 def _call_args_in_current_order(
@@ -3447,9 +3596,9 @@ def _call_element_candidates(
     disambiguation: tuple[T.Type | None, ...],
     ctx: T.Context,
 ) -> list[tuple[T.AppliedOverload, AnalysisBranch, tuple[int, ...], int]]:
-    candidates: list[
-        tuple[T.AppliedOverload, AnalysisBranch, tuple[int, ...], int]
-    ] = []
+    candidates: list[tuple[T.AppliedOverload, AnalysisBranch, tuple[int, ...], int]] = (
+        []
+    )
     if disambiguation and len(disambiguation) != len(explicit_args):
         return candidates
     for callable_index, callable_overload in enumerate(
@@ -3529,8 +3678,7 @@ def _prepare_element_call_branches(
         if not current:
             return ()
     return tuple(
-        ElementCallPreparation(prepared, call_arg_order)
-        for prepared in current
+        ElementCallPreparation(prepared, call_arg_order) for prepared in current
     )
 
 
@@ -3786,9 +3934,7 @@ def _show_modifier_counts(overloads: tuple[T.Overload, ...]) -> str:
 
 def _modifier_param_indexes(params: tuple[T.Type, ...]) -> tuple[int, ...]:
     return tuple(
-        index
-        for index, param in enumerate(params)
-        if _is_callable_parameter(param)
+        index for index, param in enumerate(params) if _is_callable_parameter(param)
     )
 
 
@@ -4079,10 +4225,14 @@ def _match_variadic_tuple_types(
                 if rec(pattern_index + 1, index + 1):
                     return True
             return False
-        return actual_index < len(actual.params) and match(
-            item.typ,
-            actual.params[actual_index],
-        ) and rec(pattern_index + 1, actual_index + 1)
+        return (
+            actual_index < len(actual.params)
+            and match(
+                item.typ,
+                actual.params[actual_index],
+            )
+            and rec(pattern_index + 1, actual_index + 1)
+        )
 
     return rec(0, 0)
 
@@ -4432,11 +4582,7 @@ def _strip_implicit_computed_tags(
 ) -> T.Type:
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
-        kept = tuple(
-            tag
-            for tag in typ.tags
-            if tag in explicit_tags
-        )
+        kept = tuple(tag for tag in typ.tags if tag in explicit_tags)
         inner = _strip_implicit_computed_tags(typ.inner, explicit_tags, ctx)
         return _with_data_tags(inner, kept, ctx) if kept else inner
     if isinstance(typ, T.CollectionType):
@@ -4979,6 +5125,75 @@ def _match_pattern_types(pattern: MatchPatternNode) -> Iterator[T.Type]:
             yield from _match_pattern_types(option)
 
 
+def _match_arity(node: MatchNode) -> int | None:
+    arity: int | None = None
+    for case in node.cases:
+        case_arity = len(case.patterns)
+        if arity is None:
+            arity = case_arity
+        elif case_arity != arity:
+            return None
+    return arity
+
+
+def _match_subject_pattern_type(
+    branch: AnalysisBranch,
+    node: MatchNode,
+    index: int,
+) -> T.Type:
+    inferred = tuple(
+        typ
+        for case in node.cases
+        if index < len(case.patterns)
+        if (typ := _pattern_subject_type(case.patterns[index])) is not None
+    )
+    if not inferred:
+        return _anonymous_type_var(branch, index + 1)
+    result = inferred[0]
+    for typ in inferred[1:]:
+        result = T.merge_types(result, typ)
+    return result
+
+
+def _pattern_subject_type(pattern: MatchPatternNode) -> T.Type | None:
+    if isinstance(pattern, TypePatternNode):
+        return pattern.typ
+    if isinstance(pattern, BindingPatternNode):
+        return _pattern_subject_type(pattern.pattern)
+    if isinstance(pattern, LiteralPatternNode):
+        if isinstance(pattern.value, NumberLiteralNode):
+            return T.Number
+        if isinstance(pattern.value, StringLiteralNode):
+            return T.String
+        return None
+    if isinstance(pattern, ListPatternNode):
+        item_types = tuple(
+            item_type
+            for item in pattern.items
+            if not isinstance(item, RestPatternNode)
+            if (item_type := _pattern_subject_type(item)) is not None
+        )
+        if not item_types:
+            return None
+        item_result = item_types[0]
+        for item_type in item_types[1:]:
+            item_result = T.merge_types(item_result, item_type)
+        return T.ExactList(item_result)
+    if isinstance(pattern, OrPatternNode):
+        option_types = tuple(
+            typ
+            for option in pattern.options
+            if (typ := _pattern_subject_type(option)) is not None
+        )
+        if not option_types:
+            return None
+        result = option_types[0]
+        for typ in option_types[1:]:
+            result = T.merge_types(result, typ)
+        return result
+    return None
+
+
 def _is_default_match_case(patterns: tuple[MatchPatternNode, ...]) -> bool:
     return bool(patterns) and all(
         _is_default_match_pattern(pattern) for pattern in patterns
@@ -4994,8 +5209,11 @@ def _is_default_match_pattern(pattern: MatchPatternNode) -> bool:
 def _match_case_variables(
     variables: BranchVariables,
     patterns: tuple[MatchPatternNode, ...],
+    subject_types: tuple[T.Type, ...] = (),
 ) -> BranchVariables:
     result = variables
+    if subject_types:
+        result = _add_match_binding(result, Symbol("top"), subject_types[0])
     for pattern in patterns:
         result = _add_match_pattern_variables(result, pattern)
     return result
@@ -5060,24 +5278,29 @@ def _pattern_binding_type(pattern: MatchPatternNode, name: Symbol) -> T.Type:
 
 def _match_pattern_guards(
     patterns: tuple[MatchPatternNode, ...],
-) -> Iterator[tuple[ASTNode, ...]]:
-    for pattern in patterns:
-        yield from _pattern_guards(pattern)
+    subject_types: tuple[T.Type, ...],
+) -> Iterator[tuple[tuple[ASTNode, ...], T.Type]]:
+    for pattern, subject_type in zip(patterns, subject_types, strict=True):
+        yield from _pattern_guards(pattern, subject_type)
 
 
-def _pattern_guards(pattern: MatchPatternNode) -> Iterator[tuple[ASTNode, ...]]:
+def _pattern_guards(
+    pattern: MatchPatternNode,
+    subject_type: T.Type,
+) -> Iterator[tuple[tuple[ASTNode, ...], T.Type]]:
     if isinstance(pattern, GuardPatternNode):
-        yield pattern.condition
+        yield pattern.condition, subject_type
     elif isinstance(pattern, TypePatternNode) and pattern.guard:
-        yield pattern.guard
+        yield pattern.guard, pattern.typ or subject_type
     elif isinstance(pattern, OrPatternNode):
         for option in pattern.options:
-            yield from _pattern_guards(option)
+            yield from _pattern_guards(option, subject_type)
     elif isinstance(pattern, ListPatternNode):
+        item_type = T.collection_item_type(subject_type) or T.V("_matched_item")
         for item in pattern.items:
-            yield from _pattern_guards(item)
+            yield from _pattern_guards(item, item_type)
     elif isinstance(pattern, BindingPatternNode):
-        yield from _pattern_guards(pattern.pattern)
+        yield from _pattern_guards(pattern.pattern, subject_type)
 
 
 def _show_stack(stack: T.TypeStack) -> str:
@@ -5095,8 +5318,7 @@ def _diagnostic_message(message: str, node: ASTNode | None) -> str:
 
 def _show_overloads(overloads: Iterable[T.Overload]) -> str:
     rendered = tuple(
-        T.show(T.Fn(overload.params, overload.returns))
-        for overload in overloads
+        T.show(T.Fn(overload.params, overload.returns)) for overload in overloads
     )
     if not rendered:
         return "none"
@@ -5175,11 +5397,23 @@ def _merge_inferred_inputs(
     merged: list[T.Type] = []
     max_len = max((len(suffix) for suffix in suffixes), default=0)
     for index in range(max_len):
-        candidates = tuple(
-            suffix[index] for suffix in suffixes if index < len(suffix)
-        )
+        candidates = tuple(suffix[index] for suffix in suffixes if index < len(suffix))
         merged.append(candidates[0] if len(candidates) == 1 else T.U(*candidates))
     return base_inputs + tuple(merged)
+
+
+def _merge_branch_inputs(
+    left: tuple[T.Type, ...],
+    right: tuple[T.Type, ...],
+) -> tuple[T.Type, ...] | None:
+    if len(left) != len(right):
+        return None
+    return tuple(
+        left_item
+        if T.same(left_item, right_item)
+        else T.merge_types(left_item, right_item)
+        for left_item, right_item in zip(left, right, strict=True)
+    )
 
 
 def _merge_list_item_variables(
@@ -5223,9 +5457,7 @@ def _drop_named_block_locals(
         parameters=variables.parameters,
         captures=variables.captures,
         block_locals=tuple(
-            (name, typ)
-            for name, typ in variables.block_locals
-            if name not in blocked
+            (name, typ) for name, typ in variables.block_locals if name not in blocked
         ),
     )
 
@@ -5235,9 +5467,7 @@ def _loop_variable_output_type(
     outputs: BranchSet,
 ) -> T.Type | None:
     types = tuple(
-        typ
-        for output in outputs
-        if (typ := output.variables.read(name)) is not None
+        typ for output in outputs if (typ := output.variables.read(name)) is not None
     )
     if not types:
         return None
@@ -5264,8 +5494,7 @@ def _param_type(param: FunctionParam, index: int) -> T.Type:
 
 def _trait_requirement(node: TraitRequirementNode) -> T.TraitRequirement | None:
     params = tuple(
-        _param_type(param, index)
-        for index, param in enumerate(node.params or ())
+        _param_type(param, index) for index, param in enumerate(node.params or ())
     )
     returns = node.returns or ()
     return T.TraitRequirement(
@@ -5474,8 +5703,7 @@ def _genericize_ast_value(value: object, generics: tuple[Symbol, ...]) -> object
         return replace(value, typ=typ, default=default)
     if isinstance(value, CallArgument):
         default = tuple(
-            cast(ASTNode, _genericize_ast_node(node, generics))
-            for node in value.value
+            cast(ASTNode, _genericize_ast_node(node, generics)) for node in value.value
         )
         if default == value.value:
             return value
@@ -5511,8 +5739,7 @@ def _genericize_requirement(
                 for param in requirement.overload.params
             ),
             tuple(
-                _genericize_type(ret, generics)
-                for ret in requirement.overload.returns
+                _genericize_type(ret, generics) for ret in requirement.overload.returns
             ),
             requirement.overload.generic_constraints,
             requirement.overload.where_clause,

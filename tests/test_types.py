@@ -521,6 +521,30 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertIs(result.overload, concrete)
 
+    def test_numeric_tower_specificity_selects_narrowest_overload(self):
+        integer = Overload((Integer, Integer), (Integer,))
+        real = Overload((Real, Real), (Real,))
+        number = Overload((Number, Number), (Number,))
+
+        result = resolve_overload_result((number, real, integer), (Integer, Integer))
+
+        self.assertIsNotNone(result)
+        self.assertIs(result.overload, integer)
+
+    def test_vectorised_numeric_specificity_selects_narrowest_overload(self):
+        integer = Overload((Integer, Integer), (Integer,))
+        real = Overload((Real, Real), (Real,))
+        number = Overload((Number, Number), (Number,))
+
+        applied = apply_overloads_to_stack(
+            (number, real, integer),
+            TypeStack((C(ListExactType, Integer), C(ListExactType, Integer))),
+        )
+
+        self.assertIsNotNone(applied)
+        self.assertIs(applied.overload, integer)
+        self.assertEqual(applied.stack, TypeStack((C(ListExactType, Integer),)))
+
     def test_cross_specificity_is_ambiguous(self):
         left = Overload((Number, U(Number, String)), (Number,))
         right = Overload((U(Number, String), Number), (Number,))
