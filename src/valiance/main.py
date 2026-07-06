@@ -3,10 +3,11 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from valiance.analysis import Analyser
+from valiance.analysis import Analyser, AnalysisBranch, BranchSet, InputMode
 from valiance.asts import pretty_ast, typed_source
 from valiance.diagnostics import from_exception, from_message, render, should_color
 from valiance.packages import (
@@ -22,6 +23,7 @@ from valiance.runtime import (
     BytecodeFormatError,
     CompileError,
     RuntimeError,
+    VirtualMachine,
     compile_program,
     dumps,
     loads,
@@ -31,13 +33,19 @@ from valiance.runtime_values import DIAGNOSTIC_LIST_PREVIEW_LIMIT, format_runtim
 
 DEFAULT_BYTECODE_FILENAME = "out.vbc"
 DEFAULT_BYTECODE_SUFFIX = ".vbc"
+_ANSI_RESET = "\033[0m"
+_ANSI_BOLD = "\033[1m"
+_ANSI_DIM = "\033[2m"
+_ANSI_CYAN = "\033[36m"
+_ANSI_GREEN = "\033[32m"
 
 _SOURCE_ACTIONS = {"compile", "run", "parse", "analyse", "analyze", "annotate"}
 _BYTECODE_ACTIONS = {"run-bytecode"}
 _PACKAGE_ACTIONS = {"init", "install", "add", "remove", "upgrade"}
 _ACTIONS = _SOURCE_ACTIONS | _BYTECODE_ACTIONS | _PACKAGE_ACTIONS
 
-HELP = """usage: valiance [compile] <file> [-o <file>]
+HELP = """usage: valiance
+       valiance [compile] <file> [-o <file>]
        valiance [compile] -c <code> [-o <file>]
        valiance run <file>
        valiance run -c <code>
@@ -52,6 +60,7 @@ HELP = """usage: valiance [compile] <file> [-o <file>]
        valiance upgrade <name> <version>
 
 actions:
+  <no action>        start the REPL
   compile             compile source to bytecode; default action
   run                 compile and execute source without writing bytecode
   run-bytecode        execute an existing bytecode file
@@ -68,15 +77,19 @@ options:
   -c, --code <code>   use inline Valiance code instead of a source file
   -o, --output <file> write compiled bytecode to this file
   --implicit-output   print the final stack if execution prints nothing
+                      (default for run --code)
   --preview-lists     preview lazy lists instead of forcing full output
+
+repl commands:
+  :reset              clear stack, variables, definitions, and imports
+  :quit               exit the REPL
 """
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
-        print(HELP)
-        return 0
+        return _run_repl()
 
     parsed = _parse_args(args)
     if parsed is None:
@@ -221,6 +234,8 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
         return None
     if parsed.code is None and parsed.file is None:
         return None
+    if parsed.action == "run" and parsed.code is not None:
+        parsed.implicit_output = True
     return parsed
 
 
@@ -300,6 +315,146 @@ def _run_package_command(parsed: argparse.Namespace) -> int:
         return 1
     print(f"error: unknown package action {parsed.action!r}", file=sys.stderr)
     return 1
+
+
+def _run_repl() -> int:
+    session = _ReplSession()
+    color = should_color(sys.stdout)
+    line_number = 1
+    _print_repl_banner(color=color)
+    while True:
+        try:
+            source = input(_repl_prompt(line_number, color=color))
+        except EOFError:
+            print()
+            return 0
+        except KeyboardInterrupt:
+            print()
+            return 130
+        source = source.strip()
+        if not source:
+            continue
+        if source in {":quit", ":q", "quit", "exit"}:
+            return 0
+        if source in {":reset", ":r", "reset"}:
+            session.reset()
+            print(
+                "Reset REPL state. Stack, variables, definitions, "
+                "and imports cleared."
+            )
+            line_number = 1
+            continue
+        if source in {":help", ":h", "help"}:
+            _print_repl_help(color=color)
+            continue
+        if source in {":clear", ":c", "clear"}:
+            print("\033[2J\033[H", end="")
+            continue
+        session.run(source)
+        line_number += 1
+
+
+def _print_repl_banner(*, color: bool) -> None:
+    print(_repl_style("Valiance REPL", _ANSI_BOLD + _ANSI_CYAN, color))
+    print(_repl_style("-------------", _ANSI_DIM, color))
+    print("State persists between lines. Type :help, :reset, or :quit.")
+
+
+def _print_repl_help(*, color: bool) -> None:
+    print(_repl_style("REPL commands", _ANSI_BOLD, color))
+    print("  :help   show this message")
+    print("  :reset  clear stack, variables, definitions, and imports")
+    print("  :quit   exit the REPL")
+    print()
+    print("Enter one Valiance expression or statement per line.")
+
+
+def _repl_prompt(line_number: int, *, color: bool) -> str:
+    prompt = f"vln:{line_number}> "
+    return _repl_style(prompt, _ANSI_GREEN, color)
+
+
+def _repl_style(text: str, code: str, enabled: bool) -> str:
+    if not enabled:
+        return text
+    return f"{code}{text}{_ANSI_RESET}"
+
+
+@dataclass
+class _ReplSession:
+    analyser: Analyser | None = None
+    branch: AnalysisBranch | None = None
+    output: _OutputTracker | None = None
+    vm: VirtualMachine | None = None
+    runtime_stack: list[Any] | None = None
+
+    def __post_init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.analyser = Analyser()
+        self.branch = AnalysisBranch(input_mode=InputMode.TOP_LEVEL)
+        self.output = _OutputTracker()
+        self.vm = VirtualMachine(output=self.output)
+        self.runtime_stack = []
+
+    def run(self, source: str) -> None:
+        if (
+            self.analyser is None
+            or self.branch is None
+            or self.output is None
+            or self.vm is None
+            or self.runtime_stack is None
+        ):
+            self.reset()
+        assert self.analyser is not None
+        assert self.branch is not None
+        assert self.output is not None
+        assert self.vm is not None
+        assert self.runtime_stack is not None
+        self.analyser.diagnostics.clear()
+        self.analyser.warnings.clear()
+        self.output.did_print = False
+        try:
+            program = Parser(lex(source)).parse_program()
+            final = self.analyser.analyse_block(
+                BranchSet.one(replace(self.branch, typed_body=())),
+                tuple(program),
+            )
+            if len(final) != 1:
+                for node in program:
+                    _print_diagnostic(
+                        from_message("Type error", f"could not analyse {node!r}"),
+                        source,
+                    )
+                return
+            next_branch = next(iter(final))
+            for warning in self.analyser.warnings:
+                _print_diagnostic(from_message("Type warning", warning), source)
+            if self.analyser.diagnostics:
+                for diagnostic in self.analyser.diagnostics:
+                    _print_diagnostic(from_message("Type error", diagnostic), source)
+                return
+            bytecode = compile_program(list(next_branch.typed_body))
+            stack = self.vm.execute(
+                bytecode.main,
+                {},
+                self.vm.globals,
+                initial_stack=list(self.runtime_stack),
+            )
+            self.runtime_stack = stack
+            self.branch = replace(next_branch, typed_body=())
+            if not self.output.did_print:
+                print(_format_stack(stack))
+        except (
+            BytecodeFormatError,
+            LexError,
+            OSError,
+            ParseError,
+            CompileError,
+            RuntimeError,
+        ) as exc:
+            _print_exception_diagnostic(exc, source=source)
 
 
 def _read_source_file(filename: str) -> str | None:

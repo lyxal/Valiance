@@ -1,1 +1,10 @@
-println range(1, 100)
+range(1, 100) map fn (n: Integer) =>
+  match =>
+    if % 15 == 0 => "FizzBuzz"
+    if %  5 == 0 => "Buzz"
+    if %  3 == 0 => "Fizz"
+               _ => "${top}"
+  end
+end
+
+println

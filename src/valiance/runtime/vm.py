@@ -432,7 +432,9 @@ class VirtualMachine:
                         case OpCode.BUILD_LIST:
                             frame.stack.append(_pop_many(frame.stack, instruction.arg))
                         case OpCode.BUILD_STRING:
-                            frame.stack.append(_build_string(frame.stack, instruction.arg))
+                            frame.stack.append(
+                                _build_string(frame.stack, instruction.arg)
+                            )
                         case OpCode.BUILD_TUPLE:
                             frame.stack.append(
                                 tuple(_pop_many(frame.stack, instruction.arg))
@@ -468,7 +470,9 @@ class VirtualMachine:
                             frame.stack.append(ObjectValue(enum_name, fields))
                         case OpCode.GET_FIELD:
                             try:
-                                args, stack_count, next_cycle_index = frame.source_args(1)
+                                args, stack_count, next_cycle_index = (
+                                    frame.source_args(1)
+                                )
                             except _StackUnderflow as exc:
                                 raise RuntimeError(
                                     "stack underflow during field access"
@@ -479,10 +483,16 @@ class VirtualMachine:
                             receiver = args[0]
                             if isinstance(receiver, ObjectValue):
                                 frame.stack.append(
-                                    _extract_object_field(receiver, instruction.arg, self)
+                                    _extract_object_field(
+                                        receiver,
+                                        instruction.arg,
+                                        self,
+                                    )
                                 )
                             else:
-                                frame.stack.append(_get_field(receiver, instruction.arg))
+                                frame.stack.append(
+                                    _get_field(receiver, instruction.arg)
+                                )
                         case OpCode.SET_FIELD:
                             value = _pop(frame.stack, "field assignment")
                             receiver = _pop(frame.stack, "field assignment")
@@ -602,15 +612,17 @@ class VirtualMachine:
             raise
 
     def _finalize_frame(self, frame: _Frame, result: list[Any]) -> list[Any]:
-        for name, value in tuple(frame.locals.items()):
-            _release_value(value, self)
-            del frame.locals[name]
+        self._release_frame_locals(frame)
         return result
 
     def _discard_frame(self, frame: _Frame) -> None:
         _release_stack_tail(frame.stack, len(frame.stack), self)
+        self._release_frame_locals(frame)
+
+    def _release_frame_locals(self, frame: _Frame) -> None:
         for name, value in tuple(frame.locals.items()):
-            _release_value(value, self)
+            if frame.globals.get(name) is not value:
+                _release_value(value, self)
             del frame.locals[name]
 
     def _handle_panic(self, frame: _Frame, panic: PanicSignal) -> int | None:
@@ -642,7 +654,9 @@ class VirtualMachine:
                 if len(callee.overloads) == 1:
                     self._call_function(callee.overloads[0], frame)
                     return
-                raise RuntimeError("cannot call overloaded function without resolved slot")
+                raise RuntimeError(
+                    "cannot call overloaded function without resolved slot"
+                )
             raise RuntimeError(f"cannot call value {_format_value(callee)}")
         finally:
             if isinstance(callee, (FunctionValue, OverloadedFunctionValue)):
@@ -1107,7 +1121,10 @@ def _make_function_value(
         return value
     if isinstance(code, FunctionSetCode):
         value = OverloadedFunctionValue(
-            tuple(FunctionValue(overload, captured, owned_names) for overload in code.overloads)
+            tuple(
+                FunctionValue(overload, captured, owned_names)
+                for overload in code.overloads
+            )
         )
         for overload in value.overloads:
             if overload.code.recursive:
@@ -1295,11 +1312,16 @@ def _run_object_cleanup(value: ObjectValue, vm: VirtualMachine) -> None:
     pop_error: PanicSignal | None = None
     if runtime is not None and runtime.pop_name is not None:
         try:
-            vm.call_value(_load_name(runtime.pop_name, {}, vm.globals), [_retain_value(value)])
+            vm.call_value(
+                _load_name(runtime.pop_name, {}, vm.globals),
+                [_retain_value(value)],
+            )
         except PanicSignal as exc:
             pop_error = exc
     if runtime is not None and not _mustcall_satisfied(value):
-        pop_error = PanicSignal(_fault_object("CleanupFault", _cleanup_fault_message(value)))
+        pop_error = PanicSignal(
+            _fault_object("CleanupFault", _cleanup_fault_message(value))
+        )
     if runtime is not None and runtime.destructor_name is not None:
         try:
             vm.call_value(
@@ -1372,7 +1394,10 @@ def _finalize_builtin_result_ownership(
     arg_ids = {
         id(value)
         for value in args
-        if isinstance(value, (ObjectValue, FunctionValue, OverloadedFunctionValue, list, tuple, dict))
+        if isinstance(
+            value,
+            (ObjectValue, FunctionValue, OverloadedFunctionValue, list, tuple, dict),
+        )
     }
     for value in result:
         if not isinstance(
@@ -1389,7 +1414,10 @@ def _finalize_builtin_result_ownership(
             _retain_value(values[ident])
 
 
-def _bind_lazy_result_owners(args: tuple[Any, ...], result: tuple[Any, ...]) -> tuple[Any, ...]:
+def _bind_lazy_result_owners(
+    args: tuple[Any, ...],
+    result: tuple[Any, ...],
+) -> tuple[Any, ...]:
     bound: list[Any] = []
     for value in result:
         if not isinstance(value, LazyList):
@@ -1446,7 +1474,11 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
             vectorized = _bind_lazy_result_owners(args, vectorized)
             _finalize_builtin_result_ownership(args, vectorized)
             if stack_count:
-                _release_stack_tail(frame.stack, stack_count, callee.context.call.__self__)
+                _release_stack_tail(
+                    frame.stack,
+                    stack_count,
+                    callee.context.call.__self__,
+                )
             frame.cycle_index = next_cycle_index
             frame.stack.extend(vectorized)
             return

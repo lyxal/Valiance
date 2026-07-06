@@ -31,36 +31,66 @@ uv run python -m unittest tests.test_types -v
 
 ## Current Code
 
-The package entry point is available as:
+For day-to-day CLI use, install the editable command once:
 
 ```powershell
-uv run valiance
+uv tool install --editable .
+```
+
+After that, the short command is available without `uv run`:
+
+```powershell
+vln
+```
+
+Running `vln` with no arguments starts the REPL. Stack state, variables,
+definitions, and imports persist between entered lines. Use `:reset` to clear
+that REPL state, and `:quit` to exit.
+
+If you prefer to keep the command only inside the project virtual environment,
+use `uv pip install -e .` instead and activate `.venv` before running `vln`.
+You can still run through uv without installing either way:
+
+```powershell
+uv run vln
 ```
 
 Compile source to bytecode with the default action:
 
 ```powershell
-uv run valiance samples/strings.vlnc
-uv run valiance --code '"hello" println' --output C:\tmp\hello.vbc
+vln samples/strings.vlnc
+vln --code '"hello" println' --output C:\tmp\hello.vbc
 ```
 
 Run source without writing bytecode:
 
 ```powershell
-uv run valiance run samples/strings.vlnc
+vln run samples/strings.vlnc
+vln run --code "1 2 +"
 ```
+
+Inline `run --code` snippets print the final stack automatically when the code
+does not print anything itself.
 
 Inspect compiler stages:
 
 ```powershell
-uv run valiance parse samples/strings.vlnc
-uv run valiance analyse samples/strings.vlnc
+vln parse samples/strings.vlnc
+vln analyse samples/strings.vlnc
 ```
 
 Run existing bytecode:
 
 ```powershell
-uv run valiance run-bytecode C:\tmp\hello.vbc
+vln run-bytecode C:\tmp\hello.vbc
+```
+
+Create and manage projects:
+
+```powershell
+vln init myproject
+vln add somelib 1.2.3
+vln install
 ```
 
 ## License

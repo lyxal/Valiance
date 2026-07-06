@@ -3,18 +3,101 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from valiance.diagnostics import Diagnostic, SourceLocation, render
 from valiance.main import main
 
 
 class MainTests(unittest.TestCase):
-    def test_main_without_command_prints_help(self):
+    def test_main_without_command_starts_repl(self):
         output = io.StringIO()
-        with contextlib.redirect_stdout(output):
+        input_stream = io.StringIO(":quit\n")
+        with contextlib.redirect_stdout(output), patch("sys.stdin", input_stream):
             exit_code = main([])
 
         self.assertEqual(exit_code, 0)
+        rendered = output.getvalue()
+        self.assertIn("Valiance REPL", rendered)
+        self.assertIn("State persists between lines.", rendered)
+        self.assertIn("vln:1> ", rendered)
+
+    def test_repl_help_lists_styled_commands(self):
+        output = io.StringIO()
+        input_stream = io.StringIO(":help\n:quit\n")
+        with contextlib.redirect_stdout(output), patch("sys.stdin", input_stream):
+            exit_code = main([])
+
+        self.assertEqual(exit_code, 0)
+        rendered = output.getvalue()
+        self.assertIn("REPL commands", rendered)
+        self.assertIn(":reset  clear stack", rendered)
+        self.assertIn(":quit   exit the REPL", rendered)
+
+    def test_repl_runs_inline_source_with_implicit_output(self):
+        output = io.StringIO()
+        input_stream = io.StringIO("1 2 +\n:quit\n")
+        with contextlib.redirect_stdout(output), patch("sys.stdin", input_stream):
+            exit_code = main([])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Stack [\n  0: 3\n]", output.getvalue())
+
+    def test_repl_persists_stack_between_entries(self):
+        output = io.StringIO()
+        input_stream = io.StringIO("1\n2 +\n:quit\n")
+        with contextlib.redirect_stdout(output), patch("sys.stdin", input_stream):
+            exit_code = main([])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Stack [\n  0: 1\n]", output.getvalue())
+        self.assertIn("Stack [\n  0: 3\n]", output.getvalue())
+
+    def test_repl_persists_variables_and_defines_between_entries(self):
+        output = io.StringIO()
+        input_stream = io.StringIO(
+            "$x = 41\n"
+            "define inc(n: Number) -> Number => $n 1 +\n"
+            "$x inc\n"
+            ":quit\n"
+        )
+        with contextlib.redirect_stdout(output), patch("sys.stdin", input_stream):
+            exit_code = main([])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Stack [\n  0: 42\n]", output.getvalue())
+
+    def test_repl_reset_clears_stack_variables_and_defines(self):
+        output = io.StringIO()
+        error = io.StringIO()
+        input_stream = io.StringIO("$x = 1\n:reset\n$x\n:quit\n")
+        with (
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(error),
+            patch("sys.stdin", input_stream),
+        ):
+            exit_code = main([])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Reset REPL state.", output.getvalue())
+        self.assertIn("Type error: undefined variable 'x'", error.getvalue())
+
+    def test_repl_reset_restarts_prompt_counter(self):
+        output = io.StringIO()
+        input_stream = io.StringIO("1\n:reset\n2\n:quit\n")
+        with contextlib.redirect_stdout(output), patch("sys.stdin", input_stream):
+            exit_code = main([])
+
+        self.assertEqual(exit_code, 0)
+        rendered = output.getvalue()
+        self.assertGreaterEqual(rendered.count("vln:1> "), 2)
+
+    def test_help_flag_prints_help(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["--help"])
+
+        self.assertEqual(exit_code, 2)
         self.assertIn("usage: valiance", output.getvalue())
         self.assertIn("valiance [compile] -c <code>", output.getvalue())
         self.assertIn("valiance run-bytecode <file>", output.getvalue())
@@ -71,6 +154,14 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(output.getvalue(), "hello\n")
+
+    def test_main_run_inline_code_defaults_to_implicit_output(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["run", "--code", "1 2 +"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), "Stack [\n  0: 3\n]\n")
 
     def test_main_formats_lex_errors_with_source_context(self):
         error = io.StringIO()
