@@ -365,6 +365,10 @@ class ImportComponent:
 
     name: Symbol
     alias: Symbol | None = None
+    signature: tuple[Type, ...] | None = None
+    exclusions: tuple[tuple[Type, ...], ...] = ()
+    kind: Symbol | None = None
+    trait: Symbol | None = None
 
 
 @dataclass(frozen=True)

@@ -333,6 +333,79 @@ class MainTests(unittest.TestCase):
             output.getvalue(),
         )
 
+    def test_package_commands_update_manifest_lock_and_install_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            old_cwd = Path.cwd()
+            output = io.StringIO()
+            try:
+                import os
+
+                os.chdir(root)
+                with contextlib.redirect_stdout(output):
+                    add_exit = main(
+                        ["add", "github.com/user/repo", "1.0.0", "as", "repo"]
+                    )
+                    upgrade_exit = main(["upgrade", "repo", "1.1.0"])
+                    install_exit = main(["install"])
+                    remove_exit = main(["remove", "repo"])
+            finally:
+                os.chdir(old_cwd)
+
+            manifest = (root / "valiance.toml").read_text(encoding="utf-8")
+            lock = (root / "valiance.lock").read_text(encoding="utf-8")
+
+        self.assertEqual(
+            (add_exit, upgrade_exit, install_exit, remove_exit),
+            (0, 0, 0, 0),
+        )
+        self.assertIn("[dependencies]", manifest)
+        self.assertNotIn("repo =", manifest)
+        self.assertIn('"dependencies": []', lock)
+
+    def test_package_init_creates_project_structure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "demo"
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                exit_code = main(["init", str(project)])
+
+            manifest = (project / "valiance.toml").read_text(encoding="utf-8")
+            source = (project / "src" / "main.vlnc").read_text(encoding="utf-8")
+            gitignore = (project / ".gitignore").read_text(encoding="utf-8")
+            lock = (project / "valiance.lock").read_text(encoding="utf-8")
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn('name = "demo"', manifest)
+        self.assertIn('"Hello, Valiance" println', source)
+        self.assertIn(".vln/", gitignore)
+        self.assertIn('"dependencies": []', lock)
+
+    def test_package_add_rejects_non_exact_versions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            old_cwd = Path.cwd()
+            error = io.StringIO()
+            try:
+                import os
+
+                os.chdir(root)
+                with contextlib.redirect_stderr(error):
+                    exit_code = main(["add", "somelib", "^1.2.3"])
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("Package error: version '^1.2.3'", error.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

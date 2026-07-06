@@ -632,10 +632,10 @@ Known parser-facing gaps include:
 
 - `_` placeholders and parent-stack substitution.
 - Cast syntax such as `as Type` and `as! Type`.
-- Advanced import/module syntax such as selective overload imports,
-  `except` exclusions, package imports, and tag-associated imports. Basic import
-  blocks, namespace imports, component imports, relative source imports, and
-  `std.*` imports are implemented.
+- Full environment exports for object/trait/variant/enum/tag imports. The parser
+  accepts the advanced import spellings, and define overload selection/exclusion
+  plus `root`, `std`, and `dep` module resolution are implemented, but the module
+  export surface still needs to carry non-`define` environment facts.
 - `spawn`, `concurrent`, `external`, and user-defined `cast` declarations.
 
 When implementing one of these, prefer adding the parser shape first, then

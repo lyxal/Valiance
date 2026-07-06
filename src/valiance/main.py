@@ -9,6 +9,14 @@ from typing import Any
 from valiance.analysis import Analyser
 from valiance.asts import pretty_ast, typed_source
 from valiance.diagnostics import from_exception, from_message, render, should_color
+from valiance.packages import (
+    PackageError,
+    add_dependency,
+    init_project,
+    install,
+    remove_dependency,
+    upgrade_dependency,
+)
 from valiance.parsing import LexError, ParseError, Parser, lex
 from valiance.runtime import (
     BytecodeFormatError,
@@ -26,7 +34,8 @@ DEFAULT_BYTECODE_SUFFIX = ".vbc"
 
 _SOURCE_ACTIONS = {"compile", "run", "parse", "analyse", "analyze", "annotate"}
 _BYTECODE_ACTIONS = {"run-bytecode"}
-_ACTIONS = _SOURCE_ACTIONS | _BYTECODE_ACTIONS
+_PACKAGE_ACTIONS = {"init", "install", "add", "remove", "upgrade"}
+_ACTIONS = _SOURCE_ACTIONS | _BYTECODE_ACTIONS | _PACKAGE_ACTIONS
 
 HELP = """usage: valiance [compile] <file> [-o <file>]
        valiance [compile] -c <code> [-o <file>]
@@ -36,6 +45,11 @@ HELP = """usage: valiance [compile] <file> [-o <file>]
        valiance parse <file>
        valiance analyse <file>
        valiance annotate <file>
+       valiance install
+       valiance init [directory]
+       valiance add <package-or-source> <version> [as <name>]
+       valiance remove <name>
+       valiance upgrade <name> <version>
 
 actions:
   compile             compile source to bytecode; default action
@@ -44,6 +58,11 @@ actions:
   parse               print the parsed AST
   analyse             print the typed AST
   annotate            print source with inferred type annotations
+  install             install project dependencies and update valiance.lock
+  init                create a new project manifest and starter source tree
+  add                 add an exact-version dependency
+  remove              remove a direct dependency
+  upgrade             change a dependency to an exact version
 
 options:
   -c, --code <code>   use inline Valiance code instead of a source file
@@ -70,6 +89,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             implicit_output=parsed.implicit_output,
             preview_lists=parsed.preview_lists,
         )
+    if parsed.action in _PACKAGE_ACTIONS:
+        return _run_package_command(parsed)
 
     source = parsed.code
     source_file: Path | None = None
@@ -107,6 +128,7 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
     parser.add_argument("--implicit-output", action="store_true")
     parser.add_argument("--preview-lists", action="store_true")
     parser.add_argument("file", nargs="?")
+    parser.add_argument("extra", nargs="*")
     parser.add_argument("-h", "--help", action="store_true")
 
     try:
@@ -163,6 +185,22 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
             return None
         return parsed
 
+    if parsed.action in _PACKAGE_ACTIONS:
+        if (
+            parsed.code is not None
+            or parsed.output is not None
+            or parsed.run
+            or parsed.legacy_bytecode_file is not None
+            or parsed.implicit_output
+            or parsed.preview_lists
+        ):
+            print(
+                "error: package commands cannot be combined with source options",
+                file=sys.stderr,
+            )
+            return None
+        return _validate_package_args(parsed)
+
     if parsed.legacy_bytecode_file is not None:
         print(
             "error: --run-bytecode cannot be combined with source actions",
@@ -184,6 +222,84 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
     if parsed.code is None and parsed.file is None:
         return None
     return parsed
+
+
+def _validate_package_args(parsed: argparse.Namespace) -> argparse.Namespace | None:
+    args = [item for item in (parsed.file, *parsed.extra) if item is not None]
+    if parsed.action == "install":
+        if args:
+            print("error: install takes no arguments", file=sys.stderr)
+            return None
+        return parsed
+    if parsed.action == "init":
+        if len(args) > 1:
+            print("error: init takes at most one directory", file=sys.stderr)
+            return None
+        parsed.package_args = args
+        return parsed
+    if parsed.action == "remove":
+        if len(args) != 1:
+            print("error: remove requires a dependency name", file=sys.stderr)
+            return None
+        parsed.package_args = args
+        return parsed
+    if parsed.action == "upgrade":
+        if len(args) != 2:
+            print(
+                "error: upgrade requires a dependency name and version",
+                file=sys.stderr,
+            )
+            return None
+        parsed.package_args = args
+        return parsed
+    if parsed.action == "add":
+        if len(args) not in {2, 4} or (len(args) == 4 and args[2] != "as"):
+            print(
+                "error: add requires <package-or-source> <version> [as <name>]",
+                file=sys.stderr,
+            )
+            return None
+        parsed.package_args = args
+        return parsed
+    return None
+
+
+def _run_package_command(parsed: argparse.Namespace) -> int:
+    try:
+        if parsed.action == "install":
+            manifest, lock_path = install()
+            print(
+                f"Installed {len(manifest.dependencies)} dependencies; "
+                f"updated {lock_path}"
+            )
+            return 0
+        if parsed.action == "init":
+            args = getattr(parsed, "package_args", [])
+            root = init_project(Path(args[0]) if args else None)
+            print(f"Initialized Valiance project: {root}")
+            return 0
+        args = parsed.package_args
+        if parsed.action == "add":
+            manifest = add_dependency(
+                args[0],
+                args[1],
+                alias=args[3] if len(args) == 4 else None,
+            )
+            print(f"Added dependency; updated {manifest.path}")
+            return 0
+        if parsed.action == "remove":
+            manifest = remove_dependency(args[0])
+            print(f"Removed dependency; updated {manifest.path}")
+            return 0
+        if parsed.action == "upgrade":
+            manifest = upgrade_dependency(args[0], args[1])
+            print(f"Upgraded dependency; updated {manifest.path}")
+            return 0
+    except PackageError as exc:
+        print(f"Package error: {exc}", file=sys.stderr)
+        return 1
+    print(f"error: unknown package action {parsed.action!r}", file=sys.stderr)
+    return 1
 
 
 def _read_source_file(filename: str) -> str | None:

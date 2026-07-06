@@ -590,6 +590,41 @@ public import {
             ],
         )
 
+    def test_parses_new_import_resolution_forms_and_selectors(self):
+        [node] = parse("""
+import {
+  root.shared.logging,
+  dep.somelib.[
+    hash(String),
+    hash except [(Number), (_+)],
+    object Box as Show,
+    #sorted
+  ]
+}
+""")
+
+        self.assertEqual(
+            node.specs[0].path,
+            ImportPath(("shared", "logging"), Symbol("root")),
+        )
+        self.assertEqual(node.specs[1].path, ImportPath(("somelib",), Symbol("dep")))
+        self.assertEqual(
+            node.specs[1].components,
+            (
+                ImportComponent(Symbol("hash"), signature=(String,)),
+                ImportComponent(
+                    Symbol("hash"),
+                    exclusions=((Number,), (C(ListExactType, N(Symbol("_"))),)),
+                ),
+                ImportComponent(
+                    Symbol("Box"),
+                    kind=Symbol("trait_impl"),
+                    trait=Symbol("Show"),
+                ),
+                ImportComponent(Symbol("#sorted"), kind=Symbol("tag")),
+            ),
+        )
+
     def test_parses_namespace_qualified_element_names(self):
         self.assertEqual(
             parse("utils.double 4"),

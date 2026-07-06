@@ -2763,195 +2763,650 @@ define fork(
 end
 ```
 
+
 # 23. Imports and Modules
 
-## 23.1. Basics
+## 23.1. Modules
 
-- 1 file = 1 module. Directories are namespaces.
-- `x.vlnc` = module `x`. `x/y.vlnc` = module `x.y`.
-- Only `define`s, `object`s, `trait`s, `variant`s, `enum`s, and tags can be imported.
-- A structure must be marked `public` to be importable. Tags are exempt.
-- No code executes at import time - only symbols are loaded. Circular imports are therefore not a problem.
-- Wildcard imports are not supported.
+* One file defines one module.
+* Directories form module namespaces.
+* `x.vlnc` defines module `x`.
+* `x/y.vlnc` defines module `x.y`.
+* Imports load symbols only. They do not execute code.
+* Circular imports are therefore permitted.
+* Wildcard imports are not supported.
 
-```
+The following structures can be imported:
+
+* `define`s
+* `object`s
+* `trait`s
+* `variant`s
+* `enum`s
+* tags
+
+A structure must be marked `public` to be importable. Tags are always importable and do not require `public`.
+
+```vlnc
 public define foo => 1
 define bar => 2
-#? foo can be imported, bar cannot
+
+#? foo can be imported
+#? bar cannot be imported
 ```
 
 ## 23.2. Import Syntax
 
-```
-import{
+Imports are enclosed in `{}`.
+
+```vlnc
+import {
   module,
   module as alias,
-  module.[Component],
+  module.Component,
   module.[
     Component,
-    Component as Alias,              #? aliased import
-    object X as Y,                   #? trait implementation
-    hash,                            #? all overloads
-    hash(String),                    #? specific concrete overload
-    hash(_+),                        #? specific generic overload
-    hash except [(String), (_+)],    #? all overloads except these
+    Component as Alias,
+    object X as Y,
+    hash,
+    hash(String),
+    hash(_+),
+    hash except [(String), (_+)]
   ]
 }
 ```
 
-- `_` in an overload signature means "any type." `_+` means "a list of any type," `_++` means "a rank-2 list of any type," and so on, consistent with the rest of the language.
-- Multiple components from the same module are listed inside `[]`.
-- Single component imports do not require `[]`.
-- `except` is only valid after a bare element name - `hash(String) except [...]` is a compile error since you are already importing a specific overload.
+The braces are always required, including for a single import:
 
-## 23.3. Module Resolution
-
-There are four kinds of modules, distinguished by the shape of their import path:
-
-- **Local modules** - a plain name or path, resolved relative to the current file. Prefix with `~` to resolve from the project root instead.
-- **Standard library** - first component is `std`. Ships with the compiler, always available.
-- **VCS packages** - contains `/`, e.g. `github.com/user/repo`. Resolved from the project's package directory.
-- **Installed packages** - prefixed with `@`, e.g. `@somelib`. Resolved from the project's package directory.
-
+```vlnc
+import {utils}
 ```
+
+This allows an import to appear on the same line as other code wherever the grammar permits:
+
+```vlnc
+import {utils}; run()
+```
+
+An import entry may import:
+
+* an entire module namespace;
+* a module namespace under an alias;
+* one component from a module;
+* several selected components from a module;
+* one or more overloads of an element;
+* a trait implementation;
+* all overloads of an element except selected overloads.
+
+## 23.3. Module Imports
+
+Importing a module without selecting a component imports the module as a namespace:
+
+```vlnc
+import {utils}
+utils.parse(input)
+```
+
+A module namespace may be aliased:
+
+```vlnc
+import {utilities.long_name as utils}
+utils.parse(input)
+```
+
+The imported namespace name is otherwise the final component of the module path:
+
+```vlnc
+import {dep.somelib.parsers}
+parsers.parse(input)
+```
+
+If two imported modules would produce the same namespace name, at least one must be aliased.
+
+```vlnc
 import {
-  utils,                        #? local: ./utils.vlnc
-  ~utils,                       #? local: <project root>/utils.vlnc
-  std.lists,                    #? standard library
-  github.com/user/repo.module,  #? VCS package
-  @somelib.module               #? installed package
+  dep.first.parsers as firstParsers,
+  dep.second.parsers as secondParsers
 }
 ```
 
-## 23.4. Re-exporting
+## 23.4. Component Imports
 
-- Imported symbols are not visible to importers of the current module by default.
-- Prefix an import with `public` to re-export it:
+A single component may be imported directly with `.`:
 
-```
-public import {
-  module.[Component]
-}
+```vlnc
+import {utils.Parser}
 ```
 
-- This allows library authors to curate a public API from internal modules without exposing internal structure.
+Several components from the same module are selected with `[]`:
 
-## 23.5. Conflict Resolution
-
-- If two imported modules define the same overload for the same types, the compiler raises an error and requires explicit resolution.
-- Resolve by explicitly importing only the overload you want:
-
-```
+```vlnc
 import {
-  @pkgA.[hash(String)],   #? explicitly choose pkgA's String overload
-  @pkgB.[hash(Number)]    #? and pkgB's Number overload
+  utils.[
+    Parser,
+    Token,
+    parse
+  ]
 }
 ```
 
-- The same applies to trait implementations - if two modules define `object X as Y`, you must explicitly import the one you want:
+A selected component may be aliased:
 
-```
+```vlnc
 import {
-  @pkgA.[object X as Y]   #? explicitly choose pkgA's implementation
+  utils.[
+    Parser as InputParser,
+    parse as parseInput
+  ]
 }
 ```
 
-- If two modules define the same generic overload, use wildcard syntax to resolve:
+Brackets are optional only when exactly one component is selected:
 
+```vlnc
+import {utils.Parser}
 ```
+
+The following is equivalent:
+
+```vlnc
+import {utils.[Parser]}
+```
+
+## 23.5. Module Resolution
+
+The first component of an import path determines how the module is resolved.
+
+There are four module resolution forms:
+
+* an unqualified path is resolved relative to the current file;
+* `root` resolves from the project root;
+* `std` resolves from the standard library;
+* `dep` resolves through the current project's dependency table.
+
+`root`, `std`, and `dep` are reserved as the first component of an import path.
+
+```vlnc
 import {
-  @pkgA.[hash(_+)]   #? pkgA's generic list overload
+  utils,
+  root.utils,
+  std.lists,
+  dep.somelib.module
 }
 ```
 
-- Alternatively, you can just import the whole namespace and use namespace access to disambiguate:
+### 23.5.1. Relative Modules
 
-```
+An unqualified module path is resolved relative to the directory containing the current file.
+
+```vlnc
 import {
-  @pkgA,
-  @pkgB
-}
-pkgA.hash("string") #? pkgA's String overload
-pkgB.hash("string") #? pkgB's String overload
-```
-
-### 23.5.1. Overload Exclusion
-
-- `except` imports all overloads of an element except those specified.
-- Syntax: `element except [overload, overload, ...]`
-- Each exclusion is an overload signature in `()` - the same syntax as selective overload imports.
-- `except` is only valid after a bare element name. Using it after a specific overload is a compile error:
-
-```
-hash except [(String)]       #? valid - all overloads except String
-hash(String) except [(_+)]   #? compile error - already specific
-```
-
-- Exclusions can be concrete or generic:
-
-```
-hash except [(String)]          #? exclude concrete String overload
-hash except [(_+)]              #? exclude generic list overload
-hash except [(String), (_+)]    #? exclude both
-```
-
-- If an excluded overload doesn't exist in the module, it is a compile error:
-
-```
-#? @somelib doesn't define hash(Number)
-hash except [(Number)]   #? compile error - nothing to exclude
-```
-
-- `except` interacts with conflict resolution - if after exclusions there are still conflicting overloads from two modules, the conflict error still applies:
-
-```
-import{
-  @pkgA.[hash except [(String)]],  #? still has hash(_+)
-  @pkgB.[hash except [(String)]]   #? still has hash(_+) - conflict!
+  utils,
+  parsers.json
 }
 ```
 
-## 23.6. Importing Objects
+Given the importing file:
 
-- Importing an object as a component automatically imports all its object-friendly elements.
-- OFEs are not automatically imported if the object is namespace-accessed.
-
+```text
+src/main.vlnc
 ```
-#? Component import - OFEs imported automatically
-import{somemod.Y}
+
+these resolve to:
+
+```text
+src/utils.vlnc
+src/parsers/json.vlnc
+```
+
+Relative imports may move through child namespaces but cannot traverse above the importing file's directory. Parent-directory syntax such as `..` is not supported.
+
+Use a `root` import when a module must be resolved from elsewhere in the project.
+
+### 23.5.2. Project-Root Modules
+
+A path beginning with `root` is resolved relative to the directory containing `valiance.toml`.
+
+```vlnc
+import {
+  root.utils,
+  root.shared.logging
+}
+```
+
+These resolve to:
+
+```text
+<project root>/utils.vlnc
+<project root>/shared/logging.vlnc
+```
+
+The `root` component selects the resolution root and is not part of the module's namespace.
+
+For example:
+
+```vlnc
+import {root.shared.logging}
+logging.info("started")
+```
+
+A file without an enclosing `valiance.toml` is treated as a standalone script. `root` imports are unavailable in standalone scripts.
+
+### 23.5.3. Standard Library Modules
+
+A path beginning with `std` is resolved from the compiler's standard library.
+
+```vlnc
+import {
+  std.lists,
+  std.strings,
+  std.io.File
+}
+```
+
+The standard library ships with the compiler and is always available.
+
+The `std` component is part of the standard library's canonical module path, but a whole-module import still introduces only the final component as the local namespace:
+
+```vlnc
+import {std.lists}
+lists.map(values, transform)
+```
+
+### 23.5.4. Dependency Modules
+
+A path beginning with `dep` is resolved through the current project's dependency table.
+
+The component immediately after `dep` is the dependency name from `valiance.toml`. The remaining components identify a module inside that dependency.
+
+```vlnc
+import {
+  dep.somelib,
+  dep.somelib.parsers,
+  dep.repo.module
+}
+```
+
+Given:
+
+```toml
+[dependencies]
+somelib = "1.2.3"
+repo = { source = "github.com/user/repo", version = "1.0.0" }
+```
+
+the imports resolve through the dependencies named `somelib` and `repo`.
+
+The import path does not contain:
+
+* the dependency's version;
+* its registry location;
+* its VCS location;
+* its installation directory.
+
+Those details belong to the manifest and lockfile.
+
+External dependencies are unavailable in standalone scripts because there is no dependency table without `valiance.toml`.
+
+## 23.6. Importing Overloads
+
+Importing a bare element name imports all of its overloads:
+
+```vlnc
+import {
+  dep.somelib.[hash]
+}
+```
+
+A specific overload may be selected by writing its signature:
+
+```vlnc
+import {
+  dep.somelib.[
+    hash(String),
+    hash(Number)
+  ]
+}
+```
+
+The signature identifies parameter types only. It does not repeat parameter names or return types.
+
+Generic overloads use the same wildcard type syntax as the rest of the language:
+
+```vlnc
+import {
+  dep.somelib.[
+    hash(_),
+    hash(_+),
+    hash(_++)
+  ]
+}
+```
+
+In an overload signature:
+
+* `_` means any single type;
+* `_+` means a rank-1 list of any type;
+* `_++` means a rank-2 list of any type;
+* further `+` suffixes indicate higher list ranks.
+
+Selecting an overload that does not exist is a compile error.
+
+## 23.7. Overload Exclusion
+
+`except` imports every overload of an element except the listed signatures.
+
+```vlnc
+import {
+  dep.somelib.[
+    hash except [(String)]
+  ]
+}
+```
+
+Several overloads may be excluded:
+
+```vlnc
+import {
+  dep.somelib.[
+    hash except [
+      (String),
+      (_+)
+    ]
+  ]
+}
+```
+
+Exclusions may refer to concrete or generic overloads.
+
+`except` is valid only after a bare element name:
+
+```vlnc
+hash except [(String)]       #? valid
+hash(String) except [(_+)]   #? compile error
+```
+
+The second form is invalid because `hash(String)` already selects one specific overload.
+
+Every excluded overload must exist in the imported module. Excluding a nonexistent overload is a compile error:
+
+```vlnc
+#? compile error if hash(Number) does not exist
+hash except [(Number)]
+```
+
+## 23.8. Importing Trait Implementations
+
+A trait implementation may be imported explicitly:
+
+```vlnc
+import {
+  dep.somelib.[
+    object X as Y
+  ]
+}
+```
+
+This imports the implementation of trait `Y` for object `X`.
+
+The object and trait names must identify an implementation defined by the selected module. Importing an implementation that does not exist is a compile error.
+
+## 23.9. Importing Objects
+
+Importing an object directly also imports its object-friendly elements.
+
+```vlnc
+import {somemod.Y}
 Y foo
+```
 
-#? Namespace access - OFEs not imported
-import{somemod}
+Object-friendly elements are not imported when the object is accessed through a module namespace:
+
+```vlnc
+import {somemod}
 somemod.Y somemod.foo
 ```
 
-## 23.7. Tag Importing
+In the second example, `Y` and `foo` remain members of the `somemod` namespace.
 
-- Importing a tag imports all overlay rules and any elements associated via tag definitions.
-- Elements that use the tag but are not associated via tag definitions are not imported.
+## 23.10. Importing Tags
 
-```
-#? In sorted.vlnc:
+Importing a tag imports:
+
+* the tag;
+* all overlay rules for the tag;
+* all elements associated with the tag through tag definitions.
+
+It does not import unrelated elements that merely use the tag in their signatures.
+
+```vlnc
+#? sorted.vlnc
+
 tag #sorted as computed
-define[T] #sorted min(:#sorted T+) => $[0]  #? will be imported
-define[T] max(:#sorted T+) => $.[-1]        #? will not be imported
+
+define[T] #sorted min(:#sorted T+) => $[0]
+
+define[T] max(:#sorted T+) => $.[-1]
 ```
 
-```
+```vlnc
 import {sorted.#sorted}
-#? #sorted overlay rules imported
-#? min imported
-#? max not imported
+```
+
+This imports:
+
+* `#sorted`;
+* its overlay rules;
+* `min`, because it is associated through the tag definition.
+
+It does not import `max`, because `max` only uses the tag and is not associated through its definition.
+
+## 23.11. Re-Exporting
+
+Imported symbols are private to the importing module by default.
+
+Prefix an import with `public` to make its imported symbols available to importers of the current module:
+
+```vlnc
+public import {
+  internal.api.[
+    Client,
+    Request,
+    send
+  ]
+}
+```
+
+A public module namespace import re-exports that namespace:
+
+```vlnc
+public import {dep.somelib}
+```
+
+A public selective import re-exports only the selected components:
+
+```vlnc
+public import {
+  dep.somelib.[Client]
+}
+```
+
+Re-exporting allows a library to provide a curated public API without exposing its internal file structure.
+
+## 23.12. Import Conflicts
+
+If two imports introduce the same non-overload symbol under the same name, the compiler raises an error unless one is aliased.
+
+```vlnc
+import {
+  dep.first.[Parser],
+  dep.second.[Parser]
+}
+```
+
+This is an error if both imports introduce `Parser`.
+
+Resolve it with aliases:
+
+```vlnc
+import {
+  dep.first.[Parser as FirstParser],
+  dep.second.[Parser as SecondParser]
+}
+```
+
+## 23.13. Overload Conflicts
+
+Overloads from different modules may coexist when their signatures are distinct.
+
+```vlnc
+import {
+  dep.pkgA.[hash(String)],
+  dep.pkgB.[hash(Number)]
+}
+```
+
+If two imported modules define the same overload for the same parameter types, the compiler raises an error.
+
+```vlnc
+import {
+  dep.pkgA.[hash],
+  dep.pkgB.[hash]
+}
+```
+
+If both modules define `hash(String)`, that overload is ambiguous.
+
+Resolve the conflict by importing only the desired overloads:
+
+```vlnc
+import {
+  dep.pkgA.[hash(String)],
+  dep.pkgB.[hash(Number)]
+}
+```
+
+Generic overloads are resolved in the same way:
+
+```vlnc
+import {
+  dep.pkgA.[hash(_+)]
+}
+```
+
+Overload exclusion may also be used:
+
+```vlnc
+import {
+  dep.pkgA.[hash except [(String)]],
+  dep.pkgB.[hash(String)]
+}
+```
+
+Exclusions do not suppress unrelated conflicts. If both imports still provide the same remaining overload, the import remains invalid:
+
+```vlnc
+import {
+  dep.pkgA.[hash except [(String)]],
+  dep.pkgB.[hash except [(String)]]
+}
+
+#? compile error if both modules still provide hash(_+)
+```
+
+## 23.14. Trait Implementation Conflicts
+
+If two imported modules provide the same trait implementation for the same object and trait, the compiler raises an error.
+
+```vlnc
+import {
+  dep.pkgA,
+  dep.pkgB
+}
+```
+
+If both packages provide `object X as Y`, the implementation is ambiguous.
+
+Resolve the conflict by importing the desired implementation explicitly:
+
+```vlnc
+import {
+  dep.pkgA.[object X as Y]
+}
+```
+
+Alternatively, import both packages as namespaces and access their members explicitly where namespace access is supported:
+
+```vlnc
+import {
+  dep.pkgA,
+  dep.pkgB
+}
+```
+
+Namespace imports do not automatically merge object-friendly elements or trait implementations into the current module.
+
+## 23.15. Namespace Disambiguation
+
+Importing whole modules as namespaces avoids direct symbol conflicts:
+
+```vlnc
+import {
+  dep.pkgA,
+  dep.pkgB
+}
+
+pkgA.hash("string")
+pkgB.hash("string")
+```
+
+A namespace may be aliased when the default final component is unclear or conflicts with another import:
+
+```vlnc
+import {
+  dep.companyA.crypto.hash as hashA,
+  dep.companyB.crypto.hash as hashB
+}
+```
+
+The aliases are then used as namespace names:
+
+```vlnc
+hashA.digest(value)
+hashB.digest(value)
 ```
 
 # 24. Package Management
 
-## 24.1. The Project Manifest
+## 24.1. Projects
 
-- Every Valiance project has a `valiance.toml` at its project root.
-- Its presence defines the project root for `~` imports.
-- If no `valiance.toml` exists, the file is treated as a standalone script. Local and standard library imports still work. External packages are unavailable without a project file.
+A Valiance project is a directory containing `valiance.toml`.
+
+The directory containing the manifest is the project root.
+
+The project root determines:
+
+* the base directory for `root` imports;
+* the location of the project package directory;
+* the dependency table used by `dep` imports;
+* the location of `valiance.lock`.
+
+If no enclosing `valiance.toml` exists, the file is treated as a standalone script.
+
+Standalone scripts may use:
+
+* relative imports;
+* standard-library imports.
+
+Standalone scripts may not use:
+
+* `root` imports;
+* `dep` imports;
+* project package commands that modify a manifest.
+
+## 24.2. The Project Manifest
+
+Every project has a `valiance.toml` file at its root.
 
 ```toml
 [project]
@@ -2961,44 +3416,485 @@ authors = ["Your Name"]
 
 [dependencies]
 somelib = "1.2.3"
-"github.com/user/repo" = "1.0.0"
+repo = { source = "github.com/user/repo", version = "1.0.0" }
 ```
 
-- All versions are exact. No ranges, no wildcards, no specifiers. Every dependency at every level of the dependency tree declares an exact version.
+The `[project]` table contains project metadata.
 
-## 24.2. The Lockfile
+The `[dependencies]` table maps local dependency names to exact package versions and package sources.
 
-- `valiance.lock` records the exact resolved versions of all dependencies, including transitive ones.
-- Always commit `valiance.lock` - ensures reproducible builds regardless of what package authors do.
-- The lockfile is managed automatically. Never edit it by hand.
+The dependency name is the name used after `dep` in source code:
 
-## 24.3. Package Installation
+```vlnc
+import {
+  dep.somelib,
+  dep.repo.module
+}
+```
 
-- Packages are installed per-project into a `.vln` directory at the project root.
-- `.vln` should be added to `.gitignore` - it is always reproducible from `valiance.lock`.
-- A global package directory exists for tools intended to be used across projects. Per-project installation is always preferred.
+Dependency names must be valid module path components.
 
-## 24.4. Version Conflicts
+The following names are reserved and cannot be used as dependency names:
 
-- If two dependencies require different versions of the same package, both are installed and used simultaneously.
-- Each dependent gets exactly the version it declared.
-- Types from different versions of the same package are distinct types - passing a `somelib.MyType 1.2.3` where `somelib.MyType 2.0.0` is expected is a compile error. This is correct since the two types may have different fields and behavior.
-- No dependency resolution algorithm is needed - there are no conflicts to resolve, only versions to install.
+* `root`
+* `std`
+* `dep`
 
-## 24.5. Upgrading Dependencies
+A dependency name must be unique within one manifest.
 
-- Upgrading is always explicit. There is no automatic version resolution.
-- To upgrade a dependency, change its version in `valiance.toml` and run `vln install`.
-- Alternatively, `vln upgrade @somelib 1.3.0` updates a specific package to a specific version, updating both `valiance.toml` and `valiance.lock`.
-- Library authors should use `@deprecated` to signal that users should upgrade, rather than relying on version ranges to force it.
+## 24.3. Registry Packages
 
-## 24.6. Package Manager Commands
+A dependency may use the default package registry.
 
-- `vln install` - install all dependencies declared in `valiance.toml`
-- `vln add @somelib 1.2.3` - add an installed package at an exact version
-- `vln add github.com/user/repo 1.0.0` - add a VCS dependency at an exact version
-- `vln remove @somelib` - remove a package
-- `vln upgrade @somelib 1.3.0` - upgrade a specific package to a specific version
+The compact form declares a registry package whose package name is the same as its dependency name:
+
+```toml
+[dependencies]
+somelib = "1.2.3"
+```
+
+This declares:
+
+* dependency name: `somelib`;
+* package source: the default registry;
+* package name: `somelib`;
+* exact version: `1.2.3`.
+
+It is imported as:
+
+```vlnc
+import {dep.somelib}
+```
+
+An expanded form may be used when the registry package name differs from the local dependency name:
+
+```toml
+[dependencies]
+math = {
+  package = "advanced-math",
+  version = "2.0.0"
+}
+```
+
+It is still imported using the local name:
+
+```vlnc
+import {dep.math}
+```
+
+Changing the external package name does not require changing source imports unless the local dependency name also changes.
+
+## 24.4. VCS Packages
+
+A dependency may refer to a package hosted at a VCS source.
+
+```toml
+[dependencies]
+repo = {
+  source = "github.com/user/repo",
+  version = "1.0.0"
+}
+```
+
+The dependency is imported through its local dependency name:
+
+```vlnc
+import {dep.repo.module}
+```
+
+The source location does not appear in import paths.
+
+This keeps imports independent of:
+
+* hosting provider;
+* repository owner;
+* repository path;
+* future source migrations.
+
+A package may move between a VCS host and a registry without requiring changes to source files, provided its dependency name remains unchanged.
+
+## 24.5. Exact Versions
+
+Every declared dependency uses an exact version.
+
+Version ranges, wildcard versions, compatibility operators, and implicit latest-version selection are not supported.
+
+Valid:
+
+```toml
+[dependencies]
+somelib = "1.2.3"
+```
+
+Invalid:
+
+```toml
+[dependencies]
+somelib = "^1.2.3"
+otherlib = ">=2.0"
+utility = "1.*"
+latestlib = "*"
+```
+
+Exact versions make dependency selection explicit and reproducible.
+
+## 24.6. The Lockfile
+
+`valiance.lock` records the fully resolved dependency graph.
+
+It contains the exact package instance used for every direct and transitive dependency, including:
+
+* package identity;
+* source;
+* exact version;
+* integrity information;
+* dependency relationships.
+
+The lockfile is generated and updated automatically.
+
+Do not edit `valiance.lock` by hand.
+
+Applications should commit `valiance.lock` so that every installation reproduces the same dependency graph.
+
+Libraries should also commit `valiance.lock` so that development, testing, and tooling use reproducible dependency versions. Consumers of a library resolve the library's declared dependencies within their own package graph.
+
+## 24.7. Package Installation
+
+Project packages are installed into:
+
+```text
+<project root>/.vln/
+```
+
+The `.vln` directory is managed by the package manager.
+
+It should not be edited manually.
+
+It should normally be added to `.gitignore` because it can be reproduced from `valiance.toml` and `valiance.lock`.
+
+```gitignore
+.vln/
+```
+
+Running:
+
+```text
+vln install
+```
+
+installs every dependency recorded in the lockfile.
+
+If the manifest has changed and the lockfile no longer matches it, the package manager updates the lockfile before installation.
+
+Installation does not alter source import paths.
+
+## 24.8. Global Packages
+
+A global package directory exists for tools intended to be used across projects.
+
+Global installation is intended for executables and development tools, not ordinary project dependencies.
+
+Libraries imported by project source code should be declared in that project's `valiance.toml` and installed into its `.vln` directory.
+
+A globally installed package does not automatically become available through `dep`.
+
+`dep` resolves only dependencies declared by the current project or package.
+
+## 24.9. Dependency Resolution
+
+Each package declares exact versions for its own direct dependencies.
+
+No version-range solving is performed.
+
+For each dependency edge, the package manager installs the exact version requested by the dependent package.
+
+If two packages require different versions of the same dependency, both versions are installed.
+
+For example:
+
+```text
+application
+├── packageA
+│   └── somelib 1.2.3
+└── packageB
+    └── somelib 2.0.0
+```
+
+`packageA` resolves its own `dep.somelib` to version `1.2.3`.
+
+`packageB` resolves its own `dep.somelib` to version `2.0.0`.
+
+The application resolves `dep.somelib` only if it declares a direct dependency named `somelib`.
+
+Dependencies are resolved relative to the importing package's own manifest context, not by searching for one project-wide version.
+
+## 24.10. Package Identity
+
+Each installed package version is a distinct package instance.
+
+Types defined by different versions of the same package are distinct types.
+
+A value of:
+
+```text
+somelib.MyType 1.2.3
+```
+
+cannot be passed where the following is expected:
+
+```text
+somelib.MyType 2.0.0
+```
+
+This is a compile error even when the type names are textually identical.
+
+The versions may define different:
+
+* fields;
+* variants;
+* invariants;
+* trait implementations;
+* behavior.
+
+Treating them as distinct preserves type safety.
+
+## 24.11. Direct and Transitive Dependencies
+
+A project may import only dependencies declared directly in its own `[dependencies]` table.
+
+A transitive dependency is not automatically available through `dep`.
+
+For example, if the project depends on `packageA`, and `packageA` depends on `somelib`, this does not make the following valid in the project:
+
+```vlnc
+import {dep.somelib}
+```
+
+To import `somelib` directly, the project must declare its own dependency:
+
+```toml
+[dependencies]
+packageA = "1.0.0"
+somelib = "1.2.3"
+```
+
+This prevents source code from depending accidentally on another package's internal dependency graph.
+
+## 24.12. Adding Dependencies
+
+Use `vln add` to add a dependency at an exact version.
+
+For a registry package:
+
+```text
+vln add somelib 1.2.3
+```
+
+This adds:
+
+```toml
+[dependencies]
+somelib = "1.2.3"
+```
+
+For a VCS package:
+
+```text
+vln add github.com/user/repo 1.0.0
+```
+
+By default, the final repository path component becomes the local dependency name:
+
+```toml
+[dependencies]
+repo = {
+  source = "github.com/user/repo",
+  version = "1.0.0"
+}
+```
+
+The dependency can then be imported as:
+
+```vlnc
+import {dep.repo}
+```
+
+Use `as` to choose a different local name:
+
+```text
+vln add github.com/user/repo 1.0.0 as userrepo
+```
+
+This adds:
+
+```toml
+[dependencies]
+userrepo = {
+  source = "github.com/user/repo",
+  version = "1.0.0"
+}
+```
+
+The dependency is imported as:
+
+```vlnc
+import {dep.userrepo}
+```
+
+Adding a dependency updates both `valiance.toml` and `valiance.lock`, then installs the package.
+
+## 24.13. Removing Dependencies
+
+Use `vln remove` with the local dependency name:
+
+```text
+vln remove somelib
+vln remove repo
+```
+
+The command:
+
+* removes the dependency from `valiance.toml`;
+* updates `valiance.lock`;
+* removes package instances no longer needed by the dependency graph.
+
+Removing a dependency is an error if source code still imports it.
+
+The compiler reports unresolved `dep` imports normally.
+
+## 24.14. Upgrading Dependencies
+
+Upgrades are always explicit.
+
+To upgrade a dependency, either edit its exact version in `valiance.toml` and run:
+
+```text
+vln install
+```
+
+or use:
+
+```text
+vln upgrade somelib 1.3.0
+```
+
+The command updates:
+
+* `valiance.toml`;
+* `valiance.lock`;
+* the installed package graph.
+
+For a VCS dependency, the command still uses the local dependency name:
+
+```text
+vln upgrade repo 1.1.0
+```
+
+No dependency is upgraded automatically.
+
+Package authors should use deprecation annotations and release documentation to encourage upgrades rather than relying on version ranges.
+
+## 24.15. Renaming Dependencies
+
+The local dependency name is part of the project's source-level namespace.
+
+Changing it requires updating imports.
+
+For example, changing:
+
+```toml
+[dependencies]
+repo = {
+  source = "github.com/user/repo",
+  version = "1.0.0"
+}
+```
+
+to:
+
+```toml
+[dependencies]
+userrepo = {
+  source = "github.com/user/repo",
+  version = "1.0.0"
+}
+```
+
+requires changing:
+
+```vlnc
+import {dep.repo.module}
+```
+
+to:
+
+```vlnc
+import {dep.userrepo.module}
+```
+
+Changing only a dependency's source or version does not require updating imports.
+
+## 24.16. Package Manager Commands
+
+The core package manager commands are:
+
+```text
+vln init
+```
+
+Create a new project in the current directory with:
+
+```text
+valiance.toml
+valiance.lock
+.gitignore
+src/main.vlnc
+```
+
+```text
+vln init myproject
+```
+
+Create the same project structure in a new or existing `myproject` directory
+that does not already contain `valiance.toml`.
+
+```text
+vln install
+```
+
+Install all dependencies declared by the project, using `valiance.lock` when possible.
+
+```text
+vln add somelib 1.2.3
+```
+
+Add a registry dependency under the local name `somelib`.
+
+```text
+vln add github.com/user/repo 1.0.0
+```
+
+Add a VCS dependency using `repo` as its default local name.
+
+```text
+vln add github.com/user/repo 1.0.0 as userrepo
+```
+
+Add a VCS dependency under the explicit local name `userrepo`.
+
+```text
+vln remove somelib
+```
+
+Remove the dependency named `somelib`.
+
+```text
+vln upgrade somelib 1.3.0
+```
+
+Upgrade the dependency named `somelib` to exactly version `1.3.0`.
+
+All package-modifying commands update the manifest and lockfile together.
 
 # 25. Concurrency
 _Features from this point onwards are for implementation further down the road. They are not considered core priority. As such, these features are very open to change._
@@ -3458,3 +4354,4 @@ end
 ```
 
 - Here, the type cast safely constructs a `Point`. There's no blind reliance on `as!`
+

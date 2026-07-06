@@ -245,8 +245,13 @@ class Parser:
     def _import_spec(self) -> ImportSpec:
         path = self._import_path()
         components: tuple[ImportComponent, ...] = ()
-        if self._match(TokenKind.DOT) and self._match(TokenKind.LBRACKET):
-            components = self._import_components()
+        if self._match(TokenKind.DOT):
+            if self._match(TokenKind.LBRACKET):
+                components = self._import_components()
+            elif self._check(TokenKind.OP) and self._current.value.startswith("#"):
+                components = (self._import_component(),)
+            else:
+                components = (self._import_component(),)
         alias = None
         if self._match_ident("as"):
             alias = self._symbol("expected import alias")
@@ -257,14 +262,21 @@ class Parser:
         parts: list[str] = []
         if self._check(TokenKind.OP) and self._current.value == "~":
             self._advance()
-            root = Symbol("~")
+            root = Symbol("root")
         elif self._match(TokenKind.AT):
-            root = Symbol("@")
+            root = Symbol("dep")
             parts.append(self._expect(TokenKind.IDENT).value)
         else:
-            parts.append(self._expect(TokenKind.IDENT).value)
+            first = self._expect(TokenKind.IDENT).value
+            if first in {"root", "dep"}:
+                root = Symbol(first)
+            else:
+                parts.append(first)
         while self._match(TokenKind.DOT):
             if self._check(TokenKind.LBRACKET):
+                self.index -= 1
+                break
+            if self._check(TokenKind.OP) and self._current.value.startswith("#"):
                 self.index -= 1
                 break
             parts.append(self._expect(TokenKind.IDENT).value)
@@ -276,14 +288,57 @@ class Parser:
         if self._match(TokenKind.RBRACKET):
             return ()
         while True:
-            name = self._symbol("expected imported component")
-            alias = None
-            if self._match_ident("as"):
-                alias = self._symbol("expected component alias")
-            components.append(ImportComponent(name, alias))
+            components.append(self._import_component())
             self._skip_newlines()
             if self._match(TokenKind.RBRACKET):
                 return tuple(components)
+            self._expect(TokenKind.COMMA)
+            self._skip_newlines()
+
+    def _import_component(self) -> ImportComponent:
+        if self._match_ident("object"):
+            object_name = self._symbol("expected imported object name")
+            self._expect_ident("as")
+            trait_name = self._symbol("expected imported trait name")
+            return ImportComponent(
+                object_name,
+                kind=Symbol("trait_impl"),
+                trait=trait_name,
+            )
+
+        if self._check(TokenKind.OP) and self._current.value.startswith("#"):
+            tag = _tag_from_token(self._advance())
+            return ImportComponent(Symbol(f"#{tag.name}"), kind=Symbol("tag"))
+
+        name = self._symbol("expected imported component")
+        signature = self._import_signature() if self._match(TokenKind.LPAREN) else None
+        exclusions: tuple[tuple[Type, ...], ...] = ()
+        if self._match_ident("except"):
+            if signature is not None:
+                self._error("except is only valid after a bare imported element name")
+            exclusions = self._import_exclusions()
+        alias = None
+        if self._match_ident("as"):
+            alias = self._symbol("expected component alias")
+        return ImportComponent(name, alias, signature, exclusions)
+
+    def _import_signature(self) -> tuple[Type, ...]:
+        params = self._type_list_until({TokenKind.RPAREN})
+        self._expect(TokenKind.RPAREN)
+        return params
+
+    def _import_exclusions(self) -> tuple[tuple[Type, ...], ...]:
+        self._expect(TokenKind.LBRACKET)
+        exclusions: list[tuple[Type, ...]] = []
+        self._skip_newlines()
+        if self._match(TokenKind.RBRACKET):
+            return ()
+        while True:
+            self._expect(TokenKind.LPAREN)
+            exclusions.append(self._import_signature())
+            self._skip_newlines()
+            if self._match(TokenKind.RBRACKET):
+                return tuple(exclusions)
             self._expect(TokenKind.COMMA)
             self._skip_newlines()
 
@@ -1968,6 +2023,11 @@ class Parser:
             self._advance()
             return True
         return False
+
+    def _expect_ident(self, value: str) -> Token:
+        if self._match_ident(value):
+            return self._previous
+        self._error(f"expected {value}")
 
     def _match_ellipsis(self) -> bool:
         if not self._check(TokenKind.DOT):

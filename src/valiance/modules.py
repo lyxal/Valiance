@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import valiance.types as T
 from valiance.asts import (
     DefineNode,
     FunctionNode,
@@ -14,6 +15,12 @@ from valiance.asts import (
     TypedFunctionNode,
 )
 from valiance.asts.nodes import TypedNode
+from valiance.packages import (
+    PackageError,
+    dependency_install_root,
+    find_project_root,
+    load_manifest,
+)
 from valiance.parsing import parse
 
 
@@ -105,20 +112,42 @@ class ModuleLoader:
         *,
         current_file: Path | None = None,
     ) -> Path:
-        if path.root == Symbol("@"):
-            raise ModuleLoadError("installed package imports are not available yet")
+        if path.root == Symbol("dep"):
+            return self._resolve_dependency(path, current_file=current_file)
         if path.parts and path.parts[0] == "std":
             if self.std_root is None:
                 root = Path(__file__).parent / "std"
             else:
                 root = self.std_root
             return _source_path(root, path.parts[1:])
-        if path.root == Symbol("~"):
+        if path.root == Symbol("root"):
             root = _project_root(current_file)
+            if root is None:
+                raise ModuleLoadError("root imports require an enclosing valiance.toml")
             return _source_path(root, path.parts)
         if current_file is None:
             raise ModuleLoadError("local imports require a source file")
         return _source_path(current_file.parent, path.parts)
+
+    def _resolve_dependency(
+        self,
+        path: ImportPath,
+        *,
+        current_file: Path | None = None,
+    ) -> Path:
+        if not path.parts:
+            raise ModuleLoadError("dep imports require a dependency name")
+        project_root = _project_root(current_file)
+        if project_root is None:
+            raise ModuleLoadError("dep imports require an enclosing valiance.toml")
+        dependency_name = path.parts[0]
+        try:
+            manifest = load_manifest(project_root)
+            package_root = dependency_install_root(manifest, dependency_name)
+        except PackageError as exc:
+            raise ModuleLoadError(str(exc)) from exc
+        module_parts = path.parts[1:] or (dependency_name,)
+        return _source_path(package_root, module_parts)
 
 
 def import_definitions(
@@ -131,12 +160,18 @@ def import_definitions(
         by_name = {definition.name: definition for definition in public}
         selected: list[ModuleDefinition] = []
         for component in spec.components:
+            if component.kind is not None:
+                raise ModuleLoadError(
+                    f"import component kind {component.kind.text!r} is not "
+                    "available in module exports yet"
+                )
             definition = by_name.get(component.name)
             if definition is None:
                 raise ModuleLoadError(
                     f"module {exports.module_name!r} has no public "
                     f"component {component.name.text!r}"
                 )
+            definition = _select_overloads(definition, component, exports.module_name)
             selected.append(
                 _renamed_definition(
                     definition,
@@ -208,25 +243,67 @@ def _renamed_definition(
     return ModuleDefinition(name, typed, definition.public)
 
 
+def _select_overloads(
+    definition: ModuleDefinition,
+    component,
+    module_name: str,
+) -> ModuleDefinition:
+    if component.signature is None and not component.exclusions:
+        return definition
+    overloads = _definition_overloads(definition)
+    if component.signature is not None:
+        selected = tuple(
+            overload
+            for overload in overloads
+            if _same_signature(overload.params, component.signature)
+        )
+        if not selected:
+            raise ModuleLoadError(
+                f"module {module_name!r} has no overload "
+                f"{component.name.text}{_show_signature(component.signature)}"
+            )
+    else:
+        exclusions = set(component.exclusions)
+        missing = tuple(
+            signature
+            for signature in component.exclusions
+            if not any(
+                _same_signature(overload.params, signature)
+                for overload in overloads
+            )
+        )
+        if missing:
+            raise ModuleLoadError(
+                f"module {module_name!r} has no overload "
+                f"{component.name.text}{_show_signature(missing[0])}"
+            )
+        selected = tuple(
+            overload for overload in overloads if overload.params not in exclusions
+        )
+    typed = TypedFunctionNode(
+        definition.typed.node,
+        T.Overloads(*selected),
+        definition.typed.overloads,
+    )
+    return ModuleDefinition(definition.name, typed, definition.public)
+
+
 def _source_path(root: Path, parts: tuple[str, ...]) -> Path:
     if not parts:
         raise ModuleLoadError("empty module path")
     return root.joinpath(*parts).with_suffix(".vlnc").resolve()
 
 
-def _project_root(current_file: Path | None) -> Path:
+def _project_root(current_file: Path | None) -> Path | None:
     start = Path.cwd() if current_file is None else current_file.resolve().parent
-    for parent in (start, *start.parents):
-        if (parent / "valiance.toml").exists():
-            return parent
-    return start
+    return find_project_root(start)
 
 
 def _module_name(path: ImportPath) -> str:
     if path.root == Symbol("@"):
         return "@" + ".".join(path.parts)
-    if path.root == Symbol("~"):
-        return "~" + ".".join(path.parts)
+    if path.root is not None:
+        return f"{path.root.text}." + ".".join(path.parts)
     return ".".join(path.parts)
 
 
@@ -241,3 +318,26 @@ def _native_std_exports(path: ImportPath) -> ModuleExports | None:
     if isinstance(exports, ModuleExports):
         return exports
     return None
+
+
+def _definition_overloads(definition: ModuleDefinition) -> tuple[T.Overload, ...]:
+    typ = definition.typed.typ
+    if (
+        isinstance(typ, T.FunctionType)
+        and typ.params is not None
+        and typ.returns is not None
+    ):
+        return (T.Overload(typ.params, typ.returns, element_tags=typ.element_tags),)
+    if isinstance(typ, T.OverloadSetType):
+        return typ.overloads
+    return ()
+
+
+def _same_signature(left: tuple[T.Type, ...], right: tuple[T.Type, ...]) -> bool:
+    return len(left) == len(right) and all(
+        T.same(a, b) for a, b in zip(left, right, strict=True)
+    )
+
+
+def _show_signature(signature: tuple[T.Type, ...]) -> str:
+    return "(" + ", ".join(T.show(item) for item in signature) + ")"

@@ -2491,6 +2491,44 @@ $n
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, Number)
 
+    def test_root_import_resolves_from_project_manifest_directory(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nested = root / "src" / "app"
+            nested.mkdir(parents=True)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n',
+                encoding="utf-8",
+            )
+            (root / "shared.vlnc").write_text(
+                "public define answer -> Number => 42\n",
+                encoding="utf-8",
+            )
+            main = nested / "main.vlnc"
+
+            analyser = Analyser(source_file=main)
+            typed = analyser.analyse(parse("import { root.shared.answer }\nanswer"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Number)
+
+    def test_dep_import_requires_direct_manifest_dependency(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            analyser = Analyser(source_file=main)
+            analyser.analyse(parse("import { dep.somelib }"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["1:1: dependency 'somelib' is not declared"],
+        )
+
     def test_private_module_definition_is_not_importable(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

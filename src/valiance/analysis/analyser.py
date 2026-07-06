@@ -26,7 +26,10 @@ from valiance.asts import (
     FunctionOverloadTyping,
     FunctionParam,
     GuardPatternNode,
+    ImportComponent,
     ImportNode,
+    ImportPath,
+    ImportSpec,
     IndexAccessNode,
     IndexSelector,
     IndexSetNode,
@@ -1140,11 +1143,7 @@ class Analyser:
         typed_nodes: list[TypedFunctionNode] = []
         for spec in node.specs:
             try:
-                exports = self.module_loader.load(
-                    spec.path,
-                    current_file=self.source_file,
-                )
-                definitions = import_definitions(exports, spec)
+                definitions = self._load_import_definitions(spec)
             except ModuleLoadError as exc:
                 self._diagnose(str(exc), node)
                 return {branch.append_typed(TypedNode(node, None))}
@@ -1155,6 +1154,28 @@ class Analyser:
         for typed_node in typed_nodes:
             imported = imported.append_typed(typed_node)
         return {imported.append_typed(TypedNode(node, None))}
+
+    def _load_import_definitions(
+        self,
+        spec: ImportSpec,
+    ):
+        try:
+            exports = self.module_loader.load(
+                spec.path,
+                current_file=self.source_file,
+            )
+            return import_definitions(exports, spec)
+        except ModuleLoadError:
+            if spec.components or len(spec.path.parts) < 2:
+                raise
+            module_path = ImportPath(spec.path.parts[:-1], spec.path.root)
+            component = ImportComponent(Symbol(spec.path.parts[-1]))
+            split_spec = ImportSpec(module_path, spec.alias, (component,))
+            exports = self.module_loader.load(
+                split_spec.path,
+                current_file=self.source_file,
+            )
+            return import_definitions(exports, split_spec)
 
     def _register_imported_definition(
         self,
