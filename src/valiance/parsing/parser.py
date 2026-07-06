@@ -50,6 +50,7 @@ from valiance.asts import (
     RestPatternNode,
     ReturnNode,
     SetVariableNode,
+    SetVariablesNode,
     SourceLocation,
     StackShuffleNode,
     StringInterpolationNode,
@@ -199,10 +200,32 @@ class Parser:
             return (self._match_node(self._previous),)
         if self._match_ident("try"):
             return (self._try(self._previous),)
+        if self._match_ident("const"):
+            return self._constant(self._previous)
 
         if annotations:
             self._error("annotation must be followed by a declaration")
         return self._chain_until(_LINE_TERMINATORS)
+
+    def _constant(self, start: Token) -> tuple[ASTNode, ...]:
+        self._expect(TokenKind.DOLLAR)
+        if self._check(TokenKind.LPAREN):
+            return self._multiple_assignment(start, constant=True)
+        name = self._symbol("expected constant name")
+        declared_type = None
+        if self._match(TokenKind.COLON):
+            declared_type = self.parse_type_expression()
+        self._expect(TokenKind.ASSIGN)
+        rhs = self._chain_until(_LINE_TERMINATORS)
+        return (
+            *rhs,
+            SetVariableNode(
+                name,
+                declared_type,
+                constant=True,
+                location=_loc(start),
+            ),
+        )
 
     def _import(self, start: Token, *, public: bool = False) -> ImportNode:
         self._expect(TokenKind.LBRACE)
@@ -1249,6 +1272,8 @@ class Parser:
         return Symbol(name)
 
     def _variable(self, start: Token) -> _ChainPiece:
+        if self._check(TokenKind.LPAREN):
+            return _ChainPiece(self._multiple_assignment(start), True)
         if self._match(TokenKind.LBRACKET):
             selectors = self._index_selectors()
             return _ChainPiece(
@@ -1367,6 +1392,46 @@ class Parser:
                 True,
             )
         return _ChainPiece((GetVariableNode(name, location=_loc(start)),), True)
+
+    def _multiple_assignment(
+        self,
+        start: Token,
+        *,
+        constant: bool = False,
+    ) -> tuple[ASTNode, ...]:
+        self._expect(TokenKind.LPAREN)
+        targets: list[SetVariableNode] = []
+        self._skip_newlines()
+        if self._match(TokenKind.RPAREN):
+            self._error("multiple assignment requires at least one target")
+        while True:
+            target_start = self._current
+            name = self._symbol("expected assignment target")
+            declared_type = None
+            if self._match(TokenKind.COLON):
+                declared_type = self.parse_type_expression()
+            targets.append(
+                SetVariableNode(
+                    name,
+                    declared_type,
+                    constant=constant,
+                    location=_loc(target_start),
+                )
+            )
+            self._skip_newlines()
+            if not self._match(TokenKind.COMMA):
+                break
+            self._skip_newlines()
+        self._expect(TokenKind.RPAREN)
+        self._expect(TokenKind.ASSIGN)
+        values = self._chain_until(_LINE_TERMINATORS)
+        return (
+            *values,
+            SetVariablesNode(
+                tuple(targets),
+                location=_loc(start),
+            ),
+        )
 
     def _index_selectors(self) -> tuple[IndexSelector, ...]:
         selectors: list[IndexSelector] = []

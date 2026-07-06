@@ -46,6 +46,7 @@ from valiance.asts import (
     RestPatternNode,
     ReturnNode,
     SetVariableNode,
+    SetVariablesNode,
     StackShuffleNode,
     StringInterpolationNode,
     StringLiteralNode,
@@ -147,6 +148,9 @@ class _Compiler:
                 self.emit(OpCode.LOAD_VAR, name.text)
             case SetVariableNode(name):
                 self.emit(OpCode.STORE_VAR, name.text)
+            case SetVariablesNode(targets):
+                for target in reversed(targets):
+                    self.emit(OpCode.STORE_VAR, target.name.text)
             case ElementNode(name, modifier_args):
                 if typed_node is None and node.call_args:
                     for arg in node.call_args:

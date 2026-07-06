@@ -16,6 +16,7 @@ from valiance.asts.nodes import (
     ListLiteralNode,
     NumberLiteralNode,
     SetVariableNode,
+    SetVariablesNode,
     StringLiteralNode,
     TypedFunctionNode,
     TypedNode,
@@ -301,7 +302,19 @@ def _node_source(node: ASTNode) -> str:
         return f"${node.name}"
     if isinstance(node, SetVariableNode):
         declared = "" if node.declared_type is None else f": {show(node.declared_type)}"
-        return f"${node.name}{declared} ="
+        prefix = "const " if node.constant else ""
+        return f"{prefix}${node.name}{declared} ="
+    if isinstance(node, SetVariablesNode):
+        targets = []
+        for target in node.targets:
+            declared = (
+                ""
+                if target.declared_type is None
+                else f": {show(target.declared_type)}"
+            )
+            targets.append(f"{target.name}{declared}")
+        prefix = "const " if any(target.constant for target in node.targets) else ""
+        return f"{prefix}$({', '.join(targets)}) ="
     if isinstance(node, ElementNode):
         return str(node.name)
     if isinstance(node, ListLiteralNode):

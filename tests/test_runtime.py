@@ -1224,6 +1224,18 @@ println(triple([1, 2, 3, 4, 5]))
             [[Decimal("1"), Decimal("5"), Decimal("3")]],
         )
 
+    def test_multiple_assignment_stores_corresponding_values(self):
+        self.assertEqual(
+            execute("$(a, b, c) = 1 2 3\n$a $b $c"),
+            [Decimal("1"), Decimal("2"), Decimal("3")],
+        )
+
+    def test_multiple_assignment_fills_missing_values_from_existing_stack(self):
+        self.assertEqual(
+            execute("1\n$(a, b, c) = 2 3\n$a $b $c"),
+            [Decimal("1"), Decimal("2"), Decimal("3")],
+        )
+
     def test_indexing_cycles_explicit_parameter_receiver(self):
         self.assertEqual(
             execute("define second(:Number+) -> Number => $[1]\nsecond([4, 9])"),

@@ -208,11 +208,11 @@ Current audit total: 398 / 734 items complete (54.2%).
 - [x] Parse augmented assignment using `$name := code`.
 - [x] Push the previous variable value before augmented-assignment code runs.
 - [ ] Disable argument cycling for the implicitly supplied augmented-assignment value.
-- [ ] Parse constant declarations using `const`.
-- [ ] Reject reassignment of constants.
-- [ ] Parse multiple assignment.
-- [ ] Map multiple-assignment targets to corresponding stack results.
-- [ ] Fill missing multiple-assignment values from the existing stack.
+- [x] Parse constant declarations using `const`.
+- [x] Reject reassignment of constants.
+- [x] Parse multiple assignment.
+- [x] Map multiple-assignment targets to corresponding stack results.
+- [x] Fill missing multiple-assignment values from the existing stack.
 - [x] Implement evaluation-time variable shadowing.
 - [x] Create a new local binding instead of modifying an outer-scope variable.
 - [x] Permit an assignment expression to read the outer binding before creating its shadow.
@@ -820,7 +820,7 @@ Current audit total: 398 / 734 items complete (54.2%).
 - [x] Report ambiguous overloads.
 - [x] Report arity or multiplicity inconsistencies.
 - [x] Report invalid variable reassignment.
-- [ ] Report writes to constants.
+- [x] Report writes to constants.
 - [x] Report writes to protected object members.
 - [ ] Report incomplete object construction.
 - [ ] Report non-exhaustive matches.

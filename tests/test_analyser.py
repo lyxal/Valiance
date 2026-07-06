@@ -1449,6 +1449,15 @@ getName $joe
         self.assertIsNone(updated)
         self.assertEqual(diagnostic, "cannot assign to read-only parameter 'x'")
 
+    def test_branch_variables_reject_constant_writes(self):
+        variables, diagnostic = BranchVariables().write(X, Number, constant=True)
+        self.assertIsNone(diagnostic)
+
+        updated, diagnostic = variables.write(X, Number)
+
+        self.assertIsNone(updated)
+        self.assertEqual(diagnostic, "cannot assign to constant 'x'")
+
     def test_branch_variables_shadow_captures_on_write(self):
         variables = BranchVariables(captures=((X, Number),))
 
@@ -1468,6 +1477,18 @@ getName $joe
         typed = analyse(parse("$n: Number? = 5\n$n"))
 
         self.assertEqual(typed[-1].typ, optional(Number))
+
+    def test_constant_reassignment_reports_diagnostic(self):
+        analyser = Analyser()
+        analyser.analyse(parse("const $n = 5\n$n = 6"))
+
+        self.assertEqual(analyser.diagnostics, ["2:1: cannot assign to constant 'n'"])
+
+    def test_multiple_assignment_sets_corresponding_types(self):
+        typed = analyse(parse("$(a, b) = 1 \"x\"\n$a\n$b"))
+
+        self.assertEqual(typed[-2].typ, Integer)
+        self.assertEqual(typed[-1].typ, String)
 
     def test_explicit_variable_type_rejects_incompatible_initializer(self):
         analyser = Analyser()

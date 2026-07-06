@@ -17,6 +17,7 @@ from valiance.asts.nodes import (
     ImportNode,
     NumberLiteralNode,
     SetVariableNode,
+    SetVariablesNode,
     StackShuffleNode,
     StringInterpolationNode,
     StringLiteralNode,
@@ -117,7 +118,14 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
             if value.declared_type is None
             else f", declared_type={value.declared_type}"
         )
-        return f"SetVariableNode(name={value.name}{declared}{_location_arg(value)})"
+        constant = ", constant=True" if value.constant else ""
+        return (
+            f"SetVariableNode(name={value.name}{declared}{constant}"
+            f"{_location_arg(value)})"
+        )
+    if isinstance(value, SetVariablesNode):
+        targets = ", ".join(_pretty(target, level + 1) for target in value.targets)
+        return f"SetVariablesNode(targets=({targets}){_location_arg(value)})"
     if isinstance(value, FieldAccessNode):
         return f"FieldAccessNode(name={value.name}{_location_arg(value)})"
     if isinstance(value, TagApplicationNode):

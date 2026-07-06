@@ -64,6 +64,7 @@ from valiance.asts.nodes import (
     IfNode,
     ObjectFieldNode,
     SetVariableNode,
+    SetVariablesNode,
     WhileNode,
 )
 from valiance.modules import ModuleLoader, ModuleLoadError, import_definitions
@@ -95,6 +96,8 @@ class BranchVariables:
     parameters: tuple[tuple[Symbol, T.Type], ...] = ()
     captures: tuple[tuple[Symbol, T.Type], ...] = ()
     block_locals: tuple[tuple[Symbol, T.Type], ...] = ()
+    function_constants: tuple[Symbol, ...] = ()
+    block_constants: tuple[Symbol, ...] = ()
 
     @classmethod
     def from_parameters(
@@ -139,12 +142,15 @@ class BranchVariables:
         typ: T.Type,
         *,
         block_local: bool = False,
+        constant: bool = False,
         ctx: T.Context | None = None,
     ) -> tuple[BranchVariables | None, str | None]:
         """Return variables after assigning ``name`` in this branch."""
         ctx = ctx or T.Context()
         existing_block_local = _lookup(self.block_locals, name)
         if existing_block_local is not None:
+            if name in self.block_constants:
+                return None, f"cannot assign to constant '{name}'"
             stored_type = _assignment_stored_type(existing_block_local, typ, ctx)
             diagnostic = _assignment_error(name, typ, existing_block_local, ctx)
             if diagnostic is not None:
@@ -157,6 +163,8 @@ class BranchVariables:
                     parameters=self.parameters,
                     captures=self.captures,
                     block_locals=_set_item(self.block_locals, name, stored_type),
+                    function_constants=self.function_constants,
+                    block_constants=self.block_constants,
                 ),
                 None,
             )
@@ -164,6 +172,8 @@ class BranchVariables:
             return None, f"cannot assign to read-only parameter '{name}'"
         existing_function_local = _lookup(self.function_locals, name)
         if existing_function_local is not None:
+            if name in self.function_constants:
+                return None, f"cannot assign to constant '{name}'"
             stored_type = _assignment_stored_type(existing_function_local, typ, ctx)
             diagnostic = _assignment_error(name, typ, existing_function_local, ctx)
             if diagnostic is not None:
@@ -174,6 +184,8 @@ class BranchVariables:
                     parameters=self.parameters,
                     captures=self.captures,
                     block_locals=self.block_locals,
+                    function_constants=self.function_constants,
+                    block_constants=self.block_constants,
                 ),
                 None,
             )
@@ -184,6 +196,10 @@ class BranchVariables:
                     parameters=self.parameters,
                     captures=self.captures,
                     block_locals=self.block_locals,
+                    function_constants=_set_symbol_flag(
+                        self.function_constants, name, constant
+                    ),
+                    block_constants=self.block_constants,
                 ),
                 None,
             )
@@ -194,6 +210,10 @@ class BranchVariables:
                     parameters=self.parameters,
                     captures=self.captures,
                     block_locals=_set_item(self.block_locals, name, typ),
+                    function_constants=self.function_constants,
+                    block_constants=_set_symbol_flag(
+                        self.block_constants, name, constant
+                    ),
                 ),
                 None,
             )
@@ -203,6 +223,10 @@ class BranchVariables:
                 parameters=self.parameters,
                 captures=self.captures,
                 block_locals=self.block_locals,
+                function_constants=_set_symbol_flag(
+                    self.function_constants, name, constant
+                ),
+                block_constants=self.block_constants,
             ),
             None,
         )
@@ -214,6 +238,8 @@ class BranchVariables:
             parameters=self.parameters,
             captures=self.captures,
             block_locals=_set_item(self.block_locals, name, typ),
+            function_constants=self.function_constants,
+            block_constants=self.block_constants,
         )
 
     def drop_block_locals(self) -> BranchVariables:
@@ -222,6 +248,7 @@ class BranchVariables:
             function_locals=self.function_locals,
             parameters=self.parameters,
             captures=self.captures,
+            function_constants=self.function_constants,
         )
 
     def refine_type(self, old: T.Type, new: T.Type) -> BranchVariables:
@@ -231,6 +258,8 @@ class BranchVariables:
             parameters=_refine_items(self.parameters, old, new),
             captures=_refine_items(self.captures, old, new),
             block_locals=_refine_items(self.block_locals, old, new),
+            function_constants=self.function_constants,
+            block_constants=self.block_constants,
         )
 
     def merge_against(
@@ -270,6 +299,12 @@ class BranchVariables:
             parameters=before.parameters,
             captures=before.captures,
             block_locals=_sorted_items(block_locals_by_name.items()),
+            function_constants=tuple(
+                name for name in before.function_constants if name in locals_by_name
+            ),
+            block_constants=tuple(
+                name for name in before.block_constants if name in block_locals_by_name
+            ),
         )
 
 
@@ -624,16 +659,18 @@ class Analyser:
                         TypedNode(node, typ)
                     )
                 }
-            case SetVariableNode(name, declared_type):
+            case SetVariableNode(name, declared_type, constant):
                 if not branch.stack:
                     if branch.input_mode is InputMode.INFER_INPUTS:
                         inferred = declared_type or T.V(f"_inferred_{name}")
                         variables, diagnostic = branch.variables.write(
                             name,
                             inferred,
+                            constant=constant,
                             ctx=self.env.context,
                         )
                         if diagnostic is not None:
+                            self._diagnose(diagnostic, node)
                             return {branch.with_diagnostic(diagnostic)}
                         if variables is None:
                             return {
@@ -670,9 +707,11 @@ class Analyser:
                     name,
                     variable_type,
                     block_local=True,
+                    constant=constant,
                     ctx=self.env.context,
                 )
                 if diagnostic is not None:
+                    self._diagnose(diagnostic, node)
                     return {branch.with_diagnostic(diagnostic)}
                 if variables is None:
                     return {
@@ -683,6 +722,8 @@ class Analyser:
                     .with_stack(branch.stack.pop())
                     .append_typed(TypedNode(node, variable_type))
                 }
+            case SetVariablesNode(targets):
+                return self._set_variables(branch, node, targets)
             case FieldAccessNode(name):
                 return self._field_access(branch, node, name)
             case FieldSetNode(name):
@@ -1561,6 +1602,63 @@ class Analyser:
                 )
             )
         return results
+
+    def _set_variables(
+        self,
+        branch: AnalysisBranch,
+        node: SetVariablesNode,
+        targets: tuple[SetVariableNode, ...],
+    ) -> set[AnalysisBranch]:
+        if not targets:
+            return {branch.append_typed(TypedNode(node, None))}
+        available = min(len(branch.stack), len(targets))
+        missing = len(targets) - available
+        if missing and branch.input_mode is not InputMode.INFER_INPUTS:
+            return {
+                branch.with_diagnostic(
+                    "empty stack when trying to assign to multiple variables"
+                )
+            }
+        inferred = tuple(
+            target.declared_type or T.V(f"_inferred_{target.name}")
+            for target in targets[:missing]
+        )
+        value_types = inferred + branch.stack.items[len(branch.stack) - available :]
+        variables = branch.variables
+        for target, value_type in zip(targets, value_types, strict=True):
+            variable_type = target.declared_type or value_type
+            if target.declared_type is not None and not T.assignable(
+                value_type,
+                target.declared_type,
+                self.env.context,
+            ):
+                self._diagnose(
+                    f"cannot assign {T.show(value_type)} to variable "
+                    f"'{target.name}' of declared type {T.show(target.declared_type)}",
+                    target,
+                )
+                return {branch.append_typed(TypedNode(node, None))}
+            variables, diagnostic = variables.write(
+                target.name,
+                variable_type,
+                block_local=True,
+                constant=target.constant,
+                ctx=self.env.context,
+            )
+            if diagnostic is not None:
+                self._diagnose(diagnostic, target)
+                return {branch.with_diagnostic(diagnostic)}
+            if variables is None:
+                return {
+                    branch.with_diagnostic(
+                        f"cannot assign to variable '{target.name}'"
+                    )
+                }
+        return {
+            branch.with_variables(variables)
+            .with_stack(branch.stack.pop(available))
+            .append_typed(TypedNode(node, None))
+        }
 
     def _field_access(
         self,
@@ -5608,6 +5706,19 @@ def _set_item(
     result = {key: value for key, value in items}
     result[name] = typ
     return _sorted_items(result.items())
+
+
+def _set_symbol_flag(
+    items: tuple[Symbol, ...],
+    name: Symbol,
+    enabled: bool,
+) -> tuple[Symbol, ...]:
+    result = set(items)
+    if enabled:
+        result.add(name)
+    else:
+        result.discard(name)
+    return tuple(sorted(result))
 
 
 def _sorted_items(

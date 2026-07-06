@@ -159,6 +159,14 @@ class SetVariableNode(ASTNode):
 
     name: Symbol
     declared_type: Type | None = None
+    constant: bool = False
+
+
+@dataclass(frozen=True)
+class SetVariablesNode(ASTNode):
+    """Assign a stack segment to multiple variables."""
+
+    targets: tuple[SetVariableNode, ...] = ()
 
 
 @dataclass(frozen=True)

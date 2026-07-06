@@ -30,6 +30,7 @@ from valiance.asts import (
     OrPatternNode,
     RestPatternNode,
     SetVariableNode,
+    SetVariablesNode,
     SourceLocation,
     StackShuffleNode,
     StringInterpolationNode,
@@ -154,6 +155,34 @@ class ParserTests(unittest.TestCase):
     def test_variable_type_annotation_requires_assignment(self):
         with self.assertRaises(ParseError):
             parse("$n: Number")
+
+    def test_parses_constant_declaration(self):
+        program = parse("const $n: Number = 5")
+
+        self.assertEqual(
+            program,
+            [
+                NumberLiteralNode("5"),
+                SetVariableNode(Symbol("n"), Number, constant=True),
+            ],
+        )
+
+    def test_parses_multiple_assignment(self):
+        program = parse("$(a, b: Number) = 1 2")
+
+        self.assertEqual(
+            program,
+            [
+                NumberLiteralNode("1"),
+                NumberLiteralNode("2"),
+                SetVariablesNode(
+                    (
+                        SetVariableNode(Symbol("a")),
+                        SetVariableNode(Symbol("b"), Number),
+                    )
+                ),
+            ],
+        )
 
     def test_parses_string_identifier_interpolation(self):
         self.assertEqual(
