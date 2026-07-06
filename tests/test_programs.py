@@ -74,3 +74,24 @@ class ProgramTests(unittest.TestCase):
             fold: +           
         """)
         self.assertEqual(result, [12, 15, 18])
+
+    def test_reduce_sum_matrix_inferred_lambda(self):
+        result = execute("""
+            [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+            fold fn => +           
+        """)
+        self.assertEqual(result, [12, 15, 18])
+
+    def test_reduce_sum_matrix_inferred_return_lambda(self):
+        result = execute("""
+            [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+            fold fn (:Integer+, :Integer+) => +           
+        """)
+        self.assertEqual(result, [12, 15, 18])
+
+    def test_reduce_sum_matrix_fully_typed_lambda(self):
+        result = execute("""
+            [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+            fold fn (:Integer+, :Integer+) -> Integer+ => +           
+        """)
+        self.assertEqual(result, [12, 15, 18])
