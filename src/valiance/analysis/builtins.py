@@ -53,6 +53,8 @@ class RuntimeContext:
     output: Callable[[str], None]
     call: Callable[[Any, list[Any]], list[Any]]
     format_value: Callable[[Any], str] = format_runtime_value
+    call_overload: Callable[[Any, list[Any], int], list[Any]] | None = None
+    static_values: tuple[Any, ...] = ()
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
@@ -395,6 +397,26 @@ def _fork_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     return None
 
 
+def _call_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+    if not call_params:
+        return None
+    function_type = call_params[-1]
+    stack = call_params[:-1]
+    for candidate in _callable_overloads(function_type):
+        arity = len(candidate.params)
+        if len(stack) < arity:
+            continue
+        args = stack[-arity:] if arity else ()
+        application = _apply_callable(candidate, args)
+        if application is not None:
+            return T.Overload(
+                (*args, application.concrete_type),
+                application.applied.actual_returns,
+                call_site_body=arity,
+            )
+    return None
+
+
 def _eager_map_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     if len(call_params) != 2:
         return None
@@ -444,6 +466,20 @@ def _fork(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (*ctx.call(left, list(left_args)), *ctx.call(right, list(right_args)))
 
 
+@builtin("call", (T.Fn(),), call_site=_call_call_site)
+def _call(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    if _runtime_callable_value(args[-1]):
+        callable_value = args[-1]
+        call_args = list(args[:-1])
+    else:
+        callable_value = args[0]
+        call_args = list(args[1:])
+    selected = ctx.static_values[0] if ctx.static_values else None
+    if isinstance(selected, int) and ctx.call_overload is not None:
+        return tuple(ctx.call_overload(callable_value, call_args, selected))
+    return tuple(ctx.call(callable_value, call_args))
+
+
 def _runtime_callable_arity(value: Any) -> int:
     code = getattr(value, "code", None)
     if code is not None:
@@ -452,6 +488,12 @@ def _runtime_callable_arity(value: Any) -> int:
     if overloads:
         return max(_runtime_callable_arity(overload) for overload in overloads)
     return 0
+
+
+def _runtime_callable_value(value: Any) -> bool:
+    return getattr(value, "code", None) is not None or bool(
+        getattr(value, "overloads", ())
+    )
 
 
 # --------------------------------------------------------------------------

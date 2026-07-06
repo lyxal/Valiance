@@ -255,6 +255,32 @@ ParseError
             execute("2 fork: (double, double)"),
             [Decimal("4"), Decimal("4")],
         )
+        self.assertEqual(
+            execute("6 7 (fn (:Number, :Number) => + end) call"),
+            [Decimal("13")],
+        )
+        self.assertEqual(
+            execute("call(fn (:Number, :Number) => + end, 6, 7)"),
+            [Decimal("13")],
+        )
+        self.assertEqual(
+            execute("'+ | call(6, 7)"),
+            [Decimal("13")],
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(execute("'+ | call(6, 7) | println"), [])
+        self.assertEqual(output.getvalue(), "13\n")
+        self.assertEqual(
+            execute(
+                """
+define choose(n: Number) -> Number => $n 1 +
+define choose(i: Integer) -> String => "int"
+'choose | call[Number](6)
+"""
+            ),
+            [Decimal("7")],
+        )
 
     def test_executes_reduce_slash_overload(self):
         self.assertEqual(execute("[1, 2, 3, 4] /: +"), [Decimal("10")])
@@ -1266,6 +1292,35 @@ println(triple([1, 2, 3, 4, 5]))
         self.assertIn("(Number, Number)", message)
         self.assertIn("runtime context:", message)
         self.assertIn("<main> ip 3: call", message)
+
+    def test_runtime_diagnostics_format_functions_compactly(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            execute("'+ | println")
+
+        self.assertEqual(output.getvalue(), "<overloaded function [2, 2]>\n")
+
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(
+                        OpCode.MAKE_FUNCTION,
+                        FunctionCode((), params=("x",), name="held"),
+                    ),
+                    Instruction(OpCode.PUSH_CONST, Decimal("1")),
+                    Instruction(OpCode.CALL),
+                ),
+                name="<main>",
+            )
+        )
+        with self.assertRaises(RuntimeError) as error:
+            run(program)
+
+        message = str(error.exception)
+        self.assertIn("cannot call value 1", message)
+        self.assertIn("stack: [<held/1>]", message)
+        self.assertNotIn("globals=", message)
+        self.assertNotIn("FunctionCode(", message)
 
     def test_runtime_errors_show_nested_function_context(self):
         inner = FunctionCode(

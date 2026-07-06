@@ -1656,6 +1656,22 @@ end
         self.assertEqual(typed[-1].overload.params, (String, String))
         self.assertEqual(typed[-1].overload.actual_returns, (String,))
 
+    def test_call_element_with_ecs_calls_function_argument(self):
+        typed = analyse(parse("call(fn (:Number, :Number) => + end, 1, 2)"))
+
+        self.assertIsInstance(typed[-1], TypedElementNode)
+        self.assertEqual(typed[-1].typ, Number)
+        self.assertEqual(typed[-1].overload.actual_returns, (Number,))
+        self.assertEqual(len(typed[-1].overload.params), 3)
+
+    def test_call_element_with_ecs_can_use_function_from_stack(self):
+        typed = analyse(parse("'+ | call(1, 2)"))
+
+        self.assertIsInstance(typed[-1], TypedElementNode)
+        self.assertEqual(typed[-1].typ, Number)
+        self.assertEqual(typed[-1].overload.actual_returns, (Number,))
+        self.assertEqual(len(typed[-1].overload.params), 3)
+
     def test_optional_parameters_do_not_change_plain_element_arity(self):
         analyser = Analyser()
         branches = analyser.analyse_block(

@@ -1215,6 +1215,8 @@ class Analyser:
             return set()
 
         if node.call_args:
+            if node.name == Symbol("call"):
+                return self._call_element_call(branch, node, overloads)
             return self._element_call(branch, node, overloads, modifier_args)
 
         candidates: list[
@@ -1434,6 +1436,103 @@ class Analyser:
                             ordered_modifiers,
                             self.env.context,
                         ),
+                    )
+                )
+            )
+        return results
+
+    def _call_element_call(
+        self,
+        branch: AnalysisBranch,
+        node: ElementNode,
+        overloads: tuple[T.Overload, ...],
+    ) -> set[AnalysisBranch]:
+        if node.modifier_args:
+            self._diagnose("element 'call' does not accept ':' arguments", node)
+            return set()
+        if any(arg.name is not None or arg.placeholder for arg in node.call_args):
+            self._diagnose(
+                "element 'call' explicit arguments must be positional",
+                node,
+            )
+            return set()
+
+        current = BranchSet.one(branch)
+        for arg in node.call_args:
+            current = current.extend_block(arg.value, self)
+            if not current:
+                return set()
+
+        call_arg_count = len(node.call_args)
+        candidates: list[
+            tuple[T.AppliedOverload, AnalysisBranch, tuple[int, ...], int]
+        ] = []
+        for arg_branch in current:
+            if len(arg_branch.stack) < call_arg_count:
+                continue
+            call_values = (
+                arg_branch.stack.items[-call_arg_count:] if call_arg_count else ()
+            )
+            base_stack = arg_branch.stack.items[:-call_arg_count]
+
+            explicit_function_order = (
+                (*range(1, call_arg_count), 0) if call_arg_count > 1 else ()
+            )
+            branch_candidates = _call_element_candidates(
+                arg_branch,
+                overloads[0],
+                call_values[0],
+                call_values[1:],
+                base_stack,
+                explicit_function_order,
+                node.disambiguation,
+                self.env.context,
+            )
+            if not branch_candidates and base_stack:
+                branch_candidates = _call_element_candidates(
+                    arg_branch,
+                    overloads[0],
+                    base_stack[-1],
+                    call_values,
+                    base_stack[:-1],
+                    (),
+                    node.disambiguation,
+                    self.env.context,
+                )
+            candidates.extend(branch_candidates)
+
+        winners = _best_candidates(candidates)
+        if not winners:
+            self._diagnose(
+                "no overloads for element 'call' match explicit call syntax",
+                node,
+            )
+            return set()
+        if (
+            len(winners) > 1
+            and branch.input_mode is not InputMode.INFER_INPUTS
+            and not _winners_specialize_inputs(winners, branch)
+        ):
+            self._diagnose(
+                "ambiguous overloads for element 'call' with explicit call syntax; "
+                f"candidates: {_show_applied_overloads(winners)}",
+                node,
+            )
+            return set()
+
+        results: set[AnalysisBranch] = set()
+        for applied, popped, call_arg_order, call_overload_index in winners:
+            results.add(
+                popped.with_stack(popped.stack.push(*applied.actual_returns))
+                .append_typed(
+                    TypedElementNode(
+                        node,
+                        _returns_result_type(applied.actual_returns),
+                        applied,
+                        0,
+                        (),
+                        call_arg_order,
+                        call_overload_index,
                     )
                 )
             )
@@ -3287,6 +3386,81 @@ def _source_element_arguments(
                 specialized_popped,
                 specialized_modifiers,
             )
+
+
+def _call_element_candidates(
+    branch: AnalysisBranch,
+    call_overload: T.Overload,
+    function_type: T.Type,
+    explicit_args: tuple[T.Type, ...],
+    base_stack: tuple[T.Type, ...],
+    call_arg_order: tuple[int, ...],
+    disambiguation: tuple[T.Type | None, ...],
+    ctx: T.Context,
+) -> list[tuple[T.AppliedOverload, AnalysisBranch, tuple[int, ...], int]]:
+    candidates: list[
+        tuple[T.AppliedOverload, AnalysisBranch, tuple[int, ...], int]
+    ] = []
+    if disambiguation and len(disambiguation) != len(explicit_args):
+        return candidates
+    for callable_index, callable_overload in enumerate(
+        _callable_overloads(function_type)
+    ):
+        callable_application = T.apply_overload(
+            callable_overload,
+            explicit_args,
+            ctx,
+            disambiguation=disambiguation,
+        )
+        if callable_application is None:
+            continue
+        concrete_function_type = T.Fn(
+            callable_application.params,
+            callable_application.actual_returns,
+            callable_overload.element_tags,
+        )
+        concrete_args = (*explicit_args, concrete_function_type)
+        concrete_overload = T.Overload(
+            concrete_args,
+            callable_application.actual_returns,
+            call_site_body=len(explicit_args),
+        )
+        concrete_application = T.apply_overload(
+            concrete_overload,
+            concrete_args,
+            ctx,
+        )
+        if concrete_application is None:
+            continue
+        actual_returns = _apply_data_tag_flow(
+            explicit_args,
+            callable_overload.returns,
+            callable_application.actual_returns,
+            ctx,
+        )
+        candidates.append(
+            (
+                T.AppliedOverload(
+                    call_overload,
+                    concrete_application.substitution,
+                    concrete_application.params,
+                    concrete_application.returns,
+                    actual_returns,
+                    concrete_application.scores,
+                    concrete_application.vectorised,
+                    concrete_application.vectorised_depths,
+                    runtime_consumed_count=len(explicit_args) + 1,
+                    element_tags=_propagated_element_tags(
+                        concrete_overload,
+                        concrete_args,
+                    ),
+                ),
+                branch.with_stack(T.TypeStack(base_stack)),
+                call_arg_order,
+                callable_index,
+            )
+        )
+    return candidates
 
 
 def _prepare_element_call_branches(
@@ -5559,6 +5733,8 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.overload,
             typed_node.overload_index,
             typed_node.modifier_args,
+            typed_node.call_arg_order,
+            typed_node.call_overload_index,
         )
     if isinstance(typed_node, TypedCallNode):
         return TypedCallNode(

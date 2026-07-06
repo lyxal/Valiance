@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import builtins as _py_builtins
 from collections import Counter
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from itertools import zip_longest
 from typing import Any, cast
@@ -87,6 +87,11 @@ class FunctionValue:
     owned_names: frozenset[str] = frozenset()
     refcount: int = 1
 
+    def __repr__(self) -> str:
+        return f"<{_function_name(self.code)}/{len(self.code.params)}>"
+
+    __str__ = __repr__
+
 
 @dataclass(slots=True)
 class OverloadedFunctionValue:
@@ -95,6 +100,14 @@ class OverloadedFunctionValue:
     overloads: tuple[FunctionValue, ...]
     refcount: int = 1
 
+    def __repr__(self) -> str:
+        arities = ", ".join(
+            str(len(overload.code.params)) for overload in self.overloads
+        )
+        return f"<overloaded function [{arities}]>"
+
+    __str__ = __repr__
+
 
 @dataclass(frozen=True, slots=True)
 class BuiltinValue:
@@ -102,6 +115,11 @@ class BuiltinValue:
 
     element: BuiltinElement
     context: RuntimeContext
+
+    def __repr__(self) -> str:
+        return f"<builtin {self.element.name.text}>"
+
+    __str__ = __repr__
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +146,9 @@ def _static_reference_values(value: object) -> tuple[Any, ...]:
         raise RuntimeError(f"invalid static reference values {value!r}")
     result: list[Any] = []
     for item in value:
+        if isinstance(item, int):
+            result.append(item)
+            continue
         if (
             not isinstance(item, tuple)
             or len(item) != 2
@@ -148,6 +169,11 @@ class ObjectConstructorValue:
     required: tuple[str, ...]
     defaults: dict[str, Any]
     runtime_type: ObjectRuntimeType | None = None
+
+    def __repr__(self) -> str:
+        return f"<constructor {self.type_name}>"
+
+    __str__ = __repr__
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,7 +246,12 @@ class VirtualMachine:
         self.globals = {
             name: BuiltinValue(
                 element,
-                RuntimeContext(self.output, self.call_value, self.format_value),
+                RuntimeContext(
+                    self.output,
+                    self.call_value,
+                    self.format_value,
+                    self.call_value_overload,
+                ),
             )
             for name, element in (
                 runtime_elements() | runtime_stdlib_elements()
@@ -264,7 +295,26 @@ class VirtualMachine:
             )
             if len(matches) == 1:
                 return self.call(matches[0], args)
-        raise RuntimeError(f"cannot call value {value!r}")
+        raise RuntimeError(f"cannot call value {_format_value(value)}")
+
+    def call_value_overload(
+        self,
+        value: Any,
+        args: list[Any],
+        overload_index: int,
+    ) -> list[Any]:
+        if isinstance(value, FunctionValue):
+            if overload_index == 0:
+                return self.call(value, args)
+            raise RuntimeError(f"function has no overload {overload_index}")
+        if isinstance(value, OverloadedFunctionValue):
+            try:
+                return self.call(value.overloads[overload_index], args)
+            except IndexError as exc:
+                raise RuntimeError(
+                    f"function has no overload {overload_index}"
+                ) from exc
+        raise RuntimeError(f"cannot call value {_format_value(value)}")
 
     def execute(
         self,
@@ -549,7 +599,7 @@ class VirtualMachine:
                     self._call_function(callee.overloads[0], frame)
                     return
                 raise RuntimeError("cannot call overloaded function without resolved slot")
-            raise RuntimeError(f"cannot call value {callee!r}")
+            raise RuntimeError(f"cannot call value {_format_value(callee)}")
         finally:
             if isinstance(callee, (FunctionValue, OverloadedFunctionValue)):
                 _release_value(callee, self)
@@ -604,6 +654,7 @@ class VirtualMachine:
             reference.vectorised_depths,
             reference.arity_override,
             reference.consumed_override,
+            reference.static_values,
         )
 
     def _call_resolved_function_value(
@@ -1417,6 +1468,7 @@ def _call_resolved_builtin(
     vectorised_depths: tuple[int, ...] = (),
     arity_override: int | None = None,
     consumed_override: int | None = None,
+    static_values: tuple[Any, ...] = (),
 ) -> None:
     arity = (
         arity_override
@@ -1438,12 +1490,17 @@ def _call_resolved_builtin(
         if consumed_override is not None
         else stack_count
     )
+    context = (
+        replace(callee.context, static_values=static_values)
+        if static_values
+        else callee.context
+    )
     if vectorised:
         try:
             vectorized = _call_vectorized_resolved_builtin(
                 overload,
                 args,
-                callee.context,
+                context,
                 vectorised_depths,
             )
         except _py_builtins.RuntimeError as exc:
@@ -1463,14 +1520,14 @@ def _call_resolved_builtin(
         vectorized = _bind_lazy_result_owners(args, vectorized)
         _finalize_builtin_result_ownership(args, vectorized)
         if consumed_count:
-            _release_stack_tail(frame.stack, consumed_count, callee.context.call.__self__)
+            _release_stack_tail(frame.stack, consumed_count, context.call.__self__)
         frame.cycle_index = next_cycle_index
         frame.stack.extend(vectorized)
         return
     implementation = overload.implementation
     assert implementation is not None
     try:
-        result = implementation(args, callee.context)
+        result = implementation(args, context)
     except _py_builtins.RuntimeError as exc:
         raise _with_call_detail(
             exc,
@@ -1480,7 +1537,7 @@ def _call_resolved_builtin(
     result = _bind_lazy_result_owners(args, result)
     _finalize_builtin_result_ownership(args, result)
     if consumed_count:
-        _release_stack_tail(frame.stack, consumed_count, callee.context.call.__self__)
+        _release_stack_tail(frame.stack, consumed_count, context.call.__self__)
     frame.cycle_index = next_cycle_index
     frame.stack.extend(result)
 
@@ -1702,7 +1759,12 @@ def _vectorize_function(
     return _vectorize_resolved(
         implementation,
         args,
-        RuntimeContext(vm.output, vm.call_value, vm.format_value),
+        RuntimeContext(
+            vm.output,
+            vm.call_value,
+            vm.format_value,
+            vm.call_value_overload,
+        ),
     )
 
 
@@ -2315,11 +2377,63 @@ def _format_stack_types(stack: list[Any]) -> str:
 
 
 def _format_value(value: Any) -> str:
+    compact = _compact_diagnostic_value(value)
+    if compact is not None:
+        return compact
     return format_runtime_value(
         value,
         quote_strings=True,
         lazy_preview_limit=DIAGNOSTIC_LIST_PREVIEW_LIMIT,
     )
+
+
+def _compact_diagnostic_value(value: Any) -> str | None:
+    if isinstance(value, FunctionValue):
+        name = _function_name(value.code)
+        arity = len(value.code.params)
+        return f"<{name}/{arity}>"
+    if isinstance(value, OverloadedFunctionValue):
+        arities = ", ".join(
+            str(len(overload.code.params)) for overload in value.overloads
+        )
+        return f"<overloaded function [{arities}]>"
+    if isinstance(value, BuiltinValue):
+        return f"<builtin {value.element.name.text}>"
+    if isinstance(value, ObjectConstructorValue):
+        return f"<constructor {value.type_name}>"
+    if isinstance(value, LazyList):
+        return "<lazy list>"
+    if isinstance(value, list):
+        return _compact_sequence("[", "]", value)
+    if isinstance(value, tuple):
+        return _compact_sequence("(", ")", value)
+    if isinstance(value, dict):
+        return _compact_mapping(value)
+    return None
+
+
+def _compact_sequence(opening: str, closing: str, values: Iterable[Any]) -> str:
+    preview = []
+    has_more = False
+    for index, item in enumerate(values):
+        if index >= DIAGNOSTIC_LIST_PREVIEW_LIMIT:
+            has_more = True
+            break
+        preview.append(_format_value(item))
+    inner = ", ".join(preview)
+    if has_more:
+        inner = f"{inner}, ..." if inner else "..."
+    return opening + inner + closing
+
+
+def _compact_mapping(value: dict[Any, Any]) -> str:
+    items = []
+    for index, (key, item) in enumerate(value.items()):
+        if index >= DIAGNOSTIC_LIST_PREVIEW_LIMIT:
+            items.append("...")
+            break
+        items.append(f"{_format_value(key)}: {_format_value(item)}")
+    return "{" + ", ".join(items) + "}"
 
 
 def _string_value(value: Any) -> str:

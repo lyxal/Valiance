@@ -39,6 +39,8 @@ class TypedElementNode(TypedNode):
     overload: AppliedOverload | None = None
     overload_index: int | None = None
     modifier_args: tuple[TypedFunctionNode, ...] = ()
+    call_arg_order: tuple[int, ...] = ()
+    call_overload_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

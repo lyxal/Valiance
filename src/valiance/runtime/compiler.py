@@ -175,6 +175,22 @@ class _Compiler:
                 ):
                     self.emit(OpCode.TRY_UNWRAP)
                     return
+                if (
+                    isinstance(typed_node, TypedElementNode)
+                    and name.text == "call"
+                    and typed_node.call_arg_order
+                ):
+                    labels = tuple(
+                        f"_call_arg_{index}" for index in range(len(node.call_args))
+                    )
+                    self.emit(
+                        OpCode.STACK_SHUFFLE,
+                        (
+                            "move",
+                            labels,
+                            tuple(labels[index] for index in typed_node.call_arg_order),
+                        ),
+                    )
                 resolved = _resolved_element_reference(typed_node)
                 if resolved is None:
                     self.emit(OpCode.LOAD_ELEMENT, name.text)
@@ -932,11 +948,14 @@ def _resolved_element_reference(
         return None
     vectorised = int(node.overload.vectorised) if node.overload is not None else 0
     type_args = _resolved_constructor_type_args(ast, node)
-    static_values = (
-        node.overload.rank_values
-        if node.overload is not None and node.overload.rank_values
-        else ()
-    )
+    if ast.name.text == "call" and node.call_overload_index is not None:
+        static_values = (node.call_overload_index,)
+    else:
+        static_values = (
+            node.overload.rank_values
+            if node.overload is not None and node.overload.rank_values
+            else ()
+        )
     if (
         element is not None
         and node.overload is not None
