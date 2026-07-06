@@ -122,8 +122,10 @@ class _Compiler:
         element_tags: tuple[str, ...] = (),
         recursive: bool = False,
     ) -> FunctionCode:
-        for node in body:
+        for index, node in enumerate(body):
             self.node(node)
+            if index + 1 < len(body) and _should_pop_statement_result(node):
+                self.emit(OpCode.POP)
         self.emit(OpCode.RETURN)
         return FunctionCode(
             tuple(self.instructions),
@@ -659,6 +661,15 @@ def _compile_function_node(
         cycle_params=bool(ast.params),
         element_tags=_function_element_tag_names(node),
         recursive=_function_is_recursive(ast),
+    )
+
+
+def _should_pop_statement_result(node: ASTNode | TypedNode) -> bool:
+    ast = _unwrap(node)
+    return (
+        isinstance(ast, ForNode)
+        and isinstance(node, TypedNode)
+        and isinstance(node.typ, NoneTypeNode)
     )
 
 

@@ -405,9 +405,16 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
                         return False
                 elif not compatible(expected, actual):
                     return False
+            actual_returns = _overload_result_for_args(
+                Overload(a.params, a.returns),
+                p.params,
+                Context(),
+            )
+            if actual_returns is None:
+                return False
             return all(
                 rec(expected, actual)
-                for expected, actual in zip(p.returns, a.returns, strict=False)
+                for expected, actual in zip(p.returns, actual_returns, strict=False)
             )
         if isinstance(p, FunctionType) and isinstance(a, OverloadSetType):
             matches: list[dict[str, list[Type]]] = []
@@ -420,10 +427,14 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
                     )
                 constraints.clear()
                 constraints.update(saved)
-            if len(matches) != 1:
+            if not matches:
                 return False
+            merged: dict[str, list[Type]] = {}
+            for match in matches:
+                for key, values in match.items():
+                    merged.setdefault(key, []).extend(values)
             constraints.clear()
-            constraints.update(matches[0])
+            constraints.update(merged)
             return True
         if isinstance(p, TaggedType):
             if not isinstance(a, TaggedType):
@@ -1026,10 +1037,10 @@ def apply_overload(
         substitution[key] = combined
 
     for param, arg in deferred_function_args:
+        substituted_param = _substitute(param, substitution)
         if isinstance(arg, OverloadSetType):
-            result = _solve(param, arg)
+            result = _solve(substituted_param, arg)
         else:
-            substituted_param = _substitute(param, substitution)
             if (
                 not _contains_type_var(substituted_param)
                 and compatible(arg, substituted_param, ctx)

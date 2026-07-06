@@ -284,6 +284,13 @@ class VirtualMachine:
 
     def call_value(self, value: Any, args: list[Any]) -> list[Any]:
         if isinstance(value, FunctionValue):
+            if any(is_list_like(arg) for arg in args):
+                try:
+                    return list(_vectorize_function(self, value, tuple(args)))
+                except PanicSignal:
+                    raise
+                except Exception:
+                    pass
             return self.call(value, args)
         if isinstance(value, OverloadedFunctionValue):
             if len(value.overloads) == 1:
@@ -295,6 +302,24 @@ class VirtualMachine:
             )
             if len(matches) == 1:
                 return self.call(matches[0], args)
+            errors: list[Exception] = []
+            if any(is_list_like(arg) for arg in args):
+                for overload in matches:
+                    try:
+                        return list(_vectorize_function(self, overload, tuple(args)))
+                    except PanicSignal:
+                        raise
+                    except Exception as exc:
+                        errors.append(exc)
+            for overload in matches:
+                try:
+                    return self.call(overload, args)
+                except PanicSignal:
+                    raise
+                except Exception as exc:
+                    errors.append(exc)
+            if errors:
+                raise RuntimeError(errors[-1]) from errors[-1]
         raise RuntimeError(f"cannot call value {_format_value(value)}")
 
     def call_value_overload(
@@ -346,11 +371,17 @@ class VirtualMachine:
                             )
                         case OpCode.STORE_VAR:
                             value = _pop(frame.stack, "store variable")
-                            existing = frame.locals.get(instruction.arg)
+                            target = (
+                                frame.globals
+                                if instruction.arg not in frame.locals
+                                and instruction.arg in frame.globals
+                                else frame.locals
+                            )
+                            existing = target.get(instruction.arg)
                             stored = _store_value(existing, value)
                             if existing is not None:
                                 _release_value(existing, self)
-                            frame.locals[instruction.arg] = stored
+                            target[instruction.arg] = stored
                             if code.name == "<main>":
                                 frame.globals[instruction.arg] = stored
                             _bind_recursive_value(stored, instruction.arg)
@@ -754,8 +785,10 @@ class VirtualMachine:
             try:
                 self.call_value(body, args)
             except _LoopBreak as signal:
+                _sync_captured_globals(frame, body.globals)
                 frame.stack.extend(signal.values)
                 return
+        _sync_captured_globals(frame, body.globals)
         frame.stack.extend(ObjectValue("None", {}) for _ in range(completion_count))
 
     def _call_function(
@@ -1092,6 +1125,13 @@ def _source_args(frame: _Frame, arity: int, context: str) -> tuple[Any, ...]:
         del frame.stack[-stack_count:]
     frame.cycle_index = next_cycle_index
     return args
+
+
+def _sync_captured_globals(frame: _Frame, captured: dict[str, Any]) -> None:
+    frame.globals.update(captured)
+    for name in tuple(frame.locals):
+        if name in captured:
+            frame.locals[name] = captured[name]
 
 
 def _enter_cycle(frame: _Frame, spec: object) -> None:

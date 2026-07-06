@@ -20,6 +20,13 @@ class LazyList:
     def __iter__(self):
         return iter(self.iterable)
 
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, LazyList):
+            return list(self) == list(other)
+        if isinstance(other, Sequence) and not isinstance(other, (str, bytes, tuple)):
+            return list(self) == list(other)
+        return False
+
 
 @dataclass(frozen=True, slots=True)
 class ObjectRuntimeType:

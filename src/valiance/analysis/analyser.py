@@ -2387,7 +2387,10 @@ class Analyser:
                         outputs.add(output.append_typed(TypedNode(node, typ)))
                     continue
                 stack = merge_stacks(left.stack, right.stack)
-                base = _refine_branch_like(branch, left)
+                base = _replace_branch(
+                    _refine_branch_like(branch, left),
+                    inputs=left.inputs,
+                )
                 variables = left.variables.merge_against(
                     right.variables,
                     base.variables,
@@ -4726,8 +4729,9 @@ def _branch_argument_substitution(
 ) -> dict[str, T.Type] | None:
     substitution: dict[str, T.Type] = {}
     for arg, param in zip(args, params, strict=True):
+        param = _substitute_branch_type(param, substitution)
         constraints = _solve_branch_argument(arg, param, ctx)
-        if constraints is None:
+        if constraints is None or (not constraints and _contains_type_var(param)):
             constraints = _solve_type_argument(arg, param)
         if constraints is None:
             if T.compatible(arg, param, ctx):

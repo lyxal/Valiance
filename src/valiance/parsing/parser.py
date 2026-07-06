@@ -1362,6 +1362,8 @@ class Parser:
         if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
             op = self._previous.kind
             rhs = self._chain_until(_LINE_TERMINATORS)
+            if declared_type is not None:
+                rhs = _contextual_empty_list(rhs, declared_type)
             prefix = (
                 (GetVariableNode(name, location=_loc(start)),)
                 if op is TokenKind.AUG_ASSIGN
@@ -1388,7 +1390,11 @@ class Parser:
             self._advance()
             args = self._argument_expressions(TokenKind.RPAREN)
             return _ChainPiece(
-                (*_flatten(args), GetVariableNode(name, location=_loc(start))),
+                (
+                    *_flatten(args),
+                    GetVariableNode(name, location=_loc(start)),
+                    ElementNode(Symbol("call"), location=_loc(start)),
+                ),
                 True,
             )
         return _ChainPiece((GetVariableNode(name, location=_loc(start)),), True)
@@ -2221,6 +2227,18 @@ def _interpolation_expression(
     token: Token,
 ) -> tuple[ASTNode, ...]:
     return tuple(parse(expression))
+
+
+def _contextual_empty_list(
+    nodes: tuple[ASTNode, ...],
+    typ: Type,
+) -> tuple[ASTNode, ...]:
+    if len(nodes) != 1:
+        return nodes
+    node = nodes[0]
+    if isinstance(node, ListLiteralNode) and not node.items and node.typ is None:
+        return (ListLiteralNode((), typ, location=node.location),)
+    return nodes
 
 
 def _interpolation_end(raw: str, start: int, token: Token) -> int:

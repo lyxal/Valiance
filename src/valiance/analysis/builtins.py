@@ -699,6 +699,28 @@ def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (LazyList(Decimal(item) for item in range(int(start), int(stop) + 1)),)
 
 
+@builtin(
+    "append",
+    (T.ExactList(T.TypeVariable("Item")), T.TypeVariable("Item")),
+    (T.ExactList(T.TypeVariable("Item")),),
+)
+@builtin(
+    "append",
+    (T.TypeVariable("Item"), T.ExactList(T.TypeVariable("Item"))),
+    (T.ExactList(T.TypeVariable("Item")),),
+)
+def _append(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    if is_list_like(args[0]):
+        return ([*args[0], args[1]],)
+    return ([*args[1], args[0]],)
+
+
+@builtin("join", (T.ExactList(T.String), T.String), (T.String,))
+def _join(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    values, separator = args
+    return (separator.join(str(item) for item in values),)
+
+
 # --------------------------------------------------------------------------
 # Optionals and results
 # --------------------------------------------------------------------------
@@ -841,6 +863,11 @@ def _panic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("toString", (T.V("T"),), (T.String,))
 def _to_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (ctx.format_value(args[0]),)
+
+
+@builtin("or", (T.String, T.String), (T.String,))
+def _or_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (args[0] or args[1],)
 
 
 # --------------------------------------------------------------------------
