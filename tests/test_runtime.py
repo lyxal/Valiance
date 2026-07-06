@@ -40,6 +40,7 @@ class RuntimeTests(unittest.TestCase):
     def test_executes_stack_arithmetic(self):
         self.assertEqual(execute("*(+(1, 2), 3)"), [Decimal("9")])
         self.assertEqual(execute("(1 + 2) * (3 + 4)"), [Decimal("21")])
+        self.assertEqual(execute("5 -(2, _)"), [Decimal("-3")])
 
     def test_executes_stack_shuffle_copy_and_move(self):
         self.assertEqual(

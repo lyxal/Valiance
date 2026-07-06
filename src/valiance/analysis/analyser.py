@@ -538,6 +538,14 @@ class ModifierArgumentAnalysis:
     typed_node: TypedFunctionNode
 
 
+@dataclass(frozen=True)
+class ElementCallPreparation:
+    """Analysed explicit call arguments plus their runtime stack order."""
+
+    branch: AnalysisBranch
+    call_arg_order: tuple[int, ...]
+
+
 class Analyser:
     """Analysis session owning global environment, diagnostics, and dispatch."""
 
@@ -1224,6 +1232,7 @@ class Analyser:
                 T.AppliedOverload,
                 AnalysisBranch,
                 tuple[ModifierArgumentAnalysis, ...],
+                tuple[int, ...],
             ]
         ] = []
         for overload in overloads:
@@ -1364,6 +1373,7 @@ class Analyser:
                 T.AppliedOverload,
                 AnalysisBranch,
                 tuple[ModifierArgumentAnalysis, ...],
+                tuple[int, ...],
             ]
         ] = []
         for overload in overloads:
@@ -1374,12 +1384,13 @@ class Analyser:
                 bool(node.modifier_args),
                 self,
             )
-            for prepared_branch in prepared:
+            for preparation in prepared:
                 for args, popped, ordered_modifiers in _source_element_arguments(
-                    prepared_branch,
+                    preparation.branch,
                     overload,
                     modifier_args,
                     self.env.context,
+                    preparation.call_arg_order,
                 ):
                     candidate = _apply_overload_to_branch(
                         overload,
@@ -1392,7 +1403,14 @@ class Analyser:
                     )
                     if candidate is not None:
                         applied, candidate_branch = candidate
-                        candidates.append((applied, candidate_branch, ordered_modifiers))
+                        candidates.append(
+                            (
+                                applied,
+                                candidate_branch,
+                                ordered_modifiers,
+                                preparation.call_arg_order,
+                            )
+                        )
 
         winners = _best_candidates(candidates)
         if not winners:
@@ -1414,7 +1432,7 @@ class Analyser:
             return set()
 
         results: set[AnalysisBranch] = set()
-        for applied, popped, ordered_modifiers in winners:
+        for applied, popped, ordered_modifiers, call_arg_order in winners:
             if applied.overload.annotation_error is not None:
                 self._diagnose(applied.overload.annotation_error, node)
                 continue
@@ -1436,6 +1454,7 @@ class Analyser:
                             ordered_modifiers,
                             self.env.context,
                         ),
+                        call_arg_order,
                     )
                 )
             )
@@ -3328,6 +3347,7 @@ def _source_element_arguments(
     overload: T.Overload,
     modifier_args: tuple[ModifierArgumentAnalysis, ...],
     ctx: T.Context,
+    call_arg_order: tuple[int, ...] = (),
 ) -> Iterator[
     tuple[
         tuple[T.Type, ...],
@@ -3336,9 +3356,11 @@ def _source_element_arguments(
     ]
 ]:
     if not modifier_args:
-        sourced = branch.source_arguments(overload.params)
+        params = _call_args_in_current_order(overload.params, call_arg_order)
+        sourced = branch.source_arguments(params)
         if sourced is not None:
-            args, popped = sourced
+            current_args, popped = sourced
+            args = _call_args_in_parameter_order(current_args, call_arg_order)
             yield args, popped, ()
         return
 
@@ -3351,10 +3373,12 @@ def _source_element_arguments(
         for index, param in enumerate(overload.params)
         if index not in modifier_indexes
     )
-    sourced = branch.source_arguments(stack_params)
+    current_stack_params = _call_args_in_current_order(stack_params, call_arg_order)
+    sourced = branch.source_arguments(current_stack_params)
     if sourced is None:
         return
-    stack_args, popped = sourced
+    current_stack_args, popped = sourced
+    stack_args = _call_args_in_parameter_order(current_stack_args, call_arg_order)
     stack_substitution = _branch_argument_substitution(stack_args, stack_params, ctx)
     if stack_substitution is None:
         return
@@ -3385,7 +3409,32 @@ def _source_element_arguments(
                 ),
                 specialized_popped,
                 specialized_modifiers,
-            )
+        )
+
+
+def _call_args_in_current_order(
+    items: tuple[T.Type, ...],
+    call_arg_order: tuple[int, ...],
+) -> tuple[T.Type, ...]:
+    if not call_arg_order:
+        return items
+    return tuple(items[index] for index in _invert_call_arg_order(call_arg_order))
+
+
+def _call_args_in_parameter_order(
+    items: tuple[T.Type, ...],
+    call_arg_order: tuple[int, ...],
+) -> tuple[T.Type, ...]:
+    if not call_arg_order:
+        return items
+    return tuple(items[index] for index in call_arg_order)
+
+
+def _invert_call_arg_order(call_arg_order: tuple[int, ...]) -> tuple[int, ...]:
+    current_to_parameter = [0] * len(call_arg_order)
+    for parameter_index, current_index in enumerate(call_arg_order):
+        current_to_parameter[current_index] = parameter_index
+    return tuple(current_to_parameter)
 
 
 def _call_element_candidates(
@@ -3469,26 +3518,30 @@ def _prepare_element_call_branches(
     call_args: tuple[CallArgument, ...],
     has_modifier_args: bool,
     analyser: Analyser,
-) -> tuple[AnalysisBranch, ...]:
-    ordered = _ordered_element_call_arguments(overload, call_args, has_modifier_args)
-    if ordered is None:
+) -> tuple[ElementCallPreparation, ...]:
+    plan = _element_call_argument_plan(overload, call_args, has_modifier_args)
+    if plan is None:
         return ()
     current = BranchSet.one(branch)
-    for expression in ordered:
+    expressions, call_arg_order = plan
+    for expression in expressions:
         current = current.extend_block(expression, analyser)
         if not current:
             return ()
-    return tuple(current)
+    return tuple(
+        ElementCallPreparation(prepared, call_arg_order)
+        for prepared in current
+    )
 
 
-def _ordered_element_call_arguments(
+def _element_call_argument_plan(
     overload: T.Overload,
     call_args: tuple[CallArgument, ...],
     has_modifier_args: bool,
-) -> tuple[tuple[ASTNode, ...], ...] | None:
+) -> tuple[tuple[tuple[ASTNode, ...], ...], tuple[int, ...]] | None:
     param_count = len(overload.params)
     if param_count == 0:
-        return () if not call_args else None
+        return ((), ()) if not call_args else None
     param_names = overload.param_names or (None,) * param_count
     param_defaults = overload.param_defaults or (None,) * param_count
     if len(param_names) < param_count:
@@ -3529,22 +3582,38 @@ def _ordered_element_call_arguments(
         cursor += 1
 
     ordered: list[tuple[ASTNode, ...]] = []
+    current_slots: list[int] = []
+    stack_sourced_slots: list[int] = []
+    explicit_slots: list[int] = []
     for index in range(param_count):
         if index in modifier_indexes:
             continue
         assigned = assignments[index]
         if isinstance(assigned, CallArgument):
             if assigned.placeholder:
+                stack_sourced_slots.append(index)
                 continue
             ordered.append(assigned.value)
+            explicit_slots.append(index)
             continue
         if assigned is not None:
             ordered.append(assigned)
+            explicit_slots.append(index)
             continue
         default = param_defaults[index]
         if default is not None:
             ordered.append(cast("tuple[ASTNode, ...]", default))
-    return tuple(ordered)
+            explicit_slots.append(index)
+            continue
+        stack_sourced_slots.append(index)
+    current_slots.extend(stack_sourced_slots)
+    current_slots.extend(explicit_slots)
+    desired_slots = tuple(
+        index for index in range(param_count) if index not in modifier_indexes
+    )
+    call_arg_order = tuple(current_slots.index(index) for index in desired_slots)
+    identity = tuple(range(len(call_arg_order)))
+    return tuple(ordered), (() if call_arg_order == identity else call_arg_order)
 
 
 def _merge_element_arguments(

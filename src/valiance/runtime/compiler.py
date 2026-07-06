@@ -158,8 +158,25 @@ class _Compiler:
                             raise CompileError(
                                 "named or placeholder element call arguments require "
                                 "resolved typed compilation"
-                            )
+                        )
                         self.expression(arg.value)
+                if (
+                    isinstance(typed_node, TypedElementNode)
+                    and name.text != "call"
+                    and typed_node.call_arg_order
+                ):
+                    labels = tuple(
+                        f"_element_arg_{index}"
+                        for index in range(len(typed_node.call_arg_order))
+                    )
+                    self.emit(
+                        OpCode.STACK_SHUFFLE,
+                        (
+                            "move",
+                            labels,
+                            tuple(labels[index] for index in typed_node.call_arg_order),
+                        ),
+                    )
                 args: tuple[ASTNode | TypedNode, ...] = modifier_args
                 if (
                     isinstance(typed_node, TypedElementNode)
