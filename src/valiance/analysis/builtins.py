@@ -222,8 +222,7 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
         return True
     if isinstance(typ, T.TaggedType):
         if any(
-            tag.absent and tag.name == "infinite" and tag.depth == 0
-            for tag in typ.tags
+            tag.absent and tag.name == "infinite" and tag.depth == 0 for tag in typ.tags
         ) and not is_finite_list_like(value):
             return False
         return _runtime_assignable(value, typ.inner)
@@ -501,27 +500,59 @@ def _runtime_callable_value(value: Any) -> bool:
 # --------------------------------------------------------------------------
 
 
+@builtin("+", (T.Integer, T.Integer), (T.Integer,))
+@builtin("+", (T.Real, T.Real), (T.Real,))
+@builtin("+", (T.Real, T.Integer), (T.Real,))
+@builtin("+", (T.Integer, T.Real), (T.Real,))
 @builtin("+", (T.Number, T.Number), (T.Number,))
 @builtin("+", (T.String, T.String), (T.String,))
 def _plus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (args[0] + args[1],)
 
 
+@builtin("-", (T.Integer, T.Integer), (T.Integer,))
+@builtin("-", (T.Real, T.Real), (T.Real,))
+@builtin("-", (T.Real, T.Integer), (T.Real,))
+@builtin("-", (T.Integer, T.Real), (T.Real,))
 @builtin("-", (T.Number, T.Number), (T.Number,))
 def _minus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (args[0] - args[1],)
 
 
+@builtin("*", (T.Integer, T.Integer), (T.Integer,))
+@builtin("*", (T.Real, T.Real), (T.Real,))
+@builtin("*", (T.Real, T.Integer), (T.Real,))
+@builtin("*", (T.Integer, T.Real), (T.Real,))
 @builtin("*", (T.Number, T.Number), (T.Number,))
-def _star(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+def _multiply(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (args[0] * args[1],)
 
 
+@builtin("*", (T.Integer, T.String), (T.String,))
+def _string_repeat(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (args[0] * args[1],)
+
+
+@builtin("*", (T.String, T.Integer), (T.String,))
+def _string_repeat_reverse(
+    args: tuple[Any, ...], ctx: RuntimeContext
+) -> tuple[Any, ...]:
+    return (args[0] * args[1],)
+
+
+@builtin("%", (T.Integer, T.Integer), (T.Integer,))
+@builtin("%", (T.Real, T.Real), (T.Real,))
+@builtin("%", (T.Real, T.Integer), (T.Real,))
+@builtin("%", (T.Integer, T.Real), (T.Real,))
 @builtin("%", (T.Number, T.Number), (T.Number,))
 def _percent(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (args[0] % args[1],)
 
 
+@builtin("/", (T.Integer, T.Integer), (T.Real,))
+@builtin("/", (T.Real, T.Real), (T.Real,))
+@builtin("/", (T.Real, T.Integer), (T.Real,))
+@builtin("/", (T.Integer, T.Real), (T.Real,))
 @builtin("/", (T.Number, T.Number), (T.Number,))
 def _slash(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (args[0] / args[1],)
@@ -659,7 +690,7 @@ def _head(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     raise RuntimeError("head requires a non-empty list")
 
 
-@builtin("range", (T.Number, T.Number), (T.ExactList(T.Number),))
+@builtin("range", (T.Integer, T.Integer), (T.ExactList(T.Integer),))
 def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     start, stop = args
     return (LazyList(range(int(start), int(stop) + 1)),)
