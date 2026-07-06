@@ -20,3 +20,4 @@ When implementing features, don't leave them half finished. "Just for now" type 
 
 Make language feature implementations as extensible as possible. Don't hardcode tuple layouts, lengths, strings, etc.
 
+`tests/test_programs.py` is a test file containing programs that are fundamental Valiance behaviour. These must always pass after changes. Do not add or modify any tests here (unless of course you're specifically asked to do so).
