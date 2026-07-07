@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from valiance.symbols import Symbol
+from valiance.types.nodes import Overload
 
 
 class TagKind(Enum):
@@ -47,6 +48,9 @@ class Context:
     )
     generic_variance: dict[Symbol, tuple[Variance, ...]] = field(
         default_factory=dict[Symbol, tuple[Variance, ...]]
+    )
+    structural_overloads: dict[Symbol, list[Overload]] = field(
+        default_factory=dict[Symbol, list[Overload]]
     )
 
     def implements(self, type_name: Symbol, trait_name: Symbol) -> bool:
@@ -118,6 +122,16 @@ class Context:
         if len(variances) != arity:
             return (Variance.INVARIANT,) * arity
         return variances
+
+    def define_structural_overload(self, name: Symbol, overload: Overload) -> None:
+        """Publish an overload for structural trait checks."""
+        overloads = self.structural_overloads.setdefault(name, [])
+        if overload not in overloads:
+            overloads.append(overload)
+
+    def overloads_for_structural_trait(self, name: Symbol) -> tuple[Overload, ...]:
+        """Return overloads visible to anonymous structural trait checks."""
+        return tuple(self.structural_overloads.get(name, ()))
 
 
 def _tag_symbol(name: str | Symbol) -> Symbol:

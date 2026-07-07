@@ -1079,7 +1079,9 @@ def _call_unfold_function(
         return _execute_unfold_function(vm, value, state)
     if isinstance(value, OverloadedFunctionValue):
         matches = tuple(
-            overload for overload in value.overloads if len(overload.code.params) == len(state)
+            overload
+            for overload in value.overloads
+            if len(overload.code.params) == len(state)
         )
         errors: list[Exception] = []
         for overload in matches:

@@ -25,6 +25,8 @@ from valiance.types.builders import (
 )
 from valiance.types.context import Context, Variance
 from valiance.types.nodes import (
+    AnonymousTraitRequirement,
+    AnonymousTraitType,
     AppliedOverload,
     ArrayExactType,
     ArrayMinType,
@@ -136,6 +138,9 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
     if isinstance(source, RowType):
         return subtype(source.base, target, ctx)
 
+    if isinstance(target, AnonymousTraitType):
+        return _satisfies_anonymous_trait(source, target, ctx)
+
     if isinstance(source, NominalType) and isinstance(target, NominalType):
         if target.name == RESULT and len(target.args) == 2:
             return _source_subtypes_result(source, target, ctx)
@@ -169,6 +174,64 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
         return _collection_subtype(source, target, ctx)
 
     return False
+
+
+def _satisfies_anonymous_trait(
+    source: Type,
+    target: AnonymousTraitType,
+    ctx: Context,
+) -> bool:
+    subst: dict[str, Type] = {}
+    if target.generics:
+        subst[target.generics[0].text] = source
+    return all(
+        _anonymous_requirement_satisfied(requirement, subst, ctx)
+        for requirement in target.requirements
+    )
+
+
+def _anonymous_requirement_satisfied(
+    requirement: AnonymousTraitRequirement,
+    subst: dict[str, Type],
+    ctx: Context,
+) -> bool:
+    expected = _substitute_overload(requirement.overload, subst)
+    return any(
+        _overload_satisfies_requirement(candidate, expected, ctx)
+        for candidate in ctx.overloads_for_structural_trait(requirement.name)
+    )
+
+
+def _overload_satisfies_requirement(
+    candidate: Overload,
+    expected: Overload,
+    ctx: Context,
+) -> bool:
+    if len(candidate.params) == len(expected.params) and len(candidate.returns) == len(
+        expected.returns
+    ) and all(
+        same(candidate_param, expected_param)
+        for candidate_param, expected_param in zip(
+            candidate.params,
+            expected.params,
+            strict=False,
+        )
+    ) and all(
+        same(candidate_return, expected_return)
+        for candidate_return, expected_return in zip(
+            candidate.returns,
+            expected.returns,
+            strict=False,
+        )
+    ):
+        return True
+    actual_returns = _overload_result_for_args(candidate, expected.params, ctx)
+    return actual_returns is not None and len(actual_returns) == len(
+        expected.returns
+    ) and all(
+        assignable(actual, required, ctx)
+        for actual, required in zip(actual_returns, expected.returns, strict=False)
+    )
 
 
 def _nominal_args_subtype(
@@ -262,6 +325,14 @@ def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
         return True
 
     if (
+        isinstance(source, AnonymousTraitType)
+        and source.generics
+        and isinstance(target, VarType)
+        and target.name == source.generics[0].text
+    ):
+        return True
+
+    if (
         isinstance(target, NominalType)
         and target.name == RESULT
         and len(target.args) == 2
@@ -306,8 +377,13 @@ def _is_builtin_err(source: NominalType) -> bool:
     return not source.args and source.name.text.endswith("Error")
 
 
-def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
+def _solve(
+    pattern: Type,
+    actual: Type,
+    ctx: Context | None = None,
+) -> dict[str, list[Type]] | None:
     """Collect generic constraints by matching a parameter pattern to an argument."""
+    ctx = ctx or Context()
     constraints: dict[str, list[Type]] = {}
 
     def add(name: str, value: Type) -> None:
@@ -408,7 +484,7 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
             actual_returns = _overload_result_for_args(
                 Overload(a.params, a.returns),
                 p.params,
-                Context(),
+                ctx,
             )
             if actual_returns is None:
                 return False
@@ -445,7 +521,19 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
         if isinstance(a, TaggedType):
             return rec(p, a.inner)
         if isinstance(p, CollectionType) and isinstance(a, CollectionType):
+            if (
+                not isinstance(p.base, VarType)
+                and type(p) is type(a)
+                and p.rank == a.rank
+            ):
+                return rec(p.base, a.base)
             return _solve_collection(p, a, add)
+        if isinstance(p, AnonymousTraitType):
+            if not _satisfies_anonymous_trait(a, p, ctx):
+                return False
+            if p.generics:
+                add(p.generics[0].text, a)
+            return True
         return False
 
     def solve_variadic_tuple(pattern: VariadicTupleType, actual: TupleType) -> bool:
@@ -713,12 +801,39 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
             (_substitute(r, subst) for r in t.returns),
             _substitute_element_tags(t.element_tags, subst),
         )
+    if isinstance(t, AnonymousTraitType):
+        return AnonymousTraitType(
+            t.generics,
+            tuple(
+                AnonymousTraitRequirement(
+                    requirement.name,
+                    _substitute_overload(requirement.overload, subst),
+                )
+                for requirement in t.requirements
+            ),
+        )
     if isinstance(t, TaggedType):
         return Tagged(_substitute(t.inner, subst), *t.tags)
     if isinstance(t, AtomicType) and isinstance(t.inner, VarType):
         solved = subst.get(t.inner.name)
         return _atomic_of(solved) if solved else t
     return t
+
+
+def _substitute_overload(overload: Overload, subst: dict[str, Type]) -> Overload:
+    return Overload(
+        tuple(_substitute(param, subst) for param in overload.params),
+        tuple(_substitute(ret, subst) for ret in overload.returns),
+        overload.generic_constraints,
+        overload.where_clause,
+        overload.param_names,
+        overload.call_site_body,
+        overload.element_tags,
+        overload.annotation_error,
+        overload.annotation_warning,
+        overload.param_defaults,
+        overload.is_multi,
+    )
 
 
 def _generic_constraints_met(
@@ -770,7 +885,7 @@ def compatible(argument: Type, parameter: Type, ctx: Context | None = None) -> b
         )
     if _can_vectorise(argument, parameter, ctx):
         return True
-    constraints = _solve(parameter, argument)
+    constraints = _solve(parameter, argument, ctx)
     if constraints is not None:
         # Compatibility can use generic solving as a fallback, but only when it
         # actually substitutes something. Otherwise concrete mismatches could
@@ -796,16 +911,32 @@ def _callable_compatible(argument: Type, parameter: Type, ctx: Context) -> bool:
             return False
         if argument.params is None or argument.returns is None:
             return parameter.params is None and parameter.returns is None
-        actual_returns = _overload_result_for_args(
-            Overload(argument.params, argument.returns), parameter.params, ctx
+        applied = apply_overload(
+            Overload(argument.params, argument.returns),
+            parameter.params,
+            ctx,
         )
-        return (
-            actual_returns is not None
-            and len(actual_returns) == len(parameter.returns)
-            and all(
-                compatible(a, p, ctx)
-                for a, p in zip(actual_returns, parameter.returns, strict=False)
+        if applied is not None and len(applied.actual_returns) == len(
+            parameter.returns
+        ) and all(
+            compatible(a, p, ctx)
+            for a, p in zip(
+                applied.actual_returns,
+                parameter.returns,
+                strict=False,
             )
+        ):
+            return True
+        actual_returns = _overload_result_for_args(
+            Overload(argument.params, argument.returns),
+            parameter.params,
+            ctx,
+        )
+        return actual_returns is not None and len(actual_returns) == len(
+            parameter.returns
+        ) and all(
+            compatible(a, p, ctx)
+            for a, p in zip(actual_returns, parameter.returns, strict=False)
         )
     if isinstance(argument, OverloadSetType):
         # The expected Function[...] supplies the call input types for choosing
@@ -833,10 +964,10 @@ def _overload_callable_compatible(
         expected.returns
     ):
         return False
-    actual_returns = _overload_result_for_args(overload, expected.params, ctx)
-    return actual_returns is not None and all(
+    applied = apply_overload(overload, expected.params, ctx)
+    return applied is not None and all(
         compatible(r, e, ctx)
-        for r, e in zip(actual_returns, expected.returns, strict=False)
+        for r, e in zip(applied.actual_returns, expected.returns, strict=False)
     )
 
 
@@ -1023,7 +1154,7 @@ def apply_overload(
             # determine T before we ask whether this callable fits Function[T].
             deferred_function_args.append((param, arg))
             continue
-        result = _solve(param, arg)
+        result = _solve(param, arg, ctx)
         if result is None:
             if _contains_type_var(param):
                 return None
@@ -1041,7 +1172,7 @@ def apply_overload(
     for param, arg in deferred_function_args:
         substituted_param = _substitute(param, substitution)
         if isinstance(arg, OverloadSetType):
-            result = _solve(substituted_param, arg)
+            result = _solve(substituted_param, arg, ctx)
         else:
             if (
                 not _contains_type_var(substituted_param)
@@ -1051,6 +1182,7 @@ def apply_overload(
             result = _solve(
                 substituted_param if _contains_type_var(substituted_param) else param,
                 arg,
+                ctx,
             )
         if result is None:
             return None
@@ -1263,6 +1395,12 @@ def _contains_type_var(t: Type) -> bool:
             return _element_tags_contain_type_var(t.element_tags)
         return any(_contains_type_var(item) for item in t.params + t.returns) or (
             _element_tags_contain_type_var(t.element_tags)
+        )
+    if isinstance(t, AnonymousTraitType):
+        return any(
+            _contains_type_var(item)
+            for requirement in t.requirements
+            for item in requirement.overload.params + requirement.overload.returns
         )
     if isinstance(t, (TaggedType, ExactType, AtomicType)):
         return _contains_type_var(t.inner)

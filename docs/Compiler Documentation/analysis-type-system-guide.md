@@ -300,15 +300,8 @@ positions without metadata default to invariant. `Variance.COVARIANT` checks
 `source_arg` assignable to `target_arg`; `Variance.CONTRAVARIANT` checks the
 opposite direction; `Variance.INVARIANT` requires canonical equality.
 
-The analyser publishes variance for object, trait, and variant declarations.
-Explicit markers in declaration generic lists win when present:
-
-```valiance
-object[T: any Vehicle] Box => ...
-object[T: above Vehicle] Sink => ...
-```
-
-When no marker is present, variance is inferred from declaration usage:
+The analyser publishes variance for object, trait, and variant declarations by
+inferring usage:
 
 - readable fields and returns are positive uses
 - public writable fields count as both positive and negative uses
@@ -318,16 +311,37 @@ When no marker is present, variance is inferred from declaration usage:
 Both positive and negative use makes the parameter invariant. Keep this
 conservative: unknown or unsupported uses should not silently become variant.
 Type syntax parses bare `T` as a nominal name, so the analyser rewrites type
-names that match the declaration's generic parameters into `VarType` before
-registering object attributes, constructors, and requirements.
+names that match the active generic parameters into `VarType` before
+registering object attributes, constructors, function definitions, function
+literals, and requirements. Nested generic function literals shadow outer
+generic names with the same spelling.
 
-Generic parameter bounds are stored as `GenericConstraint` records on overloads.
-For `T: Vehicle`, `T: any Vehicle`, or `T: above Vehicle`, overload application
-first solves `T` from the actual arguments, substitutes any solved variables in
-the bound, and then requires the solution to be assignable to the bound. This
-check belongs in `types.relations.apply_overload`, so constrained object
-constructors, generic definitions, and any future constrained overload source
-share the same rule.
+Surface generic parameter lists do not accept bound syntax. Built-ins and other
+compiler-internal overload sources can still attach `GenericConstraint` records
+directly to overloads; overload application first solves the generic from the
+actual arguments, substitutes solved variables in the bound, and then requires
+the solution to be assignable to the bound. User-authored constraints should be
+expressed in ordinary parameter types instead.
+
+Anonymous trait types provide structural behavior checks without requiring a
+named trait implementation. They are represented as `AnonymousTraitType` with
+inline `AnonymousTraitRequirement` signatures, for example:
+
+```valiance
+define[T] sum(
+  :trait[T] =>
+    extend +(:T, :T) -> T
+  end +
+) -> T => fold: +
+```
+
+The first anonymous-trait generic is treated as the subject type. During function
+body analysis the parameter is viewed as that subject type, while the declared
+overload keeps the anonymous structural requirement. The analyser also installs
+the inline requirements as local-only overloads while checking the function body,
+so operations such as `fold: +` type-check against the required behavior. At
+call sites, relation checks use the visible overload catalogue in `Context` to
+verify that the actual subject type has matching element overloads.
 
 ## Collection Types
 

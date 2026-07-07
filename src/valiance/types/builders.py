@@ -6,6 +6,8 @@ from collections.abc import Iterable
 
 from valiance.symbols import Symbol
 from valiance.types.nodes import (
+    AnonymousTraitRequirement,
+    AnonymousTraitType,
     ArrayExactType,
     ArrayMinType,
     AtomicType,
@@ -175,6 +177,14 @@ def Overloads(*overloads: Overload) -> Type:
     return OverloadSetType(tuple(overloads))
 
 
+def AnonymousTrait(
+    generics: Iterable[Symbol],
+    requirements: Iterable[AnonymousTraitRequirement],
+) -> Type:
+    """Create an inline structural trait type."""
+    return AnonymousTraitType(tuple(generics), tuple(requirements))
+
+
 TagSpec = str | DataTag
 
 
@@ -300,6 +310,30 @@ def normalize(t: Type) -> Type:
             (normalize(p) for p in t.params or ()),
             (normalize(r) for r in t.returns or ()),
             t.element_tags,
+        )
+
+    if isinstance(t, AnonymousTraitType):
+        return AnonymousTraitType(
+            t.generics,
+            tuple(
+                AnonymousTraitRequirement(
+                    requirement.name,
+                    Overload(
+                        tuple(normalize(p) for p in requirement.overload.params),
+                        tuple(normalize(r) for r in requirement.overload.returns),
+                        requirement.overload.generic_constraints,
+                        requirement.overload.where_clause,
+                        requirement.overload.param_names,
+                        requirement.overload.call_site_body,
+                        requirement.overload.element_tags,
+                        requirement.overload.annotation_error,
+                        requirement.overload.annotation_warning,
+                        requirement.overload.param_defaults,
+                        requirement.overload.is_multi,
+                    ),
+                )
+                for requirement in t.requirements
+            ),
         )
 
     if isinstance(t, VariadicTupleType):
@@ -485,6 +519,18 @@ def show(t: Type) -> str:
             f"Function[{params} -> {returns}]",
             t.element_tags,
         )
+    if isinstance(t, AnonymousTraitType):
+        generics = f"[{', '.join(str(g) for g in t.generics)}]" if t.generics else ""
+        requirements = "; ".join(
+            f"extend {req.name}({', '.join(show(p) for p in req.overload.params)})"
+            + (
+                " -> " + ", ".join(show(r) for r in req.overload.returns)
+                if req.overload.returns
+                else ""
+            )
+            for req in t.requirements
+        )
+        return f"trait{generics} => {requirements} end"
     if isinstance(t, TaggedType):
         return f"{' '.join(_show_tag(tag) for tag in sorted(t.tags))} {show(t.inner)}"
     if isinstance(t, OverloadSetType):

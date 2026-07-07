@@ -73,28 +73,45 @@ from valiance.asts import (
 from valiance.diagnostics import DiagnosticError
 from valiance.parsing.lexer import Token, TokenKind, lex
 from valiance.types import (
+    AnonymousTrait,
+    AnonymousTraitRequirement,
     ArrayExactType,
     ArrayMinType,
     Atomic,
+    AtomicType,
     C,
     CollectionType,
     DataTag,
     ElementTag,
+    Exact,
+    ExactType,
+    Field,
     Fn,
     FunctionType,
     I,
+    IntersectionType,
     ListExactType,
     ListMinType,
     ListRuggedType,
     N,
+    NominalType,
     NoneType,
+    Overload,
     RankVariable,
+    Row,
+    RowType,
     Tagged,
+    TaggedType,
     Tup,
+    TupleType,
     TupleTypeItem,
     TupVariadic,
     Type,
     U,
+    UnionType,
+    V,
+    VariadicTupleType,
+    VarType,
 )
 
 
@@ -580,22 +597,17 @@ class Parser:
             return (), (), ()
         while True:
             names.append(self._symbol("expected generic parameter name"))
-            variance, constraint = self._generic_variance_marker()
-            variances.append(variance)
-            constraints.append(constraint)
+            if self._match(TokenKind.COLON):
+                self._error(
+                    "generic bounds are not allowed in generic parameter lists; "
+                    "write the constraint in the parameter type"
+                )
+            variances.append(None)
+            constraints.append(None)
             if self._match(TokenKind.RBRACKET):
                 return tuple(names), tuple(variances), tuple(constraints)
             self._expect(TokenKind.COMMA)
             self._skip_newlines()
-
-    def _generic_variance_marker(self) -> tuple[Symbol | None, Type | None]:
-        if not self._match(TokenKind.COLON):
-            return None, None
-        if self._match_ident("any"):
-            return Symbol("covariant"), self.parse_type_expression()
-        if self._match_ident("above"):
-            return Symbol("contravariant"), self.parse_type_expression()
-        return None, self.parse_type_expression()
 
     def _object_body(
         self,
@@ -718,12 +730,14 @@ class Parser:
         start: Token,
         annotations: tuple[ASTNode, ...] = (),
     ) -> FunctionNode:
+        generics = self._generic_names()
         params = self._params() if self._match(TokenKind.LPAREN) else None
         element_tags, element_tags_explicit = self._function_element_tags()
         returns = self._returns()
         where_clause = self._where_clause()
         self._expect(TokenKind.FAT_ARROW)
         return FunctionNode(
+            generics=generics,
             params=params,
             returns=returns,
             where_clause=where_clause,
@@ -1883,6 +1897,7 @@ class Parser:
             elif seen_default:
                 self._error("parameters with defaults must be trailing")
             params.append(FunctionParam(name, typ, default))
+            self._skip_newlines()
             if self._match(TokenKind.RPAREN):
                 return tuple(params)
             self._expect(TokenKind.COMMA)
@@ -2030,6 +2045,8 @@ class Parser:
         )
 
     def _type_primary(self) -> Type:
+        if self._check_ident("trait"):
+            return self._anonymous_trait_type()
         if self._match(TokenKind.LBRACE):
             items: list[TupleTypeItem] = []
             has_repeated = False
@@ -2106,6 +2123,47 @@ class Parser:
             self._expect(TokenKind.RPAREN)
             return Fn(params, returns)
         self._error("expected type")
+
+    def _anonymous_trait_type(self) -> Type:
+        self._expect_ident("trait")
+        generics = self._generic_names()
+        self._expect(TokenKind.FAT_ARROW)
+        requirements: list[AnonymousTraitRequirement] = []
+        single_line = not self._check(TokenKind.NEWLINE)
+        self._skip_newlines()
+        while not self._check(TokenKind.EOF) and not self._check_ident("end"):
+            start = self._expect_ident("extend")
+            requirement = self._anonymous_trait_requirement(
+                self._extend(start),
+                generics,
+            )
+            requirements.append(requirement)
+            if single_line:
+                break
+            self._skip_separators()
+        self._consume_optional_end()
+        return AnonymousTrait(generics, requirements)
+
+    def _anonymous_trait_requirement(
+        self,
+        node: TraitRequirementNode,
+        generics: tuple[Symbol, ...],
+    ) -> AnonymousTraitRequirement:
+        params = tuple(
+            _local_generic_type(_parser_param_type(param, index), generics)
+            for index, param in enumerate(node.params or ())
+        )
+        returns = tuple(
+            _local_generic_type(ret, generics) for ret in node.returns or ()
+        )
+        return AnonymousTraitRequirement(
+            node.name,
+            Overload(
+                params,
+                returns,
+                param_names=tuple(param.name for param in node.params or ()),
+            ),
+        )
 
     def _element_tag_list(self) -> frozenset[ElementTag]:
         tags: list[ElementTag] = []
@@ -2316,6 +2374,61 @@ def _collection_postfix_superset(
 def _optionalize_type(typ: Type, depth: int) -> Type:
     for _ in range(depth):
         typ = U(N(Symbol("Some"), typ), NoneType())
+    return typ
+
+
+def _parser_param_type(param: FunctionParam, index: int) -> Type:
+    if param.typ is not None:
+        return param.typ
+    name = param.name.text if param.name is not None else f"_{index}"
+    return N(Symbol(name))
+
+
+def _local_generic_type(typ: Type, generics: tuple[Symbol, ...]) -> Type:
+    names = {generic.text for generic in generics}
+    if isinstance(typ, NominalType):
+        if not typ.args and typ.name.text in names:
+            return V(typ.name.text)
+        return N(typ.name, *(_local_generic_type(arg, generics) for arg in typ.args))
+    if isinstance(typ, VarType):
+        return typ
+    if isinstance(typ, UnionType):
+        return U(*(_local_generic_type(item, generics) for item in typ.items))
+    if isinstance(typ, IntersectionType):
+        return I(*(_local_generic_type(item, generics) for item in typ.items))
+    if isinstance(typ, TupleType):
+        return Tup(*(_local_generic_type(item, generics) for item in typ.params))
+    if isinstance(typ, VariadicTupleType):
+        return TupVariadic(
+            *(
+                TupleTypeItem(_local_generic_type(item.typ, generics), item.repeated)
+                for item in typ.items
+            )
+        )
+    if isinstance(typ, RowType):
+        return Row(
+            _local_generic_type(typ.base, generics),
+            *(
+                Field(field.name, _local_generic_type(field.typ, generics))
+                for field in typ.fields
+            ),
+        )
+    if isinstance(typ, CollectionType):
+        return C(type(typ), _local_generic_type(typ.base, generics), typ.rank)
+    if isinstance(typ, FunctionType):
+        if typ.params is None or typ.returns is None:
+            return typ
+        return Fn(
+            (_local_generic_type(param, generics) for param in typ.params),
+            (_local_generic_type(ret, generics) for ret in typ.returns),
+            typ.element_tags,
+        )
+    if isinstance(typ, TaggedType):
+        return Tagged(_local_generic_type(typ.inner, generics), *typ.tags)
+    if isinstance(typ, ExactType):
+        return Exact(_local_generic_type(typ.inner, generics))
+    if isinstance(typ, AtomicType):
+        return Atomic(_local_generic_type(typ.inner, generics))
     return typ
 
 

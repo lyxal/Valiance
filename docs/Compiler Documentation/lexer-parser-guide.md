@@ -245,7 +245,7 @@ you are changing. Most regressions here look like elements in the wrong order.
 - Dictionary literals: `dict{...}`
 - Parenthesized grouping: `(...)`
 - Tuple literals: `{...}`
-- Function literals: `fn ... => ...`
+- Function literals: `fn ... => ...` and generic `fn[T] ... => ...`
 - Quick functions: `'chain`
 - Control-flow nodes in expression position
 - `break` and `return`
@@ -419,6 +419,8 @@ The type parser currently supports:
 - Data-tagged types: `#sorted Number+`, `#!infinite Number+`
 - Function element tags after function types:
   `Function[Number -> ]<Eager, !Panic[String]>`
+- Anonymous structural traits:
+  `trait[T] => extend +(:T, :T) -> T end`
 
 Type parsing is split by precedence:
 
@@ -457,29 +459,31 @@ breaks the ellipsis.
 ## Generic Parameter Lists
 
 Object-like declarations and function definitions parse generic parameter lists
-before the declaration name:
+before the declaration name. Function literals parse them immediately after
+`fn`:
 
 ```valiance
-define[T: Vehicle] keep(value: T) -> T => ...
+define[T] keep(value: Vehicle[T]) -> T => ...
 object[T] Box => ...
-trait[T: any Vehicle] Readable => ...
-variant[E: above Error] Result => ...
+trait[T] Readable => ...
+variant[E] Result => ...
 enum[T] Option => ...
+fn[T] (value: T) -> T => $value
 ```
 
-The parser records generic names, optional variance markers, and optional bound
-types on `ObjectNode` and `DefineNode`. `T: any U` records covariance plus the
-bound `U`, `T: above U` records contravariance plus the bound `U`, and plain
-`T: U` records the bound without an explicit variance marker. The analyser
-rewrites matching type names into type variables and attaches bounds to
-constructor/function overloads so overload application validates the solved
-generic type after unification.
+The parser records generic names on `ObjectNode`, `DefineNode`, and
+`FunctionNode`. Generic parameter lists no longer accept bound or variance
+marker syntax such as
+`T: Vehicle`, `T: any Vehicle`, or `T: above Vehicle`; write constraints in
+ordinary type positions instead. The analyser rewrites matching type names into
+type variables before storing object attributes, constructors, function
+definitions, and requirements.
 
 This declaration-local generic syntax is separate from ordinary type parsing:
 outside a declaration's generic list, bare `T` is parsed as a nominal type name.
 The analyser rewrites names that match the surrounding declaration's generic
 parameters into type variables before storing object attributes, constructors,
-function definitions, and requirements.
+function definitions, function literals, and requirements.
 
 Function declarations may also carry element tags after the parameter list and
 before the return arrow:

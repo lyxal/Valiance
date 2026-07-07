@@ -177,6 +177,7 @@ class StackShuffleNode(ASTNode):
 class FunctionNode(ASTNode):
     """A function literal."""
 
+    generics: tuple[Symbol, ...] = ()
     params: tuple[FunctionParam, ...] | None = None
     body: tuple[ASTNode, ...] = ()
     returns: tuple[Type, ...] | None = None

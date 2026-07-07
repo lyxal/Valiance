@@ -1399,7 +1399,8 @@ at (_) => getOrElse(0)
 define[<generics>] <name>(<params>) -> <returns> => <code> end
 ```
 
-- `generics` is optional
+- `generics` is optional.
+- Generic parameter lists contain only generic names, for example `define[T]` or `define[T, U]`. Constraints are written in ordinary type positions instead of inside the `[]`.
 - `params` is optional, but must contain at least one parameter if specified.
 - `returns` is optional
 
@@ -1417,7 +1418,7 @@ end
 
 - Sometimes, it is helpful to have "configuration" style parameters.
 	- For example, you might want `sort(list)` to do normal sorting, and `sort(list, key=function)` to sort by a function
-- Problem is that the fixed arity requirement of overloads means you can't have `sort[T] (T+) -> T+` and `sort[T, U impl Comparable] (T+, Function[T, U]) -> T+` on the same element.
+- Problem is that the fixed arity requirement of overloads means you can't have `sort[T](T+) -> T+` and `sort[T](T+, Function[T -> Comparable]) -> T+` on the same element.
 	- Fine for sorting, but sometimes it can get complicated
 - Additionally, taking optional parameters from the stack would make the stack effect of a call context-sensitive.
 	- That defeats the point of using fixed arity to reason about stack behaviour.
@@ -1432,7 +1433,7 @@ end
 - Example:
 
 ```
-define[T, U: Comparable] sort(:T+, key: Function[T -> U] = 'top) -> T+ => ... end
+define[T] sort(:T+, key: Function[T -> Comparable] = 'top) -> T+ => ... end
 
 [4, 1, 3] sort(_) #? Calls with default key
 [4, 1, 3] sort #? Compile error - plain calls still expect full stack arity
@@ -1489,7 +1490,7 @@ object[<generics>] Name =>
 end
 ```
 
-- `generics` is any generic type variables the object needs
+- `generics` is any generic type variables the object needs. The list contains only names; constraints are expressed in field, constructor, or element types.
 - `Name` is the name of the object
 - Object members are defined as `<access modifier> $<name>: <type> = <value>`
 - `access modifier` is one of `public` (public read, public write), `readable` (public read, private write), or `private` (private read, private write). `access modifier` can also be omitted, making the member `readable` by default.
@@ -1755,7 +1756,8 @@ trait[<generics>] <name> =>
 end
 ```
 
-- `generics` is optional
+- `generics` is optional and contains only generic names.
+- Generic parameter lists contain only generic names. Trait constraints are expressed where values are typed, for example `:Shape`, `:Addable[T]`, or an anonymous trait type.
 - `body` contains element definitions OR elements that must be implemented by any implementer.
 	- A normal define is a default impl
 	- A required impl is a define without a body, but using `extend` instead of `define`
@@ -1816,6 +1818,34 @@ end
 object ConsoleLogger as ErrorReporter => end
 ```
 
+## 13.1. Anonymous Traits
+
+- Anonymous traits are inline trait definitions that can appear anywhere a type is expected.
+- They are useful when you need behaviour rather than membership in a particular named trait.
+- For example, a named trait for addable values can be written as:
+
+```
+trait[T] Addable =>
+  extend +(:T, :T) -> T
+end
+
+define[T] sum(:Addable[T]+) -> T => fold: +
+```
+
+- The same requirement can be written structurally with an anonymous trait:
+
+```
+define[T] sum(
+  :trait[T] =>
+    extend +(:T, :T) -> T
+  end +
+) -> T => fold: +
+```
+
+- This accepts any type that has a visible `+` overload taking two `T` values and returning `T`; the type does not need to explicitly implement a named `Addable` trait.
+- The requirements of an anonymous trait are available inside the element body, so calls like `fold: +` can type-check against the inline requirement.
+- Anonymous traits can have generic parameters just like named traits, but they do not have a name and cannot be implemented directly with an `object ... as ...` block.
+
 # 14. Variants
 
 - Objects and traits provide enough object-oriented support for comfortable OOPing. However, OOP support can be taken one step further with variants (what might be called `enums`, `sealed classes`, or `sum types` in other programming languages).
@@ -1830,7 +1860,7 @@ variant[<generics>] <name> =>
 end
 ```
 
-- `generics` is optional.
+- `generics` is optional and contains only generic names.
 - `extend` declarations come first, declaring the interface that every member must implement.
 - Member definitions follow, each providing their own fields and implementations.
 - Example:
@@ -1902,7 +1932,7 @@ enum[<generics>] <name> =>
 }
 ```
 
-- Note that generics is optional. If no generic is provided, the enum is considered to just be names. Note that if no generics are provided, then members cannot have corresponding values. Note that if a generic is provided, all members must have a corresponding value 
+- Note that generics is optional and contains only generic names. If no generic is provided, the enum is considered to just be names. Note that if no generics are provided, then members cannot have corresponding values. Note that if a generic is provided, all members must have a corresponding value 
 
 - For example:
 
@@ -1936,14 +1966,24 @@ TokenType.NUMBER.value
 # 16. Generics
 - Type substitution mechanism.
 - There is no type erasure with generics. If something is passed an object with a generic, both object and generic types are available. 
+- Generic parameter lists contain only names, such as `T` or `T, U`. Bounds like `T: SomeTrait` are not valid in the `[]`.
 - Generic constructors are invariant by default.
 - Object, trait, and variant declarations can infer variance from how their generic parameters are used.
   - Readable fields and returns are covariant positions.
   - Function parameters are contravariant positions.
   - Public writable fields count as both covariant and contravariant, so they make the parameter invariant.
-- Variance can also be declared explicitly. `T: above U` is contravariance (any type above or equal to T) and `T: any U` is covariance (any type of T).
 - Collection item types are covariant: for example, `Car+` can be passed where `Vehicle+` is expected if `Car` implements `Vehicle`. Rank rules still apply separately.
-- However, a type can also be constrained to implement certain traits. `T: U` means "generic type `T` which implements `U`"
+- Generic constraints are expressed where the constrained value is typed. Use named traits for nominal constraints, or anonymous traits for structural constraints.
+
+```
+define[T] sum(:Addable[T]+) -> T => fold: +
+
+define[T] sum(
+  :trait[T] =>
+    extend +(:T, :T) -> T
+  end +
+) -> T => fold: +
+```
 
 ## 16.1. `atomic` type marker 
 _Note: The utility of this feature is still under question_
@@ -2208,7 +2248,7 @@ end
 #sorted: [T] filter => (#sorted T+, Function[T -> #boolean Number]) -> #sorted T+
 ```
 
-- `generics` is only required if the element being overlayed requires generics
+- `generics` is only required if the element being overlayed requires generics, and contains only generic names.
 - Note that the generic type need not have the same name as the element. Only the number of generics must be the same.
 - Signatures do not have parameter names. Only parameter types.
 - Multiple elements can be overlayed at once:
@@ -2687,7 +2727,7 @@ end
 ## 21.1. The `Result` Type
 
 - `Result` types are the preferred way of doing error handling.
-- `Result[T, E: Err]` is defined as a sum type of `OK[T]` and any type implementing the `Err` trait.
+- `Result[T, E]` is defined as a sum type of `OK[T]` and any type implementing the `Err` trait.
 
 ```
 trait Err =>
@@ -2761,7 +2801,7 @@ define[T, U] &(x: T?, callable: Function[T -> U]) -> U? =>
     _          => None
 end
 
-define[T, U, E: Err] &(x: Result[T, E], callable: Function[T -> U]) -> Result[U, E] =>
+define[T, U, E] &(x: Result[T, E], callable: Function[T -> U]) -> Result[U, E] =>
   $x match =>
     as ok: T => $callable($ok)
     as err: E => $err

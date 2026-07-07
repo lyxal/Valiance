@@ -651,11 +651,14 @@ class Analyser:
             case FunctionNode():
                 if not self._validate_annotations(node.annotations, "fn", node):
                     return {branch.append_typed(TypedNode(node, None))}
-                result = self._analyse_function_literal(branch, node)
+                function_node = _genericize_function_node(node, node.generics)
+                result = self._analyse_function_literal(branch, function_node)
                 if result is None:
                     return {branch.append_typed(TypedNode(node, None))}
                 function, typed_branch = result
-                typed_node = TypedFunctionNode(node, function.typ, function.overloads)
+                typed_node = TypedFunctionNode(
+                    function_node, function.typ, function.overloads
+                )
                 return {
                     typed_branch.with_stack(
                         typed_branch.stack.push(function.typ)
@@ -3095,10 +3098,11 @@ class Analyser:
             return self._call_site_checked_function(outer, node), outer
 
         params = _declared_params(node)
+        body_params = tuple(_anonymous_trait_subject_view(param) for param in params)
         mode = _function_input_mode(node)
         named_params = tuple(
             (param.name, typ)
-            for param, typ in zip(node.params or (), params, strict=True)
+            for param, typ in zip(node.params or (), body_params, strict=True)
             if param.name is not None
         )
         variables = BranchVariables.from_parameters(
@@ -3136,23 +3140,27 @@ class Analyser:
                     captures=outer.variables,
                 )
         initial_stack = T.TypeStack(
-            params if mode is InputMode.CYCLE_EXPLICIT_PARAMS else ()
+            body_params if mode is InputMode.CYCLE_EXPLICIT_PARAMS else ()
         )
         initial = AnalysisBranch(
             stack=initial_stack,
-            inputs=params if mode is not InputMode.INFER_INPUTS else (),
+            inputs=body_params if mode is not InputMode.INFER_INPUTS else (),
             variables=variables,
             input_mode=mode,
-            cycle_params=params if mode is InputMode.CYCLE_EXPLICIT_PARAMS else (),
+            cycle_params=body_params if mode is InputMode.CYCLE_EXPLICIT_PARAMS else (),
             origin=outer.origin,
         )
 
-        function_env = self.env
+        structural_overloads = _anonymous_trait_overloads(*params)
+        function_env = self.env.child_scope() if structural_overloads else self.env
+        for name, overload in structural_overloads:
+            function_env.overloads.setdefault(name, []).append(overload)
         if recursive_overload is not None and annotation_hooks.has_annotation(
             node.annotations,
             "recursive",
         ):
-            function_env = self.env.child_scope()
+            if function_env is self.env:
+                function_env = self.env.child_scope()
             function_env.define_overload(Symbol("this"), recursive_overload)
         function_analyser = Analyser(function_env)
         function_analyser._friendly_owners = self._friendly_owners
@@ -3266,11 +3274,18 @@ class Analyser:
                 body_element_tags,
                 final_element_tags,
             )
+            declared_params = _declared_params(node)
+            inputs = (
+                declared_params
+                if node.params is not None
+                and any(_contains_anonymous_trait(param) for param in declared_params)
+                else branch.inputs
+            )
             signature = T.Overload(
-                branch.inputs,
+                inputs,
                 returns,
                 where_clause=node.where_clause,
-                param_names=_function_param_names_for_overload(node, branch.inputs),
+                param_names=_function_param_names_for_overload(node, inputs),
                 element_tags=final_element_tags,
                 annotation_error=annotation_hooks.annotation_error_message(
                     node.annotations
@@ -3280,7 +3295,7 @@ class Analyser:
                 ),
                 param_defaults=_function_param_defaults_for_overload(
                     node,
-                    branch.inputs,
+                    inputs,
                 ),
             )
             signatures.setdefault(signature, branch.typed_body)
@@ -5174,7 +5189,7 @@ def _branch_argument_substitution(
         param = _substitute_branch_type(param, substitution)
         constraints = _solve_branch_argument(arg, param, ctx)
         if constraints is None or (not constraints and _contains_type_var(param)):
-            constraints = _solve_type_argument(arg, param)
+            constraints = _solve_type_argument(arg, param, ctx)
         if constraints is None:
             if T.compatible(arg, param, ctx):
                 continue
@@ -5190,8 +5205,9 @@ def _branch_argument_substitution(
 def _solve_type_argument(
     arg: T.Type,
     param: T.Type,
+    ctx: T.Context | None = None,
 ) -> dict[str, T.Type] | None:
-    solved = T._solve(param, arg)
+    solved = T._solve(param, arg, ctx)
     if solved is None:
         return None
     substitution: dict[str, T.Type] = {}
@@ -6238,6 +6254,7 @@ def _genericize_function_node(
     if function.returns is not None:
         returns = tuple(_genericize_type(ret, generics) for ret in function.returns)
     return FunctionNode(
+        generics=function.generics,
         params=params,
         body=tuple(_genericize_ast_node(node, generics) for node in function.body),
         returns=returns,
@@ -6255,6 +6272,13 @@ def _genericize_function_node(
 
 
 def _genericize_ast_node(node: ASTNode, generics: tuple[Symbol, ...]) -> ASTNode:
+    if isinstance(node, FunctionNode) and node.generics:
+        shadowed = {generic.text for generic in node.generics}
+        generics = tuple(
+            generic for generic in generics if generic.text not in shadowed
+        )
+        if not generics:
+            return node
     updates: dict[str, object] = {}
     for item in fields(node):
         value = getattr(node, item.name)
@@ -6373,6 +6397,17 @@ def _genericize_type(typ: T.Type, generics: tuple[Symbol, ...]) -> T.Type:
             (_genericize_type(ret, generics) for ret in typ.returns),
             _genericize_element_tags(typ.element_tags, generics),
         )
+    if isinstance(typ, T.AnonymousTraitType):
+        return T.AnonymousTrait(
+            typ.generics,
+            (
+                T.AnonymousTraitRequirement(
+                    requirement.name,
+                    _genericize_overload(requirement.overload, generics),
+                )
+                for requirement in typ.requirements
+            ),
+        )
     if isinstance(typ, T.TaggedType):
         return T.Tagged(_genericize_type(typ.inner, generics), *typ.tags)
     if isinstance(typ, T.ExactType):
@@ -6380,6 +6415,135 @@ def _genericize_type(typ: T.Type, generics: tuple[Symbol, ...]) -> T.Type:
     if isinstance(typ, T.AtomicType):
         return T.Atomic(_genericize_type(typ.inner, generics))
     return typ
+
+
+def _anonymous_trait_overloads(*types: T.Type) -> tuple[tuple[Symbol, T.Overload], ...]:
+    overloads: list[tuple[Symbol, T.Overload]] = []
+    for typ in types:
+        _collect_anonymous_trait_overloads(T.normalize(typ), overloads)
+    return tuple(overloads)
+
+
+def _anonymous_trait_subject_view(typ: T.Type) -> T.Type:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.AnonymousTraitType) and typ.generics:
+        return T.V(typ.generics[0].text)
+    if isinstance(typ, T.NominalType):
+        return T.N(typ.name, *(_anonymous_trait_subject_view(arg) for arg in typ.args))
+    if isinstance(typ, T.UnionType):
+        return T.U(*(_anonymous_trait_subject_view(item) for item in typ.items))
+    if isinstance(typ, T.IntersectionType):
+        return T.I(*(_anonymous_trait_subject_view(item) for item in typ.items))
+    if isinstance(typ, T.TupleType):
+        return T.Tup(*(_anonymous_trait_subject_view(item) for item in typ.params))
+    if isinstance(typ, T.VariadicTupleType):
+        return T.TupVariadic(
+            *(
+                T.TupleTypeItem(_anonymous_trait_subject_view(item.typ), item.repeated)
+                for item in typ.items
+            )
+        )
+    if isinstance(typ, T.RowType):
+        return T.Row(
+            _anonymous_trait_subject_view(typ.base),
+            *(
+                T.Field(field.name, _anonymous_trait_subject_view(field.typ))
+                for field in typ.fields
+            ),
+        )
+    if isinstance(typ, T.CollectionType):
+        return T.C(type(typ), _anonymous_trait_subject_view(typ.base), typ.rank)
+    if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return typ
+        return T.Fn(
+            (_anonymous_trait_subject_view(param) for param in typ.params),
+            (_anonymous_trait_subject_view(ret) for ret in typ.returns),
+            typ.element_tags,
+        )
+    if isinstance(typ, T.TaggedType):
+        return T.Tagged(_anonymous_trait_subject_view(typ.inner), *typ.tags)
+    if isinstance(typ, T.ExactType):
+        return T.Exact(_anonymous_trait_subject_view(typ.inner))
+    if isinstance(typ, T.AtomicType):
+        return T.Atomic(_anonymous_trait_subject_view(typ.inner))
+    return typ
+
+
+def _contains_anonymous_trait(typ: T.Type) -> bool:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.AnonymousTraitType):
+        return True
+    if isinstance(typ, T.NominalType):
+        return any(_contains_anonymous_trait(arg) for arg in typ.args)
+    if isinstance(typ, (T.UnionType, T.IntersectionType)):
+        return any(_contains_anonymous_trait(item) for item in typ.items)
+    if isinstance(typ, T.TupleType):
+        return any(_contains_anonymous_trait(item) for item in typ.params)
+    if isinstance(typ, T.VariadicTupleType):
+        return any(_contains_anonymous_trait(item.typ) for item in typ.items)
+    if isinstance(typ, T.RowType):
+        return _contains_anonymous_trait(typ.base) or any(
+            _contains_anonymous_trait(field.typ) for field in typ.fields
+        )
+    if isinstance(typ, T.CollectionType):
+        return _contains_anonymous_trait(typ.base)
+    if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return False
+        return any(_contains_anonymous_trait(item) for item in typ.params) or any(
+            _contains_anonymous_trait(item) for item in typ.returns
+        )
+    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _contains_anonymous_trait(typ.inner)
+    return False
+
+
+def _collect_anonymous_trait_overloads(
+    typ: T.Type,
+    overloads: list[tuple[Symbol, T.Overload]],
+) -> None:
+    if isinstance(typ, T.AnonymousTraitType):
+        overloads.extend(
+            (requirement.name, requirement.overload)
+            for requirement in typ.requirements
+        )
+        for requirement in typ.requirements:
+            for item in requirement.overload.params + requirement.overload.returns:
+                _collect_anonymous_trait_overloads(T.normalize(item), overloads)
+        return
+    if isinstance(typ, T.NominalType):
+        for arg in typ.args:
+            _collect_anonymous_trait_overloads(arg, overloads)
+        return
+    if isinstance(typ, (T.UnionType, T.IntersectionType)):
+        for item in typ.items:
+            _collect_anonymous_trait_overloads(item, overloads)
+        return
+    if isinstance(typ, T.TupleType):
+        for item in typ.params:
+            _collect_anonymous_trait_overloads(item, overloads)
+        return
+    if isinstance(typ, T.VariadicTupleType):
+        for item in typ.items:
+            _collect_anonymous_trait_overloads(item.typ, overloads)
+        return
+    if isinstance(typ, T.RowType):
+        _collect_anonymous_trait_overloads(typ.base, overloads)
+        for field in typ.fields:
+            _collect_anonymous_trait_overloads(field.typ, overloads)
+        return
+    if isinstance(typ, T.CollectionType):
+        _collect_anonymous_trait_overloads(typ.base, overloads)
+        return
+    if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return
+        for item in typ.params + typ.returns:
+            _collect_anonymous_trait_overloads(item, overloads)
+        return
+    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+        _collect_anonymous_trait_overloads(typ.inner, overloads)
 
 
 def _genericize_element_tags(
@@ -6494,6 +6658,13 @@ def _record_variance_use(
             for arg in tag.args:
                 _record_variance_use(arg, polarity, usage)
         return
+    if isinstance(typ, T.AnonymousTraitType):
+        for requirement in typ.requirements:
+            for param in requirement.overload.params:
+                _record_variance_use(param, -polarity, usage)
+            for ret in requirement.overload.returns:
+                _record_variance_use(ret, polarity, usage)
+        return
     if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
         _record_variance_use(typ.inner, polarity, usage)
 
@@ -6551,6 +6722,11 @@ def _collect_anonymous_type_indices(typ: T.Type, indices: set[int]) -> None:
             return
         for item in typ.params + typ.returns:
             _collect_anonymous_type_indices(item, indices)
+        return
+    if isinstance(typ, T.AnonymousTraitType):
+        for requirement in typ.requirements:
+            for item in requirement.overload.params + requirement.overload.returns:
+                _collect_anonymous_type_indices(item, indices)
         return
     if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
         _collect_anonymous_type_indices(typ.inner, indices)
@@ -6658,6 +6834,35 @@ def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
         return T.Fn(
             (_refine_type(item, old, new) for item in typ.params),
             (_refine_type(item, old, new) for item in typ.returns),
+        )
+    if isinstance(typ, T.AnonymousTraitType):
+        return T.AnonymousTrait(
+            typ.generics,
+            (
+                T.AnonymousTraitRequirement(
+                    requirement.name,
+                    T.Overload(
+                        tuple(
+                            _refine_type(param, old, new)
+                            for param in requirement.overload.params
+                        ),
+                        tuple(
+                            _refine_type(ret, old, new)
+                            for ret in requirement.overload.returns
+                        ),
+                        requirement.overload.generic_constraints,
+                        requirement.overload.where_clause,
+                        requirement.overload.param_names,
+                        requirement.overload.call_site_body,
+                        requirement.overload.element_tags,
+                        requirement.overload.annotation_error,
+                        requirement.overload.annotation_warning,
+                        requirement.overload.param_defaults,
+                        requirement.overload.is_multi,
+                    ),
+                )
+                for requirement in typ.requirements
+            ),
         )
     if isinstance(typ, T.TaggedType):
         return T.Tagged(_refine_type(typ.inner, old, new), *typ.tags)

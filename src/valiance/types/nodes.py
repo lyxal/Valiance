@@ -171,6 +171,22 @@ class FunctionType(Type):
 
 
 @dataclass(frozen=True)
+class AnonymousTraitRequirement:
+    """One required element signature in an anonymous structural trait."""
+
+    name: Symbol
+    overload: Overload
+
+
+@dataclass(frozen=True)
+class AnonymousTraitType(Type):
+    """An inline structural trait type."""
+
+    generics: tuple[Symbol, ...] = ()
+    requirements: tuple[AnonymousTraitRequirement, ...] = ()
+
+
+@dataclass(frozen=True)
 class OverloadSetType(Type):
     """An overloaded callable value."""
 

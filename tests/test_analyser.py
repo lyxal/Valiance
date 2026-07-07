@@ -780,18 +780,6 @@ accept
             (Variance.INVARIANT,),
         )
 
-    def test_explicit_generic_variance_marker_overrides_inference(self):
-        env = Environment()
-        analyser = Analyser(env)
-
-        analyser.analyse(parse("object[T: any Vehicle] Cell => public $value: T end"))
-
-        self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(
-            env.context.variance_for(Symbol("Cell"), 1),
-            (Variance.COVARIANT,),
-        )
-
     def test_function_typed_fields_infer_contravariant_generic_use(self):
         env = Environment()
         analyser = Analyser(env)
@@ -850,42 +838,22 @@ accept
             analyser.diagnostics[0],
         )
 
-    def test_generic_object_constraints_are_enforced_on_construction(self):
+    def test_anonymous_trait_function_parameter_is_structural(self):
         analyser = Analyser(Environment())
 
         analyser.analyse(
             parse(
                 """
-trait Vehicle => end
 object Car => end
-object Car as Vehicle => end
-object[T: Vehicle] Box =>
-  $value: T
-end
-Car
-Box
-"not a vehicle"
-Box
-"""
-            )
-        )
-
-        self.assertEqual(len(analyser.diagnostics), 1)
-        self.assertIn("no overloads for element 'Box'", analyser.diagnostics[0])
-
-    def test_generic_function_constraints_are_enforced_on_call(self):
-        analyser = Analyser(Environment())
-
-        analyser.analyse(
-            parse(
-                """
-trait Vehicle => end
-object Car => end
-object Car as Vehicle => end
-define[T: Vehicle] keep(value: T) -> T => $value
+define combine(left: Car, right: Car) -> Car => $left
+define[T] keep(
+  value: trait[T] =>
+    extend combine(:T, :T) -> T
+  end
+) -> T => $value
 Car
 keep
-"not a vehicle"
+"not a car"
 keep
 """
             )
@@ -893,6 +861,26 @@ keep
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("no overloads for element 'keep'", analyser.diagnostics[0])
+
+    def test_anonymous_trait_collection_parameter_solves_item_type(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                """
+define[T] sum(
+  :trait[T] =>
+    extend +(:T, :T) -> T
+  end +
+) -> T => fold: +
+[1, 2, 3]
+sum
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, N(Symbol("Integer")))
 
     def test_enum_declaration_registers_niladic_members(self):
         env = Environment()
@@ -954,6 +942,11 @@ end
         typ = analyse_function(FunctionNode(body=(ElementNode(PLUS),)), env)
 
         self.assertEqual(typ, Fn((Number, Number), (Number,)))
+
+    def test_generic_function_literal_uses_declared_generics(self):
+        [typed] = analyse(parse("fn[T] (item: T) -> T => $item"))
+
+        self.assertEqual(typed.typ, Fn((V("T"),), (V("T"),)))
 
     def test_match_infers_missing_inputs_from_multiple_patterns(self):
         typ = analyse_function(

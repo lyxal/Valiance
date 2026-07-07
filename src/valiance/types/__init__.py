@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from valiance.types.builders import (
+    AnonymousTrait,
     AtLeastArray,
     AtLeastList,
     Atomic,
@@ -58,6 +59,8 @@ from valiance.types.environment import (
     VariantDefinition,
 )
 from valiance.types.nodes import (
+    AnonymousTraitRequirement,
+    AnonymousTraitType,
     AppliedOverload,
     ArrayExactType,
     ArrayMinType,
@@ -111,6 +114,9 @@ from valiance.types.stack import StackApplication, TypeStack
 __all__ = [
     "AppliedOverload",
     "AppliedElement",
+    "AnonymousTrait",
+    "AnonymousTraitRequirement",
+    "AnonymousTraitType",
     "ArrayExactType",
     "ArrayMinType",
     "Atomic",

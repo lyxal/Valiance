@@ -415,6 +415,7 @@ class Environment:
                     f"values, got {len(overload.returns)}"
                 )
         candidates.append(overload)
+        self.context.define_structural_overload(name, overload)
 
     def overloads_for(self, name: Symbol) -> tuple[Overload, ...]:
         """Return the overload candidates registered for ``name``."""

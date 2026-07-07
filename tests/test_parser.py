@@ -51,6 +51,7 @@ from valiance.asts import (
 )
 from valiance.parsing import LexError, ParseError, lex, parse, parse_type
 from valiance.types import (
+    AnonymousTraitType,
     Atomic,
     C,
     DataTag,
@@ -58,6 +59,7 @@ from valiance.types import (
     Fn,
     ListExactType,
     ListMinType,
+    ListRuggedType,
     N,
     Number,
     RankVariable,
@@ -65,6 +67,7 @@ from valiance.types import (
     Tagged,
     TupleTypeItem,
     TupVariadic,
+    V,
     optional,
     same,
 )
@@ -323,6 +326,17 @@ class ParserTests(unittest.TestCase):
             ),
         )
 
+    def test_parses_generic_function_literal(self):
+        [function] = parse("@recursive fn[T] (list: T~) -> T+ => this")
+
+        self.assertEqual(function.generics, (Symbol("T"),))
+        self.assertEqual(
+            function.annotations,
+            (AnnotationNode(Symbol("recursive")),),
+        )
+        self.assertEqual(function.params[0].typ, C(ListRuggedType, N(Symbol("T"))))
+        self.assertEqual(function.returns, (C(ListExactType, N(Symbol("T"))),))
+
     def test_parses_parentheses_as_grouping(self):
         self.assertEqual(
             parse("(1 + 2) * (3 + 4)"),
@@ -508,14 +522,29 @@ class ParserTests(unittest.TestCase):
             frozenset((ElementTag(Symbol("Eager")),)),
         )
 
-    def test_parses_generic_function_definition_constraints(self):
-        [node] = parse("define[T: Vehicle] keep(value: T) -> T => $value")
+    def test_rejects_generic_definition_constraints(self):
+        with self.assertRaises(ParseError):
+            parse("define[T: Vehicle] keep(value: T) -> T => $value")
+
+    def test_parses_anonymous_trait_type(self):
+        [node] = parse(
+            """
+define[T] sum(
+  :trait[T] =>
+    extend +(:T, :T) -> T
+  end +
+) -> T => fold: +
+"""
+        )
 
         self.assertIsInstance(node, DefineNode)
         self.assertEqual(node.generics, (Symbol("T"),))
-        self.assertEqual(node.generic_variances, (None,))
-        self.assertEqual(node.generic_constraints, (N(Symbol("Vehicle")),))
-        self.assertEqual(node.function.params[0].typ, N(Symbol("T")))
+        self.assertIsInstance(node.function.params[0].typ.base, AnonymousTraitType)
+        trait_type = node.function.params[0].typ.base
+        self.assertEqual(trait_type.generics, (Symbol("T"),))
+        self.assertEqual(trait_type.requirements[0].name, Symbol("+"))
+        self.assertEqual(trait_type.requirements[0].overload.params, (V("T"), V("T")))
+        self.assertEqual(trait_type.requirements[0].overload.returns, (V("T"),))
         self.assertEqual(node.function.returns, (N(Symbol("T")),))
 
     def test_parses_atomic_generic_type_marker(self):
@@ -744,9 +773,9 @@ end
         )
         self.assertEqual(person.definitions[0].name, Symbol("label"))
 
-        [box] = parse("object[T: any Vehicle] Box => $value: T end")
+        [box] = parse("object[T] Box => $value: T end")
         self.assertEqual(box.generics, (Symbol("T"),))
-        self.assertEqual(box.generic_variances, (Symbol("covariant"),))
+        self.assertEqual(box.generic_variances, (None,))
 
         [shape] = parse("trait Shape => extend area -> Number end")
         self.assertEqual(
