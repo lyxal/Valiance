@@ -10,9 +10,9 @@ to the language, such as rank polymorphism, type inference, and
 tags.
 """
 
+import unittest
 from decimal import Decimal
 from pathlib import Path
-import unittest
 
 from valiance.analysis.analyser import Analyser
 from valiance.parsing.parser import parse

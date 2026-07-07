@@ -58,6 +58,7 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedNode,
     TypedTagApplicationNode,
+    TypedUnfoldNode,
     TypePatternNode,
     UnfoldNode,
     WildcardPatternNode,
@@ -2565,18 +2566,26 @@ class Analyser:
         body_function = FunctionNode(
             params=node.params,
             body=node.body,
+            annotations=(AnnotationNode(Symbol("returnAll")),),
             element_tags=frozenset(),
             location=node.location,
         )
-        body_analysis = self._analyse_function_literal(branch, body_function)
+        body_analysis = self._analyse_unfold_body_function(branch, body_function)
         if body_analysis is None:
             return set()
-        body_function_analysis, _ = body_analysis
+        body_function_analysis = body_analysis
 
-        results: set[AnalysisBranch] = set()
+        candidates: list[tuple[T.AppliedOverload, AnalysisBranch, int]] = []
         for overload in _callable_overloads(body_function_analysis.typ):
-            if not overload.returns:
-                self._diagnose("unfold body must generate a value", node)
+            state_arity = len(overload.params)
+            if state_arity == 0:
+                self._diagnose("unfold requires at least one state value", node)
+                continue
+            if len(overload.returns) > state_arity + 1:
+                self._diagnose(
+                    "unfold body may not produce more than state arity plus one value",
+                    node,
+                )
                 continue
             if node.condition:
                 condition_function = FunctionNode(
@@ -2604,15 +2613,60 @@ class Analyser:
             if sourced is None:
                 self._diagnose("unfold inputs do not match stack", node)
                 continue
-            _, popped = sourced
-            generated = overload.returns[-1]
+            args, popped = sourced
+            applied = T.apply_overload(overload, args, self.env.context)
+            if applied is None:
+                continue
+            candidates.append((applied, popped, state_arity))
+
+        results: set[AnalysisBranch] = set()
+        for applied, popped, state_arity in _best_candidates(candidates, branch):
+            generated = _unfold_emitted_type(applied.params, applied.actual_returns)
             list_type = T.WithTag(T.ExactList(generated), "infinite")
             results.add(
                 popped.with_stack(popped.stack.push(list_type)).append_typed(
-                    TypedNode(node, list_type)
+                    TypedUnfoldNode(node, list_type, state_arity=state_arity)
                 )
             )
         return results
+
+    def _analyse_unfold_body_function(
+        self,
+        outer: AnalysisBranch,
+        node: FunctionNode,
+    ) -> FunctionAnalysis | None:
+        if node.params is None:
+            analysed = self._analyse_function_literal(outer, node)
+            return None if analysed is None else analysed[0]
+
+        params = _declared_params(node)
+        named_params = tuple(
+            (param.name, typ)
+            for param, typ in zip(node.params, params, strict=True)
+            if param.name is not None
+        )
+        variables = BranchVariables.from_parameters(
+            named_params,
+            captures=outer.variables,
+        )
+        initial = AnalysisBranch(
+            inputs=params,
+            variables=variables,
+            input_mode=InputMode.CYCLE_EXPLICIT_PARAMS if params else InputMode.NILADIC,
+            cycle_params=params,
+            origin=outer.origin,
+        )
+        function_analyser = Analyser(self.env)
+        function_analyser._friendly_owners = self._friendly_owners
+        final = function_analyser.analyse_block(BranchSet.one(initial), node.body)
+        signatures = self._function_signatures(node, final)
+        analysis = _function_analysis_from_signatures(signatures)
+        if analysis is None:
+            self.diagnostics.extend(function_analyser.diagnostics)
+            self.warnings.extend(function_analyser.warnings)
+            return None
+        self.warnings.extend(function_analyser.warnings)
+        return analysis
 
     def _at(
         self,
@@ -5331,6 +5385,47 @@ def _returns_result_type(returns: tuple[T.Type, ...]) -> T.Type | None:
     return None
 
 
+def _unfold_emitted_type(
+    state_types: tuple[T.Type, ...],
+    returns: tuple[T.Type, ...],
+) -> T.Type:
+    if len(returns) <= len(state_types):
+        missing = len(state_types) - len(returns)
+        next_state = state_types[-missing:] + returns if missing else returns
+        return next_state[-1]
+    return _optional_present_type(returns[-1])
+
+
+def _optional_present_type(typ: T.Type) -> T.Type:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.NoneTypeNode):
+        return T.Never()
+    if (
+        isinstance(typ, T.NominalType)
+        and typ.name == Symbol("Some")
+        and len(typ.args) == 1
+    ):
+        return typ.args[0]
+    if not isinstance(typ, T.UnionType):
+        return typ
+    present: list[T.Type] = []
+    for item in typ.items:
+        item = T.normalize(item)
+        if isinstance(item, T.NoneTypeNode):
+            continue
+        if (
+            isinstance(item, T.NominalType)
+            and item.name == Symbol("Some")
+            and len(item.args) == 1
+        ):
+            present.append(item.args[0])
+        else:
+            present.append(item)
+    if not present:
+        return T.Never()
+    return T.U(*present)
+
+
 def _selector_value_count(selectors: tuple[IndexSelector, ...]) -> int:
     count = 0
     for selector in selectors:
@@ -6517,6 +6612,12 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.node,
             typ,
             typed_node.overload,
+        )
+    if isinstance(typed_node, TypedUnfoldNode):
+        return TypedUnfoldNode(
+            typed_node.node,
+            typ,
+            typed_node.state_arity,
         )
     return TypedNode(typed_node.node, typ)
 

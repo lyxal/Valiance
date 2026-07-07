@@ -2533,6 +2533,31 @@ $n
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, WithTag(ExactList(Number), "infinite"))
 
+        analyser = Analyser()
+        typed = analyser.analyse(parse("0 1 unfold => + end"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, WithTag(ExactList(Integer), "infinite"))
+
+    def test_unfold_rejects_more_than_state_plus_emission(self):
+        analyser = Analyser()
+        analyser.analyse(
+            parse(
+                """
+1 unfold -> (n: Integer) =>
+  $n
+  dup
+  dup
+end
+"""
+            )
+        )
+
+        self.assertIn(
+            "2:3: unfold body may not produce more than state arity plus one value",
+            analyser.diagnostics,
+        )
+
     def test_list_literal_infers_union_item_type(self):
         typed = analyse(
             [

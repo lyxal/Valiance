@@ -61,6 +61,7 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedNode,
     TypedTagApplicationNode,
+    TypedUnfoldNode,
     TypePatternNode,
     UnfoldNode,
     WhileNode,
@@ -474,15 +475,13 @@ class _Compiler:
         self.patch(jump_to_end, len(self.instructions))
 
     def unfold_node(self, node: UnfoldNode, typed_node: TypedNode | None) -> None:
-        if node.params is None:
-            self.unsupported(node, "unfold without explicit parameters")
+        arity = _unfold_state_arity(node, typed_node)
         body = FunctionNode(
-            params=node.params,
+            params=node.params or tuple(FunctionParam(None) for _ in range(arity)),
             body=node.body,
             location=node.location,
         )
         body_code = _compile_function_value(body, "unfold.body")
-        arity = _compiled_function_arity(body_code)
         condition_code = None
         if node.condition:
             params = node.params
@@ -828,6 +827,14 @@ def _compiled_function_arity(code: FunctionCode | FunctionSetCode) -> int:
     if not code.overloads:
         return 0
     return len(code.overloads[0].params)
+
+
+def _unfold_state_arity(node: UnfoldNode, typed_node: TypedNode | None) -> int:
+    if isinstance(typed_node, TypedUnfoldNode):
+        return typed_node.state_arity
+    if node.params is not None:
+        return len(node.params)
+    raise CompileError("unfold without explicit parameters requires typed analysis")
 
 
 def _function_ast(node: FunctionNode | TypedNode) -> FunctionNode:

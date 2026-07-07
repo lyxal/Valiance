@@ -1287,6 +1287,57 @@ end
         )
         self.assertEqual(stack, [Decimal("2")])
 
+    def test_unfold_cycles_state_and_supports_separate_emission(self):
+        explicit = execute(
+            """
+0 1 unfold (true) -> (prev: Integer, next: Integer) =>
+  +
+end | #!infinite | 7 take
+"""
+        )
+        explicit_prefix = list(explicit[0])
+        self.assertEqual(
+            explicit_prefix,
+            [
+                Decimal("1"),
+                Decimal("2"),
+                Decimal("3"),
+                Decimal("5"),
+                Decimal("8"),
+                Decimal("13"),
+                Decimal("21"),
+            ],
+        )
+
+        inferred = execute(
+            """
+0 1 unfold =>
+  +
+end | #!infinite | 7 take
+"""
+        )
+        self.assertEqual(list(inferred[0]), explicit_prefix)
+
+        separate = execute(
+            """
+1 unfold (< 10) -> (n: Integer) =>
+  $n + 1
+  if ($n % 2 == 0) => None
+  else => $n Some
+  end
+end | #!infinite | 4 take
+"""
+        )
+        self.assertEqual(
+            list(separate[0]),
+            [Decimal("1"), Decimal("3"), Decimal("5"), Decimal("7")],
+        )
+
+    def test_take_accepts_lazy_lists(self):
+        stack = execute("1 5 range | 3 take")
+        self.assertIsInstance(stack[0], LazyList)
+        self.assertEqual(list(stack[0]), [Decimal("1"), Decimal("2"), Decimal("3")])
+
     def test_executes_try_handle_for_panics(self):
         self.assertEqual(
             execute(

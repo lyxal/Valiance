@@ -59,6 +59,13 @@ class TypedTagApplicationNode(TypedNode):
 
 
 @dataclass(frozen=True, slots=True)
+class TypedUnfoldNode(TypedNode):
+    """A typed unfold expression with the selected state arity."""
+
+    state_arity: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class FunctionOverloadTyping:
     typ: Type
     body: tuple[TypedNode, ...]

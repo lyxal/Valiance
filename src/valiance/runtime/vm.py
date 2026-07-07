@@ -743,17 +743,24 @@ class VirtualMachine:
             nonlocal state
             while True:
                 if condition is not None:
-                    keep_going = self.call_value(condition, list(state))
-                    if not _truthy(keep_going[0]):
+                    keep_going = _call_unfold_function(self, condition, state)
+                    if not keep_going or not _truthy(keep_going[-1]):
                         return
-                outputs = self.call_value(body, list(state))
-                generated_value = outputs[-1]
-                if arity == 1 and len(outputs) == 1:
-                    state = [generated_value]
-                else:
+                outputs = _call_unfold_function(self, body, state)
+                if len(outputs) > arity + 1:
+                    raise RuntimeError(
+                        "unfold body produced more than state arity plus one value"
+                    )
+                if len(outputs) == arity + 1:
                     state = list(outputs[:arity])
-                if generated_value is not None:
-                    yield generated_value
+                    emitted = _unfold_present_emission(outputs[-1])
+                    if emitted is _SKIP_UNFOLD_EMISSION:
+                        continue
+                    yield emitted
+                else:
+                    missing = arity - len(outputs)
+                    state = list(state[-missing:] if missing else ()) + list(outputs)
+                    yield state[-1]
 
         return LazyList(generated())
 
@@ -1058,6 +1065,65 @@ def _source_args(frame: _Frame, arity: int, context: str) -> tuple[Any, ...]:
         del frame.stack[-stack_count:]
     frame.cycle_index = next_cycle_index
     return args
+
+
+_SKIP_UNFOLD_EMISSION = object()
+
+
+def _call_unfold_function(
+    vm: VirtualMachine,
+    value: Any,
+    state: list[Any],
+) -> list[Any]:
+    if isinstance(value, FunctionValue):
+        return _execute_unfold_function(vm, value, state)
+    if isinstance(value, OverloadedFunctionValue):
+        matches = tuple(
+            overload for overload in value.overloads if len(overload.code.params) == len(state)
+        )
+        errors: list[Exception] = []
+        for overload in matches:
+            try:
+                return _execute_unfold_function(vm, overload, state)
+            except PanicSignal:
+                raise
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise RuntimeError(errors[-1]) from errors[-1]
+    raise RuntimeError(f"cannot call value {_format_value(value)}")
+
+
+def _execute_unfold_function(
+    vm: VirtualMachine,
+    function: FunctionValue,
+    state: list[Any],
+) -> list[Any]:
+    if len(state) != len(function.code.params):
+        raise RuntimeError(
+            f"{_function_name(function.code)} expected "
+            f"{len(function.code.params)} state value(s), got {len(state)}"
+        )
+    locals_ = dict(zip(function.code.params, state, strict=True))
+    return vm.execute(
+        function.code,
+        locals_,
+        function.globals,
+        tuple(state),
+        [],
+    )
+
+
+def _unfold_present_emission(value: Any) -> Any:
+    if _is_none_result_value(value):
+        return _SKIP_UNFOLD_EMISSION
+    if (
+        isinstance(value, ObjectValue)
+        and value.type_name.rsplit(".", 1)[-1] == "Some"
+        and "value" in value.fields
+    ):
+        return value.fields["value"]
+    return value
 
 
 def _sync_captured_globals(frame: _Frame, captured: dict[str, Any]) -> None:

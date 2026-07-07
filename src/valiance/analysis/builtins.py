@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal
+from itertools import islice
 from typing import Any
 
 import valiance.types as T
@@ -678,6 +679,20 @@ def _map_eager_effect(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
     for item in args[0]:
         ctx.call(args[1], [item])
     return ()
+
+
+@builtin(
+    "take",
+    (T.ExactList(T.TypeVariable("Item")), T.Integer),
+    (T.ExactList(T.TypeVariable("Item")),),
+)
+def _take(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    lst, n = args
+    if n < 0:
+        raise RuntimeError("take requires a non-negative integer")
+    if isinstance(lst, LazyList):
+        return (LazyList(islice(iter(lst), int(n))),)
+    return (lst[: int(n)],)
 
 
 @builtin(

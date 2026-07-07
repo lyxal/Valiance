@@ -1,0 +1,5 @@
+unfold (true) -> (prev: Number, next: Number) =>
+  $prev $next $prev $next +
+end
+
+take 10
