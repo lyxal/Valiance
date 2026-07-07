@@ -23,6 +23,7 @@ from valiance.runtime.bytecode import (
     Instruction,
     OpCode,
     Program,
+    ResolvedElementReference,
 )
 from valiance.runtime_values import LazyList, ObjectValue
 
@@ -1165,7 +1166,7 @@ $n
                             Instruction(OpCode.CYCLE_BEGIN, (None, 0)),
                             Instruction(
                                 OpCode.CALL_RESOLVED_ELEMENT,
-                                ("+", 1, 0),
+                                ResolvedElementReference("+", 1),
                             ),
                             Instruction(OpCode.CYCLE_END),
                             Instruction(OpCode.RETURN),
@@ -1246,7 +1247,7 @@ end
                                         Instruction(OpCode.PUSH_CONST, Decimal("0")),
                                         Instruction(
                                             OpCode.CALL_RESOLVED_ELEMENT,
-                                            (">", 0, 0),
+                                            ResolvedElementReference(">", 0),
                                         ),
                                         Instruction(OpCode.JUMP_IF_FALSE, 11),
                                         Instruction(OpCode.LOAD_VAR, "n"),
@@ -1268,7 +1269,7 @@ end
                             Instruction(OpCode.PUSH_CONST, Decimal("3")),
                             Instruction(
                                 OpCode.CALL_RESOLVED_ELEMENT,
-                                ("countdown", 0, 0),
+                                ResolvedElementReference("countdown", 0),
                             ),
                             Instruction(OpCode.RETURN),
                         ),

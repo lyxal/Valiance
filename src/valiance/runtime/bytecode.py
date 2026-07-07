@@ -60,6 +60,25 @@ class Instruction:
 
 
 @dataclass(frozen=True, slots=True)
+class ResolvedElementReference:
+    """Named payload for CALL_RESOLVED_ELEMENT.
+
+    Compiler, serializer, and VM code should use these fields instead of
+    positional layouts.
+    """
+
+    name: str
+    overload_index: int
+    vectorised: bool = False
+    vectorised_depths: tuple[int, ...] = ()
+    type_args: tuple[str, ...] = ()
+    static_values: tuple[Any, ...] = ()
+    arity_override: int | None = None
+    consumed_override: int | None = None
+    multidispatch: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class FunctionCode:
     """Executable bytecode for a function or top-level program."""
 

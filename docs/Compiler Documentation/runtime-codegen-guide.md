@@ -108,7 +108,7 @@ The runtime implementation is small, but several files must evolve together.
 `src/valiance/runtime/serialization.py`
 
 - Encodes `Program` as portable binary bytecode.
-- The current magic/version marker is `b"VLNCBC\x0b"`.
+- The current magic/version marker is `b"VLNCBC\x0c"`.
 - Opcodes are one byte each in `_OP_TO_BYTE`.
 - Instruction arguments are tagged binary values, not Python pickle, repr, or
   JSON.
@@ -181,10 +181,11 @@ selected overload instead of repeating overload resolution from runtime value
 shapes. Built-in elements select a built-in overload slot; user-defined elements
 select a compiled function overload slot from `FunctionSetCode`.
 
-Resolved element references are serialized as tuples for bytecode portability,
-but VM code should decode them into `_ResolvedElementReference` before use.
-Avoid indexing the raw tuple directly; the tuple layout is a bytecode boundary,
-and positional magic numbers make compatibility changes fragile.
+Resolved element references are represented by
+`runtime.bytecode.ResolvedElementReference`. Compiler, serializer, and VM code
+should use named fields on that object. Do not introduce positional tuple
+layouts for resolved calls; the bytecode serializer has a dedicated tagged value
+for the object.
 
 `AppliedOverload.vectorised` records whether overload application required
 vectorisation. Codegen can inspect `typed_node.overload.vectorised` on
@@ -467,6 +468,8 @@ argument value tags are:
 - `str`
 - `tuple`
 - nested `FunctionCode`
+- nested `FunctionSetCode`
+- `ResolvedElementReference`
 
 If a new opcode needs a new argument shape, extend the serializer deliberately
 and test invalid/truncated data. If the on-disk format changes incompatibly,
@@ -495,7 +498,7 @@ Resolved built-in elements use analyser-selected overloads.
 
 ```text
 TypedElementNode("+", overload_index=N)
-  -> CALL_RESOLVED_ELEMENT ("+", N, vectorised)
+  -> CALL_RESOLVED_ELEMENT ResolvedElementReference("+", N, vectorised)
 VM invokes the selected built-in overload directly, vectorising only when the
 compiled reference says to do so
 ```
@@ -517,8 +520,7 @@ Implementation checklist:
 1. Extend typed AST metadata so overload-resolved nodes expose the chosen
    overload.
 2. Give built-in overloads an identity within their element definition.
-3. Emit `CALL_RESOLVED_ELEMENT` with
-   `(element_name, overload_index, vectorised)`.
+3. Emit `CALL_RESOLVED_ELEMENT` with a `ResolvedElementReference`.
 4. Serialize that reference, not a Python function object.
 5. In the VM, execute the selected overload directly.
 6. Include the analyser's vectorisation decision in the resolved bytecode
@@ -529,32 +531,16 @@ Implementation checklist:
    overload id.
 
 Resolved object and variant constructor calls may include instantiated generic
-arguments in the bytecode reference:
-
-```text
-(element_name, overload_index, vectorised, vectorised_depths, type_args)
-```
-
-The VM passes `type_args` to `ObjectValue`, and object field reconstruction must
-preserve them. Older three- and four-item resolved references remain valid.
+arguments in `ResolvedElementReference.type_args`. The VM passes `type_args` to
+`ObjectValue`, and object field reconstruction must preserve them.
 
 Resolved user-defined element calls may also include static rank values produced
-by a `where` clause:
-
-```text
-(element_name, overload_index, vectorised, vectorised_depths, type_args, rank_values)
-```
+by a `where` clause in `ResolvedElementReference.static_values`.
 
 If a resolved user-defined fallback call needs runtime multimethod selection,
-the reference appends the multidispatch flag after the optional arity and
-consumption override slots:
-
-```text
-(element_name, overload_index, vectorised, vectorised_depths, type_args, rank_values, arity_override, consumed_override, multidispatch)
-```
-
-Use `-1` for absent arity or consumption overrides when the multidispatch flag
-must be present.
+set `ResolvedElementReference.multidispatch`. Call-site checked built-ins can
+also set `arity_override` and `consumed_override` to describe the concrete stack
+contract selected by analysis.
 
 ### `?` Result/Optional Short-Circuiting
 
@@ -579,11 +565,11 @@ helper `?!` remains a normal resolved built-in: it unwraps success values and
 panics with `UnwrappedNoneFault` or `UnwrappedResultFault` for absent/error
 values.
 
-`rank_values` is a tuple of `(name, int)` pairs from
-`AppliedOverload.rank_values`. The VM appends these values as hidden arguments
-when invoking the selected user-defined overload, allowing function bodies to
-read computed static variables such as `$n`. Built-in overloads should not infer
-or recompute these values at runtime.
+`AppliedOverload.rank_values` is converted by codegen into runtime
+`ResolvedElementReference.static_values`. The VM appends these values as hidden
+arguments when invoking the selected user-defined overload, allowing function
+bodies to read computed static variables such as `$n`. Built-in overloads should
+not infer or recompute these values at runtime.
 
 Be careful with saved bytecode. The current bytecode format encodes positional
 overload indices, so changing built-in overload order is a compatibility

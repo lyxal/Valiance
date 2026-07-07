@@ -8,6 +8,7 @@ from valiance.runtime.bytecode import (
     Instruction,
     OpCode,
     Program,
+    ResolvedElementReference,
 )
 
 
@@ -20,7 +21,10 @@ class BytecodeSerializationTests(unittest.TestCase):
                     Instruction(OpCode.PUSH_CONST, "answer"),
                     Instruction(OpCode.BUILD_STRING, ("value=", None)),
                     Instruction(OpCode.BUILD_TUPLE, 2),
-                    Instruction(OpCode.CALL_RESOLVED_ELEMENT, ("+", 0, 0)),
+                    Instruction(
+                        OpCode.CALL_RESOLVED_ELEMENT,
+                        ResolvedElementReference("+", 0),
+                    ),
                     Instruction(OpCode.TRY_UNWRAP),
                     Instruction(OpCode.STACK_SHUFFLE, ("copy", ("x",), ("x",))),
                     Instruction(OpCode.SOURCE_ARGS, 1),
@@ -34,7 +38,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x0b"))
+        self.assertTrue(data.startswith(b"VLNCBC\x0c"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)

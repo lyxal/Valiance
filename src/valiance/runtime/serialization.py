@@ -13,9 +13,10 @@ from valiance.runtime.bytecode import (
     Instruction,
     OpCode,
     Program,
+    ResolvedElementReference,
 )
 
-MAGIC = b"VLNCBC\x0b"
+MAGIC = b"VLNCBC\x0c"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -67,6 +68,7 @@ _STRING = 0x03
 _TUPLE = 0x04
 _FUNCTION = 0x05
 _FUNCTION_SET = 0x06
+_RESOLVED_ELEMENT_REFERENCE = 0x07
 
 
 class BytecodeFormatError(Exception):
@@ -151,8 +153,30 @@ class _Writer:
             self.u32(len(value.overloads))
             for overload in value.overloads:
                 self.function(overload)
+        elif isinstance(value, ResolvedElementReference):
+            self.u8(_RESOLVED_ELEMENT_REFERENCE)
+            self.resolved_element_reference(value)
         else:
             raise BytecodeFormatError(f"cannot serialize bytecode value {value!r}")
+
+    def bool(self, value: bool) -> None:
+        self.u8(1 if value else 0)
+
+    def optional_int(self, value: int | None) -> None:
+        self.u8(0 if value is None else 1)
+        if value is not None:
+            self.i64(value)
+
+    def resolved_element_reference(self, reference: ResolvedElementReference) -> None:
+        self.string(reference.name)
+        self.i64(reference.overload_index)
+        self.bool(reference.vectorised)
+        self.value(reference.vectorised_depths)
+        self.value(reference.type_args)
+        self.value(reference.static_values)
+        self.optional_int(reference.arity_override)
+        self.optional_int(reference.consumed_override)
+        self.bool(reference.multidispatch)
 
     def function(self, function: FunctionCode) -> None:
         self.optional_string(function.name)
@@ -238,7 +262,55 @@ class _Reader:
             return self.function()
         if tag == _FUNCTION_SET:
             return FunctionSetCode(tuple(self.function() for _ in range(self.u32())))
+        if tag == _RESOLVED_ELEMENT_REFERENCE:
+            return self.resolved_element_reference()
         raise BytecodeFormatError(f"unknown bytecode value tag {tag}")
+
+    def bool(self) -> bool:
+        value = self.u8()
+        if value not in {0, 1}:
+            raise BytecodeFormatError(f"invalid boolean marker {value}")
+        return bool(value)
+
+    def optional_int(self) -> int | None:
+        marker = self.u8()
+        if marker == 0:
+            return None
+        if marker == 1:
+            return self.i64()
+        raise BytecodeFormatError(f"invalid optional integer marker {marker}")
+
+    def resolved_element_reference(self) -> ResolvedElementReference:
+        name = self.string()
+        overload_index = self.i64()
+        vectorised = self.bool()
+        vectorised_depths = self.value()
+        type_args = self.value()
+        static_values = self.value()
+        arity_override = self.optional_int()
+        consumed_override = self.optional_int()
+        multidispatch = self.bool()
+        if not isinstance(vectorised_depths, tuple) or not all(
+            isinstance(depth, int) for depth in vectorised_depths
+        ):
+            raise BytecodeFormatError("invalid resolved element vectorised depths")
+        if not isinstance(type_args, tuple) or not all(
+            isinstance(type_arg, str) for type_arg in type_args
+        ):
+            raise BytecodeFormatError("invalid resolved element type arguments")
+        if not isinstance(static_values, tuple):
+            raise BytecodeFormatError("invalid resolved element static values")
+        return ResolvedElementReference(
+            name,
+            overload_index,
+            vectorised,
+            vectorised_depths,
+            type_args,
+            static_values,
+            arity_override,
+            consumed_override,
+            multidispatch,
+        )
 
     def function(self) -> FunctionCode:
         name = self.optional_string()

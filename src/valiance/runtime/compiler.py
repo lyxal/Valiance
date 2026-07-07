@@ -72,6 +72,7 @@ from valiance.runtime.bytecode import (
     Instruction,
     OpCode,
     Program,
+    ResolvedElementReference,
 )
 from valiance.symbols import Symbol
 from valiance.types import (
@@ -987,41 +988,7 @@ def _unwrap(node: ASTNode | TypedNode) -> ASTNode:
 
 def _resolved_element_reference(
     node: TypedNode | None,
-) -> (
-    tuple[str, int, int]
-    | tuple[str, int, int, tuple[int, ...]]
-    | tuple[str, int, int, tuple[int, ...], tuple[str, ...]]
-    | tuple[
-        str,
-        int,
-        int,
-        tuple[int, ...],
-        tuple[str, ...],
-        tuple[tuple[str, int], ...],
-    ]
-    | tuple[
-        str,
-        int,
-        int,
-        tuple[int, ...],
-        tuple[str, ...],
-        tuple[tuple[str, int], ...],
-        int,
-        int | None,
-    ]
-    | tuple[
-        str,
-        int,
-        int,
-        tuple[int, ...],
-        tuple[str, ...],
-        tuple[tuple[str, int], ...],
-        int,
-        int | None,
-        int,
-    ]
-    | None
-):
+) -> ResolvedElementReference | None:
     if not isinstance(node, TypedElementNode):
         return None
     if node.overload_index is None:
@@ -1045,79 +1012,46 @@ def _resolved_element_reference(
         and Symbol(runtime_name) in {item.name for item in BUILTIN_ELEMENTS}
     ):
         return None
-    vectorised = int(node.overload.vectorised) if node.overload is not None else 0
+    vectorised = bool(node.overload is not None and node.overload.vectorised)
     type_args = _resolved_constructor_type_args(ast, node)
     if ast.name.text == "call" and node.call_overload_index is not None:
         static_values = (node.call_overload_index,)
     else:
-        static_values = (
-            node.overload.rank_values
-            if node.overload is not None and node.overload.rank_values
-            else ()
-        )
+        static_values = _runtime_rank_values(node)
     multidispatch = bool(node.overload is not None and node.overload.multidispatch)
+    vectorised_depths = (
+        tuple(node.overload.vectorised_depths) if node.overload is not None else ()
+    )
+    arity_override = None
+    consumed_override = None
     if (
         element is not None
         and node.overload is not None
         and len(node.overload.params)
         != len(element.definitions[node.overload_index].signature.params)
     ):
-        reference = (
-            runtime_name,
-            node.overload_index,
-            vectorised,
-            (),
-            (),
-            static_values,
-            len(node.overload.params),
-            node.overload.runtime_consumed_count,
-        )
-        return (*reference, int(multidispatch)) if multidispatch else reference
-    if node.overload is not None and node.overload.vectorised_depths:
-        reference = runtime_name, node.overload_index, vectorised, (
-            *node.overload.vectorised_depths,
-        )
-        if multidispatch:
-            return (*reference, type_args, static_values, -1, -1, 1)
-        if static_values:
-            return (*reference, type_args, static_values)
-        return (*reference, type_args) if type_args else reference
-    if type_args:
-        if multidispatch:
-            return (
-                runtime_name,
-                node.overload_index,
-                vectorised,
-                (),
-                type_args,
-                static_values,
-                -1,
-                -1,
-                1,
-            )
-        if static_values:
-            return (
-                runtime_name,
-                node.overload_index,
-                vectorised,
-                (),
-                type_args,
-                static_values,
-            )
-        return runtime_name, node.overload_index, vectorised, (), type_args
-    if static_values:
-        reference = (
-            runtime_name,
-            node.overload_index,
-            vectorised,
-            (),
-            (),
-            static_values,
-        )
-        return (*reference, -1, -1, 1) if multidispatch else reference
-    if multidispatch:
-        return runtime_name, node.overload_index, vectorised, (), (), (), -1, -1, 1
-    return runtime_name, node.overload_index, vectorised
+        arity_override = len(node.overload.params)
+        consumed_override = node.overload.runtime_consumed_count
+    return ResolvedElementReference(
+        runtime_name,
+        node.overload_index,
+        vectorised=vectorised,
+        vectorised_depths=vectorised_depths,
+        type_args=type_args,
+        static_values=static_values,
+        arity_override=arity_override,
+        consumed_override=consumed_override,
+        multidispatch=multidispatch,
+    )
+
+
+def _runtime_rank_values(node: TypedElementNode) -> tuple[Decimal, ...]:
+    if node.overload is None or not node.overload.rank_values:
+        return ()
+    return tuple(
+        Decimal(value)
+        for _, value in node.overload.rank_values
+    )
 
 
 def _resolved_constructor_type_args(
