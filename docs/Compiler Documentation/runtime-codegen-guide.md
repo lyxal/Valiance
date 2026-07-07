@@ -33,6 +33,9 @@ The runtime implementation is small, but several files must evolve together.
   by explicit-parameter functions such as `define triple(:Number) => * 3`.
 - `FunctionCode.recursive` marks functions produced from `@recursive`; the VM
   binds `this` to the created function value when this flag is set.
+- `FunctionCode.multi` and `FunctionCode.dispatch_types` mark compiled
+  multimethod bodies and record the exact runtime nominal type names used by VM
+  dispatch.
 
 `src/valiance/runtime/compiler.py`
 
@@ -63,6 +66,9 @@ The runtime implementation is small, but several files must evolve together.
   by `BUILD_TUPLE` over the selected overload's return arity.
 - Object-friendly `@self` definitions are mirrored in codegen so synthesized
   receiver returns survive into runtime bytecode.
+- Trait-implementation object declarations such as `object X as T => end` do
+  not emit constructors; they may add object-friendly definitions, but the base
+  object declaration owns runtime constructor metadata and fields.
 
 `src/valiance/runtime/vm.py`
 
@@ -80,6 +86,10 @@ The runtime implementation is small, but several files must evolve together.
   compiled code should use resolved element calls produced by static analysis.
 - Resolved built-in calls carry the analyser-selected overload slot and whether
   the call should be vectorised.
+- Resolved user-defined fallback calls may carry a static multidispatch flag.
+  When present, the VM previews the call arguments and selects the first exact
+  runtime `multi` overload whose dispatch types match, otherwise it calls the
+  analyser-selected fallback overload.
 - Runtime call errors should include the stack, stack types, and attempted input
   shapes.
 
@@ -98,14 +108,15 @@ The runtime implementation is small, but several files must evolve together.
 `src/valiance/runtime/serialization.py`
 
 - Encodes `Program` as portable binary bytecode.
-- The current magic/version marker is `b"VLNCBC\x09"`.
+- The current magic/version marker is `b"VLNCBC\x0b"`.
 - Opcodes are one byte each in `_OP_TO_BYTE`.
 - Instruction arguments are tagged binary values, not Python pickle, repr, or
   JSON.
 - Nested `FunctionCode` values are serialized as tagged values, which is how
   function literals survive bytecode round trips.
-- Function records include the `recursive` flag. Bump the magic/version marker
-  again if function metadata changes incompatibly.
+- Function records include the `recursive`, `multi`, and dispatch-type metadata.
+  Bump the magic/version marker again if function metadata changes
+  incompatibly.
 
 `src/valiance/analysis/builtins.py`
 
@@ -179,6 +190,12 @@ and positional magic numbers make compatibility changes fragile.
 vectorisation. Codegen can inspect `typed_node.overload.vectorised` on
 `TypedElementNode` or `TypedCallNode` when it needs different lowering for a
 vectorised call shape.
+
+`AppliedOverload.multidispatch` records whether a resolved user-defined call
+should perform runtime multimethod selection. Analysis sets it only when normal
+static overload resolution selected a non-`multi` fallback that has compatible
+`multi` specialisations. If static types already select the exact `multi`
+overload, codegen emits an ordinary resolved call with no runtime dispatch flag.
 
 Runtime checks may still be needed for values whose static type permits several
 runtime shapes that the signature alone does not disambiguate, such as whether
@@ -528,6 +545,17 @@ by a `where` clause:
 (element_name, overload_index, vectorised, vectorised_depths, type_args, rank_values)
 ```
 
+If a resolved user-defined fallback call needs runtime multimethod selection,
+the reference appends the multidispatch flag after the optional arity and
+consumption override slots:
+
+```text
+(element_name, overload_index, vectorised, vectorised_depths, type_args, rank_values, arity_override, consumed_override, multidispatch)
+```
+
+Use `-1` for absent arity or consumption overrides when the multidispatch flag
+must be present.
+
 ### `?` Result/Optional Short-Circuiting
 
 The analyser resolves the built-in `?` element with ordinary overload metadata,
@@ -717,7 +745,8 @@ These are known constraints of the current runtime/codegen layer:
   are runtime-dispatched.
 - Runtime arrays are currently represented like lists.
 - Function overload codegen chooses the first typed overload body.
-- Built-in runtime dispatch is useful but not yet a complete multimethod system.
+- Multimethod runtime dispatch currently matches exact runtime nominal names
+  recorded on compiled `multi` user-defined overloads.
 - Runtime vectorisation errors are plain runtime errors, not yet dedicated
   catchable `VectorisationFault` panic values.
 - Only resolved object/variant constructor calls currently preserve instantiated

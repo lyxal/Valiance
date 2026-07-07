@@ -15,7 +15,7 @@ from valiance.runtime.bytecode import (
     Program,
 )
 
-MAGIC = b"VLNCBC\x0a"
+MAGIC = b"VLNCBC\x0b"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -164,6 +164,10 @@ class _Writer:
         self.u32(len(function.element_tags))
         for tag in function.element_tags:
             self.string(tag)
+        self.u8(1 if function.multi else 0)
+        self.u32(len(function.dispatch_types))
+        for typ in function.dispatch_types:
+            self.optional_string(typ)
         self.u32(len(function.instructions))
         for instruction in function.instructions:
             try:
@@ -246,6 +250,10 @@ class _Reader:
             raise BytecodeFormatError(f"invalid function recursive flag {recursive}")
         params = tuple(self.string() for _ in range(self.u32()))
         element_tags = tuple(self.string() for _ in range(self.u32()))
+        multi = self.u8()
+        if multi not in {0, 1}:
+            raise BytecodeFormatError(f"invalid function multi flag {multi}")
+        dispatch_types = tuple(self.optional_string() for _ in range(self.u32()))
         instructions = []
         for _ in range(self.u32()):
             op_byte = self.u8()
@@ -261,4 +269,6 @@ class _Reader:
             bool(cycle_params),
             element_tags,
             bool(recursive),
+            bool(multi),
+            dispatch_types,
         )

@@ -69,6 +69,8 @@ class FunctionCode:
     cycle_params: bool = False
     element_tags: tuple[str, ...] = ()
     recursive: bool = False
+    multi: bool = False
+    dispatch_types: tuple[str | None, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

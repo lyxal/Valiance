@@ -139,6 +139,7 @@ class _ResolvedElementReference:
     static_values: tuple[Any, ...] = ()
     arity_override: int | None = None
     consumed_override: int | None = None
+    multidispatch: bool = False
 
 
 def _static_reference_values(value: object) -> tuple[Any, ...]:
@@ -220,13 +221,14 @@ class _LoopBreak(Exception):
 
 
 _RESOLVED_REFERENCE_MIN_SIZE = 2
-_RESOLVED_REFERENCE_MAX_SIZE = 8
+_RESOLVED_REFERENCE_MAX_SIZE = 9
 _RESOLVED_REFERENCE_VECTORISED = 2
 _RESOLVED_REFERENCE_VECTORISED_DEPTHS = 3
 _RESOLVED_REFERENCE_TYPE_ARGS = 4
 _RESOLVED_REFERENCE_STATIC_VALUES = 5
 _RESOLVED_REFERENCE_ARITY_OVERRIDE = 6
 _RESOLVED_REFERENCE_CONSUMED_OVERRIDE = 7
+_RESOLVED_REFERENCE_MULTIDISPATCH = 8
 
 
 class VirtualMachine:
@@ -747,6 +749,8 @@ class VirtualMachine:
                 f"resolved function '{reference.name}' has no overload "
                 f"{reference.overload_index}"
             ) from exc
+        if reference.multidispatch:
+            overload = _select_multimethod_overload(value, overload, frame)
         frame.stack.extend(reference.static_values)
         self._call_function(overload, frame, vectorised=reference.vectorised)
 
@@ -1078,6 +1082,10 @@ def _decode_resolved_element_reference(reference: object) -> _ResolvedElementRef
             parts,
             _RESOLVED_REFERENCE_CONSUMED_OVERRIDE,
         ),
+        multidispatch=_optional_reference_bool(
+            parts,
+            _RESOLVED_REFERENCE_MULTIDISPATCH,
+        ),
     )
 
 
@@ -1097,7 +1105,10 @@ def _optional_reference_bool(reference: tuple[object, ...], index: int) -> bool:
 
 
 def _optional_reference_int(reference: tuple[object, ...], index: int) -> int | None:
-    return int(reference[index]) if len(reference) > index else None
+    if len(reference) <= index:
+        return None
+    value = int(reference[index])
+    return None if value < 0 else value
 
 
 def _optional_reference_int_tuple(
@@ -1480,6 +1491,54 @@ def _function_overloads(value: FunctionValue | OverloadedFunctionValue) -> tuple
     if isinstance(value, FunctionValue):
         return (value,)
     return value.overloads
+
+
+def _select_multimethod_overload(
+    value: OverloadedFunctionValue,
+    fallback: FunctionValue,
+    frame: _Frame,
+) -> FunctionValue:
+    arity = len(fallback.code.params)
+    try:
+        args, _, _ = frame.source_args(arity)
+    except _StackUnderflow:
+        return fallback
+    for overload in value.overloads:
+        if overload is fallback or not overload.code.multi:
+            continue
+        if len(overload.code.params) != arity:
+            continue
+        if _runtime_types_match(args, overload.code.dispatch_types):
+            return overload
+    return fallback
+
+
+def _runtime_types_match(
+    args: tuple[Any, ...],
+    dispatch_types: tuple[str | None, ...],
+) -> bool:
+    if len(args) != len(dispatch_types):
+        return False
+    return all(
+        expected is not None and _runtime_type_name(arg) == expected
+        for arg, expected in zip(args, dispatch_types, strict=True)
+    )
+
+
+def _runtime_type_name(value: Any) -> str | None:
+    if isinstance(value, ObjectValue):
+        if not value.type_args:
+            return value.type_name
+        return f"{value.type_name}[{', '.join(value.type_args)}]"
+    if isinstance(value, Decimal):
+        if value == value.to_integral_value():
+            return "Integer"
+        return "Real"
+    if isinstance(value, str):
+        return "String"
+    if isinstance(value, bool):
+        return "Boolean"
+    return None
 
 
 def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:

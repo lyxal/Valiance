@@ -238,6 +238,7 @@ class Overload:
         compare=False,
         hash=False,
     )
+    is_multi: bool = field(default=False, compare=False, hash=False)
 
 
 @dataclass(frozen=True)
@@ -277,6 +278,7 @@ class AppliedOverload:
     rank_values: tuple[tuple[str, int], ...] = ()
     runtime_consumed_count: int | None = None
     element_tags: frozenset[ElementTag] = field(default_factory=frozenset[ElementTag])
+    multidispatch: bool = field(default=False, compare=False, hash=False)
 
     def __hash__(self) -> int:
         return hash(

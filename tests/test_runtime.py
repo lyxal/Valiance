@@ -413,6 +413,72 @@ triple "H"
         """
         self.assertEqual(execute(source), ["HHH"])
 
+    def test_multimethod_dispatches_collision_by_runtime_object_types(self):
+        source = """
+trait Collidable => end
+object Spaceship => end
+object Spaceship as Collidable => end
+object Asteroid => end
+object Asteroid as Collidable => end
+
+define asCollidable(value: Collidable) -> Collidable => $value
+define collide(left: Collidable, right: Collidable) -> String => "Default collision"
+multi define collide(left: Asteroid, right: Spaceship) -> String => "a/s"
+multi define collide(left: Spaceship, right: Asteroid) -> String => "s/a"
+multi define collide(left: Spaceship, right: Spaceship) -> String => "s/s"
+multi define collide(left: Asteroid, right: Asteroid) -> String => "a/a"
+
+Asteroid | asCollidable
+Spaceship | asCollidable
+collide
+Spaceship | asCollidable
+Asteroid | asCollidable
+collide
+"""
+        self.assertEqual(execute(source), ["a/s", "s/a"])
+        program = parse(source)
+        analyser = Analyser()
+        typed = analyser.analyse(program)
+        self.assertEqual(analyser.diagnostics, [])
+        bytecode = loads(dumps(compile_program(typed)))
+        self.assertEqual(run(bytecode), ["a/s", "s/a"])
+
+    def test_multimethod_dispatches_hutton_razor_extension(self):
+        source = """
+trait Expr => end
+object Val => $n: Number
+object Val as Expr => end
+object Add =>
+  $left: Expr
+  $right: Expr
+end
+object Add as Expr => end
+
+define asExpr(value: Expr) -> Expr => $value
+define eval(value: Expr) -> Number => 0
+multi define eval(value: Val) -> Number => $value.n
+multi define eval(value: Add) -> Number =>
+  $value.left eval
+  $value.right eval
+  +
+end
+
+object Mul =>
+  $left: Expr
+  $right: Expr
+end
+object Mul as Expr => end
+
+multi define eval(value: Mul) -> Number =>
+  $value.left eval
+  $value.right eval
+  *
+end
+
+Mul(Add(Val(2), Val(3)), Val(4)) | asExpr | eval
+"""
+        self.assertEqual(execute(source), [Decimal("20")])
+
     def test_where_rank_variable_is_available_in_function_body(self):
         source = """
 define rank_of(xs: Number+$n) -> Number => $n

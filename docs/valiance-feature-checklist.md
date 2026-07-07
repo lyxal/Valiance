@@ -1,6 +1,6 @@
 # Valiance feature checklist
 
-Current audit total: 419 / 734 items complete (57.1%).
+Current audit total: 426 / 734 items complete (58.0%).
 
 ## 1. Lexer, parser, and general syntax
 
@@ -636,13 +636,13 @@ Current audit total: 419 / 734 items complete (57.1%).
 ## 36. Multimethods
 
 - [x] Parse `multi define`.
-- [ ] Register runtime-dispatched overloads.
-- [ ] Require a compatible non-multi fallback overload.
-- [ ] Require multimethod return signatures to match their fallback.
-- [ ] Select specialisations from exact runtime argument types.
-- [ ] Use compile-time dispatch when static types already identify an exact multimethod.
-- [ ] Fall back to normal overload resolution when no runtime specialisation applies.
-- [ ] Support multiple runtime-dispatched parameters.
+- [x] Register runtime-dispatched overloads.
+- [x] Require a compatible non-multi fallback overload.
+- [x] Require multimethod return signatures to match their fallback.
+- [x] Select specialisations from exact runtime argument types.
+- [x] Use compile-time dispatch when static types already identify an exact multimethod.
+- [x] Fall back to normal overload resolution when no runtime specialisation applies.
+- [x] Support multiple runtime-dispatched parameters.
 
 ## 37. Error handling
 

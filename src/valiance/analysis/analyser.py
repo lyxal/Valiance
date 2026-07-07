@@ -812,7 +812,7 @@ class Analyser:
             node.generic_constraints,
         )
         overload_typings = list(function.overloads)
-        for typing in function.overloads:
+        for typing_index, typing in enumerate(function.overloads):
             if not isinstance(typing.overload, T.Overload):
                 continue
             overload = typing.overload
@@ -831,6 +831,20 @@ class Analyser:
                 overload,
                 node.annotations,
             )
+            if node.is_multi:
+                overload = replace(overload, is_multi=True)
+                if not _has_multimethod_fallback(
+                    overload,
+                    self.env.overloads_for(name),
+                    self.env.context,
+                ):
+                    self._diagnose(
+                        f"multi define '{name}' requires a non-multi fallback "
+                        "with compatible parameters and identical returns",
+                        node,
+                    )
+                    continue
+            overload_typings[typing_index] = replace(typing, overload=overload)
             if overload not in self.env.overloads_for(name):
                 self.env.define_overload(name, overload)
             original_index = _overload_index(self.env.overloads_for(name), overload)
@@ -1465,6 +1479,11 @@ class Analyser:
                         self.env.context,
                         self.env,
                     )
+                    applied = _mark_multidispatch(
+                        applied,
+                        overloads,
+                        self.env.context,
+                    )
                     candidates.append((applied, candidate_branch, ordered_modifiers))
 
         stack_before = branch.stack
@@ -1621,6 +1640,11 @@ class Analyser:
                             applied,
                             self.env.context,
                             self.env,
+                        )
+                        applied = _mark_multidispatch(
+                            applied,
+                            overloads,
+                            self.env.context,
                         )
                         candidates.append(
                             (
@@ -6009,6 +6033,69 @@ def _with_generic_constraints(
         overload.annotation_error,
         overload.annotation_warning,
         overload.param_defaults,
+        overload.is_multi,
+    )
+
+
+def _has_multimethod_fallback(
+    overload: T.Overload,
+    candidates: tuple[T.Overload, ...],
+    ctx: T.Context,
+) -> bool:
+    return any(
+        not candidate.is_multi
+        and len(candidate.params) == len(overload.params)
+        and _multimethod_params_covered_by(overload.params, candidate.params, ctx)
+        and _same_returns(overload.returns, candidate.returns)
+        for candidate in candidates
+    )
+
+
+def _mark_multidispatch(
+    applied: T.AppliedOverload,
+    overloads: tuple[T.Overload, ...],
+    ctx: T.Context,
+) -> T.AppliedOverload:
+    if applied.overload.is_multi:
+        return applied
+    if not _has_runtime_multimethod_candidate(applied.overload, overloads, ctx):
+        return applied
+    return replace(applied, multidispatch=True)
+
+
+def _has_runtime_multimethod_candidate(
+    fallback: T.Overload,
+    overloads: tuple[T.Overload, ...],
+    ctx: T.Context,
+) -> bool:
+    return any(
+        candidate.is_multi
+        and candidate is not fallback
+        and len(candidate.params) == len(fallback.params)
+        and _multimethod_params_covered_by(candidate.params, fallback.params, ctx)
+        and _same_returns(candidate.returns, fallback.returns)
+        for candidate in overloads
+    )
+
+
+def _multimethod_params_covered_by(
+    specific: tuple[T.Type, ...],
+    fallback: tuple[T.Type, ...],
+    ctx: T.Context,
+) -> bool:
+    return all(
+        T.assignable(specific_param, fallback_param, ctx)
+        for specific_param, fallback_param in zip(specific, fallback, strict=True)
+    )
+
+
+def _same_returns(
+    left: tuple[T.Type, ...],
+    right: tuple[T.Type, ...],
+) -> bool:
+    return len(left) == len(right) and all(
+        T.same(left_item, right_item)
+        for left_item, right_item in zip(left, right, strict=True)
     )
 
 
@@ -6029,6 +6116,7 @@ def _genericize_overload(
         overload.annotation_error,
         overload.annotation_warning,
         overload.param_defaults,
+        overload.is_multi,
     )
 
 

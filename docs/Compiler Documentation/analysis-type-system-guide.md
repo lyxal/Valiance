@@ -234,6 +234,8 @@ calls an `IO` operation, the inferred function type also carries `IO`.
   codegen find the runtime implementation without re-resolving overloads by type
 - optional-parameter defaults copied from `define` declarations on
   `Overload.param_defaults`
+- whether a fallback user-defined call needs runtime multimethod selection,
+  stored on `AppliedOverload.multidispatch`
 
 Keep this on typed metadata, not on the raw parser `ElementNode`. Parser AST
 nodes should remain syntax. Do not make the runtime compiler repeat type-level
@@ -243,6 +245,26 @@ Raw `ElementNode.call_args` still matters during analysis: ECS calls preserve
 which arguments were named, positional, or `_` placeholders. The analyser uses
 that structure to lower optional defaults only for ECS calls. Ordinary stack
 calls still require the full non-modifier arity.
+
+### Multimethods
+
+The parser records `multi define` as `DefineNode.is_multi`. Analysis turns that
+into `Overload.is_multi` after generic constraints and annotation rewrites have
+been applied, then stores the updated overload on the `FunctionOverloadTyping`
+that codegen will compile.
+
+A `multi` overload must have an already visible non-`multi` fallback overload of
+the same element. Every `multi` parameter must be assignable to the corresponding
+fallback parameter, and return types must match exactly after normalization. This
+validation happens in the analyser with `T.assignable(...)` and `T.same(...)` so
+trait implementations and ordinary subtype rules stay centralized.
+
+Runtime dispatch is decided statically. If normal overload resolution selects a
+`multi` overload exactly, the typed call remains an ordinary resolved call. If it
+selects a non-`multi` fallback with compatible `multi` specialisations,
+`AppliedOverload.multidispatch` is set so codegen can emit the runtime dispatch
+flag. If no runtime specialisation matches at execution time, the VM calls the
+fallback overload selected by analysis.
 
 ## Type Relations
 

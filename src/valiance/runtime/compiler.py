@@ -132,6 +132,8 @@ class _Compiler:
         cycle_params: bool = False,
         element_tags: tuple[str, ...] = (),
         recursive: bool = False,
+        multi: bool = False,
+        dispatch_types: tuple[str | None, ...] = (),
     ) -> FunctionCode:
         for index, node in enumerate(body):
             self.node(node)
@@ -145,6 +147,8 @@ class _Compiler:
             cycle_params,
             element_tags,
             recursive,
+            multi,
+            dispatch_types,
         )
 
     def node(self, node: ASTNode | TypedNode) -> None:
@@ -338,14 +342,15 @@ class _Compiler:
     def object_declaration(self, node: ObjectNode) -> None:
         match node.kind.text:
             case "object":
-                self.object_runtime_metadata[node.name.text] = (
-                    _object_runtime_metadata(
-                        node.name.text,
-                        node.annotations,
-                        node.definitions,
+                if node.target is None:
+                    self.object_runtime_metadata[node.name.text] = (
+                        _object_runtime_metadata(
+                            node.name.text,
+                            node.annotations,
+                            node.definitions,
+                        )
                     )
-                )
-                self.object_constructor(node.name.text, node.fields)
+                    self.object_constructor(node.name.text, node.fields)
                 for definition in node.definitions:
                     self.friendly_definition(node.name.text, definition)
             case "variant":
@@ -717,6 +722,8 @@ def _compile_function_overload(
         cycle_params=bool(ast.params),
         element_tags=_function_element_tag_names(overload.typ),
         recursive=_function_is_recursive(ast),
+        multi=_overload_is_multi(overload),
+        dispatch_types=_overload_dispatch_types(overload),
     )
 
 
@@ -759,6 +766,27 @@ def _static_param_names(overload: FunctionOverloadTyping) -> tuple[str, ...]:
             if isinstance(node, SetVariableNode):
                 names.add(node.name.text)
     return tuple(sorted(names))
+
+
+def _overload_is_multi(overload: FunctionOverloadTyping) -> bool:
+    source = overload.overload
+    return isinstance(source, Overload) and source.is_multi
+
+
+def _overload_dispatch_types(
+    overload: FunctionOverloadTyping,
+) -> tuple[str | None, ...]:
+    source = overload.overload
+    if not isinstance(source, Overload) or not source.is_multi:
+        return ()
+    return tuple(_runtime_dispatch_type(param) for param in source.params)
+
+
+def _runtime_dispatch_type(typ: Type) -> str | None:
+    typ = normalize(typ)
+    if isinstance(typ, NominalType):
+        return show(typ)
+    return None
 
 
 def _rank_var_names_in_type(typ: Type) -> set[str]:
@@ -981,6 +1009,17 @@ def _resolved_element_reference(
         int,
         int | None,
     ]
+    | tuple[
+        str,
+        int,
+        int,
+        tuple[int, ...],
+        tuple[str, ...],
+        tuple[tuple[str, int], ...],
+        int,
+        int | None,
+        int,
+    ]
     | None
 ):
     if not isinstance(node, TypedElementNode):
@@ -1016,13 +1055,14 @@ def _resolved_element_reference(
             if node.overload is not None and node.overload.rank_values
             else ()
         )
+    multidispatch = bool(node.overload is not None and node.overload.multidispatch)
     if (
         element is not None
         and node.overload is not None
         and len(node.overload.params)
         != len(element.definitions[node.overload_index].signature.params)
     ):
-        return (
+        reference = (
             runtime_name,
             node.overload_index,
             vectorised,
@@ -1032,14 +1072,29 @@ def _resolved_element_reference(
             len(node.overload.params),
             node.overload.runtime_consumed_count,
         )
+        return (*reference, int(multidispatch)) if multidispatch else reference
     if node.overload is not None and node.overload.vectorised_depths:
         reference = runtime_name, node.overload_index, vectorised, (
             *node.overload.vectorised_depths,
         )
+        if multidispatch:
+            return (*reference, type_args, static_values, -1, -1, 1)
         if static_values:
             return (*reference, type_args, static_values)
         return (*reference, type_args) if type_args else reference
     if type_args:
+        if multidispatch:
+            return (
+                runtime_name,
+                node.overload_index,
+                vectorised,
+                (),
+                type_args,
+                static_values,
+                -1,
+                -1,
+                1,
+            )
         if static_values:
             return (
                 runtime_name,
@@ -1051,7 +1106,17 @@ def _resolved_element_reference(
             )
         return runtime_name, node.overload_index, vectorised, (), type_args
     if static_values:
-        return runtime_name, node.overload_index, vectorised, (), (), static_values
+        reference = (
+            runtime_name,
+            node.overload_index,
+            vectorised,
+            (),
+            (),
+            static_values,
+        )
+        return (*reference, -1, -1, 1) if multidispatch else reference
+    if multidispatch:
+        return runtime_name, node.overload_index, vectorised, (), (), (), -1, -1, 1
     return runtime_name, node.overload_index, vectorised
 
 
