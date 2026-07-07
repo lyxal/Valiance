@@ -11,4 +11,4 @@ $flatten = @recursive fn[T] (list: T~) -> T+ =>
   $flattened
 end
 
-$flatten([[1, 2, 3], [[4, 5], [6]], 7])
+println $flatten([[1, 2, 3], [[4, 5], [6]], 7])

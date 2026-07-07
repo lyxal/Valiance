@@ -155,6 +155,45 @@ define pick(a: Number, b: Number = 2) -> Number => $a $b +
 
         self.assertEqual(run(program), [1])
 
+    def test_add_all_extends_top_stack_list_with_items(self):
+        self.assertEqual(
+            execute("[3, 4] [1, 2] addAll"),
+            [[Decimal("1"), Decimal("2"), Decimal("3"), Decimal("4")]],
+        )
+
+    def test_recursive_flatten_handles_rugged_lists(self):
+        self.assertEqual(
+            execute(
+                """
+$flatten = @recursive fn[T] (list: T~) -> T+ =>
+  $flattened: T+ = []
+  $list foreach (item) =>
+    $item match =>
+      as lst: T+ => $lst
+      as scl: T  => [$scl]
+              _  => this($item)
+    end
+    $flattened := addAll
+  end
+  $flattened
+end
+
+$flatten([[1, 2, 3], [[4, 5], [6]], 7])
+"""
+            ),
+            [
+                [
+                    Decimal("1"),
+                    Decimal("2"),
+                    Decimal("3"),
+                    Decimal("4"),
+                    Decimal("5"),
+                    Decimal("6"),
+                    Decimal("7"),
+                ]
+            ],
+        )
+
     def test_result_ok_constructor_and_question_unwrap(self):
         self.assertEqual(execute("OK(1) ?"), [Decimal("1")])
         self.assertEqual(execute("OK(1) ?!"), [Decimal("1")])

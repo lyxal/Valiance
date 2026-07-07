@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal
-from itertools import islice
+from itertools import chain, islice
 from typing import Any
 
 import valiance.types as T
@@ -306,7 +306,7 @@ def _apply_callable(
     return _CallableApplication(
         overload,
         applied,
-        T.Fn(applied.params, applied.actual_returns, overload.element_tags),
+        T.Fn(args, applied.actual_returns, overload.element_tags),
     )
 
 
@@ -732,6 +732,21 @@ def _append(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     if is_list_like(args[0]):
         return ([*args[0], args[1]],)
     return ([*args[1], args[0]],)
+
+
+@builtin(
+    "addAll",
+    (
+        T.ExactList(T.TypeVariable("Item")),
+        T.ExactList(T.TypeVariable("Item")),
+    ),
+    (T.ExactList(T.TypeVariable("Item")),),
+)
+def _add_all(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    items, target = args
+    if isinstance(items, LazyList) or isinstance(target, LazyList):
+        return (LazyList(chain(target, items)),)
+    return ([*target, *items],)
 
 
 @builtin("join", (T.ExactList(T.String), T.String), (T.String,))

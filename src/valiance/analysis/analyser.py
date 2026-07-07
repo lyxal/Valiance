@@ -2790,14 +2790,24 @@ class Analyser:
             return set()
 
         joined: AnalysisBranch | None = None
+        subject_variables = _match_subject_variables(branch, arity)
+        previous_patterns: list[tuple[MatchPatternNode, ...]] = []
         for case in node.cases:
-            case_input = body_input.with_variables(
-                _match_case_variables(
-                    body_input.variables,
+            case_variables = _match_case_variables(
+                body_input.variables,
+                case.patterns,
+                subject_types,
+            )
+            if subject_variables:
+                case_variables = _refine_match_subject_variables(
+                    case_variables,
+                    subject_variables,
                     case.patterns,
                     subject_types,
+                    tuple(previous_patterns),
+                    self.env.context,
                 )
-            )
+            case_input = body_input.with_variables(case_variables)
             case_input = _replace_branch(
                 case_input,
                 input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
@@ -2848,6 +2858,7 @@ class Analyser:
                     base.with_stack(stack).with_variables(variables)
                 )
                 joined = _replace_branch(joined, inputs=merged_inputs)
+            previous_patterns.append(case.patterns)
 
         if joined is None:
             return set()
@@ -5720,6 +5731,133 @@ def _match_case_variables(
     for pattern in patterns:
         result = _add_match_pattern_variables(result, pattern)
     return result
+
+
+def _match_subject_variables(
+    branch: AnalysisBranch,
+    arity: int,
+) -> tuple[Symbol | None, ...]:
+    if arity <= 0 or len(branch.typed_body) < arity:
+        return ()
+    subject_nodes = branch.typed_body[-arity:]
+    names: list[Symbol | None] = []
+    for typed in subject_nodes:
+        if isinstance(typed.node, GetVariableNode):
+            names.append(typed.node.name)
+        else:
+            names.append(None)
+    return tuple(reversed(names))
+
+
+def _refine_match_subject_variables(
+    variables: BranchVariables,
+    subject_variables: tuple[Symbol | None, ...],
+    patterns: tuple[MatchPatternNode, ...],
+    subject_types: tuple[T.Type, ...],
+    previous_patterns: tuple[tuple[MatchPatternNode, ...], ...],
+    ctx: T.Context,
+) -> BranchVariables:
+    result = variables
+    for index, name in enumerate(subject_variables):
+        if name is None or index >= len(subject_types) or index >= len(patterns):
+            continue
+        narrowed = _match_case_subject_type(
+            patterns[index],
+            subject_types[index],
+            tuple(
+                previous[index]
+                for previous in previous_patterns
+                if index < len(previous)
+            ),
+            ctx,
+        )
+        if narrowed is None:
+            continue
+        result = _narrow_variable(result, name, narrowed)
+    return result
+
+
+def _narrow_variable(
+    variables: BranchVariables,
+    name: Symbol,
+    typ: T.Type,
+) -> BranchVariables:
+    if _lookup(variables.block_locals, name) is not None:
+        return BranchVariables(
+            function_locals=variables.function_locals,
+            parameters=variables.parameters,
+            captures=variables.captures,
+            block_locals=_set_item(variables.block_locals, name, typ),
+            function_constants=variables.function_constants,
+            block_constants=variables.block_constants,
+        )
+    if _lookup(variables.function_locals, name) is not None:
+        return BranchVariables(
+            function_locals=_set_item(variables.function_locals, name, typ),
+            parameters=variables.parameters,
+            captures=variables.captures,
+            block_locals=variables.block_locals,
+            function_constants=variables.function_constants,
+            block_constants=variables.block_constants,
+        )
+    if _lookup(variables.parameters, name) is not None:
+        return BranchVariables(
+            function_locals=variables.function_locals,
+            parameters=_set_item(variables.parameters, name, typ),
+            captures=variables.captures,
+            block_locals=variables.block_locals,
+            function_constants=variables.function_constants,
+            block_constants=variables.block_constants,
+        )
+    if _lookup(variables.captures, name) is not None:
+        return BranchVariables(
+            function_locals=variables.function_locals,
+            parameters=variables.parameters,
+            captures=_set_item(variables.captures, name, typ),
+            block_locals=variables.block_locals,
+            function_constants=variables.function_constants,
+            block_constants=variables.block_constants,
+        )
+    return variables
+
+
+def _match_case_subject_type(
+    pattern: MatchPatternNode,
+    subject_type: T.Type,
+    previous_patterns: tuple[MatchPatternNode, ...],
+    ctx: T.Context,
+) -> T.Type | None:
+    pattern_type = _pattern_subject_type(pattern)
+    if pattern_type is not None:
+        return pattern_type
+    if not _is_default_match_pattern(pattern):
+        return None
+    excluded = tuple(
+        typ
+        for previous in previous_patterns
+        if (typ := _pattern_subject_type(previous)) is not None
+    )
+    if not excluded:
+        return subject_type
+    return _subtract_match_types(subject_type, excluded, ctx)
+
+
+def _subtract_match_types(
+    subject_type: T.Type,
+    excluded: tuple[T.Type, ...],
+    ctx: T.Context,
+) -> T.Type:
+    subject_type = T.normalize(subject_type)
+    if not isinstance(subject_type, T.UnionType):
+        return subject_type
+    remaining = tuple(
+        item
+        for item in subject_type.items
+        if not any(T.assignable(item, typ, ctx) for typ in excluded)
+    )
+    if not remaining:
+        return T.NeverType()
+    return T.U(*remaining)
 
 
 def _add_match_pattern_variables(

@@ -977,8 +977,8 @@ class VirtualMachine:
         pattern: tuple[object, ...],
         bindings: dict[str, Any],
     ) -> bool:
-        _, type_name, binding_name, fields, guard = pattern
-        if type_name is not None and not _matches_type_pattern(value, type_name):
+        _, type_spec, binding_name, fields, guard = pattern
+        if type_spec is not None and not _matches_cast_type(value, type_spec):
             return False
         if binding_name is not None and not _bind_match_name(
             bindings,
@@ -2134,6 +2134,8 @@ def _matches_cast_type(value: Any, spec: object) -> bool:
     kind = spec[0]
     if kind == "none":
         return value is None
+    if kind == "var":
+        return not is_list_like(value)
     if kind == "nominal":
         return isinstance(spec[1], str) and _matches_type_pattern(value, spec[1])
     if kind == "union":

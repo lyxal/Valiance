@@ -1180,7 +1180,7 @@ def _compile_match_pattern(pattern: MatchPatternNode) -> object:
         case TypePatternNode(typ, name, fields, guard):
             return (
                 "type",
-                None if typ is None else _type_pattern_name(typ),
+                None if typ is None else _cast_type_spec(typ),
                 None if name is None else name.text,
                 tuple(_compile_match_pattern(field) for field in fields),
                 _compile_guard(guard) if guard else None,
@@ -1217,9 +1217,13 @@ def _type_pattern_name(typ: object) -> str:
 
 
 def _cast_type_spec(typ: Type) -> object:
+    from valiance.types import VarType
+
     typ = normalize(typ)
     if isinstance(typ, NoneTypeNode):
         return ("none",)
+    if isinstance(typ, VarType):
+        return ("var", typ.name)
     if isinstance(typ, NominalType):
         return ("nominal", typ.name.text)
     if isinstance(typ, UnionType):
