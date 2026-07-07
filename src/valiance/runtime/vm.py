@@ -586,6 +586,15 @@ class VirtualMachine:
                                 result = frame.stack
                                 frame.stack = []
                                 return self._finalize_frame(frame, result)
+                        case OpCode.VALIDATE_TAG:
+                            try:
+                                self._validate_tag(frame, instruction.arg)
+                            except PanicSignal as exc:
+                                target = self._handle_panic(frame, exc)
+                                if target is None:
+                                    raise
+                                ip = target
+                                continue
                         case OpCode.STACK_SHUFFLE:
                             _stack_shuffle(frame, instruction.arg, self)
                         case OpCode.POP:
@@ -740,6 +749,24 @@ class VirtualMachine:
             ) from exc
         frame.stack.extend(reference.static_values)
         self._call_function(overload, frame, vectorised=reference.vectorised)
+
+    def _validate_tag(self, frame: _Frame, spec: object) -> None:
+        tag_name, overload_index = spec
+        if not frame.stack:
+            raise RuntimeError(f"cannot validate {tag_name} on an empty stack")
+        validator = _load_name(tag_name, frame.locals, frame.globals)
+        value = _retain_value(frame.stack[-1])
+        try:
+            result = self.call_value_overload(validator, [value], overload_index)
+        finally:
+            _release_value(value, self)
+        if not result or not _truthy(result[-1]):
+            raise PanicSignal(
+                ObjectValue(
+                    "PanicError",
+                    {"message": f"tag validator {tag_name} failed"},
+                )
+            )
 
     def _unfold(self, frame: _Frame, config: object) -> LazyList:
         condition_code, body_code, arity = config

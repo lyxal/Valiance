@@ -113,6 +113,7 @@ class BuiltinElement:
 # --------------------------------------------------------------------------
 
 _REGISTRY: dict[str, list[BuiltinOverload]] = {}
+_DATA_TAG_REGISTRY: dict[str, T.TagKind] = {}
 
 
 def builtin(
@@ -122,10 +123,13 @@ def builtin(
     generic_constraints: tuple[T.GenericConstraint, ...] = (),
     call_site: Callable[..., T.Overload | None] | None = None,
     element_tags: tuple[T.ElementTag, ...] = (),
+    data_tags: tuple[tuple[str | Symbol, T.TagKind], ...] = (),
 ):
     """Register one overload of `name`, implemented by the decorated function."""
 
     def register(fn: RuntimeImpl) -> RuntimeImpl:
+        for tag_name, tag_kind in data_tags:
+            _DATA_TAG_REGISTRY[_name_key(tag_name)] = tag_kind
         overload = BuiltinOverload(
             T.Overload(
                 params,
@@ -896,6 +900,10 @@ def default_environment() -> T.Environment:
         env.add_property_element_tag(name)
     for name in ("Eager", "Memoized"):
         env.add_companion_element_tag(name)
+    _DATA_TAG_REGISTRY.setdefault("infinite", T.TagKind.CONSTRUCTED)
+    _DATA_TAG_REGISTRY.setdefault("boolean", T.TagKind.COMPUTED)
+    for name, kind in _DATA_TAG_REGISTRY.items():
+        env.define_tag(Symbol(name), kind)
     env.define_trait(ERR)
     env.define_trait(FAULT)
     env.context.set_generic_variance(OK, (T.Variance.COVARIANT,))

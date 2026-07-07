@@ -42,6 +42,32 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(execute("(1 + 2) * (3 + 4)"), [Decimal("21")])
         self.assertEqual(execute("5 -(2, _)"), [Decimal("-3")])
 
+    def test_tag_validator_runs_at_runtime(self):
+        source = """
+tag #checked as computed
+define #checked(:Number) -> #boolean Number => true end
+1 #checked
+"""
+        self.assertEqual(execute(source), [Decimal("1")])
+
+        program = parse(source)
+        analyser = Analyser()
+        typed = analyser.analyse(program)
+        if analyser.diagnostics:
+            raise AssertionError(analyser.diagnostics)
+        bytecode = loads(dumps(compile_program(typed)))
+        self.assertEqual(run(bytecode), [Decimal("1")])
+
+    def test_tag_validator_failure_panics(self):
+        with self.assertRaises(RuntimeError):
+            execute(
+                """
+tag #checked as computed
+define #checked(value: Number) -> #boolean Number => $value 2 == end
+1 #checked
+"""
+            )
+
     def test_executes_stack_shuffle_copy_and_move(self):
         self.assertEqual(
             execute("1 2 3 4\ncopy(a, b -> a, b, b)"),

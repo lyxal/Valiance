@@ -51,6 +51,14 @@ class TypedCallNode(TypedNode):
 
 
 @dataclass(frozen=True, slots=True)
+class TypedTagApplicationNode(TypedNode):
+    """A typed data-tag application with an optional runtime validator."""
+
+    validator: AppliedOverload | None = None
+    validator_index: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class FunctionOverloadTyping:
     typ: Type
     body: tuple[TypedNode, ...]
@@ -120,6 +128,28 @@ class TagApplicationNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class TagDeclarationNode(ASTNode):
+    """Declare a data tag, variant tag, or disjoint tag relationship."""
+
+    tag: DataTag
+    kind: Symbol | None = None
+    parent: DataTag | None = None
+    disjoint: DataTag | None = None
+    visibility: Symbol | None = None
+
+
+@dataclass(frozen=True)
+class TagOverlayNode(ASTNode):
+    """Declare tag-aware signatures for existing element behavior."""
+
+    tag: DataTag
+    elements: tuple[Symbol, ...] = ()
+    signatures: tuple[tuple[tuple[Type, ...], tuple[Type, ...]], ...] = ()
+    generics: tuple[Symbol, ...] = ()
+    visibility: Symbol | None = None
+
+
+@dataclass(frozen=True)
 class CastNode(ASTNode):
     """Treat the top stack value as a target type."""
 
@@ -146,6 +176,11 @@ class FunctionNode(ASTNode):
     where_clause: tuple[ASTNode, ...] = ()
     element_tags: frozenset[ElementTag] = field(default_factory=frozenset[ElementTag])
     annotations: tuple[ASTNode, ...] = ()
+    element_tags_explicit: bool = field(default=False, compare=False)
+    companion_tags_allowed: frozenset[ElementTag] = field(
+        default_factory=frozenset[ElementTag],
+        compare=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -313,6 +348,17 @@ class DefineNode(ASTNode):
     generics: tuple[Symbol, ...] = ()
     generic_variances: tuple[Symbol | None, ...] = ()
     generic_constraints: tuple[Type | None, ...] = ()
+    attached_tag: DataTag | None = field(default=None, compare=False)
+
+
+@dataclass(frozen=True)
+class ElementTagDeclarationNode(ASTNode):
+    """A declaration or disjoint rule for function/element tags."""
+
+    name: Symbol
+    kind: Symbol | None = None
+    disjoint: Symbol | None = None
+    visibility: Symbol | None = None
 
 
 @dataclass(frozen=True)

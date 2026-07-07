@@ -12,6 +12,8 @@ from valiance.asts import (
     ImportPath,
     ImportSpec,
     Symbol,
+    TagDeclarationNode,
+    TagOverlayNode,
     TypedFunctionNode,
 )
 from valiance.asts.nodes import TypedNode
@@ -31,6 +33,7 @@ class ModuleDefinition:
     name: Symbol
     typed: TypedFunctionNode
     public: bool = False
+    attached_tag: Symbol | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,8 @@ class ModuleExports:
 
     module_name: str
     definitions: tuple[ModuleDefinition, ...] = ()
+    tags: tuple[T.DataTagDefinition, ...] = ()
+    overlays: tuple[T.TagOverlayDefinition, ...] = ()
 
     def public_definitions(self) -> tuple[ModuleDefinition, ...]:
         return tuple(definition for definition in self.definitions if definition.public)
@@ -90,11 +95,15 @@ class ModuleLoader:
                 joined = "; ".join(analyser.diagnostics)
                 raise ModuleLoadError(f"{source_file}: {joined}")
             definitions = _module_definitions(program, typed)
+            tags = _module_tags(program, analyser.env)
+            overlays = _module_overlays(program, analyser.env)
             if native_exports is not None:
                 definitions = native_exports.definitions + definitions
             exports = ModuleExports(
                 _module_name(path),
                 definitions,
+                tags,
+                overlays,
             )
             self._cache[source_file] = exports
             return exports
@@ -160,11 +169,16 @@ def import_definitions(
         by_name = {definition.name: definition for definition in public}
         selected: list[ModuleDefinition] = []
         for component in spec.components:
-            if component.kind is not None:
-                raise ModuleLoadError(
-                    f"import component kind {component.kind.text!r} is not "
-                    "available in module exports yet"
+            if component.kind == Symbol("tag"):
+                tag_name = Symbol(component.name.text.removeprefix("#"))
+                selected.extend(
+                    _renamed_definition(definition, definition.name)
+                    for definition in public
+                    if definition.attached_tag == tag_name
                 )
+                continue
+            if component.kind is not None:
+                continue
             definition = by_name.get(component.name)
             if definition is None:
                 raise ModuleLoadError(
@@ -190,6 +204,35 @@ def import_definitions(
     )
 
 
+def import_environment_facts(
+    exports: ModuleExports,
+    spec: ImportSpec,
+    env: T.Environment,
+) -> None:
+    """Install exported non-callable environment facts selected by an import."""
+    if not spec.components:
+        return
+    tags = {Symbol(f"#{tag.name.text}"): tag for tag in exports.tags}
+    for component in spec.components:
+        if component.kind != Symbol("tag"):
+            continue
+        tag = tags.get(component.name)
+        if tag is None:
+            raise ModuleLoadError(
+                f"module {exports.module_name!r} has no public tag "
+                f"{component.name.text!r}"
+            )
+        env.define_tag(tag.name, tag.kind)
+        for overlay in exports.overlays:
+            if overlay.tag == tag.name:
+                env.define_tag_overlay(
+                    overlay.tag,
+                    overlay.element,
+                    overlay.overload,
+                    public=overlay.public,
+                )
+
+
 def _module_definitions(
     program: list,
     typed: list[TypedNode],
@@ -211,9 +254,43 @@ def _module_definitions(
                 node.name,
                 typed_node,
                 public=node.name in public_names,
+                attached_tag=(
+                    Symbol(node.attached_tag.name)
+                    if node.attached_tag is not None
+                    else None
+                ),
             )
         )
     return tuple(result)
+
+
+def _module_tags(program: list, env) -> tuple[T.DataTagDefinition, ...]:
+    public = {
+        Symbol(node.tag.name)
+        for node in program
+        if isinstance(node, TagDeclarationNode)
+        and node.visibility == Symbol("public")
+        and node.disjoint is None
+    }
+    return tuple(
+        definition
+        for name in public
+        if (definition := env.lookup_tag(name)) is not None
+    )
+
+
+def _module_overlays(program: list, env) -> tuple[T.TagOverlayDefinition, ...]:
+    public_tags = {
+        Symbol(node.tag.name)
+        for node in program
+        if isinstance(node, TagOverlayNode) and node.visibility == Symbol("public")
+    }
+    overlays: list[T.TagOverlayDefinition] = []
+    for definitions in env.tag_overlays.values():
+        overlays.extend(
+            definition for definition in definitions if definition.tag in public_tags
+        )
+    return tuple(overlays)
 
 
 def _renamed_definition(
@@ -232,15 +309,21 @@ def _renamed_definition(
             where_clause=node.function.where_clause,
             element_tags=node.function.element_tags,
             annotations=node.function.annotations,
+            element_tags_explicit=node.function.element_tags_explicit,
+            companion_tags_allowed=node.function.companion_tags_allowed,
             location=node.function.location,
         ),
         node.annotations,
         node.is_multi,
         node.visibility,
+        node.generics,
+        node.generic_variances,
+        node.generic_constraints,
+        node.attached_tag,
         location=node.location,
     )
     typed = TypedFunctionNode(renamed, definition.typed.typ, definition.typed.overloads)
-    return ModuleDefinition(name, typed, definition.public)
+    return ModuleDefinition(name, typed, definition.public, definition.attached_tag)
 
 
 def _select_overloads(
@@ -285,7 +368,12 @@ def _select_overloads(
         T.Overloads(*selected),
         definition.typed.overloads,
     )
-    return ModuleDefinition(definition.name, typed, definition.public)
+    return ModuleDefinition(
+        definition.name,
+        typed,
+        definition.public,
+        definition.attached_tag,
+    )
 
 
 def _source_path(root: Path, parts: tuple[str, ...]) -> Path:

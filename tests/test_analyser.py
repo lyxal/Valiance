@@ -37,6 +37,7 @@ from valiance.asts import (
     TypedCallNode,
     TypedElementNode,
     TypedFunctionNode,
+    TypedTagApplicationNode,
 )
 from valiance.modules import ModuleLoader
 from valiance.parsing import parse
@@ -262,6 +263,44 @@ move(file -> file, file)
         self.assertEqual(analyser.diagnostics, [])
         self.assertIn(ElementTag(Symbol("Eager")), typed[0].typ.element_tags)
         self.assertIn(ElementTag(Symbol("IO")), typed[0].typ.element_tags)
+
+    def test_property_element_tag_declarations_are_user_attachable(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(parse("tag Log as property\ndefine f<Log> => 1"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertIn(ElementTag(Symbol("Log")), typed[-1].typ.element_tags)
+
+    def test_companion_element_tags_cannot_be_directly_attached(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("define f<Eager> => 1"))
+
+        self.assertIn("cannot be directly attached", analyser.diagnostics[-1])
+
+    def test_explicit_element_tag_sets_reject_undeclared_body_effects(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("define log(value: Number)<> -> => $value println"))
+
+        self.assertIn("was not declared", analyser.diagnostics[-1])
+
+    def test_element_tag_disjoint_rules_reject_simultaneous_tags(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+tag Read as property
+tag Write as property
+tag Read disjoint Write
+define f<Read, Write> => 1
+"""
+            )
+        )
+
+        self.assertIn("cannot both apply", analyser.diagnostics[-1])
 
     def test_modifier_arguments_bind_to_function_parameters(self):
         env = default_environment()
@@ -2063,6 +2102,148 @@ end
             TypeStack((Tagged(Number, "sorted"),)),
         )
 
+    def test_constructed_tags_drop_without_overlay_preservation(self):
+        analyser = Analyser()
+        [branch] = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch()),
+            tuple(parse("tag #sticky as constructed\n1 #sticky 2 +")),
+        )
+
+        self.assertEqual(branch.stack, TypeStack((Integer,)))
+
+    def test_tag_overlay_preserves_computed_tag_without_runtime_override(self):
+        analyser = Analyser()
+        [branch] = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch()),
+            tuple(
+                parse(
+                    """
+tag #sorted as computed
+#sorted: + =>
+  (#sorted Number, Number) -> #sorted Number
+end
+1 #sorted | 2 +
+"""
+                )
+            ),
+        )
+
+        self.assertEqual(branch.stack, TypeStack((Tagged(Number, "sorted"),)))
+        self.assertIsInstance(branch.typed_body[-1], TypedElementNode)
+        self.assertIsNotNone(branch.typed_body[-1].overload_index)
+
+    def test_static_true_tag_validator_is_eliminated_at_application(self):
+        analyser = Analyser()
+        [branch] = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch()),
+            tuple(
+                parse(
+                    """
+tag #checked as computed
+define #checked(:Number) -> #boolean Number => true end
+1 #checked
+"""
+                )
+            ),
+        )
+
+        self.assertEqual(branch.stack, TypeStack((Tagged(Integer, "checked"),)))
+        self.assertIsInstance(branch.typed_body[-1], TypedTagApplicationNode)
+        self.assertIsNone(branch.typed_body[-1].validator_index)
+
+    def test_static_false_tag_validator_is_rejected_at_application(self):
+        analyser = Analyser()
+        analyser.analyse_block(
+            BranchSet.one(AnalysisBranch()),
+            tuple(
+                parse(
+                    """
+tag #checked as computed
+define #checked(:Number) -> #boolean Number => false end
+1 #checked
+"""
+                )
+            ),
+        )
+
+        self.assertIn("statically false", analyser.diagnostics[-1])
+
+    def test_tag_validator_missing_overload_is_diagnostic(self):
+        analyser = Analyser()
+        branches = analyser.analyse_block(
+            BranchSet.one(AnalysisBranch()),
+            tuple(
+                parse(
+                    """
+tag #checked as computed
+define #checked(:String) -> #boolean Number => true end
+1 #checked
+"""
+                )
+            ),
+        )
+
+        self.assertEqual(len(branches), 1)
+        self.assertIn("no validator overload", analyser.diagnostics[-1])
+
+    def test_explicit_tag_import_installs_tag_and_public_overlays(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tags.vlnc").write_text(
+                """
+public tag #sorted as computed
+public #sorted: + =>
+  (#sorted Number, Number) -> #sorted Number
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            main.write_text("", encoding="utf-8")
+            analyser = Analyser(module_loader=ModuleLoader(), source_file=main)
+            [branch] = analyser.analyse_block(
+                BranchSet.one(AnalysisBranch()),
+                tuple(parse("import { tags.#sorted }\n1 #sorted | 2 +")),
+            )
+
+        self.assertEqual(branch.stack, TypeStack((Tagged(Number, "sorted"),)))
+
+    def test_explicit_tag_import_installs_attached_public_elements(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tags.vlnc").write_text(
+                """
+public tag #sorted as computed
+public define #sorted normalize(value: Number) -> Number => $value
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            main.write_text("", encoding="utf-8")
+            analyser = Analyser(module_loader=ModuleLoader(), source_file=main)
+            [branch] = analyser.analyse_block(
+                BranchSet.one(AnalysisBranch()),
+                tuple(parse("import { tags.#sorted }\n1 normalize")),
+            )
+
+        self.assertEqual(branch.stack, TypeStack((Number,)))
+
+    def test_disjoint_data_tags_are_rejected_when_declared_together(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+tag #left as computed
+tag #right as computed
+tag #left disjoint #right
+define f(value: #left #right Number) -> Number => $value
+"""
+            )
+        )
+
+        self.assertIn("cannot both apply", analyser.diagnostics[-1])
+
     def test_tag_application_adds_tag_to_top_stack_value(self):
         env = Environment()
         env.add_computed_tag("sorted")
@@ -2094,7 +2275,7 @@ end
         self.assertEqual(len(branches), 1)
         self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
 
-    def test_constructed_tags_propagate_through_generic_returns(self):
+    def test_constructed_tags_do_not_propagate_through_generic_returns(self):
         env = Environment()
         env.add_constructed_tag("infinite")
         env.define_overload(OP, Overload((V("T"),), (V("T"),)))
@@ -2107,9 +2288,12 @@ end
         )
 
         self.assertEqual(len(branches), 1)
-        self.assertEqual(next(iter(branches)).stack, TypeStack((tagged_list,)))
+        self.assertEqual(
+            next(iter(branches)).stack,
+            TypeStack((C(ListExactType, Number),)),
+        )
 
-    def test_constructed_tags_propagate_to_output_depth(self):
+    def test_constructed_tags_do_not_propagate_to_output_depth(self):
         env = Environment()
         env.add_constructed_tag("infinite")
         env.define_overload(OP, Overload((V("T"),), (V("T"),)))
@@ -2129,12 +2313,10 @@ end
         self.assertEqual(len(branches), 1)
         self.assertEqual(
             next(iter(branches)).stack,
-            TypeStack(
-                (Tagged(C(ListExactType, Number, 2), DataTag("infinite", depth=1)),)
-            ),
+            TypeStack((C(ListExactType, Number, 2),)),
         )
 
-    def test_multiple_sticky_tags_propagate_together(self):
+    def test_multiple_constructed_like_tags_drop_without_overlay(self):
         env = Environment()
         env.add_constructed_tag("infinite")
         env.add_unit_tag("km")
@@ -2148,7 +2330,7 @@ end
         )
 
         self.assertEqual(len(branches), 1)
-        self.assertEqual(next(iter(branches)).stack, TypeStack((tagged,)))
+        self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
 
     def test_unit_tags_do_not_satisfy_untagged_concrete_parameters(self):
         env = Environment()

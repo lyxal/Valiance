@@ -10,6 +10,7 @@ from valiance.asts import (
     CastNode,
     DefineNode,
     ElementNode,
+    ElementTagDeclarationNode,
     EnumMemberNode,
     ForNode,
     FunctionNode,
@@ -37,6 +38,8 @@ from valiance.asts import (
     StringLiteralNode,
     Symbol,
     TagApplicationNode,
+    TagDeclarationNode,
+    TagOverlayNode,
     TraitRequirementNode,
     TryNode,
     TupleLiteralNode,
@@ -664,6 +667,58 @@ import {
 
         self.assertIsInstance(program[-1], TagApplicationNode)
         self.assertEqual(program[-1].tag, DataTag("sorted"))
+
+    def test_parses_tag_declarations_and_overlays(self):
+        self.assertEqual(
+            parse(
+                """
+tag #sorted as computed
+tag #ascending as #sorted
+tag #empty disjoint #nonempty
+tag IO as property
+tag Eager as companion
+tag Read disjoint Write
+#sorted: [T] (+, -) =>
+  (#sorted Number, Number) -> #sorted Number
+end
+"""
+            ),
+            [
+                TagDeclarationNode(DataTag("sorted"), kind=Symbol("computed")),
+                TagDeclarationNode(
+                    DataTag("ascending"),
+                    parent=DataTag("sorted"),
+                ),
+                TagDeclarationNode(
+                    DataTag("empty"),
+                    disjoint=DataTag("nonempty"),
+                ),
+                ElementTagDeclarationNode(Symbol("IO"), kind=Symbol("property")),
+                ElementTagDeclarationNode(Symbol("Eager"), kind=Symbol("companion")),
+                ElementTagDeclarationNode(Symbol("Read"), disjoint=Symbol("Write")),
+                TagOverlayNode(
+                    DataTag("sorted"),
+                    (Symbol("+"), Symbol("-")),
+                    (
+                        (
+                            (Tagged(Number, "sorted"), Number),
+                            (Tagged(Number, "sorted"),),
+                        ),
+                    ),
+                    (Symbol("T"),),
+                ),
+            ],
+        )
+
+    def test_parses_tag_attached_definition(self):
+        [tag, definition] = parse(
+            "tag #sorted as computed\n"
+            "public define #sorted sort(:Number) -> Number => $self"
+        )
+
+        self.assertIsInstance(tag, TagDeclarationNode)
+        self.assertEqual(definition.name, Symbol("sort"))
+        self.assertEqual(definition.attached_tag, DataTag("sorted"))
 
     def test_parses_object_trait_variant_and_enum_declarations(self):
         [person] = parse("""

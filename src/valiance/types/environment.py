@@ -164,6 +164,16 @@ class DataTagDefinition:
     kind: TagKind
 
 
+@dataclass(frozen=True)
+class TagOverlayDefinition:
+    """One tag-aware signature overlay for an existing element."""
+
+    tag: Symbol
+    element: Symbol
+    overload: Overload
+    public: bool = False
+
+
 @dataclass
 class Environment:
     """Compiler-facing registry for symbols and type relationship facts."""
@@ -197,6 +207,18 @@ class Environment:
     tag_parents: dict[Symbol, Symbol] = field(default_factory=dict[Symbol, Symbol])
     disjoint_tags: dict[Symbol, set[Symbol]] = field(
         default_factory=dict[Symbol, set[Symbol]]
+    )
+    disjoint_element_tags: dict[Symbol, set[Symbol]] = field(
+        default_factory=dict[Symbol, set[Symbol]]
+    )
+    tag_overlays: dict[Symbol, list[TagOverlayDefinition]] = field(
+        default_factory=dict[Symbol, list[TagOverlayDefinition]]
+    )
+    tag_attached_elements: dict[Symbol, set[Symbol]] = field(
+        default_factory=dict[Symbol, set[Symbol]]
+    )
+    tag_validator_static_results: dict[Symbol, dict[int, bool]] = field(
+        default_factory=dict[Symbol, dict[int, bool]]
     )
 
     def child_scope(self) -> Environment:
@@ -466,6 +488,28 @@ class Environment:
         """Record a system-attached companion element tag."""
         self.define_element_tag(tag, ElementTagKind.COMPANION)
 
+    def add_disjoint_element_tags(
+        self,
+        left: str | Symbol,
+        right: str | Symbol,
+    ) -> None:
+        """Record that two element tags cannot appear together."""
+        left_name = _tag_symbol(left)
+        right_name = _tag_symbol(right)
+        self.disjoint_element_tags.setdefault(left_name, set()).add(right_name)
+        self.disjoint_element_tags.setdefault(right_name, set()).add(left_name)
+
+    def element_tag_disjoints(self, tag: str | Symbol) -> frozenset[Symbol]:
+        """Return element tags declared disjoint with ``tag``."""
+        name = _tag_symbol(tag)
+        local = self.disjoint_element_tags.get(name, set())
+        parent = (
+            self.parent.element_tag_disjoints(name)
+            if self.parent is not None
+            else frozenset()
+        )
+        return frozenset((*parent, *local))
+
     def add_unit_tag(self, tag: str | Symbol) -> None:
         """Record a tag that cannot be silently erased."""
         self.define_tag(tag, TagKind.UNIT)
@@ -497,6 +541,62 @@ class Environment:
         self.disjoint_tags.setdefault(name, set()).add(other_name)
         self.disjoint_tags.setdefault(other_name, set()).add(name)
         self.context.add_disjoint_tags(name, other_name)
+
+    def define_tag_overlay(
+        self,
+        tag: str | Symbol,
+        element: Symbol,
+        overload: Overload,
+        *,
+        public: bool = False,
+    ) -> None:
+        """Register a tag overlay signature for an existing element."""
+        definition = TagOverlayDefinition(_tag_symbol(tag), element, overload, public)
+        self.tag_overlays.setdefault(element, []).append(definition)
+
+    def overlays_for(self, element: Symbol) -> tuple[TagOverlayDefinition, ...]:
+        """Return overlay signatures visible for ``element``."""
+        local = tuple(self.tag_overlays.get(element, ()))
+        parent = self.parent.overlays_for(element) if self.parent is not None else ()
+        return (*parent, *local)
+
+    def define_tag_attached_element(self, tag: str | Symbol, element: Symbol) -> None:
+        """Record that importing ``tag`` should also import ``element``."""
+        self.tag_attached_elements.setdefault(_tag_symbol(tag), set()).add(element)
+
+    def attached_elements_for_tag(self, tag: str | Symbol) -> frozenset[Symbol]:
+        """Return elements attached to a tag declaration."""
+        name = _tag_symbol(tag)
+        local = self.tag_attached_elements.get(name, set())
+        parent = (
+            self.parent.attached_elements_for_tag(name)
+            if self.parent is not None
+            else frozenset()
+        )
+        return frozenset((*parent, *local))
+
+    def set_tag_validator_static_result(
+        self,
+        validator: Symbol,
+        overload_index: int,
+        result: bool,
+    ) -> None:
+        """Remember that one validator overload is statically constant."""
+        self.tag_validator_static_results.setdefault(validator, {})[
+            overload_index
+        ] = result
+
+    def tag_validator_static_result(
+        self,
+        validator: Symbol,
+        overload_index: int,
+    ) -> bool | None:
+        """Return a statically known validator result, if one exists."""
+        if overload_index in self.tag_validator_static_results.get(validator, {}):
+            return self.tag_validator_static_results[validator][overload_index]
+        if self.parent is not None:
+            return self.parent.tag_validator_static_result(validator, overload_index)
+        return None
 
     def apply(
         self,

@@ -48,7 +48,9 @@ The runtime implementation is small, but several files must evolve together.
   destructors, custom `pop`, duplication faults, and `@mustcall` cleanup rules.
 - Permitted object/record member writes compile to `SET_FIELD`, which returns a
   reconstructed value instead of mutating the original visible value.
-- `TagApplicationNode` is currently a compile-time no-op.
+- `TagApplicationNode` is a compile-time no-op unless analysis resolved a
+  tag validator. Validated applications emit `VALIDATE_TAG`, which calls the
+  resolved validator overload and leaves the tagged value on the stack.
 - `TryNode` compiles to `TRY_BEGIN` / `TRY_END` plus handler jumps. Runtime
   panics are carried by `PanicSignal` and caught by the nearest active handler
   whose nominal type name matches, or by a catch-all handler.
@@ -709,7 +711,8 @@ uv run python -m unittest discover -s tests -v
 
 These are known constraints of the current runtime/codegen layer:
 
-- `TagApplicationNode` currently compiles as a no-op.
+- Unvalidated `TagApplicationNode` values compile as no-ops; validated tag
+  applications emit `VALIDATE_TAG`.
 - Unresolved element calls still compile through `LOAD_ELEMENT` / `CALL` and
   are runtime-dispatched.
 - Runtime arrays are currently represented like lists.

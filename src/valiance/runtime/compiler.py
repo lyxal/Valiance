@@ -19,6 +19,7 @@ from valiance.asts import (
     DefineNode,
     DictLiteralNode,
     ElementNode,
+    ElementTagDeclarationNode,
     ExpressionPatternNode,
     FieldAccessNode,
     FieldSetNode,
@@ -51,12 +52,15 @@ from valiance.asts import (
     StringInterpolationNode,
     StringLiteralNode,
     TagApplicationNode,
+    TagDeclarationNode,
+    TagOverlayNode,
     TryHandlerNode,
     TryNode,
     TupleLiteralNode,
     TypedElementNode,
     TypedFunctionNode,
     TypedNode,
+    TypedTagApplicationNode,
     TypePatternNode,
     UnfoldNode,
     WhileNode,
@@ -109,7 +113,14 @@ class _Compiler:
         self.break_as_signal = break_as_signal
         self.object_runtime_metadata: dict[
             str,
-            tuple[str | None, str | None, str | None, str | None, str | None, tuple[str, ...]],
+            tuple[
+                str | None,
+                str | None,
+                str | None,
+                str | None,
+                str | None,
+                tuple[str, ...],
+            ],
         ] = {}
 
     def compile_function(
@@ -220,6 +231,15 @@ class _Compiler:
                 if tupled_count is not None:
                     self.emit(OpCode.BUILD_TUPLE, tupled_count)
             case TagApplicationNode():
+                if (
+                    isinstance(typed_node, TypedTagApplicationNode)
+                    and typed_node.validator_index is not None
+                ):
+                    self.emit(
+                        OpCode.VALIDATE_TAG,
+                        (f"#{node.tag.name}", typed_node.validator_index),
+                    )
+            case TagDeclarationNode() | ElementTagDeclarationNode() | TagOverlayNode():
                 pass
             case CastNode(typ, checked):
                 if checked:
@@ -319,7 +339,11 @@ class _Compiler:
         match node.kind.text:
             case "object":
                 self.object_runtime_metadata[node.name.text] = (
-                    _object_runtime_metadata(node.name.text, node.annotations, node.definitions)
+                    _object_runtime_metadata(
+                        node.name.text,
+                        node.annotations,
+                        node.definitions,
+                    )
                 )
                 self.object_constructor(node.name.text, node.fields)
                 for definition in node.definitions:
@@ -375,7 +399,10 @@ class _Compiler:
                 tuple(field_names),
                 required,
                 tuple(default_values),
-                self.object_runtime_metadata.get(name, (None, None, None, None, None, ())),
+                self.object_runtime_metadata.get(
+                    name,
+                    (None, None, None, None, None, ()),
+                ),
             ),
         )
         self.emit(OpCode.STORE_VAR, name.rsplit(".", 1)[-1])

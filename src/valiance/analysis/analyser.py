@@ -22,6 +22,7 @@ from valiance.asts import (
     DefineNode,
     DictLiteralNode,
     ElementNode,
+    ElementTagDeclarationNode,
     FunctionNode,
     FunctionOverloadTyping,
     FunctionParam,
@@ -47,6 +48,8 @@ from valiance.asts import (
     StringInterpolationNode,
     StringLiteralNode,
     TagApplicationNode,
+    TagDeclarationNode,
+    TagOverlayNode,
     TraitRequirementNode,
     TryNode,
     TupleLiteralNode,
@@ -54,6 +57,7 @@ from valiance.asts import (
     TypedElementNode,
     TypedFunctionNode,
     TypedNode,
+    TypedTagApplicationNode,
     TypePatternNode,
     UnfoldNode,
     WildcardPatternNode,
@@ -71,7 +75,12 @@ from valiance.asts.nodes import (
     SetVariablesNode,
     WhileNode,
 )
-from valiance.modules import ModuleLoader, ModuleLoadError, import_definitions
+from valiance.modules import (
+    ModuleLoader,
+    ModuleLoadError,
+    import_definitions,
+    import_environment_facts,
+)
 from valiance.symbols import Symbol
 from valiance.types.default_types import Boolean
 from valiance.types.relations import merge_stacks
@@ -628,6 +637,12 @@ class Analyser:
                 return self._element(branch, node)
             case TagApplicationNode():
                 return self._tag_application(branch, node)
+            case TagDeclarationNode():
+                return self._tag_declaration(branch, node)
+            case ElementTagDeclarationNode():
+                return self._element_tag_declaration(branch, node)
+            case TagOverlayNode():
+                return self._tag_overlay(branch, node)
             case CastNode():
                 return self._cast(branch, node)
             case StackShuffleNode():
@@ -777,6 +792,7 @@ class Analyser:
             node.annotations,
         )
         function_node = _genericize_function_node(function_node, node.generics)
+        self._validate_function_element_tags(function_node, node)
         declared_overload = (
             _fully_typed_overload(function_node)
             if not node.generics and _body_references_element(function_node.body, name)
@@ -800,6 +816,16 @@ class Analyser:
             if not isinstance(typing.overload, T.Overload):
                 continue
             overload = typing.overload
+            if name.text.startswith("#") and not _validator_overload_ok(
+                overload,
+                self.env.context,
+            ):
+                self._diagnose(
+                    f"tag validator '{name}' must return #boolean Number",
+                    node,
+                )
+                continue
+            self._validate_data_tags((overload.params, overload.returns), node)
             overload = _with_generic_constraints(overload, generic_constraints)
             overload = annotation_hooks.DEFAULT_REGISTRY.transform_overload(
                 overload,
@@ -808,6 +834,14 @@ class Analyser:
             if overload not in self.env.overloads_for(name):
                 self.env.define_overload(name, overload)
             original_index = _overload_index(self.env.overloads_for(name), overload)
+            if name.text.startswith("#") and original_index is not None:
+                static_result = _static_validator_result(typing.body)
+                if static_result is not None:
+                    self.env.set_tag_validator_static_result(
+                        name,
+                        original_index,
+                        static_result,
+                    )
             if annotation_hooks.has_annotation(node.annotations, "commutative"):
                 for generated in annotation_hooks.commutative_overloads(overload):
                     if generated not in self.env.overloads_for(name):
@@ -820,8 +854,155 @@ class Analyser:
                             original_index or 0,
                         )
                     )
+        if node.attached_tag is not None:
+            if self.env.lookup_tag(node.attached_tag.name) is None:
+                self._diagnose(
+                    f"cannot attach element '{name}' to undeclared tag "
+                    f"'#{node.attached_tag.name}'",
+                    node,
+                )
+            self.env.define_tag_attached_element(node.attached_tag.name, name)
         typed_node = TypedFunctionNode(node, function.typ, tuple(overload_typings))
         return {typed_branch.append_typed(typed_node)}
+
+    def _tag_declaration(
+        self,
+        branch: AnalysisBranch,
+        node: TagDeclarationNode,
+    ) -> set[AnalysisBranch]:
+        if node.disjoint is not None:
+            self.env.add_disjoint_tags(node.tag.name, node.disjoint.name)
+        elif node.parent is not None:
+            self.env.add_variant_tag(node.tag.name, node.parent.name)
+        elif node.kind == Symbol("constructed"):
+            self.env.add_constructed_tag(node.tag.name)
+        elif node.kind == Symbol("unit"):
+            self.env.add_unit_tag(node.tag.name)
+        else:
+            self.env.add_computed_tag(node.tag.name)
+        return {branch.append_typed(TypedNode(node, None))}
+
+    def _validate_function_element_tags(
+        self,
+        node: FunctionNode,
+        origin: ASTNode,
+    ) -> None:
+        positives = tuple(tag for tag in node.element_tags if not tag.absent)
+        for tag in positives:
+            definition = self.env.lookup_element_tag(tag.name)
+            if definition is None:
+                self._diagnose(f"undeclared element tag '{tag.name}'", origin)
+                continue
+            if (
+                definition.kind is T.ElementTagKind.COMPANION
+                and tag not in node.companion_tags_allowed
+            ):
+                self._diagnose(
+                    f"companion element tag '{tag.name}' cannot be directly attached",
+                    origin,
+                )
+        self._validate_element_tag_disjoints(positives, origin)
+
+    def _validate_element_tag_disjoints(
+        self,
+        tags: Iterable[T.ElementTag],
+        origin: ASTNode,
+    ) -> None:
+        seen: set[Symbol] = set()
+        for tag in tags:
+            disjoint = self.env.element_tag_disjoints(tag.name)
+            conflict = next((name for name in seen if name in disjoint), None)
+            if conflict is not None:
+                self._diagnose(
+                    f"element tags '{conflict}' and '{tag.name}' cannot both apply",
+                    origin,
+                )
+                return
+            seen.add(tag.name)
+
+    def _validate_inferred_element_tags(
+        self,
+        node: FunctionNode,
+        body_tags: frozenset[T.ElementTag],
+        final_tags: frozenset[T.ElementTag],
+    ) -> None:
+        self._validate_element_tag_disjoints(
+            (tag for tag in final_tags if not tag.absent),
+            node,
+        )
+        if not node.element_tags_explicit:
+            return
+        declared_properties = {
+            tag
+            for tag in node.element_tags
+            if not tag.absent
+            and (
+                definition := self.env.lookup_element_tag(tag.name)
+            ) is not None
+            and definition.kind is T.ElementTagKind.PROPERTY
+        }
+        for tag in body_tags:
+            if tag.absent or tag in declared_properties:
+                continue
+            definition = self.env.lookup_element_tag(tag.name)
+            if definition is None or definition.kind is not T.ElementTagKind.PROPERTY:
+                continue
+            self._diagnose(
+                f"element tag '{tag.name}' is used inside an explicitly "
+                "constrained function but was not declared",
+                node,
+            )
+            return
+
+    def _validate_data_tags(
+        self,
+        groups: Iterable[Iterable[T.Type]],
+        origin: ASTNode,
+    ) -> None:
+        for group in groups:
+            for typ in group:
+                conflict = _disjoint_data_tags(typ, self.env.context)
+                if conflict is None:
+                    continue
+                left, right = conflict
+                self._diagnose(
+                    f"data tags '#{left.text}' and '#{right.text}' cannot both apply",
+                    origin,
+                )
+                return
+
+    def _element_tag_declaration(
+        self,
+        branch: AnalysisBranch,
+        node: ElementTagDeclarationNode,
+    ) -> set[AnalysisBranch]:
+        if node.disjoint is not None:
+            self.env.add_disjoint_element_tags(node.name, node.disjoint)
+        elif node.kind == Symbol("companion"):
+            self.env.add_companion_element_tag(node.name)
+        else:
+            self.env.add_property_element_tag(node.name)
+        return {branch.append_typed(TypedNode(node, None))}
+
+    def _tag_overlay(
+        self,
+        branch: AnalysisBranch,
+        node: TagOverlayNode,
+    ) -> set[AnalysisBranch]:
+        public = node.visibility == Symbol("public")
+        for element in node.elements:
+            for params, returns in node.signatures:
+                self._validate_data_tags((params, returns), node)
+                overload = T.Overload(params, returns)
+                if node.generics:
+                    overload = _genericize_overload(overload, node.generics)
+                self.env.define_tag_overlay(
+                    node.tag.name,
+                    element,
+                    overload,
+                    public=public,
+                )
+        return {branch.append_typed(TypedNode(node, None))}
 
     def _object_declaration(
         self,
@@ -1143,7 +1324,10 @@ class Analyser:
         typed_nodes: list[TypedFunctionNode] = []
         for spec in node.specs:
             try:
-                definitions = self._load_import_definitions(spec)
+                exports, resolved_spec, definitions = self._load_import_definitions(
+                    spec
+                )
+                import_environment_facts(exports, resolved_spec, self.env)
             except ModuleLoadError as exc:
                 self._diagnose(str(exc), node)
                 return {branch.append_typed(TypedNode(node, None))}
@@ -1164,7 +1348,7 @@ class Analyser:
                 spec.path,
                 current_file=self.source_file,
             )
-            return import_definitions(exports, spec)
+            return exports, spec, import_definitions(exports, spec)
         except ModuleLoadError:
             if spec.components or len(spec.path.parts) < 2:
                 raise
@@ -1175,7 +1359,7 @@ class Analyser:
                 split_spec.path,
                 current_file=self.source_file,
             )
-            return import_definitions(exports, split_spec)
+            return exports, split_spec, import_definitions(exports, split_spec)
 
     def _register_imported_definition(
         self,
@@ -1274,6 +1458,13 @@ class Analyser:
                 )
                 if candidate is not None:
                     applied, candidate_branch = candidate
+                    applied = _apply_tag_overlay(
+                        node.name,
+                        args,
+                        applied,
+                        self.env.context,
+                        self.env,
+                    )
                     candidates.append((applied, candidate_branch, ordered_modifiers))
 
         stack_before = branch.stack
@@ -1424,6 +1615,13 @@ class Analyser:
                     )
                     if candidate is not None:
                         applied, candidate_branch = candidate
+                        applied = _apply_tag_overlay(
+                            node.name,
+                            args,
+                            applied,
+                            self.env.context,
+                            self.env,
+                        )
                         candidates.append(
                             (
                                 applied,
@@ -1622,9 +1820,57 @@ class Analyser:
                 return {branch.append_typed(TypedNode(node, None))}
         else:
             tagged = _with_data_tags(value_type, (node.tag,), self.env.context)
+            validator: T.AppliedOverload | None = None
+            validator_index: int | None = None
+            validator_name = Symbol(f"#{node.tag.name}")
+            validator_overloads = self.env.overloads_for(validator_name)
+            if validator_overloads:
+                matches: list[tuple[T.AppliedOverload, int]] = []
+                for index, overload in enumerate(validator_overloads):
+                    applied = T.apply_overload(
+                        overload,
+                        (value_type,),
+                        self.env.context,
+                    )
+                    if applied is None:
+                        continue
+                    if not _validator_overload_ok(overload, self.env.context):
+                        self._diagnose(
+                            f"tag validator '{validator_name}' must return "
+                            "#boolean Number",
+                            node,
+                        )
+                        return {branch.append_typed(TypedNode(node, None))}
+                    matches.append((applied, index))
+                if not matches:
+                    self._diagnose(
+                        f"no validator overload for '{validator_name}' matches "
+                        f"{T.show(value_type)}",
+                        node,
+                    )
+                    return {branch.append_typed(TypedNode(node, None))}
+                validator, validator_index = matches[0]
+                static_result = self.env.tag_validator_static_result(
+                    validator_name,
+                    validator_index,
+                )
+                if static_result is True:
+                    validator = None
+                    validator_index = None
+                elif static_result is False:
+                    self._diagnose(
+                        f"tag validator '{validator_name}' is statically false",
+                        node,
+                    )
+                    return {branch.append_typed(TypedNode(node, None))}
 
         stack = T.TypeStack((*branch.stack.items[:-1], tagged))
-        return {branch.with_stack(stack).append_typed(TypedNode(node, tagged))}
+        typed: TypedNode
+        if node.tag.absent:
+            typed = TypedNode(node, tagged)
+        else:
+            typed = TypedTagApplicationNode(node, tagged, validator, validator_index)
+        return {branch.with_stack(stack).append_typed(typed)}
 
     def _cast(
         self,
@@ -2889,6 +3135,8 @@ class Analyser:
             returns=node.returns,
             where_clause=node.where_clause,
             element_tags=node.element_tags,
+            element_tags_explicit=node.element_tags_explicit,
+            companion_tags_allowed=node.companion_tags_allowed,
             location=node.location,
         )
         explicit_count = len(declared)
@@ -2930,15 +3178,22 @@ class Analyser:
             if refined is None:
                 continue
             returns, branch = refined
+            body_element_tags = frozenset(_typed_body_element_tags(branch.typed_body))
+            declared_element_tags = frozenset(node.element_tags)
+            final_element_tags = frozenset(
+                set(declared_element_tags) | set(body_element_tags)
+            )
+            self._validate_inferred_element_tags(
+                node,
+                body_element_tags,
+                final_element_tags,
+            )
             signature = T.Overload(
                 branch.inputs,
                 returns,
                 where_clause=node.where_clause,
                 param_names=_function_param_names_for_overload(node, branch.inputs),
-                element_tags=frozenset(
-                    set(node.element_tags)
-                    | set(_typed_body_element_tags(branch.typed_body))
-                ),
+                element_tags=final_element_tags,
                 annotation_error=annotation_hooks.annotation_error_message(
                     node.annotations
                 ),
@@ -4039,6 +4294,48 @@ def _apply_overload_to_branch(
     return applied, specialized_branch
 
 
+def _apply_tag_overlay(
+    element: Symbol,
+    args: tuple[T.Type, ...],
+    applied: T.AppliedOverload,
+    ctx: T.Context,
+    env: T.Environment,
+) -> T.AppliedOverload:
+    matches: list[T.AppliedOverload] = []
+    for overlay in env.overlays_for(element):
+        candidate = T.apply_overload(overlay.overload, args, ctx)
+        if candidate is None:
+            continue
+        actual_returns = _apply_data_tag_flow(
+            args,
+            overlay.overload.returns,
+            candidate.actual_returns,
+            ctx,
+        )
+        matches.append(
+            T.AppliedOverload(
+                applied.overload,
+                candidate.substitution,
+                applied.params,
+                candidate.returns,
+                actual_returns,
+                applied.scores,
+                applied.vectorised,
+                applied.vectorised_depths,
+                applied.rank_values,
+                applied.runtime_consumed_count,
+                applied.element_tags,
+            )
+        )
+    if not matches:
+        return applied
+    return sorted(
+        matches,
+        key=lambda item: tuple(score.value for score in item.scores),
+        reverse=True,
+    )[0]
+
+
 def _apply_call_site_checked_overload(
     overload: T.Overload,
     args: tuple[T.Type, ...],
@@ -4567,9 +4864,9 @@ def _apply_data_tag_flow(
     actual_returns: tuple[T.Type, ...],
     ctx: T.Context,
 ) -> tuple[T.Type, ...]:
-    """Strip implicit computed tags and propagate sticky data tags."""
+    """Strip implicit tags that are not preserved by the chosen signature."""
     explicit_tags = tuple(_explicit_tags(ret) for ret in declared_returns)
-    returns = tuple(
+    return tuple(
         _strip_implicit_computed_tags(
             ret,
             explicit_tags[index] if index < len(explicit_tags) else frozenset(),
@@ -4577,12 +4874,6 @@ def _apply_data_tag_flow(
         )
         for index, ret in enumerate(actual_returns)
     )
-    sticky_inputs = tuple(
-        sticky for arg in args for sticky in _sticky_input_tags(arg, ctx)
-    )
-    if not sticky_inputs:
-        return returns
-    return tuple(_propagate_sticky_tags(ret, sticky_inputs, ctx) for ret in returns)
 
 
 def _explicit_tags(typ: T.Type) -> frozenset[T.DataTag]:
@@ -4703,6 +4994,58 @@ def _show_tag(tag: T.DataTag) -> str:
     prefix = "#!" if tag.absent else "#"
     depth = "+" * tag.depth
     return f"{prefix}{tag.name}{depth}"
+
+
+def _validator_overload_ok(overload: T.Overload, ctx: T.Context) -> bool:
+    return len(overload.returns) == 1 and T.assignable(
+        overload.returns[0],
+        T.WithTag(T.Number, "boolean"),
+        ctx,
+    )
+
+
+def _static_validator_result(body: tuple[TypedNode, ...]) -> bool | None:
+    if len(body) != 1:
+        return None
+    node = body[0].node
+    if isinstance(node, ElementNode):
+        if node.name == Symbol("true"):
+            return True
+        if node.name == Symbol("false"):
+            return False
+    return None
+
+
+def _disjoint_data_tags(
+    typ: T.Type,
+    ctx: T.Context,
+) -> tuple[Symbol, Symbol] | None:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        positive = [Symbol(tag.name) for tag in typ.tags if not tag.absent]
+        seen: set[Symbol] = set()
+        for tag in positive:
+            conflict = next(
+                (name for name in seen if name in ctx.tag_disjoints(tag)),
+                None,
+            )
+            if conflict is not None:
+                return conflict, tag
+            seen.add(tag)
+        return _disjoint_data_tags(typ.inner, ctx)
+    if isinstance(typ, T.CollectionType):
+        return _disjoint_data_tags(typ.base, ctx)
+    if isinstance(typ, T.UnionType):
+        for item in typ.items:
+            conflict = _disjoint_data_tags(item, ctx)
+            if conflict is not None:
+                return conflict
+    if isinstance(typ, T.FunctionType):
+        for item in (*(typ.params or ()), *(typ.returns or ())):
+            conflict = _disjoint_data_tags(item, ctx)
+            if conflict is not None:
+                return conflict
+    return None
 
 
 def _type_rank(typ: T.Type) -> int:
@@ -5669,6 +6012,26 @@ def _with_generic_constraints(
     )
 
 
+def _genericize_overload(
+    overload: T.Overload,
+    generics: tuple[Symbol, ...],
+) -> T.Overload:
+    if not generics:
+        return overload
+    return T.Overload(
+        tuple(_genericize_type(param, generics) for param in overload.params),
+        tuple(_genericize_type(ret, generics) for ret in overload.returns),
+        overload.generic_constraints,
+        overload.where_clause,
+        overload.param_names,
+        overload.call_site_body,
+        overload.element_tags,
+        overload.annotation_error,
+        overload.annotation_warning,
+        overload.param_defaults,
+    )
+
+
 def _genericize_function_node(
     function: FunctionNode,
     generics: tuple[Symbol, ...],
@@ -5700,6 +6063,10 @@ def _genericize_function_node(
             _genericize_element_tags(function.element_tags, generics)
         ),
         annotations=function.annotations,
+        element_tags_explicit=function.element_tags_explicit,
+        companion_tags_allowed=frozenset(
+            _genericize_element_tags(function.companion_tags_allowed, generics)
+        ),
         location=function.location,
     )
 

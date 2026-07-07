@@ -19,6 +19,7 @@ from valiance.asts import (
     DefineNode,
     DictLiteralNode,
     ElementNode,
+    ElementTagDeclarationNode,
     EnumMemberNode,
     ExpressionPatternNode,
     FieldAccessNode,
@@ -57,6 +58,8 @@ from valiance.asts import (
     StringLiteralNode,
     Symbol,
     TagApplicationNode,
+    TagDeclarationNode,
+    TagOverlayNode,
     TraitRequirementNode,
     TryHandlerNode,
     TryNode,
@@ -155,6 +158,11 @@ class Parser:
                     public=visibility == Symbol("public"),
                 ),
             )
+        if self._match_ident("tag"):
+            return (self._tag_declaration(self._previous, visibility),)
+        if self._check(TokenKind.OP) and self._current.value.startswith("#"):
+            if self._peek(1).kind is TokenKind.COLON:
+                return (self._tag_overlay(self._current, visibility),)
         if self._match_ident("multi"):
             is_multi = True
         if self._match_ident("eager"):
@@ -342,6 +350,124 @@ class Parser:
             self._expect(TokenKind.COMMA)
             self._skip_newlines()
 
+    def _tag_declaration(
+        self,
+        start: Token,
+        visibility: Symbol | None,
+    ) -> TagDeclarationNode | ElementTagDeclarationNode:
+        if not (self._check(TokenKind.OP) and self._current.value.startswith("#")):
+            name = self._symbol("expected element tag name")
+            if self._match_ident("disjoint"):
+                return ElementTagDeclarationNode(
+                    name,
+                    disjoint=self._symbol("expected disjoint element tag name"),
+                    visibility=visibility,
+                    location=_loc(start),
+                )
+            self._expect_ident("as")
+            kind = self._expect(TokenKind.IDENT).value
+            if kind not in {"property", "companion"}:
+                self._error("expected element tag kind property or companion")
+            return ElementTagDeclarationNode(
+                name,
+                kind=Symbol(kind),
+                visibility=visibility,
+                location=_loc(start),
+            )
+
+        tag = _tag_from_token(self._expect_tag_token())
+        if self._match_ident("disjoint"):
+            return TagDeclarationNode(
+                tag,
+                disjoint=_tag_from_token(self._expect_tag_token()),
+                visibility=visibility,
+                location=_loc(start),
+            )
+        self._expect_ident("as")
+        if self._check(TokenKind.OP) and self._current.value.startswith("#"):
+            parent = _tag_from_token(self._advance())
+            return TagDeclarationNode(
+                tag,
+                parent=parent,
+                visibility=visibility,
+                location=_loc(start),
+            )
+        kind = self._expect(TokenKind.IDENT).value
+        if kind not in {"computed", "constructed", "unit"}:
+            self._error("expected tag kind computed, constructed, unit, or parent tag")
+        return TagDeclarationNode(
+            tag,
+            kind=Symbol(kind),
+            visibility=visibility,
+            location=_loc(start),
+        )
+
+    def _tag_overlay(
+        self,
+        start: Token,
+        visibility: Symbol | None,
+    ) -> TagOverlayNode:
+        tag = _tag_from_token(self._advance())
+        self._expect(TokenKind.COLON)
+        generics, _, _ = self._generic_parameters()
+        elements = self._overlay_elements()
+        self._expect(TokenKind.FAT_ARROW)
+        signatures = self._overlay_signatures()
+        return TagOverlayNode(
+            tag,
+            elements,
+            signatures,
+            generics,
+            visibility,
+            location=_loc(start),
+        )
+
+    def _overlay_elements(self) -> tuple[Symbol, ...]:
+        if self._match(TokenKind.LPAREN):
+            elements: list[Symbol] = []
+            self._skip_newlines()
+            while not self._check(TokenKind.RPAREN):
+                elements.append(self._overlay_element_symbol())
+                self._skip_newlines()
+                if self._match(TokenKind.RPAREN):
+                    return tuple(elements)
+                self._expect(TokenKind.COMMA)
+                self._skip_newlines()
+            self._expect(TokenKind.RPAREN)
+            return tuple(elements)
+        return (self._overlay_element_symbol(),)
+
+    def _overlay_element_symbol(self) -> Symbol:
+        if not self._check(TokenKind.IDENT, TokenKind.OP):
+            self._error("expected overlay element name")
+        token = self._advance()
+        if token.kind is TokenKind.OP:
+            return self._operator_run(token)
+        return self._qualified_symbol(token)
+
+    def _overlay_signatures(
+        self,
+    ) -> tuple[tuple[tuple[Type, ...], tuple[Type, ...]], ...]:
+        signatures: list[tuple[tuple[Type, ...], tuple[Type, ...]]] = []
+        single_line = not self._check(TokenKind.NEWLINE)
+        self._skip_newlines()
+        while not self._check(TokenKind.EOF) and not self._check_ident("end"):
+            self._expect(TokenKind.LPAREN)
+            params = self._type_list_until({TokenKind.RPAREN})
+            self._expect(TokenKind.RPAREN)
+            self._expect(TokenKind.ARROW)
+            returns = self._type_list_until(
+                {TokenKind.NEWLINE, TokenKind.EOF}
+                if single_line
+                else {TokenKind.NEWLINE, TokenKind.EOF}
+            )
+            signatures.append((params, returns))
+            if single_line:
+                break
+            self._skip_separators()
+        self._consume_optional_end()
+        return tuple(signatures)
+
     def _define(
         self,
         start: Token,
@@ -352,11 +478,27 @@ class Parser:
         eager: bool = False,
     ) -> DefineNode:
         generics, generic_variances, generic_constraints = self._generic_parameters()
+        attached_tag = None
+        if (
+            self._check(TokenKind.OP)
+            and self._current.value.startswith("#")
+            and self._peek(1).kind
+            not in {TokenKind.LPAREN, TokenKind.FAT_ARROW, TokenKind.COLON}
+        ):
+            attached_tag = _tag_from_token(self._advance())
         name = self._symbol("expected definition name")
-        params = self._params(allow_defaults=True) if self._match(TokenKind.LPAREN) else None
-        element_tags = set(self._function_element_tags())
+        params = (
+            self._params(allow_defaults=True)
+            if self._match(TokenKind.LPAREN)
+            else None
+        )
+        element_tags, element_tags_explicit = self._function_element_tags()
+        element_tag_set = set(element_tags)
+        companion_tags_allowed: set[ElementTag] = set()
         if eager:
-            element_tags.add(ElementTag(Symbol("Eager")))
+            eager_tag = ElementTag(Symbol("Eager"))
+            element_tag_set.add(eager_tag)
+            companion_tags_allowed.add(eager_tag)
         returns = self._returns()
         where_clause = self._where_clause()
         self._expect(TokenKind.FAT_ARROW)
@@ -368,7 +510,9 @@ class Parser:
                 body=body,
                 returns=returns,
                 where_clause=where_clause,
-                element_tags=frozenset(element_tags),
+                element_tags=frozenset(element_tag_set),
+                element_tags_explicit=element_tags_explicit,
+                companion_tags_allowed=frozenset(companion_tags_allowed),
                 annotations=annotations,
                 location=_loc(start),
             ),
@@ -378,6 +522,7 @@ class Parser:
             generics,
             generic_variances,
             generic_constraints,
+            attached_tag,
             location=_loc(start),
         )
 
@@ -574,7 +719,7 @@ class Parser:
         annotations: tuple[ASTNode, ...] = (),
     ) -> FunctionNode:
         params = self._params() if self._match(TokenKind.LPAREN) else None
-        element_tags = self._function_element_tags()
+        element_tags, element_tags_explicit = self._function_element_tags()
         returns = self._returns()
         where_clause = self._where_clause()
         self._expect(TokenKind.FAT_ARROW)
@@ -583,16 +728,17 @@ class Parser:
             returns=returns,
             where_clause=where_clause,
             element_tags=element_tags,
+            element_tags_explicit=element_tags_explicit,
             annotations=annotations,
             body=self._body(),
             location=_loc(start),
         )
 
-    def _function_element_tags(self) -> frozenset[ElementTag]:
+    def _function_element_tags(self) -> tuple[frozenset[ElementTag], bool]:
         if not self._check_op("<"):
-            return frozenset()
+            return frozenset(), False
         self._advance()
-        return self._element_tag_list()
+        return self._element_tag_list(), True
 
     def _where_clause(self) -> tuple[ASTNode, ...]:
         self._skip_newlines()
@@ -1188,10 +1334,21 @@ class Parser:
                     ),
                     True,
                 )
-            if self._check(TokenKind.LPAREN) and self._adjacent(call_anchor, self._current):
+            if self._check(TokenKind.LPAREN) and self._adjacent(
+                call_anchor,
+                self._current,
+            ):
                 self._advance()
                 return _ChainPiece(
-                    (ElementNode(name, (), disambiguation, self._call_arguments(), location=_loc(token)),),
+                    (
+                        ElementNode(
+                            name,
+                            (),
+                            disambiguation,
+                            self._call_arguments(),
+                            location=_loc(token),
+                        ),
+                    ),
                     True,
                 )
             return _ChainPiece(
@@ -1996,6 +2153,11 @@ class Parser:
         if self._match(TokenKind.IDENT, TokenKind.OP):
             return Symbol(self._previous.value)
         self._error(message)
+
+    def _expect_tag_token(self) -> Token:
+        if self._check(TokenKind.OP) and self._current.value.startswith("#"):
+            return self._advance()
+        self._error("expected data tag")
 
     def _skip_newlines(self) -> None:
         while self._match(TokenKind.NEWLINE):

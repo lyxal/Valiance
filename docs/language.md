@@ -2081,6 +2081,7 @@ tag #A disjoint #B
 - If `#B` is applied to a value tagged as `#A`, then `#A` is removed.
 - This is because the intention is to apply the new tag, making the old tag obsolete.
 - In this way, the tag disjoint rule only belongs to `#A`. `#B` does not need to know about the rule.
+- Explicit type signatures that contain disjoint present tags at the same position are rejected at compile time.
 
 ## 17.7. Tag Overlays
 - To make use of tags, the tag needs to be included in a function's parameters.
@@ -2142,6 +2143,7 @@ end
 ```
 
 - Absence of a constructed tag will remove that tag.
+- Constructed tags are not preserved by ordinary generic flow. A function signature or tag overlay must explicitly preserve a constructed tag for it to remain on the return value.
 
 ## 17.8. Tag Validators
 - Sometimes you may want to validate that data being tagged actually exhibits the property of the tag.
@@ -2167,6 +2169,7 @@ end
 ## 17.9. Importing Tags
 
 - `import{<libraryName>.#<tagName>}`
+- Importing a tag also imports any public elements that were attached to that tag with the tag-attached definition syntax.
 
 ## 17.10. Tag-Attached Elements
 - Sometimes it may be desirable to import a set of elements whenever a tag is imported.
@@ -2178,6 +2181,7 @@ define[T] #sorted sort(:#sorted T+) => top
 ```
 
 - This overload of `sort` would be imported whenever `#sorted` is imported.
+- Users still import the tag explicitly. The attached element arrives as a normal public element alongside the tag facts.
 
 ## 17.11. Tag Depth
 - If you would have `(#tag T+)+`, you can rewrite it as `#tag+ T+`. Each `+` after a tag is a level of depth that tag applies at. ie levels of nesting from the top.
@@ -2275,6 +2279,13 @@ define[T] callSafe(function: Function<!Panic>) => ... end
 
 ## 18.4. Tag Disjoints and Element Tags
 
+- Element tags can declare that they are incompatible with other element tags:
+
+```
+tag Read disjoint Write
+```
+
+- A function or function type that explicitly includes both present tags is rejected.
 - Data tags can declare that they are incompatible with element tags.
         - For example, most times an `#infinite` stack value should not be used in an `Eager` element.
 - Syntax is exactly the same:

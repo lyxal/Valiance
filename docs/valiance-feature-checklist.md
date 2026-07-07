@@ -1,6 +1,6 @@
 # Valiance feature checklist
 
-Current audit total: 398 / 734 items complete (54.2%).
+Current audit total: 419 / 734 items complete (57.1%).
 
 ## 1. Lexer, parser, and general syntax
 
@@ -559,7 +559,7 @@ Current audit total: 398 / 734 items complete (54.2%).
 
 ## 33. Data tags
 
-- [ ] Parse data-tag declarations.
+- [x] Parse data-tag declarations.
 - [x] Support constructed tags.
 - [x] Support unit tags.
 - [x] Support computed tags.
@@ -570,20 +570,20 @@ Current audit total: 398 / 734 items complete (54.2%).
 - [x] Give tagged overloads higher specificity.
 - [x] Support tag constraints in generic contexts.
 - [x] Support tag disjoint declarations.
-- [ ] Reject disallowed simultaneous tags.
-- [ ] Support tag-overlay declarations.
-- [ ] Apply overlay signatures without changing underlying element behavior.
-- [ ] Support overlays for multiple elements.
-- [ ] Remove constructed tags when no overlay preserves them.
-- [ ] Support tag validators as tag-named definitions.
-- [ ] Require validators to return `#boolean Number`.
-- [ ] Run validators when tags are applied.
-- [ ] Panic when tag validation fails.
-- [ ] Report compile errors when no applicable validator overload exists.
-- [ ] Eliminate checks for validators statically known to always succeed or fail.
-- [ ] Import tags explicitly.
-- [ ] Import tag overlay rules.
-- [ ] Support elements attached to tag imports.
+- [x] Reject disallowed simultaneous tags.
+- [x] Support tag-overlay declarations.
+- [x] Apply overlay signatures without changing underlying element behavior.
+- [x] Support overlays for multiple elements.
+- [x] Remove constructed tags when no overlay preserves them.
+- [x] Support tag validators as tag-named definitions.
+- [x] Require validators to return `#boolean Number`.
+- [x] Run validators when tags are applied.
+- [x] Panic when tag validation fails.
+- [x] Report compile errors when no applicable validator overload exists.
+- [x] Eliminate checks for validators statically known to always succeed or fail.
+- [x] Import tags explicitly.
+- [x] Import tag overlay rules.
+- [x] Support elements attached to tag imports.
 - [x] Parse tag depth using repeated `+` or numeric shorthand.
 - [x] Apply tags at the requested nested collection depth.
 
@@ -593,17 +593,17 @@ Current audit total: 398 / 734 items complete (54.2%).
 - [x] Support generic parameters on element tags.
 - [x] Represent element tags after function types using `<...>`.
 - [x] Represent required tag absence using `!Tag`.
-- [ ] Parse property element-tag declarations.
-- [ ] Parse companion element-tag declarations.
+- [x] Parse property element-tag declarations.
+- [x] Parse companion element-tag declarations.
 - [x] Support built-in property tags including `IO`, `Random`, `Panic[T]`, and `Memoizable`.
 - [x] Support built-in companion tags including `Eager` and `Memoized`.
 - [x] Allow users to attach property tags.
-- [ ] Prevent users from directly attaching companion tags.
+- [x] Prevent users from directly attaching companion tags.
 - [x] Infer unspecified property tags.
-- [ ] Validate explicitly declared property-tag sets.
-- [ ] Reject undeclared effects used inside explicitly constrained definitions.
+- [x] Validate explicitly declared property-tag sets.
+- [x] Reject undeclared effects used inside explicitly constrained definitions.
 - [x] Allow explicitly declared effects even when no tagged operation is called.
-- [ ] Support element-tag disjoint rules.
+- [x] Support element-tag disjoint rules.
 - [x] Propagate effect information through functions and higher-order calls.
 
 ## 35. Annotations
