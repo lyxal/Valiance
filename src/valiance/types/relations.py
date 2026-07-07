@@ -442,6 +442,8 @@ def _solve(pattern: Type, actual: Type) -> dict[str, list[Type]] | None:
             if not _tag_requirements_met(a.tags, p.tags):
                 return False
             return rec(p.inner, a.inner)
+        if isinstance(a, TaggedType):
+            return rec(p, a.inner)
         if isinstance(p, CollectionType) and isinstance(a, CollectionType):
             return _solve_collection(p, a, add)
         return False

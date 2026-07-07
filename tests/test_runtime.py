@@ -1318,6 +1318,15 @@ end | #!infinite | 7 take
         )
         self.assertEqual(list(inferred[0]), explicit_prefix)
 
+        tagged = execute(
+            """
+0 1 unfold =>
+  +
+end | 7 take
+"""
+        )
+        self.assertEqual(list(tagged[0]), explicit_prefix)
+
         separate = execute(
             """
 1 unfold (< 10) -> (n: Integer) =>

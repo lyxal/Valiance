@@ -1,5 +1,4 @@
-unfold (true) -> (prev: Number, next: Number) =>
-  $prev $next $prev $next +
-end
+#? Fibonacci - Infinite List
 
-take 10
+$fib = 0 1 unfold => +
+$fib take 10 | println

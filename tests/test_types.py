@@ -318,6 +318,20 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(applied.actual_returns, (Number,))
         self.assertFalse(applied.vectorised)
 
+    def test_constructed_tags_are_transparent_to_generic_overload_solving(self):
+        overload = Overload(
+            (C(ListExactType, V("Item")), Integer),
+            (C(ListExactType, V("Item")),),
+        )
+        source = Tagged(C(ListExactType, Integer), DataTag("infinite"))
+
+        applied = apply_overload(overload, (source, Integer))
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.substitution["Item"], Integer)
+        self.assertEqual(applied.params, (C(ListExactType, Integer), Integer))
+        self.assertEqual(applied.actual_returns, (C(ListExactType, Integer),))
+
     def test_apply_overload_marks_vectorisation(self):
         overload = Overload((Number, Number), (Number,))
 
