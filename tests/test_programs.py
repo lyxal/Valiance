@@ -321,3 +321,35 @@ class ProgramTests(unittest.TestCase):
         factorial 5
         """)
         self.assertEqual(result, [Decimal("120")])
+
+    def test_flatten_as_function(self):
+        result = execute("""
+        $flatten = @recursive fn[T] (list: T~) -> T+ =>
+            $flattened: T+ = []
+            $list foreach (item) =>
+                $item match =>
+                as lst: T+ => $lst
+                as scl: T  => [$scl]
+                        _  => this($item)
+                end
+                $flattened := addAll
+            end
+            $flattened
+        end
+
+        $flatten([[1, 2, 3], [[4, 5], [6]], 7])
+        """)
+        self.assertEqual(
+            result,
+            [
+                [
+                    Decimal("1"),
+                    Decimal("2"),
+                    Decimal("3"),
+                    Decimal("4"),
+                    Decimal("5"),
+                    Decimal("6"),
+                    Decimal("7"),
+                ]
+            ],
+        )
