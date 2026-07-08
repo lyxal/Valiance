@@ -1485,13 +1485,13 @@ class Parser:
         ):
             self._advance()
             parts.append(self._advance().value)
-        name = ".".join(parts)
+        name = Symbol(parts[-1], tuple(parts[:-1]))
         if self._match(TokenKind.DOUBLE_COLON):
             if not self._match(TokenKind.IDENT, TokenKind.OP):
                 self._error("expected qualified element name")
             token = self._previous
-            name = f"{name}::{token.value}"
-        return Symbol(name)
+            name = Symbol(f"{name.dotted()}::{token.value}")
+        return name
 
     def _operator_run(self, start: Token) -> Symbol:
         """Greedily merge a whitespace-free run of OP tokens into one name.
@@ -2153,10 +2153,12 @@ class Parser:
                     return Tup(*(item.typ for item in items))
                 self._expect(TokenKind.COMMA)
         if self._match(TokenKind.IDENT):
-            name = self._previous.value
+            parts = [self._previous.value]
             while self._check(TokenKind.DOT) and self._peek(1).kind == TokenKind.IDENT:
                 self._advance()
-                name = f"{name}.{self._expect(TokenKind.IDENT).value}"
+                parts.append(self._expect(TokenKind.IDENT).value)
+            name = parts[-1]
+            namespace = tuple(parts[:-1])
             optional_depth = 0
             if name.endswith("?"):
                 bare_name = name.rstrip("?")
@@ -2189,7 +2191,10 @@ class Parser:
                 return _optionalize_type(args[0], optional_depth)
             if name == "Function":
                 return _optionalize_type(Fn(), optional_depth)
-            return _optionalize_type(N(Symbol(name), *args), optional_depth)
+            return _optionalize_type(
+                N(Symbol(name, namespace), *args),
+                optional_depth,
+            )
         if self._match(TokenKind.LPAREN):
             params: list[Type] = []
             if not self._check(TokenKind.ARROW):
@@ -2526,6 +2531,8 @@ def _append_object_body_item(
         fields.append(item)
     elif isinstance(item, DefineNode):
         definitions.append(item)
+
+
     else:
         requirements.append(item)
 

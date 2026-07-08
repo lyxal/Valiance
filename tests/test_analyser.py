@@ -715,12 +715,12 @@ end
 
         self.assertTrue(env.context.implements(Symbol("Circle"), Symbol("Shape")))
         self.assertEqual(
-            env.context.variant_members[Symbol("Maybe.Some")],
+            env.context.variant_members[Symbol("Some", ("Maybe",))],
             Symbol("Maybe"),
         )
         self.assertEqual(
             env.lookup_variant(Symbol("Maybe")).members[0],
-            Symbol("Maybe.Some"),
+            Symbol("Some", ("Maybe",)),
         )
 
     def test_generic_variant_constructor_preserves_type_argument(self):
@@ -915,7 +915,7 @@ end
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Colour")))
-        self.assertTrue(env.overloads_for(Symbol("Colour.RED")))
+        self.assertTrue(env.overloads_for(Symbol("RED", ("Colour",))))
 
     def test_match_on_enum_requires_all_members_without_default(self):
         analyser = Analyser(Environment())
@@ -1781,7 +1781,7 @@ end
         )
         self.assertTrue(
             assignable(
-                N(Symbol("DBError.ConnectionClosedError")),
+                N(Symbol("ConnectionClosedError", ("DBError",))),
                 N(Symbol("Err")),
                 analyser.env.context,
             )

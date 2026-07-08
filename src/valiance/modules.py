@@ -219,7 +219,7 @@ def import_definitions(
     return tuple(
         _renamed_definition(
             definition,
-            Symbol(f"{namespace.text}.{definition.name.text}"),
+            _namespaced_symbol(definition.name, namespace),
         )
         for definition in public
     )
@@ -253,7 +253,7 @@ def import_objects(
     return tuple(
         _renamed_object(
             obj,
-            Symbol(f"{namespace.text}.{obj.name.text}"),
+            _namespaced_symbol(obj.name, namespace),
             friendly_prefix=namespace,
             import_friendly=True,
         )
@@ -468,10 +468,14 @@ def _renamed_friendly_definitions(
     return tuple(
         _renamed_define_node(
             definition,
-            Symbol(f"{prefix.text}.{definition.name.text}"),
+            _namespaced_symbol(definition.name, prefix),
         )
         for definition in definitions
     )
+
+
+def _namespaced_symbol(name: Symbol, prefix: Symbol) -> Symbol:
+    return Symbol(name.text, (*prefix.namespace, prefix.text, *name.namespace))
 
 
 def _select_overloads(

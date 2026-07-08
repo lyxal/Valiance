@@ -347,7 +347,7 @@ class Environment:
             self.define_overload(member.name, Overload((), (NominalType(name),)))
             if member.typ is not None and member.has_value:
                 self.define_overload(
-                    Symbol(f"{member.name}.value"),
+                    Symbol("value", (*member.name.namespace, member.name.text)),
                     Overload((), (member.typ,)),
                 )
 

@@ -164,12 +164,12 @@ class _Compiler:
             case StringInterpolationNode(parts):
                 self.string_interpolation(parts)
             case GetVariableNode(name):
-                self.emit(OpCode.LOAD_VAR, name.text)
+                self.emit(OpCode.LOAD_VAR, _symbol_runtime_name(name))
             case SetVariableNode(name):
-                self.emit(OpCode.STORE_VAR, name.text)
+                self.emit(OpCode.STORE_VAR, _symbol_runtime_name(name))
             case SetVariablesNode(targets):
                 for target in reversed(targets):
-                    self.emit(OpCode.STORE_VAR, target.name.text)
+                    self.emit(OpCode.STORE_VAR, _symbol_runtime_name(target.name))
             case ElementNode(name, modifier_args):
                 if typed_node is None and node.call_args:
                     for arg in node.call_args:
@@ -229,7 +229,7 @@ class _Compiler:
                     )
                 resolved = _resolved_element_reference(typed_node)
                 if resolved is None:
-                    self.emit(OpCode.LOAD_ELEMENT, name.text)
+                    self.emit(OpCode.LOAD_ELEMENT, _symbol_runtime_name(name))
                     self.emit(OpCode.CALL)
                 else:
                     self.emit(OpCode.CALL_RESOLVED_ELEMENT, resolved)
@@ -260,9 +260,12 @@ class _Compiler:
             case DefineNode(name, function):
                 self.emit(
                     OpCode.MAKE_FUNCTION,
-                    _compile_function_value(typed_node or function, name.text),
+                    _compile_function_value(
+                        typed_node or function,
+                        _symbol_runtime_name(name),
+                    ),
                 )
-                self.emit(OpCode.STORE_VAR, name.text)
+                self.emit(OpCode.STORE_VAR, _symbol_runtime_name(name))
             case ImportNode():
                 pass
             case ListLiteralNode(items) | ArrayLiteralNode(items):
@@ -344,28 +347,32 @@ class _Compiler:
     def object_declaration(self, node: ObjectNode) -> None:
         match node.kind.text:
             case "object":
+                runtime_name = _symbol_runtime_name(node.name)
                 if node.target is None:
-                    self.object_runtime_metadata[node.name.text] = (
+                    self.object_runtime_metadata[runtime_name] = (
                         _object_runtime_metadata(
-                            node.name.text,
+                            runtime_name,
                             node.annotations,
                             node.definitions,
                         )
                     )
                     self.object_constructor(
-                        node.name.text,
+                        runtime_name,
                         node.fields,
                         alias=(
-                            node.name.text
-                            if "." not in node.name.text
+                            runtime_name
+                            if not node.name.namespace
                             else None
                         ),
                     )
                 for definition in node.definitions:
-                    self.friendly_definition(node.name.text, definition)
+                    self.friendly_definition(runtime_name, definition)
             case "variant":
                 for member in node.variants:
-                    runtime_name = f"{node.name}.{member.name}"
+                    runtime_name = (
+                        f"{_symbol_runtime_name(node.name)}."
+                        f"{_symbol_runtime_name(member.name)}"
+                    )
                     self.object_runtime_metadata[runtime_name] = (
                         _object_runtime_metadata(
                             runtime_name,
@@ -381,20 +388,23 @@ class _Compiler:
                     for definition in member.definitions:
                         self.friendly_definition(runtime_name, definition)
             case "enum":
+                enum_name = _symbol_runtime_name(node.name)
                 for member in node.enum_members:
+                    member_name = _symbol_runtime_name(member.name)
+                    runtime_name = f"{enum_name}.{member_name}"
                     value = None
                     if member.value:
                         value = _literal_expression_value(member.value)
                     self.emit(
                         OpCode.MAKE_ENUM_MEMBER,
-                        (node.name.text, member.name.text, value),
+                        (enum_name, member_name, value),
                     )
-                    self.emit(OpCode.STORE_VAR, f"{node.name}.{member.name}")
+                    self.emit(OpCode.STORE_VAR, runtime_name)
                     if value is not None:
                         self.emit(OpCode.PUSH_CONST, value)
                         self.emit(
                             OpCode.STORE_VAR,
-                            f"{node.name}.{member.name}.value",
+                            f"{runtime_name}.value",
                         )
 
     def object_constructor(
@@ -457,16 +467,17 @@ class _Compiler:
             definition.visibility,
             location=definition.location,
         )
+        runtime_definition_name = _symbol_runtime_name(definition.name)
         self.emit(
             OpCode.MAKE_FUNCTION,
-            _compile_function_value(node, definition.name.text),
+            _compile_function_value(node, runtime_definition_name),
         )
-        self.emit(OpCode.STORE_VAR, definition.name.text)
+        self.emit(OpCode.STORE_VAR, runtime_definition_name)
         self.emit(
             OpCode.MAKE_FUNCTION,
-            _compile_function_value(node, f"{owner}::{definition.name.text}"),
+            _compile_function_value(node, f"{owner}::{runtime_definition_name}"),
         )
-        self.emit(OpCode.STORE_VAR, f"{owner}::{definition.name.text}")
+        self.emit(OpCode.STORE_VAR, f"{owner}::{runtime_definition_name}")
 
     def if_node(self, node: IfNode) -> None:
         for condition_node in node.condition:
@@ -1014,6 +1025,10 @@ def _unwrap(node: ASTNode | TypedNode) -> ASTNode:
     return node
 
 
+def _symbol_runtime_name(symbol: Symbol) -> str:
+    return symbol.dotted()
+
+
 def _resolved_element_reference(
     node: TypedNode | None,
 ) -> ResolvedElementReference | None:
@@ -1024,7 +1039,7 @@ def _resolved_element_reference(
     ast = node.node
     if not isinstance(ast, ElementNode):
         return None
-    runtime_name = ast.name.text.removeprefix("*::")
+    runtime_name = _symbol_runtime_name(ast.name).removeprefix("*::")
     type_args = _resolved_constructor_type_args(ast, node)
     elements = runtime_elements()
     element = elements.get(runtime_name)
@@ -1051,7 +1066,11 @@ def _resolved_element_reference(
     ):
         return None
     vectorised = bool(node.overload is not None and node.overload.vectorised)
-    if ast.name.text == "call" and node.call_overload_index is not None:
+    if (
+        ast.name.text == "call"
+        and not ast.name.namespace
+        and node.call_overload_index is not None
+    ):
         static_values = (node.call_overload_index,)
     else:
         static_values = _runtime_rank_values(node)

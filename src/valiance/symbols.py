@@ -15,6 +15,9 @@ class Symbol:
             raise ValueError("symbol text cannot be empty")
 
     def __str__(self) -> str:
+        return self.dotted()
+
+    def dotted(self) -> str:
         if not self.namespace:
             return self.text
-        return "::".join((*self.namespace, self.text))
+        return ".".join((*self.namespace, self.text))

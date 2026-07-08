@@ -1197,7 +1197,7 @@ class Analyser:
         )
         members: list[Symbol] = []
         for member in node.variants:
-            member_name = Symbol(f"{node.name}.{member.name}")
+            member_name = _child_symbol(node.name, member.name)
             members.append(member_name)
             attributes = tuple(self._object_attribute(field) for field in member.fields)
             object_attributes = tuple(
@@ -1255,7 +1255,7 @@ class Analyser:
         value_type = T.V(node.generics[0].text) if node.generics else None
         members = tuple(
             T.EnumMemberDefinition(
-                Symbol(f"{node.name}.{member.name}"),
+                _child_symbol(node.name, member.name),
                 value_type,
                 bool(member.value),
             )
@@ -7412,6 +7412,10 @@ def _mustcall_methods(annotations: tuple[ASTNode, ...]) -> tuple[str, ...]:
                 methods.append(item[0].value)
             return tuple(methods)
     return ()
+
+
+def _child_symbol(parent: Symbol, child: Symbol) -> Symbol:
+    return Symbol(child.text, (*parent.namespace, parent.text, *child.namespace))
 
 
 def _set_item(

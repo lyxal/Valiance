@@ -106,7 +106,7 @@ def runtime_stdlib_elements() -> dict[str, BuiltinElement]:
     for module_name, functions in _all_native_modules().items():
         for function in functions:
             element = _runtime_element(module_name, function)
-            result[element.name.text] = element
+            result[element.name.dotted()] = element
     return result
 
 
@@ -122,7 +122,7 @@ def _module_definition(module_name: str, function: NativeFunction):
 
 def _typed_wrapper(module_name: str, function: NativeFunction) -> TypedFunctionNode:
     param_names = _param_names(function)
-    runtime_name = Symbol(f"std.{module_name}.{function.name.text}")
+    runtime_name = Symbol(function.name.text, ("std", module_name))
     overload = T.Overload(function.params, function.returns, param_names=param_names)
     applied = T.AppliedOverload(
         overload,
@@ -169,7 +169,7 @@ def _typed_wrapper(module_name: str, function: NativeFunction) -> TypedFunctionN
 
 def _runtime_element(module_name: str, function: NativeFunction) -> BuiltinElement:
     return BuiltinElement(
-        Symbol(f"std.{module_name}.{function.name.text}"),
+        Symbol(function.name.text, ("std", module_name)),
         (
             BuiltinOverload(
                 T.Overload(function.params, function.returns),

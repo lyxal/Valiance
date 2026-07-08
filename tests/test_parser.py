@@ -679,7 +679,7 @@ import {
             parse("utils.double 4"),
             [
                 NumberLiteralNode("4"),
-                ElementNode(Symbol("utils.double")),
+                ElementNode(Symbol("double", ("utils",))),
             ],
         )
 
@@ -1007,7 +1007,10 @@ end
 """)
 
         self.assertIsInstance(node, MatchNode)
-        self.assertEqual(node.cases[0].pattern_type, N(Symbol("Colour.RED")))
+        self.assertEqual(
+            node.cases[0].pattern_type,
+            N(Symbol("RED", ("Colour",))),
+        )
         self.assertFalse(node.cases[0].is_default)
         self.assertTrue(node.cases[1].is_default)
         self.assertEqual(node.cases[1].body, (StringLiteralNode("other"),))
