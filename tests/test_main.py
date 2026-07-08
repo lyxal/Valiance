@@ -203,7 +203,7 @@ class MainTests(unittest.TestCase):
     def test_main_formats_type_warnings_without_failing(self):
         output = io.StringIO()
         error = io.StringIO()
-        source = '@warn("use newer") define old -> Number => 1\nold | println'
+        source = '@warn("use newer") define \\old -> Number => 1\n\\old | println'
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
             exit_code = main(["run", "--code", source])
 

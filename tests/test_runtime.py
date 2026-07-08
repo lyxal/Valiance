@@ -671,8 +671,8 @@ $value 1 +
         self.assertEqual(
             execute(
                 """
-define pair -> Number, Number => 1 2
-@@tupled pair
+define \\pair -> Number, Number => 1 2
+@@tupled \\pair
 """
             ),
             [(Decimal("1"), Decimal("2"))],
@@ -867,11 +867,11 @@ object Temp =>
   define ~Temp => $self.name println
 end
 
-define makeTemp =>
+define \\makeTemp =>
   $value = Temp("released")
 end
 
-makeTemp
+\\makeTemp
 """
 
         with contextlib.redirect_stdout(output):
@@ -907,11 +907,11 @@ object Tx =>
   define ~Tx => "released" println
 end
 
-define leak =>
+define \\leak =>
   $tx = Tx
 end
 
-leak
+\\leak
 """
 
         with self.assertRaises(RuntimeError) as caught, contextlib.redirect_stdout(

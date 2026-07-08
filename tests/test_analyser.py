@@ -267,7 +267,7 @@ move(file -> file, file)
     def test_property_element_tag_declarations_are_user_attachable(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(parse("tag Log as property\ndefine f<Log> => 1"))
+        typed = analyser.analyse(parse("tag Log as property\ndefine \\f<Log> => 1"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertIn(ElementTag(Symbol("Log")), typed[-1].typ.element_tags)
@@ -275,7 +275,7 @@ move(file -> file, file)
     def test_companion_element_tags_cannot_be_directly_attached(self):
         analyser = Analyser()
 
-        analyser.analyse(parse("define f<Eager> => 1"))
+        analyser.analyse(parse("define \\f<Eager> => 1"))
 
         self.assertIn("cannot be directly attached", analyser.diagnostics[-1])
 
@@ -295,7 +295,7 @@ move(file -> file, file)
 tag Read as property
 tag Write as property
 tag Read disjoint Write
-define f<Read, Write> => 1
+define \\f<Read, Write> => 1
 """
             )
         )
@@ -1058,6 +1058,39 @@ end
             ),
         )
 
+    def test_define_inferred_nilad_requires_backslash_name(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("define PI => 3.14"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["1:1: PI inferred as nilad, but not named as one"],
+        )
+
+    def test_backslash_define_must_infer_niladic_stack_effect(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("define \\actually_a_monad => length"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "1:1: \\actually_a_monad named as nilad, "
+                "but inferred as popping 1 value(s)"
+            ],
+        )
+
+    def test_backslash_define_allows_niladic_stack_effect(self):
+        typed = analyse(parse("define \\PI => 3.14"))
+
+        self.assertEqual(typed[0].typ, Fn((), (Real,)))
+
+    def test_niladic_function_literal_does_not_require_backslash(self):
+        typed = analyse(parse("fn () => 3.14"))
+
+        self.assertEqual(typed[0].typ, Fn((), (Real,)))
+
     def test_top_level_assignment_is_not_captured_by_define(self):
         analyser = Analyser()
 
@@ -1648,7 +1681,7 @@ getName $joe
         self.assertEqual(typed[0].typ, Fn((Number, Number), (Number,)))
 
     def test_return_all_annotation_returns_full_function_stack(self):
-        typed = analyse(parse("@returnAll define pair => 1 2\npair"))
+        typed = analyse(parse("@returnAll define \\pair => 1 2\n\\pair"))
 
         self.assertEqual(typed[0].typ, Fn((), (Integer, Integer)))
         self.assertEqual(typed[-1].overload.actual_returns, (Integer, Integer))
@@ -1681,13 +1714,15 @@ getName $joe
     def test_deprecated_annotation_has_default_warning(self):
         analyser = Analyser()
 
-        analyser.analyse(parse("@deprecated define old -> Number => 1\nold"))
+        analyser.analyse(parse("@deprecated define \\old -> Number => 1\n\\old"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(analyser.warnings, ["2:1: selected overload is deprecated"])
 
     def test_tupled_element_annotation_wraps_static_returns(self):
-        typed = analyse(parse("define pair -> Number, Number => 1 2\n@@tupled pair"))
+        typed = analyse(
+            parse("define \\pair -> Number, Number => 1 2\n@@tupled \\pair")
+        )
 
         self.assertEqual(typed[-1].typ, Tup(Number, Number))
 
@@ -1731,7 +1766,7 @@ end
         register_annotation(AnnotationSpec("pluginCheck", frozenset({"define"})))
         analyser = Analyser()
 
-        analyser.analyse(parse("@pluginCheck define value -> Number => 1"))
+        analyser.analyse(parse("@pluginCheck define \\value -> Number => 1"))
 
         self.assertEqual(analyser.diagnostics, [])
 
@@ -2677,7 +2712,7 @@ end
             root = Path(tmp)
             (root / "math.vlnc").write_text(
                 "public define add_one(n: Number) -> Number => $n 1 +\n"
-                "define hidden => 2\n",
+                "define hidden(n: Number) -> Number => $n\n",
                 encoding="utf-8",
             )
             main = root / "main.vlnc"
@@ -2718,13 +2753,13 @@ end
                 encoding="utf-8",
             )
             (root / "shared.vlnc").write_text(
-                "public define answer -> Number => 42\n",
+                "public define answer(n: Number) -> Number => $n\n",
                 encoding="utf-8",
             )
             main = nested / "main.vlnc"
 
             analyser = Analyser(source_file=main)
-            typed = analyser.analyse(parse("import { root.shared.answer }\nanswer"))
+            typed = analyser.analyse(parse("import { root.shared.answer }\n42 answer"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, Number)
@@ -2750,7 +2785,7 @@ end
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "math.vlnc").write_text(
-                "define hidden => 2\n",
+                "define hidden(n: Number) -> Number => $n\n",
                 encoding="utf-8",
             )
             main = root / "main.vlnc"

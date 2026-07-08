@@ -820,6 +820,19 @@ class Analyser:
             if not isinstance(typing.overload, T.Overload):
                 continue
             overload = typing.overload
+            if not _validate_define_niladic_name(name, overload):
+                if name.text.startswith("\\"):
+                    self._diagnose(
+                        f"{name} named as nilad, but inferred as popping "
+                        f"{len(overload.params)} value(s)",
+                        node,
+                    )
+                else:
+                    self._diagnose(
+                        f"{name} inferred as nilad, but not named as one",
+                        node,
+                    )
+                continue
             if name.text.startswith("#") and not _validator_overload_ok(
                 overload,
                 self.env.context,
@@ -3453,6 +3466,12 @@ def _fully_typed_overload(node: FunctionNode) -> T.Overload | None:
         ),
         param_defaults=_function_param_defaults_for_overload(node, params),
     )
+
+
+def _validate_define_niladic_name(name: Symbol, overload: T.Overload) -> bool:
+    is_named_nilad = name.text.startswith("\\")
+    is_inferred_nilad = len(overload.params) == 0
+    return is_named_nilad == is_inferred_nilad
 
 
 def _body_references_element(body: tuple[ASTNode, ...], name: Symbol) -> bool:
