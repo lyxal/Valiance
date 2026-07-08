@@ -445,6 +445,11 @@ def _dup(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (args[0], args[0])
 
 
+@builtin("swap", (T.V("A"), T.V("B")), (T.V("B"), T.V("A")))
+def _swap(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (args[1], args[0])
+
+
 @builtin("top", (T.V("T"),), (T.V("T"),))
 def _top(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (args[0],)

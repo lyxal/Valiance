@@ -181,25 +181,149 @@ def _satisfies_anonymous_trait(
     target: AnonymousTraitType,
     ctx: Context,
 ) -> bool:
-    subst: dict[str, Type] = {}
-    if target.generics:
-        subst[target.generics[0].text] = source
-    return all(
-        _anonymous_requirement_satisfied(requirement, subst, ctx)
-        for requirement in target.requirements
-    )
+    return _solve_anonymous_trait(source, target, ctx) is not None
 
 
-def _anonymous_requirement_satisfied(
-    requirement: AnonymousTraitRequirement,
-    subst: dict[str, Type],
+def _solve_anonymous_trait(
+    source: Type,
+    target: AnonymousTraitType,
     ctx: Context,
-) -> bool:
-    expected = _substitute_overload(requirement.overload, subst)
-    return any(
-        _overload_satisfies_requirement(candidate, expected, ctx)
-        for candidate in ctx.overloads_for_structural_trait(requirement.name)
-    )
+) -> dict[str, list[Type]] | None:
+    constraints: dict[str, list[Type]] = {}
+    subject = _anonymous_trait_subject_name(target)
+    if subject is not None:
+        constraints[subject] = [source]
+    for requirement in target.requirements:
+        updated = _anonymous_requirement_constraints(requirement, constraints, ctx)
+        if updated is None:
+            return None
+        constraints = updated
+    return constraints
+
+
+def _anonymous_trait_subject_name(target: AnonymousTraitType) -> str | None:
+    if target.generics:
+        return target.generics[0].text
+    for requirement in target.requirements:
+        for item in requirement.overload.params + requirement.overload.returns:
+            name = _first_type_var_name(item)
+            if name is not None:
+                return name
+    return None
+
+
+def _first_type_var_name(typ: Type) -> str | None:
+    typ = normalize(typ)
+    if isinstance(typ, VarType):
+        return typ.name
+    if isinstance(typ, NominalType):
+        for arg in typ.args:
+            name = _first_type_var_name(arg)
+            if name is not None:
+                return name
+    if isinstance(typ, (UnionType, IntersectionType)):
+        for item in typ.items:
+            name = _first_type_var_name(item)
+            if name is not None:
+                return name
+    if isinstance(typ, TupleType):
+        for item in typ.params:
+            name = _first_type_var_name(item)
+            if name is not None:
+                return name
+    if isinstance(typ, VariadicTupleType):
+        for item in typ.items:
+            name = _first_type_var_name(item.typ)
+            if name is not None:
+                return name
+    if isinstance(typ, RowType):
+        name = _first_type_var_name(typ.base)
+        if name is not None:
+            return name
+        for field in typ.fields:
+            name = _first_type_var_name(field.typ)
+            if name is not None:
+                return name
+    if isinstance(typ, CollectionType):
+        return _first_type_var_name(typ.base)
+    if isinstance(typ, FunctionType):
+        if typ.params is not None:
+            for item in typ.params:
+                name = _first_type_var_name(item)
+                if name is not None:
+                    return name
+        if typ.returns is not None:
+            for item in typ.returns:
+                name = _first_type_var_name(item)
+                if name is not None:
+                    return name
+    if isinstance(typ, AnonymousTraitType):
+        return _anonymous_trait_subject_name(typ)
+    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
+        return _first_type_var_name(typ.inner)
+    return None
+
+
+def _anonymous_requirement_constraints(
+    requirement: AnonymousTraitRequirement,
+    constraints: dict[str, list[Type]],
+    ctx: Context,
+) -> dict[str, list[Type]] | None:
+    for candidate in ctx.overloads_for_structural_trait(requirement.name):
+        merged = {key: list(values) for key, values in constraints.items()}
+        subst = _combined_substitution(merged)
+        if subst is None:
+            continue
+        expected = _substitute_overload(requirement.overload, subst)
+        inferred = _solve_overload_shape(expected, candidate, ctx)
+        if inferred is None:
+            continue
+        for key, values in inferred.items():
+            merged.setdefault(key, []).extend(values)
+        subst = _combined_substitution(merged)
+        if subst is None:
+            continue
+        expected = _substitute_overload(requirement.overload, subst)
+        if _overload_satisfies_requirement(candidate, expected, ctx):
+            return merged
+    return None
+
+
+def _combined_substitution(
+    constraints: dict[str, list[Type]],
+) -> dict[str, Type] | None:
+    substitution: dict[str, Type] = {}
+    for key, values in constraints.items():
+        combined = _combine_all(values)
+        if combined is None:
+            return None
+        substitution[key] = combined
+    return substitution
+
+
+def _solve_overload_shape(
+    expected: Overload,
+    candidate: Overload,
+    ctx: Context,
+) -> dict[str, list[Type]] | None:
+    if len(expected.params) != len(candidate.params) or len(expected.returns) != len(
+        candidate.returns
+    ):
+        return None
+    constraints: dict[str, list[Type]] = {}
+    for pattern, actual in zip(
+        expected.params + expected.returns,
+        candidate.params + candidate.returns,
+        strict=True,
+    ):
+        result = _solve(pattern, actual, ctx)
+        if result is None:
+            if _contains_type_var(pattern):
+                return None
+            continue
+        for key, values in result.items():
+            constraints.setdefault(key, []).extend(values)
+    return constraints
 
 
 def _overload_satisfies_requirement(
@@ -396,6 +520,8 @@ def _solve(
         if isinstance(p, VarType):
             # Solving does not decide whether this is globally valid; it only
             # records what this one parameter says the generic must be.
+            if _contains_named_type_var(a, p.name):
+                return True
             add(p.name, a)
             return True
         if same(p, a):
@@ -529,10 +655,11 @@ def _solve(
                 return rec(p.base, a.base)
             return _solve_collection(p, a, add)
         if isinstance(p, AnonymousTraitType):
-            if not _satisfies_anonymous_trait(a, p, ctx):
+            result = _solve_anonymous_trait(a, p, ctx)
+            if result is None:
                 return False
-            if p.generics:
-                add(p.generics[0].text, a)
+            for key, values in result.items():
+                constraints.setdefault(key, []).extend(values)
             return True
         return False
 
@@ -1407,6 +1534,42 @@ def _contains_type_var(t: Type) -> bool:
     return False
 
 
+def _contains_named_type_var(t: Type, name: str) -> bool:
+    """Return whether a type tree contains the named generic type variable."""
+    t = normalize(t)
+    if isinstance(t, VarType):
+        return t.name == name
+    if isinstance(t, NominalType):
+        return any(_contains_named_type_var(arg, name) for arg in t.args)
+    if isinstance(t, (UnionType, IntersectionType)):
+        return any(_contains_named_type_var(item, name) for item in t.items)
+    if isinstance(t, TupleType):
+        return any(_contains_named_type_var(item, name) for item in t.params)
+    if isinstance(t, VariadicTupleType):
+        return any(_contains_named_type_var(item.typ, name) for item in t.items)
+    if isinstance(t, RowType):
+        return _contains_named_type_var(t.base, name) or any(
+            _contains_named_type_var(field.typ, name) for field in t.fields
+        )
+    if isinstance(t, CollectionType):
+        return _contains_named_type_var(t.base, name)
+    if isinstance(t, FunctionType):
+        if t.params is None or t.returns is None:
+            return _element_tags_contain_named_type_var(t.element_tags, name)
+        return any(
+            _contains_named_type_var(item, name) for item in t.params + t.returns
+        ) or _element_tags_contain_named_type_var(t.element_tags, name)
+    if isinstance(t, AnonymousTraitType):
+        return any(
+            _contains_named_type_var(item, name)
+            for requirement in t.requirements
+            for item in requirement.overload.params + requirement.overload.returns
+        )
+    if isinstance(t, (TaggedType, ExactType, AtomicType)):
+        return _contains_named_type_var(t.inner, name)
+    return False
+
+
 def _dominates(a: tuple[Specificity, ...], b: tuple[Specificity, ...]) -> bool:
     """Return whether specificity vector ``a`` strictly dominates ``b``."""
     return all(x <= y for x, y in zip(a, b, strict=False)) and any(
@@ -1547,6 +1710,15 @@ def _substitute_element_tags(
 
 def _element_tags_contain_type_var(tags: frozenset[ElementTag]) -> bool:
     return any(_contains_type_var(arg) for tag in tags for arg in tag.args)
+
+
+def _element_tags_contain_named_type_var(
+    tags: frozenset[ElementTag],
+    name: str,
+) -> bool:
+    return any(
+        _contains_named_type_var(arg, name) for tag in tags for arg in tag.args
+    )
 
 
 def _has_unit_tag(tags: frozenset[DataTag], ctx: Context) -> bool:

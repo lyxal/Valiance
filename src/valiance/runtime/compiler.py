@@ -1004,23 +1004,32 @@ def _resolved_element_reference(
     if not isinstance(ast, ElementNode):
         return None
     runtime_name = ast.name.text.removeprefix("*::")
+    type_args = _resolved_constructor_type_args(ast, node)
     elements = runtime_elements()
     element = elements.get(runtime_name)
     if element is not None:
         if not 0 <= node.overload_index < len(element.definitions):
             return None
-        if element.definitions[node.overload_index].implementation is None:
+        definition = element.definitions[node.overload_index]
+        if definition.implementation is None:
             raise CompileError(
                 f"cannot compile static-only overload {node.overload_index} "
                 f"of built-in element '{runtime_name}'"
             )
+        if (
+            node.overload is not None
+            and node.overload.overload != definition.signature
+            and node.overload.overload.call_site_body is None
+            and not type_args
+        ):
+            return None
     if (
         element is None
         and Symbol(runtime_name) in {item.name for item in BUILTIN_ELEMENTS}
+        and not type_args
     ):
         return None
     vectorised = bool(node.overload is not None and node.overload.vectorised)
-    type_args = _resolved_constructor_type_args(ast, node)
     if ast.name.text == "call" and node.call_overload_index is not None:
         static_values = (node.call_overload_index,)
     else:

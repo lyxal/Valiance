@@ -119,6 +119,26 @@ define pick(a: Number, b: Number = 2) -> Number => $a $b +
         self.assertEqual(execute('3 "ha" *'), ["hahaha"])
         self.assertEqual(execute('"ha" 3 *'), ["hahaha"])
 
+    def test_structural_trait_element_calls_dispatch_to_runtime_shape(self):
+        self.assertEqual(
+            execute(
+                """
+define[T, U] dotProd(
+  left: trait =>
+    extend +(:T, :T) -> T
+    extend *(:T, :U) -> T
+  end +,
+  right: U+
+) =>
+  * | fold: +
+end
+
+["Fizz", "Buzz"] dotProd [0, 1]
+"""
+            ),
+            ["Buzz"],
+        )
+
     def test_vectorises_scalar_overloads_over_lazy_lists(self):
         program = Program(
             FunctionCode(

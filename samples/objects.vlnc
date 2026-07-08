@@ -3,7 +3,9 @@ object Person =>
   $age: Number
 end
 
-define getName(person) -> String => $.name
+$people = [Person("Joe", 67), Person("Jeff", 15), Person("Jill", 30)]
 
-$joe = Person("Joe", 67)
-println getName $joe
+define ageABit(p: Person) => Person($p.name, $p.age + 1)
+
+println $people
+println ageABit $people

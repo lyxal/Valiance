@@ -3675,6 +3675,50 @@ def _contains_type_var(typ: T.Type) -> bool:
     return False
 
 
+def _contains_named_type_var(typ: T.Type, name: str) -> bool:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.VarType):
+        return typ.name == name
+    if isinstance(typ, T.CollectionType):
+        return _contains_named_type_var(typ.base, name)
+    if isinstance(typ, T.NominalType):
+        return any(_contains_named_type_var(arg, name) for arg in typ.args)
+    if isinstance(typ, (T.UnionType, T.IntersectionType)):
+        return any(_contains_named_type_var(item, name) for item in typ.items)
+    if isinstance(typ, T.TupleType):
+        return any(_contains_named_type_var(item, name) for item in typ.params)
+    if isinstance(typ, T.VariadicTupleType):
+        return any(_contains_named_type_var(item.typ, name) for item in typ.items)
+    if isinstance(typ, T.RowType):
+        return _contains_named_type_var(typ.base, name) or any(
+            _contains_named_type_var(field.typ, name) for field in typ.fields
+        )
+    if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return _element_tags_contain_named_type_var(typ.element_tags, name)
+        return any(
+            _contains_named_type_var(item, name) for item in typ.params + typ.returns
+        ) or _element_tags_contain_named_type_var(typ.element_tags, name)
+    if isinstance(typ, T.AnonymousTraitType):
+        return any(
+            _contains_named_type_var(item, name)
+            for requirement in typ.requirements
+            for item in requirement.overload.params + requirement.overload.returns
+        )
+    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _contains_named_type_var(typ.inner, name)
+    return False
+
+
+def _element_tags_contain_named_type_var(
+    tags: frozenset[T.ElementTag],
+    name: str,
+) -> bool:
+    return any(
+        _contains_named_type_var(arg, name) for tag in tags for arg in tag.args
+    )
+
+
 def _contains_type_var_in_stack(types: tuple[T.Type, ...] | None) -> bool:
     return types is not None and any(_contains_type_var(typ) for typ in types)
 
@@ -5080,6 +5124,8 @@ def _specialize_branch_arguments(
     substitution: dict[str, T.Type],
 ) -> AnalysisBranch:
     for name, typ in substitution.items():
+        if _contains_named_type_var(typ, name):
+            continue
         branch = branch.refine_type(T.V(name), typ)
     return branch
 
@@ -5370,8 +5416,12 @@ def _solve_branch_argument(
         actual = T.normalize(actual)
         expected = T.normalize(expected)
         if isinstance(actual, T.VarType):
+            if _contains_named_type_var(expected, actual.name):
+                return True
             return bind(actual.name, expected)
         if isinstance(expected, T.VarType):
+            if _contains_named_type_var(actual, expected.name):
+                return True
             return bind(expected.name, actual)
         if T.compatible(actual, expected, ctx):
             return True
@@ -6686,8 +6736,11 @@ def _anonymous_trait_overloads(*types: T.Type) -> tuple[tuple[Symbol, T.Overload
 
 def _anonymous_trait_subject_view(typ: T.Type) -> T.Type:
     typ = T.normalize(typ)
-    if isinstance(typ, T.AnonymousTraitType) and typ.generics:
-        return T.V(typ.generics[0].text)
+    if isinstance(typ, T.AnonymousTraitType):
+        subject = _anonymous_trait_subject_name(typ)
+        if subject is not None:
+            return T.V(subject)
+        return typ
     if isinstance(typ, T.NominalType):
         return T.N(typ.name, *(_anonymous_trait_subject_view(arg) for arg in typ.args))
     if isinstance(typ, T.UnionType):
@@ -6728,6 +6781,69 @@ def _anonymous_trait_subject_view(typ: T.Type) -> T.Type:
     if isinstance(typ, T.AtomicType):
         return T.Atomic(_anonymous_trait_subject_view(typ.inner))
     return typ
+
+
+def _anonymous_trait_subject_name(typ: T.AnonymousTraitType) -> str | None:
+    if typ.generics:
+        return typ.generics[0].text
+    for requirement in typ.requirements:
+        for item in requirement.overload.params + requirement.overload.returns:
+            name = _first_type_var_name(item)
+            if name is not None:
+                return name
+    return None
+
+
+def _first_type_var_name(typ: T.Type) -> str | None:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.VarType):
+        return typ.name
+    if isinstance(typ, T.NominalType):
+        for arg in typ.args:
+            name = _first_type_var_name(arg)
+            if name is not None:
+                return name
+    if isinstance(typ, (T.UnionType, T.IntersectionType)):
+        for item in typ.items:
+            name = _first_type_var_name(item)
+            if name is not None:
+                return name
+    if isinstance(typ, T.TupleType):
+        for item in typ.params:
+            name = _first_type_var_name(item)
+            if name is not None:
+                return name
+    if isinstance(typ, T.VariadicTupleType):
+        for item in typ.items:
+            name = _first_type_var_name(item.typ)
+            if name is not None:
+                return name
+    if isinstance(typ, T.RowType):
+        name = _first_type_var_name(typ.base)
+        if name is not None:
+            return name
+        for field in typ.fields:
+            name = _first_type_var_name(field.typ)
+            if name is not None:
+                return name
+    if isinstance(typ, T.CollectionType):
+        return _first_type_var_name(typ.base)
+    if isinstance(typ, T.FunctionType):
+        if typ.params is not None:
+            for item in typ.params:
+                name = _first_type_var_name(item)
+                if name is not None:
+                    return name
+        if typ.returns is not None:
+            for item in typ.returns:
+                name = _first_type_var_name(item)
+                if name is not None:
+                    return name
+    if isinstance(typ, T.AnonymousTraitType):
+        return _anonymous_trait_subject_name(typ)
+    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _first_type_var_name(typ.inner)
+    return None
 
 
 def _contains_anonymous_trait(typ: T.Type) -> bool:

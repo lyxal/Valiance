@@ -882,6 +882,30 @@ sum
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Integer")))
 
+    def test_anonymous_trait_requirement_contributes_generic_constraints(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                """
+define[T, U] dotProd(
+  left: trait =>
+    extend +(:T, :T) -> T
+    extend *(:T, :U) -> T
+  end +,
+  right: U+
+) =>
+  * | fold: +
+end
+
+[1, 2, 3] dotProd [4, 5, 6]
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, N(Symbol("Integer")))
+
     def test_enum_declaration_registers_niladic_members(self):
         env = Environment()
         analyser = Analyser(env)

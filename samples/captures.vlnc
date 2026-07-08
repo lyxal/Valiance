@@ -1,0 +1,5 @@
+define makeMult(x: Number) =>
+  fn (y: Number) => $x * $y
+end
+
+makeMult(2) call(3) | println
