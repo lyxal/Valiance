@@ -15,7 +15,9 @@ from valiance.packages import (
     add_dependency,
     init_project,
     install,
+    project_entry_path,
     remove_dependency,
+    require_manifest,
     upgrade_dependency,
 )
 from valiance.parsing import LexError, ParseError, Parser, lex
@@ -33,6 +35,7 @@ from valiance.runtime_values import DIAGNOSTIC_LIST_PREVIEW_LIMIT, format_runtim
 
 DEFAULT_BYTECODE_FILENAME = "out.vbc"
 DEFAULT_BYTECODE_SUFFIX = ".vbc"
+DEFAULT_PROJECT_BYTECODE_DIR = "bin"
 _ANSI_RESET = "\033[0m"
 _ANSI_BOLD = "\033[1m"
 _ANSI_DIM = "\033[2m"
@@ -40,16 +43,20 @@ _ANSI_CYAN = "\033[36m"
 _ANSI_GREEN = "\033[32m"
 
 _SOURCE_ACTIONS = {"compile", "run", "parse", "analyse", "analyze", "annotate"}
-_BYTECODE_ACTIONS = {"run-bytecode"}
+_BYTECODE_ACTIONS = {"exec"}
 _PACKAGE_ACTIONS = {"init", "install", "add", "remove", "upgrade"}
 _ACTIONS = _SOURCE_ACTIONS | _BYTECODE_ACTIONS | _PACKAGE_ACTIONS
 
 HELP = """usage: valiance
-       valiance [compile] <file> [-o <file>]
-       valiance [compile] -c <code> [-o <file>]
-       valiance run <file>
+       valiance <file> [-o <file>]
+       valiance compile [<entry>] [-o <file>]
+       valiance compile --file <file> [-o <file>]
+       valiance compile -c <code> [-o <file>]
+       valiance run [<entry>]
+       valiance run --file <file>
        valiance run -c <code>
-       valiance run-bytecode <file>
+       valiance exec [<entry>]
+       valiance exec --file <file>
        valiance parse <file>
        valiance analyse <file>
        valiance annotate <file>
@@ -61,9 +68,9 @@ HELP = """usage: valiance
 
 actions:
   <no action>        start the REPL
-  compile             compile source to bytecode; default action
-  run                 compile and execute source without writing bytecode
-  run-bytecode        execute an existing bytecode file
+  compile             compile the current project's main or named entry
+  run                 run the current project's main or named entry
+  exec                execute existing project bytecode without compiling
   parse               print the parsed AST
   analyse             print the typed AST
   annotate            print source with inferred type annotations
@@ -74,7 +81,8 @@ actions:
   upgrade             change a dependency to an exact version
 
 options:
-  -c, --code <code>   use inline Valiance code instead of a source file
+  -c, --code <code>   use inline Valiance code
+  --file <file>        use an explicit source or bytecode file
   -o, --output <file> write compiled bytecode to this file
   --implicit-output   print the final stack if execution prints nothing
                       (default for run --code)
@@ -96,9 +104,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(HELP)
         return 2
 
-    if parsed.action == "run-bytecode":
+    if parsed.action == "exec":
+        bytecode_file = parsed.bytecode_file
+        if bytecode_file is None:
+            try:
+                manifest = require_manifest()
+                bytecode_file = _project_bytecode_path(
+                    manifest.root,
+                    parsed.project_entry,
+                )
+            except PackageError as exc:
+                print(f"Package error: {exc}", file=sys.stderr)
+                return 1
         return _run_bytecode_file(
-            parsed.bytecode_file,
+            bytecode_file,
             implicit_output=parsed.implicit_output,
             preview_lists=parsed.preview_lists,
         )
@@ -107,9 +126,21 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     source = parsed.code
     source_file: Path | None = None
+    project_root: Path | None = None
+    project_entry: str | None = None
     if source is None:
-        source_file = Path(parsed.file)
-        source = _read_source_file(parsed.file)
+        if parsed.project_entry is not None:
+            try:
+                manifest = require_manifest()
+                source_file = project_entry_path(manifest, parsed.project_entry)
+                project_root = manifest.root
+                project_entry = parsed.project_entry
+            except PackageError as exc:
+                print(f"Package error: {exc}", file=sys.stderr)
+                return 1
+        else:
+            source_file = Path(parsed.source_file)
+        source = _read_source_file(str(source_file))
         if source is None:
             return 1
 
@@ -118,6 +149,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         action=parsed.action,
         bytecode_output=parsed.output,
         source_file=source_file,
+        project_root=project_root,
+        project_entry=project_entry,
         implicit_output=parsed.implicit_output,
         preview_lists=parsed.preview_lists,
     )
@@ -125,7 +158,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _parse_args(args: list[str]) -> argparse.Namespace | None:
     action = "compile"
+    explicit_action: str | None = None
     if args and args[0] in _ACTIONS:
+        explicit_action = args[0]
         action = "analyse" if args[0] == "analyze" else args[0]
         args = args[1:]
 
@@ -134,10 +169,10 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
         add_help=False,
     )
     parser.add_argument("-c", "--code")
+    parser.add_argument("--file", dest="explicit_source_file")
     parser.add_argument("-o", "--output")
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--emit-bytecode", dest="legacy_output")
-    parser.add_argument("--run-bytecode", dest="legacy_bytecode_file")
     parser.add_argument("--implicit-output", action="store_true")
     parser.add_argument("--preview-lists", action="store_true")
     parser.add_argument("file", nargs="?")
@@ -157,14 +192,7 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
             print("error: --run cannot be combined with an action", file=sys.stderr)
             return None
         action = "run"
-    if parsed.legacy_bytecode_file is not None:
-        if action != "compile":
-            print(
-                "error: --run-bytecode cannot be combined with an action",
-                file=sys.stderr,
-            )
-            return None
-        action = "run-bytecode"
+
     if parsed.legacy_output is not None:
         if parsed.output is not None:
             print(
@@ -175,35 +203,33 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
         parsed.output = parsed.legacy_output
 
     parsed.action = action
-    parsed.bytecode_file = parsed.legacy_bytecode_file
+    parsed.bytecode_file = None
 
-    if parsed.action == "run-bytecode":
+    if parsed.action == "exec":
         if parsed.code is not None or parsed.output is not None or parsed.run:
             print(
-                "error: run-bytecode cannot be combined with source input, "
-                "--run, or bytecode output",
+                "error: exec cannot be combined with source input, --run, "
+                "or bytecode output",
                 file=sys.stderr,
             )
             return None
-        if parsed.bytecode_file is not None and parsed.file is not None:
-            print(
-                "error: pass either run-bytecode <file> or --run-bytecode <file>, "
-                "not both",
-                file=sys.stderr,
-            )
+        if parsed.extra:
+            print("error: exec takes at most one entry name", file=sys.stderr)
             return None
-        parsed.bytecode_file = parsed.bytecode_file or parsed.file
-        if parsed.bytecode_file is None:
-            print("error: run-bytecode requires a bytecode file", file=sys.stderr)
+        if parsed.file is not None and parsed.explicit_source_file is not None:
+            print("error: pass either an entry or --file, not both", file=sys.stderr)
             return None
+
+        parsed.project_entry = parsed.file or "main"
+        parsed.bytecode_file = parsed.explicit_source_file
         return parsed
 
     if parsed.action in _PACKAGE_ACTIONS:
         if (
             parsed.code is not None
+            or parsed.explicit_source_file is not None
             or parsed.output is not None
             or parsed.run
-            or parsed.legacy_bytecode_file is not None
             or parsed.implicit_output
             or parsed.preview_lists
         ):
@@ -214,26 +240,56 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
             return None
         return _validate_package_args(parsed)
 
-    if parsed.legacy_bytecode_file is not None:
-        print(
-            "error: --run-bytecode cannot be combined with source actions",
-            file=sys.stderr,
-        )
-        return None
     if parsed.output is not None and parsed.action != "compile":
         print("error: bytecode output is only valid for compile", file=sys.stderr)
         return None
-    if parsed.implicit_output and parsed.action not in {"run"}:
+    if parsed.implicit_output and parsed.action != "run":
         print("error: --implicit-output is only valid for run actions", file=sys.stderr)
         return None
-    if parsed.preview_lists and parsed.action not in {"run", "run-bytecode"}:
+    if parsed.preview_lists and parsed.action not in {"run", "exec"}:
         print("error: --preview-lists is only valid for run actions", file=sys.stderr)
         return None
-    if parsed.code is not None and parsed.file is not None:
-        print("error: pass either a file or --code, not both", file=sys.stderr)
+    if parsed.extra:
+        print("error: too many positional arguments", file=sys.stderr)
         return None
-    if parsed.code is None and parsed.file is None:
-        return None
+
+    project_mode = explicit_action in {"compile", "run"} and not parsed.run
+
+    if project_mode:
+        selected_inputs = sum(
+            value is not None
+            for value in (parsed.code, parsed.explicit_source_file, parsed.file)
+        )
+        if selected_inputs > 1:
+            print(
+                "error: pass an entry, --file, or --code; not more than one",
+                file=sys.stderr,
+            )
+            return None
+
+        parsed.project_entry = None
+        parsed.source_file = None
+        if parsed.code is None:
+            if parsed.explicit_source_file is not None:
+                parsed.source_file = parsed.explicit_source_file
+            else:
+                parsed.project_entry = parsed.file or "main"
+    else:
+        if parsed.explicit_source_file is not None:
+            print(
+                "error: --file is only valid with explicit compile or run actions",
+                file=sys.stderr,
+            )
+            return None
+        if parsed.code is not None and parsed.file is not None:
+            print("error: pass either a file or --code, not both", file=sys.stderr)
+            return None
+        if parsed.code is None and parsed.file is None:
+            return None
+
+        parsed.project_entry = None
+        parsed.source_file = parsed.file
+
     if parsed.action == "run" and parsed.code is not None:
         parsed.implicit_output = True
     return parsed
@@ -471,6 +527,8 @@ def _run_source(
     action: str = "compile",
     bytecode_output: str | None = None,
     source_file: Path | None = None,
+    project_root: Path | None = None,
+    project_entry: str | None = None,
     implicit_output: bool = False,
     preview_lists: bool = False,
 ) -> int:
@@ -523,7 +581,12 @@ def _run_source(
         if action != "compile":
             print(f"error: unknown action {action!r}", file=sys.stderr)
             return 1
-        output_path = _resolve_bytecode_output_path(bytecode_output, source_file)
+        output_path = _resolve_bytecode_output_path(
+            bytecode_output,
+            source_file,
+            project_root=project_root,
+            project_entry=project_entry,
+        )
         _write_bytecode_file(output_path, dumps(bytecode))
         print(f"Wrote bytecode: {output_path}")
         return 0
@@ -537,6 +600,20 @@ def _run_source(
     ) as exc:
         _print_exception_diagnostic(exc, source=source, source_file=source_file)
         return 1
+
+
+def _project_bytecode_path(project_root: Path, entry: str) -> Path:
+    path = (
+        project_root
+        / DEFAULT_PROJECT_BYTECODE_DIR
+        / f"{entry}{DEFAULT_BYTECODE_SUFFIX}"
+    )
+    if not path.is_file():
+        raise PackageError(
+            f"compiled entry {entry!r} does not exist: {path}; "
+            f"run `vln compile {entry}` first"
+        )
+    return path
 
 
 def _run_bytecode_file(
@@ -561,8 +638,17 @@ def _run_bytecode_file(
 def _resolve_bytecode_output_path(
     filename: str | None,
     source_file: Path | None,
+    *,
+    project_root: Path | None = None,
+    project_entry: str | None = None,
 ) -> Path:
     if filename is None:
+        if project_root is not None and project_entry is not None:
+            return (
+                project_root
+                / DEFAULT_PROJECT_BYTECODE_DIR
+                / f"{project_entry}{DEFAULT_BYTECODE_SUFFIX}"
+            )
         if source_file is not None:
             return source_file.with_suffix(DEFAULT_BYTECODE_SUFFIX)
         return Path(DEFAULT_BYTECODE_FILENAME)
@@ -573,7 +659,9 @@ def _resolve_bytecode_output_path(
 
 
 def _write_bytecode_file(filename: str | Path, data: bytes) -> None:
-    Path(filename).write_bytes(data)
+    path = Path(filename)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
 
 
 def _print_exception_diagnostic(

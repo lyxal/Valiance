@@ -143,10 +143,22 @@ The runtime implementation is small, but several files must evolve together.
 
 `src/valiance/main.py`
 
-- Wires the CLI to analysis, codegen, VM execution, and bytecode files.
-- Source input compiles by default and emits `.vbc` bytecode.
-- Relevant actions are `compile`, `run`, `run-bytecode`, `parse`, and `analyse`.
+- Wires the CLI to project entry resolution, analysis, codegen, VM execution,
+  and bytecode files.
+- Relevant actions are `compile`, `run`, `exec`, `parse`, and `analyse`.
+- `compile`, `run`, and `exec` are project-oriented:
+  - `valiance compile` and `valiance run` select the `main` entry.
+  - `valiance compile <entry>` and `valiance run <entry>` select a named source entry.
+  - `valiance exec` executes `bin/main.vbc` without compiling.
+  - `valiance exec <entry>` executes `bin/<entry>.vbc` without compiling.
+  - `--file <path>` explicitly selects an arbitrary source or bytecode file,
+    depending on the action.
+  - `--code <source>` explicitly compiles or runs inline source.
+- Project entries are declared in the manifest's `[entries]` table. Entry paths
+  are resolved relative to the project root.
+- Project compilation writes bytecode to `bin/<entry>.vbc`.
 - `run` compiles and executes source without writing bytecode.
+- `exec` loads existing bytecode and never recompiles source.
 
 ## Core Invariants
 
@@ -670,11 +682,40 @@ This means library callers can still use `run()` without surprise printing.
 
 ## Bytecode Files
 
-The CLI supports two bytecode workflows:
+The CLI supports project-entry, direct-file, inline-source, and saved-bytecode
+workflows:
 
 ```powershell
-uv run valiance --code "[1, 2, 3] + [5, 6, 7]" --output C:\tmp\sample.vbc
-uv run valiance run-bytecode C:\tmp\sample.vbc --implicit-output
+# Compile the current project's main entry to bin/main.vbc.
+uv run valiance compile
+
+# Compile a named project entry to bin/server.vbc.
+uv run valiance compile server
+
+# Execute those compiled project entries without recompiling.
+uv run valiance exec
+uv run valiance exec server
+
+# Compile an arbitrary source file explicitly.
+uv run valiance compile --file samples\example.vlnc
+
+# Compile inline source.
+uv run valiance compile --code "[1, 2, 3] + [5, 6, 7]" --output C:\tmp\sample.vbc
+
+# Execute an arbitrary saved bytecode file.
+uv run valiance exec --file C:\tmp\sample.vbc --implicit-output
+```
+
+Project manifests expose entries through an `[entries]` table:
+
+```toml
+[project]
+name = "demo"
+version = "0.1.0"
+
+[entries]
+main = "src/main.vlnc"
+server = "src/server.vlnc"
 ```
 
 The bytecode file contains:
@@ -700,18 +741,28 @@ Useful checks when a program analyses but fails at runtime:
 
 1. Inspect the typed AST to confirm analysis selected the expected stack effect.
 2. Inspect `compile_program(typed).main.instructions`.
-3. Run with `run --implicit-output` to see the final stack when nothing printed.
+3. Run the relevant project entry with `run [<entry>] --implicit-output`, or
+   use `run --file <path> --implicit-output` for an arbitrary source file, to see
+   the final stack when nothing printed.
 4. If dispatch fails, read the runtime error's stack values, stack types, and
    attempted input shapes.
-5. Save and rerun bytecode to distinguish compiler issues from VM/serializer
-   issues.
+5. Save and rerun bytecode with `exec` to distinguish compiler issues from
+   VM/serializer issues without recompiling source.
 
 Good smoke commands:
 
 ```powershell
+uv run valiance run
+uv run valiance run server
+uv run valiance run --file samples\example.vlnc --implicit-output
 uv run valiance run --code "[1, 2, 3] + [5, 6, 7]" --implicit-output
-uv run valiance --code "[1, 2, 3] + [5, 6, 7]" --output C:\tmp\sample.vbc
-uv run valiance run-bytecode C:\tmp\sample.vbc --implicit-output
+uv run valiance compile
+uv run valiance compile server
+uv run valiance exec
+uv run valiance exec server
+uv run valiance compile --file samples\example.vlnc
+uv run valiance compile --code "[1, 2, 3] + [5, 6, 7]" --output C:\tmp\sample.vbc
+uv run valiance exec --file C:\tmp\sample.vbc --implicit-output
 uv run valiance parse --code "1 + 2"
 uv run valiance analyse --code "1 + 2"
 ```

@@ -99,8 +99,8 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 2)
         self.assertIn("usage: valiance", output.getvalue())
-        self.assertIn("valiance [compile] -c <code>", output.getvalue())
-        self.assertIn("valiance run-bytecode <file>", output.getvalue())
+        self.assertIn("valiance compile -c <code>", output.getvalue())
+        self.assertIn("valiance exec --file <file>", output.getvalue())
         self.assertNotIn("analyse-demo", output.getvalue())
 
     def test_main_parses_inline_code(self):
@@ -333,7 +333,8 @@ class MainTests(unittest.TestCase):
             with contextlib.redirect_stdout(run_output):
                 run_exit = main(
                     [
-                        "run-bytecode",
+                        "exec",
+                        "--file",
                         str(bytecode),
                         "--implicit-output",
                     ]
@@ -378,6 +379,7 @@ class MainTests(unittest.TestCase):
                 exit_code = main(
                     [
                         "run",
+                        "--file",
                         str(source),
                         "--implicit-output",
                     ]
@@ -386,6 +388,147 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertFalse(output_path.exists())
         self.assertEqual(output.getvalue(), "Stack [\n  0: [6, 8, 10]\n]\n")
+
+    def test_main_compile_uses_main_project_entry_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            source = root / "src" / "main.vlnc"
+            source.write_text('"main" println', encoding="utf-8")
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n\n'
+                '[entries]\nmain = "src/main.vlnc"\n\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            old_cwd = Path.cwd()
+            output = io.StringIO()
+            try:
+                import os
+
+                os.chdir(root)
+                with contextlib.redirect_stdout(output):
+                    exit_code = main(["compile"])
+            finally:
+                os.chdir(old_cwd)
+
+            bytecode = root / "bin" / "main.vbc"
+            bytecode_data = bytecode.read_bytes()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn(f"Wrote bytecode: {bytecode}", output.getvalue())
+        self.assertTrue(bytecode_data.startswith(b"VLNCBC"))
+        self.assertFalse((root / "src" / "main.vbc").exists())
+
+    def test_main_compile_uses_named_project_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "src" / "main.vlnc").write_text('"main" println', encoding="utf-8")
+            source = root / "src" / "server.vlnc"
+            source.write_text('"server" println', encoding="utf-8")
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n\n'
+                '[entries]\nmain = "src/main.vlnc"\nserver = "src/server.vlnc"\n\n'
+                "[dependencies]\n",
+                encoding="utf-8",
+            )
+            old_cwd = Path.cwd()
+            output = io.StringIO()
+            try:
+                import os
+
+                os.chdir(root)
+                with contextlib.redirect_stdout(output):
+                    exit_code = main(["compile", "server"])
+            finally:
+                os.chdir(old_cwd)
+
+            bytecode = root / "bin" / "server.vbc"
+            bytecode_data = bytecode.read_bytes()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn(f"Wrote bytecode: {bytecode}", output.getvalue())
+        self.assertTrue(bytecode_data.startswith(b"VLNCBC"))
+        self.assertFalse((root / "src" / "server.vbc").exists())
+
+    def test_main_run_uses_main_project_entry_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "src" / "main.vlnc").write_text('"main" println', encoding="utf-8")
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n\n'
+                '[entries]\nmain = "src/main.vlnc"\n\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            old_cwd = Path.cwd()
+            output = io.StringIO()
+            try:
+                import os
+
+                os.chdir(root)
+                with contextlib.redirect_stdout(output):
+                    exit_code = main(["run"])
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), "main\n")
+
+    def test_main_run_uses_named_project_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "src" / "main.vlnc").write_text('"main" println', encoding="utf-8")
+            (root / "src" / "server.vlnc").write_text(
+                '"server" println',
+                encoding="utf-8",
+            )
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n\n'
+                '[entries]\nmain = "src/main.vlnc"\nserver = "src/server.vlnc"\n\n'
+                "[dependencies]\n",
+                encoding="utf-8",
+            )
+            old_cwd = Path.cwd()
+            output = io.StringIO()
+            try:
+                import os
+
+                os.chdir(root)
+                with contextlib.redirect_stdout(output):
+                    exit_code = main(["run", "server"])
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), "server\n")
+
+    def test_main_run_rejects_unknown_project_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "src" / "main.vlnc").write_text('"main" println', encoding="utf-8")
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n\n'
+                '[entries]\nmain = "src/main.vlnc"\nserver = "src/server.vlnc"\n\n'
+                "[dependencies]\n",
+                encoding="utf-8",
+            )
+            old_cwd = Path.cwd()
+            error = io.StringIO()
+            try:
+                import os
+
+                os.chdir(root)
+                with contextlib.redirect_stderr(error):
+                    exit_code = main(["run", "missing"])
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("project has no entry named 'missing'", error.getvalue())
+        self.assertIn("available entries: main, server", error.getvalue())
 
     def test_main_emits_relative_bytecode_path_next_to_source_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -472,6 +615,8 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertIn('name = "demo"', manifest)
+        self.assertIn("[entries]", manifest)
+        self.assertIn('main = "src/main.vlnc"', manifest)
         self.assertIn('"Hello, Valiance" println', source)
         self.assertIn(".vln/", gitignore)
         self.assertIn('"dependencies": []', lock)

@@ -55,17 +55,52 @@ You can still run through uv without installing either way:
 uv run vln
 ```
 
-Compile source to bytecode with the default action:
+Compile project entries to bytecode:
 
 ```powershell
-vln samples/strings.vlnc
-vln --code '"hello" println' --output C:\tmp\hello.vbc
+cd myproject
+vln compile
+vln compile server
 ```
 
-Run source without writing bytecode:
+The `main` entry is compiled when no entry name is supplied. Project bytecode
+is written under `bin/` using the entry name:
+
+```text
+bin/main.vbc
+bin/server.vbc
+```
+
+Compile an arbitrary source file explicitly with `--file`, or compile inline
+code with `--code`:
 
 ```powershell
-vln run samples/strings.vlnc
+vln compile --file samples/strings.vlnc
+vln compile --code '"hello" println' --output C:\tmp\hello.vbc
+```
+
+Run project entries without writing bytecode:
+
+```powershell
+cd myproject
+vln run
+vln run server
+```
+
+Project entry points are declared in the manifest. The `main` entry is used when
+no name is supplied:
+
+```toml
+[entries]
+main = "src/main.vlnc"
+server = "src/server.vlnc"
+```
+
+Run an arbitrary source file explicitly with `--file`, or run inline code with
+`--code`:
+
+```powershell
+vln run --file samples/strings.vlnc
 vln run --code "1 2 +"
 ```
 
@@ -79,16 +114,27 @@ vln parse samples/strings.vlnc
 vln analyse samples/strings.vlnc
 ```
 
-Run existing bytecode:
+Execute previously compiled bytecode without recompiling:
 
 ```powershell
-vln run-bytecode C:\tmp\hello.vbc
+cd myproject
+vln exec
+vln exec server
+```
+
+`vln exec` runs `bin/main.vbc`; a named entry such as `server` runs
+`bin/server.vbc`. Execute an arbitrary bytecode file explicitly with `--file`:
+
+```powershell
+vln exec --file C:\tmp\hello.vbc
 ```
 
 Create and manage projects:
 
 ```powershell
 vln init myproject
+cd myproject
+vln run
 vln add somelib 1.2.3
 vln install
 ```

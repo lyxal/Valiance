@@ -3572,471 +3572,49 @@ hashB.digest(value)
 
 # 24. Package Management
 
+Valiance projects are described by a `valiance.toml` manifest. The manifest
+defines project metadata, executable entry points, and direct dependencies.
+
+The package manager currently provides project creation, manifest editing,
+lockfile generation, and local package-directory setup. Registry downloads,
+VCS cloning, transitive dependency resolution, and integrity verification are
+not yet implemented.
+
 ## 24.1. Projects
 
 A Valiance project is a directory containing `valiance.toml`.
 
-The directory containing the manifest is the project root.
+The directory containing that manifest is the project root. Commands that need
+project context search the current directory and its parents for the nearest
+`valiance.toml`.
 
 The project root determines:
 
-* the base directory for `root` imports;
-* the location of the project package directory;
-* the dependency table used by `dep` imports;
-* the location of `valiance.lock`.
-
-If no enclosing `valiance.toml` exists, the file is treated as a standalone script.
-
-Standalone scripts may use:
-
-* relative imports;
-* standard-library imports.
-
-Standalone scripts may not use:
-
-* `root` imports;
-* `dep` imports;
-* project package commands that modify a manifest.
-
-## 24.2. The Project Manifest
-
-Every project has a `valiance.toml` file at its root.
-
-```toml
-[project]
-name = "myproject"
-version = "1.0.0"
-authors = ["Your Name"]
-
-[dependencies]
-somelib = "1.2.3"
-repo = { source = "github.com/user/repo", version = "1.0.0" }
-```
-
-The `[project]` table contains project metadata.
-
-The `[dependencies]` table maps local dependency names to exact package versions and package sources.
-
-The dependency name is the name used after `dep` in source code:
-
-```vlnc
-import {
-  dep.somelib,
-  dep.repo.module
-}
-```
-
-Dependency names must be valid module path components.
-
-The following names are reserved and cannot be used as dependency names:
-
-* `root`
-* `std`
-* `dep`
-
-A dependency name must be unique within one manifest.
-
-## 24.3. Registry Packages
-
-A dependency may use the default package registry.
-
-The compact form declares a registry package whose package name is the same as its dependency name:
-
-```toml
-[dependencies]
-somelib = "1.2.3"
-```
-
-This declares:
-
-* dependency name: `somelib`;
-* package source: the default registry;
-* package name: `somelib`;
-* exact version: `1.2.3`.
-
-It is imported as:
-
-```vlnc
-import {dep.somelib}
-```
-
-An expanded form may be used when the registry package name differs from the local dependency name:
-
-```toml
-[dependencies]
-math = {
-  package = "advanced-math",
-  version = "2.0.0"
-}
-```
-
-It is still imported using the local name:
-
-```vlnc
-import {dep.math}
-```
-
-Changing the external package name does not require changing source imports unless the local dependency name also changes.
-
-## 24.4. VCS Packages
-
-A dependency may refer to a package hosted at a VCS source.
-
-```toml
-[dependencies]
-repo = {
-  source = "github.com/user/repo",
-  version = "1.0.0"
-}
-```
-
-The dependency is imported through its local dependency name:
-
-```vlnc
-import {dep.repo.module}
-```
-
-The source location does not appear in import paths.
-
-This keeps imports independent of:
-
-* hosting provider;
-* repository owner;
-* repository path;
-* future source migrations.
-
-A package may move between a VCS host and a registry without requiring changes to source files, provided its dependency name remains unchanged.
-
-## 24.5. Exact Versions
-
-Every declared dependency uses an exact version.
-
-Version ranges, wildcard versions, compatibility operators, and implicit latest-version selection are not supported.
-
-Valid:
-
-```toml
-[dependencies]
-somelib = "1.2.3"
-```
-
-Invalid:
-
-```toml
-[dependencies]
-somelib = "^1.2.3"
-otherlib = ">=2.0"
-utility = "1.*"
-latestlib = "*"
-```
-
-Exact versions make dependency selection explicit and reproducible.
-
-## 24.6. The Lockfile
-
-`valiance.lock` records the fully resolved dependency graph.
-
-It contains the exact package instance used for every direct and transitive dependency, including:
-
-* package identity;
-* source;
-* exact version;
-* integrity information;
-* dependency relationships.
-
-The lockfile is generated and updated automatically.
-
-Do not edit `valiance.lock` by hand.
-
-Applications should commit `valiance.lock` so that every installation reproduces the same dependency graph.
-
-Libraries should also commit `valiance.lock` so that development, testing, and tooling use reproducible dependency versions. Consumers of a library resolve the library's declared dependencies within their own package graph.
-
-## 24.7. Package Installation
-
-Project packages are installed into:
-
-```text
-<project root>/.vln/
-```
-
-The `.vln` directory is managed by the package manager.
-
-It should not be edited manually.
-
-It should normally be added to `.gitignore` because it can be reproduced from `valiance.toml` and `valiance.lock`.
-
-```gitignore
-.vln/
-```
-
-Running:
-
-```text
-vln install
-```
-
-installs every dependency recorded in the lockfile.
-
-If the manifest has changed and the lockfile no longer matches it, the package manager updates the lockfile before installation.
-
-Installation does not alter source import paths.
-
-## 24.8. Global Packages
-
-A global package directory exists for tools intended to be used across projects.
-
-Global installation is intended for executables and development tools, not ordinary project dependencies.
-
-Libraries imported by project source code should be declared in that project's `valiance.toml` and installed into its `.vln` directory.
-
-A globally installed package does not automatically become available through `dep`.
-
-`dep` resolves only dependencies declared by the current project or package.
-
-## 24.9. Dependency Resolution
-
-Each package declares exact versions for its own direct dependencies.
-
-No version-range solving is performed.
-
-For each dependency edge, the package manager installs the exact version requested by the dependent package.
-
-If two packages require different versions of the same dependency, both versions are installed.
-
-For example:
-
-```text
-application
-├── packageA
-│   └── somelib 1.2.3
-└── packageB
-    └── somelib 2.0.0
-```
-
-`packageA` resolves its own `dep.somelib` to version `1.2.3`.
-
-`packageB` resolves its own `dep.somelib` to version `2.0.0`.
-
-The application resolves `dep.somelib` only if it declares a direct dependency named `somelib`.
-
-Dependencies are resolved relative to the importing package's own manifest context, not by searching for one project-wide version.
-
-## 24.10. Package Identity
-
-Each installed package version is a distinct package instance.
-
-Types defined by different versions of the same package are distinct types.
-
-A value of:
-
-```text
-somelib.MyType 1.2.3
-```
-
-cannot be passed where the following is expected:
-
-```text
-somelib.MyType 2.0.0
-```
-
-This is a compile error even when the type names are textually identical.
-
-The versions may define different:
-
-* fields;
-* variants;
-* invariants;
-* trait implementations;
-* behavior.
-
-Treating them as distinct preserves type safety.
-
-## 24.11. Direct and Transitive Dependencies
-
-A project may import only dependencies declared directly in its own `[dependencies]` table.
-
-A transitive dependency is not automatically available through `dep`.
-
-For example, if the project depends on `packageA`, and `packageA` depends on `somelib`, this does not make the following valid in the project:
-
-```vlnc
-import {dep.somelib}
-```
-
-To import `somelib` directly, the project must declare its own dependency:
-
-```toml
-[dependencies]
-packageA = "1.0.0"
-somelib = "1.2.3"
-```
-
-This prevents source code from depending accidentally on another package's internal dependency graph.
-
-## 24.12. Adding Dependencies
-
-Use `vln add` to add a dependency at an exact version.
-
-For a registry package:
-
-```text
-vln add somelib 1.2.3
-```
-
-This adds:
-
-```toml
-[dependencies]
-somelib = "1.2.3"
-```
-
-For a VCS package:
-
-```text
-vln add github.com/user/repo 1.0.0
-```
-
-By default, the final repository path component becomes the local dependency name:
-
-```toml
-[dependencies]
-repo = {
-  source = "github.com/user/repo",
-  version = "1.0.0"
-}
-```
-
-The dependency can then be imported as:
-
-```vlnc
-import {dep.repo}
-```
-
-Use `as` to choose a different local name:
-
-```text
-vln add github.com/user/repo 1.0.0 as userrepo
-```
-
-This adds:
-
-```toml
-[dependencies]
-userrepo = {
-  source = "github.com/user/repo",
-  version = "1.0.0"
-}
-```
-
-The dependency is imported as:
-
-```vlnc
-import {dep.userrepo}
-```
-
-Adding a dependency updates both `valiance.toml` and `valiance.lock`, then installs the package.
-
-## 24.13. Removing Dependencies
-
-Use `vln remove` with the local dependency name:
-
-```text
-vln remove somelib
-vln remove repo
-```
-
-The command:
-
-* removes the dependency from `valiance.toml`;
-* updates `valiance.lock`;
-* removes package instances no longer needed by the dependency graph.
-
-Removing a dependency is an error if source code still imports it.
-
-The compiler reports unresolved `dep` imports normally.
-
-## 24.14. Upgrading Dependencies
-
-Upgrades are always explicit.
-
-To upgrade a dependency, either edit its exact version in `valiance.toml` and run:
-
-```text
-vln install
-```
-
-or use:
-
-```text
-vln upgrade somelib 1.3.0
-```
-
-The command updates:
-
-* `valiance.toml`;
-* `valiance.lock`;
-* the installed package graph.
-
-For a VCS dependency, the command still uses the local dependency name:
-
-```text
-vln upgrade repo 1.1.0
-```
-
-No dependency is upgraded automatically.
-
-Package authors should use deprecation annotations and release documentation to encourage upgrades rather than relying on version ranges.
-
-## 24.15. Renaming Dependencies
-
-The local dependency name is part of the project's source-level namespace.
-
-Changing it requires updating imports.
-
-For example, changing:
-
-```toml
-[dependencies]
-repo = {
-  source = "github.com/user/repo",
-  version = "1.0.0"
-}
-```
-
-to:
-
-```toml
-[dependencies]
-userrepo = {
-  source = "github.com/user/repo",
-  version = "1.0.0"
-}
-```
-
-requires changing:
-
-```vlnc
-import {dep.repo.module}
-```
-
-to:
-
-```vlnc
-import {dep.userrepo.module}
-```
-
-Changing only a dependency's source or version does not require updating imports.
-
-## 24.16. Package Manager Commands
-
-The core package manager commands are:
+- the location of the project manifest;
+- the location of `valiance.lock`;
+- the location of the managed `.vln` directory;
+- the base directory used to resolve project entry paths;
+- the dependency declarations available to the project.
+
+Commands such as `vln run`, `vln compile`, `vln install`, `vln add`,
+`vln remove`, and `vln upgrade` require an enclosing project unless they are
+given an explicit source input where supported.
+
+## 24.2. Creating a Project
+
+Create a project in the current directory with:
 
 ```text
 vln init
 ```
 
-Create a new project in the current directory with:
+Create a project in another directory with:
+
+```text
+vln init myproject
+```
+
+The command creates:
 
 ```text
 valiance.toml
@@ -4045,50 +3623,479 @@ valiance.lock
 src/main.vlnc
 ```
 
-```text
-vln init myproject
+The generated source file contains a small runnable program.
+
+The generated `.gitignore` includes:
+
+```gitignore
+.vln/
 ```
 
-Create the same project structure in a new or existing `myproject` directory
-that does not already contain `valiance.toml`.
+`vln init` fails if the target directory already contains `valiance.toml`.
 
-```text
-vln install
+## 24.3. The Project Manifest
+
+A new manifest has this shape:
+
+```toml
+[project]
+name = "myproject"
+version = "0.1.0"
+
+[entries]
+main = "src/main.vlnc"
+
+[dependencies]
 ```
 
-Install all dependencies declared by the project, using `valiance.lock` when possible.
+The manifest contains three main tables:
+
+- `[project]` stores project metadata;
+- `[entries]` maps executable entry names to source files;
+- `[dependencies]` declares direct dependencies.
+
+Unknown project metadata may be preserved when the package manager rewrites the
+manifest, provided its values can be written as TOML strings, booleans, numbers,
+or lists of supported values.
+
+## 24.4. Project Entries
+
+The `[entries]` table exposes named source entry points.
+
+```toml
+[entries]
+main = "src/main.vlnc"
+server = "src/server.vlnc"
+tools = "src/tools.vlnc"
+```
+
+Entry names are used by `vln run` and `vln compile`.
+
+Run the main entry:
+
+```text
+vln run
+```
+
+Run a named entry:
+
+```text
+vln run server
+```
+
+Compile the main entry:
+
+```text
+vln compile
+```
+
+Compile a named entry:
+
+```text
+vln compile server
+```
+
+The entry path is resolved relative to the project root.
+
+Entry paths must:
+
+- be strings;
+- be relative paths;
+- remain inside the project root;
+- refer to existing files.
+
+The `main` entry is the default selected by bare `vln run` and
+`vln compile`.
+
+## 24.5. Running and Compiling Explicit Files
+
+Project entry names occupy the positional argument of `run` and `compile`.
+Use `--file` to operate on an arbitrary source file directly.
+
+Run a source file:
+
+```text
+vln run --file samples/example.vlnc
+```
+
+Compile a source file:
+
+```text
+vln compile --file samples/example.vlnc
+```
+
+Inline source remains available through `--code`:
+
+```text
+vln run --code "1 2 +"
+vln compile --code "1 2 +" --output out.vbc
+```
+
+`--file`, `--code`, and a named project entry are mutually exclusive forms of
+source selection.
+
+## 24.6. Dependencies
+
+The `[dependencies]` table maps local dependency names to exact versions and
+package identities.
+
+A registry-style dependency may use the compact form:
+
+```toml
+[dependencies]
+somelib = "1.2.3"
+```
+
+This declares:
+
+- local dependency name: `somelib`;
+- package identity: `somelib`;
+- source kind: registry;
+- exact version: `1.2.3`.
+
+A different external package name may be declared with the expanded form:
+
+```toml
+[dependencies]
+math = { package = "advanced-math", version = "2.0.0" }
+```
+
+This keeps `math` as the local dependency name while recording
+`advanced-math` as the external package identity.
+
+A source-based dependency may be declared as:
+
+```toml
+[dependencies]
+repo = { source = "github.com/user/repo", version = "1.0.0" }
+```
+
+The package manager classifies a dependency as source-based when it has a
+`source` field.
+
+At present, source strings are recorded as metadata. The package manager does
+not yet clone repositories or download registry packages.
+
+## 24.7. Dependency Names
+
+A dependency name must be a valid Valiance module component.
+
+It must:
+
+- begin with a letter or underscore;
+- contain only letters, digits, and underscores;
+- not use a reserved name.
+
+The reserved dependency names are:
+
+- `root`;
+- `std`;
+- `dep`.
+
+A dependency name identifies the dependency inside the current project and must
+be unique within the manifest.
+
+## 24.8. Exact Versions
+
+Every dependency uses an exact numeric version.
+
+Valid examples include:
+
+```toml
+[dependencies]
+a = "1"
+b = "1.2"
+c = "1.2.3"
+```
+
+Version ranges and compatibility operators are rejected.
+
+Invalid examples include:
+
+```toml
+[dependencies]
+a = "^1.2.3"
+b = ">=2.0"
+c = "1.*"
+d = "*"
+```
+
+The current version syntax accepts one or more numeric components separated by
+periods.
+
+## 24.9. Adding Dependencies
+
+Add a registry-style dependency with:
 
 ```text
 vln add somelib 1.2.3
 ```
 
-Add a registry dependency under the local name `somelib`.
+This writes:
+
+```toml
+[dependencies]
+somelib = "1.2.3"
+```
+
+Add a source-based dependency with:
 
 ```text
 vln add github.com/user/repo 1.0.0
 ```
 
-Add a VCS dependency using `repo` as its default local name.
+By default, the final path component becomes the local dependency name:
+
+```toml
+[dependencies]
+repo = { source = "github.com/user/repo", version = "1.0.0" }
+```
+
+Choose a different local name with `as`:
 
 ```text
 vln add github.com/user/repo 1.0.0 as userrepo
 ```
 
-Add a VCS dependency under the explicit local name `userrepo`.
+This writes:
+
+```toml
+[dependencies]
+userrepo = { source = "github.com/user/repo", version = "1.0.0" }
+```
+
+Adding a dependency:
+
+1. validates the local name and exact version;
+2. updates `valiance.toml`;
+3. regenerates `valiance.lock`;
+4. ensures the corresponding `.vln` package directory exists.
+
+Adding a dependency with an existing local name replaces that declaration.
+
+## 24.10. Removing Dependencies
+
+Remove a dependency by its local name:
 
 ```text
 vln remove somelib
 ```
 
-Remove the dependency named `somelib`.
+The command:
+
+1. removes the dependency from `valiance.toml`;
+2. regenerates `valiance.lock`;
+3. removes the dependency's managed directory when possible.
+
+Removing an undeclared dependency is an error.
+
+The command does not currently scan project source code for imports before
+removing a dependency. Any unresolved imports are reported later by the normal
+analysis process.
+
+## 24.11. Upgrading Dependencies
+
+Change a dependency's exact version with:
 
 ```text
 vln upgrade somelib 1.3.0
 ```
 
-Upgrade the dependency named `somelib` to exactly version `1.3.0`.
+For a source-based dependency, use its local name:
 
-All package-modifying commands update the manifest and lockfile together.
+```text
+vln upgrade repo 1.1.0
+```
+
+The command preserves the dependency's package or source identity while
+replacing its version.
+
+Upgrading a dependency:
+
+1. validates the new exact version;
+2. updates `valiance.toml`;
+3. regenerates `valiance.lock`;
+4. refreshes the managed package metadata.
+
+Upgrading an undeclared dependency is an error.
+
+Dependencies are never upgraded automatically.
+
+## 24.12. Installation
+
+Install the dependencies declared by the current project with:
+
+```text
+vln install
+```
+
+The command:
+
+1. loads the nearest `valiance.toml`;
+2. regenerates `valiance.lock`;
+3. creates the project's `.vln` directory;
+4. creates one directory for each direct dependency;
+5. writes package metadata for each dependency.
+
+The managed directory has this form:
+
+```text
+<project root>/.vln/
+├── somelib/
+│   └── package.json
+└── repo/
+    └── package.json
+```
+
+Each `package.json` records the dependency's local name, identity, source, and
+exact version.
+
+The current installer does not yet fetch package contents. The generated
+directories are placeholders for the future package acquisition and resolution
+system.
+
+## 24.13. The Lockfile
+
+`valiance.lock` is generated from the current manifest.
+
+The lockfile records:
+
+- a lockfile format version;
+- the root project's name and version;
+- each direct dependency's local name;
+- dependency kind;
+- package identity;
+- source;
+- exact version;
+- an empty transitive dependency list;
+- a currently unset integrity value.
+
+A simplified lockfile looks like:
+
+```json
+{
+  "version": 1,
+  "package": {
+    "name": "myproject",
+    "version": "0.1.0"
+  },
+  "dependencies": [
+    {
+      "name": "somelib",
+      "kind": "registry",
+      "identity": "somelib",
+      "source": "registry",
+      "version": "1.2.3",
+      "dependencies": [],
+      "integrity": null
+    }
+  ]
+}
+```
+
+Do not edit `valiance.lock` by hand.
+
+The current lockfile describes direct dependencies only. Transitive dependency
+resolution and integrity verification are future package-manager work.
+
+## 24.14. The Managed Package Directory
+
+Project package metadata is stored under:
+
+```text
+<project root>/.vln/
+```
+
+This directory is managed by Valiance and should not be edited manually.
+
+It should normally remain excluded from version control:
+
+```gitignore
+.vln/
+```
+
+`valiance.toml` and `valiance.lock` should be committed when the project is kept
+in version control.
+
+## 24.15. Current Resolution Model
+
+The package manager currently records only direct dependencies declared by the
+root project.
+
+It does not yet:
+
+- contact a package registry;
+- clone VCS repositories;
+- inspect dependency manifests;
+- resolve transitive dependency graphs;
+- install multiple versions of transitive packages;
+- calculate integrity hashes;
+- enforce package identity at the type level;
+- provide global package installation.
+
+The manifest and lockfile formats already preserve fields needed by parts of a
+future implementation, but those fields must not be treated as evidence that
+the corresponding behavior exists today.
+
+## 24.16. Command Summary
+
+Create a project:
+
+```text
+vln init
+vln init myproject
+```
+
+Run project entries:
+
+```text
+vln run
+vln run server
+```
+
+Compile project entries:
+
+```text
+vln compile
+vln compile server
+```
+
+Operate on explicit files:
+
+```text
+vln run --file samples/example.vlnc
+vln compile --file samples/example.vlnc
+```
+
+Install declared dependencies:
+
+```text
+vln install
+```
+
+Add dependencies:
+
+```text
+vln add somelib 1.2.3
+vln add github.com/user/repo 1.0.0
+vln add github.com/user/repo 1.0.0 as userrepo
+```
+
+Remove a dependency:
+
+```text
+vln remove somelib
+```
+
+Upgrade a dependency:
+
+```text
+vln upgrade somelib 1.3.0
+```
+
+All dependency-modifying commands rewrite the manifest, regenerate the
+lockfile, and refresh the local managed package metadata.
+
 
 # 25. Concurrency
 _Features from this point onwards are for implementation further down the road. They are not considered core priority. As such, these features are very open to change._

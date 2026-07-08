@@ -11,6 +11,7 @@ from pathlib import Path
 RESERVED_DEPENDENCY_NAMES = frozenset({"root", "std", "dep"})
 VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+DEFAULT_PROJECT_ENTRY = Path("src/main.vlnc")
 
 
 class PackageError(Exception):
@@ -48,6 +49,7 @@ class Manifest:
 
     root: Path
     project: dict[str, object]
+    entries: dict[str, str]
     dependencies: tuple[Dependency, ...]
 
     @property
@@ -82,14 +84,27 @@ def load_manifest(root: Path) -> Manifest:
         raise PackageError(f"invalid {path}: {exc}") from exc
 
     project = data.get("project", {})
+    entries = data.get("entries", {})
     dependencies = data.get("dependencies", {})
     if not isinstance(project, dict):
         raise PackageError("[project] must be a table")
+    if not isinstance(entries, dict):
+        raise PackageError("[entries] must be a table")
     if not isinstance(dependencies, dict):
         raise PackageError("[dependencies] must be a table")
+
+    parsed_entries: dict[str, str] = {}
+    for entry_name, entry_path in entries.items():
+        if not NAME_RE.fullmatch(entry_name):
+            raise PackageError(f"entry name {entry_name!r} is not valid")
+        if not isinstance(entry_path, str):
+            raise PackageError(f"entry {entry_name!r} path must be a string")
+        parsed_entries[entry_name] = entry_path
+
     return Manifest(
         root,
         dict(project),
+        parsed_entries,
         tuple(_parse_dependency(name, value) for name, value in dependencies.items()),
     )
 
@@ -99,6 +114,33 @@ def require_manifest(start: Path | None = None) -> Manifest:
     if root is None:
         raise PackageError("no enclosing valiance.toml found")
     return load_manifest(root)
+
+
+def project_entry_path(manifest: Manifest, name: str = "main") -> Path:
+    """Resolve and validate one named project entry point."""
+    configured = manifest.entries.get(name)
+    if configured is None:
+        available = ", ".join(sorted(manifest.entries)) or "(none)"
+        raise PackageError(
+            f"project has no entry named {name!r}; available entries: {available}"
+        )
+
+    entry = Path(configured)
+    if entry.is_absolute():
+        raise PackageError(f"entry {name!r} must be relative to the project root")
+
+    root = manifest.root.resolve()
+    resolved = (root / entry).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise PackageError(
+            f"entry {name!r} must stay within the project root"
+        ) from exc
+
+    if not resolved.is_file():
+        raise PackageError(f"project entry {name!r} does not exist: {resolved}")
+    return resolved
 
 
 def init_project(
@@ -119,6 +161,9 @@ def init_project(
                 "[project]",
                 f"name = {_toml_value(project_name)}",
                 'version = "0.1.0"',
+                "",
+                "[entries]",
+                'main = "src/main.vlnc"',
                 "",
                 "[dependencies]",
                 "",
@@ -181,7 +226,12 @@ def add_dependency(
         dependency = Dependency(local_name, version, package=package_name)
     _validate_dependency_name(dependency.local_name)
     dependencies = _without_dependency(manifest.dependencies, dependency.local_name)
-    updated = Manifest(manifest.root, manifest.project, dependencies + (dependency,))
+    updated = Manifest(
+        manifest.root,
+        manifest.project,
+        manifest.entries,
+        dependencies + (dependency,),
+    )
     write_manifest(updated)
     install(manifest.root)
     return updated
@@ -193,7 +243,7 @@ def remove_dependency(name: str, *, start: Path | None = None) -> Manifest:
     dependencies = _without_dependency(manifest.dependencies, name)
     if len(dependencies) == len(manifest.dependencies):
         raise PackageError(f"dependency {name!r} is not declared")
-    updated = Manifest(manifest.root, manifest.project, dependencies)
+    updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies)
     write_manifest(updated)
     install(manifest.root)
     unused_dir = manifest.root / ".vln" / name
@@ -227,7 +277,7 @@ def upgrade_dependency(
         updated_dependency if dependency.local_name == name else dependency
         for dependency in manifest.dependencies
     )
-    updated = Manifest(manifest.root, manifest.project, dependencies)
+    updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies)
     write_manifest(updated)
     install(manifest.root)
     return updated
@@ -237,6 +287,10 @@ def write_manifest(manifest: Manifest) -> None:
     lines = ["[project]"]
     for key, value in manifest.project.items():
         lines.append(f"{key} = {_toml_value(value)}")
+    lines.append("")
+    lines.append("[entries]")
+    for name, path in manifest.entries.items():
+        lines.append(f"{name} = {_toml_value(path)}")
     lines.append("")
     lines.append("[dependencies]")
     for dependency in sorted(manifest.dependencies, key=lambda item: item.local_name):
