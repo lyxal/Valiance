@@ -124,7 +124,9 @@ Current audit total: 426 / 734 items complete (58.0%).
 - [x] Reject untyped empty-list literals.
 - [ ] Allow empty lists when a type annotation, cast, or typed list constructor supplies the element type.
 - [x] Support list indexing, slicing, multidimensional indexing, and spread indexing.
+- [x] Support lazy list indexing and non-negative positive-step lazy slicing.
 - [x] Support immutable list updates through indexed assignment syntax.
+- [x] Support immutable slice updates through indexed and augmented assignment syntax.
 
 ## 9. Arrays
 
@@ -366,12 +368,15 @@ Current audit total: 426 / 734 items complete (58.0%).
 - [x] Parse multiple indices and return the selected values as a list.
 - [x] Parse direct variable indexing.
 - [x] Parse inclusive slices with start, stop, and step.
+- [x] Parse `::step` slice shorthand inside indexing expressions.
 - [x] Apply default slice values.
+- [x] Support lazy list indexing and non-negative positive-step lazy slicing.
 - [x] Support multidimensional chained indices.
 - [x] Support multidimensional slices.
 - [ ] Raise `SliceFault` for invalid multidimensional slicing.
 - [x] Parse record member access using `$.member`.
 - [x] Support indexed augmented assignment.
+- [x] Support sliced assignment and augmented sliced assignment.
 - [x] Treat indexed updates as immutable reconstruction.
 - [x] Parse spread indexing using `...$[...]`.
 - [x] Push statically known indexed values individually onto the stack.

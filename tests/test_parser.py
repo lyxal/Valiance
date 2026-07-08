@@ -388,6 +388,23 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(program[7], IndexAccessNode(program[7].selectors))
         self.assertTrue(program[-1].spread)
 
+    def test_parses_double_colon_slice_indexing(self):
+        program = parse("[1, 2, 3, 4, 5, 6] $[::2]")
+
+        self.assertIsInstance(program[-1], IndexAccessNode)
+        [selector] = program[-1].selectors
+        self.assertTrue(selector.is_slice)
+        self.assertEqual(selector.start, ())
+        self.assertEqual(selector.stop, ())
+        self.assertEqual(selector.step, (NumberLiteralNode("2"),))
+
+    def test_parses_bare_indexed_assignment(self):
+        program = parse("$[1:3] = 4\n$[::2] := + 1")
+
+        self.assertIsInstance(program[1], StackShuffleNode)
+        self.assertIsInstance(program[4], IndexSetNode)
+        self.assertIsInstance(program[-1], IndexSetNode)
+
     def test_parses_index_augmented_assignment_as_copy_update(self):
         program = parse("$data[1] := + 3")
 

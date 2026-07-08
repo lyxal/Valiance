@@ -963,12 +963,15 @@ fork: (sum, length) /
 - Variables can be indexed directly
 - `$data[2, 4, 1]` == `$data $[2, 4, 1]`
 - Slicing:
-	- `$[<start>:<stop>:<step>]` - items starting at `start`, and finishing (and including) at `end`, collecting every `step`th item.
+	- `$[<start>:<stop>:<step>]` - items starting at `start`, and finishing (and including) at `stop`, collecting every `step`th item.
+	- The shorthand `$[::step]` is equivalent to `$[0:-1:step]`.
 	- `stop` being inclusive corresponds to how the `range` element is inclusive on both ends.
 	- `start` = 0 if not provided
 	- `stop` = -1 if not provided
 	- `step` = 1 if not provided
+	- Lazy lists support non-negative slices with positive steps. A slice with no explicit `stop` stays lazy.
 - `$data[1:4]` == `$data[1, 2, 3, 4]`
+- `[1, 2, 3, 4, 5, 6] $[::2]` == `[1, 3, 5]`
 - Multi-dimensional indices
 - `$data[[1, 2]]` == `$data[1][2]` == `$data[1] $[2]`
 - You can multidimensional slice lists (runtime panic - `SliceFault` to try and multidim slice a non-list)
@@ -993,13 +996,40 @@ $.name #? "Jeff"
 ```
 
 ## 9.1. Indexing and Augmented Assignment
+- Index assignment reconstructs the receiver with the selected item or items replaced.
+- Stack indexing assignment writes back to the receiver on top of the stack.
+
+```
+[1, 2, 3, 4, 5]
+$[1:3] = 4
+#? [1, 4, 4, 4, 5]
+```
+
+- Slice assignment accepts either a single replacement value, which is written to every selected item, or a list-shaped replacement with exactly one value for each selected item.
+- For zero-based FizzBuzz over `range(1, 100)`, use offsets 2, 4, and 14:
+
+```
+range(1, 100) map: toString
+$[2::3] = "Fizz"
+$[4::5] = "Buzz"
+$[14::15] = "FizzBuzz"
+```
+
 - Augmented assignment can be applied to an index
 
 ```
 $data[1] := + 3
 ```
 
-- This is not mutation. It is sugar for `updateBy($item, $index, $function)`
+- Augmented assignment can also be applied to slices. The augmentation function is applied to each selected value, then the receiver is reconstructed.
+
+```
+[1, 2, 3, 4, 5]
+$[1:3] := + 1
+#? [1, 3, 4, 5, 5]
+```
+
+- This is not mutation. It is sugar for reconstructing the receiver from the indexed or sliced update.
 
 ## 9.2. Spread Indexing
 - If there are a static number of indices, `...$[]` can be used to dump the items of the index to the stack

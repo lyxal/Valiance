@@ -1524,6 +1524,77 @@ println(triple([1, 2, 3, 4, 5]))
             [Decimal("2"), Decimal("7")],
         )
 
+    def test_indexing_lazy_lists_uses_absolute_indices(self):
+        self.assertEqual(
+            execute("range(1, 100) $[0, 1, 2, 3, 4, 5]"),
+            [[
+                Decimal("1"),
+                Decimal("2"),
+                Decimal("3"),
+                Decimal("4"),
+                Decimal("5"),
+                Decimal("6"),
+            ]],
+        )
+
+    def test_slicing_lazy_lists(self):
+        [result] = execute("range(1, 100) $[::2]")
+
+        self.assertIsInstance(result, LazyList)
+        self.assertEqual(
+            list(islice(result, 6)),
+            [
+                Decimal("1"),
+                Decimal("3"),
+                Decimal("5"),
+                Decimal("7"),
+                Decimal("9"),
+                Decimal("11"),
+            ],
+        )
+
+    def test_slice_assignment_replaces_each_selected_item(self):
+        self.assertEqual(
+            execute("[1, 2, 3, 4, 5]\n$[1:3] = 4"),
+            [[Decimal("1"), Decimal("4"), Decimal("4"), Decimal("4"), Decimal("5")]],
+        )
+
+    def test_augmented_slice_assignment_updates_each_selected_item(self):
+        self.assertEqual(
+            execute("[1, 2, 3, 4, 5]\n$[1:3] := + 1"),
+            [[Decimal("1"), Decimal("3"), Decimal("4"), Decimal("5"), Decimal("5")]],
+        )
+
+    def test_lazy_slice_assignment_can_build_fizzbuzz_positions(self):
+        [result] = execute(
+            'range(1, 100) map: toString\n'
+            '$[2::3] = "Fizz"\n'
+            '$[4::5] = "Buzz"\n'
+            '$[14::15] = "FizzBuzz"'
+        )
+
+        self.assertIsInstance(result, LazyList)
+        self.assertEqual(
+            list(islice(result, 15)),
+            [
+                "1",
+                "2",
+                "Fizz",
+                "4",
+                "Buzz",
+                "Fizz",
+                "7",
+                "8",
+                "Fizz",
+                "Buzz",
+                "11",
+                "Fizz",
+                "13",
+                "14",
+                "FizzBuzz",
+            ],
+        )
+
     def test_index_augmented_assignment_rebuilds_and_assigns_receiver(self):
         self.assertEqual(
             execute("$data = [1, 2, 3]\n$data[1] := + 3\n$data"),

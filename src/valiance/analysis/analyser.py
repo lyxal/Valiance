@@ -5691,7 +5691,12 @@ def _indexed_assignment_type(
     value_type: T.Type,
     ctx: T.Context,
 ) -> T.Type | None:
-    if len(selectors) != 1 or selectors[0].is_slice:
+    if len(selectors) == 1 and selectors[0].is_slice:
+        slice_type = _indexed_type(receiver_type, selectors, spread=False)
+        if T.assignable(value_type, slice_type, ctx):
+            return receiver_type
+        return _single_index_assignment_type(receiver_type, value_type, ctx)
+    if len(selectors) != 1:
         item_type = _indexed_type(receiver_type, selectors, spread=False)
         return receiver_type if T.assignable(value_type, item_type, ctx) else None
     return _single_index_assignment_type(receiver_type, value_type, ctx)

@@ -1510,6 +1510,47 @@ class Parser:
             return _ChainPiece(self._multiple_assignment(start), True)
         if self._match(TokenKind.LBRACKET):
             selectors = self._index_selectors()
+            if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
+                op = self._previous.kind
+                rhs = self._chain_until(_LINE_TERMINATORS)
+                index_values = self._selector_expressions(selectors)
+                if op is TokenKind.AUG_ASSIGN:
+                    return _ChainPiece(
+                        (
+                            StackShuffleNode(
+                                Symbol("copy"),
+                                (Symbol("receiver"),),
+                                (Symbol("receiver"),),
+                                location=_loc(start),
+                            ),
+                            *index_values,
+                            IndexAccessNode(selectors, location=_loc(start)),
+                            *rhs,
+                            StackShuffleNode(
+                                Symbol("move"),
+                                (Symbol("receiver"), Symbol("value")),
+                                (Symbol("value"), Symbol("receiver")),
+                                location=_loc(start),
+                            ),
+                            *index_values,
+                            IndexSetNode(selectors, location=_loc(start)),
+                        ),
+                        True,
+                    )
+                return _ChainPiece(
+                    (
+                        *rhs,
+                        StackShuffleNode(
+                            Symbol("move"),
+                            (Symbol("receiver"), Symbol("value")),
+                            (Symbol("value"), Symbol("receiver")),
+                            location=_loc(start),
+                        ),
+                        *index_values,
+                        IndexSetNode(selectors, location=_loc(start)),
+                    ),
+                    True,
+                )
             return _ChainPiece(
                 (
                     *self._selector_expressions(selectors),
@@ -1683,20 +1724,37 @@ class Parser:
             stop: tuple[ASTNode, ...] = ()
             step: tuple[ASTNode, ...] = ()
             is_slice = False
-            if not self._check(TokenKind.COLON):
+            if not self._check(TokenKind.COLON, TokenKind.DOUBLE_COLON):
                 start = self._chain_until(
-                    {TokenKind.COMMA, TokenKind.COLON, TokenKind.RBRACKET}
+                    {
+                        TokenKind.COMMA,
+                        TokenKind.COLON,
+                        TokenKind.DOUBLE_COLON,
+                        TokenKind.RBRACKET,
+                    }
                 )
-            if self._match(TokenKind.COLON):
+            if self._match(TokenKind.DOUBLE_COLON):
+                is_slice = True
+                if not self._check(TokenKind.COMMA, TokenKind.RBRACKET):
+                    step = self._chain_until({TokenKind.COMMA, TokenKind.RBRACKET})
+            elif self._match(TokenKind.COLON):
                 is_slice = True
                 if not self._check(
                     TokenKind.COLON,
+                    TokenKind.DOUBLE_COLON,
                     TokenKind.COMMA,
                     TokenKind.RBRACKET,
                 ):
                     stop = self._chain_until(
-                        {TokenKind.COMMA, TokenKind.COLON, TokenKind.RBRACKET}
+                        {
+                            TokenKind.COMMA,
+                            TokenKind.COLON,
+                            TokenKind.DOUBLE_COLON,
+                            TokenKind.RBRACKET,
+                        }
                     )
+                if self._match(TokenKind.DOUBLE_COLON):
+                    self._error("slice syntax cannot contain three ':' characters")
                 if self._match(TokenKind.COLON):
                     if not self._check(TokenKind.COMMA, TokenKind.RBRACKET):
                         step = self._chain_until({TokenKind.COMMA, TokenKind.RBRACKET})

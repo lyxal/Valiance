@@ -7,7 +7,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
-from itertools import zip_longest
+from itertools import islice, zip_longest
 from typing import Any, cast
 
 from valiance.analysis.builtins import (
@@ -2284,6 +2284,8 @@ def _get_index(
     selectors: list[tuple[bool, Any, Any, Any]],
 ) -> Any:
     if len(selectors) > 1 and all(not item[0] for item in selectors):
+        if is_list_like(receiver) and not is_eager_sequence(receiver):
+            return _index_many_lazy(receiver, tuple(item[1] for item in selectors))
         return [_index_path(receiver, item[1]) for item in selectors]
     result = receiver
     for is_slice, start, stop, step in selectors:
@@ -2300,7 +2302,10 @@ def _set_index(
     selectors: list[tuple[bool, Any, Any, Any]],
     value: Any,
 ) -> Any:
-    if len(selectors) != 1 or selectors[0][0]:
+    if len(selectors) == 1 and selectors[0][0]:
+        _, start, stop, step = selectors[0]
+        return _set_slice_value(receiver, start, stop, step, value)
+    if len(selectors) != 1:
         raise RuntimeError("indexed assignment requires one non-slice index")
     return _set_index_path(receiver, selectors[0][1], value)
 
@@ -2312,6 +2317,48 @@ def _index_path(receiver: Any, index: Any) -> Any:
             result = _index_one(result, item)
         return result
     return _index_one(receiver, index)
+
+
+def _index_many_lazy(receiver: Any, indices: tuple[Any, ...]) -> list[Any]:
+    requests = tuple(_lazy_index_request(index) for index in indices)
+    targets = sorted({target for target, _ in requests})
+    results: dict[int, Any] = {}
+    target_iter = iter(targets)
+    try:
+        next_target = next(target_iter)
+    except StopIteration:
+        return []
+    for offset, item in enumerate(receiver):
+        if offset != next_target:
+            continue
+        results[offset] = item
+        try:
+            next_target = next(target_iter)
+        except StopIteration:
+            break
+    missing = [target for target in targets if target not in results]
+    if missing:
+        raise RuntimeError("index out of range")
+    return [
+        _index_path(results[target], tail) if tail else results[target]
+        for target, tail in requests
+    ]
+
+
+def _lazy_index_request(index: Any) -> tuple[int, list[Any]]:
+    tail: list[Any] = []
+    target = index
+    if _is_path(index):
+        if not index:
+            raise RuntimeError("empty index path is invalid")
+        target = index[0]
+        tail = list(index[1:])
+    if not isinstance(target, Decimal):
+        raise RuntimeError("lazy list indexing requires a numeric index")
+    target_int = _int_index(target)
+    if target_int < 0:
+        raise RuntimeError("lazy list indexing does not support negative indices")
+    return target_int, tail
 
 
 def _index_one(receiver: Any, index: Any) -> Any:
@@ -2343,7 +2390,9 @@ def _slice_value(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
     if _is_path(start) or _is_path(stop):
         return _slice_path(receiver, start, stop, step)
     if not (is_eager_sequence(receiver) or isinstance(receiver, str)):
-        raise RuntimeError("slicing requires an eager list or string")
+        if is_list_like(receiver):
+            return _slice_lazy(receiver, start, stop, step)
+        raise RuntimeError("slicing requires a list or string")
     step_int = 1 if step is None else _int_index(step)
     if step_int == 0:
         raise RuntimeError("slice step cannot be 0")
@@ -2353,6 +2402,20 @@ def _slice_value(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
     python_stop = stop_int + (1 if step_int > 0 else -1)
     sliced = receiver[start_int:python_stop:step_int]
     return "".join(sliced) if isinstance(receiver, str) else list(sliced)
+
+
+def _slice_lazy(receiver: Any, start: Any, stop: Any, step: Any) -> LazyList:
+    step_int = 1 if step is None else _int_index(step)
+    if step_int <= 0:
+        raise RuntimeError("lazy list slicing requires a positive step")
+    start_int = 0 if start is None else _int_index(start)
+    if start_int < 0:
+        raise RuntimeError("lazy list slicing does not support negative start")
+    stop_int = None if stop is None else _int_index(stop)
+    if stop_int is not None and stop_int < 0:
+        raise RuntimeError("lazy list slicing does not support negative stop")
+    python_stop = None if stop_int is None else stop_int + 1
+    return LazyList(islice(iter(receiver), start_int, python_stop, step_int))
 
 
 def _slice_path(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
@@ -2377,6 +2440,125 @@ def _set_index_path(receiver: Any, index: Any, value: Any) -> Any:
         current = _index_one(receiver, head)
         return _set_index_one(receiver, head, _set_index_path(current, tail, value))
     return _set_index_one(receiver, index, value)
+
+
+def _set_slice_value(
+    receiver: Any,
+    start: Any,
+    stop: Any,
+    step: Any,
+    value: Any,
+) -> Any:
+    if _is_path(start) or _is_path(stop):
+        raise RuntimeError("multidimensional slice assignment is not implemented")
+    if isinstance(receiver, str):
+        return _set_string_slice(receiver, start, stop, step, value)
+    if is_eager_sequence(receiver):
+        return _set_eager_slice(receiver, start, stop, step, value)
+    if is_list_like(receiver):
+        return _set_lazy_slice(receiver, start, stop, step, value)
+    raise RuntimeError("value is not slice-assignable")
+
+
+def _set_eager_slice(
+    receiver: Any,
+    start: Any,
+    stop: Any,
+    step: Any,
+    value: Any,
+) -> list[Any]:
+    indexes = _eager_slice_indexes(len(receiver), start, stop, step)
+    replacements = _slice_replacements(value, len(indexes))
+    updated = list(receiver)
+    for index, replacement in zip(indexes, replacements, strict=True):
+        updated[index] = replacement
+    return updated
+
+
+def _set_string_slice(
+    receiver: str,
+    start: Any,
+    stop: Any,
+    step: Any,
+    value: Any,
+) -> str:
+    if not isinstance(value, str):
+        raise RuntimeError("string slice assignment requires a string value")
+    indexes = _eager_slice_indexes(len(receiver), start, stop, step)
+    replacements = list(value)
+    if len(replacements) != len(indexes):
+        raise RuntimeError("slice assignment replacement length mismatch")
+    updated = list(receiver)
+    for index, replacement in zip(indexes, replacements, strict=True):
+        updated[index] = replacement
+    return "".join(updated)
+
+
+def _set_lazy_slice(
+    receiver: Any,
+    start: Any,
+    stop: Any,
+    step: Any,
+    value: Any,
+) -> LazyList:
+    step_int = 1 if step is None else _int_index(step)
+    if step_int <= 0:
+        raise RuntimeError("lazy list slice assignment requires a positive step")
+    start_int = 0 if start is None else _int_index(start)
+    if start_int < 0:
+        raise RuntimeError("lazy list slice assignment does not support negative start")
+    stop_int = None if stop is None else _int_index(stop)
+    if stop_int is not None and stop_int < 0:
+        raise RuntimeError("lazy list slice assignment does not support negative stop")
+    replacement_iter = iter(value) if is_list_like(value) else None
+
+    def updated_items():
+        for offset, item in enumerate(receiver):
+            in_slice = offset >= start_int and (stop_int is None or offset <= stop_int)
+            if in_slice and (offset - start_int) % step_int == 0:
+                if replacement_iter is None:
+                    yield value
+                else:
+                    try:
+                        yield next(replacement_iter)
+                    except StopIteration as exc:
+                        raise RuntimeError(
+                            "slice assignment replacement length mismatch"
+                        ) from exc
+            else:
+                yield item
+        if replacement_iter is not None:
+            try:
+                next(replacement_iter)
+            except StopIteration:
+                return
+            raise RuntimeError("slice assignment replacement length mismatch")
+
+    return LazyList(updated_items())
+
+
+def _eager_slice_indexes(
+    length: int,
+    start: Any,
+    stop: Any,
+    step: Any,
+) -> list[int]:
+    step_int = 1 if step is None else _int_index(step)
+    if step_int == 0:
+        raise RuntimeError("slice step cannot be 0")
+    start_int = 0 if start is None else _normal_index(_int_index(start), length)
+    stop_int = length - 1 if stop is None else _normal_index(_int_index(stop), length)
+    python_stop = stop_int + (1 if step_int > 0 else -1)
+    return list(range(length))[start_int:python_stop:step_int]
+
+
+def _slice_replacements(value: Any, count: int) -> list[Any]:
+    if is_list_like(value):
+        replacements = list(value)
+        if len(replacements) != count:
+            raise RuntimeError("slice assignment replacement length mismatch")
+        return replacements
+    return [value for _ in range(count)]
 
 
 def _set_index_one(receiver: Any, index: Any, value: Any) -> Any:
