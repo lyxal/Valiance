@@ -74,6 +74,7 @@ from valiance.types import (
     WithTag,
     assignable,
     optional,
+    show,
 )
 from valiance.types.default_types import Boolean
 
@@ -2766,6 +2767,155 @@ end
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, Number)
+
+    def test_import_namespace_exports_public_object_constructor(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "person.vlnc").write_text(
+                """
+public object Person =>
+  $name: String
+  $age: Number
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            analyser = Analyser(source_file=main)
+            typed = analyser.analyse(
+                parse('import { person }\nperson.Person("Joe", 67)')
+            )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(show(typed[-1].typ), "person.Person")
+
+    def test_direct_import_exports_public_object_constructor(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "person.vlnc").write_text(
+                """
+public object Person =>
+  $name: String
+  $age: Number
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            analyser = Analyser(source_file=main)
+            typed = analyser.analyse(
+                parse('import { person.Person }\nPerson("Joe", 67)')
+            )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(show(typed[-1].typ), "Person")
+
+    def test_direct_object_import_exports_object_friendly_elements(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "person.vlnc").write_text(
+                """
+public object Person =>
+  $name: String
+  $age: Number
+  define label -> String => $self.name
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            analyser = Analyser(source_file=main)
+            typed = analyser.analyse(
+                parse('import { person.Person }\nPerson("Joe", 67) label')
+            )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, String)
+
+    def test_direct_object_import_exports_trait_impl_friendly_elements(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "shape.vlnc").write_text(
+                """
+public trait Shape =>
+  extend getArea -> Number
+end
+""",
+                encoding="utf-8",
+            )
+            (root / "rectangle.vlnc").write_text(
+                """
+import {shape.Shape}
+
+public object Rectangle =>
+  $shortSide: Number
+  $longSide: Number
+end
+
+object Rectangle as Shape =>
+  define getArea => $self.shortSide * $self.longSide
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            analyser = Analyser(source_file=main)
+            typed = analyser.analyse(
+                parse("import {rectangle.Rectangle}\nRectangle(6, 7) getArea")
+            )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Number)
+
+    def test_namespace_object_import_keeps_friendly_elements_qualified(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "rectangle.vlnc").write_text(
+                """
+public object Rectangle =>
+  $shortSide: Number
+  $longSide: Number
+  define getArea => $self.shortSide * $self.longSide
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            analyser = Analyser(source_file=main)
+            analyser.analyse(
+                parse("import {rectangle}\nrectangle.Rectangle(6, 7) getArea")
+            )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["2:27: unknown element 'getArea'"],
+        )
+
+    def test_private_object_is_not_importable(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "person.vlnc").write_text(
+                """
+object Person =>
+  $name: String
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            analyser = Analyser(source_file=main)
+            analyser.analyse(parse("import { person.Person }"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["1:1: module 'person' has no public component 'Person'"],
+        )
 
     def test_root_import_resolves_from_project_manifest_directory(self):
         with TemporaryDirectory() as tmp:

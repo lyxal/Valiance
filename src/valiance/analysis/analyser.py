@@ -81,6 +81,7 @@ from valiance.modules import (
     ModuleLoadError,
     import_definitions,
     import_environment_facts,
+    import_objects,
 )
 from valiance.symbols import Symbol
 from valiance.types.default_types import Boolean
@@ -1352,16 +1353,20 @@ class Analyser:
         branch: AnalysisBranch,
         node: ImportNode,
     ) -> set[AnalysisBranch]:
-        typed_nodes: list[TypedFunctionNode] = []
+        typed_nodes: list[TypedNode] = []
         for spec in node.specs:
             try:
                 exports, resolved_spec, definitions = self._load_import_definitions(
                     spec
                 )
+                objects = import_objects(exports, resolved_spec)
                 import_environment_facts(exports, resolved_spec, self.env)
             except ModuleLoadError as exc:
                 self._diagnose(str(exc), node)
                 return {branch.append_typed(TypedNode(node, None))}
+            for obj in objects:
+                self._register_imported_object(obj)
+                typed_nodes.append(obj.typed)
             for definition in definitions:
                 self._register_imported_definition(definition.name, definition.typed)
                 typed_nodes.append(definition.typed)
@@ -1399,6 +1404,78 @@ class Analyser:
     ) -> None:
         for overload in _callable_overloads(typed_node.typ):
             self.env.define_overload(name, overload)
+
+    def _register_imported_object(
+        self,
+        obj,
+    ) -> None:
+        node = obj.typed.node
+        if not isinstance(node, ObjectNode):
+            return
+        kind = node.kind.text
+        if kind == "trait":
+            requirements = tuple(
+                _genericize_requirement(requirement, node.generics)
+                for item in node.requirements
+                if (requirement := _trait_requirement(item)) is not None
+            )
+            self.env.define_trait(
+                obj.name,
+                generics=node.generics,
+                generic_variance=_declared_or_inferred_variance(
+                    node.generics,
+                    node.generic_variances,
+                    (),
+                    requirements,
+                ),
+                requirements=requirements,
+            )
+            if node.target is not None:
+                target = T.normalize(node.target)
+                if isinstance(target, T.NominalType):
+                    self.env.add_trait_parent(obj.name, target.name)
+            return
+
+        if kind != "object" or node.target is not None:
+            return
+
+        attributes = tuple(self._object_attribute(field) for field in node.fields)
+        if any(attribute is None for attribute in attributes):
+            return
+        object_attributes = tuple(
+            _genericize_attribute(attribute, node.generics)
+            for attribute in attributes
+            if attribute
+        )
+        generic_constraints = _generic_constraints(
+            node.generics,
+            node.generic_constraints,
+        )
+        self.env.define_object(
+            obj.name,
+            object_attributes,
+            generics=node.generics,
+            generic_variance=_declared_or_inferred_variance(
+                node.generics,
+                node.generic_variances,
+                object_attributes,
+                (),
+            ),
+        )
+        self.env.define_constructor(
+            obj.name,
+            object_attributes,
+            result_type=_declared_nominal(obj.name, node.generics),
+            generic_constraints=generic_constraints,
+        )
+        if obj.import_friendly:
+            current = AnalysisBranch()
+            for definition in node.definitions:
+                current = self._register_friendly_definition(
+                    current,
+                    obj.name,
+                    definition,
+                )
 
     def _string_interpolation(
         self,

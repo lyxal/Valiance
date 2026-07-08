@@ -585,6 +585,86 @@ $name = "Valiance"
 
         self.assertEqual(stack, [Decimal("42")])
 
+    def test_executes_imported_namespace_object_constructor(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "person.vlnc").write_text(
+                """
+public object Person =>
+  $name: String
+  $age: Number
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            stack = execute(
+                'import { person }\nperson.Person("Joe", 67) $.name',
+                main,
+            )
+
+        self.assertEqual(stack, ["Joe"])
+
+    def test_executes_direct_imported_object_friendly_element(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "person.vlnc").write_text(
+                """
+public object Person =>
+  $name: String
+  $age: Number
+  define label -> String => $self.name
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            stack = execute(
+                'import { person.Person }\nPerson("Joe", 67) label',
+                main,
+            )
+
+        self.assertEqual(stack, ["Joe"])
+
+    def test_executes_direct_imported_trait_impl_friendly_element(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "shape.vlnc").write_text(
+                """
+public trait Shape =>
+  extend getArea -> Number
+end
+""",
+                encoding="utf-8",
+            )
+            (root / "rectangle.vlnc").write_text(
+                """
+import {shape.Shape}
+
+public object Rectangle =>
+  $shortSide: Number
+  $longSide: Number
+end
+
+object Rectangle as Shape =>
+  define getArea => $self.shortSide * $self.longSide
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            stack = execute(
+                "import {rectangle.Rectangle}\n"
+                "$myShape = Rectangle(6, 7)\n"
+                "getArea $myShape",
+                main,
+            )
+
+        self.assertEqual(stack, [Decimal("42")])
+
     def test_executes_python_backed_standard_library_regex_helpers(self):
         stack = execute(
             """

@@ -199,7 +199,12 @@ class Parser:
             self._error("eager must be followed by define")
         if self._match_ident("object", "trait", "variant", "enum"):
             return (
-                self._object_like(self._previous, self._previous.value, annotations),
+                self._object_like(
+                    self._previous,
+                    self._previous.value,
+                    annotations,
+                    visibility,
+                ),
             )
         if self._match_ident("fn"):
             return (self._function(self._previous, annotations),)
@@ -544,7 +549,11 @@ class Parser:
         )
 
     def _object_like(
-        self, start: Token, kind: str, annotations: tuple[ASTNode, ...]
+        self,
+        start: Token,
+        kind: str,
+        annotations: tuple[ASTNode, ...],
+        visibility: Symbol | None = None,
     ) -> ObjectNode:
         generics, generic_variances, generic_constraints = self._generic_parameters()
         name = self._symbol("expected object name")
@@ -561,6 +570,7 @@ class Parser:
                 annotations=annotations,
                 generic_variances=generic_variances,
                 generic_constraints=generic_constraints,
+                visibility=visibility,
                 location=_loc(start),
             )
         fields, definitions, requirements, variants = self._object_body(kind, name)
@@ -577,6 +587,7 @@ class Parser:
             annotations,
             generic_variances=generic_variances,
             generic_constraints=generic_constraints,
+            visibility=visibility,
             location=_loc(start),
         )
 

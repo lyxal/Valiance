@@ -352,7 +352,15 @@ class _Compiler:
                             node.definitions,
                         )
                     )
-                    self.object_constructor(node.name.text, node.fields)
+                    self.object_constructor(
+                        node.name.text,
+                        node.fields,
+                        alias=(
+                            node.name.text
+                            if "." not in node.name.text
+                            else None
+                        ),
+                    )
                 for definition in node.definitions:
                     self.friendly_definition(node.name.text, definition)
             case "variant":
@@ -365,7 +373,11 @@ class _Compiler:
                             member.definitions,
                         )
                     )
-                    self.object_constructor(runtime_name, member.fields)
+                    self.object_constructor(
+                        runtime_name,
+                        member.fields,
+                        alias=member.name.text,
+                    )
                     for definition in member.definitions:
                         self.friendly_definition(runtime_name, definition)
             case "enum":
@@ -385,7 +397,13 @@ class _Compiler:
                             f"{node.name}.{member.name}.value",
                         )
 
-    def object_constructor(self, name: str, fields: object) -> None:
+    def object_constructor(
+        self,
+        name: str,
+        fields: object,
+        *,
+        alias: str | None = None,
+    ) -> None:
         field_names: list[str] = []
         default_values: list[tuple[str, object]] = []
         for field in fields:
@@ -412,7 +430,10 @@ class _Compiler:
                 ),
             ),
         )
-        self.emit(OpCode.STORE_VAR, name.rsplit(".", 1)[-1])
+        self.emit(OpCode.STORE_VAR, name)
+        if alias is not None and alias != name:
+            self.emit(OpCode.LOAD_ELEMENT, name)
+            self.emit(OpCode.STORE_VAR, alias)
 
     def friendly_definition(self, owner: str, definition: DefineNode) -> None:
         body = definition.function.body

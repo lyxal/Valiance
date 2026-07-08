@@ -582,3 +582,4 @@ class ObjectNode(ASTNode):
     annotations: tuple[ASTNode, ...] = ()
     generic_variances: tuple[Symbol | None, ...] = ()
     generic_constraints: tuple[Type | None, ...] = ()
+    visibility: Symbol | None = None

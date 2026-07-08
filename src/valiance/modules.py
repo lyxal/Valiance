@@ -11,6 +11,7 @@ from valiance.asts import (
     FunctionNode,
     ImportPath,
     ImportSpec,
+    ObjectNode,
     Symbol,
     TagDeclarationNode,
     TagOverlayNode,
@@ -37,16 +38,31 @@ class ModuleDefinition:
 
 
 @dataclass(frozen=True)
+class ModuleObject:
+    """One analysed object-like declaration exported by a module."""
+
+    name: Symbol
+    typed: TypedNode
+    public: bool = False
+    friendly_definitions: tuple[DefineNode, ...] = ()
+    import_friendly: bool = False
+
+
+@dataclass(frozen=True)
 class ModuleExports:
     """The reusable symbol surface of an analysed module."""
 
     module_name: str
     definitions: tuple[ModuleDefinition, ...] = ()
+    objects: tuple[ModuleObject, ...] = ()
     tags: tuple[T.DataTagDefinition, ...] = ()
     overlays: tuple[T.TagOverlayDefinition, ...] = ()
 
     def public_definitions(self) -> tuple[ModuleDefinition, ...]:
         return tuple(definition for definition in self.definitions if definition.public)
+
+    def public_objects(self) -> tuple[ModuleObject, ...]:
+        return tuple(obj for obj in self.objects if obj.public)
 
 
 class ModuleLoadError(Exception):
@@ -95,6 +111,7 @@ class ModuleLoader:
                 joined = "; ".join(analyser.diagnostics)
                 raise ModuleLoadError(f"{source_file}: {joined}")
             definitions = _module_definitions(program, typed)
+            objects = _module_objects(typed)
             tags = _module_tags(program, analyser.env)
             overlays = _module_overlays(program, analyser.env)
             if native_exports is not None:
@@ -102,6 +119,7 @@ class ModuleLoader:
             exports = ModuleExports(
                 _module_name(path),
                 definitions,
+                objects,
                 tags,
                 overlays,
             )
@@ -165,6 +183,7 @@ def import_definitions(
 ) -> tuple[ModuleDefinition, ...]:
     """Return exported definitions selected by an import spec."""
     public = exports.public_definitions()
+    public_objects = {obj.name for obj in exports.public_objects()}
     if spec.components:
         by_name = {definition.name: definition for definition in public}
         selected: list[ModuleDefinition] = []
@@ -181,6 +200,8 @@ def import_definitions(
                 continue
             definition = by_name.get(component.name)
             if definition is None:
+                if component.name in public_objects:
+                    continue
                 raise ModuleLoadError(
                     f"module {exports.module_name!r} has no public "
                     f"component {component.name.text!r}"
@@ -201,6 +222,42 @@ def import_definitions(
             Symbol(f"{namespace.text}.{definition.name.text}"),
         )
         for definition in public
+    )
+
+
+def import_objects(
+    exports: ModuleExports,
+    spec: ImportSpec,
+) -> tuple[ModuleObject, ...]:
+    """Return exported object-like declarations selected by an import spec."""
+    public = exports.public_objects()
+    by_name = {obj.name: obj for obj in public}
+    if spec.components:
+        selected: list[ModuleObject] = []
+        for component in spec.components:
+            if component.kind is not None:
+                continue
+            obj = by_name.get(component.name)
+            if obj is None:
+                continue
+            selected.append(
+                _renamed_object(
+                    obj,
+                    component.alias or component.name,
+                    import_friendly=True,
+                )
+            )
+        return tuple(selected)
+
+    namespace = spec.alias or Symbol(exports.module_name.rsplit(".", 1)[-1])
+    return tuple(
+        _renamed_object(
+            obj,
+            Symbol(f"{namespace.text}.{obj.name.text}"),
+            friendly_prefix=namespace,
+            import_friendly=True,
+        )
+        for obj in public
     )
 
 
@@ -264,6 +321,38 @@ def _module_definitions(
     return tuple(result)
 
 
+def _module_objects(
+    typed: list[TypedNode],
+) -> tuple[ModuleObject, ...]:
+    friendly_by_owner: dict[Symbol, list[DefineNode]] = {}
+    for typed_node in typed:
+        node = typed_node.node
+        if not isinstance(node, ObjectNode):
+            continue
+        if node.kind == Symbol("object") and node.target is not None:
+            friendly_by_owner.setdefault(node.name, []).extend(node.definitions)
+
+    result: list[ModuleObject] = []
+    for typed_node in typed:
+        node = typed_node.node
+        if not isinstance(node, ObjectNode):
+            continue
+        if node.kind == Symbol("object") and node.target is not None:
+            continue
+        result.append(
+            ModuleObject(
+                node.name,
+                typed_node,
+                public=node.visibility == Symbol("public"),
+                friendly_definitions=(
+                    node.definitions
+                    + tuple(friendly_by_owner.get(node.name, ()))
+                ),
+            )
+        )
+    return tuple(result)
+
+
 def _module_tags(program: list, env) -> tuple[T.DataTagDefinition, ...]:
     public = {
         Symbol(node.tag.name)
@@ -300,7 +389,53 @@ def _renamed_definition(
     node = definition.typed.node
     if not isinstance(node, DefineNode):
         return definition
-    renamed = DefineNode(
+    renamed = _renamed_define_node(node, name)
+    typed = TypedFunctionNode(renamed, definition.typed.typ, definition.typed.overloads)
+    return ModuleDefinition(name, typed, definition.public, definition.attached_tag)
+
+
+def _renamed_object(
+    obj: ModuleObject,
+    name: Symbol,
+    *,
+    friendly_prefix: Symbol | None = None,
+    import_friendly: bool = False,
+) -> ModuleObject:
+    node = obj.typed.node
+    if not isinstance(node, ObjectNode):
+        return obj
+    definitions = (
+        _renamed_friendly_definitions(obj.friendly_definitions, friendly_prefix)
+        if import_friendly
+        else ()
+    )
+    renamed = ObjectNode(
+        node.kind,
+        name,
+        node.generics,
+        node.target,
+        node.fields,
+        definitions,
+        node.requirements,
+        node.variants,
+        node.enum_members,
+        node.annotations,
+        node.generic_variances,
+        node.generic_constraints,
+        node.visibility,
+        location=node.location,
+    )
+    return ModuleObject(
+        name,
+        TypedNode(renamed, obj.typed.typ),
+        obj.public,
+        definitions,
+        import_friendly,
+    )
+
+
+def _renamed_define_node(node: DefineNode, name: Symbol) -> DefineNode:
+    return DefineNode(
         name,
         FunctionNode(
             params=node.function.params,
@@ -322,8 +457,21 @@ def _renamed_definition(
         node.attached_tag,
         location=node.location,
     )
-    typed = TypedFunctionNode(renamed, definition.typed.typ, definition.typed.overloads)
-    return ModuleDefinition(name, typed, definition.public, definition.attached_tag)
+
+
+def _renamed_friendly_definitions(
+    definitions: tuple[DefineNode, ...],
+    prefix: Symbol | None,
+) -> tuple[DefineNode, ...]:
+    if prefix is None:
+        return definitions
+    return tuple(
+        _renamed_define_node(
+            definition,
+            Symbol(f"{prefix.text}.{definition.name.text}"),
+        )
+        for definition in definitions
+    )
 
 
 def _select_overloads(
