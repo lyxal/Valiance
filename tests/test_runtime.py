@@ -175,6 +175,44 @@ end
 
         self.assertEqual(run(program), [1])
 
+    def test_generic_atomic_scalar_search_uses_equality_constraint(self):
+        source = """
+define[T: trait => extend ==(:T, :T) -> #boolean Number end] findScalar(
+  xs: T+,
+  x: T atomic
+) -> Integer? =>
+  $xs foreach (item, pos) =>
+    if ($item == $x) => return $pos
+  end
+  None
+end
+
+[1, 2, 3, 4, 5] findScalar 3
+"""
+
+        self.assertEqual(execute(source), [Decimal("2")])
+
+    def test_generic_atomic_scalar_search_rejects_non_scalar_shapes(self):
+        definition = """
+define[T: trait => extend ==(:T, :T) -> #boolean Number end] findScalar(
+  xs: T+,
+  x: T atomic
+) -> Integer? =>
+  $xs foreach (item, pos) =>
+    if ($item == $x) => return $pos
+  end
+  None
+end
+"""
+
+        for call in (
+            "[[1, 2, 3, 4, 5]] findScalar 3",
+            "[1, 2, 3, 4, 5] findScalar [3]",
+        ):
+            analyser = Analyser()
+            analyser.analyse(parse(definition + call))
+            self.assertTrue(analyser.diagnostics)
+
     def test_add_all_extends_top_stack_list_with_items(self):
         self.assertEqual(
             execute("[3, 4] [1, 2] addAll"),

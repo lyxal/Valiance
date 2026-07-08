@@ -478,12 +478,19 @@ fn[T] (value: T) -> T => $value
 ```
 
 The parser records generic names on `ObjectNode`, `DefineNode`, and
-`FunctionNode`. Generic parameter lists no longer accept bound or variance
-marker syntax such as
-`T: Vehicle`, `T: any Vehicle`, or `T: above Vehicle`; write constraints in
-ordinary type positions instead. The analyser rewrites matching type names into
-type variables before storing object attributes, constructors, function
-definitions, and requirements.
+`FunctionNode`. Generic parameter lists may also carry bounds:
+
+```valiance
+define[T: Vehicle] keep(value: T) -> T => $value
+define[T: any Vehicle] keepSubtype(value: T) -> T => $value
+define[T: above Car] keepSupertype(value: T) -> T => $value
+```
+
+Unlabelled bounds behave like `any`: the solved type must be assignable to the
+bound. `above` reverses that relationship: the bound must be assignable to the
+solved type. The parser stores the optional label in the generic variance slot
+and the bound in the matching generic constraint slot; the analyser interprets
+the pair when building overload constraints and declaration-site variance.
 
 This declaration-local generic syntax is separate from ordinary type parsing:
 outside a declaration's generic list, bare `T` is parsed as a nominal type name.

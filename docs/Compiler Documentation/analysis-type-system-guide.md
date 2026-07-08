@@ -316,12 +316,15 @@ registering object attributes, constructors, function definitions, function
 literals, and requirements. Nested generic function literals shadow outer
 generic names with the same spelling.
 
-Surface generic parameter lists do not accept bound syntax. Built-ins and other
-compiler-internal overload sources can still attach `GenericConstraint` records
-directly to overloads; overload application first solves the generic from the
-actual arguments, substitutes solved variables in the bound, and then requires
-the solution to be assignable to the bound. User-authored constraints should be
-expressed in ordinary parameter types instead.
+Surface generic parameter lists accept bounds. Unlabelled `T: U` and labelled
+`T: any U` are upper bounds: overload application first solves `T` from the
+actual arguments, substitutes solved variables in `U`, and then requires the
+solution to be assignable to `U`. `T: above U` is a lower bound and checks the
+opposite direction, requiring `U` to be assignable to the solution. The parser
+stores `any` and `above` in the generic variance marker slot, and the analyser
+turns them into directed `GenericConstraint` records. The same labels also map
+to declaration-site covariance and contravariance for nominal generic
+constructors.
 
 Anonymous trait types provide structural behavior checks without requiring a
 named trait implementation. They are represented as `AnonymousTraitType` with

@@ -797,6 +797,12 @@ class Analyser:
             node.annotations,
         )
         function_node = _genericize_function_node(function_node, node.generics)
+        function_node = replace(
+            function_node,
+            generics=node.generics,
+            generic_variances=node.generic_variances,
+            generic_constraints=node.generic_constraints,
+        )
         self._validate_function_element_tags(function_node, node)
         declared_overload = (
             _fully_typed_overload(function_node)
@@ -814,6 +820,7 @@ class Analyser:
         function, typed_branch = result
         generic_constraints = _generic_constraints(
             node.generics,
+            node.generic_variances,
             node.generic_constraints,
         )
         overload_typings = list(function.overloads)
@@ -1098,6 +1105,7 @@ class Analyser:
         )
         generic_constraints = _generic_constraints(
             node.generics,
+            node.generic_variances,
             node.generic_constraints,
         )
         self.env.define_object(
@@ -1188,6 +1196,7 @@ class Analyser:
     ) -> set[AnalysisBranch]:
         generic_constraints = _generic_constraints(
             node.generics,
+            node.generic_variances,
             node.generic_constraints,
         )
         requirements = tuple(
@@ -1333,6 +1342,7 @@ class Analyser:
         function, typed_branch = result
         generic_constraints = _generic_constraints(
             definition.generics,
+            definition.generic_variances,
             definition.generic_constraints,
         )
         for name in (definition.name, Symbol(f"{owner}::{definition.name}")):
@@ -1449,6 +1459,7 @@ class Analyser:
         )
         generic_constraints = _generic_constraints(
             node.generics,
+            node.generic_variances,
             node.generic_constraints,
         )
         self.env.define_object(
@@ -2812,10 +2823,11 @@ class Analyser:
         else_outputs = self.analyse_block(body_inputs, node.else_branch)
 
         outputs: set[AnalysisBranch] = set()
+        saw_mismatched_inputs = False
         for left in then_outputs:
             for right in else_outputs:
                 if left.inputs != right.inputs:
-                    self._diagnose("if branches inferred different inputs", node)
+                    saw_mismatched_inputs = True
                     continue
                 if left.break_type is not None or right.break_type is not None:
                     for output in (left, right):
@@ -2839,6 +2851,8 @@ class Analyser:
                     .with_variables(variables)
                     .append_typed(typed_if)
                 )
+        if not outputs and saw_mismatched_inputs:
+            self._diagnose("if branches inferred different inputs", node)
         return outputs
 
     def _match(
@@ -3261,7 +3275,15 @@ class Analyser:
             origin=outer.origin,
         )
 
-        structural_overloads = _anonymous_trait_overloads(*params)
+        generic_constraints = _generic_constraints(
+            node.generics,
+            node.generic_variances,
+            node.generic_constraints,
+        )
+        structural_overloads = _anonymous_trait_overloads(
+            *params,
+            *(constraint.bound for constraint in generic_constraints),
+        )
         function_env = self.env.child_scope() if structural_overloads else self.env
         for name, overload in structural_overloads:
             function_env.overloads.setdefault(name, []).append(overload)
@@ -5442,6 +5464,7 @@ def _branch_argument_substitution(
 ) -> dict[str, T.Type] | None:
     substitution: dict[str, T.Type] = {}
     for arg, param in zip(args, params, strict=True):
+        arg = _substitute_branch_type(arg, substitution)
         param = _substitute_branch_type(param, substitution)
         constraints = _solve_branch_argument(arg, param, ctx)
         if constraints is None or (not constraints and _contains_type_var(param)):
@@ -5622,7 +5645,10 @@ def _substitute_branch_type(typ: T.Type, substitution: dict[str, T.Type]) -> T.T
     if isinstance(typ, T.ExactType):
         return T.Exact(_substitute_branch_type(typ.inner, substitution))
     if isinstance(typ, T.AtomicType):
-        return T.Atomic(_substitute_branch_type(typ.inner, substitution))
+        inner = _substitute_branch_type(typ.inner, substitution)
+        if not isinstance(inner, T.VarType):
+            return _atomic_base_type(inner)
+        return T.Atomic(inner)
     return typ
 
 
@@ -6508,15 +6534,30 @@ def _number_literal_type(value: str) -> T.Type:
 
 def _generic_constraints(
     generics: tuple[Symbol, ...],
+    variances: tuple[Symbol | None, ...],
     constraints: tuple[T.Type | None, ...],
 ) -> tuple[T.GenericConstraint, ...]:
     if len(generics) != len(constraints):
         return ()
+    if len(variances) != len(generics):
+        variances = (None,) * len(generics)
     return tuple(
-        T.GenericConstraint(generic.text, _genericize_type(bound, generics))
-        for generic, bound in zip(generics, constraints, strict=True)
+        T.GenericConstraint(
+            generic.text,
+            _genericize_type(bound, generics),
+            _constraint_variance_from_marker(marker),
+        )
+        for generic, marker, bound in zip(generics, variances, constraints, strict=True)
         if bound is not None
     )
+
+
+def _constraint_variance_from_marker(marker: Symbol | None) -> T.Variance:
+    if marker is None or marker.text == "any":
+        return T.Variance.COVARIANT
+    if marker.text == "above":
+        return T.Variance.CONTRAVARIANT
+    return _variance_from_marker(marker)
 
 
 def _with_generic_constraints(
@@ -6645,8 +6686,13 @@ def _genericize_function_node(
     returns = None
     if function.returns is not None:
         returns = tuple(_genericize_type(ret, generics) for ret in function.returns)
+    generic_constraints = tuple(
+        None if bound is None else _genericize_type(bound, generics)
+        for bound in function.generic_constraints
+    )
     return FunctionNode(
         generics=function.generics,
+        generic_variances=function.generic_variances,
         params=params,
         body=tuple(_genericize_ast_node(node, generics) for node in function.body),
         returns=returns,
@@ -6659,6 +6705,7 @@ def _genericize_function_node(
         companion_tags_allowed=frozenset(
             _genericize_element_tags(function.companion_tags_allowed, generics)
         ),
+        generic_constraints=generic_constraints,
         location=function.location,
     )
 
@@ -7034,9 +7081,9 @@ def _declared_or_inferred_variance(
 
 
 def _variance_from_marker(marker: Symbol) -> T.Variance:
-    if marker.text == "covariant":
+    if marker.text in {"any", "covariant"}:
         return T.Variance.COVARIANT
-    if marker.text == "contravariant":
+    if marker.text in {"above", "contravariant"}:
         return T.Variance.CONTRAVARIANT
     return T.Variance.INVARIANT
 
@@ -7327,7 +7374,19 @@ def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
     if isinstance(typ, T.ExactType):
         return T.Exact(_refine_type(typ.inner, old, new))
     if isinstance(typ, T.AtomicType):
-        return T.Atomic(_refine_type(typ.inner, old, new))
+        inner = _refine_type(typ.inner, old, new)
+        if not isinstance(inner, T.VarType):
+            return _atomic_base_type(inner)
+        return T.Atomic(inner)
+    return typ
+
+
+def _atomic_base_type(typ: T.Type) -> T.Type:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        return _atomic_base_type(typ.inner)
+    if isinstance(typ, T.CollectionType):
+        return _atomic_base_type(typ.base)
     return typ
 
 

@@ -608,13 +608,14 @@ class Parser:
             return (), (), ()
         while True:
             names.append(self._symbol("expected generic parameter name"))
+            variance = None
+            constraint = None
             if self._match(TokenKind.COLON):
-                self._error(
-                    "generic bounds are not allowed in generic parameter lists; "
-                    "write the constraint in the parameter type"
-                )
-            variances.append(None)
-            constraints.append(None)
+                if self._check_ident("any") or self._check_ident("above"):
+                    variance = Symbol(str(self._advance().value))
+                constraint = self.parse_type_expression()
+            variances.append(variance)
+            constraints.append(constraint)
             if self._match(TokenKind.RBRACKET):
                 return tuple(names), tuple(variances), tuple(constraints)
             self._expect(TokenKind.COMMA)
@@ -685,7 +686,14 @@ class Parser:
         return self._field(owner, visibility)
 
     def _extend(self, start: Token) -> TraitRequirementNode:
-        name = self._symbol("expected required element name")
+        if not self._check(TokenKind.IDENT, TokenKind.OP):
+            self._error("expected required element name")
+        token = self._advance()
+        name = (
+            self._operator_run(token)
+            if token.kind is TokenKind.OP
+            else self._qualified_symbol(token)
+        )
         params = (
             self._params(allow_empty=True)
             if self._match(TokenKind.LPAREN)
@@ -745,7 +753,7 @@ class Parser:
         start: Token,
         annotations: tuple[ASTNode, ...] = (),
     ) -> FunctionNode:
-        generics = self._generic_names()
+        generics, generic_variances, generic_constraints = self._generic_parameters()
         params = (
             self._params(allow_empty=True)
             if self._match(TokenKind.LPAREN)
@@ -757,6 +765,7 @@ class Parser:
         self._expect(TokenKind.FAT_ARROW)
         return FunctionNode(
             generics=generics,
+            generic_variances=generic_variances,
             params=params,
             returns=returns,
             where_clause=where_clause,
@@ -764,6 +773,7 @@ class Parser:
             element_tags_explicit=element_tags_explicit,
             annotations=annotations,
             body=self._body(),
+            generic_constraints=generic_constraints,
             location=_loc(start),
         )
 
@@ -796,8 +806,6 @@ class Parser:
                 else_branch = self._body({"end"})
                 self._skip_newlines()
                 self._consume_optional_end()
-        else:
-            self._consume_optional_end()
         return IfNode(condition, then_branch, else_branch, location=_loc(start))
 
     def _while(self, start: Token) -> WhileNode:
@@ -815,8 +823,6 @@ class Parser:
             self._expect(TokenKind.FAT_ARROW)
             else_branch = self._body({"end"})
             self._skip_newlines()
-            self._consume_optional_end()
-        else:
             self._consume_optional_end()
         return AssertNode(condition, else_branch, location=_loc(start))
 
@@ -1093,8 +1099,10 @@ class Parser:
     def _body(self, stop_words: set[str] | None = None) -> tuple[ASTNode, ...]:
         single_line = not self._check(TokenKind.NEWLINE)
         if single_line:
+            body_line = self._current.line
             body = self._chain_until(_LINE_TERMINATORS)
-            self._consume_optional_end()
+            if self._check_ident("end") and self._current.line == body_line:
+                self._consume_optional_end()
             return body
         self._skip_newlines()
         nodes: list[ASTNode] = []

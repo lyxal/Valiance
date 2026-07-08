@@ -178,6 +178,7 @@ class FunctionNode(ASTNode):
     """A function literal."""
 
     generics: tuple[Symbol, ...] = ()
+    generic_variances: tuple[Symbol | None, ...] = ()
     params: tuple[FunctionParam, ...] | None = None
     body: tuple[ASTNode, ...] = ()
     returns: tuple[Type, ...] | None = None
@@ -189,6 +190,7 @@ class FunctionNode(ASTNode):
         default_factory=frozenset[ElementTag],
         compare=False,
     )
+    generic_constraints: tuple[Type | None, ...] = ()
 
 
 @dataclass(frozen=True)

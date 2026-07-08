@@ -793,6 +793,30 @@ accept
             (Variance.CONTRAVARIANT,),
         )
 
+    def test_labelled_generic_bounds_publish_declaration_variance(self):
+        env = Environment()
+        analyser = Analyser(env)
+
+        analyser.analyse(
+            parse(
+                """
+trait Vehicle => end
+object[T: any Vehicle] Source => $value: T end
+object[T: above Vehicle] Sink => $consume: Function[T ->] end
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            env.context.variance_for(Symbol("Source"), 1),
+            (Variance.COVARIANT,),
+        )
+        self.assertEqual(
+            env.context.variance_for(Symbol("Sink"), 1),
+            (Variance.CONTRAVARIANT,),
+        )
+
     def test_generic_object_field_access_substitutes_receiver_argument(self):
         analyser = Analyser(Environment())
 
@@ -812,6 +836,49 @@ $.value
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Car")))
+
+    def test_labelled_generic_upper_bound_rejects_supertype_solution(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(
+            parse(
+                """
+trait Vehicle => end
+object Car => end
+object Car as Vehicle => end
+define \\asVehicle -> Vehicle => Car end
+define[T: any Car] accept(value: T) -> T => $value end
+\\asVehicle
+accept
+"""
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "no overloads for element 'accept' match stack [Vehicle]",
+            analyser.diagnostics[0],
+        )
+
+    def test_labelled_generic_lower_bound_accepts_supertype_solution(self):
+        analyser = Analyser(Environment())
+
+        typed = analyser.analyse(
+            parse(
+                """
+trait Vehicle => end
+object Car => end
+object Car as Vehicle => end
+define \\asVehicle -> Vehicle => Car end
+define[T: above Car] accept(value: T) -> T => $value end
+\\asVehicle
+accept
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, N(Symbol("Vehicle")))
 
     def test_invariant_generic_object_rejects_substituted_supertype_argument(self):
         analyser = Analyser(Environment())

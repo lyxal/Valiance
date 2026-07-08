@@ -539,9 +539,41 @@ class ParserTests(unittest.TestCase):
             frozenset((ElementTag(Symbol("Eager")),)),
         )
 
-    def test_rejects_generic_definition_constraints(self):
-        with self.assertRaises(ParseError):
-            parse("define[T: Vehicle] keep(value: T) -> T => $value")
+    def test_parses_generic_definition_constraints(self):
+        [node] = parse("define[T: Vehicle] keep(value: T) -> T => $value")
+
+        self.assertEqual(node.generics, (Symbol("T"),))
+        self.assertEqual(node.generic_variances, (None,))
+        self.assertEqual(node.generic_constraints, (N(Symbol("Vehicle")),))
+
+    def test_parses_labelled_generic_definition_constraints(self):
+        [upper] = parse("define[T: any Vehicle] keep(value: T) -> T => $value")
+        [lower] = parse("define[T: above Vehicle] keep(value: T) -> T => $value")
+
+        self.assertEqual(upper.generics, (Symbol("T"),))
+        self.assertEqual(upper.generic_variances, (Symbol("any"),))
+        self.assertEqual(upper.generic_constraints, (N(Symbol("Vehicle")),))
+        self.assertEqual(lower.generics, (Symbol("T"),))
+        self.assertEqual(lower.generic_variances, (Symbol("above"),))
+        self.assertEqual(lower.generic_constraints, (N(Symbol("Vehicle")),))
+
+    def test_parses_labelled_generic_function_literal_constraints(self):
+        [node] = parse("fn[T: above Vehicle] (value: T) -> T => $value")
+
+        self.assertEqual(node.generics, (Symbol("T"),))
+        self.assertEqual(node.generic_variances, (Symbol("above"),))
+        self.assertEqual(node.generic_constraints, (N(Symbol("Vehicle")),))
+
+    def test_parses_symbolic_anonymous_trait_generic_constraint(self):
+        [node] = parse(
+            """
+define[T: trait => extend ==(:T, :T) -> #boolean Number end] same(x: T) -> T => $x
+"""
+        )
+
+        constraint = node.generic_constraints[0]
+        self.assertIsInstance(constraint, AnonymousTraitType)
+        self.assertEqual(constraint.requirements[0].name, Symbol("=="))
 
     def test_parses_anonymous_trait_type(self):
         [node] = parse(

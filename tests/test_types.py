@@ -190,6 +190,36 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(accepted.substitution, {"T": Car})
         self.assertIsNone(rejected)
 
+    def test_generic_upper_constraints_accept_subtypes(self):
+        ctx = Context(trait_impls={CAR: {VEHICLE}})
+        overload = Overload(
+            (V("T"),),
+            (V("T"),),
+            (GenericConstraint("T", Car, Variance.COVARIANT),),
+        )
+
+        accepted = apply_overload(overload, (Car,), ctx)
+        rejected = apply_overload(overload, (Vehicle,), ctx)
+
+        self.assertIsNotNone(accepted)
+        self.assertEqual(accepted.substitution, {"T": Car})
+        self.assertIsNone(rejected)
+
+    def test_generic_lower_constraints_accept_supertypes(self):
+        ctx = Context(trait_impls={CAR: {VEHICLE}})
+        overload = Overload(
+            (V("T"),),
+            (V("T"),),
+            (GenericConstraint("T", Car, Variance.CONTRAVARIANT),),
+        )
+
+        accepted = apply_overload(overload, (Vehicle,), ctx)
+        rejected = apply_overload(overload, (String,), ctx)
+
+        self.assertIsNotNone(accepted)
+        self.assertEqual(accepted.substitution, {"T": Vehicle})
+        self.assertIsNone(rejected)
+
     def test_result_union_simplifies_success_and_error_members(self):
         self.assertEqual(U(Number, ParseError), N(Symbol("Result"), Number, ParseError))
         self.assertEqual(

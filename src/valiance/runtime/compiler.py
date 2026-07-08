@@ -109,10 +109,16 @@ class _LoopPatch:
 
 
 class _Compiler:
-    def __init__(self, *, break_as_signal: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        break_as_signal: bool = False,
+        return_as_signal: bool = False,
+    ) -> None:
         self.instructions: list[Instruction] = []
         self.loops: list[_LoopPatch] = []
         self.break_as_signal = break_as_signal
+        self.return_as_signal = return_as_signal
         self.object_runtime_metadata: dict[
             str,
             tuple[
@@ -314,7 +320,9 @@ class _Compiler:
             case ReturnNode(values):
                 for value in values:
                     self.node(value)
-                self.emit(OpCode.RETURN)
+                self.emit(
+                    OpCode.RETURN_SIGNAL if self.return_as_signal else OpCode.RETURN
+                )
             case _:
                 self.unsupported(node, type(node).__name__)
 
@@ -541,7 +549,12 @@ class _Compiler:
             body=node.body,
             location=node.location,
         )
-        body_code = _compile_function_node(body, "foreach.body", break_as_signal=True)
+        body_code = _compile_function_node(
+            body,
+            "foreach.body",
+            break_as_signal=True,
+            return_as_signal=True,
+        )
         completion_count = max(1, _max_break_values(node.body))
         self.emit(
             OpCode.FOREACH,
@@ -710,6 +723,7 @@ def _compile_function_node(
     name: str | None = None,
     *,
     break_as_signal: bool = False,
+    return_as_signal: bool = False,
 ) -> FunctionCode:
     ast = _function_ast(node)
     params = ()
@@ -718,7 +732,10 @@ def _compile_function_node(
             f"_{index}" if param.name is None else param.name.text
             for index, param in enumerate(ast.params)
         )
-    return _Compiler(break_as_signal=break_as_signal).compile_function(
+    return _Compiler(
+        break_as_signal=break_as_signal,
+        return_as_signal=return_as_signal,
+    ).compile_function(
         ast.body,
         params=params,
         name=name,

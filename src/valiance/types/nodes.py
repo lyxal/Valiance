@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import IntEnum
+from enum import Enum, IntEnum, auto
 from typing import Any
 
 from valiance.symbols import Symbol
@@ -23,6 +23,14 @@ class Specificity(IntEnum):
     VECTORISED = 8
     CALL_SITE_CHECKED = 9
     NO_MATCH = 10_000
+
+
+class Variance(Enum):
+    """How a generic argument or bound participates in subtyping."""
+
+    INVARIANT = auto()
+    COVARIANT = auto()
+    CONTRAVARIANT = auto()
 
 
 class Type:
@@ -230,6 +238,7 @@ class GenericConstraint:
 
     name: str
     bound: Type
+    variance: Variance = Variance.COVARIANT
 
 
 @dataclass(frozen=True)

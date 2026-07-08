@@ -681,11 +681,11 @@ define timesFive(y: Number) => $x * $y
 - Examples (assuming no additional overload definitions)
 ```
 fn => +
-#? Inferred as OverloadSet[VectFunction[Number, Number -> Number], VectFunction[String, String -> String]]
+#? Inferred as OverloadSet[Function[Number, Number -> Number], Function[String, String -> String]]
 
 fn => + double
-#? Inferred as VectFunction[Number, Number -> Number]
-#? The `double` makes the `VectFunction[String, String -> String]` overload impossible, and thus ` VectFunction[String, String -> String]` is discarded.
+#? Inferred as Function[Number, Number -> Number]
+#? The `double` makes the `Function[String, String -> String]` overload impossible, and thus ` Function[String, String -> String]` is discarded.
 ```
 - Untyped variables are inferred from their usage. If an untyped variable is not used, a compile-time error is raised.
 - Multiple possible overloads during inference = that function has multiple possible overloads.
@@ -709,8 +709,8 @@ $dip = fn (function: Function) =>
 end
 
 1 2 3 $dip(fn => +) #? 3 3
-#? dip in this context is considered `Function[Number, Number, Number, VectFunction[Number, Number -> Number] -> Number, Number]`
-#? Note that future usages of dip may use function values that aren't `VectFunction[Number, Number -> Number]`
+#? dip in this context is considered `Function[Number, Number, Number, Function[Number, Number -> Number] -> Number, Number]`
+#? Note that future usages of dip may use function values that aren't `Function[Number, Number -> Number]`
 ```
 
 ## 6.7. Inline Parameter/Return Type-Casting
@@ -1545,7 +1545,7 @@ object[<generics>] Name =>
 end
 ```
 
-- `generics` is any generic type variables the object needs. The list contains only names; constraints are expressed in field, constructor, or element types.
+- `generics` is any generic type variables the object needs. A generic can be bounded with `T: U`, `T: any U`, or `T: above U`; `any` is an upper bound and `above` is a lower bound.
 - `Name` is the name of the object
 - Object members are defined as `<access modifier> $<name>: <type> = <value>`
 - `access modifier` is one of `public` (public read, public write), `readable` (public read, private write), or `private` (private read, private write). `access modifier` can also be omitted, making the member `readable` by default.

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from valiance.symbols import Symbol
-from valiance.types.nodes import Overload
+from valiance.types.nodes import Overload, Variance
 
 
 class TagKind(Enum):
@@ -16,14 +16,6 @@ class TagKind(Enum):
     COMPUTED = auto()
     UNIT = auto()
     VARIANT = auto()
-
-
-class Variance(Enum):
-    """How one nominal generic argument participates in subtyping."""
-
-    INVARIANT = auto()
-    COVARIANT = auto()
-    CONTRAVARIANT = auto()
 
 
 @dataclass

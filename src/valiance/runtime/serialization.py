@@ -58,6 +58,7 @@ _OP_TO_BYTE = {
     OpCode.WHILE: 0x25,
     OpCode.SOURCE_ARGS: 0x26,
     OpCode.VALIDATE_TAG: 0x27,
+    OpCode.RETURN_SIGNAL: 0x28,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 

@@ -47,6 +47,7 @@ class OpCode(Enum):
     SOURCE_ARGS = "source_args"
     FOREACH = "foreach"
     LOOP_BREAK = "loop_break"
+    RETURN_SIGNAL = "return_signal"
     POP = "pop"
     RETURN = "return"
 

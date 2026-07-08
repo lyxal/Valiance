@@ -188,6 +188,11 @@ class _LoopBreak(Exception):
     values: tuple[Any, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _FunctionReturn(Exception):
+    values: tuple[Any, ...]
+
+
 class VirtualMachine:
     """A small stack-based bytecode interpreter."""
 
@@ -580,6 +585,10 @@ class VirtualMachine:
                             result = frame.stack
                             frame.stack = []
                             return self._finalize_frame(frame, result)
+                        case OpCode.RETURN_SIGNAL:
+                            result = tuple(frame.stack)
+                            frame.stack = []
+                            raise _FunctionReturn(result)
                 except _py_builtins.RuntimeError as exc:
                     error = exc if isinstance(exc, RuntimeError) else RuntimeError(exc)
                     error.add_execution_context(
@@ -593,6 +602,11 @@ class VirtualMachine:
             result = frame.stack
             frame.stack = []
             return self._finalize_frame(frame, result)
+        except _FunctionReturn as signal:
+            if code.name == "foreach.body":
+                self._discard_frame(frame)
+                raise
+            return self._finalize_frame(frame, list(signal.values))
         except Exception:
             self._discard_frame(frame)
             raise
@@ -816,6 +830,9 @@ class VirtualMachine:
                 _sync_captured_globals(frame, body.globals)
                 frame.stack.extend(signal.values)
                 return
+            except _FunctionReturn:
+                _sync_captured_globals(frame, body.globals)
+                raise
         _sync_captured_globals(frame, body.globals)
         frame.stack.extend(ObjectValue("None", {}) for _ in range(completion_count))
 

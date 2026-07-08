@@ -448,6 +448,9 @@ def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
     if same(source, target) or subtype(source, target, ctx):
         return True
 
+    if _is_boolean_number_to_integer(source, target):
+        return True
+
     if (
         isinstance(source, AnonymousTraitType)
         and source.generics
@@ -484,6 +487,16 @@ def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
         return any(assignable(source, t, ctx) for t in target.items)
 
     return False
+
+
+def _is_boolean_number_to_integer(source: Type, target: Type) -> bool:
+    source = normalize(source)
+    target = normalize(target)
+    if not isinstance(source, TaggedType) or not isinstance(target, TaggedType):
+        return False
+    if DataTag("boolean") not in source.tags or DataTag("boolean") not in target.tags:
+        return False
+    return same(source.inner, N(NUMBER)) and same(target.inner, N(INTEGER))
 
 
 def _source_subtypes_result(
@@ -943,7 +956,9 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
         return Tagged(_substitute(t.inner, subst), *t.tags)
     if isinstance(t, AtomicType) and isinstance(t.inner, VarType):
         solved = subst.get(t.inner.name)
-        return _atomic_of(solved) if solved else t
+        return ExactType(_atomic_of(solved)) if solved else t
+    if isinstance(t, AtomicType):
+        return ExactType(_atomic_of(_substitute(t.inner, subst)))
     return t
 
 
@@ -974,7 +989,13 @@ def _generic_constraints_met(
         if solution is None:
             return False
         bound = _substitute(constraint.bound, substitution)
-        if not assignable(solution, bound, ctx):
+        if constraint.variance is Variance.CONTRAVARIANT:
+            bound_satisfied = assignable(bound, solution, ctx)
+        elif constraint.variance is Variance.INVARIANT:
+            bound_satisfied = same(solution, bound)
+        else:
+            bound_satisfied = assignable(solution, bound, ctx)
+        if not bound_satisfied:
             return False
     return True
 
@@ -992,6 +1013,12 @@ def compatible(argument: Type, parameter: Type, ctx: Context | None = None) -> b
     ctx = ctx or Context()
     argument, parameter = normalize(argument), normalize(parameter)
     if assignable(argument, parameter, ctx):
+        return True
+    if (
+        isinstance(parameter, VarType)
+        and isinstance(argument, AtomicType)
+        and _contains_named_type_var(argument.inner, parameter.name)
+    ):
         return True
     if isinstance(parameter, FunctionType):
         # Function compatibility is callability-based. A scalar function can be
@@ -1228,6 +1255,8 @@ def _match_specificity(
         return Specificity.RANK
     if isinstance(parameter, UnionType) and compatible(argument, parameter, ctx):
         return Specificity.UNION
+    if isinstance(parameter, ExactType) and compatible(argument, parameter.inner, ctx):
+        return Specificity.EXACT_GENERIC
     if _can_vectorise(argument, parameter, ctx):
         return Specificity.VECTORISED
     if compatible(argument, parameter, ctx):

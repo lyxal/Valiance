@@ -438,6 +438,8 @@ def _renamed_define_node(node: DefineNode, name: Symbol) -> DefineNode:
     return DefineNode(
         name,
         FunctionNode(
+            generics=node.function.generics,
+            generic_variances=node.function.generic_variances,
             params=node.function.params,
             body=node.function.body,
             returns=node.function.returns,
@@ -446,6 +448,7 @@ def _renamed_define_node(node: DefineNode, name: Symbol) -> DefineNode:
             annotations=node.function.annotations,
             element_tags_explicit=node.function.element_tags_explicit,
             companion_tags_allowed=node.function.companion_tags_allowed,
+            generic_constraints=node.function.generic_constraints,
             location=node.function.location,
         ),
         node.annotations,
