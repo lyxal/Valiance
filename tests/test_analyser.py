@@ -1058,6 +1058,23 @@ end
             ),
         )
 
+    def test_top_level_assignment_is_not_captured_by_define(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+$x = 5
+define timesFive(y: Number) -> Number => $x $y *
+"""
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["3:42: cannot capture top-level assignment 'x'"],
+        )
+
     def test_repeated_unannotated_named_parameter_specializes_from_overload_use(self):
         typed = analyse(
             [

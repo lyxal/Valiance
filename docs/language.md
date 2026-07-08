@@ -624,6 +624,8 @@ $doubleArg(6, 7) #? prints "6", "7", "6"
 
 ## 6.3. Variable Capturing
 - If a function refers to a variable from an outside scope, that function will "capture" that variable's value. If the function is returned from another function, that value will still be available
+- Functions do not capture top-level assignments. A top-level `define` may depend on other elements, including niladic elements, but not on `$name` variables assigned at module/top level.
+- Captured values are restored at the start of each closure call. Assigning to a captured name inside the closure changes that call's local copy, not the value stored in the closure for future calls.
 - For example
 
 ```
@@ -642,8 +644,29 @@ fn =>
 end
 $wrapped = call(top)
 $x = 10
-$wrapped() #? 6
+$wrapped call #? 6
 #? It used its stored value rather than the scope's value
+```
+
+```
+define foo(x: Integer) =>
+  fn () =>
+    $x := 1 +
+    println $x
+  end
+end
+
+$c = foo(5)
+$c()
+$c()
+#? Prints 6 both times
+```
+
+This is not valid, because `timesFive` would depend on a top-level assignment:
+
+```
+$x = 5
+define timesFive(y: Number) => $x * $y
 ```
 
 ## 6.4. Parameters
@@ -1458,17 +1481,19 @@ define[T] sort(:T+, key: Function[T -> Comparable] = 'top) -> T+ => ... end
 
  ## 11.3. `define` and Capturing
 
-_Note: this may change depending on what's easier or more efficient to implement and execute_
-
- - Variables are captured in their state as they are before the element definition. That is, whatever variable values were set before the definition is evaluated is what is captured.
+ - A `define` may capture variables from an enclosing function scope, but not from top-level assignments. Top-level defines should depend on parameters, stack inputs, other elements, and niladic constants instead of module-local `$name` bindings.
+ - Variables captured from an enclosing function are captured in their state as they are before the element definition. That is, whatever variable values were set before the definition is evaluated is what is captured.
+ - Captured variables are restored to that captured state at the start of every call. Assignment to a captured name inside the function does not persist into the next call.
 
 ```
-$x = 5
-define foo => $x * 3
-$x = 10
+define makeMultiplier(x: Integer) =>
+  fn (y: Integer) => $x * $y
+end
 
-foo #? 15
-#? NOT 30
+$double = makeMultiplier(2)
+$triple = makeMultiplier(3)
+
+$double($triple(4)) #? 24
 ```
 
 

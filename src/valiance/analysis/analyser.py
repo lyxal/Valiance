@@ -2650,7 +2650,7 @@ class Analyser:
         )
         variables = BranchVariables.from_parameters(
             named_params,
-            captures=outer.variables,
+            captures=_function_capture_source(outer),
         )
         initial = AnalysisBranch(
             inputs=params,
@@ -3108,6 +3108,15 @@ class Analyser:
         if _needs_call_site_checking(node):
             return self._call_site_checked_function(outer, node), outer
 
+        top_level_captures = _top_level_assignment_capture_nodes(outer, node)
+        if top_level_captures:
+            for capture in top_level_captures:
+                self._diagnose(
+                    f"cannot capture top-level assignment '{capture.name}'",
+                    capture,
+                )
+            return None
+
         params = _declared_params(node)
         body_params = tuple(_anonymous_trait_subject_view(param) for param in params)
         mode = _function_input_mode(node)
@@ -3118,7 +3127,7 @@ class Analyser:
         )
         variables = BranchVariables.from_parameters(
             named_params,
-            captures=outer.variables,
+            captures=_function_capture_source(outer),
         )
         recursive_overload = annotation_hooks.recursive_overload(node, params)
         if annotation_hooks.has_annotation(node.annotations, "recursive"):
@@ -3148,7 +3157,7 @@ class Analyser:
             if variables is None:
                 variables = BranchVariables.from_parameters(
                     named_params,
-                    captures=outer.variables,
+                    captures=_function_capture_source(outer),
                 )
         initial_stack = T.TypeStack(
             body_params if mode is InputMode.CYCLE_EXPLICIT_PARAMS else ()
@@ -3249,7 +3258,7 @@ class Analyser:
         )
         variables = BranchVariables.from_parameters(
             named_params,
-            captures=outer.variables,
+            captures=_function_capture_source(outer),
         )
         initial = AnalysisBranch(
             stack=T.TypeStack(stack_params),
@@ -3700,6 +3709,100 @@ def _function_input_mode(node: FunctionNode) -> InputMode:
     if not node.params:
         return InputMode.NILADIC
     return InputMode.CYCLE_EXPLICIT_PARAMS
+
+
+def _function_capture_source(outer: AnalysisBranch) -> BranchVariables | None:
+    if outer.input_mode is InputMode.TOP_LEVEL:
+        return None
+    return outer.variables
+
+
+def _top_level_assignment_capture_nodes(
+    outer: AnalysisBranch,
+    node: FunctionNode,
+) -> tuple[GetVariableNode, ...]:
+    if outer.input_mode is not InputMode.TOP_LEVEL:
+        return ()
+    visible = {name for name, _typ in outer.variables.visible_items()}
+    if not visible:
+        return ()
+    return _top_level_assignment_capture_reads_in_function(node, visible, frozenset())
+
+
+def _top_level_assignment_capture_reads_in_function(
+    node: FunctionNode,
+    visible: set[Symbol],
+    inherited_bound: frozenset[Symbol],
+) -> tuple[GetVariableNode, ...]:
+    bound = inherited_bound | _function_bound_variable_names(node)
+    return _top_level_assignment_capture_reads_in_nodes(node.body, visible, bound)
+
+
+def _top_level_assignment_capture_reads_in_nodes(
+    nodes: tuple[ASTNode, ...],
+    visible: set[Symbol],
+    bound: frozenset[Symbol],
+) -> tuple[GetVariableNode, ...]:
+    reads: list[GetVariableNode] = []
+    for node in nodes:
+        if isinstance(node, GetVariableNode):
+            if node.name in visible and node.name not in bound:
+                reads.append(node)
+            continue
+        if isinstance(node, FunctionNode):
+            reads.extend(
+                _top_level_assignment_capture_reads_in_function(
+                    node,
+                    visible,
+                    bound,
+                )
+            )
+            continue
+        for item in fields(node):
+            reads.extend(
+                _top_level_assignment_capture_reads_in_value(
+                    getattr(node, item.name),
+                    visible,
+                    bound,
+                )
+            )
+    return tuple(reads)
+
+
+def _top_level_assignment_capture_reads_in_value(
+    value: object,
+    visible: set[Symbol],
+    bound: frozenset[Symbol],
+) -> tuple[GetVariableNode, ...]:
+    if isinstance(value, FunctionNode):
+        return _top_level_assignment_capture_reads_in_function(value, visible, bound)
+    if isinstance(value, ASTNode):
+        return _top_level_assignment_capture_reads_in_nodes((value,), visible, bound)
+    if isinstance(value, tuple):
+        reads: list[GetVariableNode] = []
+        for item in value:
+            reads.extend(
+                _top_level_assignment_capture_reads_in_value(item, visible, bound)
+            )
+        return tuple(reads)
+    return ()
+
+
+def _function_bound_variable_names(node: FunctionNode) -> frozenset[Symbol]:
+    names = {
+        param.name
+        for param in node.params or ()
+        if param.name is not None
+    }
+    names.update(
+        assigned.name
+        for assigned in node.body
+        if isinstance(assigned, SetVariableNode)
+    )
+    for assigned in node.body:
+        if isinstance(assigned, SetVariablesNode):
+            names.update(target.name for target in assigned.targets)
+    return frozenset(names)
 
 
 def _function_analysis_from_signatures(

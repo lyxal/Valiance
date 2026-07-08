@@ -335,18 +335,24 @@ It is used for collection and tuple literals where empty forms can be valid.
 
 `_argument_expressions` rejects empty argument lists. This enforces the language
 rule that niladic elements must be recognizable without context: use `\nilad`,
-not `nilad()`.
+not `nilad()`. Variable function-call syntax is different because the leading
+`$` proves a function value is being called, so `$f()` is valid and parses as an
+empty `call`.
 
 Examples:
 
 ```text
 []                 # empty list literal parses
+$f()               # empty variable function call parses
 foo()              # syntax error
 define foo() => 1  # syntax error
+fn () => 1         # empty function literal parameter list parses
 ```
 
-Use `_argument_expressions` for call syntax and function parameter syntax where
-empty parentheses would create ambiguity.
+Use `_argument_expressions` for element call syntax where empty parentheses
+would create ambiguity. Use `_comma_expressions` for syntactically unambiguous
+empty argument lists such as variable function calls, and `_params(allow_empty=True)`
+for function literals.
 
 ## Function-Argument Modifier
 

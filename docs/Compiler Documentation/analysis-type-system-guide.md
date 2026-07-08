@@ -633,7 +633,8 @@ The function analyser creates a fresh `AnalysisBranch` using:
 - declared params as `inputs` for explicit functions
 - no inputs initially for inferred functions
 - named parameters as read-only variables
-- outer visible variables as captures
+- outer visible variables as captures, except when the function is created from
+  the top-level branch
 - function-local stack according to `InputMode`
 
 Function return rules:

@@ -713,11 +713,37 @@ define makeMultiplier(factor: Number) =>
 end
 
 $double = makeMultiplier(2)
-double(5)
+$triple = makeMultiplier(3)
+$double($triple(4))
 """
             ),
-            [Decimal("10")],
+            [Decimal("24")],
         )
+
+    def test_closure_assignment_does_not_persist_between_calls(self):
+        output = io.StringIO()
+        source = """
+define foo(x: Integer) =>
+  fn () =>
+    $x := 1 +
+    println $x
+  end
+end
+
+$c = foo(5)
+$c()
+$c()
+"""
+        program = parse(source)
+        analyser = Analyser()
+        typed = analyser.analyse(program)
+        if analyser.diagnostics:
+            raise AssertionError(analyser.diagnostics)
+
+        stack = run(compile_program(typed), output=output.write)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "6\n6\n")
 
     def test_err_type_annotation_synthesizes_runtime_message_element(self):
         self.assertEqual(

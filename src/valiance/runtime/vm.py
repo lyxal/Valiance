@@ -157,6 +157,7 @@ class _Frame:
     globals: dict[str, Any]
     cycle_values: tuple[Any, ...] = ()
     cycle_index: int = 0
+    retained_locals: frozenset[str] = frozenset()
     panic_handlers: list[_PanicHandler] = field(default_factory=list)
     cycle_scopes: list[tuple[tuple[Any, ...], int]] = field(default_factory=list)
 
@@ -223,13 +224,23 @@ class VirtualMachine:
         except PanicSignal as exc:
             raise RuntimeError(f"uncaught panic: {_format_value(exc.value)}") from exc
 
-    def call(self, function: FunctionValue, args: list[Any]) -> list[Any]:
+    def call(
+        self,
+        function: FunctionValue,
+        args: list[Any],
+        *,
+        isolate_captures: bool = True,
+    ) -> list[Any]:
         if len(args) != len(function.code.params):
             raise RuntimeError(
                 f"{_function_name(function.code)} expected "
                 f"{len(function.code.params)} arguments, got {len(args)}"
             )
-        locals_: dict[str, Any] = dict(zip(function.code.params, args, strict=True))
+        locals_, retained_locals = _function_call_locals(
+            function,
+            args,
+            isolate_captures=isolate_captures,
+        )
         cycle_values = tuple(args) if function.code.cycle_params else ()
         initial_stack = list(args) if function.code.params and not cycle_values else []
         return self.execute(
@@ -238,6 +249,7 @@ class VirtualMachine:
             function.globals,
             cycle_values,
             initial_stack,
+            retained_locals,
         )
 
     def call_value(self, value: Any, args: list[Any]) -> list[Any]:
@@ -306,8 +318,15 @@ class VirtualMachine:
         globals_: dict[str, Any],
         cycle_values: tuple[Any, ...] = (),
         initial_stack: list[Any] | None = None,
+        retained_locals: frozenset[str] = frozenset(),
     ) -> list[Any]:
-        frame = _Frame(list(initial_stack or ()), locals_, globals_, cycle_values)
+        frame = _Frame(
+            list(initial_stack or ()),
+            locals_,
+            globals_,
+            cycle_values,
+            retained_locals=retained_locals,
+        )
         ip = 0
         instructions = code.instructions
         try:
@@ -588,7 +607,7 @@ class VirtualMachine:
 
     def _release_frame_locals(self, frame: _Frame) -> None:
         for name, value in tuple(frame.locals.items()):
-            if frame.globals.get(name) is not value:
+            if name in frame.retained_locals or frame.globals.get(name) is not value:
                 _release_value(value, self)
             del frame.locals[name]
 
@@ -770,12 +789,12 @@ class VirtualMachine:
         condition = _make_function_value(condition_code, frame.globals, frame.locals)
         body = _make_function_value(body_code, frame.globals, frame.locals)
         while True:
-            keep_going = self.call_value(condition, list(state))
+            keep_going = self.call(condition, list(state), isolate_captures=False)
             if not keep_going or not _truthy(keep_going[-1]):
                 frame.stack.extend(state)
                 return
             try:
-                outputs = self.call_value(body, list(state))
+                outputs = self.call(body, list(state), isolate_captures=False)
             except _LoopBreak as signal:
                 frame.stack.extend(signal.values)
                 return
@@ -792,7 +811,7 @@ class VirtualMachine:
             if has_index:
                 args.append(Decimal(index))
             try:
-                self.call_value(body, args)
+                self.call(body, args, isolate_captures=False)
             except _LoopBreak as signal:
                 _sync_captured_globals(frame, body.globals)
                 frame.stack.extend(signal.values)
@@ -1056,6 +1075,24 @@ def _make_function_value(
     raise RuntimeError(f"invalid function bytecode value {code!r}")
 
 
+def _function_call_locals(
+    function: FunctionValue,
+    args: list[Any],
+    *,
+    isolate_captures: bool = True,
+) -> tuple[dict[str, Any], frozenset[str]]:
+    locals_: dict[str, Any] = dict(zip(function.code.params, args, strict=True))
+    if not isolate_captures:
+        return locals_, frozenset()
+    retained: set[str] = set()
+    for name in function.owned_names:
+        if name in locals_ or name not in function.globals:
+            continue
+        locals_[name] = _retain_value(function.globals[name])
+        retained.add(name)
+    return locals_, frozenset(retained)
+
+
 def _source_args(frame: _Frame, arity: int, context: str) -> tuple[Any, ...]:
     try:
         args, stack_count, next_cycle_index = frame.source_args(arity)
@@ -1106,13 +1143,18 @@ def _execute_unfold_function(
             f"{_function_name(function.code)} expected "
             f"{len(function.code.params)} state value(s), got {len(state)}"
         )
-    locals_ = dict(zip(function.code.params, state, strict=True))
+    locals_, retained_locals = _function_call_locals(
+        function,
+        state,
+        isolate_captures=False,
+    )
     return vm.execute(
         function.code,
         locals_,
         function.globals,
         tuple(state),
         [],
+        retained_locals,
     )
 
 

@@ -691,6 +691,22 @@ import {
         with self.assertRaises(ParseError):
             parse("foo()")
 
+    def test_parses_empty_function_literal_parameters(self):
+        [node] = parse("fn () => 1")
+
+        self.assertIsInstance(node, FunctionNode)
+        self.assertEqual(node.params, ())
+        self.assertEqual(node.body, (NumberLiteralNode("1"),))
+
+    def test_parses_empty_variable_function_call(self):
+        self.assertEqual(
+            parse("$c()"),
+            [
+                GetVariableNode(Symbol("c")),
+                ElementNode(Symbol("call")),
+            ],
+        )
+
     def test_parses_value_level_tag_application(self):
         program = parse("[1, 2, 3] | #sorted")
 

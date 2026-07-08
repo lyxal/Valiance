@@ -291,6 +291,8 @@ Current audit total: 426 / 734 items complete (58.0%).
 - [x] Disable argument cycling for explicitly zero-parameter functions.
 - [x] Implement closure capture by value.
 - [x] Preserve captured values after the defining scope exits.
+- [x] Reject captures of top-level assignments.
+- [x] Restore captured values at the start of each closure call.
 - [x] Parse quick functions using `'chain`.
 - [x] Make quick functions equivalent to `fn => chain`.
 

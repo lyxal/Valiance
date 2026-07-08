@@ -675,7 +675,11 @@ class Parser:
 
     def _extend(self, start: Token) -> TraitRequirementNode:
         name = self._symbol("expected required element name")
-        params = self._params() if self._match(TokenKind.LPAREN) else None
+        params = (
+            self._params(allow_empty=True)
+            if self._match(TokenKind.LPAREN)
+            else None
+        )
         returns = self._returns()
         return TraitRequirementNode(name, params, returns, location=_loc(start))
 
@@ -731,7 +735,11 @@ class Parser:
         annotations: tuple[ASTNode, ...] = (),
     ) -> FunctionNode:
         generics = self._generic_names()
-        params = self._params() if self._match(TokenKind.LPAREN) else None
+        params = (
+            self._params(allow_empty=True)
+            if self._match(TokenKind.LPAREN)
+            else None
+        )
         element_tags, element_tags_explicit = self._function_element_tags()
         returns = self._returns()
         where_clause = self._where_clause()
@@ -1614,7 +1622,7 @@ class Parser:
             self._current,
         ):
             self._advance()
-            args = self._argument_expressions(TokenKind.RPAREN)
+            args = self._comma_expressions(TokenKind.RPAREN)
             return _ChainPiece(
                 (
                     *_flatten(args),
@@ -1869,10 +1877,17 @@ class Parser:
             self._error("annotation arguments must contain exactly one expression")
         return values[0]
 
-    def _params(self, *, allow_defaults: bool = False) -> tuple[FunctionParam, ...]:
+    def _params(
+        self,
+        *,
+        allow_defaults: bool = False,
+        allow_empty: bool = False,
+    ) -> tuple[FunctionParam, ...]:
         params: list[FunctionParam] = []
         seen_default = False
         self._skip_newlines()
+        if allow_empty and self._match(TokenKind.RPAREN):
+            return ()
         if self._check(TokenKind.RPAREN):
             self._error("empty parameter lists are invalid; use a \\nilad name")
         while True:

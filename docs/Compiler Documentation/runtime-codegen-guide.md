@@ -583,10 +583,12 @@ a shared stack with the caller. The VM:
 
 1. Pops the callee.
 2. Sources as many arguments as possible from the caller stack.
-3. If the callee has `cycle_params`, fills missing arguments by cycling the
+3. Seeds closure-owned captures as retained frame locals so assignments to
+   captured names affect only the current call.
+4. If the callee has `cycle_params`, fills missing arguments by cycling the
    caller function's explicit parameter values.
-4. Executes the callee with its own fresh stack.
-5. Pushes the callee's returned stack values back onto the caller stack.
+5. Executes the callee with its own fresh stack.
+6. Pushes the callee's returned stack values back onto the caller stack.
 
 This matters for definitions such as:
 
