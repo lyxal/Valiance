@@ -60,6 +60,7 @@ from valiance.asts import (
     TryHandlerNode,
     TryNode,
     TupleLiteralNode,
+    TypedAtNode,
     TypedCallNode,
     TypedElementExtension,
     TypedElementNode,
@@ -3712,21 +3713,139 @@ def _return_node(
     return BranchSet((branch.emit(TypedNode(node, None)),))
 
 
+def _at_collection_view(typ: T.Type) -> T.CollectionType | None:
+    typ = T.normalize(typ)
+    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _at_collection_view(typ.inner)
+    return typ if isinstance(typ, T.CollectionType) else None
+
+
+def _at_level_type(source: T.Type, target_rank: int) -> T.Type | None:
+    source = T.normalize(source)
+    if isinstance(source, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _at_level_type(source.inner, target_rank)
+    if not isinstance(source, T.CollectionType):
+        return source if target_rank == 0 else None
+    if not isinstance(source.rank, int) or source.rank < target_rank:
+        return None
+    if target_rank == 0:
+        return source.base
+    collection_type: type[T.CollectionType]
+    if isinstance(source, (T.ListExactType, T.ListMinType)):
+        collection_type = T.ListExactType
+    elif isinstance(source, T.ListRuggedType):
+        collection_type = T.ListRuggedType
+    elif isinstance(source, (T.ArrayExactType, T.ArrayMinType)):
+        collection_type = T.ArrayExactType
+    else:
+        return None
+    return T.C(collection_type, source.base, target_rank)
+
+
 @register(AtNode)
 def _at_node(
     self: Analyser,
     node: AtNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
-    body_branch = replace(
-        branch,
-        input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
-        cycle_params=branch.stack.items,
+    arity = len(node.levels)
+    source_hints = tuple(
+        T.V(f"_at_{branch.origin}_{index}") for index in range(arity)
     )
-    outputs = self.analyse_from(body_branch, node.body)
-    return BranchSet.collect(
-        output.emit(TypedNode(node, _returns_result_type(output.stack.items)))
-        for output in outputs
+    sourced = branch.source_arguments(source_hints)
+    if sourced is None:
+        self._diagnose(
+            f"at requires {arity} value(s) on the stack",
+            node,
+        )
+        return BranchSet()
+
+    source_types, popped = sourced
+    target_types: list[T.Type] = []
+    explicit_target_ranks: list[int | None] = []
+    minimum_depths: list[int] = []
+    for level, source_type in zip(node.levels, source_types, strict=True):
+        target = _at_level_type(source_type, level.depth)
+        if target is None:
+            self._diagnose(
+                f"at level '{level.name}' requires rank {level.depth}, "
+                f"but received {T.show(source_type)}",
+                node,
+            )
+            return BranchSet()
+        target_types.append(target)
+        collection = _at_collection_view(source_type)
+        if collection is None:
+            explicit_target_ranks.append(None)
+            minimum_depths.append(0)
+        else:
+            explicit_target_ranks.append(level.depth)
+            minimum_depths.append(
+                max(collection.rank - level.depth, 0)
+                if isinstance(collection.rank, int)
+                else 0
+            )
+
+    params = tuple(
+        FunctionParam(
+            None if level.name.text == "_" else level.name,
+            target_type,
+        )
+        for level, target_type in zip(node.levels, target_types, strict=True)
+    )
+    function_node = FunctionNode(
+        params=params,
+        body=node.body,
+        location=node.location,
+    )
+    analysed = self._analyse_function_literal(popped, function_node)
+    if analysed is None:
+        return BranchSet()
+    function, _ = analysed
+    typed_function = TypedFunctionNode(
+        function_node,
+        function.typ,
+        function.overloads,
+    )
+
+    candidates: list[tuple[int, T.AppliedOverload]] = []
+    for index, overload_typing in enumerate(function.overloads):
+        overload = overload_typing.overload
+        if not isinstance(overload, T.Overload):
+            continue
+        applied = T.apply_overload(overload, source_types, self.env.context)
+        if applied is None:
+            continue
+        applied = replace(
+            applied,
+            vectorised=any(depth > 0 for depth in minimum_depths),
+            vectorised_depths=tuple(minimum_depths),
+            vectorised_target_ranks=tuple(explicit_target_ranks),
+        )
+        candidates.append((index, applied))
+
+    if not candidates:
+        self._diagnose("at body does not accept the selected level values", node)
+        return BranchSet()
+    if len(candidates) > 1:
+        self._diagnose("at body has ambiguous inferred overloads", node)
+        return BranchSet()
+
+    overload_index, applied = candidates[0]
+    result = popped.with_stack(popped.stack.push(*applied.actual_returns))
+    result = result.with_element_tags(applied.element_tags)
+    return BranchSet(
+        (
+            result.emit(
+                TypedAtNode(
+                    node,
+                    _returns_result_type(applied.actual_returns),
+                    typed_function,
+                    applied,
+                    overload_index,
+                )
+            ),
+        )
     )
 
 
@@ -8987,6 +9106,23 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.node,
             typ,
             typed_node.state_arity,
+        )
+    if isinstance(typed_node, TypedAtNode):
+        function = typed_node.function
+        refined_function = (
+            None
+            if function is None
+            else cast(
+                TypedFunctionNode,
+                _refine_typed_node(function, old, new),
+            )
+        )
+        return TypedAtNode(
+            typed_node.node,
+            typ,
+            refined_function,
+            typed_node.overload,
+            typed_node.function_overload_index,
         )
     return TypedNode(typed_node.node, typ)
 

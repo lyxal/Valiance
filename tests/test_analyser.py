@@ -38,6 +38,7 @@ from valiance.asts import (
     StringInterpolationNode,
     StringLiteralNode,
     TagApplicationNode,
+    TypedAtNode,
     TypedCallNode,
     TypedElementNode,
     TypedFunctionNode,
@@ -3248,6 +3249,36 @@ $n
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, WithTag(ExactList(Integer), "infinite"))
+
+    def test_at_binds_named_levels_and_tracks_stop_ranks(self):
+        analyser = Analyser()
+        typed = analyser.analyse(
+            parse(
+                """
+[[1, 2], [3, 4]]
+[5, 6]
+at (list+, item) => $list append $item
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertIsInstance(typed[-1], TypedAtNode)
+        self.assertEqual(typed[-1].typ, ExactList(ExactList(Integer)))
+        self.assertEqual(typed[-1].overload.vectorised_depths, (1, 1))
+        self.assertEqual(
+            typed[-1].overload.vectorised_target_ranks,
+            (1, 0),
+        )
+
+    def test_at_rejects_a_stop_rank_above_the_input_rank(self):
+        analyser = Analyser()
+        analyser.analyse(parse("[1, 2] at (items++) => top"))
+
+        self.assertIn(
+            "1:8: at level 'items' requires rank 2, but received Integer+",
+            analyser.diagnostics,
+        )
 
     def test_unfold_rejects_more_than_state_plus_emission(self):
         analyser = Analyser()

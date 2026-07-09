@@ -83,6 +83,13 @@ The runtime implementation is small, but several files must evolve together.
   not emit constructors; they may add object-friendly definitions, but the base
   object declaration owns runtime constructor metadata and fields.
 
+`AtNode` code generation compiles the analysed body as an explicit-parameter
+function and emits a resolved call through the built-in `call` element. The
+resolved reference carries one stop rank per source argument and a zero-depth
+callable argument. Runtime vectorisation zips arguments while their ranks are
+above those stops, then invokes the selected body overload directly so a
+collection-valued stopped parameter is not automatically vectorised again.
+
 `src/valiance/runtime/vm.py`
 
 - Executes bytecode with a stack per frame.

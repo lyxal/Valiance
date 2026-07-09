@@ -342,7 +342,7 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Reify known exact list ranks on eager and lazy runtime list values.
 - [x] Apply atomic-only vectorisation for explicit rugged types.
 - [ ] Apply the same atomic-only rule to equivalent expanded unions.
-- [ ] Parse and execute `at (...) => ...`.
+- [x] Parse and execute `at (...) => ...`.
 - [ ] Support per-argument vectorisation-depth labels in `at`.
 - [ ] Support underscore depth inference in `at`.
 

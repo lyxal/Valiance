@@ -82,6 +82,15 @@ class TypedUnfoldNode(TypedNode):
 
 
 @dataclass(frozen=True, slots=True)
+class TypedAtNode(TypedNode):
+    """A typed at expression with its callable body and vectorisation plan."""
+
+    function: TypedFunctionNode | None = None
+    overload: AppliedOverload | None = None
+    function_overload_index: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class FunctionOverloadTyping:
     typ: Type
     body: tuple[TypedNode, ...]

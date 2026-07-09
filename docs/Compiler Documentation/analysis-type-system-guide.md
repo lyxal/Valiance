@@ -1031,6 +1031,21 @@ Implemented annotations:
   overloads. A string argument customizes the warning text; otherwise the
   compiler uses a default warning message.
 
+## Explicit `at` Vectorisation
+
+`AtNode` consumes one source value per declared level. The number of `+`
+characters on a level is the collection rank at which vectorisation must stop:
+`item` stops at rank zero, `list+` at rank one, and so on. Analysis derives a
+typed function parameter for each stopped value, binds named levels as ordinary
+function parameters, and analyses the body with explicit-parameter cycling. This
+is why both `at (list+, item) => append` and an explicit body using `$list` and
+`$item` have the same stack effect.
+
+The resulting `TypedAtNode` retains the typed callable body, selected callable
+overload, fixed minimum vectorisation depths, and runtime target ranks. The
+input values are removed from the surrounding stack and the callable's returns
+are wrapped in the outer vector shape selected by overload application.
+
 ## Row Polymorphism And Fields
 
 Field access can refine generic/row types.

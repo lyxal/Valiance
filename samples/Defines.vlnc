@@ -1,8 +1,5 @@
-define discrim(:Integer, :Integer, :Integer) -> Integer =>
-  copy(a, b, c -> a, c)
-  * * 4
-  dip: (** 2)
-  -
-end
+define triple(n: Number) -> Number => $n * 3
+define triple(s: String) -> String => $s + $s + $s
 
-discrim(1, 2, 3)
+println triple 5
+println (triple "Hee " | + "Haw")

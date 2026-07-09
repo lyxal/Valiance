@@ -57,6 +57,7 @@ from valiance.asts import (
     TryHandlerNode,
     TryNode,
     TupleLiteralNode,
+    TypedAtNode,
     TypedElementExtension,
     TypedElementNode,
     TypedFunctionNode,
@@ -386,7 +387,7 @@ class _Compiler:
             case UnfoldNode():
                 self.unfold_node(node, typed_node)
             case AtNode():
-                self.at_node(node)
+                self.at_node(node, typed_node)
             case ForNode():
                 self.foreach_node(node)
             case BreakNode():
@@ -658,10 +659,39 @@ class _Compiler:
             condition_code = _compile_function_value(condition, "unfold.condition")
         self.emit(OpCode.UNFOLD, (condition_code, body_code, arity))
 
-    def at_node(self, node: AtNode) -> None:
-        self.emit(OpCode.CYCLE_BEGIN, (None, 0))
-        self.expression(node.body)
-        self.emit(OpCode.CYCLE_END)
+    def at_node(self, node: AtNode, typed_node: TypedNode | None) -> None:
+        if not isinstance(typed_node, TypedAtNode):
+            raise CompileError("at expressions require typed vectorisation metadata")
+        if typed_node.function is None or typed_node.overload is None:
+            raise CompileError("at expression is missing its typed body")
+
+        body = _compile_function_value(typed_node.function, "at.body")
+        self.emit(OpCode.MAKE_FUNCTION, body)
+        applied = typed_node.overload
+        arity = len(node.levels) + 1
+        vectorised = applied.vectorised or any(
+            rank is not None for rank in applied.vectorised_target_ranks
+        )
+        self.emit(
+            OpCode.CALL_RESOLVED_ELEMENT,
+            ResolvedElementReference(
+                "call",
+                0,
+                vectorised=vectorised,
+                vectorised_depths=(*applied.vectorised_depths, 0),
+                vectorised_target_ranks=(
+                    *applied.vectorised_target_ranks,
+                    None,
+                ),
+                return_collection_ranks=tuple(
+                    _runtime_collection_rank(ret)
+                    for ret in applied.actual_returns
+                ),
+                static_values=(typed_node.function_overload_index,),
+                arity_override=arity,
+                consumed_override=arity,
+            ),
+        )
 
     def foreach_node(self, node: ForNode) -> None:
         params = (FunctionParam(node.variable),)

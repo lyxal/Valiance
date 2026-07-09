@@ -2128,6 +2128,62 @@ end
             [ObjectValue("None", {})],
         )
 
+    def test_at_vectorises_to_explicit_stop_ranks(self):
+        implicit = """
+[[1, 2], [3, 4]]
+[5, 6]
+at (list+, item) => append
+"""
+        explicit = """
+[[1, 2], [3, 4]]
+[5, 6]
+at (list+, item) => $list append $item
+"""
+        expected = [
+            [
+                Decimal("1"),
+                Decimal("2"),
+                Decimal("5"),
+            ],
+            [
+                Decimal("3"),
+                Decimal("4"),
+                Decimal("6"),
+            ],
+        ]
+
+        self.assertEqual(execute(implicit), [expected])
+        self.assertEqual(execute(explicit), [expected])
+
+    def test_at_broadcasts_scalar_levels_and_survives_bytecode_round_trip(self):
+        source = """
+[[1, 2], [3, 4]]
+5
+at (list+, item) => append
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        bytecode = loads(dumps(compile_program(typed)))
+
+        self.assertEqual(
+            run(bytecode),
+            [
+                [
+                    [
+                        Decimal("1"),
+                        Decimal("2"),
+                        Decimal("5"),
+                    ],
+                    [
+                        Decimal("3"),
+                        Decimal("4"),
+                        Decimal("5"),
+                    ],
+                ]
+            ],
+        )
+
     def test_foreach_and_while_break_return_values(self):
         self.assertEqual(
             execute(
