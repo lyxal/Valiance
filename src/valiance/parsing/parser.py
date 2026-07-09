@@ -1214,7 +1214,7 @@ class Parser:
                         location=_loc(token),
                     ),
                 ),
-                is_element=True,
+                breaks_chain=True,
             )
         if self._match(TokenKind.LBRACKET):
             token = self._previous
@@ -1692,7 +1692,7 @@ class Parser:
                         location=_loc(start),
                     ),
                 ),
-                is_element=True,
+                breaks_chain=True,
             )
         name = self._symbol("expected variable name")
         if self._match(TokenKind.LBRACKET):

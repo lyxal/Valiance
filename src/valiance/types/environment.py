@@ -183,6 +183,9 @@ class Environment:
     overloads: dict[Symbol, list[Overload]] = field(
         default_factory=dict[Symbol, list[Overload]]
     )
+    object_friendly_overloads: dict[Symbol, set[int]] = field(
+        default_factory=dict[Symbol, set[int]]
+    )
     objects: dict[Symbol, ObjectDefinition] = field(
         default_factory=dict[Symbol, ObjectDefinition]
     )
@@ -408,7 +411,13 @@ class Environment:
         """Return whether an object declares the requested attribute."""
         return self.lookup_attribute(object_name, attribute_name) is not None
 
-    def define_overload(self, name: Symbol, overload: Overload) -> None:
+    def define_overload(
+        self,
+        name: Symbol,
+        overload: Overload,
+        *,
+        object_friendly: bool = False,
+    ) -> None:
         """Append one overload to a named overload set."""
         candidates = self.overloads.setdefault(name, [])
         if candidates:
@@ -433,8 +442,50 @@ class Environment:
                     f"overloads for {name!r} must all return {expected_returns} "
                     f"values, got {len(overload.returns)}"
                 )
+        overload_index = len(candidates)
         candidates.append(overload)
+        if object_friendly:
+            self.object_friendly_overloads.setdefault(name, set()).add(
+                overload_index
+            )
         self.context.define_structural_overload(name, overload)
+
+    def overload_is_object_friendly(self, name: Symbol, index: int) -> bool:
+        """Return whether one visible overload is an unqualified friendly one."""
+        if name.text.startswith("*::"):
+            if self.parent is None:
+                builtin_name = Symbol(name.text.removeprefix("*::"))
+                return index in self.object_friendly_overloads.get(
+                    builtin_name,
+                    set(),
+                )
+            return self.parent.overload_is_object_friendly(name, index)
+        local = tuple(self.overloads.get(name, ()))
+        if local or self.parent is None:
+            return index in self.object_friendly_overloads.get(name, set())
+        return self.parent.overload_is_object_friendly(name, index)
+
+    def non_object_friendly_overload_index(
+        self,
+        name: Symbol,
+        overload: Overload,
+    ) -> int | None:
+        """Return the index of a matching non-friendly overload, if present."""
+        for index, candidate in enumerate(self.overloads_for(name)):
+            if candidate == overload and not self.overload_is_object_friendly(
+                name,
+                index,
+            ):
+                return index
+        return None
+
+    def has_non_object_friendly_overload(
+        self,
+        name: Symbol,
+        overload: Overload,
+    ) -> bool:
+        """Return whether a matching visible overload is not a friendly default."""
+        return self.non_object_friendly_overload_index(name, overload) is not None
 
     def overloads_for(self, name: Symbol) -> tuple[Overload, ...]:
         """Return the overload candidates registered for ``name``."""

@@ -664,6 +664,7 @@ class ModifierArgumentAnalysis:
 @dataclass(frozen=True)
 class ElementArguments:
     overload: T.Overload
+    overload_index: int
     arguments: tuple[T.Type, ...]
     branch: AnalysisBranch
     modifiers: tuple[ModifierArgumentAnalysis, ...] = ()
@@ -683,6 +684,8 @@ class CallCandidate:
     modifiers: tuple[ModifierArgumentAnalysis, ...] = ()
     call_arg_order: tuple[int, ...] = ()
     callable_overload_index: int | None = None
+    overload_index: int | None = None
+    dispatch_priority: int = 1
 
 
 @dataclass(frozen=True)
@@ -910,7 +913,10 @@ class Analyser:
         )
         if (
             declared_overload is not None
-            and declared_overload not in self.env.overloads_for(name)
+            and not self.env.has_non_object_friendly_overload(
+                name,
+                declared_overload,
+            )
         ):
             self.env.define_overload(name, declared_overload)
         result = self._analyse_function_literal(branch, function_node)
@@ -935,9 +941,12 @@ class Analyser:
             if overload is None:
                 continue
             overload_typings[typing_index] = replace(typing, overload=overload)
-            if overload not in self.env.overloads_for(name):
+            if not self.env.has_non_object_friendly_overload(name, overload):
                 self.env.define_overload(name, overload)
-            original_index = _overload_index(self.env.overloads_for(name), overload)
+            original_index = self.env.non_object_friendly_overload_index(
+                name,
+                overload,
+            )
             if name.text.startswith("#") and original_index is not None:
                 static_result = _static_validator_result(typing.body)
                 if static_result is not None:
@@ -948,7 +957,10 @@ class Analyser:
                     )
             if annotation_hooks.has_annotation(node.annotations, "commutative"):
                 for generated in annotation_hooks.commutative_overloads(overload):
-                    if generated not in self.env.overloads_for(name):
+                    if not self.env.has_non_object_friendly_overload(
+                        name,
+                        generated,
+                    ):
                         self.env.define_overload(name, generated)
                     overload_typings.append(
                         annotation_hooks.commutative_overload_typing(
@@ -1711,6 +1723,7 @@ class Analyser:
             definition.generic_constraints,
         )
         for name in (definition.name, Symbol(f"{owner}::{definition.name}")):
+            object_friendly = name == definition.name
             for typing in function.overloads:
                 if not isinstance(typing.overload, T.Overload):
                     continue
@@ -1720,6 +1733,7 @@ class Analyser:
                         _with_generic_constraints(typing.overload, generic_constraints),
                         definition.annotations,
                     ),
+                    object_friendly=object_friendly,
                 )
         return typed_branch
 
@@ -1940,7 +1954,7 @@ class Analyser:
         modifiers: tuple[ModifierArgumentAnalysis, ...],
     ) -> tuple[list[ElementArguments], list[AnalysisBranch]]:
         sources: list[ElementArguments] = []
-        for overload in overloads:
+        for overload_index, overload in enumerate(overloads):
             for args, popped, ordered_modifiers in _source_element_arguments(
                 branch,
                 overload,
@@ -1950,6 +1964,7 @@ class Analyser:
                 sources.append(
                     ElementArguments(
                         overload=overload,
+                        overload_index=overload_index,
                         arguments=args,
                         branch=popped,
                         modifiers=ordered_modifiers,
@@ -1965,7 +1980,7 @@ class Analyser:
         modifiers: tuple[ModifierArgumentAnalysis, ...],
     ) -> tuple[list[ElementArguments], list[AnalysisBranch]]:
         sources: list[ElementArguments] = []
-        for overload in overloads:
+        for overload_index, overload in enumerate(overloads):
             prepared = _prepare_element_call_branches(
                 branch,
                 overload,
@@ -1984,6 +1999,7 @@ class Analyser:
                     sources.append(
                         ElementArguments(
                             overload=overload,
+                            overload_index=overload_index,
                             arguments=args,
                             branch=popped,
                             modifiers=ordered_modifiers,
@@ -2030,6 +2046,15 @@ class Analyser:
                     branch=candidate.branch,
                     modifiers=source.modifiers,
                     call_arg_order=source.call_arg_order,
+                    overload_index=source.overload_index,
+                    dispatch_priority=(
+                        0
+                        if self.env.overload_is_object_friendly(
+                            node.name,
+                            source.overload_index,
+                        )
+                        else 1
+                    ),
                 )
             )
         return candidates
@@ -2064,7 +2089,11 @@ class Analyser:
                 node,
                 _returns_result_type(actual_returns),
                 candidate.applied,
-                _overload_index(overloads, overload),
+                (
+                    candidate.overload_index
+                    if candidate.overload_index is not None
+                    else _overload_index(overloads, overload)
+                ),
                 _specialize_modifier_arguments(
                     candidate.applied,
                     candidate.modifiers,
@@ -2941,6 +2970,8 @@ class Analyser:
             node,
         )
         for branch in branches:
+            if branch.failed:
+                continue
             refined = self._function_returns(node, branch)
             if refined is None:
                 continue
@@ -3070,8 +3101,17 @@ def _get_variable(
     typ = branch.variables.read(node.name)
 
     if typ is None:
-        self._diagnose(f"undefined variable '{node.name}'", node)
-        return BranchSet((branch.emit(TypedNode(node, None)),))
+        message = f"undefined variable '{node.name}'"
+        self._diagnose(message, node)
+        return BranchSet(
+            (
+                branch.error(
+                    message,
+                    node.location,
+                    code="undefined-variable",
+                ).emit(TypedNode(node, None)),
+            )
+        )
 
     return BranchSet((branch.push(typ).emit(TypedNode(node, typ)),))
 
@@ -5128,6 +5168,8 @@ def _candidate_dominates(
 ) -> bool:
     left_applied = left.applied
     right_applied = right.applied
+    if left.dispatch_priority != right.dispatch_priority:
+        return left.dispatch_priority > right.dispatch_priority
     if _dominates(left_applied.scores, right_applied.scores):
         return True
     if left_applied.scores != right_applied.scores:

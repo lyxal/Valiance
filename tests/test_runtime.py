@@ -1068,6 +1068,32 @@ end
 
         self.assertEqual(stack, ["Joe"])
 
+    def test_external_element_overrides_imported_object_friendly_element(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "foo.vlnc").write_text(
+                """
+public object Foo =>
+  $x: Number
+  define get => $self.x
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            stack = execute(
+                """
+import { foo.Foo }
+define get(:Foo) => $.x + 5
+Foo(10) get
+Foo(10) Foo::get
+""",
+                main,
+            )
+
+        self.assertEqual(stack, [Decimal("15"), Decimal("10")])
+
     def test_executes_direct_imported_trait_impl_friendly_element(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1508,6 +1534,44 @@ Value("x") $.text
 """
             ),
             [Decimal("1"), "x"],
+        )
+
+    def test_external_element_overrides_object_friendly_element(self):
+        output = io.StringIO()
+        source = """
+object Foo =>
+  $x: Number
+  define get => $self.x
+end
+
+define get(:Foo) => $.x + 5
+
+Foo(10) | get | println
+Foo(10) | Foo::get | println
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "15\n10\n")
+
+    def test_named_external_element_overrides_object_friendly_element(self):
+        self.assertEqual(
+            execute(
+                """
+object Foo =>
+  $x: Number
+  define get => $self.x
+end
+
+define get(f: Foo) => $f.x + 5
+
+Foo(10) get
+Foo(10) Foo::get
+"""
+            ),
+            [Decimal("15"), Decimal("10")],
         )
 
     def test_executes_row_inferred_element_on_nominal_object(self):

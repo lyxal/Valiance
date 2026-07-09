@@ -1882,6 +1882,26 @@ fn (x: Number, y: String) -> Number => 1 end arity_rank
 
         self.assertEqual(typ, Fn((Number, Number), (Number,)))
 
+    def test_explicit_function_rejects_undefined_named_parameter_read(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(
+            parse(
+                """
+object Foo =>
+  $x: Number
+end
+
+define get(:Foo) => $f.x + 5
+"""
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["6:21: undefined variable 'f'"],
+        )
+
     def test_function_infers_row_constraint_from_field_access(self):
         typ = analyse_function(
             FunctionNode(body=(FieldAccessNode(BAR),)),

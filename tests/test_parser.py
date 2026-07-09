@@ -11,6 +11,7 @@ from valiance.asts import (
     DefineNode,
     ElementExtension,
     ElementNode,
+    FieldAccessNode,
     ElementTagDeclarationNode,
     EnumMemberNode,
     ForNode,
@@ -292,6 +293,16 @@ end
             [
                 NumberLiteralNode("1"),
                 NumberLiteralNode("2"),
+                ElementNode(Symbol("+")),
+            ],
+        )
+
+    def test_stack_field_access_terminates_infix_lowering_segment(self):
+        self.assertEqual(
+            parse("$.x + 5"),
+            [
+                FieldAccessNode(Symbol("x")),
+                NumberLiteralNode("5"),
                 ElementNode(Symbol("+")),
             ],
         )
