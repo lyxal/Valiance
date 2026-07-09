@@ -372,6 +372,10 @@ class AnalysisBranch:
     inputs: tuple[T.Type, ...] = ()
     variables: BranchVariables = field(default_factory=BranchVariables)
     typed_body: tuple[TypedNode, ...] = ()
+    element_tags: frozenset[T.ElementTag] = field(default_factory=frozenset)
+    data_element_uses: frozenset[tuple[Symbol, Symbol]] = field(
+        default_factory=frozenset
+    )
     input_mode: InputMode = InputMode.TOP_LEVEL
     cycle_params: tuple[T.Type, ...] = ()
     cycle_index: int = 0
@@ -400,8 +404,55 @@ class AnalysisBranch:
     def with_variables(self, variables: BranchVariables) -> AnalysisBranch:
         return replace(self, variables=variables)
 
+    def with_element_tags(
+        self,
+        tags: Iterable[T.ElementTag],
+    ) -> AnalysisBranch:
+        return replace(
+            self,
+            element_tags=frozenset(
+                (*self.element_tags, *(tag for tag in tags if not tag.absent))
+            ),
+        )
+
+    def with_data_element_uses(
+        self,
+        uses: Iterable[tuple[Symbol, Symbol]],
+    ) -> AnalysisBranch:
+        return replace(
+            self,
+            data_element_uses=frozenset((*self.data_element_uses, *uses)),
+        )
+
     def emit(self, typed_node: TypedNode) -> AnalysisBranch:
-        return replace(self, typed_body=(*self.typed_body, typed_node))
+        element_tags = set(self.element_tags)
+        data_element_uses = set(self.data_element_uses)
+        applied: T.AppliedOverload | None = None
+        if isinstance(typed_node, (TypedElementNode, TypedCallNode)):
+            if typed_node.overload is not None:
+                applied = typed_node.overload
+        elif isinstance(typed_node, TypedTagApplicationNode):
+            if typed_node.validator is not None:
+                applied = typed_node.validator
+        if applied is not None:
+            positives = tuple(tag for tag in applied.element_tags if not tag.absent)
+            element_tags.update(positives)
+            data_names = {
+                Symbol(tag.name)
+                for param in applied.params
+                for tag in _present_data_tags(param)
+            }
+            data_element_uses.update(
+                (data_name, element_tag.name)
+                for data_name in data_names
+                for element_tag in positives
+            )
+        return replace(
+            self,
+            typed_body=(*self.typed_body, typed_node),
+            element_tags=frozenset(element_tags),
+            data_element_uses=frozenset(data_element_uses),
+        )
 
     def error(
         self,
@@ -463,6 +514,14 @@ class AnalysisBranch:
             inputs=tuple(_refine_type(item, old, new) for item in self.inputs),
             variables=self.variables.refine_type(old, new),
             typed_body=_refine_typed_body(self.typed_body, old, new),
+            element_tags=frozenset(
+                T.ElementTag(
+                    tag.name,
+                    tuple(_refine_type(arg, old, new) for arg in tag.args),
+                    tag.absent,
+                )
+                for tag in self.element_tags
+            ),
             cycle_params=tuple(
                 _refine_type(item, old, new) for item in self.cycle_params
             ),
@@ -650,6 +709,9 @@ class Analyser:
         self.diagnostics: list[str] = []
         self.warnings: list[str] = []
         self._friendly_owners: tuple[Symbol, ...] = ()
+        self._reported_data_element_disjoints: set[
+            tuple[int, Symbol, Symbol]
+        ] = set()
 
     def analyse(self, program: list[ASTNode]) -> list[TypedNode]:
         """Analyse a top-level sequence into typed nodes."""
@@ -784,7 +846,40 @@ class Analyser:
                 )
             )
 
-        return handler(self, node, branch)
+        outputs = handler(self, node, branch)
+        self._observe_element_effects(branch, outputs)
+        return outputs
+
+    def _observe_element_effects(
+        self,
+        branch: AnalysisBranch,
+        outputs: BranchSet,
+    ) -> None:
+        """Collect effects from executed calls, including nested expressions."""
+        start = len(branch.typed_body)
+        for output in outputs:
+            if len(output.typed_body) <= start:
+                continue
+            for typed_node in output.typed_body[start:]:
+                applied: T.AppliedOverload | None = None
+                if isinstance(typed_node, (TypedElementNode, TypedCallNode)):
+                    applied = typed_node.overload
+                elif isinstance(typed_node, TypedTagApplicationNode):
+                    applied = typed_node.validator
+                if applied is None:
+                    continue
+                positives = tuple(
+                    tag for tag in applied.element_tags if not tag.absent
+                )
+                self._validate_element_tag_disjoints(
+                    positives,
+                    typed_node.node,
+                )
+                self._validate_data_element_tag_disjoints(
+                    applied.params,
+                    positives,
+                    typed_node.node,
+                )
 
     @register(DefineNode)
     def _define(
@@ -936,21 +1031,83 @@ class Analyser:
         node: FunctionNode,
         origin: ASTNode,
     ) -> None:
-        positives = tuple(tag for tag in node.element_tags if not tag.absent)
-        for tag in positives:
+        self._validate_element_tag_set(
+            node.element_tags,
+            origin,
+            companion_tags_allowed=node.companion_tags_allowed,
+        )
+        annotated_types = tuple(
+            param.typ
+            for param in node.params or ()
+            if param.typ is not None
+        ) + tuple(node.returns or ()) + tuple(
+            constraint
+            for constraint in node.generic_constraints
+            if constraint is not None
+        )
+        self._validate_element_tags_in_types(annotated_types, origin)
+
+    def _validate_element_tag_set(
+        self,
+        tags: Iterable[T.ElementTag],
+        origin: ASTNode,
+        *,
+        companion_tags_allowed: frozenset[T.ElementTag] | None = None,
+    ) -> None:
+        tag_tuple = tuple(tags)
+        positives = tuple(tag for tag in tag_tuple if not tag.absent)
+        absences = tuple(tag for tag in tag_tuple if tag.absent)
+        allowed = companion_tags_allowed or frozenset()
+        for tag in tag_tuple:
             definition = self.env.lookup_element_tag(tag.name)
             if definition is None:
                 self._diagnose(f"undeclared element tag '{tag.name}'", origin)
                 continue
             if (
+                not tag.absent
+                and
                 definition.kind is T.ElementTagKind.COMPANION
-                and tag not in node.companion_tags_allowed
+                and tag not in allowed
             ):
                 self._diagnose(
                     f"companion element tag '{tag.name}' cannot be directly attached",
                     origin,
                 )
+        for absent in absences:
+            conflict = next(
+                (
+                    positive
+                    for positive in positives
+                    if _element_tag_absence_conflicts(
+                        absent,
+                        positive,
+                        self.env.context,
+                    )
+                ),
+                None,
+            )
+            if conflict is not None:
+                self._diagnose(
+                    f"element tag '{absent.name}' cannot be both present and absent",
+                    origin,
+                )
+                break
         self._validate_element_tag_disjoints(positives, origin)
+
+    def _validate_element_tags_in_types(
+        self,
+        types: Iterable[T.Type],
+        origin: ASTNode,
+    ) -> None:
+        for typ in types:
+            for tags in _function_type_element_tag_sets(typ):
+                self._validate_element_tag_set(
+                    tags,
+                    origin,
+                    companion_tags_allowed=frozenset(
+                        tag for tag in tags if not tag.absent
+                    ),
+                )
 
     def _validate_element_tag_disjoints(
         self,
@@ -979,17 +1136,43 @@ class Analyser:
             (tag for tag in final_tags if not tag.absent),
             node,
         )
+        declared_absences = tuple(
+            tag for tag in node.element_tags if tag.absent
+        )
+        for body_tag in body_tags:
+            forbidden = next(
+                (
+                    absent
+                    for absent in declared_absences
+                    if _element_tag_absence_conflicts(
+                        absent,
+                        body_tag,
+                        self.env.context,
+                    )
+                ),
+                None,
+            )
+            if forbidden is not None:
+                self._diagnose(
+                    f"element tag '{body_tag.name}' is required to be absent "
+                    "but is used by the function body",
+                    node,
+                )
+                return
         if not node.element_tags_explicit:
             return
-        declared_properties = {
+        declared_properties = tuple(
             tag
             for tag in node.element_tags
             if not tag.absent
             and (definition := self.env.lookup_element_tag(tag.name)) is not None
             and definition.kind is T.ElementTagKind.PROPERTY
-        }
+        )
         for tag in body_tags:
-            if tag.absent or tag in declared_properties:
+            if tag.absent or any(
+                _element_tag_covers(declared, tag, self.env.context)
+                for declared in declared_properties
+            ):
                 continue
             definition = self.env.lookup_element_tag(tag.name)
             if definition is None or definition.kind is not T.ElementTagKind.PROPERTY:
@@ -1000,6 +1183,53 @@ class Analyser:
                 node,
             )
             return
+
+    def _validate_data_element_tag_disjoints(
+        self,
+        types: Iterable[T.Type],
+        element_tags: Iterable[T.ElementTag],
+        origin: ASTNode,
+    ) -> None:
+        positive_elements = tuple(tag for tag in element_tags if not tag.absent)
+        if not positive_elements:
+            return
+        data_tags = {
+            tag.name
+            for typ in types
+            for tag in _present_data_tags(typ)
+        }
+        for data_name in data_tags:
+            disjoint_elements = self.env.data_tag_element_disjoints(data_name)
+            for element_tag in positive_elements:
+                if element_tag.name not in disjoint_elements:
+                    continue
+                key = (id(origin), data_name, element_tag.name)
+                if key in self._reported_data_element_disjoints:
+                    continue
+                self._reported_data_element_disjoints.add(key)
+                self._diagnose(
+                    f"data tag '#{data_name}' cannot be used by an element "
+                    f"with tag '{element_tag.name}'",
+                    origin,
+                )
+
+    def _validate_recorded_data_element_uses(
+        self,
+        uses: Iterable[tuple[Symbol, Symbol]],
+        origin: ASTNode,
+    ) -> None:
+        for data_name, element_name in uses:
+            if element_name not in self.env.data_tag_element_disjoints(data_name):
+                continue
+            key = (id(origin), data_name, element_name)
+            if key in self._reported_data_element_disjoints:
+                continue
+            self._reported_data_element_disjoints.add(key)
+            self._diagnose(
+                f"data tag '#{data_name}' cannot be used by an element "
+                f"with tag '{element_name}'",
+                origin,
+            )
 
     def _validate_data_tags(
         self,
@@ -2700,15 +2930,26 @@ class Analyser:
         branches: BranchSet,
     ) -> dict[T.Overload, tuple[TypedNode, ...]]:
         signatures: dict[T.Overload, tuple[TypedNode, ...]] = {}
+        surviving_element_tags = frozenset(
+            tag for branch in branches for tag in branch.element_tags
+        )
+        surviving_data_element_uses = frozenset(
+            use for branch in branches for use in branch.data_element_uses
+        )
+        self._validate_recorded_data_element_uses(
+            surviving_data_element_uses,
+            node,
+        )
         for branch in branches:
             refined = self._function_returns(node, branch)
             if refined is None:
                 continue
             returns, branch = refined
-            body_element_tags = frozenset(_typed_body_element_tags(branch.typed_body))
-            declared_element_tags = frozenset(node.element_tags)
-            final_element_tags = frozenset(
-                set(declared_element_tags) | set(body_element_tags)
+            body_element_tags = surviving_element_tags
+            final_element_tags = _final_function_element_tags(
+                node,
+                body_element_tags,
+                self.env,
             )
             self._validate_inferred_element_tags(
                 node,
@@ -2723,6 +2964,11 @@ class Analyser:
                 else branch.inputs
             )
             inputs = _restore_exact_parameter_markers(declared_params, inputs)
+            self._validate_data_element_tag_disjoints(
+                inputs,
+                final_element_tags,
+                node,
+            )
             signature = _function_overload(
                 node,
                 params=inputs,
@@ -3065,6 +3311,8 @@ def _if_node(
             base = replace(
                 _refine_branch_like(branch, left),
                 inputs=left.inputs,
+            ).with_element_tags(right.element_tags).with_data_element_uses(
+                right.data_element_uses
             )
             variables = left.variables.merge_against(
                 right.variables,
@@ -3100,11 +3348,26 @@ def _assert_node(
         self._diagnose("assert condition must be a boolean value", node)
         return BranchSet()
 
-    success = branch.emit(TypedNode(node, None))
+    condition_tags = frozenset(
+        tag for output in condition for tag in output.element_tags
+    )
+    condition_uses = frozenset(
+        use for output in condition for use in output.data_element_uses
+    )
+    success = (
+        branch.with_element_tags(condition_tags)
+        .with_data_element_uses(condition_uses)
+        .emit(TypedNode(node, None))
+    )
     if not node.else_branch:
         return BranchSet((success,))
 
     else_outputs = self.analyse_from(branch, node.else_branch)
+    success = success.with_element_tags(
+        tag for output in else_outputs for tag in output.element_tags
+    ).with_data_element_uses(
+        use for output in else_outputs for use in output.data_element_uses
+    )
     error_types = tuple(_top_or_none(output.stack) for output in else_outputs)
     error_type = T.U(*error_types) if error_types else T.NoneType()
     assert_error = T.N(Symbol("AssertError"), error_type)
@@ -3192,6 +3455,8 @@ def _while_node(
             loop_input.variables,
         )
         joined = joined.with_stack(stack).with_variables(variables)
+        joined = joined.with_element_tags(output.element_tags)
+        joined = joined.with_data_element_uses(output.data_element_uses)
 
     if joined is None:
         return BranchSet()
@@ -3248,6 +3513,7 @@ def _function_node(
         return BranchSet((branch.emit(TypedNode(node, None)),))
 
     function_node = _genericize_function_node(node, node.generics)
+    self._validate_function_element_tags(function_node, node)
     result = self._analyse_function_literal(branch, function_node)
     if result is None:
         return BranchSet((branch.emit(TypedNode(node, None)),))
@@ -3264,6 +3530,7 @@ def _cast_node(
     branch: AnalysisBranch,
 ) -> BranchSet:
     target = T.normalize(node.typ)
+    self._validate_element_tags_in_types((target,), node)
     if not branch.stack:
         self._diagnose(
             f"empty stack when casting to {T.show(target)}",
@@ -3809,9 +4076,17 @@ def _for_node(
         loop_locals,
     )
     typed_for = TypedNode(node, result_type)
+    body_element_tags = frozenset(
+        tag for output in body_outputs for tag in output.element_tags
+    )
+    body_data_element_uses = frozenset(
+        use for output in body_outputs for use in output.data_element_uses
+    )
     return BranchSet(
         (
             _refine_branch_like(branch, body_branch)
+            .with_element_tags(body_element_tags)
+            .with_data_element_uses(body_data_element_uses)
             .with_stack(body_branch.stack.push(result_type))
             .with_variables(variables)
             .emit(typed_for),
@@ -3838,6 +4113,7 @@ def _unfold_node(
 
     candidates: list[CallCandidate] = []
     for overload in _callable_overloads(body_analysis.typ):
+        condition_element_tags: frozenset[T.ElementTag] = frozenset()
         state_arity = len(overload.params)
         if state_arity == 0:
             self._diagnose("unfold requires at least one state value", node)
@@ -3868,9 +4144,20 @@ def _unfold_node(
                 element_tags=frozenset(),
                 location=node.location,
             )
-            if self._analyse_function_literal(branch, condition_function) is None:
+            condition_result = self._analyse_function_literal(
+                branch,
+                condition_function,
+            )
+            if condition_result is None:
                 self._diagnose("unfold condition must return a boolean value", node)
                 continue
+            condition_analysis, _ = condition_result
+            condition_element_tags = frozenset(
+                tag
+                for candidate_overload in _callable_overloads(condition_analysis.typ)
+                for tag in candidate_overload.element_tags
+                if not tag.absent
+            )
 
         sourced = branch.source_arguments(overload.params)
         if sourced is None:
@@ -3896,7 +4183,9 @@ def _unfold_node(
         )
         list_type = T.WithTag(T.ExactList(generated), "infinite")
         results.append(
-            candidate.branch.push(list_type).emit(
+            candidate.branch.with_element_tags(
+                (*candidate.applied.element_tags, *condition_element_tags)
+            ).push(list_type).emit(
                 TypedUnfoldNode(
                     node,
                     list_type,
@@ -3914,7 +4203,10 @@ def _tag_declaration_node(
     branch: AnalysisBranch,
 ) -> BranchSet:
     if node.disjoint is not None:
-        self.env.add_disjoint_tags(node.tag.name, node.disjoint.name)
+        if isinstance(node.disjoint, T.DataTag):
+            self.env.add_disjoint_tags(node.tag.name, node.disjoint.name)
+        else:
+            self.env.add_disjoint_data_element_tags(node.tag.name, node.disjoint)
     elif node.parent is not None:
         self.env.add_variant_tag(node.tag.name, node.parent.name)
     elif node.kind == Symbol("constructed"):
@@ -3934,7 +4226,10 @@ def _element_tag_declaration_node(
     branch: AnalysisBranch,
 ) -> BranchSet:
     if node.disjoint is not None:
-        self.env.add_disjoint_element_tags(node.name, node.disjoint)
+        if isinstance(node.disjoint, T.DataTag):
+            self.env.add_disjoint_data_element_tags(node.disjoint.name, node.name)
+        else:
+            self.env.add_disjoint_element_tags(node.name, node.disjoint)
     elif node.kind == Symbol("companion"):
         self.env.add_companion_element_tag(node.name)
     else:
@@ -4613,16 +4908,197 @@ def _callable_overloads(typ: T.Type) -> tuple[T.Overload, ...]:
     return ()
 
 
-def _typed_body_element_tags(body: tuple[TypedNode, ...]) -> tuple[T.ElementTag, ...]:
-    tags: set[T.ElementTag] = set()
-    for node in body:
-        if isinstance(node, TypedElementNode) and node.overload is not None:
-            tags.update(tag for tag in node.overload.element_tags if not tag.absent)
-        elif isinstance(node, TypedCallNode) and node.overload is not None:
-            tags.update(tag for tag in node.overload.element_tags if not tag.absent)
-        if isinstance(node, TypedFunctionNode):
+def _element_tag_covers(
+    requirement: T.ElementTag,
+    actual: T.ElementTag,
+    ctx: T.Context,
+) -> bool:
+    """Return whether one declared tag covers a concrete propagated effect."""
+    if requirement.name != actual.name:
+        return False
+    if not requirement.args:
+        return True
+    if len(requirement.args) != len(actual.args):
+        return False
+    return all(
+        T.assignable(actual_arg, required_arg, ctx)
+        for actual_arg, required_arg in zip(
+            actual.args,
+            requirement.args,
+            strict=True,
+        )
+    )
+
+
+def _element_tag_absence_conflicts(
+    forbidden: T.ElementTag,
+    actual: T.ElementTag,
+    ctx: T.Context,
+) -> bool:
+    """Return whether a propagated effect may overlap a declared absence."""
+    if forbidden.name != actual.name:
+        return False
+    if not forbidden.args:
+        return True
+    if len(forbidden.args) != len(actual.args):
+        return False
+    return all(
+        _types_may_overlap(forbidden_arg, actual_arg, ctx)
+        for forbidden_arg, actual_arg in zip(
+            forbidden.args,
+            actual.args,
+            strict=True,
+        )
+    )
+
+
+def _types_may_overlap(
+    left: T.Type,
+    right: T.Type,
+    ctx: T.Context,
+) -> bool:
+    left = T.normalize(left)
+    right = T.normalize(right)
+    if isinstance(left, T.UnionType):
+        return any(_types_may_overlap(item, right, ctx) for item in left.items)
+    if isinstance(right, T.UnionType):
+        return any(_types_may_overlap(left, item, ctx) for item in right.items)
+    return T.assignable(left, right, ctx) or T.assignable(right, left, ctx)
+
+
+def _final_function_element_tags(
+    node: FunctionNode,
+    body_tags: frozenset[T.ElementTag],
+    env: T.Environment,
+) -> frozenset[T.ElementTag]:
+    declared = set(node.element_tags)
+    if not node.element_tags_explicit:
+        return frozenset(declared | set(body_tags))
+
+    final = set(declared)
+    declared_properties = tuple(
+        tag
+        for tag in node.element_tags
+        if not tag.absent
+        and (definition := env.lookup_element_tag(tag.name)) is not None
+        and definition.kind is T.ElementTagKind.PROPERTY
+    )
+    for tag in body_tags:
+        definition = env.lookup_element_tag(tag.name)
+        if definition is not None and definition.kind is T.ElementTagKind.COMPANION:
+            final.add(tag)
             continue
-    return tuple(sorted(tags))
+        if not any(
+            _element_tag_covers(declared_tag, tag, env.context)
+            for declared_tag in declared_properties
+        ):
+            final.add(tag)
+    return frozenset(final)
+
+
+def _function_type_element_tag_sets(
+    typ: T.Type,
+) -> Iterator[frozenset[T.ElementTag]]:
+    """Yield every function-tag set nested in a type annotation."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.FunctionType):
+        yield typ.element_tags
+        for tag in typ.element_tags:
+            for arg in tag.args:
+                yield from _function_type_element_tag_sets(arg)
+        for item in (*(typ.params or ()), *(typ.returns or ())):
+            yield from _function_type_element_tag_sets(item)
+        return
+    if isinstance(typ, T.NominalType):
+        for arg in typ.args:
+            yield from _function_type_element_tag_sets(arg)
+        return
+    if isinstance(typ, (T.UnionType, T.IntersectionType)):
+        for item in typ.items:
+            yield from _function_type_element_tag_sets(item)
+        return
+    if isinstance(typ, T.TupleType):
+        for item in typ.params:
+            yield from _function_type_element_tag_sets(item)
+        return
+    if isinstance(typ, T.VariadicTupleType):
+        for item in typ.items:
+            yield from _function_type_element_tag_sets(item.typ)
+        return
+    if isinstance(typ, T.RowType):
+        yield from _function_type_element_tag_sets(typ.base)
+        for field in typ.fields:
+            yield from _function_type_element_tag_sets(field.typ)
+        return
+    if isinstance(typ, T.CollectionType):
+        yield from _function_type_element_tag_sets(typ.base)
+        return
+    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+        yield from _function_type_element_tag_sets(typ.inner)
+        return
+    if isinstance(typ, T.AnonymousTraitType):
+        for requirement in typ.requirements:
+            yield requirement.overload.element_tags
+            for item in (*requirement.overload.params, *requirement.overload.returns):
+                yield from _function_type_element_tag_sets(item)
+        return
+    if isinstance(typ, T.OverloadSetType):
+        for overload in typ.overloads:
+            yield overload.element_tags
+            for item in (*overload.params, *overload.returns):
+                yield from _function_type_element_tag_sets(item)
+
+
+def _present_data_tags(typ: T.Type) -> Iterator[T.DataTag]:
+    """Yield present data tags anywhere inside a call argument type."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        yield from (tag for tag in typ.tags if not tag.absent)
+        yield from _present_data_tags(typ.inner)
+        return
+    if isinstance(typ, T.NominalType):
+        for arg in typ.args:
+            yield from _present_data_tags(arg)
+        return
+    if isinstance(typ, (T.UnionType, T.IntersectionType)):
+        for item in typ.items:
+            yield from _present_data_tags(item)
+        return
+    if isinstance(typ, T.TupleType):
+        for item in typ.params:
+            yield from _present_data_tags(item)
+        return
+    if isinstance(typ, T.VariadicTupleType):
+        for item in typ.items:
+            yield from _present_data_tags(item.typ)
+        return
+    if isinstance(typ, T.RowType):
+        yield from _present_data_tags(typ.base)
+        for field in typ.fields:
+            yield from _present_data_tags(field.typ)
+        return
+    if isinstance(typ, T.CollectionType):
+        yield from _present_data_tags(typ.base)
+        return
+    if isinstance(typ, T.FunctionType):
+        for tag in typ.element_tags:
+            for arg in tag.args:
+                yield from _present_data_tags(arg)
+        for item in (*(typ.params or ()), *(typ.returns or ())):
+            yield from _present_data_tags(item)
+        return
+    if isinstance(typ, (T.ExactType, T.AtomicType)):
+        yield from _present_data_tags(typ.inner)
+        return
+    if isinstance(typ, T.AnonymousTraitType):
+        for requirement in typ.requirements:
+            for item in (*requirement.overload.params, *requirement.overload.returns):
+                yield from _present_data_tags(item)
+        return
+    if isinstance(typ, T.OverloadSetType):
+        for overload in typ.overloads:
+            for item in (*overload.params, *overload.returns):
+                yield from _present_data_tags(item)
 
 
 def _best_candidates(
@@ -6127,8 +6603,16 @@ def _refine_branch_like(
 ) -> AnalysisBranch:
     substitution = _branch_pair_substitution(branch.inputs, refined.inputs)
     if substitution is None:
-        return branch
-    return _specialize_branch_arguments(branch, substitution)
+        return replace(
+            branch,
+            element_tags=refined.element_tags,
+            data_element_uses=refined.data_element_uses,
+        )
+    return replace(
+        _specialize_branch_arguments(branch, substitution),
+        element_tags=refined.element_tags,
+        data_element_uses=refined.data_element_uses,
+    )
 
 
 def _branch_pair_substitution(
@@ -6680,6 +7164,8 @@ def _join_try_output(
         _refine_branch_like(branch, joined)
         .with_stack(stack)
         .with_variables(variables)
+        .with_element_tags(output.element_tags)
+        .with_data_element_uses(output.data_element_uses)
     )
 
 
@@ -6729,7 +7215,10 @@ def _join_match_output(
         else joined
     )
     return replace(
-        base.with_stack(stack).with_variables(variables),
+        base.with_stack(stack)
+        .with_variables(variables)
+        .with_element_tags(candidate.element_tags)
+        .with_data_element_uses(candidate.data_element_uses),
         inputs=merged_inputs,
     )
 
@@ -7128,6 +7617,12 @@ def _literal_branch_results(
         consumed = max((item.consumed for item in combo), default=0)
         typ = literal_type(combo)
         variables = _merge_list_item_variables(branch.variables, combo)
+        element_tags = frozenset(
+            tag for item in combo for tag in item.branch.element_tags
+        )
+        data_element_uses = frozenset(
+            use for item in combo for use in item.branch.data_element_uses
+        )
         results.append(
             replace(
                 branch,
@@ -7140,7 +7635,8 @@ def _literal_branch_results(
                     typ,
                     tuple(item.typed_body for item in combo),
                 )
-            )
+            ).with_element_tags(element_tags)
+            .with_data_element_uses(data_element_uses)
         )
     return BranchSet.collect(results)
 

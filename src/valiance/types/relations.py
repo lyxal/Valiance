@@ -541,6 +541,71 @@ def _solve(
         """Append a candidate solution for one type variable."""
         constraints.setdefault(name, []).append(normalize(value))
 
+    def rec_element_tags(
+        required: frozenset[ElementTag],
+        actual: frozenset[ElementTag],
+    ) -> bool:
+        present = tuple(tag for tag in actual if not tag.absent)
+        for requirement in required:
+            candidates = tuple(
+                tag for tag in present if tag.name == requirement.name
+            )
+            if requirement.absent:
+                if not requirement.args:
+                    if candidates:
+                        return False
+                    continue
+                if any(_contains_type_var(arg) for arg in requirement.args):
+                    if candidates:
+                        return False
+                    continue
+                if any(
+                    _element_tag_conflicts(candidate, requirement, ctx)
+                    for candidate in candidates
+                ):
+                    return False
+                continue
+            if not candidates:
+                return False
+            if not requirement.args:
+                continue
+
+            matches: list[dict[str, list[Type]]] = []
+            original = {key: list(values) for key, values in constraints.items()}
+            for candidate in candidates:
+                constraints.clear()
+                constraints.update(
+                    {key: list(values) for key, values in original.items()}
+                )
+                if len(candidate.args) != len(requirement.args):
+                    continue
+                matched = all(
+                    rec(required_arg, actual_arg)
+                    if _contains_type_var(required_arg)
+                    else assignable(actual_arg, required_arg, ctx)
+                    for required_arg, actual_arg in zip(
+                        requirement.args,
+                        candidate.args,
+                        strict=True,
+                    )
+                )
+                if matched:
+                    matches.append(
+                        {key: list(values) for key, values in constraints.items()}
+                    )
+            if not matches:
+                constraints.clear()
+                constraints.update(original)
+                return False
+            merged = {key: list(values) for key, values in original.items()}
+            for match in matches:
+                for key, values in match.items():
+                    existing_count = len(original.get(key, ()))
+                    merged.setdefault(key, []).extend(values[existing_count:])
+            constraints.clear()
+            constraints.update(merged)
+        return True
+
     def rec(p: Type, a: Type) -> bool:
         """Recursively match a pattern node against an actual type node."""
         p, a = normalize(p), normalize(a)
@@ -624,6 +689,8 @@ def _solve(
         if isinstance(p, VariadicTupleType) and isinstance(a, TupleType):
             return solve_variadic_tuple(p, a)
         if isinstance(p, FunctionType) and isinstance(a, FunctionType):
+            if not rec_element_tags(p.element_tags, a.element_tags):
+                return False
             if p.params is None or p.returns is None:
                 return True
             if a.params is None or a.returns is None:
@@ -1089,6 +1156,7 @@ def _callable_compatible(argument: Type, parameter: Type, ctx: Context) -> bool:
         if not _element_tag_requirements_met(
             argument.element_tags,
             parameter.element_tags,
+            ctx,
         ):
             return False
         if argument.params is None or argument.returns is None:
@@ -1175,6 +1243,7 @@ def union_dispatched_callable_plan(
         if not _element_tag_requirements_met(
             applied.overload.element_tags,
             expected.element_tags,
+            ctx,
         ):
             return None
         if len(applied.actual_returns) != len(expected.returns):
@@ -1371,7 +1440,11 @@ def _overload_callable_compatible(
     overload: Overload, expected: Type, ctx: Context
 ) -> bool:
     """Return whether one overload can be used as an expected function type."""
-    if not _element_tag_requirements_met(overload.element_tags, expected.element_tags):
+    if not _element_tag_requirements_met(
+        overload.element_tags,
+        expected.element_tags,
+        ctx,
+    ):
         return False
     if len(overload.params) != len(expected.params) or len(overload.returns) != len(
         expected.returns
@@ -2207,15 +2280,78 @@ def _tag_requirements_met(
 def _element_tag_requirements_met(
     actual: frozenset[ElementTag],
     required: frozenset[ElementTag],
+    ctx: Context,
 ) -> bool:
+    present = tuple(tag for tag in actual if not tag.absent)
     for tag in required:
-        positive = ElementTag(tag.name, tag.args)
+        matches = tuple(
+            candidate
+            for candidate in present
+            if (
+                _element_tag_conflicts(candidate, tag, ctx)
+                if tag.absent
+                else _element_tag_matches(candidate, tag, ctx)
+            )
+        )
         if tag.absent:
-            if positive in actual:
+            if matches:
                 return False
-        elif positive not in actual:
+        elif not matches:
             return False
     return True
+
+
+def _element_tag_matches(
+    actual: ElementTag,
+    required: ElementTag,
+    ctx: Context,
+) -> bool:
+    if actual.name != required.name:
+        return False
+    if not required.args:
+        return True
+    if len(actual.args) != len(required.args):
+        return False
+    return all(
+        assignable(actual_arg, required_arg, ctx)
+        for actual_arg, required_arg in zip(
+            actual.args,
+            required.args,
+            strict=True,
+        )
+    )
+
+
+def _element_tag_conflicts(
+    actual: ElementTag,
+    forbidden: ElementTag,
+    ctx: Context,
+) -> bool:
+    """Return whether an actual effect may overlap a forbidden effect."""
+    if actual.name != forbidden.name:
+        return False
+    if not forbidden.args:
+        return True
+    if len(actual.args) != len(forbidden.args):
+        return False
+    return all(
+        _types_may_overlap(actual_arg, forbidden_arg, ctx)
+        for actual_arg, forbidden_arg in zip(
+            actual.args,
+            forbidden.args,
+            strict=True,
+        )
+    )
+
+
+def _types_may_overlap(left: Type, right: Type, ctx: Context) -> bool:
+    left = normalize(left)
+    right = normalize(right)
+    if isinstance(left, UnionType):
+        return any(_types_may_overlap(item, right, ctx) for item in left.items)
+    if isinstance(right, UnionType):
+        return any(_types_may_overlap(left, item, ctx) for item in right.items)
+    return assignable(left, right, ctx) or assignable(right, left, ctx)
 
 
 def _substitute_element_tags(

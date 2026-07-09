@@ -189,7 +189,7 @@ class TagDeclarationNode(ASTNode):
     tag: DataTag
     kind: Symbol | None = None
     parent: DataTag | None = None
-    disjoint: DataTag | None = None
+    disjoint: DataTag | Symbol | None = None
     visibility: Symbol | None = None
 
 
@@ -415,7 +415,7 @@ class ElementTagDeclarationNode(ASTNode):
 
     name: Symbol
     kind: Symbol | None = None
-    disjoint: Symbol | None = None
+    disjoint: Symbol | DataTag | None = None
     visibility: Symbol | None = None
 
 

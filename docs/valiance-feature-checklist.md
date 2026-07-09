@@ -862,9 +862,9 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Report missing generic solutions.
 - [x] Report conflicting generic solutions.
 - [ ] Report invalid rank relationships.
-- [ ] Report tag disjoint violations.
+- [x] Report tag disjoint violations.
 - [ ] Report missing tag validators.
-- [ ] Report effect-tag violations.
+- [x] Report effect-tag violations.
 - [ ] Report import and implementation conflicts.
 - [ ] Report invalid package-version usage.
 - [ ] Report discarded multi-value expression results.

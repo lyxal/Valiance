@@ -898,6 +898,26 @@ end
             ],
         )
 
+    def test_parses_data_element_tag_disjoints_in_either_order(self):
+        self.assertEqual(
+            parse(
+                """
+tag #infinite disjoint Eager
+tag Eager disjoint #infinite
+"""
+            ),
+            [
+                TagDeclarationNode(
+                    DataTag("infinite"),
+                    disjoint=Symbol("Eager"),
+                ),
+                ElementTagDeclarationNode(
+                    Symbol("Eager"),
+                    disjoint=DataTag("infinite"),
+                ),
+            ],
+        )
+
     def test_parses_tag_attached_definition(self):
         [tag, definition] = parse(
             "tag #sorted as computed\n"

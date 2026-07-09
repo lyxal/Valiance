@@ -383,9 +383,15 @@ class Parser:
         if not (self._check(TokenKind.OP) and self._current.value.startswith("#")):
             name = self._symbol("expected element tag name")
             if self._match_ident("disjoint"):
+                disjoint = (
+                    _tag_from_token(self._advance())
+                    if self._check(TokenKind.OP)
+                    and self._current.value.startswith("#")
+                    else self._symbol("expected disjoint tag name")
+                )
                 return ElementTagDeclarationNode(
                     name,
-                    disjoint=self._symbol("expected disjoint element tag name"),
+                    disjoint=disjoint,
                     visibility=visibility,
                     location=_loc(start),
                 )
@@ -402,9 +408,15 @@ class Parser:
 
         tag = _tag_from_token(self._expect_tag_token())
         if self._match_ident("disjoint"):
+            disjoint = (
+                _tag_from_token(self._advance())
+                if self._check(TokenKind.OP)
+                and self._current.value.startswith("#")
+                else self._symbol("expected disjoint tag name")
+            )
             return TagDeclarationNode(
                 tag,
-                disjoint=_tag_from_token(self._expect_tag_token()),
+                disjoint=disjoint,
                 visibility=visibility,
                 location=_loc(start),
             )

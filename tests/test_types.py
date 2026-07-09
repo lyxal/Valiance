@@ -349,6 +349,55 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertFalse(compatible(tagged, Fn((Number,), (), (not_eager,))))
         self.assertFalse(compatible(Fn((Number,), ()), Fn((Number,), (), (eager,))))
 
+    def test_element_tag_requirements_match_parameterized_effects(self):
+        panic_string = ElementTag(Symbol("Panic"), (String,))
+        any_panic = ElementTag(Symbol("Panic"))
+        no_panic = ElementTag(Symbol("Panic"), absent=True)
+        no_string_panic = ElementTag(Symbol("Panic"), (String,), absent=True)
+        no_number_panic = ElementTag(Symbol("Panic"), (Number,), absent=True)
+        actual = Fn((Number,), (), (panic_string,))
+        broad_numeric_panic = Fn(
+            (Number,),
+            (),
+            (ElementTag(Symbol("Panic"), (Number,)),),
+        )
+
+        self.assertTrue(compatible(actual, Fn((Number,), (), (any_panic,))))
+        self.assertFalse(compatible(actual, Fn((Number,), (), (no_panic,))))
+        self.assertFalse(
+            compatible(actual, Fn((Number,), (), (no_string_panic,)))
+        )
+        self.assertTrue(
+            compatible(actual, Fn((Number,), (), (no_number_panic,)))
+        )
+        self.assertFalse(
+            compatible(
+                broad_numeric_panic,
+                Fn(
+                    (Number,),
+                    (),
+                    (ElementTag(Symbol("Panic"), (Integer,), absent=True),),
+                ),
+            )
+        )
+
+    def test_element_tag_arguments_participate_in_generic_solving(self):
+        pattern = Fn(
+            (Number,),
+            (),
+            (ElementTag(Symbol("Panic"), (V("F"),)),),
+        )
+        actual = Fn(
+            (Number,),
+            (),
+            (ElementTag(Symbol("Panic"), (String,)),),
+        )
+
+        solved = _solve(pattern, actual)
+
+        self.assertIsNotNone(solved)
+        self.assertEqual(solved["F"], [String])
+
     def test_only_unit_tags_block_erasure_to_untagged_types(self):
         ctx = Context()
         ctx.define_tag("infinite", TagKind.CONSTRUCTED)

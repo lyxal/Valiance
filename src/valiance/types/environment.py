@@ -211,6 +211,9 @@ class Environment:
     disjoint_element_tags: dict[Symbol, set[Symbol]] = field(
         default_factory=dict[Symbol, set[Symbol]]
     )
+    disjoint_data_element_tags: dict[Symbol, set[Symbol]] = field(
+        default_factory=dict[Symbol, set[Symbol]]
+    )
     tag_overlays: dict[Symbol, list[TagOverlayDefinition]] = field(
         default_factory=dict[Symbol, list[TagOverlayDefinition]]
     )
@@ -522,6 +525,42 @@ class Environment:
         local = self.disjoint_element_tags.get(name, set())
         parent = (
             self.parent.element_tag_disjoints(name)
+            if self.parent is not None
+            else frozenset()
+        )
+        return frozenset((*parent, *local))
+
+    def add_disjoint_data_element_tags(
+        self,
+        data_tag: str | Symbol,
+        element_tag: str | Symbol,
+    ) -> None:
+        """Record that tagged data cannot be passed to the element effect."""
+        data_name = _tag_symbol(data_tag)
+        element_name = _tag_symbol(element_tag)
+        self.disjoint_data_element_tags.setdefault(data_name, set()).add(element_name)
+
+    def data_tag_element_disjoints(self, tag: str | Symbol) -> frozenset[Symbol]:
+        """Return element tags disjoint with a data tag."""
+        name = _tag_symbol(tag)
+        local = self.disjoint_data_element_tags.get(name, set())
+        parent = (
+            self.parent.data_tag_element_disjoints(name)
+            if self.parent is not None
+            else frozenset()
+        )
+        return frozenset((*parent, *local))
+
+    def element_tag_data_disjoints(self, tag: str | Symbol) -> frozenset[Symbol]:
+        """Return data tags disjoint with an element tag."""
+        name = _tag_symbol(tag)
+        local = {
+            data_tag
+            for data_tag, element_tags in self.disjoint_data_element_tags.items()
+            if name in element_tags
+        }
+        parent = (
+            self.parent.element_tag_data_disjoints(name)
             if self.parent is not None
             else frozenset()
         )

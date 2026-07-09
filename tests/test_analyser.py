@@ -284,6 +284,127 @@ move(file -> file, file)
 
         self.assertIn("cannot be directly attached", analyser.diagnostics[-1])
 
+    def test_function_literals_cannot_directly_attach_companion_tags(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("fn<Eager> => 1"))
+
+        self.assertIn("cannot be directly attached", analyser.diagnostics[-1])
+
+    def test_element_tags_are_validated_in_absences_and_function_types(self):
+        absent = Analyser()
+        absent.analyse(parse("define f(value: Number)<!Missing> -> Number => $value"))
+
+        nested = Analyser()
+        nested.analyse(
+            parse(
+                "define use(f: Function[Number -> Number]<Missing>) -> => end"
+            )
+        )
+
+        self.assertIn("undeclared element tag 'Missing'", absent.diagnostics[-1])
+        self.assertIn("undeclared element tag 'Missing'", nested.diagnostics[-1])
+
+    def test_required_element_tag_absence_rejects_inferred_effects(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                "define log(value: Number)<IO, !Eager> -> => $value println"
+            )
+        )
+
+        self.assertIn("required to be absent", analyser.diagnostics[-1])
+
+        parameterized = Analyser()
+        parameterized.analyse(
+            parse(
+                "define fail(error: Fault)<!Panic[RuntimeFault]> -> => "
+                "$error panic"
+            )
+        )
+
+        self.assertIn(
+            "required to be absent",
+            parameterized.diagnostics[-1],
+        )
+
+    def test_nested_calls_propagate_element_tags(self):
+        sources = (
+            "define f(x: Number) -> Number => "
+            "if true => $x println 1 else => 1 end",
+            "define \\f => [1 println 1, 2]",
+            'define \\f => "${1 println 2}"',
+        )
+
+        for source in sources:
+            with self.subTest(source=source):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+
+                self.assertEqual(analyser.diagnostics, [])
+                self.assertIn(
+                    ElementTag(Symbol("Eager")),
+                    typed[-1].typ.element_tags,
+                )
+                self.assertIn(
+                    ElementTag(Symbol("IO")),
+                    typed[-1].typ.element_tags,
+                )
+
+    def test_declared_generic_property_tag_covers_narrower_inferred_effect(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                "define fail(error: RuntimeFault)<Panic[Fault]> -> => "
+                "$error panic"
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            typed[-1].typ.element_tags,
+            frozenset(
+                {
+                    ElementTag(
+                        Symbol("Panic"),
+                        (N(Symbol("Fault")),),
+                    )
+                }
+            ),
+        )
+
+    def test_data_element_tag_disjoints_reject_effectful_use(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+tag #infinite as constructed
+tag #infinite disjoint Eager
+[1, 2] | #infinite | println
+"""
+            )
+        )
+
+        self.assertIn("cannot be used by an element", analyser.diagnostics[-1])
+
+    def test_data_element_tag_disjoints_reject_effectful_use_in_function(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+tag #infinite as constructed
+tag #infinite disjoint Eager
+define \\f => [1, 2] | #infinite | println
+"""
+            )
+        )
+
+        self.assertIn("cannot be used by an element", analyser.diagnostics[-1])
+
     def test_explicit_element_tag_sets_reject_undeclared_body_effects(self):
         analyser = Analyser()
 

@@ -533,6 +533,27 @@ eager define show(value: String) -> () => println(value)
 The `eager define` spelling records the same parsed function node with the
 `Eager` element tag attached.
 
+Element-tag declarations use the same `tag` statement without a leading `#`:
+
+```valiance
+tag Log as property
+tag Eager as companion
+tag Read disjoint Write
+```
+
+Disjoint declarations may also cross between data and element tags in either
+order:
+
+```valiance
+tag #infinite disjoint Eager
+tag Eager disjoint #infinite
+```
+
+The parser records whether a function tag list was explicitly written. It also
+records compiler-authorized companion tags separately, so `eager define` can
+attach `Eager` while an ordinary `define ...<Eager>` or `fn<Eager>` is rejected
+during analysis.
+
 Only `define` parameter lists may currently attach trailing `= <expr>` defaults.
 Those defaults are recorded on `FunctionParam.default` for later ECS lowering;
 they do not change ordinary stack-call arity.

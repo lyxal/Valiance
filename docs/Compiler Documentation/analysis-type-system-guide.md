@@ -796,11 +796,20 @@ Function return rules:
 Multiple viable function signatures become an `OverloadSetType`. The typed
 function node keeps per-overload typed bodies so the typed AST remains useful.
 
-Function types can carry element tags. Explicit tags written on a function are
-combined with tags inferred from the function body and with tags propagated from
-callable arguments. For example, `println` contributes `Eager` and `IO`, so a
-function that calls `println` gets those tags even if it did not write them
-explicitly.
+Function types can carry element tags. Effects are accumulated on each analysis
+branch and survive nested control flow, loops, `try`, `match`, collection
+literals, string interpolation, validators, and ordinary/callable invocations.
+Only surviving branches contribute to the final function type. For example,
+`println` contributes `Eager` and `IO`, so a function that calls `println` gets
+those tags even if it did not write them explicitly.
+
+When a function has no explicit `<...>` list, inferred property and companion
+tags are added to its type. An explicit list is an effect contract: declared
+property tags may be broader than a concrete body effect (for example,
+`Panic[Fault]` covers `Panic[RuntimeFault]`), undeclared property effects are
+diagnosed, and companion tags are still inferred from compiler-controlled
+features. Declared absent tags are checked against the complete surviving body
+effect set.
 
 ## Call-Site Type Checking
 
@@ -953,8 +962,15 @@ The default environment predeclares the currently supported tags:
 - companion tags: `Eager`, `Memoized`
 
 Positive element tags require the called function to carry a matching positive
-tag. Absent tags reject a matching positive tag. This lets parameter types such
-as `Function[T -> U]<!Eager>` accept only non-eager callables.
+tag. Parameterized effects are covariant for positive requirements, so
+`Panic[RuntimeFault]` satisfies `Panic[Fault]`. Absent tags reject effects whose
+payload types overlap the forbidden payload, and an unparameterized absence such
+as `!Panic` rejects every `Panic[...]` effect. This lets parameter types such as
+`Function[T -> U]<!Eager>` accept only non-eager callables.
+
+Element-tag type arguments participate in ordinary substitution and generic
+solving. A function parameter requiring `Panic[F]`, for example, can solve `F`
+from the concrete callable effect.
 
 Element tags propagate from resolved element calls and from concrete callable
 arguments used by call-site type checking. This is why `map: println` is eager:
@@ -963,8 +979,16 @@ callable argument, and the resulting applied overload/function type carries the
 tag upward.
 
 The parser accepts explicit function element tags and `eager define` attaches
-`Eager`. Full source declarations for property/companion element tags and the
-rule preventing direct user attachment of companion tags are still future work.
+the compiler-controlled `Eager` companion tag. Source declarations support both
+`tag Name as property` and `tag Name as companion`. Positive companion tags may
+appear in function-type requirements, but ordinary definitions and function
+literals cannot attach them directly.
+
+Element/element disjoints and data/element disjoints are stored symmetrically in
+the environment. The analyser rejects incompatible explicit or inferred element
+tag sets and records data-tag/effect uses per branch so violations inside nested
+expressions and function bodies are not lost during branch merges. Both
+`tag #infinite disjoint Eager` and `tag Eager disjoint #infinite` are accepted.
 
 ## Annotations
 
