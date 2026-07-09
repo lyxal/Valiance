@@ -22,6 +22,7 @@ from valiance.runtime_values import (
     format_runtime_value,
     is_finite_list_like,
     is_list_like,
+    unwrap_runtime_value,
 )
 from valiance.symbols import Symbol
 
@@ -220,6 +221,7 @@ def _present_value(value: Any) -> Any:
 
 
 def _runtime_assignable(value: Any, typ: T.Type) -> bool:
+    value = unwrap_runtime_value(value)
     typ = T.normalize(typ)
     if isinstance(typ, T.VarType):
         return True

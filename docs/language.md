@@ -702,12 +702,17 @@ println($values map: * 2)
 #? [2, 4, AA, BB]
 ```
 
-This adaptation is deliberately limited to calls whose argument types and
-selected overload parameters have the same exact runtime nominal identities.
-Coverage through a trait, a broader supertype, a data tag, or another erased
-structural type is rejected until runtime can dispatch those cases without
-guessing. Every branch must be covered, and two overloads must not erase to the
-same runtime signature. An ambiguous branch remains a compile-time error.
+The compiler records which overload is selected for each union branch and
+emits that branch-to-overload plan with the function value. At runtime it tests
+the value against reified type predicates and invokes the overload already
+chosen for that branch. Broader numeric types, named traits, variants, generic
+nominal variance, and reified data tags can therefore cover a branch without
+requiring exact type-name equality.
+
+Every branch must still be covered unambiguously. If two runtime-overlapping
+branches would select different overloads, the function is rejected. Runtime
+dispatch never executes overload bodies speculatively and never re-resolves to
+a narrower overload based only on the concrete runtime value.
 
 ## 6.6. Call-Site Type Checking
 - Sometimes it may be desirable to have a function accept any function as input, rather than a fixed function.

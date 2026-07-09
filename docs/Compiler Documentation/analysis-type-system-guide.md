@@ -221,22 +221,28 @@ ordinary user code still sees them only through imported module exports.
 
 ## Union-Covered Callable Overloads
 
-`types.relations._union_dispatched_callable_returns(...)` handles the safe case
+`types.relations.union_dispatched_callable_plan(...)` handles the safe case
 where an `OverloadSetType` is used as a `FunctionType` whose input contains a
 top-level union. It expands the cartesian product of union branches, resolves
-one best overload for every combination, and unions each return position.
+one best overload for every combination, unions each return position, and emits
+a `UnionDispatchPlan` that records the selected overload index for that branch.
 
-This rule is intentionally conservative. Every concrete argument branch and
-its selected overload parameter must have the same exact, sealed runtime nominal
-identity, including arguments that are not themselves unions. The selected
-runtime signature must also be unique across the whole overload set. Do not
-loosen this to traits, broad supertypes, tags, rows, or other erased structural
-types unless the runtime gains equivalent deterministic dispatch metadata.
-Missing, erased, or ambiguous branch coverage must reject the callable.
+The plan uses reified `RuntimeTypePattern` values. Nominal patterns contain the
+closed-world subtype set known during analysis, so broader numeric types,
+traits, variants, and declared generic variance are available to runtime branch
+matching. Data-tag requirements are also retained and checked against runtime
+tag evidence. Collections are currently excluded because their element types
+are not reified and inspecting a lazy collection would be observably unsafe.
+Other unsupported structural patterns also reject the adaptation.
+
+Branches whose runtime predicates overlap may select the same overload. If two
+overlapping branches select different overloads, the adaptation is rejected as
+ambiguous. Missing or statically ambiguous branch coverage also rejects it.
 
 Modifier specialization in `analyser.py` must preserve the complete typed
-overload set for this case. Narrowing the modifier to one overload would make
-the static union function type disagree with the runtime callable value.
+overload set and attach the plan to `TypedFunctionNode`. Narrowing the modifier
+to one overload would make the static union function type disagree with the
+runtime callable value.
 
 ## Element Application
 

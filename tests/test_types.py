@@ -714,7 +714,7 @@ class TypeLibraryTests(unittest.TestCase):
             )
         )
 
-    def test_union_function_coverage_rejects_erased_tag_dispatch(self):
+    def test_union_function_coverage_rejects_overlapping_tag_dispatch(self):
         left = Tagged(Integer, DataTag(Symbol("left")))
         right = Tagged(Integer, DataTag(Symbol("right")))
         overloaded = Overloads(
@@ -729,26 +729,46 @@ class TypeLibraryTests(unittest.TestCase):
             )
         )
 
-    def test_union_function_coverage_requires_exact_non_union_inputs(self):
+    def test_union_function_coverage_accepts_disjoint_reified_tags(self):
+        ctx = Context()
+        ctx.define_tag("left", TagKind.COMPUTED)
+        ctx.define_tag("right", TagKind.COMPUTED)
+        ctx.add_disjoint_tags("left", "right")
+        left = Tagged(Integer, DataTag("left"))
+        right = Tagged(Integer, DataTag("right"))
+        overloaded = Overloads(
+            Overload((left,), (Integer,)),
+            Overload((right,), (String,)),
+        )
+
+        self.assertTrue(
+            compatible(
+                overloaded,
+                Fn((U(left, right),), (U(Integer, String),)),
+                ctx,
+            )
+        )
+
+    def test_union_function_coverage_accepts_broad_non_union_inputs(self):
         overloaded = Overloads(
             Overload((Integer, Number), (Number,)),
             Overload((String, Number), (Number,)),
         )
 
-        self.assertFalse(
+        self.assertTrue(
             compatible(
                 overloaded,
                 Fn((U(Integer, String), Number), (Number,)),
             )
         )
 
-    def test_union_function_coverage_rejects_erased_supertype_dispatch(self):
+    def test_union_function_coverage_accepts_nominal_supertypes(self):
         overloaded = Overloads(
             Overload((Number,), (Number,)),
             Overload((String,), (String,)),
         )
 
-        self.assertFalse(
+        self.assertTrue(
             compatible(
                 overloaded,
                 Fn((U(Integer, String),), (U(Number, String),)),

@@ -211,6 +211,41 @@ class DataTag:
 
 
 @dataclass(frozen=True)
+class RuntimeTypePattern:
+    """Serializable runtime predicate derived from one static type branch.
+
+    ``accepted_names`` is the closed-world nominal subtype set known during
+    analysis. ``children`` stores nominal arguments or the members of compound
+    patterns, depending on ``kind``.
+    """
+
+    kind: str
+    name: str | None = None
+    children: tuple[RuntimeTypePattern, ...] = ()
+    accepted_names: tuple[str, ...] = ()
+    variances: tuple[Variance, ...] = ()
+    tags: tuple[DataTag, ...] = ()
+    rank: int | None = None
+    collection_kind: str | None = None
+
+
+@dataclass(frozen=True)
+class UnionDispatchBranch:
+    """One cartesian union branch and its statically selected overload."""
+
+    params: tuple[RuntimeTypePattern, ...]
+    overload_index: int
+
+
+@dataclass(frozen=True)
+class UnionDispatchPlan:
+    """Runtime branch dispatch plus the statically merged return stack."""
+
+    branches: tuple[UnionDispatchBranch, ...]
+    returns: tuple[Type, ...]
+
+
+@dataclass(frozen=True)
 class TaggedType(Type):
     """A type decorated with present or absent tag requirements."""
 

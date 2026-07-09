@@ -65,6 +65,7 @@ from valiance.asts import (
     TypedElementNode,
     TypedExtensionPatternRule,
     TypedFunctionNode,
+    TypedLiteralNode,
     TypedNode,
     TypedTagApplicationNode,
     TypedUnfoldNode,
@@ -580,11 +581,12 @@ class FunctionAnalysis:
 
 @dataclass(frozen=True)
 class ListItemAnalysis:
-    """One possible analysis result for a forked list item."""
+    """One possible analysis result for a forked literal item."""
 
     branch: AnalysisBranch
     typ: T.Type
     consumed: int
+    typed_body: tuple[TypedNode, ...]
 
 
 @dataclass(frozen=True)
@@ -3779,6 +3781,8 @@ def _tag_application_node(
     value_type = branch.stack[-1]
     validator: T.AppliedOverload | None = None
     validator_index: int | None = None
+    added_tags: tuple[T.DataTag, ...] = ()
+    removed_tags: tuple[T.DataTag, ...] = ()
     if node.tag.absent:
         tagged = _remove_data_tag(value_type, node.tag)
         if tagged is None:
@@ -3788,8 +3792,21 @@ def _tag_application_node(
                 node,
             )
             return BranchSet((branch.emit(TypedNode(node, None)),))
+        removed_tags = (T.DataTag(node.tag.name, node.tag.depth),)
     else:
         tagged = _with_data_tags(value_type, (node.tag,), self.env.context)
+        added = [T.DataTag(node.tag.name, node.tag.depth)]
+        parent = self.env.context.tag_parent(node.tag.name)
+        if parent is not None:
+            added.append(T.DataTag(parent.text, node.tag.depth))
+        added_tags = tuple(added)
+        removed_tags = tuple(
+            T.DataTag(str(name), node.tag.depth)
+            for name in sorted(
+                self.env.context.tag_disjoints(node.tag.name),
+                key=str,
+            )
+        )
         validator_name = Symbol(f"#{node.tag.name}")
         validator_overloads = self.env.overloads_for(validator_name)
         if validator_overloads:
@@ -3835,11 +3852,14 @@ def _tag_application_node(
                 return BranchSet((branch.emit(TypedNode(node, None)),))
 
     stack = T.TypeStack((*branch.stack.items[:-1], tagged))
-    typed: TypedNode
-    if node.tag.absent:
-        typed = TypedNode(node, tagged)
-    else:
-        typed = TypedTagApplicationNode(node, tagged, validator, validator_index)
+    typed = TypedTagApplicationNode(
+        node,
+        tagged,
+        validator,
+        validator_index,
+        added_tags,
+        removed_tags,
+    )
     return BranchSet((branch.with_stack(stack).emit(typed),))
 
 
@@ -4865,6 +4885,15 @@ def _modifier_variants_for_expected(
         substitution = _branch_argument_substitution((modifier.typ,), (expected,), ctx)
         if substitution is not None:
             concrete_expected = _substitute_branch_type(expected, substitution)
+            dispatch_plan = (
+                _union_dispatch_plan_for_function(
+                    modifier.typed_node,
+                    concrete_expected,
+                    ctx,
+                )
+                if isinstance(T.normalize(concrete_expected), T.FunctionType)
+                else None
+            )
             if (
                 isinstance(T.normalize(concrete_expected), T.FunctionType)
                 and T.compatible(
@@ -4872,6 +4901,7 @@ def _modifier_variants_for_expected(
                     concrete_expected,
                     ctx,
                 )
+                and dispatch_plan is not None
             ):
                 yield (
                     ModifierArgumentAnalysis(
@@ -4880,6 +4910,7 @@ def _modifier_variants_for_expected(
                             modifier.typed_node.node,
                             concrete_expected,
                             modifier.typed_node.overloads,
+                            dispatch_plan,
                         ),
                     ),
                     substitution,
@@ -4960,6 +4991,9 @@ def _specialize_modifier_arguments(
         index = offset + original_index
         expected = applied.params[index] if index < len(applied.params) else None
         expected = T.normalize(expected) if expected is not None else None
+        if item.typed_node.dispatch_plan is not None:
+            typed_nodes.append(item.typed_node)
+            continue
         if isinstance(expected, T.FunctionType):
             overloads = tuple(
                 overload
@@ -4973,6 +5007,24 @@ def _specialize_modifier_arguments(
                 continue
         typed_nodes.append(item.typed_node)
     return tuple(typed_nodes)
+
+
+def _union_dispatch_plan_for_function(
+    function: TypedFunctionNode,
+    expected: T.Type,
+    ctx: T.Context,
+) -> T.UnionDispatchPlan | None:
+    expected = T.normalize(expected)
+    if not isinstance(expected, T.FunctionType):
+        return None
+    overloads = tuple(
+        typing.overload
+        for typing in function.overloads
+        if isinstance(typing.overload, T.Overload)
+    )
+    if len(overloads) != len(function.overloads):
+        return None
+    return T.union_dispatched_callable_plan(T.Overloads(*overloads), expected, ctx)
 
 
 def _function_overload_matches_type(
@@ -6834,6 +6886,7 @@ def _list_item_analysis(
         branch=output,
         typ=output.stack[-1],
         consumed=_forked_stack_consumption(base.stack, output.stack.pop()),
+        typed_body=output.typed_body[len(base.typed_body) :],
     )
 
 
@@ -6857,7 +6910,13 @@ def _literal_branch_results(
                 stack=_pop_stack(branch.stack, consumed).push(typ),
                 inputs=inputs,
                 variables=variables,
-            ).emit(TypedNode(node, typ))
+            ).emit(
+                TypedLiteralNode(
+                    node,
+                    typ,
+                    tuple(item.typed_body for item in combo),
+                )
+            )
         )
     return BranchSet.collect(results)
 
@@ -7803,9 +7862,28 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
                 FunctionOverloadTyping(
                     _refine_type(overload.typ, old, new),
                     _refine_typed_body(overload.body, old, new),
+                    overload.overload,
                 )
                 for overload in typed_node.overloads
             ),
+            typed_node.dispatch_plan,
+        )
+    if isinstance(typed_node, TypedLiteralNode):
+        return TypedLiteralNode(
+            typed_node.node,
+            typ,
+            tuple(
+                _refine_typed_body(item, old, new) for item in typed_node.items
+            ),
+        )
+    if isinstance(typed_node, TypedTagApplicationNode):
+        return TypedTagApplicationNode(
+            typed_node.node,
+            typ,
+            typed_node.validator,
+            typed_node.validator_index,
+            typed_node.added_tags,
+            typed_node.removed_tags,
         )
     if isinstance(typed_node, TypedElementNode):
         return TypedElementNode(

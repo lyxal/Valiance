@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from valiance.types import DataTag, UnionDispatchBranch
+
 
 class OpCode(Enum):
     """Bytecode operations understood by the Valiance VM."""
@@ -92,6 +94,7 @@ class FunctionCode:
     recursive: bool = False
     multi: bool = False
     dispatch_types: tuple[str | None, ...] = ()
+    return_tags: tuple[tuple[DataTag, ...], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +102,7 @@ class FunctionSetCode:
     """Executable bytecode for every statically analysed overload of a function."""
 
     overloads: tuple[FunctionCode, ...]
+    dispatch_plan: tuple[UnionDispatchBranch, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

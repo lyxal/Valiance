@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from valiance.symbols import Symbol
-from valiance.types import AppliedOverload, DataTag, ElementTag, Type
+from valiance.types import (
+    AppliedOverload,
+    DataTag,
+    ElementTag,
+    Type,
+    UnionDispatchPlan,
+)
 
 
 @dataclass(frozen=True)
@@ -33,6 +39,13 @@ class TypedNode:
 
 
 @dataclass(frozen=True, slots=True)
+class TypedLiteralNode(TypedNode):
+    """A literal whose item expressions retain their typed child nodes."""
+
+    items: tuple[tuple[TypedNode, ...], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class TypedElementNode(TypedNode):
     """A typed element application with its compile-time resolved overload."""
 
@@ -57,6 +70,8 @@ class TypedTagApplicationNode(TypedNode):
 
     validator: AppliedOverload | None = None
     validator_index: int | None = None
+    added_tags: tuple[DataTag, ...] = ()
+    removed_tags: tuple[DataTag, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +91,7 @@ class FunctionOverloadTyping:
 @dataclass(frozen=True, slots=True)
 class TypedFunctionNode(TypedNode):
     overloads: tuple[FunctionOverloadTyping, ...] = ()
+    dispatch_plan: UnionDispatchPlan | None = None
 
 
 @dataclass(frozen=True)

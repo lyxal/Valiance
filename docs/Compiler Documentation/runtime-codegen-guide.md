@@ -36,6 +36,10 @@ The runtime implementation is small, but several files must evolve together.
 - `FunctionCode.multi` and `FunctionCode.dispatch_types` mark compiled
   multimethod bodies and record the exact runtime nominal type names used by VM
   dispatch.
+- `FunctionCode.return_tags` retains top-level data-tag evidence for compiled
+  function results.
+- `FunctionSetCode.dispatch_plan` stores the statically selected overload for
+  every accepted union branch.
 
 `src/valiance/runtime/compiler.py`
 
@@ -648,18 +652,30 @@ Be careful when changing this area. Seeding function frames with arguments or
 changing when parameter cycling happens can easily break stack-style function
 bodies.
 
-## Exact Runtime Dispatch for Ordinary Overloaded Functions
+## Static Union Dispatch Plans
 
-Compiled ordinary function overloads carry `FunctionCode.dispatch_types`, not
-only `multi` overloads. When a higher-order built-in calls an overloaded
-function value, the VM first selects the unique overload whose dispatch types
-exactly match the runtime argument types. This is the runtime half of
-union-covered callable typing and avoids executing candidates speculatively.
+When analysis adapts an overload set to a function with union inputs, compiled
+`FunctionSetCode` carries a branch-to-overload dispatch plan. Each branch has
+reified runtime predicates and the index of the overload chosen during static
+resolution. The VM matches the arguments against the plan and calls that exact
+overload. It does not redo overload resolution from a more specific runtime
+type; doing so could change the statically calculated return type.
+
+Runtime nominal predicates include the known subtype closure for numeric
+supertypes, traits, and variants. Generic nominal arguments are compared using
+declared variance. Data-tag predicates use `TaggedValue` evidence retained by
+tag application and by tagged function/builtin returns.
+
+Typed list, tuple, record, and dictionary literals retain the typed nodes for
+their item expressions. This ensures constructor calls nested inside literals
+carry resolved generic arguments into `ObjectValue.type_args` instead of
+falling back to an erased dynamic constructor call.
 
 Do not implement union dispatch by trying overload bodies until one succeeds. A
 body may perform effects before failing, and a genuine body failure must not be
-reinterpreted as an overload mismatch. Unsupported runtime identities continue
-to be rejected by static union-coverage checking.
+reinterpreted as an overload mismatch. A plan with no matching branch or with
+multiple differently selected matching branches is a runtime integrity error;
+analysis is responsible for preventing those plans.
 
 ## Runtime Vectorisation
 
@@ -832,12 +848,12 @@ uv run python -m unittest discover -s tests -v
 
 These are known constraints of the current runtime/codegen layer:
 
-- Unvalidated `TagApplicationNode` values compile as no-ops; validated tag
-  applications emit `VALIDATE_TAG`.
+- Tag applications emit `VALIDATE_TAG` even without a validator so data-tag
+  evidence remains available to runtime dispatch. Typed applications also
+  carry validator and disjoint/parent tag metadata.
 - Unresolved element calls still compile through `LOAD_ELEMENT` / `CALL` and
   are runtime-dispatched.
 - Runtime arrays are currently represented like lists.
-- Function overload codegen chooses the first typed overload body.
 - Multimethod runtime dispatch currently matches exact runtime nominal names
   recorded on compiled `multi` user-defined overloads.
 - Runtime vectorisation errors are plain runtime errors, not yet dedicated

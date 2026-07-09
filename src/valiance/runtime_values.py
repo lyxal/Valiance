@@ -8,6 +8,8 @@ from decimal import Decimal
 from itertools import islice
 from typing import Any
 
+from valiance.types import DataTag
+
 
 @dataclass
 class LazyList:
@@ -26,6 +28,51 @@ class LazyList:
         if isinstance(other, Sequence) and not isinstance(other, (str, bytes, tuple)):
             return list(self) == list(other)
         return False
+
+
+@dataclass(frozen=True, eq=False)
+class TaggedValue:
+    """A runtime value carrying reified data-tag evidence."""
+
+    value: Any
+    tags: frozenset[DataTag] = field(default_factory=frozenset)
+
+    def __iter__(self):
+        return iter(self.value)
+
+    def __len__(self) -> int:
+        return len(self.value)
+
+    def __getitem__(self, index: Any) -> Any:
+        return self.value[index]
+
+    def __eq__(self, other: object) -> bool:
+        return self.value == unwrap_runtime_value(other)
+
+
+def unwrap_runtime_value(value: Any) -> Any:
+    """Return the payload beneath any runtime tag evidence wrapper."""
+    return value.value if isinstance(value, TaggedValue) else value
+
+
+def runtime_value_tags(value: Any) -> frozenset[DataTag]:
+    """Return the reified data tags attached to a runtime value."""
+    return value.tags if isinstance(value, TaggedValue) else frozenset()
+
+
+def update_runtime_tags(
+    value: Any,
+    *,
+    add: tuple[DataTag, ...] = (),
+    remove: tuple[DataTag, ...] = (),
+) -> Any:
+    """Apply a tag-evidence delta without nesting wrappers."""
+    payload = unwrap_runtime_value(value)
+    tags = set(runtime_value_tags(value))
+    removed = {(tag.name, tag.depth) for tag in remove}
+    tags = {tag for tag in tags if (tag.name, tag.depth) not in removed}
+    tags.update(tag for tag in add if not tag.absent)
+    return TaggedValue(payload, frozenset(tags)) if tags else payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +122,7 @@ DIAGNOSTIC_LIST_PREVIEW_LIMIT = 100
 
 def is_list_like(value: Any) -> bool:
     """Return whether a runtime value behaves like a Valiance list."""
+    value = unwrap_runtime_value(value)
     return (
         isinstance(value, Iterable)
         and not isinstance(value, (str, bytes, tuple, Mapping))
@@ -83,11 +131,13 @@ def is_list_like(value: Any) -> bool:
 
 def is_finite_list_like(value: Any) -> bool:
     """Return whether a list-like value has a known finite length."""
+    value = unwrap_runtime_value(value)
     return is_list_like(value) and isinstance(value, Sized)
 
 
 def is_eager_sequence(value: Any) -> bool:
     """Return whether a list-like value can be indexed without consumption."""
+    value = unwrap_runtime_value(value)
     return isinstance(value, Sequence) and not isinstance(value, (str, bytes, tuple))
 
 
@@ -99,6 +149,7 @@ def format_runtime_value(
     lazy_preview_limit: int | None = None,
 ) -> str:
     """Format a runtime value for user-visible output and diagnostics."""
+    value = unwrap_runtime_value(value)
     if isinstance(value, Decimal):
         if value == value.to_integral_value():
             return format(value.quantize(Decimal(1)), "f")

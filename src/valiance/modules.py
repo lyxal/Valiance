@@ -390,7 +390,12 @@ def _renamed_definition(
     if not isinstance(node, DefineNode):
         return definition
     renamed = _renamed_define_node(node, name)
-    typed = TypedFunctionNode(renamed, definition.typed.typ, definition.typed.overloads)
+    typed = TypedFunctionNode(
+        renamed,
+        definition.typed.typ,
+        definition.typed.overloads,
+        definition.typed.dispatch_plan,
+    )
     return ModuleDefinition(name, typed, definition.public, definition.attached_tag)
 
 
@@ -522,6 +527,7 @@ def _select_overloads(
         definition.typed.node,
         T.Overloads(*selected),
         definition.typed.overloads,
+        definition.typed.dispatch_plan,
     )
     return ModuleDefinition(
         definition.name,

@@ -17,6 +17,12 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
+from valiance.types import (
+    DataTag,
+    RuntimeTypePattern,
+    UnionDispatchBranch,
+    Variance,
+)
 
 MAGIC = b"VLNCBC\x0d"
 
@@ -155,9 +161,7 @@ class _Writer:
             self.function(value)
         elif isinstance(value, FunctionSetCode):
             self.u8(_FUNCTION_SET)
-            self.u32(len(value.overloads))
-            for overload in value.overloads:
-                self.function(overload)
+            self.function_set(value)
         elif isinstance(value, ResolvedElementReference):
             self.u8(_RESOLVED_ELEMENT_REFERENCE)
             self.resolved_element_reference(value)
@@ -206,6 +210,46 @@ class _Writer:
             self.extension_rule_reference(rule)
         self.value(reference.selector)
 
+    def function_set(self, function_set: FunctionSetCode) -> None:
+        self.u32(len(function_set.overloads))
+        for overload in function_set.overloads:
+            self.function(overload)
+        self.u32(len(function_set.dispatch_plan))
+        for branch in function_set.dispatch_plan:
+            self.union_dispatch_branch(branch)
+
+    def union_dispatch_branch(self, branch: UnionDispatchBranch) -> None:
+        self.u32(len(branch.params))
+        for pattern in branch.params:
+            self.runtime_type_pattern(pattern)
+        self.i64(branch.overload_index)
+
+    def runtime_type_pattern(self, pattern: RuntimeTypePattern) -> None:
+        self.string(pattern.kind)
+        self.optional_string(pattern.name)
+        self.u32(len(pattern.children))
+        for child in pattern.children:
+            self.runtime_type_pattern(child)
+        self.u32(len(pattern.accepted_names))
+        for name in pattern.accepted_names:
+            self.string(name)
+        self.u32(len(pattern.variances))
+        for variance in pattern.variances:
+            self.u8(
+                {
+                    Variance.INVARIANT: 0,
+                    Variance.COVARIANT: 1,
+                    Variance.CONTRAVARIANT: 2,
+                }[variance]
+            )
+        self.u32(len(pattern.tags))
+        for tag in pattern.tags:
+            self.string(tag.name)
+            self.i64(tag.depth)
+            self.bool(tag.absent)
+        self.optional_int(pattern.rank)
+        self.optional_string(pattern.collection_kind)
+
     def function(self, function: FunctionCode) -> None:
         self.optional_string(function.name)
         self.u8(1 if function.cycle_params else 0)
@@ -220,6 +264,13 @@ class _Writer:
         self.u32(len(function.dispatch_types))
         for typ in function.dispatch_types:
             self.optional_string(typ)
+        self.u32(len(function.return_tags))
+        for tags in function.return_tags:
+            self.u32(len(tags))
+            for tag in tags:
+                self.string(tag.name)
+                self.i64(tag.depth)
+                self.bool(tag.absent)
         self.u32(len(function.instructions))
         for instruction in function.instructions:
             try:
@@ -289,7 +340,7 @@ class _Reader:
         if tag == _FUNCTION:
             return self.function()
         if tag == _FUNCTION_SET:
-            return FunctionSetCode(tuple(self.function() for _ in range(self.u32())))
+            return self.function_set()
         if tag == _RESOLVED_ELEMENT_REFERENCE:
             return self.resolved_element_reference()
         if tag == _EXTENSION_RULE_REFERENCE:
@@ -373,6 +424,57 @@ class _Reader:
             raise BytecodeFormatError("invalid vector extension configuration")
         return VectorExtensionReference(default, rules, selector)
 
+    def function_set(self) -> FunctionSetCode:
+        overloads = tuple(self.function() for _ in range(self.u32()))
+        dispatch_plan = tuple(
+            self.union_dispatch_branch() for _ in range(self.u32())
+        )
+        return FunctionSetCode(overloads, dispatch_plan)
+
+    def union_dispatch_branch(self) -> UnionDispatchBranch:
+        params = tuple(self.runtime_type_pattern() for _ in range(self.u32()))
+        overload_index = self.i64()
+        if not 0 <= overload_index:
+            raise BytecodeFormatError("invalid union dispatch overload index")
+        return UnionDispatchBranch(params, overload_index)
+
+    def runtime_type_pattern(self) -> RuntimeTypePattern:
+        kind = self.string()
+        name = self.optional_string()
+        children = tuple(self.runtime_type_pattern() for _ in range(self.u32()))
+        accepted_names = tuple(self.string() for _ in range(self.u32()))
+        variances = []
+        for _ in range(self.u32()):
+            marker = self.u8()
+            try:
+                variances.append(
+                    {
+                        0: Variance.INVARIANT,
+                        1: Variance.COVARIANT,
+                        2: Variance.CONTRAVARIANT,
+                    }[marker]
+                )
+            except KeyError as exc:
+                raise BytecodeFormatError(
+                    f"invalid runtime type variance marker {marker}"
+                ) from exc
+        tags = tuple(
+            DataTag(self.string(), self.i64(), self.bool())
+            for _ in range(self.u32())
+        )
+        rank = self.optional_int()
+        collection_kind = self.optional_string()
+        return RuntimeTypePattern(
+            kind,
+            name,
+            children,
+            accepted_names,
+            tuple(variances),
+            tags,
+            rank,
+            collection_kind,
+        )
+
     def function(self) -> FunctionCode:
         name = self.optional_string()
         cycle_params = self.u8()
@@ -387,6 +489,13 @@ class _Reader:
         if multi not in {0, 1}:
             raise BytecodeFormatError(f"invalid function multi flag {multi}")
         dispatch_types = tuple(self.optional_string() for _ in range(self.u32()))
+        return_tags = tuple(
+            tuple(
+                DataTag(self.string(), self.i64(), self.bool())
+                for _ in range(self.u32())
+            )
+            for _ in range(self.u32())
+        )
         instructions = []
         for _ in range(self.u32()):
             op_byte = self.u8()
@@ -404,4 +513,5 @@ class _Reader:
             bool(recursive),
             bool(multi),
             dispatch_types,
+            return_tags,
         )

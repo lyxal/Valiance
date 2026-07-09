@@ -23,6 +23,7 @@ from valiance.types.builders import (
     normalize,
     optional,
     same,
+    show,
 )
 from valiance.types.context import Context, Variance
 from valiance.types.nodes import (
@@ -52,10 +53,13 @@ from valiance.types.nodes import (
     OverloadSetType,
     ResolvedOverload,
     RowType,
+    RuntimeTypePattern,
     Specificity,
     TaggedType,
     TupleType,
     Type,
+    UnionDispatchBranch,
+    UnionDispatchPlan,
     UnionType,
     VariadicTupleType,
     VarType,
@@ -1142,21 +1146,18 @@ def _callable_compatible(argument: Type, parameter: Type, ctx: Context) -> bool:
     return False
 
 
-def _union_dispatched_callable_returns(
+def union_dispatched_callable_plan(
     argument: OverloadSetType,
     expected: FunctionType,
-    ctx: Context,
-) -> tuple[Type, ...] | None:
-    """Return merged results when overloads safely cover every union input branch.
+    ctx: Context | None = None,
+) -> UnionDispatchPlan | None:
+    """Build deterministic runtime dispatch for a union-accepting callable.
 
-    The runtime currently distinguishes ordinary function overloads by exact
-    nominal argument type.  Keep this adaptation equally conservative: every
-    cartesian combination of top-level union members must resolve to one best
-    overload, and that overload's parameter types must have the same runtime
-    identity as the concrete branch types.  This prevents erased trait, broad
-    supertype, or structural matches from being accepted without a sound
-    runtime dispatch mechanism.
+    Every cartesian input branch is resolved statically. Runtime dispatch only
+    identifies the branch and invokes that already-selected overload; it never
+    repeats overload resolution from the concrete runtime value.
     """
+    ctx = ctx or Context()
     if expected.params is None or expected.returns is None:
         return None
     if not any(isinstance(normalize(param), UnionType) for param in expected.params):
@@ -1165,6 +1166,7 @@ def _union_dispatched_callable_returns(
         return None
 
     alternatives = tuple(_union_input_alternatives(param) for param in expected.params)
+    branches: list[UnionDispatchBranch] = []
     branch_results: list[tuple[Type, ...]] = []
     for branch_args in product(*alternatives):
         applied = _resolve_applied_overload(argument.overloads, branch_args, ctx)
@@ -1177,101 +1179,192 @@ def _union_dispatched_callable_returns(
             return None
         if len(applied.actual_returns) != len(expected.returns):
             return None
-        if not all(
-            _same_runtime_dispatch_identity(actual, selected, ctx)
-            for actual, selected in zip(
-                branch_args,
-                applied.params,
-                strict=False,
+        patterns = tuple(_runtime_dispatch_pattern(arg, ctx) for arg in branch_args)
+        if any(pattern is None for pattern in patterns):
+            return None
+        branches.append(
+            UnionDispatchBranch(
+                tuple(pattern for pattern in patterns if pattern is not None),
+                argument.overloads.index(applied.overload),
             )
-        ):
-            return None
-        if not _has_unique_runtime_dispatch_overload(
-            argument.overloads,
-            branch_args,
-            applied.overload,
-        ):
-            return None
+        )
         branch_results.append(applied.actual_returns)
 
-    if not branch_results:
+    if not branch_results or _dispatch_plan_has_ambiguous_overlap(tuple(branches), ctx):
         return None
-    return tuple(
-        U(*(returns[index] for returns in branch_results))
+    returns = tuple(
+        U(*(result[index] for result in branch_results))
         for index in range(len(expected.returns))
     )
+    return UnionDispatchPlan(tuple(branches), returns)
+
+
+def _union_dispatched_callable_returns(
+    argument: OverloadSetType,
+    expected: FunctionType,
+    ctx: Context,
+) -> tuple[Type, ...] | None:
+    plan = union_dispatched_callable_plan(argument, expected, ctx)
+    return None if plan is None else plan.returns
 
 
 def _union_input_alternatives(typ: Type) -> tuple[Type, ...]:
     typ = normalize(typ)
     if isinstance(typ, UnionType):
-        return tuple(typ.items)
+        return tuple(sorted(typ.items, key=show))
     return (typ,)
 
 
-def _has_unique_runtime_dispatch_overload(
-    overloads: tuple[Overload, ...],
-    branch_args: tuple[Type, ...],
-    selected: Overload,
-) -> bool:
-    branch_identities = tuple(_runtime_dispatch_identity(arg) for arg in branch_args)
-    if any(identity is None for identity in branch_identities):
-        return False
-    matches = tuple(
-        overload
-        for overload in overloads
-        if tuple(_runtime_dispatch_identity(param) for param in overload.params)
-        == branch_identities
-    )
-    return len(matches) == 1 and matches[0] is selected
+def _runtime_dispatch_pattern(
+    typ: Type,
+    ctx: Context,
+) -> RuntimeTypePattern | None:
+    typ = normalize(typ)
+    if isinstance(typ, (ExactType, AtomicType)):
+        return _runtime_dispatch_pattern(typ.inner, ctx)
+    if isinstance(typ, TaggedType):
+        inner = _runtime_dispatch_pattern(typ.inner, ctx)
+        if inner is None:
+            return None
+        return RuntimeTypePattern(
+            "tagged",
+            children=(inner,),
+            tags=tuple(sorted(typ.tags)),
+        )
+    if isinstance(typ, NominalType):
+        children = tuple(_runtime_dispatch_pattern(arg, ctx) for arg in typ.args)
+        if any(child is None for child in children):
+            return None
+        accepted = _runtime_nominal_subtypes(typ, ctx)
+        return RuntimeTypePattern(
+            "nominal",
+            name=str(typ.name),
+            children=tuple(child for child in children if child is not None),
+            accepted_names=tuple(sorted(accepted)),
+            variances=ctx.variance_for(typ.name, len(typ.args)),
+        )
+    if isinstance(typ, UnionType):
+        children = tuple(
+            _runtime_dispatch_pattern(item, ctx)
+            for item in sorted(typ.items, key=show)
+        )
+        if any(child is None for child in children):
+            return None
+        return RuntimeTypePattern(
+            "union",
+            children=tuple(child for child in children if child is not None),
+        )
+    if isinstance(typ, TupleType):
+        children = tuple(_runtime_dispatch_pattern(item, ctx) for item in typ.params)
+        if any(child is None for child in children):
+            return None
+        return RuntimeTypePattern(
+            "tuple",
+            children=tuple(child for child in children if child is not None),
+        )
+    if isinstance(typ, CollectionType):
+        # Collection element types are not reified on runtime values. Inspecting
+        # elements here would also consume lazy or infinite collections, so a
+        # collection cannot currently be used as a union-dispatch guard.
+        return None
+    if isinstance(typ, NoneTypeNode):
+        return RuntimeTypePattern("none")
+    return None
 
 
-def _same_runtime_dispatch_identity(
-    argument: Type,
-    parameter: Type,
+def _runtime_nominal_subtypes(typ: NominalType, ctx: Context) -> set[str]:
+    names = {str(typ.name)}
+    candidates = set(ctx.trait_impls) | set(ctx.variant_members)
+    candidates.update({INTEGER, REAL, NUMBER})
+    for candidate in candidates:
+        if subtype(N(candidate), typ, ctx):
+            names.add(str(candidate))
+    return names
+
+
+def _dispatch_plan_has_ambiguous_overlap(
+    branches: tuple[UnionDispatchBranch, ...],
     ctx: Context,
 ) -> bool:
-    argument_identity = _runtime_dispatch_identity(argument)
-    parameter_identity = _runtime_dispatch_identity(parameter)
-    return (
-        argument_identity is not None
-        and parameter_identity is not None
-        and argument_identity == parameter_identity
-        and _runtime_dispatch_identity_is_exact(argument_identity, ctx)
-    )
+    for index, left in enumerate(branches):
+        for right in branches[index + 1 :]:
+            if left.overload_index == right.overload_index:
+                continue
+            if all(
+                _runtime_patterns_overlap(a, b, ctx)
+                for a, b in zip(left.params, right.params, strict=True)
+            ):
+                return True
+    return False
 
 
-def _runtime_dispatch_identity_is_exact(typ: NominalType, ctx: Context) -> bool:
-    if typ.name in {BOOLEAN, NUMBER, REAL}:
+def _runtime_patterns_overlap(
+    left: RuntimeTypePattern,
+    right: RuntimeTypePattern,
+    ctx: Context,
+) -> bool:
+    left_inner, left_tags = _runtime_pattern_tags(left)
+    right_inner, right_tags = _runtime_pattern_tags(right)
+    if not _runtime_tag_requirements_overlap(left_tags, right_tags, ctx):
         return False
-    if typ.name in ctx.variant_members.values():
+    left = left_inner
+    right = right_inner
+    if left.kind == "union":
+        return any(
+            _runtime_patterns_overlap(item, right, ctx) for item in left.children
+        )
+    if right.kind == "union":
+        return any(
+            _runtime_patterns_overlap(left, item, ctx) for item in right.children
+        )
+    if left.kind != right.kind:
         return False
-    trait_names = {
-        trait
-        for traits in ctx.trait_impls.values()
-        for trait in traits
-    }
-    trait_names.update(ctx.trait_parents)
-    trait_names.update(
-        parent
-        for parents in ctx.trait_parents.values()
-        for parent in parents
-    )
-    if typ.name in trait_names:
-        return False
-    return all(
-        variance is Variance.INVARIANT
-        for variance in ctx.variance_for(typ.name, len(typ.args))
-    )
+    if left.kind == "nominal":
+        if not set(left.accepted_names).intersection(right.accepted_names):
+            return False
+        if left.name == right.name and left.children and right.children:
+            return all(
+                _runtime_patterns_overlap(a, b, ctx)
+                for a, b in zip(left.children, right.children, strict=True)
+            )
+        return True
+    if left.kind == "tuple":
+        return len(left.children) == len(right.children) and all(
+            _runtime_patterns_overlap(a, b, ctx)
+            for a, b in zip(left.children, right.children, strict=True)
+        )
+    if left.kind == "collection":
+        return True
+    return left.kind == "none"
 
 
-def _runtime_dispatch_identity(typ: Type) -> NominalType | None:
-    typ = normalize(typ)
-    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
-        return _runtime_dispatch_identity(typ.inner)
-    if isinstance(typ, NominalType):
-        return typ
-    return None
+def _runtime_pattern_tags(
+    pattern: RuntimeTypePattern,
+) -> tuple[RuntimeTypePattern, tuple[DataTag, ...]]:
+    if pattern.kind != "tagged":
+        return pattern, ()
+    return pattern.children[0], pattern.tags
+
+
+def _runtime_tag_requirements_overlap(
+    left: tuple[DataTag, ...],
+    right: tuple[DataTag, ...],
+    ctx: Context,
+) -> bool:
+    left_present = {tag for tag in left if not tag.absent}
+    right_present = {tag for tag in right if not tag.absent}
+    left_absent = {(tag.name, tag.depth) for tag in left if tag.absent}
+    right_absent = {(tag.name, tag.depth) for tag in right if tag.absent}
+    if any((tag.name, tag.depth) in right_absent for tag in left_present):
+        return False
+    if any((tag.name, tag.depth) in left_absent for tag in right_present):
+        return False
+    return not any(
+        other.name in {str(name) for name in ctx.tag_disjoints(tag.name)}
+        for tag in left_present
+        for other in right_present
+        if tag.depth == other.depth
+    )
 
 
 def _overload_callable_compatible(

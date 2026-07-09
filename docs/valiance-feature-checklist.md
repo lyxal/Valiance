@@ -658,6 +658,17 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Fall back to normal overload resolution when no runtime specialisation applies.
 - [x] Support multiple runtime-dispatched parameters.
 
+## 36.1. Union-covered overloaded function values
+
+- [x] Resolve every cartesian union-input branch statically.
+- [x] Merge the selected overload return positions into union results.
+- [x] Serialize branch-to-overload dispatch plans with function sets.
+- [x] Match broad numeric supertypes, named traits, and variants at runtime.
+- [x] Respect declared variance for reified nominal generic arguments.
+- [x] Retain data-tag evidence for runtime branch matching.
+- [x] Reject missing, ambiguous, or differently selected overlapping branches.
+- [x] Invoke the statically selected overload without speculative execution.
+
 ## 37. Error handling
 
 - [x] Provide the generic `Result[T, E]` type.

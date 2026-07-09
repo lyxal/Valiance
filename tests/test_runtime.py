@@ -468,6 +468,102 @@ println($lst map: foo)
             "[2, 4, AA, BB]\n[2, 4, AA, BB]\n[2, 4, AA, BB]\n",
         )
 
+    def test_union_dispatch_accepts_broad_numeric_overload(self):
+        output = io.StringIO()
+        source = """
+$lst = [1, "A"]
+define classify(n: Number) -> String => "number"
+define classify(s: String) -> String => "string"
+$lst map: classify | println
+"""
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = loads(dumps(compile_program(typed)))
+        with contextlib.redirect_stdout(output):
+            stack = run(program)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "[number, string]\n")
+
+    def test_union_dispatch_uses_statically_selected_broad_branch(self):
+        output = io.StringIO()
+        source = """
+define widen(n: Number) -> Number => $n
+define choose(n: Number) -> String => "number"
+define choose(n: Integer) -> String => "integer"
+define choose(s: String) -> String => "string"
+[1 | widen, "A"] map: choose | println
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "[number, string]\n")
+
+    def test_union_dispatch_accepts_trait_and_variant_branches(self):
+        output = io.StringIO()
+        source = """
+trait Shape => end
+object Circle => end
+object Circle as Shape => end
+variant Maybe =>
+  Some => $value: Number end
+  None => end
+end
+define describe(x: Shape) -> String => "shape"
+define describe(x: Maybe) -> String => "maybe"
+define describe(x: String) -> String => $x
+[Circle, Some(1), "text"] map: describe | println
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "[shape, maybe, text]\n")
+
+    def test_union_dispatch_preserves_generic_arguments_in_literals(self):
+        output = io.StringIO()
+        source = """
+trait Vehicle => end
+object Car => end
+object Car as Vehicle => end
+object[T] Box => $value: T end
+define describe(x: Box[Vehicle]) -> String => "vehicle box"
+define describe(x: String) -> String => "string"
+[Car | Box, "x"] map: describe | println
+"""
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = loads(dumps(compile_program(typed)))
+        with contextlib.redirect_stdout(output):
+            stack = run(program)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "[vehicle box, string]\n")
+
+    def test_union_dispatch_uses_reified_disjoint_data_tags(self):
+        output = io.StringIO()
+        source = """
+tag #left as computed
+tag #right as computed
+tag #left disjoint #right
+define label(x: #left Integer) -> String => "left"
+define label(x: #right Integer) -> String => "right"
+[1 #left, 2 #right] map: label | println
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "[left, right]\n")
+
     def test_eager_map_with_println_executes_immediately(self):
         output = io.StringIO()
 

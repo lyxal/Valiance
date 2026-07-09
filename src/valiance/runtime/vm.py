@@ -31,11 +31,23 @@ from valiance.runtime_values import (
     ObjectRuntimeType,
     ObjectValue,
     PanicSignal,
+    TaggedValue,
     format_runtime_value,
     is_eager_sequence,
     is_list_like,
+    runtime_value_tags,
+    unwrap_runtime_value,
+    update_runtime_tags,
 )
 from valiance.stdlib_native import runtime_stdlib_elements
+from valiance.types import (
+    DataTag,
+    RuntimeTypePattern,
+    TaggedType,
+    UnionDispatchBranch,
+    Variance,
+    normalize,
+)
 
 
 class RuntimeError(_py_builtins.RuntimeError):
@@ -129,6 +141,7 @@ class OverloadedFunctionValue:
     """A closure with one compiled body per statically analysed overload."""
 
     overloads: tuple[FunctionValue, ...]
+    dispatch_plan: tuple[UnionDispatchBranch, ...] = ()
     refcount: int = 1
 
     def __repr__(self) -> str:
@@ -273,7 +286,7 @@ class VirtualMachine:
         )
         cycle_values = tuple(args) if function.code.cycle_params else ()
         initial_stack = list(args) if function.code.params and not cycle_values else []
-        return self.execute(
+        result = self.execute(
             function.code,
             locals_,
             function.globals,
@@ -281,6 +294,7 @@ class VirtualMachine:
             initial_stack,
             retained_locals,
         )
+        return list(_apply_runtime_return_tags(result, function.code.return_tags))
 
     def call_value(self, value: Any, args: list[Any]) -> list[Any]:
         if isinstance(value, FunctionValue):
@@ -295,6 +309,9 @@ class VirtualMachine:
         if isinstance(value, OverloadedFunctionValue):
             if len(value.overloads) == 1:
                 return self.call(value.overloads[0], args)
+            if value.dispatch_plan:
+                selected = _select_union_dispatch_overload(value, tuple(args))
+                return self.call(selected, args)
             matches = tuple(
                 overload
                 for overload in value.overloads
@@ -787,22 +804,28 @@ class VirtualMachine:
         )
 
     def _validate_tag(self, frame: _Frame, spec: object) -> None:
-        tag_name, overload_index = spec
+        tag_name, overload_index, added, removed = spec
         if not frame.stack:
             raise RuntimeError(f"cannot validate {tag_name} on an empty stack")
-        validator = _load_name(tag_name, frame.locals, frame.globals)
-        value = _retain_value(frame.stack[-1])
-        try:
-            result = self.call_value_overload(validator, [value], overload_index)
-        finally:
-            _release_value(value, self)
-        if not result or not _truthy(result[-1]):
-            raise PanicSignal(
-                ObjectValue(
-                    "PanicError",
-                    {"message": f"tag validator {tag_name} failed"},
+        if overload_index is not None:
+            validator = _load_name(tag_name, frame.locals, frame.globals)
+            value = _retain_value(frame.stack[-1])
+            try:
+                result = self.call_value_overload(validator, [value], overload_index)
+            finally:
+                _release_value(value, self)
+            if not result or not _truthy(result[-1]):
+                raise PanicSignal(
+                    ObjectValue(
+                        "PanicError",
+                        {"message": f"tag validator {tag_name} failed"},
+                    )
                 )
-            )
+        frame.stack[-1] = update_runtime_tags(
+            frame.stack[-1],
+            add=tuple(DataTag(name, depth) for name, depth in added),
+            remove=tuple(DataTag(name, depth) for name, depth in removed),
+        )
 
     def _unfold(self, frame: _Frame, config: object) -> LazyList:
         condition_code, body_code, arity = config
@@ -1140,7 +1163,8 @@ def _make_function_value(
             tuple(
                 FunctionValue(overload, captured, owned_names)
                 for overload in code.overloads
-            )
+            ),
+            code.dispatch_plan,
         )
         for overload in value.overloads:
             if overload.code.recursive:
@@ -1407,6 +1431,9 @@ def _release_stack_tail(stack: list[Any], count: int, vm: VirtualMachine) -> Non
 
 
 def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
+    if isinstance(value, TaggedValue):
+        _retain_value(value.value, check_duplication=check_duplication)
+        return value
     if isinstance(value, LazyList):
         value.refcount += 1
         return value
@@ -1446,6 +1473,9 @@ def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
 
 
 def _release_value(value: Any, vm: VirtualMachine) -> None:
+    if isinstance(value, TaggedValue):
+        _release_value(value.value, vm)
+        return
     if isinstance(value, LazyList):
         value.refcount -= 1
         if value.refcount > 0:
@@ -1662,6 +1692,187 @@ def _select_exact_runtime_overload(
     return None
 
 
+def _select_union_dispatch_overload(
+    value: OverloadedFunctionValue,
+    args: tuple[Any, ...],
+) -> FunctionValue:
+    matches = tuple(
+        branch
+        for branch in value.dispatch_plan
+        if len(branch.params) == len(args)
+        and all(
+            _runtime_pattern_matches(arg, pattern)
+            for arg, pattern in zip(args, branch.params, strict=True)
+        )
+    )
+    indexes = {branch.overload_index for branch in matches}
+    if len(indexes) != 1:
+        detail = "no branch" if not indexes else "ambiguous branches"
+        raise RuntimeError(
+            f"cannot dispatch overloaded function: {detail} for runtime types "
+            f"{tuple(_runtime_type_name(arg) for arg in args)}"
+        )
+    index = indexes.pop()
+    try:
+        return value.overloads[index]
+    except IndexError as exc:
+        raise RuntimeError(f"function has no overload {index}") from exc
+
+
+def _runtime_pattern_matches(value: Any, pattern: RuntimeTypePattern) -> bool:
+    if pattern.kind == "tagged":
+        actual_tags = runtime_value_tags(value)
+        for required in pattern.tags:
+            present = DataTag(required.name, required.depth) in actual_tags
+            if required.absent == present:
+                return False
+        return _runtime_pattern_matches(
+            unwrap_runtime_value(value),
+            pattern.children[0],
+        )
+    if pattern.kind == "union":
+        return any(_runtime_pattern_matches(value, item) for item in pattern.children)
+    if pattern.kind == "none":
+        return isinstance(value, ObjectValue) and value.type_name == "None"
+    if pattern.kind == "tuple":
+        return isinstance(value, tuple) and len(value) == len(pattern.children) and all(
+            _runtime_pattern_matches(item, child)
+            for item, child in zip(value, pattern.children, strict=True)
+        )
+    if pattern.kind == "collection":
+        return _runtime_collection_pattern_matches(value, pattern)
+    if pattern.kind != "nominal":
+        return False
+    actual = _runtime_value_pattern(value)
+    return actual is not None and _runtime_pattern_subtype(actual, pattern)
+
+
+def _runtime_collection_pattern_matches(
+    value: Any,
+    pattern: RuntimeTypePattern,
+) -> bool:
+    if not is_list_like(value) or pattern.rank is None or not pattern.children:
+        return False
+
+    def matches_rank(item: Any, rank: int) -> bool:
+        if rank == 0:
+            return _runtime_pattern_matches(item, pattern.children[0])
+        if not is_list_like(item):
+            return False
+        return all(matches_rank(child, rank - 1) for child in item)
+
+    return matches_rank(value, pattern.rank)
+
+
+def _runtime_value_pattern(value: Any) -> RuntimeTypePattern | None:
+    value = unwrap_runtime_value(value)
+    if isinstance(value, ObjectValue):
+        return RuntimeTypePattern(
+            "nominal",
+            name=value.type_name,
+            children=tuple(_parse_runtime_type_pattern(arg) for arg in value.type_args),
+            accepted_names=(value.type_name,),
+        )
+    if isinstance(value, Decimal):
+        name = "Integer" if value == value.to_integral_value() else "Real"
+        return RuntimeTypePattern("nominal", name=name, accepted_names=(name,))
+    if isinstance(value, str):
+        return RuntimeTypePattern("nominal", name="String", accepted_names=("String",))
+    return None
+
+
+def _runtime_pattern_subtype(
+    actual: RuntimeTypePattern,
+    target: RuntimeTypePattern,
+) -> bool:
+    if target.kind == "union":
+        return any(_runtime_pattern_subtype(actual, item) for item in target.children)
+    if actual.kind != target.kind:
+        return False
+    if target.kind != "nominal":
+        return actual == target
+    if actual.name not in target.accepted_names:
+        return False
+    if actual.name != target.name or not target.children:
+        return True
+    if len(actual.children) != len(target.children):
+        return False
+    variances = target.variances or (Variance.INVARIANT,) * len(target.children)
+    for actual_arg, target_arg, variance in zip(
+        actual.children,
+        target.children,
+        variances,
+        strict=True,
+    ):
+        if variance is Variance.COVARIANT:
+            if not _runtime_pattern_subtype(actual_arg, target_arg):
+                return False
+        elif variance is Variance.CONTRAVARIANT:
+            if not _runtime_pattern_subtype(target_arg, actual_arg):
+                return False
+        elif not _runtime_patterns_same_type(actual_arg, target_arg):
+            return False
+    return True
+
+
+def _runtime_patterns_same_type(
+    left: RuntimeTypePattern,
+    right: RuntimeTypePattern,
+) -> bool:
+    return (
+        left.kind == right.kind
+        and left.name == right.name
+        and len(left.children) == len(right.children)
+        and all(
+            _runtime_patterns_same_type(a, b)
+            for a, b in zip(left.children, right.children, strict=True)
+        )
+        and left.tags == right.tags
+        and left.rank == right.rank
+        and left.collection_kind == right.collection_kind
+    )
+
+
+def _parse_runtime_type_pattern(text: str) -> RuntimeTypePattern:
+    text = text.strip()
+    union_parts = _split_runtime_type_args(text, "|")
+    if len(union_parts) > 1:
+        return RuntimeTypePattern(
+            "union",
+            children=tuple(_parse_runtime_type_pattern(part) for part in union_parts),
+        )
+    bracket = text.find("[")
+    if bracket < 0 or not text.endswith("]"):
+        return RuntimeTypePattern("nominal", text, accepted_names=(text,))
+    name = text[:bracket].strip()
+    inner = text[bracket + 1 : -1]
+    return RuntimeTypePattern(
+        "nominal",
+        name,
+        tuple(
+            _parse_runtime_type_pattern(part)
+            for part in _split_runtime_type_args(inner, ",")
+        ),
+        (name,),
+    )
+
+
+def _split_runtime_type_args(text: str, separator: str) -> tuple[str, ...]:
+    depth = 0
+    start = 0
+    parts: list[str] = []
+    for index, char in enumerate(text):
+        if char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+        elif char == separator and depth == 0:
+            parts.append(text[start:index].strip())
+            start = index + 1
+    parts.append(text[start:].strip())
+    return tuple(part for part in parts if part)
+
+
 def _select_multimethod_overload(
     value: OverloadedFunctionValue,
     fallback: FunctionValue,
@@ -1695,6 +1906,7 @@ def _runtime_types_match(
 
 
 def _runtime_type_name(value: Any) -> str | None:
+    value = unwrap_runtime_value(value)
     if isinstance(value, ObjectValue):
         if not value.type_args:
             return value.type_name
@@ -1741,7 +1953,10 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
         if implementation is None:
             continue
         try:
-            result = implementation(args, callee.context)
+            result = _apply_declared_return_tags(
+                implementation(_unwrapped_args(args), callee.context),
+                overload.signature.returns,
+            )
         except _py_builtins.RuntimeError as exc:
             raise _with_call_detail(
                 exc,
@@ -1876,7 +2091,10 @@ def _call_resolved_builtin(
     implementation = overload.implementation
     assert implementation is not None
     try:
-        result = implementation(args, context)
+        result = _apply_declared_return_tags(
+            implementation(_unwrapped_args(args), context),
+            overload.signature.returns,
+        )
     except _py_builtins.RuntimeError as exc:
         raise _with_call_detail(
             exc,
@@ -2028,16 +2246,24 @@ def _call_vectorized_resolved_builtin(
 ) -> tuple[Any, ...] | None:
     implementation = overload.implementation
     assert implementation is not None
+    def typed_implementation(
+        item_args: tuple[Any, ...],
+        item_context: RuntimeContext,
+    ) -> tuple[Any, ...]:
+        return _apply_declared_return_tags(
+            implementation(_unwrapped_args(item_args), item_context),
+            overload.signature.returns,
+        )
     try:
         if vectorised_depths:
             return _vectorize_resolved_depths(
-                implementation,
+                typed_implementation,
                 args,
                 context,
                 vectorised_depths,
                 extension,
             )
-        return _vectorize_resolved(implementation, args, context, extension)
+        return _vectorize_resolved(typed_implementation, args, context, extension)
     except _CannotVectorize:
         return None
 
@@ -2054,7 +2280,10 @@ def _vectorize(
         implementation = overload.implementation
         if implementation is None:
             raise _CannotVectorize
-        return implementation(args, context)
+        return _apply_declared_return_tags(
+            implementation(_unwrapped_args(args), context),
+            overload.signature.returns,
+        )
     if all(is_eager_sequence(arg) for arg in vector_args):
         return _vectorize_eager(overload, args, context)
     return (LazyList(_vectorize_lazy(overload, args, context)),)
@@ -2068,7 +2297,7 @@ def _vectorize_resolved(
 ) -> tuple[Any, ...]:
     vector_args = tuple(arg for arg in args if is_list_like(arg))
     if not vector_args:
-        return implementation(args, context)
+        return implementation(_unwrapped_args(args), context)
     if all(is_eager_sequence(arg) for arg in vector_args):
         return _vectorize_eager_resolved(implementation, args, context, extension)
     return (
@@ -2453,10 +2682,12 @@ def _constant(value: Any) -> Any:
 
 
 def _truthy(value: Any) -> bool:
+    value = unwrap_runtime_value(value)
     return value != 0 and value is not None
 
 
 def _matches_type_pattern(value: Any, pattern: str) -> bool:
+    value = unwrap_runtime_value(value)
     if pattern == "Integer":
         return isinstance(value, Decimal) and value == value.to_integral_value()
     if pattern == "Real":
@@ -2896,6 +3127,7 @@ def _is_path(value: Any) -> bool:
 
 
 def _int_index(value: Any) -> int:
+    value = unwrap_runtime_value(value)
     if isinstance(value, Decimal) and value == value.to_integral_value():
         return int(value)
     if isinstance(value, int):
@@ -2908,6 +3140,7 @@ def _normal_index(index: int, length: int) -> int:
 
 
 def _get_field(receiver: Any, field: str) -> Any:
+    receiver = unwrap_runtime_value(receiver)
     if is_list_like(receiver):
         if is_eager_sequence(receiver):
             return [_get_field(item, field) for item in receiver]
@@ -2931,6 +3164,7 @@ def _get_field(receiver: Any, field: str) -> Any:
 
 
 def _set_field(receiver: Any, field: str, value: Any) -> Any:
+    receiver = unwrap_runtime_value(receiver)
     if isinstance(receiver, ObjectValue):
         if field not in receiver.fields:
             raise RuntimeError(f"{receiver.type_name} has no field '{field}'")
@@ -3105,6 +3339,7 @@ def _string_value(value: Any) -> str:
 
 
 def _runtime_type_name(value: Any) -> str:
+    value = unwrap_runtime_value(value)
     if isinstance(value, Decimal):
         return "Integer" if value == value.to_integral_value() else "Real"
     if isinstance(value, str):
@@ -3122,3 +3357,38 @@ def _runtime_type_name(value: Any) -> str:
     if isinstance(value, ObjectValue):
         return _object_type_name(value)
     return type(value).__name__
+
+
+def _unwrapped_args(args: tuple[Any, ...]) -> tuple[Any, ...]:
+    return tuple(unwrap_runtime_value(arg) for arg in args)
+
+
+def _apply_declared_return_tags(
+    values: tuple[Any, ...],
+    types: tuple[Any, ...],
+) -> tuple[Any, ...]:
+    tag_sets = tuple(_declared_runtime_tags(typ) for typ in types)
+    return _apply_runtime_return_tags(values, tag_sets)
+
+
+def _declared_runtime_tags(typ: Any) -> tuple[DataTag, ...]:
+    typ = normalize(typ)
+    if isinstance(typ, TaggedType):
+        return tuple(sorted(tag for tag in typ.tags if tag.depth == 0))
+    return ()
+
+
+def _apply_runtime_return_tags(
+    values: tuple[Any, ...] | list[Any],
+    tag_sets: tuple[tuple[DataTag, ...], ...],
+) -> tuple[Any, ...]:
+    if len(values) != len(tag_sets):
+        return tuple(values)
+    return tuple(
+        update_runtime_tags(
+            value,
+            add=tuple(tag for tag in tags if not tag.absent),
+            remove=tuple(tag for tag in tags if tag.absent),
+        )
+        for value, tags in zip(values, tag_sets, strict=True)
+    )

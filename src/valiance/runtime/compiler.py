@@ -60,6 +60,7 @@ from valiance.asts import (
     TypedElementNode,
     TypedElementExtension,
     TypedFunctionNode,
+    TypedLiteralNode,
     TypedNode,
     TypedTagApplicationNode,
     TypedUnfoldNode,
@@ -84,6 +85,7 @@ from valiance.types import (
     ArrayExactType,
     ArrayMinType,
     CollectionType,
+    DataTag,
     ExactType,
     FunctionType,
     IntersectionType,
@@ -135,6 +137,8 @@ class _Compiler:
                 tuple[str, ...],
             ],
         ] = {}
+        self.tag_disjoints: dict[str, set[str]] = {}
+        self.tag_parents: dict[str, str] = {}
 
     def compile_function(
         self,
@@ -147,6 +151,7 @@ class _Compiler:
         recursive: bool = False,
         multi: bool = False,
         dispatch_types: tuple[str | None, ...] = (),
+        return_tags: tuple[tuple[DataTag, ...], ...] = (),
     ) -> FunctionCode:
         for index, node in enumerate(body):
             self.node(node)
@@ -162,6 +167,7 @@ class _Compiler:
             recursive,
             multi,
             dispatch_types,
+            return_tags,
         )
 
     def node(self, node: ASTNode | TypedNode) -> None:
@@ -248,15 +254,37 @@ class _Compiler:
                 if tupled_count is not None:
                     self.emit(OpCode.BUILD_TUPLE, tupled_count)
             case TagApplicationNode():
-                if (
-                    isinstance(typed_node, TypedTagApplicationNode)
-                    and typed_node.validator_index is not None
-                ):
-                    self.emit(
-                        OpCode.VALIDATE_TAG,
-                        (f"#{node.tag.name}", typed_node.validator_index),
+                if isinstance(typed_node, TypedTagApplicationNode):
+                    validator_index = typed_node.validator_index
+                    added_tags = typed_node.added_tags
+                    removed_tags = typed_node.removed_tags
+                elif node.tag.absent:
+                    validator_index = None
+                    added_tags = ()
+                    removed_tags = (DataTag(node.tag.name, node.tag.depth),)
+                else:
+                    validator_index = None
+                    added = [DataTag(node.tag.name, node.tag.depth)]
+                    parent = self.tag_parents.get(node.tag.name)
+                    if parent is not None:
+                        added.append(DataTag(parent, node.tag.depth))
+                    added_tags = tuple(added)
+                    removed_tags = tuple(
+                        DataTag(name, node.tag.depth)
+                        for name in sorted(self.tag_disjoints.get(node.tag.name, ()))
                     )
-            case TagDeclarationNode() | ElementTagDeclarationNode() | TagOverlayNode():
+                self.emit(
+                    OpCode.VALIDATE_TAG,
+                    (
+                        f"#{node.tag.name}",
+                        validator_index,
+                        tuple((tag.name, tag.depth) for tag in added_tags),
+                        tuple((tag.name, tag.depth) for tag in removed_tags),
+                    ),
+                )
+            case TagDeclarationNode():
+                self._register_runtime_tag_declaration(node)
+            case ElementTagDeclarationNode() | TagOverlayNode():
                 pass
             case CastNode(typ, checked):
                 if checked:
@@ -280,19 +308,39 @@ class _Compiler:
             case ImportNode():
                 pass
             case ListLiteralNode(items) | ArrayLiteralNode(items):
-                self.collection(items, OpCode.BUILD_LIST)
+                compiled_items = (
+                    typed_node.items
+                    if isinstance(typed_node, TypedLiteralNode)
+                    else items
+                )
+                self.collection(compiled_items, OpCode.BUILD_LIST)
             case TupleLiteralNode(items):
-                self.collection(items, OpCode.BUILD_TUPLE)
+                compiled_items = (
+                    typed_node.items
+                    if isinstance(typed_node, TypedLiteralNode)
+                    else items
+                )
+                self.collection(compiled_items, OpCode.BUILD_TUPLE)
             case RecordLiteralNode(fields):
+                typed_items = (
+                    typed_node.items
+                    if isinstance(typed_node, TypedLiteralNode)
+                    else ()
+                )
                 keys = []
-                for key, expr in fields:
-                    self.expression(expr)
+                for index, (key, expr) in enumerate(fields):
+                    self.expression(typed_items[index] if typed_items else expr)
                     keys.append(key.text)
                 self.emit(OpCode.BUILD_RECORD, tuple(keys))
             case DictLiteralNode(entries):
-                for key_expr, value_expr in entries:
-                    self.expression(key_expr)
-                    self.expression(value_expr)
+                typed_items = (
+                    typed_node.items
+                    if isinstance(typed_node, TypedLiteralNode)
+                    else ()
+                )
+                expressions = tuple(expr for entry in entries for expr in entry)
+                for index, expr in enumerate(expressions):
+                    self.expression(typed_items[index] if typed_items else expr)
                 self.emit(OpCode.BUILD_DICT, len(entries))
             case ObjectNode():
                 self.object_declaration(node)
@@ -331,18 +379,27 @@ class _Compiler:
             case _:
                 self.unsupported(node, type(node).__name__)
 
-    def expression(self, nodes: tuple[ASTNode, ...]) -> None:
+    def expression(self, nodes: tuple[ASTNode | TypedNode, ...]) -> None:
         for node in nodes:
             self.node(node)
 
     def collection(
         self,
-        items: tuple[tuple[ASTNode, ...], ...],
+        items: tuple[tuple[ASTNode | TypedNode, ...], ...],
         op: OpCode,
     ) -> None:
         for item in items:
             self.expression(item)
         self.emit(op, len(items))
+
+    def _register_runtime_tag_declaration(self, node: TagDeclarationNode) -> None:
+        name = node.tag.name
+        if node.parent is not None:
+            self.tag_parents[name] = node.parent.name
+        if node.disjoint is not None:
+            other = node.disjoint.name
+            self.tag_disjoints.setdefault(name, set()).add(other)
+            self.tag_disjoints.setdefault(other, set()).add(name)
 
     def string_interpolation(
         self,
@@ -719,7 +776,10 @@ def _compile_function_value(
         )
         if len(overloads) == 1:
             return overloads[0]
-        return FunctionSetCode(overloads)
+        dispatch_plan = (
+            () if typed.dispatch_plan is None else typed.dispatch_plan.branches
+        )
+        return FunctionSetCode(overloads, dispatch_plan)
     return _compile_function_node(node, name)
 
 
@@ -778,6 +838,7 @@ def _compile_function_overload(
         recursive=_function_is_recursive(ast),
         multi=_overload_is_multi(overload),
         dispatch_types=_overload_dispatch_types(overload),
+        return_tags=_function_return_tags(typ),
     )
 
 
@@ -834,6 +895,21 @@ def _overload_dispatch_types(
     if not isinstance(source, Overload):
         return ()
     return tuple(_runtime_dispatch_type(param) for param in source.params)
+
+
+def _function_return_tags(
+    typ: FunctionType,
+) -> tuple[tuple[DataTag, ...], ...]:
+    if typ.returns is None:
+        return ()
+    return tuple(_top_level_runtime_tags(ret) for ret in typ.returns)
+
+
+def _top_level_runtime_tags(typ: Type) -> tuple[DataTag, ...]:
+    typ = normalize(typ)
+    if isinstance(typ, TaggedType):
+        return tuple(sorted(tag for tag in typ.tags if tag.depth == 0))
+    return ()
 
 
 def _runtime_dispatch_type(typ: Type) -> str | None:
