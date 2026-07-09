@@ -57,8 +57,8 @@ from valiance.asts import (
     TryHandlerNode,
     TryNode,
     TupleLiteralNode,
-    TypedElementNode,
     TypedElementExtension,
+    TypedElementNode,
     TypedFunctionNode,
     TypedLiteralNode,
     TypedNode,
@@ -81,9 +81,9 @@ from valiance.runtime.bytecode import (
 )
 from valiance.symbols import Symbol
 from valiance.types import (
-    AtomicType,
     ArrayExactType,
     ArrayMinType,
+    AtomicType,
     CollectionType,
     DataTag,
     ExactType,
@@ -587,6 +587,7 @@ class _Compiler:
         self.patch(jump_to_else, else_start)
         for branch_node in node.else_branch:
             self.node(branch_node)
+        self.emit(OpCode.WRAP_ASSERT_ERROR)
         self.patch(jump_to_end, len(self.instructions))
 
     def unfold_node(self, node: UnfoldNode, typed_node: TypedNode | None) -> None:

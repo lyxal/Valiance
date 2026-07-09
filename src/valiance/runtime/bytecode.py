@@ -36,6 +36,7 @@ class OpCode(Enum):
     JUMP_IF_MATCH = "jump_if_match"
     MATCH_ERROR = "match_error"
     ASSERT_TRUE = "assert_true"
+    WRAP_ASSERT_ERROR = "wrap_assert_error"
     UNFOLD = "unfold"
     WHILE = "while"
     TRY_BEGIN = "try_begin"

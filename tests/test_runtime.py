@@ -10,6 +10,7 @@ from tempfile import TemporaryDirectory
 from valiance.analysis import Analyser
 from valiance.parsing import parse
 from valiance.runtime import (
+    AssertionFailure,
     CompileError,
     RuntimeError,
     compile_program,
@@ -38,6 +39,31 @@ def execute(source: str, source_file: Path | None = None):
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_assert_else_returns_assert_error(self):
+        [value] = execute('assert => false else => "wrong value" end')
+        self.assertIsInstance(value, ObjectValue)
+        self.assertEqual(value.type_name, "AssertError")
+        self.assertEqual(value.fields["value"], "wrong value")
+
+    def test_std_testing_assertions(self):
+        self.assertEqual(
+            execute(
+                "import { std.testing }\n"
+                "testing.assertEqual(20 + 22, 42)\n"
+                "testing.assertNotEqual(42, 43)\n"
+                'testing.assertPanics: fn => "boom" panic end'
+            ),
+            [],
+        )
+        with self.assertRaisesRegex(
+            AssertionFailure,
+            "expected: 43\nactual:   42",
+        ):
+            execute(
+                "import { std.testing }\n"
+                "testing.assertEqual(20 + 22, 43)"
+            )
+
     def test_executes_stack_arithmetic(self):
         self.assertEqual(execute("*(+(1, 2), 3)"), [Decimal("9")])
         self.assertEqual(execute("(1 + 2) * (3 + 4)"), [Decimal("21")])

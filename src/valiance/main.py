@@ -23,6 +23,7 @@ from valiance.packages import (
     upgrade_dependency,
 )
 from valiance.parsing import LexError, ParseError, Parser, lex
+from valiance.repl import ReplCompletion, create_repl_frontend
 from valiance.runtime import (
     BytecodeFormatError,
     CompileError,
@@ -33,8 +34,8 @@ from valiance.runtime import (
     loads,
     run,
 )
-from valiance.repl import ReplCompletion, create_repl_frontend
 from valiance.runtime_values import DIAGNOSTIC_LIST_PREVIEW_LIMIT, format_runtime_value
+from valiance.testing import TestCommandError, run_test_command
 
 DEFAULT_BYTECODE_FILENAME = "out.vbc"
 DEFAULT_BYTECODE_SUFFIX = ".vbc"
@@ -48,7 +49,8 @@ _ANSI_GREEN = "\033[32m"
 _SOURCE_ACTIONS = {"compile", "run", "parse", "analyse", "analyze", "annotate"}
 _BYTECODE_ACTIONS = {"exec"}
 _PACKAGE_ACTIONS = {"init", "install", "add", "remove", "upgrade"}
-_ACTIONS = _SOURCE_ACTIONS | _BYTECODE_ACTIONS | _PACKAGE_ACTIONS
+_TEST_ACTIONS = {"test"}
+_ACTIONS = _SOURCE_ACTIONS | _BYTECODE_ACTIONS | _PACKAGE_ACTIONS | _TEST_ACTIONS
 
 HELP = """usage: valiance
        valiance <file> [-o <file>]
@@ -60,6 +62,7 @@ HELP = """usage: valiance
        valiance run -c <code>
        valiance exec [<entry>]
        valiance exec --file <file>
+       valiance test [<selector-or-path> ...] [options]
        valiance parse <file>
        valiance analyse <file>
        valiance annotate <file>
@@ -74,6 +77,7 @@ actions:
   compile             compile the current project's main or named entry
   run                 run the current project's main or named entry
   exec                execute existing project bytecode without compiling
+  test                discover and run tests under the project's tests directory
   parse               print the parsed AST
   analyse             print the typed AST
   annotate            print source with inferred type annotations
@@ -90,6 +94,11 @@ options:
   --implicit-output   print the final stack if execution prints nothing
                       (default for run --code)
   --preview-lists     preview lazy lists instead of forcing full output
+  --filter <text>      run tests whose names or descriptions contain text
+  --list               list selected tests without running them
+  --flat               print copyable dotted names with --list
+  --fail-fast          stop after the first failed or errored test
+  --show-output        show captured output for passing tests too
 
 repl commands:
   :help               show REPL help
@@ -129,6 +138,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if parsed.action in _PACKAGE_ACTIONS:
         return _run_package_command(parsed)
+    if parsed.action == "test":
+        try:
+            manifest = require_manifest()
+            return run_test_command(
+                manifest.root,
+                parsed.test_arguments,
+                filter_text=parsed.test_filter,
+                list_only=parsed.test_list,
+                flat=parsed.test_flat,
+                fail_fast=parsed.test_fail_fast,
+                show_output=parsed.test_show_output,
+            )
+        except (PackageError, TestCommandError) as exc:
+            print(f"Test error: {exc}", file=sys.stderr)
+            return 1
 
     source = parsed.code
     source_file: Path | None = None
@@ -169,6 +193,9 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
         explicit_action = args[0]
         action = "analyse" if args[0] == "analyze" else args[0]
         args = args[1:]
+
+    if explicit_action == "test":
+        return _parse_test_args(args)
 
     parser = argparse.ArgumentParser(
         prog="valiance",
@@ -298,6 +325,28 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
 
     if parsed.action == "run" and parsed.code is not None:
         parsed.implicit_output = True
+    return parsed
+
+
+def _parse_test_args(args: list[str]) -> argparse.Namespace | None:
+    parser = argparse.ArgumentParser(prog="valiance test", add_help=False)
+    parser.add_argument("--filter", dest="test_filter")
+    parser.add_argument("--list", dest="test_list", action="store_true")
+    parser.add_argument("--flat", dest="test_flat", action="store_true")
+    parser.add_argument("--fail-fast", dest="test_fail_fast", action="store_true")
+    parser.add_argument("--show-output", dest="test_show_output", action="store_true")
+    parser.add_argument("-h", "--help", action="store_true")
+    parser.add_argument("test_arguments", nargs="*")
+    try:
+        parsed = parser.parse_args(args)
+    except SystemExit:
+        return None
+    if parsed.help:
+        return None
+    if parsed.test_flat and not parsed.test_list:
+        print("error: --flat is only valid with --list", file=sys.stderr)
+        return None
+    parsed.action = "test"
     return parsed
 
 

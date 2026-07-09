@@ -31,6 +31,7 @@ class BytecodeSerializationTests(unittest.TestCase):
                     Instruction(OpCode.STACK_SHUFFLE, ("copy", ("x",), ("x",))),
                     Instruction(OpCode.SOURCE_ARGS, 1),
                     Instruction(OpCode.VALIDATE_TAG, ("#checked", 0)),
+                    Instruction(OpCode.WRAP_ASSERT_ERROR),
                     Instruction(OpCode.RETURN),
                 ),
                 name="<main>",
@@ -40,7 +41,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x0e"))
+        self.assertTrue(data.startswith(b"VLNCBC\x0f"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)

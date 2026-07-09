@@ -17,7 +17,6 @@ from valiance.analysis.builtins import (
     runtime_elements,
 )
 from valiance.runtime.bytecode import (
-    ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
     OpCode,
@@ -94,6 +93,10 @@ class RuntimeError(_py_builtins.RuntimeError):
             for context in self.execution_contexts:
                 lines.append(f"  - {_format_execution_context(context)}")
         return "\n".join(lines)
+
+
+class AssertionFailure(RuntimeError):
+    """Raised when a bare Valiance assertion fails."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -590,7 +593,18 @@ class VirtualMachine:
                             raise RuntimeError("non-exhaustive match at runtime")
                         case OpCode.ASSERT_TRUE:
                             if not _truthy(_pop(frame.stack, "assert")):
-                                raise RuntimeError("assertion failed")
+                                raise AssertionFailure("assertion failed")
+                        case OpCode.WRAP_ASSERT_ERROR:
+                            value = _pop(frame.stack, "assert else")
+                            frame.stack.append(
+                                ObjectValue(
+                                    "AssertError",
+                                    {
+                                        "value": value,
+                                        "message": self.format_value(value),
+                                    },
+                                )
+                            )
                         case OpCode.UNFOLD:
                             frame.stack.append(self._unfold(frame, instruction.arg))
                         case OpCode.WHILE:

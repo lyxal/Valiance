@@ -824,8 +824,6 @@ class Parser:
         if self._match_ident("else"):
             self._expect(TokenKind.FAT_ARROW)
             else_branch = self._body({"end"})
-            self._skip_newlines()
-            self._consume_optional_end()
         return AssertNode(condition, else_branch, location=_loc(start))
 
     def _unfold(self, start: Token) -> UnfoldNode:

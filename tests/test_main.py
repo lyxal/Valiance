@@ -664,6 +664,118 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("Package error: version '^1.2.3'", error.getvalue())
 
+    def test_test_command_discovers_groups_and_selects_exact_tests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "tests").mkdir()
+            (root / "src" / "main.vlnc").write_text("", encoding="utf-8")
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "0.1.0"\n\n'
+                '[entries]\nmain = "src/main.vlnc"\n\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            test_source = (
+                'import { std.testing }\n\n'
+                '@testgroup("Arithmetic")\n'
+                'define \\arithmetic =>\n'
+                '  @test("adds two numbers")\n'
+                '  define \\addition =>\n'
+                '    testing.assertEqual(20 + 22, 42)\n'
+                '  end\n\n'
+                '  @testgroup("Division")\n'
+                '  define \\division =>\n'
+                '    @test("expects a panic")\n'
+                '    define \\zero =>\n'
+                '      testing.assertPanics: fn => "boom" panic end\n'
+                '    end\n'
+                '  end\n'
+                'end\n'
+            )
+            (root / "tests" / "arithmetic.vlnc").write_text(
+                test_source,
+                encoding="utf-8",
+            )
+            old_cwd = Path.cwd()
+            output = io.StringIO()
+            tree_output = io.StringIO()
+            try:
+                import os
+
+                os.chdir(root)
+                with contextlib.redirect_stdout(output):
+                    exit_code = main(["test", "arithmetic.division"])
+                with contextlib.redirect_stdout(tree_output):
+                    list_exit = main(["test", "--list"])
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(list_exit, 0)
+        self.assertIn("arithmetic — Arithmetic", tree_output.getvalue())
+        self.assertIn("  division — Division", tree_output.getvalue())
+        rendered = output.getvalue()
+        self.assertIn("PASS arithmetic.division.zero", rendered)
+        self.assertNotIn("arithmetic.addition", rendered)
+        self.assertIn("1 passed, 0 failed, 0 errors", rendered)
+
+    def test_test_command_lists_flat_selectors_and_reports_failures(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tests").mkdir()
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "0.1.0"\n\n'
+                '[entries]\n\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            test_source = (
+                'import { std.testing }\n\n'
+                '@testgroup\n'
+                'define \\checks =>\n'
+                '  @test\n'
+                '  define \\passes =>\n'
+                '    assert =>\n'
+                '      20 + 22 == 42\n'
+                '    else =>\n'
+                '      "bad arithmetic"\n'
+                '    end\n'
+                '  end\n\n'
+                '  @test\n'
+                '  define \\fails =>\n'
+                '    testing.fail("intentional failure")\n'
+                '  end\n'
+                'end\n'
+            )
+            (root / "tests" / "checks.vlnc").write_text(
+                test_source,
+                encoding="utf-8",
+            )
+            old_cwd = Path.cwd()
+            listed = io.StringIO()
+            run_output = io.StringIO()
+            try:
+                import os
+
+                os.chdir(root)
+                with contextlib.redirect_stdout(listed):
+                    list_exit = main(["test", "--list", "--flat"])
+                with contextlib.redirect_stdout(run_output):
+                    run_exit = main(["test"])
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(list_exit, 0)
+        self.assertEqual(
+            listed.getvalue().splitlines(),
+            ["checks.fails", "checks.passes"],
+        )
+        self.assertEqual(run_exit, 1)
+        rendered = run_output.getvalue()
+        self.assertIn("FAIL checks.fails", rendered)
+        self.assertIn("intentional failure", rendered)
+        self.assertIn("PASS checks.passes", rendered)
+        self.assertIn("1 passed, 1 failed, 0 errors", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

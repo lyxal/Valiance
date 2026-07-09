@@ -99,6 +99,18 @@ vln compile --file samples/strings.vlnc
 vln compile --code '"hello" println' --output C:\tmp\hello.vbc
 ```
 
+Run Valiance tests declared under a project's `tests/` directory:
+
+```powershell
+vln test
+vln test arithmetic.division
+vln test --list --flat
+```
+
+Tests use `@test` and `@testgroup` on niladic definitions. See
+[`docs/testing.md`](docs/testing.md) for the source API, standard-library
+assertions, selectors, and runner options.
+
 Run project entries without writing bytecode:
 
 ```powershell

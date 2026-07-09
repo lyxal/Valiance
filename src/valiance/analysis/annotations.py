@@ -283,6 +283,38 @@ def _function_param_names_for_overload(
     return names
 
 
+def _validate_test_annotation(
+    annotation: AnnotationNode,
+    target: str,
+    node: ASTNode,
+) -> tuple[str, ...]:
+    del target
+    diagnostics: list[str] = []
+    if annotation.kwargs:
+        diagnostics.append(f"@{annotation.name.text} does not accept named arguments")
+    if len(annotation.args) > 1 or any(
+        not isinstance(argument, StringLiteralNode) for argument in annotation.args
+    ):
+        diagnostics.append(
+            f"@{annotation.name.text} accepts at most one string description"
+        )
+    if isinstance(node, DefineNode):
+        if not node.name.text.startswith("\\") or node.function.params is not None:
+            diagnostics.append(
+                f"@{annotation.name.text} requires a niladic definition "
+                "whose name starts with '\\'"
+            )
+        if node.is_multi:
+            diagnostics.append(
+                f"@{annotation.name.text} cannot annotate a multi define"
+            )
+        if node.generics:
+            diagnostics.append(
+                f"@{annotation.name.text} cannot annotate a generic define"
+            )
+    return tuple(diagnostics)
+
+
 def _validate_return_all(
     annotation: AnnotationNode,
     target: str,
@@ -415,6 +447,20 @@ def _ensure_message_definition(
 
 def _install_builtin_annotations() -> None:
     register_annotation(AnnotationSpec("recursive", frozenset({"define", "fn"})))
+    register_annotation(
+        AnnotationSpec(
+            "test",
+            frozenset({"define"}),
+            validate=_validate_test_annotation,
+        )
+    )
+    register_annotation(
+        AnnotationSpec(
+            "testgroup",
+            frozenset({"define"}),
+            validate=_validate_test_annotation,
+        )
+    )
     register_annotation(
         AnnotationSpec(
             "self",
