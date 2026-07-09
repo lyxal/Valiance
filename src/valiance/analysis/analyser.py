@@ -1476,7 +1476,8 @@ class Analyser:
                 f"no overloads for element '{node.name}' match explicit call syntax"
             )
             ambiguous_message = (
-                f"ambiguous overloads for element '{node.name}' with explicit call syntax"
+                f"ambiguous overloads for element '{node.name}' "
+                "with explicit call syntax"
             )
         else:
             no_match_message = (
@@ -1706,8 +1707,12 @@ class Analyser:
             candidates=candidates,
             branch=branch,
             node=node,
-            no_match_message="no overloads for element 'call' match explicit call syntax",
-            ambiguous_message="ambiguous overloads for element 'call' with explicit call syntax",
+            no_match_message=(
+                "no overloads for element 'call' match explicit call syntax"
+            ),
+            ambiguous_message=(
+                "ambiguous overloads for element 'call' with explicit call syntax"
+            ),
         )
         if winners is None:
             return BranchSet()
