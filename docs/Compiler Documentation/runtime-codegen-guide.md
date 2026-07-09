@@ -144,7 +144,13 @@ The runtime implementation is small, but several files must evolve together.
 `src/valiance/main.py`
 
 - Wires the CLI to project entry resolution, analysis, codegen, VM execution,
-  and bytecode files.
+  bytecode files, and the persistent REPL compiler/runtime session.
+- `_ReplSession` owns the persistent analyser branch, VM globals, runtime stack,
+  and output tracker. Enhanced prompt features must query this session rather
+  than creating a second execution path.
+- REPL type previews analyse a deep copy of the current analyser and branch.
+  They must never mutate definitions, imports, variables, stack types, runtime
+  values, or VM globals.
 - Relevant actions are `compile`, `run`, `exec`, `parse`, and `analyse`.
 - `compile`, `run`, and `exec` are project-oriented:
   - `valiance compile` and `valiance run` select the `main` entry.
@@ -159,6 +165,21 @@ The runtime implementation is small, but several files must evolve together.
 - Project compilation writes bytecode to `bin/<entry>.vbc`.
 - `run` compiles and executes source without writing bytecode.
 - `exec` loads existing bytecode and never recompiles source.
+
+`src/valiance/repl.py`
+
+- Owns terminal presentation only: capability detection, the portable plain
+  frontend, prompt-toolkit integration, syntax highlighting, completion,
+  history suggestions, and live type-hint display.
+- Enhanced mode is selected only for capable interactive terminals. Redirected
+  streams, dumb terminals, explicit `VALIANCE_REPL_MODE=plain`, or a missing
+  prompt-toolkit installation use `PlainReplFrontend`.
+- Highlighting is deliberately tolerant of incomplete input and does not call
+  the compiler lexer. Completion candidates are presentation metadata supplied
+  by the current `_ReplSession`; accepting a candidate has no analyser effect.
+- Both frontends return source text to the same `_ReplSession.run(...)` method.
+  Do not put parsing, analysis, compilation, or runtime behaviour in a prompt
+  frontend.
 
 ## Core Invariants
 

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+import valiance.types as T
 from valiance.analysis import Analyser, AnalysisBranch, BranchSet, InputMode
 from valiance.asts import pretty_ast, typed_source
 from valiance.diagnostics import from_exception, from_message, render, should_color
@@ -31,6 +33,7 @@ from valiance.runtime import (
     loads,
     run,
 )
+from valiance.repl import ReplCompletion, create_repl_frontend
 from valiance.runtime_values import DIAGNOSTIC_LIST_PREVIEW_LIMIT, format_runtime_value
 
 DEFAULT_BYTECODE_FILENAME = "out.vbc"
@@ -89,7 +92,10 @@ options:
   --preview-lists     preview lazy lists instead of forcing full output
 
 repl commands:
+  :help               show REPL help
   :reset              clear stack, variables, definitions, and imports
+  :type <source>      show stack types without executing source
+  :clear              clear the terminal
   :quit               exit the REPL
 """
 
@@ -376,11 +382,16 @@ def _run_package_command(parsed: argparse.Namespace) -> int:
 def _run_repl() -> int:
     session = _ReplSession()
     color = should_color(sys.stdout)
+    frontend = create_repl_frontend(
+        prompt=lambda line_number: _repl_prompt(line_number, color=color),
+        completion_provider=session.completion_items,
+        type_hint_provider=session.type_hint,
+    )
     line_number = 1
-    _print_repl_banner(color=color)
+    _print_repl_banner(color=color, fancy=frontend.fancy)
     while True:
         try:
-            source = input(_repl_prompt(line_number, color=color))
+            source = frontend.read(line_number)
         except EOFError:
             print()
             return 0
@@ -400,26 +411,45 @@ def _run_repl() -> int:
             line_number = 1
             continue
         if source in {":help", ":h", "help"}:
-            _print_repl_help(color=color)
+            _print_repl_help(color=color, fancy=frontend.fancy)
             continue
         if source in {":clear", ":c", "clear"}:
             print("\033[2J\033[H", end="")
+            continue
+        if source == ":type" or source.startswith(":type "):
+            expression = source.removeprefix(":type").strip()
+            if not expression:
+                print("usage: :type <Valiance source>")
+            else:
+                print(session.type_hint(expression) or "No type information available.")
             continue
         session.run(source)
         line_number += 1
 
 
-def _print_repl_banner(*, color: bool) -> None:
+def _print_repl_banner(*, color: bool, fancy: bool = False) -> None:
     print(_repl_style("Valiance REPL", _ANSI_BOLD + _ANSI_CYAN, color))
     print(_repl_style("-------------", _ANSI_DIM, color))
+    if fancy:
+        print(
+            "Enhanced editing enabled: highlighting, completion, and live type hints."
+        )
     print("State persists between lines. Type :help, :reset, or :quit.")
 
 
-def _print_repl_help(*, color: bool) -> None:
+def _print_repl_help(*, color: bool, fancy: bool = False) -> None:
     print(_repl_style("REPL commands", _ANSI_BOLD, color))
     print("  :help   show this message")
     print("  :reset  clear stack, variables, definitions, and imports")
+    print("  :type   show stack types without executing source: :type <source>")
+    print("  :clear  clear the terminal")
     print("  :quit   exit the REPL")
+    if fancy:
+        print()
+        print("Enhanced editing")
+        print("  Tab / Ctrl-Space  show completions")
+        print("  F2                toggle live type hints")
+        print("  Right arrow        accept an inline history suggestion")
     print()
     print("Enter one Valiance expression or statement per line.")
 
@@ -442,6 +472,8 @@ class _ReplSession:
     output: _OutputTracker | None = None
     vm: VirtualMachine | None = None
     runtime_stack: list[Any] | None = None
+    _state_version: int = 0
+    _hint_cache: tuple[int, str, str | None] | None = None
 
     def __post_init__(self) -> None:
         self.reset()
@@ -452,8 +484,80 @@ class _ReplSession:
         self.output = _OutputTracker()
         self.vm = VirtualMachine(output=self.output)
         self.runtime_stack = []
+        self._state_version += 1
+        self._hint_cache = None
 
-    def run(self, source: str) -> None:
+    def completion_items(self) -> tuple[ReplCompletion, ...]:
+        if self.analyser is None or self.branch is None:
+            return ()
+        items: dict[str, ReplCompletion] = {}
+        env = self.analyser.env
+        depth = 0
+        while env is not None:
+            scope = "element" if depth == 0 else "built-in element"
+            for name in env.overloads:
+                text = name.text
+                items.setdefault(text, ReplCompletion(text, scope))
+            for collection, meta in (
+                (env.objects, "object"),
+                (env.traits, "trait"),
+                (env.variants, "variant"),
+                (env.enums, "enum"),
+            ):
+                for name in collection:
+                    text = name.text
+                    items.setdefault(text, ReplCompletion(text, meta))
+            for name in env.data_tags:
+                text = f"#{name.text}"
+                items.setdefault(text, ReplCompletion(text, "data tag"))
+            env = env.parent
+            depth += 1
+        for name, typ in self.branch.variables.visible_items():
+            text = f"${name.text}"
+            items[text] = ReplCompletion(text, f"variable: {T.show(typ)}")
+        return tuple(items.values())
+
+    def type_hint(self, source: str) -> str | None:
+        source = source.strip()
+        if not source:
+            return None
+        cached = self._hint_cache
+        if cached is not None and cached[:2] == (self._state_version, source):
+            return cached[2]
+        result = self._type_hint_uncached(source)
+        self._hint_cache = (self._state_version, source, result)
+        return result
+
+    def _type_hint_uncached(self, source: str) -> str | None:
+        if self.analyser is None or self.branch is None:
+            return None
+        try:
+            program = Parser(lex(source)).parse_program()
+        except LexError as exc:
+            return f"Lex error: {exc}"
+        except ParseError as exc:
+            return f"Parse error: {exc}"
+        analyser = copy.deepcopy(self.analyser)
+        analyser.diagnostics.clear()
+        analyser.warnings.clear()
+        initial = replace(copy.deepcopy(self.branch), typed_body=())
+        try:
+            final = analyser.analyse_block(BranchSet((initial,)), tuple(program))
+        except (OSError, RuntimeError) as exc:
+            return f"Type error: {exc}"
+        if analyser.diagnostics:
+            return f"Type error: {analyser.diagnostics[0]}"
+        if len(final) != 1:
+            return "Type error: source has no single valid stack effect"
+        next_branch = next(iter(final))
+        if next_branch.errors:
+            return f"Type error: {next_branch.errors[0].message}"
+        return (
+            f"Types: {_format_type_stack(self.branch.stack)} -> "
+            f"{_format_type_stack(next_branch.stack)}"
+        )
+
+    def run(self, source: str) -> bool:
         if (
             self.analyser is None
             or self.branch is None
@@ -482,14 +586,14 @@ class _ReplSession:
                         from_message("Type error", f"could not analyse {node!r}"),
                         source,
                     )
-                return
+                return False
             next_branch = next(iter(final))
             for warning in self.analyser.warnings:
                 _print_diagnostic(from_message("Type warning", warning), source)
             if self.analyser.diagnostics:
                 for diagnostic in self.analyser.diagnostics:
                     _print_diagnostic(from_message("Type error", diagnostic), source)
-                return
+                return False
             bytecode = compile_program(list(next_branch.typed_body))
             stack = self.vm.execute(
                 bytecode.main,
@@ -499,8 +603,11 @@ class _ReplSession:
             )
             self.runtime_stack = stack
             self.branch = replace(next_branch, typed_body=())
+            self._state_version += 1
+            self._hint_cache = None
             if not self.output.did_print:
                 print(_format_stack(stack))
+            return True
         except (
             BytecodeFormatError,
             LexError,
@@ -510,6 +617,11 @@ class _ReplSession:
             RuntimeError,
         ) as exc:
             _print_exception_diagnostic(exc, source=source)
+            return False
+
+
+def _format_type_stack(stack: T.TypeStack) -> str:
+    return "[" + ", ".join(T.show(item) for item in stack) + "]"
 
 
 def _read_source_file(filename: str) -> str | None:

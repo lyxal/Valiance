@@ -1,6 +1,6 @@
 # Valiance feature checklist
 
-Current audit total: 426 / 734 items complete (58.0%).
+Current audit total: 430 / 738 items complete (58.3%).
 
 ## 1. Lexer, parser, and general syntax
 
@@ -863,6 +863,12 @@ Current audit total: 426 / 734 items complete (58.0%).
 
 - [x] Execute inline source through the bytecode runtime.
 - [x] Execute source files through the bytecode runtime.
+- [x] Provide a persistent interactive REPL.
+- [x] Provide syntax highlighting, dynamic completion, and history suggestions in
+  capable terminals.
+- [x] Provide non-executing stack-type previews for REPL input.
+- [x] Fall back to a portable plain REPL for unsupported or redirected
+  terminals.
 - [x] Print the final stack when implicit output is requested and nothing prints.
 - [x] Emit portable binary bytecode files.
 - [x] Execute saved portable binary bytecode files.

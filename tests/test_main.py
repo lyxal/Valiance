@@ -92,6 +92,28 @@ class MainTests(unittest.TestCase):
         rendered = output.getvalue()
         self.assertGreaterEqual(rendered.count("vln:1> "), 2)
 
+    def test_repl_type_command_previews_without_executing(self):
+        output = io.StringIO()
+        input_stream = io.StringIO(":type 1 2 +\n:quit\n")
+        with contextlib.redirect_stdout(output), patch("sys.stdin", input_stream):
+            exit_code = main([])
+
+        self.assertEqual(exit_code, 0)
+        rendered = output.getvalue()
+        self.assertIn("Types: [] -> [Integer]", rendered)
+        self.assertNotIn("Stack [", rendered)
+
+    def test_repl_type_command_uses_current_stack_without_mutating_it(self):
+        output = io.StringIO()
+        input_stream = io.StringIO("1\n:type 2 +\n2 +\n:quit\n")
+        with contextlib.redirect_stdout(output), patch("sys.stdin", input_stream):
+            exit_code = main([])
+
+        self.assertEqual(exit_code, 0)
+        rendered = output.getvalue()
+        self.assertIn("Types: [Integer] -> [Integer]", rendered)
+        self.assertIn("Stack [\n  0: 3\n]", rendered)
+
     def test_help_flag_prints_help(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

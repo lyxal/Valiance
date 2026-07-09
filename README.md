@@ -47,6 +47,26 @@ Running `vln` with no arguments starts the REPL. Stack state, variables,
 definitions, and imports persist between entered lines. Use `:reset` to clear
 that REPL state, and `:quit` to exit.
 
+On an interactive terminal, the REPL uses an enhanced prompt with Valiance
+syntax highlighting, completion for language keywords, built-ins, user
+definitions, variables, tags, and types, plus inline suggestions from command
+history. Press `Tab` or `Ctrl-Space` to open completions and `F2` to toggle the
+live stack-type preview shown beneath the input line.
+
+Type information is also available in every terminal mode without executing the
+source:
+
+```text
+vln:1> :type 1 2 +
+Types: [] -> [Integer]
+```
+
+Redirected input, `TERM=dumb`, or an unavailable enhanced-prompt dependency
+uses the portable plain REPL automatically. Set `VALIANCE_REPL_MODE=plain` to
+force that mode; set it to `fancy` to request the enhanced frontend explicitly.
+Both frontends use the same analyser, persistent session state, compiler, and
+virtual machine.
+
 If you prefer to keep the command only inside the project virtual environment,
 use `uv pip install -e .` instead and activate `.venv` before running `vln`.
 You can still run through uv without installing either way:
