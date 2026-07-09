@@ -219,6 +219,25 @@ module's native hooks, then combines the Python and Valiance exports. The native
 hook names are therefore visible while analysing the stdlib module itself, but
 ordinary user code still sees them only through imported module exports.
 
+## Union-Covered Callable Overloads
+
+`types.relations._union_dispatched_callable_returns(...)` handles the safe case
+where an `OverloadSetType` is used as a `FunctionType` whose input contains a
+top-level union. It expands the cartesian product of union branches, resolves
+one best overload for every combination, and unions each return position.
+
+This rule is intentionally conservative. Every concrete argument branch and
+its selected overload parameter must have the same exact, sealed runtime nominal
+identity, including arguments that are not themselves unions. The selected
+runtime signature must also be unique across the whole overload set. Do not
+loosen this to traits, broad supertypes, tags, rows, or other erased structural
+types unless the runtime gains equivalent deterministic dispatch metadata.
+Missing, erased, or ambiguous branch coverage must reject the callable.
+
+Modifier specialization in `analyser.py` must preserve the complete typed
+overload set for this case. Narrowing the modifier to one overload would make
+the static union function type disagree with the runtime callable value.
+
 ## Element Application
 
 Element application happens in `Analyser._element`:

@@ -690,6 +690,25 @@ fn => + double
 - Untyped variables are inferred from their usage. If an untyped variable is not used, a compile-time error is raised.
 - Multiple possible overloads during inference = that function has multiple possible overloads.
 
+### Union-covered overloaded functions
+
+An overloaded function may satisfy a function type whose input is a union when
+every union branch resolves to one unambiguous overload. The result type is the
+union of the selected overload results. For example:
+
+```valiance
+$values = [1, 2, "A", "B"]
+println($values map: * 2)
+#? [2, 4, AA, BB]
+```
+
+This adaptation is deliberately limited to calls whose argument types and
+selected overload parameters have the same exact runtime nominal identities.
+Coverage through a trait, a broader supertype, a data tag, or another erased
+structural type is rejected until runtime can dispatch those cases without
+guessing. Every branch must be covered, and two overloads must not erase to the
+same runtime signature. An ambiguous branch remains a compile-time error.
+
 ## 6.6. Call-Site Type Checking
 - Sometimes it may be desirable to have a function accept any function as input, rather than a fixed function.
 	- For example, `fn (f: Function)` to work for any arity/multiplicity

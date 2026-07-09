@@ -448,6 +448,26 @@ ParseError
             [Decimal("2"), Decimal("4"), Decimal("6")],
         )
 
+    def test_map_dispatches_overloaded_functions_across_union_items(self):
+        output = io.StringIO()
+        source = """
+$lst = [1, 2, "A", "B"]
+
+define foo => * 2
+println($lst map: * 2)
+println($lst map fn => * 2)
+println($lst map: foo)
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(
+            output.getvalue(),
+            "[2, 4, AA, BB]\n[2, 4, AA, BB]\n[2, 4, AA, BB]\n",
+        )
+
     def test_eager_map_with_println_executes_immediately(self):
         output = io.StringIO()
 

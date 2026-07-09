@@ -831,7 +831,7 @@ def _overload_dispatch_types(
     overload: FunctionOverloadTyping,
 ) -> tuple[str | None, ...]:
     source = overload.overload
-    if not isinstance(source, Overload) or not source.is_multi:
+    if not isinstance(source, Overload):
         return ()
     return tuple(_runtime_dispatch_type(param) for param in source.params)
 

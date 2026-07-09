@@ -648,6 +648,19 @@ Be careful when changing this area. Seeding function frames with arguments or
 changing when parameter cycling happens can easily break stack-style function
 bodies.
 
+## Exact Runtime Dispatch for Ordinary Overloaded Functions
+
+Compiled ordinary function overloads carry `FunctionCode.dispatch_types`, not
+only `multi` overloads. When a higher-order built-in calls an overloaded
+function value, the VM first selects the unique overload whose dispatch types
+exactly match the runtime argument types. This is the runtime half of
+union-covered callable typing and avoids executing candidates speculatively.
+
+Do not implement union dispatch by trying overload bodies until one succeeds. A
+body may perform effects before failing, and a genuine body failure must not be
+reinterpreted as an overload mismatch. Unsupported runtime identities continue
+to be rejected by static union-coverage checking.
+
 ## Runtime Vectorisation
 
 Runtime vectorisation executes a scalar built-in implementation across

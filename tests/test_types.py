@@ -673,6 +673,88 @@ class TypeLibraryTests(unittest.TestCase):
             TypeStack((optional(Number), optional(Number))),
         )
 
+    def test_overload_set_can_cover_each_union_function_input_branch(self):
+        overloaded = Overloads(
+            Overload((Integer,), (Integer,)),
+            Overload((String,), (String,)),
+        )
+        expected = Fn((U(Integer, String),), (TypeVariable("Mapped"),))
+
+        solved = _solve(expected, overloaded)
+
+        self.assertEqual(solved, {"Mapped": [U(Integer, String)]})
+        self.assertTrue(
+            compatible(
+                overloaded,
+                Fn((U(Integer, String),), (U(Integer, String),)),
+            )
+        )
+
+    def test_union_function_coverage_requires_every_branch(self):
+        overloaded = Overloads(Overload((Integer,), (Integer,)))
+
+        self.assertFalse(
+            compatible(
+                overloaded,
+                Fn((U(Integer, String),), (U(Integer, String),)),
+            )
+        )
+
+    def test_union_function_coverage_requires_unambiguous_branches(self):
+        overloaded = Overloads(
+            Overload((Integer,), (Integer,)),
+            Overload((Integer,), (String,)),
+            Overload((String,), (String,)),
+        )
+
+        self.assertFalse(
+            compatible(
+                overloaded,
+                Fn((U(Integer, String),), (U(Integer, String),)),
+            )
+        )
+
+    def test_union_function_coverage_rejects_erased_tag_dispatch(self):
+        left = Tagged(Integer, DataTag(Symbol("left")))
+        right = Tagged(Integer, DataTag(Symbol("right")))
+        overloaded = Overloads(
+            Overload((left,), (Integer,)),
+            Overload((right,), (String,)),
+        )
+
+        self.assertFalse(
+            compatible(
+                overloaded,
+                Fn((U(left, right),), (U(Integer, String),)),
+            )
+        )
+
+    def test_union_function_coverage_requires_exact_non_union_inputs(self):
+        overloaded = Overloads(
+            Overload((Integer, Number), (Number,)),
+            Overload((String, Number), (Number,)),
+        )
+
+        self.assertFalse(
+            compatible(
+                overloaded,
+                Fn((U(Integer, String), Number), (Number,)),
+            )
+        )
+
+    def test_union_function_coverage_rejects_erased_supertype_dispatch(self):
+        overloaded = Overloads(
+            Overload((Number,), (Number,)),
+            Overload((String,), (String,)),
+        )
+
+        self.assertFalse(
+            compatible(
+                overloaded,
+                Fn((U(Integer, String),), (U(Number, String),)),
+            )
+        )
+
     def test_concrete_overload_beats_union_overload(self):
         concrete = Overload((Number,), (Number,))
         unioned = Overload((U(Number, String),), (Number,))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from itertools import product
 
 from valiance.symbols import Symbol
 from valiance.types.builders import (
@@ -62,6 +63,7 @@ from valiance.types.nodes import (
 from valiance.types.stack import StackApplication, TypeStack
 
 CollectionClass = type[CollectionType]
+BOOLEAN = Symbol("Boolean")
 INTEGER = Symbol("Integer")
 NUMBER = Symbol("Number")
 REAL = Symbol("Real")
@@ -642,6 +644,16 @@ def _solve(
                 for expected, actual in zip(p.returns, actual_returns, strict=False)
             )
         if isinstance(p, FunctionType) and isinstance(a, OverloadSetType):
+            union_returns = _union_dispatched_callable_returns(a, p, ctx)
+            if union_returns is not None:
+                return all(
+                    rec(expected, actual)
+                    for expected, actual in zip(
+                        p.returns,
+                        union_returns,
+                        strict=False,
+                    )
+                )
             matches: list[dict[str, list[Type]]] = []
             for overload in a.overloads:
                 saved = {key: list(values) for key, values in constraints.items()}
@@ -1105,6 +1117,16 @@ def _callable_compatible(argument: Type, parameter: Type, ctx: Context) -> bool:
             for a, p in zip(actual_returns, parameter.returns, strict=False)
         )
     if isinstance(argument, OverloadSetType):
+        union_returns = _union_dispatched_callable_returns(argument, parameter, ctx)
+        if union_returns is not None:
+            return len(union_returns) == len(parameter.returns) and all(
+                compatible(actual, expected, ctx)
+                for actual, expected in zip(
+                    union_returns,
+                    parameter.returns,
+                    strict=False,
+                )
+            )
         # The expected Function[...] supplies the call input types for choosing
         # an overload from the callable value.
         matches = [
@@ -1118,6 +1140,138 @@ def _callable_compatible(argument: Type, parameter: Type, ctx: Context) -> bool:
             resolve_overload_result(argument.overloads, parameter.params, ctx)
         )
     return False
+
+
+def _union_dispatched_callable_returns(
+    argument: OverloadSetType,
+    expected: FunctionType,
+    ctx: Context,
+) -> tuple[Type, ...] | None:
+    """Return merged results when overloads safely cover every union input branch.
+
+    The runtime currently distinguishes ordinary function overloads by exact
+    nominal argument type.  Keep this adaptation equally conservative: every
+    cartesian combination of top-level union members must resolve to one best
+    overload, and that overload's parameter types must have the same runtime
+    identity as the concrete branch types.  This prevents erased trait, broad
+    supertype, or structural matches from being accepted without a sound
+    runtime dispatch mechanism.
+    """
+    if expected.params is None or expected.returns is None:
+        return None
+    if not any(isinstance(normalize(param), UnionType) for param in expected.params):
+        return None
+    if any(_contains_type_var(param) for param in expected.params):
+        return None
+
+    alternatives = tuple(_union_input_alternatives(param) for param in expected.params)
+    branch_results: list[tuple[Type, ...]] = []
+    for branch_args in product(*alternatives):
+        applied = _resolve_applied_overload(argument.overloads, branch_args, ctx)
+        if applied is None:
+            return None
+        if not _element_tag_requirements_met(
+            applied.overload.element_tags,
+            expected.element_tags,
+        ):
+            return None
+        if len(applied.actual_returns) != len(expected.returns):
+            return None
+        if not all(
+            _same_runtime_dispatch_identity(actual, selected, ctx)
+            for actual, selected in zip(
+                branch_args,
+                applied.params,
+                strict=False,
+            )
+        ):
+            return None
+        if not _has_unique_runtime_dispatch_overload(
+            argument.overloads,
+            branch_args,
+            applied.overload,
+        ):
+            return None
+        branch_results.append(applied.actual_returns)
+
+    if not branch_results:
+        return None
+    return tuple(
+        U(*(returns[index] for returns in branch_results))
+        for index in range(len(expected.returns))
+    )
+
+
+def _union_input_alternatives(typ: Type) -> tuple[Type, ...]:
+    typ = normalize(typ)
+    if isinstance(typ, UnionType):
+        return tuple(typ.items)
+    return (typ,)
+
+
+def _has_unique_runtime_dispatch_overload(
+    overloads: tuple[Overload, ...],
+    branch_args: tuple[Type, ...],
+    selected: Overload,
+) -> bool:
+    branch_identities = tuple(_runtime_dispatch_identity(arg) for arg in branch_args)
+    if any(identity is None for identity in branch_identities):
+        return False
+    matches = tuple(
+        overload
+        for overload in overloads
+        if tuple(_runtime_dispatch_identity(param) for param in overload.params)
+        == branch_identities
+    )
+    return len(matches) == 1 and matches[0] is selected
+
+
+def _same_runtime_dispatch_identity(
+    argument: Type,
+    parameter: Type,
+    ctx: Context,
+) -> bool:
+    argument_identity = _runtime_dispatch_identity(argument)
+    parameter_identity = _runtime_dispatch_identity(parameter)
+    return (
+        argument_identity is not None
+        and parameter_identity is not None
+        and argument_identity == parameter_identity
+        and _runtime_dispatch_identity_is_exact(argument_identity, ctx)
+    )
+
+
+def _runtime_dispatch_identity_is_exact(typ: NominalType, ctx: Context) -> bool:
+    if typ.name in {BOOLEAN, NUMBER, REAL}:
+        return False
+    if typ.name in ctx.variant_members.values():
+        return False
+    trait_names = {
+        trait
+        for traits in ctx.trait_impls.values()
+        for trait in traits
+    }
+    trait_names.update(ctx.trait_parents)
+    trait_names.update(
+        parent
+        for parents in ctx.trait_parents.values()
+        for parent in parents
+    )
+    if typ.name in trait_names:
+        return False
+    return all(
+        variance is Variance.INVARIANT
+        for variance in ctx.variance_for(typ.name, len(typ.args))
+    )
+
+
+def _runtime_dispatch_identity(typ: Type) -> NominalType | None:
+    typ = normalize(typ)
+    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
+        return _runtime_dispatch_identity(typ.inner)
+    if isinstance(typ, NominalType):
+        return typ
+    return None
 
 
 def _overload_callable_compatible(
@@ -1648,30 +1802,43 @@ def resolve_overload_result(
 ) -> ResolvedOverload | None:
     """Resolve overloads and return the winner with solved generic details."""
     ctx = ctx or Context()
-    candidates: list[ResolvedOverload] = []
-    for overload in overloads:
-        applied = apply_overload(overload, args, ctx)
-        if applied is None:
-            continue
-        candidates.append(
-            ResolvedOverload(
-                applied.overload,
-                applied.substitution,
-                applied.params,
-                applied.returns,
-                applied.scores,
-            )
-        )
-    winners = []
-    for candidate in candidates:
-        # Specificity is a partial order, not a summed score. If two candidates
-        # each win on different parameters, neither dominates and the call is
-        # ambiguous.
+    applied = _resolve_applied_overload(overloads, args, ctx)
+    if applied is None:
+        return None
+    return ResolvedOverload(
+        applied.overload,
+        applied.substitution,
+        applied.params,
+        applied.returns,
+        applied.scores,
+    )
+
+
+def _resolve_applied_overload(
+    overloads: Iterable[Overload],
+    args: tuple[Type, ...],
+    ctx: Context,
+) -> AppliedOverload | None:
+    candidates = tuple(
+        applied
+        for overload in overloads
+        if (applied := apply_overload(overload, args, ctx)) is not None
+    )
+    winners = tuple(
+        candidate
+        for candidate in candidates
         if not any(
-            _resolved_overload_dominates(other, candidate, ctx)
+            _overload_match_dominates(
+                other.scores,
+                other.params,
+                candidate.scores,
+                candidate.params,
+                ctx,
+            )
             for other in candidates
-        ):
-            winners.append(candidate)
+            if other is not candidate
+        )
+    )
     return winners[0] if len(winners) == 1 else None
 
 

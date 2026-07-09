@@ -4861,6 +4861,31 @@ def _modifier_variants_for_expected(
             yield modifier, {}
         return
 
+    if _function_has_union_parameter(expected):
+        substitution = _branch_argument_substitution((modifier.typ,), (expected,), ctx)
+        if substitution is not None:
+            concrete_expected = _substitute_branch_type(expected, substitution)
+            if (
+                isinstance(T.normalize(concrete_expected), T.FunctionType)
+                and T.compatible(
+                    modifier.typ,
+                    concrete_expected,
+                    ctx,
+                )
+            ):
+                yield (
+                    ModifierArgumentAnalysis(
+                        concrete_expected,
+                        TypedFunctionNode(
+                            modifier.typed_node.node,
+                            concrete_expected,
+                            modifier.typed_node.overloads,
+                        ),
+                    ),
+                    substitution,
+                )
+                return
+
     for overload in modifier.typed_node.overloads:
         typ = T.normalize(overload.typ)
         if not isinstance(typ, T.FunctionType):
@@ -4897,6 +4922,12 @@ def _merge_substitutions(
             return None
         merged[name] = typ
     return merged
+
+
+def _function_has_union_parameter(typ: T.FunctionType) -> bool:
+    return typ.params is not None and any(
+        isinstance(T.normalize(param), T.UnionType) for param in typ.params
+    )
 
 
 def _modifier_arity_matches(

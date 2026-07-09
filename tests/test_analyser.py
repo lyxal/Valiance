@@ -331,6 +331,19 @@ define \\f<Read, Write> => 1
         self.assertIsInstance(modifier, TypedFunctionNode)
         self.assertEqual(modifier.typ, Fn((Integer,), (Number,)))
 
+    def test_modifier_overloads_cover_union_item_type(self):
+        typed = analyse(parse('$lst = [1, 2, "A", "B"]\n$lst map: * 2'))
+
+        mapped = typed[-1]
+        self.assertIsInstance(mapped, TypedElementNode)
+        self.assertEqual(mapped.typ, C(ListExactType, U(Integer, String)))
+        self.assertEqual(len(mapped.modifier_args), 1)
+        self.assertEqual(
+            mapped.modifier_args[0].typ,
+            Fn((U(Integer, String),), (U(Integer, String),)),
+        )
+        self.assertGreater(len(mapped.modifier_args[0].overloads), 1)
+
     def test_modifier_function_refines_inferred_generic_inputs(self):
         typed = analyse(parse("define sum => /: +"))
 

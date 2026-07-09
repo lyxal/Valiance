@@ -300,6 +300,9 @@ class VirtualMachine:
                 for overload in value.overloads
                 if len(overload.code.params) == len(args)
             )
+            exact = _select_exact_runtime_overload(matches, tuple(args))
+            if exact is not None:
+                return self.call(exact, args)
             if len(matches) == 1:
                 return self.call(matches[0], args)
             errors: list[Exception] = []
@@ -1636,6 +1639,27 @@ def _function_overloads(value: FunctionValue | OverloadedFunctionValue) -> tuple
     if isinstance(value, FunctionValue):
         return (value,)
     return value.overloads
+
+
+def _select_exact_runtime_overload(
+    overloads: tuple[FunctionValue, ...],
+    args: tuple[Any, ...],
+) -> FunctionValue | None:
+    """Select an overload by exact runtime type without executing candidates."""
+    matches = tuple(
+        overload
+        for overload in overloads
+        if overload.code.dispatch_types
+        and _runtime_types_match(args, overload.code.dispatch_types)
+    )
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise RuntimeError(
+            "ambiguous overloaded function call for runtime types "
+            f"{tuple(_runtime_type_name(arg) for arg in args)}"
+        )
+    return None
 
 
 def _select_multimethod_overload(
