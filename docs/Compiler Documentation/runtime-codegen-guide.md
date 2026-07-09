@@ -877,9 +877,12 @@ uv run python -m unittest discover -s tests -v
 
 These are known constraints of the current runtime/codegen layer:
 
-- Tag applications emit `VALIDATE_TAG` even without a validator so data-tag
-  evidence remains available to runtime dispatch. Typed applications also
-  carry validator and disjoint/parent tag metadata.
+- Tag applications emit `SOURCE_ARGS 1` followed by `VALIDATE_TAG`. Sourcing is
+  a no-op move when the value is already on the stack and materialises an
+  explicit parameter from the runtime cycle when the analyser's conceptual
+  stack supplied it. Validation is emitted even without a validator so data-tag
+  evidence remains available to runtime dispatch; typed applications also carry
+  validator and disjoint/parent tag metadata.
 - Unresolved element calls still compile through `LOAD_ELEMENT` / `CALL` and
   are runtime-dispatched.
 - Runtime arrays are currently represented like lists.

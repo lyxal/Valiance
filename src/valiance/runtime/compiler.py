@@ -261,6 +261,11 @@ class _Compiler:
                 if tupled_count is not None:
                     self.emit(OpCode.BUILD_TUPLE, tupled_count)
             case TagApplicationNode():
+                # Explicit function parameters are present on the analyser's
+                # conceptual stack, but runtime parameter values are sourced
+                # lazily from the cycle. Re-source the top value so direct tag
+                # applications behave like ordinary one-argument elements.
+                self.emit(OpCode.SOURCE_ARGS, 1)
                 if isinstance(typed_node, TypedTagApplicationNode):
                     validator_index = typed_node.validator_index
                     added_tags = typed_node.added_tags

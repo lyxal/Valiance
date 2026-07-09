@@ -925,6 +925,9 @@ Tag kinds live in `Context`:
 The analyser applies data tag flow after overload application:
 
 - computed tags are stripped unless explicitly declared on the return type
+- top-level tags in an explicit function return type are guarantees made by the
+  function; body checking validates the underlying value shape and codegen
+  applies the declared tags to the returned runtime value
 - constructed/unit tags propagate according to rank/depth rules
 - variant tags add their parent computed tag
 - disjoint tags replace incompatible existing tags

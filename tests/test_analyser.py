@@ -2577,6 +2577,22 @@ end
             TypeStack((Tagged(Number, "sorted"),)),
         )
 
+    def test_declared_return_tag_guarantees_untagged_body_value(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+tag #sorted as computed
+define sort(:Number+) -> #sorted Number+ => top
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        [overload] = analyser.env.overloads_for(Symbol("sort"))
+        self.assertEqual(overload.returns, (Tagged(ExactList(Number), "sorted"),))
+
     def test_constructed_tags_drop_without_overlay_preservation(self):
         analyser = Analyser()
         [branch] = analyser.analyse_block(

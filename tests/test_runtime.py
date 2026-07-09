@@ -103,6 +103,52 @@ define #checked(:Number) -> #boolean Number => true end
         bytecode = loads(dumps(compile_program(typed)))
         self.assertEqual(run(bytecode), [Decimal("1")])
 
+    def test_declared_return_tag_selects_tagged_overload(self):
+        output = io.StringIO()
+        source = """
+tag #sorted as computed
+#sorted: + =>
+  (#sorted Number, Number) -> #sorted Number
+end
+
+define sort(:Number+) -> #sorted Number+ => top
+define #sorted min(:#sorted Number+) => println "Cheap min"
+define min(:Number+) => println "Expensive min"
+
+$ns = [1, 2, 3, 4, 5]
+$sortedNs = sort $ns
+
+min $ns
+min $sortedNs
+"""
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        bytecode = loads(dumps(compile_program(typed)))
+
+        with contextlib.redirect_stdout(output):
+            stack = run(bytecode)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "Expensive min\nCheap min\n")
+
+    def test_direct_tag_application_sources_explicit_parameter(self):
+        output = io.StringIO()
+        source = """
+tag #sorted as computed
+define sort(:Number+) -> #sorted Number+ => #sorted
+define #sorted min(:#sorted Number+) => println "Cheap min"
+$sorted = sort [1, 2, 3]
+min $sorted
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "Cheap min\n")
+
     def test_tag_validator_failure_panics(self):
         with self.assertRaises(RuntimeError):
             execute(

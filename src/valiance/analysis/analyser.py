@@ -2738,13 +2738,14 @@ class Analyser:
         if node.returns is None:
             return (branch.stack.items[-1:] if branch.stack else ()), branch
 
-        expected = T.TypeStack(node.returns)
+        checked_returns = tuple(_return_value_shape(typ) for typ in node.returns)
+        expected = T.TypeStack(checked_returns)
         actual_returns = _stack_returns(branch.stack, expected)
         if len(actual_returns) != len(node.returns):
             return None
         substitution = _branch_argument_substitution(
             actual_returns,
-            node.returns,
+            checked_returns,
             self.env.context,
         )
         if (
@@ -8305,6 +8306,20 @@ def _stack_returns(
     expected: T.TypeStack,
 ) -> tuple[T.Type, ...]:
     return actual.items[-len(expected) :] if expected else ()
+
+
+def _return_value_shape(typ: T.Type) -> T.Type:
+    """Return the underlying value shape checked inside a function body.
+
+    Top-level return tags are guarantees made by the function signature. The
+    compiler applies those tags to returned runtime values, so body checking
+    must validate the underlying value rather than require the body to apply
+    the same tags explicitly. Nested tags remain part of the value shape.
+    """
+    normalized = T.normalize(typ)
+    if isinstance(normalized, T.TaggedType):
+        return normalized.inner
+    return normalized
 
 
 def _lookup(
