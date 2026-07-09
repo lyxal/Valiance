@@ -35,6 +35,14 @@ from valiance.runtime import (
     run,
 )
 from valiance.runtime_values import DIAGNOSTIC_LIST_PREVIEW_LIMIT, format_runtime_value
+from valiance.source_tools import (
+    DEFAULT_REFERENCE_FILENAME,
+    add_missing_docstrings,
+    extract_documented_defines,
+    format_source,
+    project_source_files,
+    render_html_reference,
+)
 from valiance.testing import TestCommandError, run_test_command
 
 DEFAULT_BYTECODE_FILENAME = "out.vbc"
@@ -46,11 +54,18 @@ _ANSI_DIM = "\033[2m"
 _ANSI_CYAN = "\033[36m"
 _ANSI_GREEN = "\033[32m"
 
-_SOURCE_ACTIONS = {"compile", "run", "parse", "analyse", "analyze", "annotate"}
+_SOURCE_ACTIONS = {"compile", "run", "parse", "analyse", "analyze"}
+_SOURCE_TOOL_ACTIONS = {"tidy", "annotate", "docs"}
 _BYTECODE_ACTIONS = {"exec"}
 _PACKAGE_ACTIONS = {"init", "install", "add", "remove", "upgrade"}
 _TEST_ACTIONS = {"test"}
-_ACTIONS = _SOURCE_ACTIONS | _BYTECODE_ACTIONS | _PACKAGE_ACTIONS | _TEST_ACTIONS
+_ACTIONS = (
+    _SOURCE_ACTIONS
+    | _SOURCE_TOOL_ACTIONS
+    | _BYTECODE_ACTIONS
+    | _PACKAGE_ACTIONS
+    | _TEST_ACTIONS
+)
 
 HELP = """usage: valiance
        valiance <file> [-o <file>]
@@ -65,7 +80,8 @@ HELP = """usage: valiance
        valiance test [<selector-or-path> ...] [options]
        valiance parse <file>
        valiance analyse <file>
-       valiance annotate <file>
+       valiance tidy [<file>] [--types] [--docstrings] [--format]
+       valiance docs [<file>] [-o <file>]
        valiance install
        valiance init [directory]
        valiance add <package-or-source> <version> [as <name>]
@@ -80,7 +96,9 @@ actions:
   test                discover and run tests under the project's tests directory
   parse               print the parsed AST
   analyse             print the typed AST
-  annotate            print source with inferred type annotations
+  tidy                rewrite one file or every project source file
+  docs                generate an HTML reference from #?? doc comments
+  annotate            legacy alias for `tidy --types --stdout`
   install             install project dependencies and update valiance.lock
   init                create a new project manifest and starter source tree
   add                 add an exact-version dependency
@@ -99,6 +117,11 @@ options:
   --flat               print copyable dotted names with --list
   --fail-fast          stop after the first failed or errored test
   --show-output        show captured output for passing tests too
+  --types              add available inferred function signatures with tidy
+  --docstrings         add missing #?? documentation stubs with tidy
+  --format             normalize indentation to two spaces with tidy
+  --stdout             print tidy output instead of rewriting a file
+  --title <title>      set the generated HTML reference title
 
 repl commands:
   :help               show REPL help
@@ -136,6 +159,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             implicit_output=parsed.implicit_output,
             preview_lists=parsed.preview_lists,
         )
+    if parsed.action in {"tidy", "annotate"}:
+        return _run_tidy_command(parsed)
+    if parsed.action == "docs":
+        return _run_docs_command(parsed)
     if parsed.action in _PACKAGE_ACTIONS:
         return _run_package_command(parsed)
     if parsed.action == "test":
@@ -196,6 +223,10 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
 
     if explicit_action == "test":
         return _parse_test_args(args)
+    if explicit_action in {"tidy", "annotate"}:
+        return _parse_tidy_args(explicit_action, args)
+    if explicit_action == "docs":
+        return _parse_docs_args(args)
 
     parser = argparse.ArgumentParser(
         prog="valiance",
@@ -325,6 +356,101 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
 
     if parsed.action == "run" and parsed.code is not None:
         parsed.implicit_output = True
+    return parsed
+
+
+def _parse_tidy_args(
+    action: str,
+    args: list[str],
+) -> argparse.Namespace | None:
+    parser = argparse.ArgumentParser(prog=f"valiance {action}", add_help=False)
+    parser.add_argument("-c", "--code")
+    parser.add_argument("--file", dest="explicit_source_file")
+    parser.add_argument("--types", dest="tidy_types", action="store_true")
+    parser.add_argument("--docstrings", dest="tidy_docstrings", action="store_true")
+    parser.add_argument("--format", dest="tidy_format", action="store_true")
+    parser.add_argument("--stdout", dest="tidy_stdout", action="store_true")
+    parser.add_argument("-h", "--help", action="store_true")
+    parser.add_argument("file", nargs="?")
+    try:
+        parsed = parser.parse_args(args)
+    except SystemExit:
+        return None
+    if parsed.help:
+        return None
+
+    selected_inputs = sum(
+        value is not None
+        for value in (parsed.code, parsed.explicit_source_file, parsed.file)
+    )
+    if selected_inputs > 1:
+        print(
+            "error: pass a file, --file, or --code; not more than one",
+            file=sys.stderr,
+        )
+        return None
+
+    parsed.action = action
+    parsed.source_file = parsed.explicit_source_file or parsed.file
+    parsed.project_mode = parsed.code is None and parsed.source_file is None
+
+    if action == "annotate":
+        if parsed.tidy_docstrings or parsed.tidy_format:
+            print(
+                "error: use `vln tidy` to combine annotations with other rewrites",
+                file=sys.stderr,
+            )
+            return None
+        if parsed.project_mode:
+            print(
+                "error: legacy annotate requires a file or --code; use `vln tidy` "
+                "for a whole project",
+                file=sys.stderr,
+            )
+            return None
+        parsed.tidy_types = True
+        parsed.tidy_stdout = True
+    elif not (
+        parsed.tidy_types or parsed.tidy_docstrings or parsed.tidy_format
+    ):
+        parsed.tidy_types = True
+
+    if parsed.code is not None:
+        parsed.tidy_stdout = True
+    if parsed.project_mode and parsed.tidy_stdout:
+        print("error: --stdout requires one file or --code", file=sys.stderr)
+        return None
+    return parsed
+
+
+def _parse_docs_args(args: list[str]) -> argparse.Namespace | None:
+    parser = argparse.ArgumentParser(prog="valiance docs", add_help=False)
+    parser.add_argument("-c", "--code")
+    parser.add_argument("--file", dest="explicit_source_file")
+    parser.add_argument("-o", "--output")
+    parser.add_argument("--title")
+    parser.add_argument("-h", "--help", action="store_true")
+    parser.add_argument("file", nargs="?")
+    try:
+        parsed = parser.parse_args(args)
+    except SystemExit:
+        return None
+    if parsed.help:
+        return None
+
+    selected_inputs = sum(
+        value is not None
+        for value in (parsed.code, parsed.explicit_source_file, parsed.file)
+    )
+    if selected_inputs > 1:
+        print(
+            "error: pass a file, --file, or --code; not more than one",
+            file=sys.stderr,
+        )
+        return None
+    parsed.action = "docs"
+    parsed.source_file = parsed.explicit_source_file or parsed.file
+    parsed.project_mode = parsed.code is None and parsed.source_file is None
     return parsed
 
 
@@ -679,6 +805,207 @@ def _read_source_file(filename: str) -> str | None:
     except OSError as exc:
         print(f"error: could not read {filename!r}: {exc}", file=sys.stderr)
         return None
+
+
+def _run_tidy_command(parsed: argparse.Namespace) -> int:
+    project_root: Path | None = None
+    if parsed.project_mode:
+        try:
+            manifest = require_manifest()
+        except PackageError as exc:
+            print(f"Package error: {exc}", file=sys.stderr)
+            return 1
+        project_root = manifest.root
+        source_files = project_source_files(project_root)
+        if not source_files:
+            print("error: project contains no .vlnc source files", file=sys.stderr)
+            return 1
+    elif parsed.source_file is not None:
+        source_files = (Path(parsed.source_file),)
+    else:
+        source_files = ()
+
+    if parsed.code is not None:
+        try:
+            rendered = _tidy_source(
+                parsed.code,
+                source_file=None,
+                add_types=parsed.tidy_types,
+                add_docstrings=parsed.tidy_docstrings,
+                apply_format=parsed.tidy_format,
+            )
+        except (LexError, ParseError, OSError) as exc:
+            _print_exception_diagnostic(exc, source=parsed.code)
+            return 1
+        print(rendered, end="" if rendered.endswith("\n") else "\n")
+        return 0
+
+    changed = 0
+    failed = 0
+    for source_file in source_files:
+        source = _read_source_file(str(source_file))
+        if source is None:
+            failed += 1
+            continue
+        try:
+            rendered = _tidy_source(
+                source,
+                source_file=source_file,
+                add_types=parsed.tidy_types,
+                add_docstrings=parsed.tidy_docstrings,
+                apply_format=parsed.tidy_format,
+            )
+        except (LexError, ParseError, OSError) as exc:
+            _print_exception_diagnostic(exc, source=source, source_file=source_file)
+            failed += 1
+            continue
+
+        if parsed.tidy_stdout:
+            print(rendered, end="" if rendered.endswith("\n") else "\n")
+            continue
+        if rendered == source:
+            continue
+        try:
+            source_file.write_text(rendered, encoding="utf-8")
+        except OSError as exc:
+            print(f"error: could not write {source_file}: {exc}", file=sys.stderr)
+            failed += 1
+            continue
+        changed += 1
+
+    if not parsed.tidy_stdout:
+        if parsed.project_mode:
+            relative_label = (
+                f" in {project_root}" if project_root is not None else ""
+            )
+            print(
+                f"Tidied {len(source_files) - failed} file(s){relative_label}; "
+                f"{changed} changed."
+            )
+        elif source_files:
+            status = "Updated" if changed else "Unchanged"
+            print(f"{status}: {source_files[0]}")
+    return 1 if failed else 0
+
+
+def _tidy_source(
+    source: str,
+    *,
+    source_file: Path | None,
+    add_types: bool,
+    add_docstrings: bool,
+    apply_format: bool,
+) -> str:
+    program = Parser(lex(source)).parse_program()
+    rendered = source
+    if add_types:
+        analyser = Analyser(source_file=source_file)
+        typed = analyser.analyse(program)
+        _print_analyser_messages(analyser, source, source_file)
+        rendered = _safe_typed_source(typed, source)
+    if add_docstrings:
+        rendered = add_missing_docstrings(rendered)
+    if apply_format:
+        rendered = format_source(rendered, indent_width=2)
+    return rendered
+
+
+def _run_docs_command(parsed: argparse.Namespace) -> int:
+    project_root: Path | None = None
+    project_title: str | None = None
+    if parsed.project_mode:
+        try:
+            manifest = require_manifest()
+        except PackageError as exc:
+            print(f"Package error: {exc}", file=sys.stderr)
+            return 1
+        project_root = manifest.root
+        project_title = str(manifest.project.get("name") or project_root.name)
+        source_files = project_source_files(project_root)
+        if not source_files:
+            print("error: project contains no .vlnc source files", file=sys.stderr)
+            return 1
+    elif parsed.source_file is not None:
+        source_files = (Path(parsed.source_file),)
+    else:
+        source_files = ()
+
+    references = []
+    failed = 0
+    if parsed.code is not None:
+        source_items = ((None, "<code>", parsed.code),)
+    else:
+        source_items_list = []
+        for source_file in source_files:
+            source = _read_source_file(str(source_file))
+            if source is None:
+                failed += 1
+                continue
+            if project_root is None:
+                label = source_file.name
+            else:
+                label = (
+                    source_file.resolve()
+                    .relative_to(project_root.resolve())
+                    .as_posix()
+                )
+            source_items_list.append((source_file, label, source))
+        source_items = tuple(source_items_list)
+
+    for source_file, label, source in source_items:
+        try:
+            program = Parser(lex(source)).parse_program()
+            analyser = Analyser(source_file=source_file)
+            typed = analyser.analyse(program)
+            _print_analyser_messages(analyser, source, source_file)
+            annotated = _safe_typed_source(typed, source)
+            references.extend(
+                extract_documented_defines(annotated, source_path=label)
+            )
+        except (LexError, ParseError, OSError) as exc:
+            _print_exception_diagnostic(exc, source=source, source_file=source_file)
+            failed += 1
+
+    if parsed.title is not None:
+        title = parsed.title
+    elif project_title is not None:
+        title = f"{project_title} Reference"
+    elif source_files:
+        title = f"{source_files[0].stem} Reference"
+    else:
+        title = "Valiance Reference"
+    rendered = render_html_reference(references, title=title)
+
+    output_path: Path | None
+    if parsed.output is not None:
+        output_path = Path(parsed.output)
+    elif parsed.code is not None:
+        output_path = None
+    elif project_root is not None:
+        output_path = project_root / "docs" / DEFAULT_REFERENCE_FILENAME
+    else:
+        output_path = source_files[0].with_suffix(".html")
+
+    if output_path is None:
+        print(rendered, end="")
+    else:
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(rendered, encoding="utf-8")
+        except OSError as exc:
+            print(f"error: could not write {output_path}: {exc}", file=sys.stderr)
+            return 1
+        print(f"Wrote documentation: {output_path}")
+    return 1 if failed else 0
+
+
+def _safe_typed_source(typed, source: str) -> str:
+    rendered = typed_source(typed, source)
+    try:
+        Parser(lex(rendered)).parse_program()
+    except (LexError, ParseError):
+        return source
+    return rendered
 
 
 def _run_source(

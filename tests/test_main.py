@@ -169,6 +169,158 @@ class MainTests(unittest.TestCase):
             "define foo => 0 - | positive?\nprintln foo 60\n",
         )
 
+    def test_main_annotate_keeps_niladic_definition_syntax_valid(self):
+        output = io.StringIO()
+        source = "define \\value -> Number => 1"
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["annotate", "--code", source])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), source + "\n")
+
+    def test_main_annotate_handles_multiple_empty_niladic_definitions(self):
+        output = io.StringIO()
+        source = "define \\first => end\ndefine \\second => end"
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["annotate", "--code", source])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            output.getvalue(),
+            "define \\first -> => end\ndefine \\second -> => end\n",
+        )
+
+    def test_main_annotate_ignores_arrows_inside_generic_constraints(self):
+        output = io.StringIO()
+        source = (
+            "define[T: trait => extend ==(:T, :T) -> Number end] "
+            "\\value => end"
+        )
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["annotate", "--code", source])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            output.getvalue(),
+            source.replace("\\value =>", "\\value -> =>") + "\n",
+        )
+
+    def test_main_tidy_rewrites_one_file_with_docstrings_and_formatting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source_file = Path(directory) / "main.vlnc"
+            source_file.write_text(
+                "define choose(n: Number) -> Number =>\n"
+                "if ($n 0 >) =>\n"
+                "$n\n"
+                "else =>\n"
+                "0\n"
+                "end\n"
+                "end\n",
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                exit_code = main(
+                    ["tidy", str(source_file), "--docstrings", "--format"]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn(f"Updated: {source_file}", output.getvalue())
+            self.assertEqual(
+                source_file.read_text(encoding="utf-8"),
+                "#?? TODO: Describe `choose`.\n"
+                "#??\n"
+                "#?? @param n TODO: Describe `n`.\n"
+                "#?? @returns TODO: Describe the returned stack value(s).\n"
+                "define choose(n: Number) -> Number =>\n"
+                "  if ($n 0 >) =>\n"
+                "    $n\n"
+                "  else =>\n"
+                "    0\n"
+                "  end\n"
+                "end\n",
+            )
+
+    def test_main_tidy_without_file_rewrites_whole_project(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "0.1.0"\n\n'
+                '[entries]\nmain = "src/main.vlnc"\n',
+                encoding="utf-8",
+            )
+            first = root / "src" / "main.vlnc"
+            second = root / "tests" / "sample.vlnc"
+            dependency = root / ".vln" / "dep" / "ignored.vlnc"
+            for path in (first, second, dependency):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("define value -> Number => 1\n", encoding="utf-8")
+
+            output = io.StringIO()
+            with (
+                patch("pathlib.Path.cwd", return_value=root),
+                contextlib.redirect_stdout(output),
+            ):
+                exit_code = main(["tidy", "--docstrings"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(first.read_text(encoding="utf-8").startswith("#??"))
+            self.assertTrue(second.read_text(encoding="utf-8").startswith("#??"))
+            self.assertFalse(dependency.read_text(encoding="utf-8").startswith("#??"))
+            self.assertIn("Tidied 2 file(s)", output.getvalue())
+
+    def test_main_docs_generates_html_for_one_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source_file = Path(directory) / "math.vlnc"
+            output_file = Path(directory) / "reference.html"
+            source_file.write_text(
+                "#?? Double a number.\n"
+                "#?? @param value Number to double.\n"
+                "#?? @returns The doubled number.\n"
+                "public define double(value: Number) -> Number => $value 2 *\n",
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                exit_code = main(
+                    ["docs", str(source_file), "--output", str(output_file)]
+                )
+
+            self.assertEqual(exit_code, 0)
+            rendered = output_file.read_text(encoding="utf-8")
+            self.assertIn("math Reference", rendered)
+            self.assertIn(
+                "public define double(value: Number) -&gt; Number",
+                rendered,
+            )
+            self.assertIn("Double a number.", rendered)
+            self.assertIn(f"Wrote documentation: {output_file}", output.getvalue())
+
+    def test_main_docs_without_file_generates_project_reference(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "0.1.0"\n\n'
+                '[entries]\nmain = "src/main.vlnc"\n',
+                encoding="utf-8",
+            )
+            source_file = root / "src" / "main.vlnc"
+            source_file.parent.mkdir(parents=True)
+            source_file.write_text(
+                "#?? Main entry.\ndefine \\main -> Number => 1\n",
+                encoding="utf-8",
+            )
+
+            with patch("pathlib.Path.cwd", return_value=root):
+                exit_code = main(["docs"])
+
+            output_file = root / "docs" / "reference.html"
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(output_file.is_file())
+            rendered = output_file.read_text(encoding="utf-8")
+            self.assertIn("demo Reference", rendered)
+            self.assertIn("src/main.vlnc", rendered)
+
     def test_main_runs_inline_code(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

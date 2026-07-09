@@ -82,6 +82,10 @@ Important token rules:
   parser skips these tokens centrally during cursor movement and lookahead.
 - `\n` emits `TokenKind.NEWLINE`.
 - `#?` starts a single-line comment.
+- `#??` is reserved by source tooling for documentation comments. The lexer
+  deliberately treats it as the existing `#?` comment form; association with
+  a following `define` and field parsing live in `source_tools.py`, not in the
+  language parser.
 - `#/ ... /#` is a nested multiline comment.
 - A bare `#name`, `#!name`, or `#name++` is emitted as one `OP` token for data
   tags.

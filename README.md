@@ -146,6 +146,29 @@ vln parse samples/strings.vlnc
 vln analyse samples/strings.vlnc
 ```
 
+Rewrite source with inferred signatures, documentation stubs, and consistent
+two-space indentation:
+
+```powershell
+vln tidy src/main.vlnc --types --docstrings --format
+vln tidy --docstrings --format
+```
+
+With no file, `vln tidy` processes every Valiance source file in the current
+project. The legacy `vln annotate` command remains available as a print-only
+alias for inferred signatures.
+
+Documentation comments start with `#??`. Generate a self-contained HTML
+reference for one file or the whole project with:
+
+```powershell
+vln docs src/main.vlnc
+vln docs
+```
+
+See [`docs/docstrings.md`](docs/docstrings.md) for the comment format, supported
+fields, and output defaults.
+
 Execute previously compiled bytecode without recompiling:
 
 ```powershell

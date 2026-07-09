@@ -155,7 +155,9 @@ The runtime implementation is small, but several files must evolve together.
 - REPL type previews analyse a deep copy of the current analyser and branch.
   They must never mutate definitions, imports, variables, stack types, runtime
   values, or VM globals.
-- Relevant actions are `compile`, `run`, `exec`, `parse`, and `analyse`.
+- Relevant compiler/runtime actions are `compile`, `run`, `exec`, `parse`, and
+  `analyse`. Source-maintenance actions `tidy` and `docs` are also dispatched
+  here, but they do not compile or execute bytecode.
 - `compile`, `run`, and `exec` are project-oriented:
   - `valiance compile` and `valiance run` select the `main` entry.
   - `valiance compile <entry>` and `valiance run <entry>` select a named source entry.
@@ -169,6 +171,12 @@ The runtime implementation is small, but several files must evolve together.
 - Project compilation writes bytecode to `bin/<entry>.vbc`.
 - `run` compiles and executes source without writing bytecode.
 - `exec` loads existing bytecode and never recompiles source.
+- `tidy` rewrites one source file or all project `.vlnc` files. Its independent
+  passes add inferred signatures, insert `#??` doc stubs, and normalize leading
+  indentation to two spaces. `annotate` is the print-only compatibility alias.
+- `docs` analyses source for display signatures, extracts `#??` blocks, and
+  writes a self-contained HTML reference. Project mode defaults to
+  `docs/reference.html`.
 
 `src/valiance/repl.py`
 

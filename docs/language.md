@@ -36,6 +36,10 @@ Which equals
 # 1. Fundamentals
 - Stack based language. There's a top level stack where everything lives upon.
 - `#?` starts single line comment
+- `#??` starts a documentation comment line. A contiguous block immediately
+  before a `define` can contain free text plus `@param`, `@typeparam`, and
+  `@returns` fields. The compiler still treats these as comments; `vln docs`
+  turns them into an HTML reference. See `docs/docstrings.md`.
 - `#/` and `/#` for multiline comment. Can be nested, but must be balanced.
 
 ## 1.1. Numbers

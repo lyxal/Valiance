@@ -48,8 +48,9 @@ def _typed_function_source(node: TypedFunctionNode) -> str:
     ast = node.node
     typ = normalize(node.typ) if node.typ is not None else None
     if isinstance(ast, DefineNode) and isinstance(typ, FunctionType):
+        signature = _function_signature(ast.function, typ, definition=True)
         return (
-            f"define {ast.name}{_function_signature(ast.function, typ)} => "
+            f"define {ast.name}{signature} => "
             f"{_body_source(ast.function.body)}"
         )
     if isinstance(ast, FunctionNode) and isinstance(typ, FunctionType):
@@ -57,10 +58,19 @@ def _typed_function_source(node: TypedFunctionNode) -> str:
     return _typed_node_source(TypedNode(ast, node.typ))
 
 
-def _function_signature(node: FunctionNode, typ: FunctionType) -> str:
+def _function_signature(
+    node: FunctionNode,
+    typ: FunctionType,
+    *,
+    definition: bool = False,
+) -> str:
     params = typ.params or ()
     returns = typ.returns or ()
-    return f"({_params_source(node.params, params)}) -> {_returns_source(returns)}"
+    if definition and node.params is None and not params:
+        param_clause = ""
+    else:
+        param_clause = f"({_params_source(node.params, params)})"
+    return param_clause + _return_clause(returns)
 
 
 def _params_source(
@@ -78,10 +88,10 @@ def _params_source(
     return ", ".join(labels)
 
 
-def _returns_source(returns: tuple[Type, ...]) -> str:
+def _return_clause(returns: tuple[Type, ...]) -> str:
     if not returns:
-        return "()"
-    return ", ".join(show(ret) for ret in returns)
+        return " ->"
+    return " -> " + ", ".join(show(ret) for ret in returns)
 
 
 @dataclass(frozen=True)
@@ -174,31 +184,50 @@ def _signature_replacements(
     typ = normalize(node.typ) if node.typ is not None else None
     if not isinstance(typ, FunctionType) or function.location is None:
         return []
+
+    params = typ.params or ()
+    returns = typ.returns or ()
+    replace_params = _needs_parameter_annotations(function, params)
+    replace_returns = function.returns is None
+    if not replace_params and not replace_returns:
+        return []
+
     start = function.location.offset
-    fat_arrow_index = _token_index(tokens, TokenKind.FAT_ARROW, start)
+    fat_arrow_index = _function_fat_arrow_index(tokens, start)
     if fat_arrow_index is None:
         return []
     fat_arrow = tokens[fat_arrow_index]
-    params = typ.params or ()
-    returns = typ.returns or ()
-    replacements: list[_Replacement] = []
-    param_text = f"({_params_source(function.params, params)})"
     param_span = _params_span(tokens, start, fat_arrow_index)
+    param_text = f"({_params_source(function.params, params)})"
+    replacements: list[_Replacement] = []
+    if replace_params and param_span is not None:
+        replacements.append(_Replacement(param_span[0], param_span[1], param_text))
+
+    arrow_search_start = param_span[1] if param_span is not None else start
+    arrow_index = _last_token_index(
+        tokens,
+        TokenKind.ARROW,
+        arrow_search_start,
+        fat_arrow.offset,
+    )
     return_insert = _return_insert_token(tokens, start, fat_arrow_index)
     return_insert_start = _leading_whitespace_start(source, return_insert.offset)
-    return_end = return_insert_start
-    if param_span is None:
-        params_end = return_insert_start
-    else:
-        replacements.append(_Replacement(param_span[0], param_span[1], param_text))
-        params_end = param_span[1]
-    return_text = f" -> {_returns_source(returns)}"
-    arrow_index = _token_index(tokens, TokenKind.ARROW, params_end, fat_arrow.offset)
-    where_index = _where_index(tokens, params_end, fat_arrow_index)
-    if where_index is not None:
-        return_end = _leading_whitespace_start(source, tokens[where_index].offset)
+
+    if not replace_returns:
+        if replace_params and param_span is None:
+            if arrow_index is None:
+                insert_at = return_insert_start
+            else:
+                insert_at = _leading_whitespace_start(
+                    source,
+                    tokens[arrow_index].offset,
+                )
+            replacements.append(_Replacement(insert_at, insert_at, param_text))
+        return replacements
+
+    prefix = param_text if replace_params and param_span is None else ""
+    return_text = _return_clause(returns)
     if arrow_index is None:
-        prefix = param_text if param_span is None else ""
         replacements.append(
             _Replacement(
                 return_insert_start,
@@ -208,12 +237,57 @@ def _signature_replacements(
         )
     else:
         return_start = _leading_whitespace_start(source, tokens[arrow_index].offset)
-        if param_span is None:
-            replacements.append(_Replacement(return_start, return_start, param_text))
         replacements.append(
-            _Replacement(return_start, return_end, f"{return_text} ")
+            _Replacement(
+                return_start,
+                return_insert.offset,
+                f"{prefix}{return_text} ",
+            )
         )
     return replacements
+
+
+def _needs_parameter_annotations(
+    function: FunctionNode,
+    inferred_params: tuple[Type, ...],
+) -> bool:
+    if function.params is None:
+        return bool(inferred_params)
+    return any(param.typ is None for param in function.params)
+
+
+def _function_fat_arrow_index(
+    tokens: Sequence[Any],
+    start: int,
+) -> int | None:
+    from valiance.parsing.lexer import TokenKind
+
+    paren_depth = 0
+    square_depth = 0
+    brace_depth = 0
+    for index, token in enumerate(tokens):
+        if token.offset < start:
+            continue
+        if token.kind is TokenKind.LPAREN:
+            paren_depth += 1
+        elif token.kind is TokenKind.RPAREN:
+            paren_depth -= 1
+        elif token.kind is TokenKind.LBRACKET:
+            square_depth += 1
+        elif token.kind is TokenKind.RBRACKET:
+            square_depth -= 1
+        elif token.kind is TokenKind.LBRACE:
+            brace_depth += 1
+        elif token.kind is TokenKind.RBRACE:
+            brace_depth -= 1
+        elif (
+            token.kind is TokenKind.FAT_ARROW
+            and paren_depth == 0
+            and square_depth == 0
+            and brace_depth == 0
+        ):
+            return index
+    return None
 
 
 def _token_index(
@@ -232,6 +306,45 @@ def _token_index(
     return None
 
 
+def _last_token_index(
+    tokens: Sequence[Any],
+    kind: Any,
+    start: int,
+    end: int,
+) -> int | None:
+    from valiance.parsing.lexer import TokenKind
+
+    found = None
+    paren_depth = 0
+    square_depth = 0
+    brace_depth = 0
+    for index, token in enumerate(tokens):
+        if token.offset < start:
+            continue
+        if token.offset >= end:
+            break
+        if token.kind is TokenKind.LPAREN:
+            paren_depth += 1
+        elif token.kind is TokenKind.RPAREN:
+            paren_depth -= 1
+        elif token.kind is TokenKind.LBRACKET:
+            square_depth += 1
+        elif token.kind is TokenKind.RBRACKET:
+            square_depth -= 1
+        elif token.kind is TokenKind.LBRACE:
+            brace_depth += 1
+        elif token.kind is TokenKind.RBRACE:
+            brace_depth -= 1
+        elif (
+            token.kind is kind
+            and paren_depth == 0
+            and square_depth == 0
+            and brace_depth == 0
+        ):
+            found = index
+    return found
+
+
 def _params_span(
     tokens: Sequence[Any],
     start: int,
@@ -239,12 +352,18 @@ def _params_span(
 ) -> tuple[int, int] | None:
     from valiance.parsing.lexer import TokenKind
 
-    open_index = _token_index(
-        tokens,
-        TokenKind.LPAREN,
-        start,
-        tokens[fat_arrow_index].offset,
-    )
+    square_depth = 0
+    open_index = None
+    for index, token in enumerate(tokens[:fat_arrow_index]):
+        if token.offset < start:
+            continue
+        if token.kind is TokenKind.LBRACKET:
+            square_depth += 1
+        elif token.kind is TokenKind.RBRACKET:
+            square_depth -= 1
+        elif token.kind is TokenKind.LPAREN and square_depth == 0:
+            open_index = index
+            break
     if open_index is None:
         return None
     depth = 0
@@ -274,10 +393,31 @@ def _where_index(
 ) -> int | None:
     from valiance.parsing.lexer import TokenKind
 
+    paren_depth = 0
+    square_depth = 0
+    brace_depth = 0
     for index, token in enumerate(tokens[:fat_arrow_index]):
         if token.offset < start:
             continue
-        if token.kind is TokenKind.IDENT and token.value == "where":
+        if token.kind is TokenKind.LPAREN:
+            paren_depth += 1
+        elif token.kind is TokenKind.RPAREN:
+            paren_depth -= 1
+        elif token.kind is TokenKind.LBRACKET:
+            square_depth += 1
+        elif token.kind is TokenKind.RBRACKET:
+            square_depth -= 1
+        elif token.kind is TokenKind.LBRACE:
+            brace_depth += 1
+        elif token.kind is TokenKind.RBRACE:
+            brace_depth -= 1
+        elif (
+            token.kind is TokenKind.IDENT
+            and token.value == "where"
+            and paren_depth == 0
+            and square_depth == 0
+            and brace_depth == 0
+        ):
             return index
     return None
 
