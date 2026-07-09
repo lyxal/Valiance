@@ -53,6 +53,11 @@ The runtime implementation is small, but several files must evolve together.
   `MAKE_ENUM_MEMBER` and optional backing-value globals.
 - `MAKE_OBJECT_CONSTRUCTOR` also carries runtime lifecycle metadata for
   destructors, custom `pop`, duplication faults, and `@mustcall` cleanup rules.
+- When an object declares same-name definitions, codegen stores those compiled
+  initializer functions on the constructor value instead of emitting the
+  synthesized field-order constructor. The VM allocates a fresh object,
+  supplies it as the initializer's hidden first argument, and validates that
+  all required fields are initialized before exposing the result.
 - Permitted object/record member writes compile to `SET_FIELD`, which returns a
   reconstructed value instead of mutating the original visible value.
 - `TagApplicationNode` is a compile-time no-op unless analysis resolved a

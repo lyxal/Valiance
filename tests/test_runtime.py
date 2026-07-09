@@ -957,6 +957,49 @@ end
 
         self.assertEqual(stack, ["Joe"])
 
+    def test_executes_imported_namespace_explicit_object_constructor(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "person.vlnc").write_text(
+                """
+public object Person =>
+  $name: String
+  private $age: Number = 0
+  define Person(name: String) => $self.name = $name
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            stack = execute(
+                'import { person }\nperson.Person("Joe") $.name',
+                main,
+            )
+
+        self.assertEqual(stack, ["Joe"])
+
+    def test_executes_aliased_explicit_object_constructor(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "person.vlnc").write_text(
+                """
+public object Person =>
+  $name: String
+  define Person(name: String) => $self.name = $name
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            stack = execute(
+                'import { person.[Person as Human] }\nHuman("Joe") $.name',
+                main,
+            )
+
+        self.assertEqual(stack, ["Joe"])
+
     def test_executes_direct_imported_object_friendly_element(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1310,6 +1353,72 @@ Person("Ada", 36) $.name
             ["Ada"],
         )
 
+    def test_executes_explicit_object_constructor(self):
+        self.assertEqual(
+            execute(
+                """
+object Counter =>
+  $value: Number = 0
+  private $timesIncremented = 0
+  define Counter(initialValue: Number) => $self.value = $initialValue
+end
+Counter(7) $.value
+"""
+            ),
+            [Decimal("7")],
+        )
+
+    def test_explicit_constructor_accumulates_multiple_field_assignments(self):
+        stack = execute(
+            """
+object Person =>
+  $name: String
+  $age: Number
+  define Person(name: String, age: Number) =>
+    $self.name = $name
+    $self.age = $age
+  end
+end
+Person("Ada", 36)
+"""
+        )
+
+        [person] = stack
+        self.assertIsInstance(person, ObjectValue)
+        self.assertEqual(person.fields, {"name": "Ada", "age": Decimal("36")})
+
+    def test_explicit_constructor_preserves_generic_type_arguments(self):
+        [box] = execute(
+            """
+object[T] Box =>
+  $value: T
+  define Box(value: T) => $self.value = $value
+end
+Box(1)
+"""
+        )
+
+        self.assertIsInstance(box, ObjectValue)
+        self.assertEqual(box.fields, {"value": Decimal("1")})
+        self.assertEqual(box.type_args, ("Integer",))
+
+    def test_overloaded_explicit_constructor_uses_resolved_initializer(self):
+        self.assertEqual(
+            execute(
+                """
+object Value =>
+  $number: Number = 0
+  $text: String = ""
+  define Value(value: Number) => $self.number = $value
+  define Value(value: String) => $self.text = $value
+end
+Value(1) $.number
+Value("x") $.text
+"""
+            ),
+            [Decimal("1"), "x"],
+        )
+
     def test_executes_row_inferred_element_on_nominal_object(self):
         output = io.StringIO()
         source = """
@@ -1493,6 +1602,24 @@ Box
         self.assertEqual(len(stack), 1)
         self.assertIsInstance(stack[0], ObjectValue)
         self.assertEqual(stack[0].type_args, ("Integer",))
+
+    def test_explicit_object_constructor_survives_bytecode_round_trip(self):
+        source = """
+object Person =>
+  $name: String
+  $age: Number = 0
+  define Person(name: String) => $self.name = $name
+end
+Person("Ada")
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+
+        [person] = run(loads(dumps(compile_program(typed))))
+
+        self.assertIsInstance(person, ObjectValue)
+        self.assertEqual(person.fields, {"name": "Ada", "age": Decimal("0")})
 
     def test_function_element_tags_survive_bytecode_round_trip(self):
         source = "eager define log(value: Number) -> => $value println"

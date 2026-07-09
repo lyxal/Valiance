@@ -382,6 +382,16 @@ registering object attributes, constructors, function definitions, function
 literals, and requirements. Nested generic function literals shadow outer
 generic names with the same spelling.
 
+Object declarations synthesize their field-order constructor only when the
+declaration has no definition with the same name as the object. A same-name
+definition is an explicit constructor: its declared parameters are the public
+constructor signature, while a writable hidden `self` local is available only
+while analysing its body. Constructor field writes are tracked across control
+flow, and every non-default field must be definitely initialized on every
+successful path before the overload is registered. Private fields participate
+in this initialization check but never add implicit public parameters to an
+explicit constructor.
+
 Surface generic parameter lists accept bounds. Unlabelled `T: U` and labelled
 `T: any U` are upper bounds: overload application first solves `T` from the
 actual arguments, substitutes solved variables in `U`, and then requires the

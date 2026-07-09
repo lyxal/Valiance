@@ -253,6 +253,22 @@ class Environment:
             return self.parent.lookup_object(name)
         return None
 
+    def define_constructor_metadata(
+        self,
+        name: Symbol,
+        fields: tuple[ObjectAttribute, ...],
+        *,
+        defaults: frozenset[Symbol] = frozenset(),
+        generic_constraints: tuple[GenericConstraint, ...] = (),
+    ) -> None:
+        """Register runtime constructor metadata without synthesizing an overload."""
+        self.constructors[name] = ConstructorDefinition(
+            name,
+            fields,
+            defaults,
+            generic_constraints,
+        )
+
     def define_constructor(
         self,
         name: Symbol,
@@ -262,12 +278,12 @@ class Environment:
         result_type: Type | None = None,
         generic_constraints: tuple[GenericConstraint, ...] = (),
     ) -> None:
-        """Register constructor metadata and its overload."""
-        self.constructors[name] = ConstructorDefinition(
+        """Register constructor metadata and synthesize its field-order overload."""
+        self.define_constructor_metadata(
             name,
             fields,
-            defaults,
-            generic_constraints,
+            defaults=defaults,
+            generic_constraints=generic_constraints,
         )
         params = tuple(field.typ for field in fields if field.name not in defaults)
         self.define_overload(

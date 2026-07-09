@@ -69,11 +69,16 @@ from valiance.asts import (
     WhileNode,
     WildcardPatternNode,
 )
+from valiance.object_constructors import (
+    constructor_definitions,
+    prepare_constructor_body,
+)
 from valiance.runtime.bytecode import (
     ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
     Instruction,
+    ObjectConstructorReference,
     OpCode,
     Program,
     ResolvedElementReference,
@@ -431,6 +436,7 @@ class _Compiler:
         match node.kind.text:
             case "object":
                 runtime_name = _symbol_runtime_name(node.name)
+                constructors = constructor_definitions(node.name, node.definitions)
                 if node.target is None:
                     self.object_runtime_metadata[runtime_name] = (
                         _object_runtime_metadata(
@@ -447,9 +453,11 @@ class _Compiler:
                             if not node.name.namespace
                             else None
                         ),
+                        initializers=constructors,
                     )
                 for definition in node.definitions:
-                    self.friendly_definition(runtime_name, definition)
+                    if definition not in constructors:
+                        self.friendly_definition(runtime_name, definition)
             case "variant":
                 for member in node.variants:
                     runtime_name = (
@@ -496,6 +504,7 @@ class _Compiler:
         fields: object,
         *,
         alias: str | None = None,
+        initializers: tuple[DefineNode, ...] = (),
     ) -> None:
         field_names: list[str] = []
         default_values: list[tuple[str, object]] = []
@@ -510,17 +519,29 @@ class _Compiler:
             for field_name in field_names
             if field_name not in {name for name, _ in default_values}
         )
+        initializer_code: FunctionCode | FunctionSetCode | None = None
+        if initializers:
+            compiled_initializers = tuple(
+                _compile_object_initializer(name, definition)
+                for definition in initializers
+            )
+            initializer_code = (
+                compiled_initializers[0]
+                if len(compiled_initializers) == 1
+                else FunctionSetCode(compiled_initializers)
+            )
         self.emit(
             OpCode.MAKE_OBJECT_CONSTRUCTOR,
-            (
-                name,
-                tuple(field_names),
-                required,
-                tuple(default_values),
-                self.object_runtime_metadata.get(
+            ObjectConstructorReference(
+                type_name=name,
+                fields=tuple(field_names),
+                required=required,
+                defaults=tuple(default_values),
+                runtime_metadata=self.object_runtime_metadata.get(
                     name,
                     (None, None, None, None, None, ()),
                 ),
+                initializer=initializer_code,
             ),
         )
         self.emit(OpCode.STORE_VAR, name)
@@ -775,6 +796,24 @@ def compile_program(nodes: list[TypedNode]) -> Program:
         raise CompileError("compile_program expects analysed TypedNode values")
     compiler = _Compiler()
     return Program(compiler.compile_function(tuple(nodes), name="<main>"))
+
+
+def _compile_object_initializer(name: str, definition: DefineNode) -> FunctionCode:
+    body = prepare_constructor_body(definition.function.body)
+    function = FunctionNode(
+        params=(FunctionParam(Symbol("self")),)
+        + tuple(definition.function.params or ()),
+        body=(*body, GetVariableNode(Symbol("self"), location=definition.location)),
+        returns=definition.function.returns,
+        where_clause=definition.function.where_clause,
+        element_tags=definition.function.element_tags,
+        annotations=definition.function.annotations,
+        location=definition.function.location,
+    )
+    compiled = _compile_function_value(function, f"{name}.constructor")
+    if not isinstance(compiled, FunctionCode):
+        raise CompileError(f"constructor '{name}' compiled to an overload set")
+    return compiled
 
 
 def _compile_function_value(

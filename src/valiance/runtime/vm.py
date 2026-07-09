@@ -19,6 +19,7 @@ from valiance.analysis.builtins import (
 from valiance.runtime.bytecode import (
     FunctionCode,
     FunctionSetCode,
+    ObjectConstructorReference,
     OpCode,
     Program,
     ResolvedElementReference,
@@ -124,6 +125,7 @@ class FunctionValue:
 
 _NO_EXTENSION_DEFAULT = object()
 _MISSING_VECTOR_ITEM = object()
+_UNINITIALIZED_OBJECT_FIELD = object()
 
 
 @dataclass(slots=True)
@@ -184,6 +186,7 @@ class ObjectConstructorValue:
     required: tuple[str, ...]
     defaults: dict[str, Any]
     runtime_type: ObjectRuntimeType | None = None
+    initializer: FunctionValue | OverloadedFunctionValue | None = None
 
     def __repr__(self) -> str:
         return f"<constructor {self.type_name}>"
@@ -500,16 +503,28 @@ class VirtualMachine:
                                 dict(zip(values[::2], values[1::2], strict=True))
                             )
                         case OpCode.MAKE_OBJECT_CONSTRUCTOR:
-                            type_name, fields, required, defaults, runtime_meta = (
+                            constructor = _object_constructor_reference(
                                 instruction.arg
+                            )
+                            initializer = (
+                                None
+                                if constructor.initializer is None
+                                else _make_function_value(
+                                    constructor.initializer,
+                                    frame.globals,
+                                    frame.locals,
+                                )
                             )
                             frame.stack.append(
                                 ObjectConstructorValue(
-                                    type_name,
-                                    tuple(fields),
-                                    tuple(required),
-                                    dict(defaults),
-                                    _object_runtime_type(runtime_meta),
+                                    constructor.type_name,
+                                    constructor.fields,
+                                    constructor.required,
+                                    dict(constructor.defaults),
+                                    _object_runtime_type(
+                                        constructor.runtime_metadata
+                                    ),
+                                    initializer,
                                 )
                             )
                         case OpCode.MAKE_ENUM_MEMBER:
@@ -746,7 +761,7 @@ class VirtualMachine:
                 self._call_function(callee, frame)
                 return
             if isinstance(callee, ObjectConstructorValue):
-                _call_object_constructor(callee, frame)
+                _call_object_constructor(callee, frame, self)
                 return
             if isinstance(callee, OverloadedFunctionValue):
                 if len(callee.overloads) == 1:
@@ -778,8 +793,13 @@ class VirtualMachine:
             self._call_resolved_overloaded_function(value, frame, reference)
             return
         if isinstance(value, ObjectConstructorValue):
-            _require_single_resolved_slot(reference, "constructor")
-            _call_object_constructor(value, frame, reference.type_args)
+            _call_object_constructor(
+                value,
+                frame,
+                self,
+                reference.type_args,
+                reference.overload_index,
+            )
             return
         if isinstance(value, ObjectValue):
             _require_single_resolved_slot(reference, "enum member")
@@ -1481,6 +1501,57 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
     )
 
 
+def _object_constructor_reference(value: object) -> ObjectConstructorReference:
+    """Normalize named and legacy positional constructor bytecode payloads."""
+    if isinstance(value, ObjectConstructorReference):
+        return value
+    if isinstance(value, tuple):
+        if len(value) == 5:
+            type_name, fields, required, defaults, runtime_metadata = value
+            initializer = None
+        elif len(value) == 6:
+            (
+                type_name,
+                fields,
+                required,
+                defaults,
+                runtime_metadata,
+                initializer,
+            ) = value
+        else:
+            raise RuntimeError(f"invalid object constructor metadata {value!r}")
+        if not isinstance(type_name, str):
+            raise RuntimeError(f"invalid object constructor type {type_name!r}")
+        if not isinstance(fields, tuple) or not all(
+            isinstance(field, str) for field in fields
+        ):
+            raise RuntimeError(f"invalid object constructor fields {fields!r}")
+        if not isinstance(required, tuple) or not all(
+            isinstance(field, str) for field in required
+        ):
+            raise RuntimeError(
+                f"invalid object constructor required fields {required!r}"
+            )
+        if not isinstance(defaults, tuple):
+            raise RuntimeError(f"invalid object constructor defaults {defaults!r}")
+        if initializer is not None and not isinstance(
+            initializer,
+            (FunctionCode, FunctionSetCode),
+        ):
+            raise RuntimeError(
+                f"invalid object constructor initializer {initializer!r}"
+            )
+        return ObjectConstructorReference(
+            type_name,
+            fields,
+            required,
+            defaults,
+            runtime_metadata,
+            initializer,
+        )
+    raise RuntimeError(f"invalid object constructor metadata {value!r}")
+
+
 def _release_stack_tail(stack: list[Any], count: int, vm: VirtualMachine) -> None:
     if count <= 0:
         return
@@ -2041,9 +2112,15 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
 def _call_object_constructor(
     callee: ObjectConstructorValue,
     frame: _Frame,
+    vm: VirtualMachine,
     type_args: tuple[str, ...] = (),
+    overload_index: int | None = None,
 ) -> None:
-    arity = len(callee.required)
+    if callee.initializer is None:
+        arity = len(callee.required)
+    else:
+        initializer = _object_constructor_initializer(callee, overload_index)
+        arity = len(initializer.code.params) - 1
     try:
         args, stack_count, next_cycle_index = frame.source_args(arity)
     except _StackUnderflow as exc:
@@ -2057,23 +2134,84 @@ def _call_object_constructor(
     if stack_count:
         del frame.stack[-stack_count:]
     frame.cycle_index = next_cycle_index
-    fields = dict(callee.defaults)
-    fields.update(dict(zip(callee.required, args, strict=True)))
-    missing = [name for name in callee.fields if name not in fields]
+
+    if callee.initializer is None:
+        fields = dict(callee.defaults)
+        fields.update(dict(zip(callee.required, args, strict=True)))
+        value = ObjectValue(
+            callee.type_name,
+            fields,
+            type_args,
+            runtime_type=callee.runtime_type,
+        )
+    else:
+        fields = {name: _UNINITIALIZED_OBJECT_FIELD for name in callee.fields}
+        fields.update(callee.defaults)
+        self_value = ObjectValue(
+            callee.type_name,
+            fields,
+            type_args,
+            runtime_type=callee.runtime_type,
+        )
+        try:
+            result = vm.call(initializer, [self_value, *args])
+        except _py_builtins.RuntimeError as exc:
+            raise _with_call_detail(
+                exc,
+                f"constructor '{callee.type_name}'",
+                args,
+            ) from exc
+        if len(result) != 1 or not isinstance(result[0], ObjectValue):
+            raise RuntimeError(
+                f"constructor '{callee.type_name}' must produce exactly one object"
+            )
+        value = result[0]
+        if value.type_name != callee.type_name:
+            raise RuntimeError(
+                f"constructor '{callee.type_name}' returned {value.type_name}"
+            )
+
+    missing = [
+        name
+        for name in callee.fields
+        if name not in value.fields
+        or value.fields[name] is _UNINITIALIZED_OBJECT_FIELD
+    ]
     if missing:
         error = RuntimeError(
             f"constructor '{callee.type_name}' missing fields: {', '.join(missing)}"
         )
         error.add_call_detail(f"constructor '{callee.type_name}'", args)
         raise error
-    frame.stack.append(
-        ObjectValue(
-            callee.type_name,
-            fields,
-            type_args,
-            runtime_type=callee.runtime_type,
-        )
-    )
+    frame.stack.append(value)
+
+
+def _object_constructor_initializer(
+    callee: ObjectConstructorValue,
+    overload_index: int | None,
+) -> FunctionValue:
+    initializer = callee.initializer
+    if isinstance(initializer, FunctionValue):
+        if overload_index not in (None, 0):
+            raise RuntimeError(
+                f"constructor '{callee.type_name}' has no overload {overload_index}"
+            )
+        return initializer
+    if isinstance(initializer, OverloadedFunctionValue):
+        if overload_index is None:
+            if len(initializer.overloads) != 1:
+                raise RuntimeError(
+                    f"cannot call overloaded constructor '{callee.type_name}' "
+                    "without a resolved slot"
+                )
+            return initializer.overloads[0]
+        try:
+            return initializer.overloads[overload_index]
+        except IndexError as exc:
+            raise RuntimeError(
+                f"constructor '{callee.type_name}' has no overload {overload_index}"
+            ) from exc
+    raise RuntimeError(f"constructor '{callee.type_name}' has no initializer")
 
 
 def _call_resolved_builtin(
@@ -2253,6 +2391,10 @@ def _extract_object_field(receiver: ObjectValue, field: str, vm: VirtualMachine)
         value = receiver.fields[field]
     except KeyError as exc:
         raise RuntimeError(f"{receiver.type_name} has no field '{field}'") from exc
+    if value is _UNINITIALIZED_OBJECT_FIELD:
+        raise RuntimeError(
+            f"{receiver.type_name} field '{field}' is not initialized"
+        )
     retained = _retain_value(value)
     _release_value(receiver, vm)
     return retained

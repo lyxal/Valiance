@@ -18,6 +18,7 @@ from valiance.asts import (
     TypedFunctionNode,
 )
 from valiance.asts.nodes import TypedNode
+from valiance.object_constructors import constructor_definitions
 from valiance.packages import (
     PackageError,
     dependency_install_root,
@@ -409,11 +410,25 @@ def _renamed_object(
     node = obj.typed.node
     if not isinstance(node, ObjectNode):
         return obj
-    definitions = (
-        _renamed_friendly_definitions(obj.friendly_definitions, friendly_prefix)
-        if import_friendly
-        else ()
+    explicit_constructors = constructor_definitions(
+        node.name,
+        obj.friendly_definitions,
     )
+    renamed_constructors = tuple(
+        _renamed_define_node(definition, name)
+        for definition in explicit_constructors
+    )
+    friendly_definitions = tuple(
+        definition
+        for definition in obj.friendly_definitions
+        if definition not in explicit_constructors
+    )
+    definitions = renamed_constructors
+    if import_friendly:
+        definitions += _renamed_friendly_definitions(
+            friendly_definitions,
+            friendly_prefix,
+        )
     renamed = ObjectNode(
         node.kind,
         name,

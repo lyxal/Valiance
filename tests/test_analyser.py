@@ -763,6 +763,101 @@ Person("Ada", 36) $.name
         )
         self.assertTrue(analyser.env.overloads_for(Symbol("Person::label")))
 
+    def test_explicit_object_constructor_replaces_synthesized_constructor(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(
+            parse(
+                """
+object Counter =>
+  $value: Number = 0
+  private $timesIncremented = 0
+  define Counter(initialValue: Number) => $self.value = $initialValue
+end
+Counter(7)
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        [constructor] = analyser.env.overloads_for(Symbol("Counter"))
+        self.assertEqual(constructor.params, (Number,))
+        self.assertEqual(constructor.returns, (N(Symbol("Counter")),))
+        self.assertEqual(constructor.param_names, (Symbol("initialValue"),))
+
+    def test_explicit_constructor_requires_all_non_default_fields_on_every_path(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(
+            parse(
+                """
+object Person =>
+  $name: String
+  $age: Number
+  define Person(name: String, includeAge: Bool) =>
+    $self.name = $name
+    if ($includeAge) => $self.age = 1 end
+  end
+end
+"""
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "5:3: constructor 'Person' does not initialize field(s): age"
+            ],
+        )
+        self.assertEqual(analyser.env.overloads_for(Symbol("Person")), ())
+
+    def test_augmented_field_write_does_not_initialize_required_constructor_field(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(
+            parse(
+                """
+object Counter =>
+  $value: Number
+  define Counter => $self.value := + 1
+end
+"""
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "4:3: constructor 'Counter' does not initialize field(s): value"
+            ],
+        )
+        self.assertEqual(analyser.env.overloads_for(Symbol("Counter")), ())
+
+    def test_explicit_constructor_arity_mismatch_is_a_diagnostic(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(
+            parse(
+                """
+object Person =>
+  $name: String = "unknown"
+  define Person => end
+  define Person(name: String) => $self.name = $name
+end
+"""
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "5:3: constructor overloads for 'Person' must all take "
+                "0 inputs, got 1"
+            ],
+        )
+        [constructor] = analyser.env.overloads_for(Symbol("Person"))
+        self.assertEqual(constructor.params, ())
+
     def test_object_mustcall_methods_must_exist(self):
         analyser = Analyser()
 

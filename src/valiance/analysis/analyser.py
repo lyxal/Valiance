@@ -94,6 +94,11 @@ from valiance.modules import (
     import_environment_facts,
     import_objects,
 )
+from valiance.object_constructors import (
+    constructor_definitions,
+    definitely_initialized_fields,
+    prepare_constructor_body,
+)
 from valiance.symbols import Symbol
 from valiance.types.default_types import Boolean
 from valiance.types.relations import merge_stacks
@@ -1040,16 +1045,32 @@ class Analyser:
         object_attributes = self._object_attributes(node.fields, node.generics)
         if object_attributes is None:
             return BranchSet((branch.emit(TypedNode(node, None)),))
+        defaults = frozenset(field.name for field in node.fields if field.default)
+        constructors = constructor_definitions(node.name, node.definitions)
+        friendly_definitions = tuple(
+            definition
+            for definition in node.definitions
+            if definition not in constructors
+        )
         self._define_object_shape(
             node.name,
             node,
             object_attributes,
-            defaults=frozenset(field.name for field in node.fields if field.default),
+            defaults=defaults,
+            synthesize_constructor=not constructors,
         )
+        current = branch.emit(TypedNode(node, None))
+        for constructor in constructors:
+            current = self._register_constructor_definition(
+                current,
+                node,
+                constructor,
+                defaults,
+            )
         current = self._register_friendly_definitions(
-            branch.emit(TypedNode(node, None)),
+            current,
             node.name,
-            node.definitions,
+            friendly_definitions,
         )
         return BranchSet((current,))
 
@@ -1225,6 +1246,7 @@ class Analyser:
         defaults: frozenset[Symbol] = frozenset(),
         result_type: T.Type | None = None,
         generic_constraints: tuple[T.GenericConstraint, ...] | None = None,
+        synthesize_constructor: bool = True,
     ) -> None:
         constraints = (
             _generic_constraints(
@@ -1248,13 +1270,21 @@ class Analyser:
         )
         if annotation_hooks.has_annotation(node.annotations, "errType"):
             self.env.add_trait_impl(name, Symbol("Err"))
-        self.env.define_constructor(
-            name,
-            attributes,
-            defaults=defaults,
-            result_type=result_type or _declared_nominal(name, node.generics),
-            generic_constraints=constraints,
-        )
+        if synthesize_constructor:
+            self.env.define_constructor(
+                name,
+                attributes,
+                defaults=defaults,
+                result_type=result_type or _declared_nominal(name, node.generics),
+                generic_constraints=constraints,
+            )
+        else:
+            self.env.define_constructor_metadata(
+                name,
+                attributes,
+                defaults=defaults,
+                generic_constraints=constraints,
+            )
 
     def _define_trait_shape(self, name: Symbol, node: ObjectNode) -> None:
         requirements = _trait_requirements(node)
@@ -1273,6 +1303,128 @@ class Analyser:
             target = T.normalize(node.target)
             if isinstance(target, T.NominalType):
                 self.env.add_trait_parent(name, target.name)
+
+    def _register_constructor_definition(
+        self,
+        branch: AnalysisBranch,
+        owner_node: ObjectNode,
+        definition: DefineNode,
+        defaults: frozenset[Symbol],
+    ) -> AnalysisBranch:
+        if not self._validate_annotations(definition.annotations, "define", definition):
+            return branch
+
+        owner = owner_node.name
+        owner_definition = self.env.lookup_object(owner)
+        self_type = _declared_nominal(
+            owner,
+            owner_definition.generics if owner_definition is not None else (),
+        )
+        if definition.function.returns is not None and (
+            len(definition.function.returns) != 1
+            or not T.same(
+                _genericize_type(
+                    definition.function.returns[0],
+                    (*owner_node.generics, *definition.generics),
+                ),
+                self_type,
+            )
+        ):
+            self._diagnose(
+                f"constructor '{owner}' must return {T.show(self_type)}",
+                definition,
+            )
+            return branch
+
+        body = prepare_constructor_body(definition.function.body)
+        initialized = definitely_initialized_fields(body, defaults)
+        missing = tuple(
+            field.name for field in owner_node.fields if field.name not in initialized
+        )
+        if missing:
+            self._diagnose(
+                f"constructor '{owner}' does not initialize field(s): "
+                + ", ".join(str(name) for name in missing),
+                definition,
+            )
+            return branch
+
+        function_node = FunctionNode(
+            params=definition.function.params,
+            body=(*body, GetVariableNode(Symbol("self"), location=definition.location)),
+            returns=(self_type,),
+            where_clause=definition.function.where_clause,
+            element_tags=definition.function.element_tags,
+            annotations=definition.function.annotations,
+            element_tags_explicit=definition.function.element_tags_explicit,
+            companion_tags_allowed=definition.function.companion_tags_allowed,
+            location=definition.function.location,
+        )
+        function_node = annotation_hooks.DEFAULT_REGISTRY.transform_function(
+            function_node,
+            definition.annotations,
+        )
+        function_node = _genericize_function_node(
+            function_node,
+            (*owner_node.generics, *definition.generics),
+        )
+        function_node = replace(
+            function_node,
+            generics=(*owner_node.generics, *definition.generics),
+            generic_variances=(
+                *owner_node.generic_variances,
+                *definition.generic_variances,
+            ),
+            generic_constraints=(
+                *owner_node.generic_constraints,
+                *definition.generic_constraints,
+            ),
+        )
+        self._validate_function_element_tags(function_node, definition)
+        self._friendly_owners = self._friendly_owners + (owner,)
+        try:
+            result = self._analyse_function_literal(
+                branch,
+                function_node,
+                initial_function_locals=((Symbol("self"), self_type),),
+            )
+        finally:
+            self._friendly_owners = self._friendly_owners[:-1]
+        if result is None:
+            return branch
+
+        function, typed_branch = result
+        generic_constraints = (
+            *_generic_constraints(
+                owner_node.generics,
+                owner_node.generic_variances,
+                owner_node.generic_constraints,
+            ),
+            *_generic_constraints(
+                definition.generics,
+                definition.generic_variances,
+                definition.generic_constraints,
+            ),
+        )
+        for typing in function.overloads:
+            if not isinstance(typing.overload, T.Overload):
+                continue
+            overload = annotation_hooks.DEFAULT_REGISTRY.transform_overload(
+                _with_generic_constraints(typing.overload, generic_constraints),
+                definition.annotations,
+            )
+            if overload not in self.env.overloads_for(owner):
+                existing = self.env.overloads_for(owner)
+                if existing and len(overload.params) != len(existing[0].params):
+                    self._diagnose(
+                        f"constructor overloads for '{owner}' must all take "
+                        f"{len(existing[0].params)} inputs, got "
+                        f"{len(overload.params)}",
+                        definition,
+                    )
+                    continue
+                self.env.define_overload(owner, overload)
+        return typed_branch
 
     def _register_friendly_definition(
         self,
@@ -1377,16 +1529,33 @@ class Analyser:
         object_attributes = self._object_attributes(node.fields, node.generics)
         if object_attributes is None:
             return
+        defaults = frozenset(field.name for field in node.fields if field.default)
+        constructors = constructor_definitions(obj.name, node.definitions)
+        friendly_definitions = tuple(
+            definition
+            for definition in node.definitions
+            if definition not in constructors
+        )
         self._define_object_shape(
             obj.name,
             node,
             object_attributes,
+            defaults=defaults,
+            synthesize_constructor=not constructors,
         )
+        current = AnalysisBranch()
+        for constructor in constructors:
+            current = self._register_constructor_definition(
+                current,
+                node,
+                constructor,
+                defaults,
+            )
         if obj.import_friendly:
             self._register_friendly_definitions(
-                AnalysisBranch(),
+                current,
                 obj.name,
-                node.definitions,
+                friendly_definitions,
             )
 
     def _register_friendly_definitions(
@@ -2320,6 +2489,8 @@ class Analyser:
         self,
         outer: AnalysisBranch,
         node: FunctionNode,
+        *,
+        initial_function_locals: tuple[tuple[Symbol, T.Type], ...] = (),
     ) -> tuple[FunctionAnalysis, AnalysisBranch] | None:
         node = _contextualize_function_empty_returns(node)
         if node.params is not None and any(
@@ -2356,6 +2527,13 @@ class Analyser:
             named_params,
             captures=_function_capture_source(outer),
         )
+        for local_name, local_type in initial_function_locals:
+            write = variables.write(local_name, local_type, ctx=self.env.context)
+            if write.variables is None:
+                diagnostic = write.diagnostic or f"cannot define '{local_name}'"
+                self._diagnose(diagnostic, node)
+                return None
+            variables = write.variables
         recursive_overload = annotation_hooks.recursive_overload(node, params)
         if annotation_hooks.has_annotation(node.annotations, "recursive"):
             if recursive_overload is None:
@@ -8215,3 +8393,5 @@ def _sorted_items(
     items: Iterable[tuple[Symbol, T.Type]],
 ) -> tuple[tuple[Symbol, T.Type], ...]:
     return tuple(sorted(items, key=lambda item: item[0]))
+
+

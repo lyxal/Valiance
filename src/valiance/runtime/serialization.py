@@ -12,6 +12,7 @@ from valiance.runtime.bytecode import (
     FunctionCode,
     FunctionSetCode,
     Instruction,
+    ObjectConstructorReference,
     OpCode,
     Program,
     ResolvedElementReference,
@@ -81,6 +82,7 @@ _FUNCTION_SET = 0x06
 _RESOLVED_ELEMENT_REFERENCE = 0x07
 _EXTENSION_RULE_REFERENCE = 0x08
 _VECTOR_EXTENSION_REFERENCE = 0x09
+_OBJECT_CONSTRUCTOR_REFERENCE = 0x0A
 
 
 class BytecodeFormatError(Exception):
@@ -172,6 +174,9 @@ class _Writer:
         elif isinstance(value, VectorExtensionReference):
             self.u8(_VECTOR_EXTENSION_REFERENCE)
             self.vector_extension_reference(value)
+        elif isinstance(value, ObjectConstructorReference):
+            self.u8(_OBJECT_CONSTRUCTOR_REFERENCE)
+            self.object_constructor_reference(value)
         else:
             raise BytecodeFormatError(f"cannot serialize bytecode value {value!r}")
 
@@ -212,6 +217,17 @@ class _Writer:
         for rule in reference.rules:
             self.extension_rule_reference(rule)
         self.value(reference.selector)
+
+    def object_constructor_reference(
+        self,
+        reference: ObjectConstructorReference,
+    ) -> None:
+        self.string(reference.type_name)
+        self.value(reference.fields)
+        self.value(reference.required)
+        self.value(reference.defaults)
+        self.value(reference.runtime_metadata)
+        self.value(reference.initializer)
 
     def function_set(self, function_set: FunctionSetCode) -> None:
         self.u32(len(function_set.overloads))
@@ -351,6 +367,8 @@ class _Reader:
             return self.extension_rule_reference()
         if tag == _VECTOR_EXTENSION_REFERENCE:
             return self.vector_extension_reference()
+        if tag == _OBJECT_CONSTRUCTOR_REFERENCE:
+            return self.object_constructor_reference()
         raise BytecodeFormatError(f"unknown bytecode value tag {tag}")
 
     def bool(self) -> bool:
@@ -445,6 +463,42 @@ class _Reader:
         if configured != 1:
             raise BytecodeFormatError("invalid vector extension configuration")
         return VectorExtensionReference(default, rules, selector)
+
+    def object_constructor_reference(self) -> ObjectConstructorReference:
+        type_name = self.string()
+        fields = self.value()
+        required = self.value()
+        defaults = self.value()
+        runtime_metadata = self.value()
+        initializer = self.value()
+        if not isinstance(fields, tuple) or not all(
+            isinstance(field, str) for field in fields
+        ):
+            raise BytecodeFormatError("invalid object constructor fields")
+        if not isinstance(required, tuple) or not all(
+            isinstance(field, str) for field in required
+        ):
+            raise BytecodeFormatError("invalid object constructor required fields")
+        if not isinstance(defaults, tuple) or not all(
+            isinstance(item, tuple)
+            and len(item) == 2
+            and isinstance(item[0], str)
+            for item in defaults
+        ):
+            raise BytecodeFormatError("invalid object constructor defaults")
+        if initializer is not None and not isinstance(
+            initializer,
+            (FunctionCode, FunctionSetCode),
+        ):
+            raise BytecodeFormatError("invalid object constructor initializer")
+        return ObjectConstructorReference(
+            type_name,
+            fields,
+            required,
+            defaults,
+            runtime_metadata,
+            initializer,
+        )
 
     def function_set(self) -> FunctionSetCode:
         overloads = tuple(self.function() for _ in range(self.u32()))

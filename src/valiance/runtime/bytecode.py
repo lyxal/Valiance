@@ -110,6 +110,18 @@ class FunctionSetCode:
 
 
 @dataclass(frozen=True, slots=True)
+class ObjectConstructorReference:
+    """Named payload for ``MAKE_OBJECT_CONSTRUCTOR`` bytecode."""
+
+    type_name: str
+    fields: tuple[str, ...]
+    required: tuple[str, ...]
+    defaults: tuple[tuple[str, Any], ...]
+    runtime_metadata: Any = None
+    initializer: FunctionCode | FunctionSetCode | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ExtensionRuleReference:
     """Compiled substitution rule for one present/missing argument pattern."""
 
