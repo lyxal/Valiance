@@ -739,6 +739,11 @@ def _double(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (_decimal_multiply(args[0], Decimal(2)),)
 
 
+@builtin("squared", (T.Number,), (T.Number,))
+def _squared(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (_decimal_multiply(args[0], args[0]),)
+
+
 @builtin("positive?", (T.Number,), (T.Boolean,))
 def _is_positive(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (_truth(args[0] > 0),)

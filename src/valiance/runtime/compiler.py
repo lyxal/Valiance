@@ -464,6 +464,7 @@ class _Compiler:
                     if definition not in constructors:
                         self.friendly_definition(runtime_name, definition)
             case "variant":
+                required_names = {requirement.name for requirement in node.requirements}
                 for member in node.variants:
                     runtime_name = (
                         f"{_symbol_runtime_name(node.name)}."
@@ -482,7 +483,11 @@ class _Compiler:
                         alias=member.name.text,
                     )
                     for definition in member.definitions:
-                        self.friendly_definition(runtime_name, definition)
+                        self.friendly_definition(
+                            runtime_name,
+                            definition,
+                            variant_dispatch=definition.name in required_names,
+                        )
             case "enum":
                 enum_name = _symbol_runtime_name(node.name)
                 for member in node.enum_members:
@@ -554,7 +559,13 @@ class _Compiler:
             self.emit(OpCode.LOAD_ELEMENT, name)
             self.emit(OpCode.STORE_VAR, alias)
 
-    def friendly_definition(self, owner: str, definition: DefineNode) -> None:
+    def friendly_definition(
+        self,
+        owner: str,
+        definition: DefineNode,
+        *,
+        variant_dispatch: bool = False,
+    ) -> None:
         body = definition.function.body
         if _definition_has_annotation(definition, "self"):
             body = prepare_constructor_body(body)
@@ -580,7 +591,16 @@ class _Compiler:
         runtime_definition_name = _symbol_runtime_name(definition.name)
         self.emit(
             OpCode.MAKE_FUNCTION,
-            _compile_function_value(node, runtime_definition_name),
+            _compile_function_node(
+                node,
+                runtime_definition_name,
+                multi=variant_dispatch,
+                dispatch_types=(
+                    (owner, *(None for _ in definition.function.params or ()))
+                    if variant_dispatch
+                    else ()
+                ),
+            ),
         )
         self.emit(OpCode.STORE_VAR, runtime_definition_name)
         self.emit(
@@ -848,6 +868,8 @@ def _compile_function_node(
     *,
     break_as_signal: bool = False,
     return_as_signal: bool = False,
+    multi: bool = False,
+    dispatch_types: tuple[str | None, ...] = (),
 ) -> FunctionCode:
     ast = _function_ast(node)
     params = ()
@@ -866,6 +888,8 @@ def _compile_function_node(
         cycle_params=bool(ast.params),
         element_tags=_function_element_tag_names(node),
         recursive=_function_is_recursive(ast),
+        multi=multi,
+        dispatch_types=dispatch_types,
     )
 
 

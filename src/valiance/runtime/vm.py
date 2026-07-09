@@ -2072,13 +2072,21 @@ def _select_multimethod_overload(
         args, _, _, _ = frame.source_args(arity)
     except _StackUnderflow:
         return fallback
+    matches: list[FunctionValue] = []
     for overload in value.overloads:
-        if overload is fallback or not overload.code.multi:
+        if not overload.code.multi:
             continue
         if len(overload.code.params) != arity:
             continue
-        if _runtime_types_match(args, overload.code.dispatch_types):
-            return overload
+        if _runtime_multimethod_types_match(args, overload.code.dispatch_types):
+            matches.append(overload)
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise RuntimeError(
+            "ambiguous multimethod call for runtime types "
+            f"{tuple(_runtime_type_name(arg) for arg in args)}"
+        )
     return fallback
 
 
@@ -2092,6 +2100,27 @@ def _runtime_types_match(
         expected is not None and _runtime_type_name(arg) == expected
         for arg, expected in zip(args, dispatch_types, strict=True)
     )
+
+
+def _runtime_multimethod_types_match(
+    args: tuple[Any, ...],
+    dispatch_types: tuple[str | None, ...],
+) -> bool:
+    if len(args) != len(dispatch_types) or not any(
+        expected is not None for expected in dispatch_types
+    ):
+        return False
+    return all(
+        expected is None or _runtime_argument_type_matches(arg, expected)
+        for arg, expected in zip(args, dispatch_types, strict=True)
+    )
+
+
+def _runtime_argument_type_matches(value: Any, expected: str) -> bool:
+    value = unwrap_runtime_value(value)
+    if isinstance(value, ObjectValue) and value.type_name == expected:
+        return True
+    return _runtime_type_name(value) == expected
 
 
 def _runtime_type_name(value: Any) -> str | None:

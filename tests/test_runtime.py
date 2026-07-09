@@ -621,6 +621,55 @@ define describe(x: String) -> String => $x
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "[shape, maybe, text]\n")
 
+    def test_variant_extend_dispatches_to_member_element(self):
+        output = io.StringIO()
+        source = """
+variant Shape =>
+  extend getArea -> Number
+
+  Circle =>
+    $radius: Number
+    define getArea => squared $self.radius * 3.14
+  end
+  Rectangle =>
+    $width: Number
+    $height: Number
+    define getArea => $self.width * $self.height
+  end
+end
+
+define asShape(value: Shape) -> Shape => $value
+Circle(5) | asShape | getArea | println
+Rectangle(4, 6) | asShape | getArea | println
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "78.5\n24\n")
+
+    def test_external_element_overrides_variant_member_defaults(self):
+        source = """
+variant Shape =>
+  extend getArea -> Number
+  Circle =>
+    $radius: Number
+    define getArea => squared $self.radius
+  end
+  Rectangle =>
+    $width: Number
+    $height: Number
+    define getArea => $self.width * $self.height
+  end
+end
+define getArea(:Shape) -> Number => 99
+Circle(5) | getArea
+Rectangle(4, 6) | getArea
+"""
+
+        self.assertEqual(execute(source), [Decimal("99"), Decimal("99")])
+
     def test_union_dispatch_preserves_generic_arguments_in_literals(self):
         output = io.StringIO()
         source = """

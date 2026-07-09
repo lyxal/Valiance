@@ -1100,6 +1100,65 @@ end
             Symbol("Some", ("Maybe",)),
         )
 
+    def test_variant_member_elements_implement_and_publish_extend_interface(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+variant Shape =>
+  extend getArea -> Number
+  Circle =>
+    $radius: Number
+    define getArea => squared $self.radius * 3.14
+  end
+  Rectangle =>
+    $width: Number
+    $height: Number
+    define getArea => $self.width * $self.height
+  end
+end
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        overloads = analyser.env.overloads_for(Symbol("getArea"))
+        self.assertEqual(len(overloads), 2)
+        self.assertTrue(
+            all(
+                overload.params == (N(Symbol("Shape")),)
+                for overload in overloads
+            )
+        )
+        self.assertTrue(all(overload.is_multi for overload in overloads))
+        self.assertTrue(
+            analyser.env.overloads_for(Symbol("Shape.Circle::getArea"))
+        )
+        self.assertTrue(
+            analyser.env.overloads_for(Symbol("Shape.Rectangle::getArea"))
+        )
+
+    def test_variant_member_must_implement_every_extend_declaration(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(
+            parse(
+                """
+variant Shape =>
+  extend getArea -> Number
+  Circle => $radius: Number end
+end
+"""
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "variant member 'Circle' must implement element 'getArea'",
+            analyser.diagnostics[0],
+        )
+
     def test_generic_variant_constructor_preserves_type_argument(self):
         analyser = Analyser(Environment())
 

@@ -1408,13 +1408,191 @@ class Analyser:
         )
         if annotation_hooks.has_annotation(node.annotations, "errType"):
             self.env.add_trait_impl(node.name, Symbol("Err"))
-        return BranchSet(
-            (
-                branch.emit(
-                    TypedNode(node, _declared_nominal(node.name, node.generics))
-                ),
-            )
+
+        current = branch.emit(
+            TypedNode(node, _declared_nominal(node.name, node.generics))
         )
+        requirements_by_name = {
+            requirement.name: requirement for requirement in requirements
+        }
+        for member, member_name in zip(node.variants, members, strict=True):
+            definitions_by_name: dict[Symbol, list[DefineNode]] = {}
+            for definition in member.definitions:
+                definitions_by_name.setdefault(definition.name, []).append(definition)
+
+            for requirement in requirements:
+                implementations = definitions_by_name.get(requirement.name, ())
+                if not implementations:
+                    self._diagnose(
+                        f"variant member '{member.name}' must implement element "
+                        f"'{requirement.name}'",
+                        member,
+                    )
+                elif len(implementations) > 1:
+                    self._diagnose(
+                        f"variant member '{member.name}' must implement element "
+                        f"'{requirement.name}' exactly once",
+                        member,
+                    )
+
+            for definition in member.definitions:
+                current = self._register_variant_member_definition(
+                    current,
+                    node,
+                    member_name,
+                    definition,
+                    requirements_by_name.get(definition.name),
+                )
+
+        return BranchSet((current,))
+
+    def _register_variant_member_definition(
+        self,
+        branch: AnalysisBranch,
+        variant: ObjectNode,
+        owner: Symbol,
+        definition: DefineNode,
+        requirement: T.TraitRequirement | None,
+    ) -> AnalysisBranch:
+        if requirement is None:
+            return self._register_friendly_definition(branch, owner, definition)
+        if not self._validate_annotations(definition.annotations, "define", definition):
+            return branch.emit(TypedNode(definition, None))
+
+        explicit_params = tuple(definition.function.params or ())
+        if len(explicit_params) != len(requirement.overload.params):
+            self._diagnose(
+                f"variant member element '{definition.name}' must take "
+                f"{len(requirement.overload.params)} explicit parameter(s), got "
+                f"{len(explicit_params)}",
+                definition,
+            )
+            return branch.emit(TypedNode(definition, None))
+
+        contextual_params: list[FunctionParam] = []
+        for source, required in zip(
+            explicit_params,
+            requirement.overload.params,
+            strict=True,
+        ):
+            if source.typ is not None and not T.same(source.typ, required):
+                self._diagnose(
+                    f"variant member element '{definition.name}' parameter type "
+                    f"{T.show(source.typ)} does not match required type "
+                    f"{T.show(required)}",
+                    definition,
+                )
+                return branch.emit(TypedNode(definition, None))
+            contextual_params.append(replace(source, typ=required))
+
+        if definition.function.returns is not None and (
+            len(definition.function.returns) != len(requirement.overload.returns)
+            or any(
+                not T.same(actual, required)
+                for actual, required in zip(
+                    definition.function.returns,
+                    requirement.overload.returns,
+                    strict=False,
+                )
+            )
+        ):
+            self._diagnose(
+                f"variant member element '{definition.name}' return signature "
+                "does not match the variant extend declaration",
+                definition,
+            )
+            return branch.emit(TypedNode(definition, None))
+
+        self_type = _declared_nominal(owner, variant.generics)
+        params = (FunctionParam(Symbol("self"), self_type), *contextual_params)
+        function_node = annotation_hooks.DEFAULT_REGISTRY.transform_function(
+            FunctionNode(
+                params=params,
+                body=definition.function.body,
+                returns=requirement.overload.returns,
+                where_clause=definition.function.where_clause,
+                element_tags=definition.function.element_tags,
+                annotations=definition.function.annotations,
+                location=definition.function.location,
+            ),
+            definition.annotations,
+        )
+        function_node = replace(
+            function_node,
+            params=(replace(function_node.params[0], name=None),)
+            + function_node.params[1:],
+        )
+        function_node = _genericize_function_node(
+            function_node,
+            (*variant.generics, *definition.generics),
+        )
+        function_node = replace(
+            function_node,
+            generics=(*variant.generics, *definition.generics),
+            generic_variances=(
+                *variant.generic_variances,
+                *definition.generic_variances,
+            ),
+            generic_constraints=(
+                *variant.generic_constraints,
+                *definition.generic_constraints,
+            ),
+        )
+
+        self._friendly_owners = self._friendly_owners + (owner,)
+        try:
+            result = self._analyse_function_literal(
+                branch,
+                function_node,
+                initial_function_locals=((Symbol("self"), self_type),),
+            )
+        finally:
+            self._friendly_owners = self._friendly_owners[:-1]
+        if result is None:
+            return branch.emit(TypedNode(definition, None))
+
+        function, typed_branch = result
+        [typing] = function.overloads
+        if not isinstance(typing.overload, T.Overload):
+            return branch.emit(TypedNode(definition, None))
+
+        generic_constraints = (
+            *_generic_constraints(
+                variant.generics,
+                variant.generic_variances,
+                variant.generic_constraints,
+            ),
+            *_generic_constraints(
+                definition.generics,
+                definition.generic_variances,
+                definition.generic_constraints,
+            ),
+        )
+        concrete = annotation_hooks.DEFAULT_REGISTRY.transform_overload(
+            _with_generic_constraints(
+                typing.overload,
+                generic_constraints,
+            ),
+            definition.annotations,
+        )
+        variant_type = _declared_nominal(variant.name, variant.generics)
+        exposed = replace(
+            concrete,
+            params=(variant_type, *requirement.overload.params),
+            returns=requirement.overload.returns,
+            param_names=(None, *requirement.overload.param_names),
+            is_multi=True,
+        )
+        self.env.define_overload(
+            definition.name,
+            exposed,
+            object_friendly=True,
+        )
+        self.env.define_overload(
+            Symbol(f"{owner}::{definition.name}"),
+            replace(concrete, is_multi=False),
+        )
+        return typed_branch
 
     def _enum_definition(
         self,
@@ -1931,7 +2109,9 @@ class Analyser:
         no_match_message: str,
         ambiguous_message: str,
     ) -> tuple[CallCandidate, ...] | None:
-        winners = _best_candidates(candidates, branch)
+        winners = _collapse_equivalent_friendly_multidispatch_winners(
+            _best_candidates(candidates, branch)
+        )
         if not winners:
             self._diagnose(no_match_message, node)
             return None
@@ -2035,9 +2215,19 @@ class Analyser:
                 self.env.context,
                 self.env,
             )
+            selected_is_friendly = self.env.overload_is_object_friendly(
+                node.name,
+                source.overload_index,
+            )
+            dispatch_overloads = tuple(
+                overload
+                for index, overload in enumerate(overloads)
+                if self.env.overload_is_object_friendly(node.name, index)
+                == selected_is_friendly
+            )
             applied = _mark_multidispatch(
                 applied,
-                overloads,
+                dispatch_overloads,
                 self.env.context,
             )
             candidates.append(
@@ -2049,10 +2239,7 @@ class Analyser:
                     overload_index=source.overload_index,
                     dispatch_priority=(
                         0
-                        if self.env.overload_is_object_friendly(
-                            node.name,
-                            source.overload_index,
-                        )
+                        if selected_is_friendly
                         else 1
                     ),
                 )
@@ -7998,10 +8185,47 @@ def _mark_multidispatch(
     ctx: T.Context,
 ) -> T.AppliedOverload:
     if applied.overload.is_multi:
+        if any(
+            candidate is not applied.overload
+            and candidate.is_multi
+            and candidate.params == applied.overload.params
+            and candidate.returns == applied.overload.returns
+            for candidate in overloads
+        ):
+            return replace(applied, multidispatch=True)
         return applied
     if not _has_runtime_multimethod_candidate(applied.overload, overloads, ctx):
         return applied
     return replace(applied, multidispatch=True)
+
+
+def _collapse_equivalent_friendly_multidispatch_winners(
+    winners: tuple[CallCandidate, ...],
+) -> tuple[CallCandidate, ...]:
+    if len(winners) <= 1:
+        return winners
+    first = winners[0]
+    if first.dispatch_priority != 0 or not first.applied.multidispatch:
+        return winners
+    if not all(
+        candidate.dispatch_priority == 0
+        and candidate.applied.multidispatch
+        and candidate.applied.params == first.applied.params
+        and candidate.applied.actual_returns == first.applied.actual_returns
+        and candidate.branch == first.branch
+        for candidate in winners[1:]
+    ):
+        return winners
+    return (
+        min(
+            winners,
+            key=lambda candidate: (
+                candidate.overload_index
+                if candidate.overload_index is not None
+                else -1
+            ),
+        ),
+    )
 
 
 def _has_runtime_multimethod_candidate(
