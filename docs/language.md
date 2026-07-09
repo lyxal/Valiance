@@ -891,9 +891,8 @@ $identity([1, 2, 3]) #? [1, 2, 3]
 
 - `T~` can only be safely vectorised where an atomic value is expected.
 	- The only structural guarantee of a `T~` of any rugged rank is that there's atomic types present at different depths.
-	- Because items can be `T | T~`, `T` is the base case
-- However, `T~n` can be vectorised where `T+m` expected granted `n > m`
-	- A function expecting `T+m` can safely be given `T~(n - m)`, as there'll be `> 1` level of uniform nesting
+	- Because items can be `T | T~`, `T` is the base case.
+- `T~n` cannot be vectorised to satisfy a collection parameter such as `T+m`, even when `n > m`. Rugged rank does not guarantee a uniform prefix of nesting that can be peeled away safely.
 - Vectorisation behaviours of `T~` also extend to union types that are expansions of `T~`
 	- For example, `T | T+` can vectorise where a `T~` can, because a `T | T+` _is_ a `T~`.
 	- `{T | T+}+3` can vectorise where a `T~3` can, because it's still a `T~3`.

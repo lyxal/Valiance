@@ -167,7 +167,9 @@ Current audit total: 426 / 734 items complete (58.0%).
 - [x] Allow exact-rank lists where compatible minimum-rank lists are expected.
 - [x] Allow exact- or minimum-rank lists where compatible rugged lists are expected.
 - [ ] Represent rugged rank as a compile-time abstraction over recursive union structures.
-- [ ] Apply the specified rugged-vectorisation rules.
+- [x] Allow explicit rugged types to vectorise only where atomic parameters are expected.
+- [x] Reject rugged-to-collection vectorisation, regardless of relative rugged rank.
+- [ ] Recognise equivalent expanded-union rugged types during vectorisation.
 
 ## 12. Ranked array types
 
@@ -335,7 +337,8 @@ Current audit total: 426 / 734 items complete (58.0%).
 - [x] Bind generic exact parameters to the whole argument type.
 - [x] Broadcast exact arguments unchanged when another parameter vectorises.
 - [x] Preserve per-argument automatic vectorisation depths in saved bytecode.
-- [ ] Apply vectorisation rules for rugged types and equivalent expanded unions.
+- [x] Apply atomic-only vectorisation for explicit rugged types.
+- [ ] Apply the same atomic-only rule to equivalent expanded unions.
 - [ ] Parse and execute `at (...) => ...`.
 - [ ] Support per-argument vectorisation-depth labels in `at`.
 - [ ] Support underscore depth inference in `at`.

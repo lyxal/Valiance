@@ -455,6 +455,14 @@ Rugged rank is weaker than exact/minimum list structure. When generic
 constraints include rugged lists, `_combine_collections` conservatively widens
 to a rugged list.
 
+Automatic vectorisation may peel an explicit rugged collection only when the
+parameter is atomic. It must not peel some rugged rank to satisfy another
+collection parameter, even when the argument's declared rugged rank is greater:
+rugged rank does not guarantee a uniform outer prefix. Keep this restriction in
+both `_can_vectorise` and `_vectorisation_excess`, so ordinary overload matching
+and explicit disambiguation agree. Exact- and minimum-rank collections retain
+their collection-to-collection vectorisation rules.
+
 ### Arrays
 
 Arrays have exact and minimum-rank forms:

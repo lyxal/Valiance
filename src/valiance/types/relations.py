@@ -1185,6 +1185,11 @@ def _vectorisation_excess(argument: Type, expected: Type, ctx: Context) -> int |
         return 0 if compatible(argument, expected, ctx) else None
     expected_collection = _collection_view(expected)
     if expected_collection is not None:
+        # Rugged rank does not guarantee a uniform outer prefix that can be
+        # peeled to leave values of another collection type. It may only
+        # vectorise all the way down to an atomic parameter.
+        if isinstance(argument_collection, ListRuggedType):
+            return None
         if not compatible(argument_collection.base, expected_collection.base, ctx):
             return None
         excess = argument_collection.rank - expected_collection.rank
@@ -1225,6 +1230,11 @@ def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:
     if argument_collection is None:
         return False
     if parameter_collection is not None:
+        # Unlike exact and minimum-rank collections, rugged collections do not
+        # promise enough uniform nesting to vectorise into a collection-valued
+        # parameter. They can only vectorise where an atomic value is expected.
+        if isinstance(argument_collection, ListRuggedType):
+            return False
         return (
             compatible(argument_collection.base, parameter_collection.base, ctx)
             and isinstance(argument_collection.rank, int)

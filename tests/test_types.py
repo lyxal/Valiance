@@ -17,6 +17,7 @@ from valiance.types import (
     GenericConstraint,
     ListExactType,
     ListMinType,
+    ListRuggedType,
     N,
     NoneType,
     OKType,
@@ -376,6 +377,47 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertIsNotNone(applied)
         self.assertTrue(applied.vectorised)
         self.assertEqual(applied.actual_returns, (C(ListExactType, Number),))
+
+    def test_rugged_collection_only_vectorises_to_atomic_parameters(self):
+        argument = C(ListRuggedType, Number, 2)
+
+        atomic = apply_overload(Overload((Number,), (Number,)), (argument,))
+
+        self.assertIsNotNone(atomic)
+        self.assertTrue(atomic.vectorised)
+        self.assertEqual(atomic.vectorised_depths, (2,))
+        self.assertEqual(
+            atomic.actual_returns,
+            (C(ListExactType, Number, 2),),
+        )
+
+        for parameter in (
+            C(ListExactType, Number),
+            C(ListMinType, Number),
+            C(ListRuggedType, Number),
+        ):
+            with self.subTest(parameter=parameter):
+                self.assertFalse(compatible(argument, parameter))
+                self.assertIsNone(
+                    apply_overload(Overload((parameter,), (Number,)), (argument,))
+                )
+
+    def test_uniform_collection_can_still_vectorise_to_collection_parameter(self):
+        parameter = C(ListExactType, Number)
+
+        for argument in (
+            C(ListExactType, Number, 2),
+            C(ListMinType, Number, 2),
+        ):
+            with self.subTest(argument=argument):
+                applied = apply_overload(
+                    Overload((parameter,), (Number,)),
+                    (argument,),
+                )
+
+                self.assertIsNotNone(applied)
+                self.assertTrue(applied.vectorised)
+                self.assertEqual(applied.vectorised_depths, (1,))
 
     def test_exact_parameter_disables_vectorisation(self):
         overload = Overload((Exact(Number),), (Number,))
