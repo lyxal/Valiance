@@ -1471,40 +1471,31 @@ class Analyser:
             )
 
         stack_before = branch.stack
-        winners = _best_candidates(candidates, branch)
-        if not winners:
-            if node.call_args:
-                self._diagnose(
-                    f"no overloads for element '{node.name}' match explicit "
-                    f"call syntax",
-                    node,
-                )
-            else:
-                self._diagnose(
-                    f"no overloads for element '{node.name}' match stack "
-                    f"{_show_stack(stack_before)}; available overloads: "
-                    f"{_show_overloads(overloads)}",
-                    node,
-                )
-            return BranchSet()
-        if (
-            len(winners) > 1
-            and branch.input_mode is not InputMode.INFER_INPUTS
-            and not _winners_specialize_inputs(winners, branch)
-        ):
-            if node.call_args:
-                self._diagnose(
-                    f"ambiguous overloads for element '{node.name}' with explicit "
-                    f"call syntax; candidates: {_show_applied_overloads(winners)}",
-                    node,
-                )
-            else:
-                self._diagnose(
-                    f"ambiguous overloads for element '{node.name}' with stack "
-                    f"{_show_stack(stack_before)}; candidates: "
-                    f"{_show_applied_overloads(winners)}",
-                    node,
-                )
+        if node.call_args:
+            no_match_message = (
+                f"no overloads for element '{node.name}' match explicit call syntax"
+            )
+            ambiguous_message = (
+                f"ambiguous overloads for element '{node.name}' with explicit call syntax"
+            )
+        else:
+            no_match_message = (
+                f"no overloads for element '{node.name}' match stack "
+                f"{_show_stack(stack_before)}; available overloads: "
+                f"{_show_overloads(overloads)}"
+            )
+            ambiguous_message = (
+                f"ambiguous overloads for element '{node.name}' with stack "
+                f"{_show_stack(stack_before)}"
+            )
+        winners = self.select_call_winners(
+            candidates=candidates,
+            branch=branch,
+            node=node,
+            no_match_message=no_match_message,
+            ambiguous_message=ambiguous_message,
+        )
+        if winners is None:
             return BranchSet()
 
         results: list[AnalysisBranch] = []
@@ -1534,6 +1525,31 @@ class Analyser:
             overloads,
             modifiers,
         )
+
+    def select_call_winners(
+        self,
+        *,
+        candidates: Iterable[CallCandidate],
+        branch: AnalysisBranch,
+        node: ASTNode,
+        no_match_message: str,
+        ambiguous_message: str,
+    ) -> tuple[CallCandidate, ...] | None:
+        winners = _best_candidates(candidates, branch)
+        if not winners:
+            self._diagnose(no_match_message, node)
+            return None
+        if (
+            len(winners) > 1
+            and branch.input_mode is not InputMode.INFER_INPUTS
+            and not _winners_specialize_inputs(winners, branch)
+        ):
+            self._diagnose(
+                f"{ambiguous_message}; candidates: {_show_applied_overloads(winners)}",
+                node,
+            )
+            return None
+        return winners
 
     def stack_element_arguments(
         self,
@@ -1686,23 +1702,14 @@ class Analyser:
                 )
             candidates.extend(branch_candidates)
 
-        winners = _best_candidates(candidates, branch)
-        if not winners:
-            self._diagnose(
-                "no overloads for element 'call' match explicit call syntax",
-                node,
-            )
-            return BranchSet()
-        if (
-            len(winners) > 1
-            and branch.input_mode is not InputMode.INFER_INPUTS
-            and not _winners_specialize_inputs(winners, branch)
-        ):
-            self._diagnose(
-                "ambiguous overloads for element 'call' with explicit call syntax; "
-                f"candidates: {_show_applied_overloads(winners)}",
-                node,
-            )
+        winners = self.select_call_winners(
+            candidates=candidates,
+            branch=branch,
+            node=node,
+            no_match_message="no overloads for element 'call' match explicit call syntax",
+            ambiguous_message="ambiguous overloads for element 'call' with explicit call syntax",
+        )
+        if winners is None:
             return BranchSet()
 
         results: list[AnalysisBranch] = []
@@ -3156,27 +3163,21 @@ def _call_node(
 
             candidates.append(CallCandidate(candidate.applied, candidate.branch))
 
-    winners = _best_candidates(candidates, callable_popped)
-    if not winners:
-        self._diagnose(
+    winners = self.select_call_winners(
+        candidates=candidates,
+        branch=callable_popped,
+        node=node,
+        no_match_message=(
             f"no overloads for call target {T.show(callable_type)} match stack "
             f"{_show_stack(callable_popped.stack)}; available overloads: "
-            f"{_show_overloads(overloads)}",
-            node,
-        )
-        return BranchSet()
-
-    if (
-        len(winners) > 1
-        and branch.input_mode is not InputMode.INFER_INPUTS
-        and not _winners_specialize_inputs(winners, callable_popped)
-    ):
-        self._diagnose(
+            f"{_show_overloads(overloads)}"
+        ),
+        ambiguous_message=(
             f"ambiguous call target {T.show(callable_type)} with stack "
-            f"{_show_stack(callable_popped.stack)}; candidates: "
-            f"{_show_applied_overloads(winners)}",
-            node,
-        )
+            f"{_show_stack(callable_popped.stack)}"
+        ),
+    )
+    if winners is None:
         return BranchSet()
 
     return BranchSet.collect(
