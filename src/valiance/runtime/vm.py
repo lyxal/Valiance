@@ -3514,13 +3514,6 @@ def _slice_replacements(value: Any, count: int) -> list[Any]:
 
 def _set_index_one(receiver: Any, index: Any, value: Any) -> Any:
     if isinstance(receiver, dict):
-        if index not in receiver:
-            raise PanicSignal(
-                _fault_object(
-                    "KeyFault",
-                    f"dictionary has no key {_format_value(index)}",
-                )
-            )
         updated = dict(receiver)
         updated[index] = value
         return updated

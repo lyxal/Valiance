@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping, Sequence, Sized
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -343,9 +344,8 @@ def _format_mapping_item(
     tuple_single_comma: bool,
     lazy_preview_limit: int | None,
 ) -> str:
-    rendered_key = _format_nested(
+    rendered_key = _format_mapping_key(
         key,
-        quote_strings,
         tuple_single_comma,
         lazy_preview_limit,
     )
@@ -356,6 +356,22 @@ def _format_mapping_item(
         lazy_preview_limit,
     )
     return f"{rendered_key}: {rendered_item}"
+
+
+def _format_mapping_key(
+    key: Any,
+    tuple_single_comma: bool,
+    lazy_preview_limit: int | None,
+) -> str:
+    key = unwrap_runtime_value(key)
+    if isinstance(key, str):
+        return json.dumps(key, ensure_ascii=False)
+    return _format_nested(
+        key,
+        True,
+        tuple_single_comma,
+        lazy_preview_limit,
+    )
 
 
 def _format_field_item(

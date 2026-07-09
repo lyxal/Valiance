@@ -2448,6 +2448,40 @@ println(triple([1, 2, 3, 4, 5]))
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "15\n[3, 6, 9, 12, 15]\n")
 
+    def test_dictionary_index_assignment_inserts_missing_key(self):
+        self.assertEqual(
+            execute(
+                '''
+                dict{"name": "Jeff", "age": 20}
+                $["favColour"] = "Magenta"
+                '''
+            ),
+            [
+                {
+                    "name": "Jeff",
+                    "age": Decimal("20"),
+                    "favColour": "Magenta",
+                }
+            ],
+        )
+
+    def test_dictionary_printing_quotes_string_keys(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            stack = execute(
+                '''
+                dict{"name": "Jeff", "age": 20}
+                $["favColour"] = "Magenta"
+                println
+                '''
+            )
+
+        self.assertEqual(stack, [])
+        self.assertEqual(
+            output.getvalue(),
+            '{"name": Jeff, "age": 20, "favColour": Magenta}\n',
+        )
+
     def test_indexing_lists_slices_dicts_and_spread(self):
         self.assertEqual(execute("[1, 2, 3] $[1]"), [Decimal("2")])
         self.assertEqual(
