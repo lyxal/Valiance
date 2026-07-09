@@ -24,7 +24,7 @@ from valiance.types import (
     Variance,
 )
 
-MAGIC = b"VLNCBC\x0d"
+MAGIC = b"VLNCBC\x0e"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -187,6 +187,8 @@ class _Writer:
         self.i64(reference.overload_index)
         self.bool(reference.vectorised)
         self.value(reference.vectorised_depths)
+        self.value(reference.vectorised_target_ranks)
+        self.value(reference.return_collection_ranks)
         self.value(reference.type_args)
         self.value(reference.static_values)
         self.optional_int(reference.arity_override)
@@ -271,6 +273,7 @@ class _Writer:
                 self.string(tag.name)
                 self.i64(tag.depth)
                 self.bool(tag.absent)
+        self.value(function.return_collection_ranks)
         self.u32(len(function.instructions))
         for instruction in function.instructions:
             try:
@@ -368,6 +371,8 @@ class _Reader:
         overload_index = self.i64()
         vectorised = self.bool()
         vectorised_depths = self.value()
+        vectorised_target_ranks = self.value()
+        return_collection_ranks = self.value()
         type_args = self.value()
         static_values = self.value()
         arity_override = self.optional_int()
@@ -378,6 +383,20 @@ class _Reader:
             isinstance(depth, int) for depth in vectorised_depths
         ):
             raise BytecodeFormatError("invalid resolved element vectorised depths")
+        if not isinstance(vectorised_target_ranks, tuple) or not all(
+            rank is None or isinstance(rank, int)
+            for rank in vectorised_target_ranks
+        ):
+            raise BytecodeFormatError(
+                "invalid resolved element vectorised target ranks"
+            )
+        if not isinstance(return_collection_ranks, tuple) or not all(
+            rank is None or isinstance(rank, int)
+            for rank in return_collection_ranks
+        ):
+            raise BytecodeFormatError(
+                "invalid resolved element return collection ranks"
+            )
         if not isinstance(type_args, tuple) or not all(
             isinstance(type_arg, str) for type_arg in type_args
         ):
@@ -394,6 +413,8 @@ class _Reader:
             overload_index=overload_index,
             vectorised=vectorised,
             vectorised_depths=vectorised_depths,
+            vectorised_target_ranks=vectorised_target_ranks,
+            return_collection_ranks=return_collection_ranks,
             type_args=type_args,
             static_values=static_values,
             arity_override=arity_override,
@@ -496,6 +517,12 @@ class _Reader:
             )
             for _ in range(self.u32())
         )
+        return_collection_ranks = self.value()
+        if not isinstance(return_collection_ranks, tuple) or not all(
+            rank is None or isinstance(rank, int)
+            for rank in return_collection_ranks
+        ):
+            raise BytecodeFormatError("invalid function return collection ranks")
         instructions = []
         for _ in range(self.u32()):
             op_byte = self.u8()
@@ -514,4 +541,5 @@ class _Reader:
             bool(multi),
             dispatch_types,
             return_tags,
+            return_collection_ranks,
         )

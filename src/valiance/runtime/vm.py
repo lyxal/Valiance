@@ -28,6 +28,7 @@ from valiance.runtime.bytecode import (
 from valiance.runtime_values import (
     DIAGNOSTIC_LIST_PREVIEW_LIMIT,
     LazyList,
+    ListValue,
     ObjectRuntimeType,
     ObjectValue,
     PanicSignal,
@@ -35,13 +36,18 @@ from valiance.runtime_values import (
     format_runtime_value,
     is_eager_sequence,
     is_list_like,
+    runtime_collection_rank,
     runtime_value_tags,
     unwrap_runtime_value,
     update_runtime_tags,
+    with_runtime_collection_rank,
 )
 from valiance.stdlib_native import runtime_stdlib_elements
 from valiance.types import (
+    AtomicType,
+    CollectionType,
     DataTag,
+    ExactType,
     RuntimeTypePattern,
     TaggedType,
     UnionDispatchBranch,
@@ -294,7 +300,11 @@ class VirtualMachine:
             initial_stack,
             retained_locals,
         )
-        return list(_apply_runtime_return_tags(result, function.code.return_tags))
+        ranked = _apply_runtime_collection_ranks(
+            result,
+            function.code.return_collection_ranks,
+        )
+        return list(_apply_runtime_return_tags(ranked, function.code.return_tags))
 
     def call_value(self, value: Any, args: list[Any]) -> list[Any]:
         if isinstance(value, FunctionValue):
@@ -457,7 +467,17 @@ class VirtualMachine:
                                 )
                             frame.stack.append(value)
                         case OpCode.BUILD_LIST:
-                            frame.stack.append(_pop_many(frame.stack, instruction.arg))
+                            count, rank = (
+                                instruction.arg
+                                if isinstance(instruction.arg, tuple)
+                                else (instruction.arg, None)
+                            )
+                            frame.stack.append(
+                                ListValue(
+                                    _pop_many(frame.stack, count),
+                                    runtime_rank=rank,
+                                )
+                            )
                         case OpCode.BUILD_STRING:
                             frame.stack.append(
                                 _build_string(frame.stack, instruction.arg)
@@ -757,6 +777,8 @@ class VirtualMachine:
             self,
             reference.vectorised,
             reference.vectorised_depths,
+            reference.vectorised_target_ranks,
+            reference.return_collection_ranks,
             reference.arity_override,
             reference.consumed_override,
             reference.static_values,
@@ -776,6 +798,7 @@ class VirtualMachine:
             frame,
             vectorised=reference.vectorised,
             vectorised_depths=reference.vectorised_depths,
+            vectorised_target_ranks=reference.vectorised_target_ranks,
             extension_reference=reference.extension,
         )
 
@@ -800,6 +823,7 @@ class VirtualMachine:
             frame,
             vectorised=reference.vectorised,
             vectorised_depths=reference.vectorised_depths,
+            vectorised_target_ranks=reference.vectorised_target_ranks,
             extension_reference=reference.extension,
         )
 
@@ -908,6 +932,7 @@ class VirtualMachine:
         *,
         vectorised: bool = False,
         vectorised_depths: tuple[int, ...] = (),
+        vectorised_target_ranks: tuple[int | None, ...] = (),
         extension_reference: VectorExtensionReference | None = None,
     ) -> None:
         arity = len(callee.code.params)
@@ -936,6 +961,7 @@ class VirtualMachine:
                     callee,
                     args,
                     vectorised_depths,
+                    vectorised_target_ranks,
                     extension,
                 )
             except _py_builtins.RuntimeError as exc:
@@ -2024,6 +2050,8 @@ def _call_resolved_builtin(
     vm: VirtualMachine,
     vectorised: bool,
     vectorised_depths: tuple[int, ...] = (),
+    vectorised_target_ranks: tuple[int | None, ...] = (),
+    return_collection_ranks: tuple[int | None, ...] = (),
     arity_override: int | None = None,
     consumed_override: int | None = None,
     static_values: tuple[Any, ...] = (),
@@ -2062,6 +2090,7 @@ def _call_resolved_builtin(
                 args,
                 context,
                 vectorised_depths,
+                vectorised_target_ranks,
                 extension,
             )
             if vectorized is None:
@@ -2074,6 +2103,10 @@ def _call_resolved_builtin(
                 )
             ownership_args = (*args, *_extension_owned_values(extension))
             vectorized = _bind_lazy_result_owners(ownership_args, vectorized)
+            vectorized = _apply_runtime_collection_ranks(
+                vectorized,
+                return_collection_ranks,
+            )
             _finalize_builtin_result_ownership(ownership_args, vectorized)
         except _py_builtins.RuntimeError as exc:
             raise _with_call_detail(
@@ -2095,6 +2128,7 @@ def _call_resolved_builtin(
             implementation(_unwrapped_args(args), context),
             overload.signature.returns,
         )
+        result = _apply_runtime_collection_ranks(result, return_collection_ranks)
     except _py_builtins.RuntimeError as exc:
         raise _with_call_detail(
             exc,
@@ -2242,6 +2276,7 @@ def _call_vectorized_resolved_builtin(
     args: tuple[Any, ...],
     context: RuntimeContext,
     vectorised_depths: tuple[int, ...] = (),
+    vectorised_target_ranks: tuple[int | None, ...] = (),
     extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...] | None:
     implementation = overload.implementation
@@ -2255,13 +2290,25 @@ def _call_vectorized_resolved_builtin(
             overload.signature.returns,
         )
     try:
-        if vectorised_depths:
+        if vectorised_depths or vectorised_target_ranks:
+            resolved_depths = _resolve_vectorisation_depths(
+                args,
+                vectorised_depths,
+                vectorised_target_ranks,
+            )
             return _vectorize_resolved_depths(
                 typed_implementation,
                 args,
                 context,
-                vectorised_depths,
+                resolved_depths,
                 extension,
+                stop_at_zero=(
+                    any(rank is not None for rank in vectorised_target_ranks)
+                    or any(
+                        _parameter_stops_vectorisation(param)
+                        for param in overload.signature.params
+                    )
+                ),
             )
         return _vectorize_resolved(typed_implementation, args, context, extension)
     except _CannotVectorize:
@@ -2311,8 +2358,12 @@ def _vectorize_resolved_depths(
     context: RuntimeContext,
     depths: tuple[int, ...],
     extension: _RuntimeVectorExtension | None = None,
+    *,
+    stop_at_zero: bool = False,
 ) -> tuple[Any, ...]:
     if not any(depth > 0 for depth in depths):
+        if stop_at_zero:
+            return implementation(_unwrapped_args(args), context)
         return _vectorize_resolved(implementation, args, context, extension)
     vector_args = tuple(
         arg for arg, depth in zip(args, depths, strict=False) if depth > 0
@@ -2326,6 +2377,7 @@ def _vectorize_resolved_depths(
             context,
             depths,
             extension,
+            stop_at_zero=stop_at_zero,
         )
     lazy_items = _vectorize_lazy_resolved_depths(
         implementation,
@@ -2333,10 +2385,50 @@ def _vectorize_resolved_depths(
         context,
         depths,
         extension,
+        stop_at_zero=stop_at_zero,
     )
     return (
         LazyList(lazy_items),
     )
+
+
+def _resolve_vectorisation_depths(
+    args: tuple[Any, ...],
+    depths: tuple[int, ...],
+    target_ranks: tuple[int | None, ...],
+) -> tuple[int, ...]:
+    """Resolve runtime-selected depths for minimum-rank call arguments."""
+    width = len(args)
+    if depths and len(depths) != width:
+        raise RuntimeError("invalid vectorisation depth metadata")
+    if target_ranks and len(target_ranks) != width:
+        raise RuntimeError("invalid vectorisation target-rank metadata")
+    fixed = depths or (0,) * width
+    targets = target_ranks or (None,) * width
+    resolved: list[int] = []
+    for value, depth, target in zip(args, fixed, targets, strict=True):
+        if target is None:
+            resolved.append(depth)
+            continue
+        actual_rank = runtime_collection_rank(value)
+        if actual_rank is None:
+            raise RuntimeError(
+                "cannot determine the runtime rank of a minimum-rank list "
+                "for exact-rank parameter adaptation"
+            )
+        if actual_rank < target:
+            raise RuntimeError(
+                f"runtime list rank {actual_rank} is below required rank {target}"
+            )
+        resolved.append(actual_rank - target)
+    return tuple(resolved)
+
+
+def _parameter_stops_vectorisation(typ: Any) -> bool:
+    typ = normalize(typ)
+    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
+        return _parameter_stops_vectorisation(typ.inner)
+    return isinstance(typ, CollectionType)
 
 
 def _vectorize_function(
@@ -2344,6 +2436,7 @@ def _vectorize_function(
     callee: FunctionValue,
     args: tuple[Any, ...],
     depths: tuple[int, ...] = (),
+    target_ranks: tuple[int | None, ...] = (),
     extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...]:
     def implementation(item_args: tuple[Any, ...], _context: RuntimeContext):
@@ -2360,10 +2453,11 @@ def _vectorize_function(
             implementation,
             args,
             context,
-            depths,
+            _resolve_vectorisation_depths(args, depths, target_ranks),
             extension,
+            stop_at_zero=True,
         )
-        if depths
+        if depths or target_ranks
         else _vectorize_resolved(implementation, args, context, extension)
     )
     ownership_args = (*args, *_extension_owned_values(extension))
@@ -2423,6 +2517,8 @@ def _vectorize_eager_resolved_depths(
     context: RuntimeContext,
     depths: tuple[int, ...],
     extension: _RuntimeVectorExtension | None = None,
+    *,
+    stop_at_zero: bool = False,
 ) -> tuple[Any, ...]:
     vector_lengths = tuple(
         len(arg)
@@ -2455,6 +2551,7 @@ def _vectorize_eager_resolved_depths(
                 context,
                 item_depths,
                 extension,
+                stop_at_zero=stop_at_zero,
             )
         )
 
@@ -2512,6 +2609,8 @@ def _vectorize_lazy_resolved_depths(
     context: RuntimeContext,
     depths: tuple[int, ...],
     extension: _RuntimeVectorExtension | None = None,
+    *,
+    stop_at_zero: bool = False,
 ):
     iterators = tuple(
         iter(arg) if depth > 0 and is_list_like(arg) else None
@@ -2536,6 +2635,7 @@ def _vectorize_lazy_resolved_depths(
             context,
             item_depths,
             extension,
+            stop_at_zero=stop_at_zero,
         )
         if len(result) != 1:
             raise RuntimeError("lazy vectorised overload must return one value")
@@ -3391,4 +3491,16 @@ def _apply_runtime_return_tags(
             remove=tuple(tag for tag in tags if tag.absent),
         )
         for value, tags in zip(values, tag_sets, strict=True)
+    )
+
+
+def _apply_runtime_collection_ranks(
+    values: tuple[Any, ...] | list[Any],
+    ranks: tuple[int | None, ...],
+) -> tuple[Any, ...]:
+    if len(values) != len(ranks):
+        return tuple(values)
+    return tuple(
+        with_runtime_collection_rank(value, rank)
+        for value, rank in zip(values, ranks, strict=True)
     )

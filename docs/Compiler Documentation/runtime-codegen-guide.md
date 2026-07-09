@@ -696,6 +696,11 @@ For a scalar overload with a runtime implementation:
 - Arguments with positive depths are indexed one level per vectorisation pass;
   their remaining depth is decremented recursively until the scalar call shape
   is reached.
+- A resolved call may also carry a per-argument exact target rank. This is used
+  when a minimum-rank argument is parameter-compatible with an exact-rank
+  parameter. Runtime computes `actual_rank - target_rank` from reified rank
+  evidence and then follows the ordinary depth algorithm. A resolved depth of
+  zero calls the collection-parameter function once rather than iterating it.
 - Eager sequence list arguments must have the same length before mapping.
 - Lazy list arguments are advanced with iterators and may be infinite.
 - The scalar overload may return multiple stack values; vectorisation collects
@@ -704,6 +709,11 @@ For a scalar overload with a runtime implementation:
   to produce exactly one stack value per item.
 - Lazy vectorisation detects mismatched finite/lazy input lengths only when the
   shorter iterator is exhausted.
+- Eager `ListValue` and lazy `LazyList` values retain known exact runtime rank.
+  List literals encode their analysed rank in `BUILD_LIST`; resolved element
+  calls and function returns reattach exact return-rank evidence after
+  execution. This avoids consuming a lazy value merely to discover whether a
+  minimum-rank argument has reached an exact-rank parameter boundary.
 - A resolved vectorised call may carry an `extend` reference. Defaults are
   evaluated once per call after argument sourcing, pattern rules receive only
   the arguments marked present by their pattern, and selectors receive an

@@ -152,6 +152,7 @@ class _Compiler:
         multi: bool = False,
         dispatch_types: tuple[str | None, ...] = (),
         return_tags: tuple[tuple[DataTag, ...], ...] = (),
+        return_collection_ranks: tuple[int | None, ...] = (),
     ) -> FunctionCode:
         for index, node in enumerate(body):
             self.node(node)
@@ -168,6 +169,7 @@ class _Compiler:
             multi,
             dispatch_types,
             return_tags,
+            return_collection_ranks,
         )
 
     def node(self, node: ASTNode | TypedNode) -> None:
@@ -313,7 +315,16 @@ class _Compiler:
                     if isinstance(typed_node, TypedLiteralNode)
                     else items
                 )
-                self.collection(compiled_items, OpCode.BUILD_LIST)
+                rank = (
+                    _runtime_collection_rank(typed_node.typ)
+                    if isinstance(typed_node, TypedLiteralNode)
+                    else None
+                )
+                self.collection(
+                    compiled_items,
+                    OpCode.BUILD_LIST,
+                    argument=(len(compiled_items), rank),
+                )
             case TupleLiteralNode(items):
                 compiled_items = (
                     typed_node.items
@@ -387,10 +398,12 @@ class _Compiler:
         self,
         items: tuple[tuple[ASTNode | TypedNode, ...], ...],
         op: OpCode,
+        *,
+        argument: object | None = None,
     ) -> None:
         for item in items:
             self.expression(item)
-        self.emit(op, len(items))
+        self.emit(op, len(items) if argument is None else argument)
 
     def _register_runtime_tag_declaration(self, node: TagDeclarationNode) -> None:
         name = node.tag.name
@@ -839,6 +852,7 @@ def _compile_function_overload(
         multi=_overload_is_multi(overload),
         dispatch_types=_overload_dispatch_types(overload),
         return_tags=_function_return_tags(typ),
+        return_collection_ranks=_function_return_collection_ranks(typ),
     )
 
 
@@ -903,6 +917,14 @@ def _function_return_tags(
     if typ.returns is None:
         return ()
     return tuple(_top_level_runtime_tags(ret) for ret in typ.returns)
+
+
+def _function_return_collection_ranks(
+    typ: FunctionType,
+) -> tuple[int | None, ...]:
+    if typ.returns is None:
+        return ()
+    return tuple(_runtime_collection_rank(ret) for ret in typ.returns)
 
 
 def _top_level_runtime_tags(typ: Type) -> tuple[DataTag, ...]:
@@ -1178,6 +1200,16 @@ def _resolved_element_reference(
     vectorised_depths = (
         tuple(node.overload.vectorised_depths) if node.overload is not None else ()
     )
+    vectorised_target_ranks = (
+        tuple(node.overload.vectorised_target_ranks)
+        if node.overload is not None
+        else ()
+    )
+    return_collection_ranks = (
+        tuple(_runtime_collection_rank(ret) for ret in node.overload.actual_returns)
+        if node.overload is not None
+        else ()
+    )
     arity_override = None
     consumed_override = None
     if (
@@ -1193,6 +1225,8 @@ def _resolved_element_reference(
         node.overload_index,
         vectorised=vectorised,
         vectorised_depths=vectorised_depths,
+        vectorised_target_ranks=vectorised_target_ranks,
+        return_collection_ranks=return_collection_ranks,
         type_args=type_args,
         static_values=static_values,
         arity_override=arity_override,
@@ -1200,6 +1234,17 @@ def _resolved_element_reference(
         multidispatch=multidispatch,
         extension=_compiled_element_extension(node.extension),
     )
+
+
+def _runtime_collection_rank(typ: Type | None) -> int | None:
+    if typ is None:
+        return None
+    typ = normalize(typ)
+    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
+        return _runtime_collection_rank(typ.inner)
+    if isinstance(typ, (ListExactType, ArrayExactType)) and isinstance(typ.rank, int):
+        return typ.rank
+    return None
 
 
 def _compiled_element_extension(

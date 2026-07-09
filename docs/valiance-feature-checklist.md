@@ -122,7 +122,7 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Apply implicit fork-like behavior across list item expressions.
 - [x] Pop the maximum required arity across list items during implicit construction.
 - [x] Reject untyped empty-list literals.
-- [ ] Allow empty lists when a type annotation, cast, or typed list constructor supplies the element type.
+- [x] Allow empty lists when a type annotation, cast, or explicit function return type supplies the element type and rank.
 - [x] Support list indexing, slicing, multidimensional indexing, and spread indexing.
 - [x] Support lazy list indexing and non-negative positive-step lazy slicing.
 - [x] Support immutable list updates through indexed assignment syntax.
@@ -165,6 +165,7 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Enforce minimum-rank compatibility.
 - [x] Enforce rugged-rank compatibility.
 - [x] Allow exact-rank lists where compatible minimum-rank lists are expected.
+- [x] Allow minimum-rank lists as exact-rank call parameters when the minimum rank is high enough, without making them assignable.
 - [x] Allow exact- or minimum-rank lists where compatible rugged lists are expected.
 - [ ] Represent rugged rank as a compile-time abstraction over recursive union structures.
 - [x] Allow explicit rugged types to vectorise only where atomic parameters are expected.
@@ -337,6 +338,8 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Bind generic exact parameters to the whole argument type.
 - [x] Broadcast exact arguments unchanged when another parameter vectorises.
 - [x] Preserve per-argument automatic vectorisation depths in saved bytecode.
+- [x] Preserve dynamic exact target ranks for minimum-rank call adaptation in saved bytecode.
+- [x] Reify known exact list ranks on eager and lazy runtime list values.
 - [x] Apply atomic-only vectorisation for explicit rugged types.
 - [ ] Apply the same atomic-only rule to equivalent expanded unions.
 - [ ] Parse and execute `at (...) => ...`.

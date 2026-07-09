@@ -16,6 +16,7 @@ class LazyList:
     """A list-like value backed by an iterable that may be lazy or infinite."""
 
     iterable: Iterable[Any]
+    runtime_rank: int | None = field(default=None, compare=False, repr=False)
     owned_values: tuple[Any, ...] = field(default=(), compare=False, repr=False)
     refcount: int = field(default=1, compare=False, repr=False)
 
@@ -28,6 +29,19 @@ class LazyList:
         if isinstance(other, Sequence) and not isinstance(other, (str, bytes, tuple)):
             return list(self) == list(other)
         return False
+
+
+class ListValue(list[Any]):
+    """An eager Valiance list carrying its known uniform runtime rank."""
+
+    def __init__(
+        self,
+        iterable: Iterable[Any] = (),
+        *,
+        runtime_rank: int | None = None,
+    ) -> None:
+        super().__init__(iterable)
+        self.runtime_rank = runtime_rank
 
 
 @dataclass(frozen=True, eq=False)
@@ -139,6 +153,47 @@ def is_eager_sequence(value: Any) -> bool:
     """Return whether a list-like value can be indexed without consumption."""
     value = unwrap_runtime_value(value)
     return isinstance(value, Sequence) and not isinstance(value, (str, bytes, tuple))
+
+
+def runtime_collection_rank(value: Any) -> int | None:
+    """Return the exact uniform rank carried by or observable from a list value."""
+    value = unwrap_runtime_value(value)
+    recorded = getattr(value, "runtime_rank", None)
+    if isinstance(recorded, int) and recorded >= 1:
+        return recorded
+    if not is_eager_sequence(value):
+        return None
+    if not value:
+        return 1
+
+    child_ranks = tuple(runtime_collection_rank(item) for item in value)
+    list_children = tuple(rank is not None for rank in child_ranks)
+    if not any(list_children):
+        return 1
+    if not all(list_children):
+        return None
+    first = child_ranks[0]
+    if first is None or any(rank != first for rank in child_ranks[1:]):
+        return None
+    return first + 1
+
+
+def with_runtime_collection_rank(value: Any, rank: int | None) -> Any:
+    """Attach exact collection-rank evidence without changing value semantics."""
+    if rank is None:
+        return value
+    wrapped = unwrap_runtime_value(value)
+    tags = runtime_value_tags(value)
+    if isinstance(wrapped, LazyList):
+        wrapped.runtime_rank = rank
+        return TaggedValue(wrapped, tags) if tags else wrapped
+    if isinstance(wrapped, ListValue):
+        wrapped.runtime_rank = rank
+        return TaggedValue(wrapped, tags) if tags else wrapped
+    if isinstance(wrapped, list):
+        ranked = ListValue(wrapped, runtime_rank=rank)
+        return TaggedValue(ranked, tags) if tags else ranked
+    return value
 
 
 def format_runtime_value(

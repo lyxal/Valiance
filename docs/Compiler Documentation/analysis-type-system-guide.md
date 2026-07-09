@@ -465,6 +465,16 @@ An exact list can satisfy a compatible minimum-rank list if its rank is high
 enough. Generic solving may widen exact/minimum constraints to a minimum-rank
 solution.
 
+Minimum rank is also compatible with a lower-or-equal exact rank specifically
+at a call parameter. This is call adaptation, not assignability: `Number*` is
+still not assignable to `Number+`. When a `Number*3` argument is passed to a
+`Number+2` parameter, analysis records exact target rank 2. Runtime uses the
+value's reified uniform rank to call once at rank 2 or peel additional outer
+ranks through vectorisation. `AppliedOverload.vectorised_target_ranks` carries
+this policy alongside the minimum fixed depths. Result types retain the
+uncertainty: a dynamic excess of zero or more yields `R | R*`, while a known
+minimum positive excess yields a minimum-rank collection result.
+
 ### Rugged Lists
 
 `RuggedList(T, n)` means potentially ragged nested list structure. Surface
@@ -825,7 +835,14 @@ For list literals:
 - stack fallback/input inference is merged across item branches
 - the final literal consumes the maximum stack arity consumed by any item
 - empty list literals are rejected unless another feature supplies a type
-  annotation/cast
+  annotation/cast or they are syntactically returned from a function with an
+  explicit collection return type
+
+Return-context inference chooses the exact minimal rank compatible with the
+declared collection return. Thus `define \\xs -> Number* => []` analyses the
+literal as `Number+` and then validates it against the declared `Number*`
+return. The same contextualisation is applied to explicit `return` values and
+terminal `if`, `match`, and `try` branches.
 
 Tuple, record, and dict literals reuse the same literal item machinery but build
 different result types.

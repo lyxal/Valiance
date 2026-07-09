@@ -74,6 +74,8 @@ class ResolvedElementReference:
     overload_index: int
     vectorised: bool = False
     vectorised_depths: tuple[int, ...] = ()
+    vectorised_target_ranks: tuple[int | None, ...] = ()
+    return_collection_ranks: tuple[int | None, ...] = ()
     type_args: tuple[str, ...] = ()
     static_values: tuple[Any, ...] = ()
     arity_override: int | None = None
@@ -95,6 +97,7 @@ class FunctionCode:
     multi: bool = False
     dispatch_types: tuple[str | None, ...] = ()
     return_tags: tuple[tuple[DataTag, ...], ...] = ()
+    return_collection_ranks: tuple[int | None, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

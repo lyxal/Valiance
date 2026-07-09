@@ -2312,6 +2312,7 @@ class Analyser:
         outer: AnalysisBranch,
         node: FunctionNode,
     ) -> tuple[FunctionAnalysis, AnalysisBranch] | None:
+        node = _contextualize_function_empty_returns(node)
         if node.params is not None and any(
             _is_call_site_checked_param(param.typ) for param in node.params
         ):
@@ -4704,6 +4705,9 @@ def _call_element_candidates(
                         concrete_overload,
                         concrete_args,
                     ),
+                    vectorised_target_ranks=(
+                        concrete_application.vectorised_target_ranks
+                    ),
                 ),
                 branch=branch.with_stack(T.TypeStack(base_stack)),
                 call_arg_order=call_arg_order,
@@ -5127,6 +5131,7 @@ def _apply_overload_to_branch(
         applied.vectorised_depths,
         tuple(sorted(rank_values.items())),
         element_tags=_propagated_element_tags(overload, specialized_args),
+        vectorised_target_ranks=applied.vectorised_target_ranks,
     )
     return OverloadApplication(applied, specialized_branch)
 
@@ -5162,6 +5167,7 @@ def _apply_tag_overlay(
                 applied.rank_values,
                 applied.runtime_consumed_count,
                 applied.element_tags,
+                vectorised_target_ranks=applied.vectorised_target_ranks,
             )
         )
     if not matches:
@@ -5236,6 +5242,7 @@ def _apply_call_site_checked_overload(
             tuple(sorted(rank_values.items())),
             consumed_count + len(args),
             element_tags=_propagated_element_tags(concrete, concrete_args),
+            vectorised_target_ranks=candidate.vectorised_target_ranks,
         )
         return OverloadApplication(
             applied,
@@ -7327,6 +7334,100 @@ def _genericize_function_node(
         generic_constraints=generic_constraints,
         location=function.location,
     )
+
+
+def _contextualize_function_empty_returns(function: FunctionNode) -> FunctionNode:
+    """Infer empty list literals that are syntactically returned by a function."""
+    if not function.returns:
+        return function
+    body = _contextualize_return_block(function.body, function.returns)
+    return function if body == function.body else replace(function, body=body)
+
+
+def _contextualize_return_block(
+    body: tuple[ASTNode, ...],
+    returns: tuple[T.Type, ...],
+) -> tuple[ASTNode, ...]:
+    nodes = tuple(_contextualize_explicit_return(node, returns) for node in body)
+    if not nodes:
+        return nodes
+    if len(returns) == 1:
+        final = _contextualize_return_expression(nodes[-1], returns[0])
+        return (*nodes[:-1], final)
+    if len(nodes) >= len(returns):
+        prefix = nodes[: -len(returns)]
+        suffix = tuple(
+            _contextualize_return_expression(node, expected)
+            for node, expected in zip(
+                nodes[-len(returns) :],
+                returns,
+                strict=True,
+            )
+        )
+        return prefix + suffix
+    return nodes
+
+
+def _contextualize_explicit_return(
+    node: ASTNode,
+    returns: tuple[T.Type, ...],
+) -> ASTNode:
+    if isinstance(node, ReturnNode) and len(node.values) == len(returns):
+        return replace(
+            node,
+            values=tuple(
+                _contextualize_return_expression(value, expected)
+                for value, expected in zip(node.values, returns, strict=True)
+            ),
+        )
+    return node
+
+
+def _contextualize_return_expression(node: ASTNode, expected: T.Type) -> ASTNode:
+    if isinstance(node, ListLiteralNode) and not node.items and node.typ is None:
+        inferred = _empty_list_return_type(expected)
+        return node if inferred is None else replace(node, typ=inferred)
+    if isinstance(node, IfNode):
+        return replace(
+            node,
+            then_branch=_contextualize_return_block(node.then_branch, (expected,)),
+            else_branch=_contextualize_return_block(node.else_branch, (expected,)),
+        )
+    if isinstance(node, MatchNode):
+        return replace(
+            node,
+            cases=tuple(
+                replace(
+                    case,
+                    body=_contextualize_return_block(case.body, (expected,)),
+                )
+                for case in node.cases
+            ),
+        )
+    if isinstance(node, TryNode):
+        return replace(
+            node,
+            body=_contextualize_return_block(node.body, (expected,)),
+            handlers=tuple(
+                replace(
+                    handler,
+                    body=_contextualize_return_block(handler.body, (expected,)),
+                )
+                for handler in node.handlers
+            ),
+        )
+    return node
+
+
+def _empty_list_return_type(expected: T.Type) -> T.Type | None:
+    expected = T.normalize(expected)
+    if isinstance(expected, (T.TaggedType, T.ExactType)):
+        return _empty_list_return_type(expected.inner)
+    if isinstance(expected, (T.ListExactType, T.ListMinType, T.ListRuggedType)):
+        return T.C(T.ListExactType, expected.base, expected.rank)
+    if isinstance(expected, (T.ArrayExactType, T.ArrayMinType)):
+        return T.C(T.ArrayExactType, expected.base, expected.rank)
+    return None
 
 
 def _genericize_ast_node(node: ASTNode, generics: tuple[Symbol, ...]) -> ASTNode:
