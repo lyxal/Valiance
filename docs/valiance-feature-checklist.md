@@ -677,6 +677,7 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Provide the generic `Result[T, E]` type.
 - [x] Provide success and error variants or constructors.
 - [x] Provide the `Err` trait.
+- [x] Provide the standard recoverable built-in error objects.
 - [x] Provide the `Fault` trait.
 - [x] Implement panic values and panic propagation.
 - [x] Attach `Panic[T]` element tags to panicking operations.

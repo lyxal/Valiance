@@ -8,6 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from valiance.analysis import Analyser
+from valiance.analysis.builtins import BUILTIN_ERROR_TYPES
 from valiance.parsing import parse
 from valiance.runtime import (
     AssertionFailure,
@@ -1206,6 +1207,45 @@ message
             ),
             ["division by zero"],
         )
+
+    def test_builtin_error_types_construct_and_expose_messages(self):
+        constructors = "\n".join(
+            f'{error_type.text}("{error_type.text}")'
+            for error_type in BUILTIN_ERROR_TYPES
+        )
+        values = execute(constructors)
+
+        self.assertEqual(len(values), len(BUILTIN_ERROR_TYPES))
+        for error_type, value in zip(BUILTIN_ERROR_TYPES, values, strict=True):
+            with self.subTest(error_type=error_type.text):
+                self.assertIsInstance(value, ObjectValue)
+                self.assertEqual(value.type_name, error_type.text)
+                self.assertEqual(value.fields, {"message": error_type.text})
+
+        messages = "\n".join(
+            f'{error_type.text}("{error_type.text}") message'
+            for error_type in BUILTIN_ERROR_TYPES
+        )
+        self.assertEqual(
+            execute(messages),
+            [error_type.text for error_type in BUILTIN_ERROR_TYPES],
+        )
+
+    def test_builtin_value_error_forms_result_in_safe_division(self):
+        source = """
+define safediv(x: Number, y: Number) =>
+  if ($y 0 ==) => ValueError("y cannot be 0")
+  else => $x / $y
+  end
+end
+safediv(3, 0)
+"""
+
+        [value] = execute(source)
+
+        self.assertIsInstance(value, ObjectValue)
+        self.assertEqual(value.type_name, "ValueError")
+        self.assertEqual(value.fields["message"], "y cannot be 0")
 
     def test_executes_object_default_constructor_and_field_access(self):
         self.assertEqual(

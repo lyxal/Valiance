@@ -2859,6 +2859,29 @@ trait Err =>
 end
 ```
 
+The following recoverable error objects are built in. Each constructor takes a
+single `String` message, exposes it through `$.message` and `message`, and
+implements `Err`:
+
+- General validation and data errors: `Error`, `ValueError`, `RangeError`,
+  `ParseError`, `DivisionByZeroError`, `IndexError`, `KeyError`, `ShapeError`,
+  and `StateError`.
+- System and concurrency errors: `IOError`, `NotFoundError`,
+  `AlreadyExistsError`, `PermissionError`, `ClosedError`, `TimeoutError`, and
+  `CancelledError`.
+
+For example:
+
+```
+define safediv(x: Number, y: Number) =>
+  if ($y 0 ==) => DivisionByZeroError("y cannot be 0")
+  else => $x / $y
+  end
+end
+```
+
+The inferred return type is `Result[Number, DivisionByZeroError]`.
+
 - However, for convenience, there is some union simplification.
 - Akin to how optional types simplify from union types, `T | E` (where `E` implements `Err`) is turned into `OK[T] | E` which is turned into `Result[T, E]`
 - If there are multiple `OK` types in a union, they will merge into one `OK`. If there are multiple types implementing `Err` in a union, they will form a union in the `Result` type.

@@ -15,7 +15,7 @@ from valiance.analysis import (
 )
 from valiance.analysis.analyser import _branch_argument_substitution
 from valiance.analysis.annotations import AnnotationSpec, register_annotation
-from valiance.analysis.builtins import BUILTIN_ELEMENTS
+from valiance.analysis.builtins import BUILTIN_ELEMENTS, BUILTIN_ERROR_TYPES
 from valiance.asts import (
     BreakNode,
     CallNode,
@@ -1986,6 +1986,25 @@ getName $joe
         self.assertEqual(definition.attribute_type(Symbol("message")), String)
         self.assertTrue(assignable(error_type, N(Symbol("Err")), analyser.env.context))
         self.assertTrue(analyser.env.overloads_for(Symbol("message")))
+
+    def test_builtin_error_types_have_constructors_messages_and_err_impls(self):
+        env = default_environment()
+
+        for error_name in BUILTIN_ERROR_TYPES:
+            with self.subTest(error_type=error_name.text):
+                error_type = N(error_name)
+                definition = env.lookup_object(error_name)
+                self.assertIsNotNone(definition)
+                self.assertEqual(
+                    definition.attribute_type(Symbol("message")),
+                    String,
+                )
+                self.assertTrue(assignable(error_type, N(Symbol("Err")), env.context))
+
+                [constructor] = env.overloads_for(error_name)
+                self.assertEqual(constructor.params, (String,))
+                self.assertEqual(constructor.returns, (error_type,))
+                self.assertEqual(constructor.param_names, (Symbol("message"),))
 
     def test_err_type_variant_marks_members_and_parent_as_err(self):
         analyser = Analyser()

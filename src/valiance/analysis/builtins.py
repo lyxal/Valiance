@@ -38,9 +38,32 @@ FAULT = Symbol("Fault")
 OK = Symbol("OK")
 RESULT = Symbol("Result")
 
+BUILTIN_ERROR_TYPES = tuple(
+    Symbol(name)
+    for name in (
+        "Error",
+        "ValueError",
+        "RangeError",
+        "ParseError",
+        "DivisionByZeroError",
+        "IndexError",
+        "KeyError",
+        "ShapeError",
+        "StateError",
+        "IOError",
+        "NotFoundError",
+        "AlreadyExistsError",
+        "PermissionError",
+        "ClosedError",
+        "TimeoutError",
+        "CancelledError",
+    )
+)
+
 TRAIT_IMPLS = (
     (INTEGER, REAL),
     (REAL, NUMBER),
+    *((error_type, ERR) for error_type in BUILTIN_ERROR_TYPES),
     (Symbol("AssertError"), ERR),
     (Symbol("PanicError"), ERR),
     (Symbol("UnwrappedNoneFault"), FAULT),
@@ -126,8 +149,15 @@ def builtin(
     call_site: Callable[..., T.Overload | None] | None = None,
     element_tags: tuple[T.ElementTag, ...] = (),
     data_tags: tuple[tuple[str | Symbol, T.TagKind], ...] = (),
+    param_names: tuple[str | Symbol | None, ...] = (),
 ):
     """Register one overload of `name`, implemented by the decorated function."""
+    normalized_param_names = tuple(
+        Symbol(param_name) if isinstance(param_name, str) else param_name
+        for param_name in param_names
+    )
+    if normalized_param_names and len(normalized_param_names) != len(params):
+        raise ValueError("param_names must match the number of parameters")
 
     def register(fn: RuntimeImpl) -> RuntimeImpl:
         for tag_name, tag_kind in data_tags:
@@ -137,6 +167,7 @@ def builtin(
                 params,
                 returns,
                 generic_constraints,
+                param_names=normalized_param_names,
                 call_site_body=call_site,
                 element_tags=frozenset(element_tags),
             ),
@@ -844,6 +875,39 @@ def _join(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 # --------------------------------------------------------------------------
+# Recoverable errors
+# --------------------------------------------------------------------------
+
+
+def _register_builtin_error_type(error_type: Symbol) -> None:
+    @builtin(
+        error_type,
+        (T.String,),
+        (T.N(error_type),),
+        param_names=("message",),
+    )
+    def construct(
+        args: tuple[Any, ...],
+        ctx: RuntimeContext,
+        *,
+        _error_type: Symbol = error_type,
+    ) -> tuple[Any, ...]:
+        return (ObjectValue(_error_type.text, {"message": args[0]}),)
+
+
+for _error_type in BUILTIN_ERROR_TYPES:
+    _register_builtin_error_type(_error_type)
+
+
+@builtin("message", (T.N(ERR),), (T.String,))
+def _error_message(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    error = args[0]
+    if not isinstance(error, ObjectValue) or "message" not in error.fields:
+        raise RuntimeError("Err value has no message field")
+    return (error.fields["message"],)
+
+
+# --------------------------------------------------------------------------
 # Optionals and results
 # --------------------------------------------------------------------------
 
@@ -1036,6 +1100,9 @@ def default_environment() -> T.Environment:
         env.define_tag(Symbol(name), kind)
     env.define_trait(ERR)
     env.define_trait(FAULT)
+    message_attribute = T.ObjectAttribute(Symbol("message"), T.String)
+    for error_type in BUILTIN_ERROR_TYPES:
+        env.define_object(error_type, (message_attribute,))
     env.context.set_generic_variance(OK, (T.Variance.COVARIANT,))
     env.context.set_generic_variance(
         RESULT,

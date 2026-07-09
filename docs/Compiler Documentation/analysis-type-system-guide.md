@@ -714,11 +714,17 @@ Error-like types are currently recognized by a narrow built-in convention:
 - the nominal `Err` type itself
 - non-generic nominal types whose names end with `Error`
 
-The standard environment also defines the built-in `Err` trait and records
-`AssertError` and `PanicError` as implementations. User code can add explicit
-implementations with normal `object MyError as Err => ...` syntax; the current
-normalizer is still name-convention based because `normalize(...)` does not take
-an environment.
+The standard environment also defines the built-in `Err` trait and records the
+recoverable built-in error objects, `AssertError`, and `PanicError` as
+implementations. The recoverable built-ins are `Error`, `ValueError`,
+`RangeError`, `ParseError`, `DivisionByZeroError`, `IndexError`, `KeyError`,
+`ShapeError`, `StateError`, `IOError`, `NotFoundError`, `AlreadyExistsError`,
+`PermissionError`, `ClosedError`, `TimeoutError`, and `CancelledError`. Each has
+an analyser-visible readable `message: String` field and a native constructor
+with a single `message` parameter. User code can add explicit implementations
+with normal `object MyError as Err => ...` syntax; the current normalizer is
+still name-convention based because `normalize(...)` does not take an
+environment.
 
 Assignability and overload solving know the Result success/error split:
 

@@ -311,7 +311,9 @@ registry at import time (`BUILTIN_ELEMENTS = _all_elements()`) after every
 1. Write the runtime implementation as a function with signature
    `(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]`.
 2. Decorate it with `@builtin(name, params, returns, generic_constraints=())`,
-   where `name` is a plain string (e.g. `"square"`, not a `Symbol`).
+   where `name` is a plain string (e.g. `"square"`, not a `Symbol`). Pass
+   `param_names=(...)` when the overload should retain source-level parameter
+   names for diagnostics and explicit-call planning.
 3. If the element has multiple overloads that share one implementation, stack
    `@builtin(...)` multiple times on the same function -- one application per
    overload. Decorator stacking applies bottom-up, so the overload closest to
