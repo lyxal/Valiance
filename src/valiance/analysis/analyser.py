@@ -1442,10 +1442,13 @@ class Analyser:
         params = (FunctionParam(Symbol("self"), self_type),) + tuple(
             definition.function.params or ()
         )
+        body = definition.function.body
+        if annotation_hooks.has_annotation(definition.annotations, "self"):
+            body = prepare_constructor_body(body)
         function_node = annotation_hooks.DEFAULT_REGISTRY.transform_function(
             FunctionNode(
                 params=params,
-                body=definition.function.body,
+                body=body,
                 returns=definition.function.returns,
                 where_clause=definition.function.where_clause,
                 element_tags=definition.function.element_tags,
@@ -1454,10 +1457,19 @@ class Analyser:
             ),
             definition.annotations,
         )
+        function_node = replace(
+            function_node,
+            params=(replace(function_node.params[0], name=None),)
+            + function_node.params[1:],
+        )
         function_node = _genericize_function_node(function_node, definition.generics)
         self._friendly_owners = self._friendly_owners + (owner,)
         try:
-            result = self._analyse_function_literal(branch, function_node)
+            result = self._analyse_function_literal(
+                branch,
+                function_node,
+                initial_function_locals=((Symbol("self"), self_type),),
+            )
         finally:
             self._friendly_owners = self._friendly_owners[:-1]
         if result is None:

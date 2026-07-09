@@ -207,26 +207,47 @@ class _Frame:
     globals: dict[str, Any]
     cycle_values: tuple[Any, ...] = ()
     cycle_index: int = 0
+    cycle_stack_remaining: int = 0
     retained_locals: frozenset[str] = frozenset()
     panic_handlers: list[_PanicHandler] = field(default_factory=list)
-    cycle_scopes: list[tuple[tuple[Any, ...], int]] = field(default_factory=list)
+    cycle_scopes: list[tuple[tuple[Any, ...], int, int]] = field(default_factory=list)
 
-    def source_args(self, arity: int) -> tuple[tuple[Any, ...], int, int]:
+    def source_args(
+        self,
+        arity: int,
+    ) -> tuple[tuple[Any, ...], int, int, int]:
+        """Preview arguments from physical values and the conceptual input stack."""
         if arity == 0:
-            return (), 0, self.cycle_index
-        available = min(len(self.stack), arity)
-        missing = arity - available
-        stack_args = tuple(self.stack[-available:]) if available else ()
-        if missing == 0:
-            return stack_args, available, self.cycle_index
-        if not self.cycle_values:
+            return (), 0, self.cycle_index, self.cycle_stack_remaining
+
+        stack_count = min(len(self.stack), arity)
+        stack_args = tuple(self.stack[-stack_count:]) if stack_count else ()
+        initial_count = min(
+            self.cycle_stack_remaining,
+            arity - stack_count,
+        )
+        initial_start = self.cycle_stack_remaining - initial_count
+        initial_args = self.cycle_values[
+            initial_start : self.cycle_stack_remaining
+        ]
+        missing = arity - stack_count - initial_count
+        if missing and not self.cycle_values:
             raise _StackUnderflow
         cycle_args = tuple(
             self.cycle_values[(self.cycle_index + index) % len(self.cycle_values)]
             for index in range(missing)
         )
-        next_cycle_index = (self.cycle_index + missing) % len(self.cycle_values)
-        return cycle_args + stack_args, available, next_cycle_index
+        next_cycle_index = (
+            (self.cycle_index + missing) % len(self.cycle_values)
+            if self.cycle_values
+            else self.cycle_index
+        )
+        return (
+            cycle_args + initial_args + stack_args,
+            stack_count,
+            next_cycle_index,
+            initial_start,
+        )
 
 
 class _StackUnderflow(Exception):
@@ -387,10 +408,11 @@ class VirtualMachine:
         retained_locals: frozenset[str] = frozenset(),
     ) -> list[Any]:
         frame = _Frame(
-            list(initial_stack or ()),
-            locals_,
-            globals_,
-            cycle_values,
+            stack=list(initial_stack or ()),
+            locals=locals_,
+            globals=globals_,
+            cycle_values=cycle_values,
+            cycle_stack_remaining=(len(cycle_values) if code.cycle_params else 0),
             retained_locals=retained_locals,
         )
         ip = 0
@@ -535,9 +557,12 @@ class VirtualMachine:
                             frame.stack.append(ObjectValue(enum_name, fields))
                         case OpCode.GET_FIELD:
                             try:
-                                args, stack_count, next_cycle_index = (
-                                    frame.source_args(1)
-                                )
+                                (
+                                    args,
+                                    stack_count,
+                                    next_cycle_index,
+                                    next_cycle_stack_remaining,
+                                ) = frame.source_args(1)
                             except _StackUnderflow as exc:
                                 raise RuntimeError(
                                     "stack underflow during field access"
@@ -545,6 +570,9 @@ class VirtualMachine:
                             if stack_count:
                                 del frame.stack[-stack_count:]
                             frame.cycle_index = next_cycle_index
+                            frame.cycle_stack_remaining = (
+                                next_cycle_stack_remaining
+                            )
                             receiver = args[0]
                             if isinstance(receiver, ObjectValue):
                                 frame.stack.append(
@@ -559,8 +587,11 @@ class VirtualMachine:
                                     _get_field(receiver, instruction.arg)
                                 )
                         case OpCode.SET_FIELD:
-                            value = _pop(frame.stack, "field assignment")
-                            receiver = _pop(frame.stack, "field assignment")
+                            receiver, value = _source_args(
+                                frame,
+                                2,
+                                "field assignment",
+                            )
                             frame.stack.append(
                                 _set_field(receiver, instruction.arg, value)
                             )
@@ -617,10 +648,15 @@ class VirtualMachine:
                                 _release_stack_tail(frame.stack, len(patterns), self)
                                 frame.locals.update(bindings)
                                 frame.cycle_scopes.append(
-                                    (frame.cycle_values, frame.cycle_index)
+                                    (
+                                        frame.cycle_values,
+                                        frame.cycle_index,
+                                        frame.cycle_stack_remaining,
+                                    )
                                 )
                                 frame.cycle_values = values
                                 frame.cycle_index = 0
+                                frame.cycle_stack_remaining = 0
                                 ip = target
                                 continue
                         case OpCode.MATCH_ERROR:
@@ -990,7 +1026,12 @@ class VirtualMachine:
     ) -> None:
         arity = len(callee.code.params)
         try:
-            args, stack_count, next_cycle_index = frame.source_args(arity)
+            (
+                args,
+                stack_count,
+                next_cycle_index,
+                next_cycle_stack_remaining,
+            ) = frame.source_args(arity)
         except _StackUnderflow as exc:
             raise RuntimeError(
                 _format_call_error(
@@ -1002,6 +1043,7 @@ class VirtualMachine:
         if stack_count:
             del frame.stack[-stack_count:]
         frame.cycle_index = next_cycle_index
+        frame.cycle_stack_remaining = next_cycle_stack_remaining
         if vectorised:
             extension = _materialize_vector_extension(
                 self,
@@ -1358,12 +1400,18 @@ def _function_call_locals(
 
 def _source_args(frame: _Frame, arity: int, context: str) -> tuple[Any, ...]:
     try:
-        args, stack_count, next_cycle_index = frame.source_args(arity)
+        (
+            args,
+            stack_count,
+            next_cycle_index,
+            next_cycle_stack_remaining,
+        ) = frame.source_args(arity)
     except _StackUnderflow as exc:
         raise RuntimeError(f"stack underflow during {context}") from exc
     if stack_count:
         del frame.stack[-stack_count:]
     frame.cycle_index = next_cycle_index
+    frame.cycle_stack_remaining = next_cycle_stack_remaining
     return args
 
 
@@ -1450,9 +1498,16 @@ def _enter_cycle(frame: _Frame, spec: object) -> None:
         values = _source_args(frame, arity, "cycle scope")
     else:
         raise RuntimeError(f"invalid cycle arity {arity!r}")
-    frame.cycle_scopes.append((frame.cycle_values, frame.cycle_index))
+    frame.cycle_scopes.append(
+        (
+            frame.cycle_values,
+            frame.cycle_index,
+            frame.cycle_stack_remaining,
+        )
+    )
     frame.cycle_values = values
     frame.cycle_index = 0
+    frame.cycle_stack_remaining = 0
     if seed_stack:
         frame.stack.extend(values)
 
@@ -1460,7 +1515,11 @@ def _enter_cycle(frame: _Frame, spec: object) -> None:
 def _exit_cycle(frame: _Frame) -> None:
     if not frame.cycle_scopes:
         raise RuntimeError("cycle scope underflow")
-    frame.cycle_values, frame.cycle_index = frame.cycle_scopes.pop()
+    (
+        frame.cycle_values,
+        frame.cycle_index,
+        frame.cycle_stack_remaining,
+    ) = frame.cycle_scopes.pop()
 
 
 def _store_value(existing: Any, value: Any) -> Any:
@@ -1475,11 +1534,11 @@ def _store_value(existing: Any, value: Any) -> Any:
 
 def _bind_recursive_value(value: Any, name: str) -> None:
     if isinstance(value, FunctionValue):
-        value.globals[name] = value
+        value.globals.setdefault(name, value)
         return
     if isinstance(value, OverloadedFunctionValue):
         for overload in value.overloads:
-            overload.globals[name] = value
+            overload.globals.setdefault(name, value)
 
 
 def _is_function_value(value: Any) -> bool:
@@ -2010,7 +2069,7 @@ def _select_multimethod_overload(
 ) -> FunctionValue:
     arity = len(fallback.code.params)
     try:
-        args, _, _ = frame.source_args(arity)
+        args, _, _, _ = frame.source_args(arity)
     except _StackUnderflow:
         return fallback
     for overload in value.overloads:
@@ -2061,7 +2120,12 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
     for overload in candidates:
         arity = len(overload.signature.params)
         try:
-            args, stack_count, next_cycle_index = frame.source_args(arity)
+            (
+                args,
+                stack_count,
+                next_cycle_index,
+                next_cycle_stack_remaining,
+            ) = frame.source_args(arity)
         except _StackUnderflow:
             continue
         if not overload.runtime_matches(args):
@@ -2077,6 +2141,7 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
                     callee.context.call.__self__,
                 )
             frame.cycle_index = next_cycle_index
+            frame.cycle_stack_remaining = next_cycle_stack_remaining
             frame.stack.extend(vectorized)
             return
         implementation = overload.implementation
@@ -2098,6 +2163,7 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
         if stack_count:
             _release_stack_tail(frame.stack, stack_count, callee.context.call.__self__)
         frame.cycle_index = next_cycle_index
+        frame.cycle_stack_remaining = next_cycle_stack_remaining
         frame.stack.extend(result)
         return
     raise RuntimeError(
@@ -2122,7 +2188,12 @@ def _call_object_constructor(
         initializer = _object_constructor_initializer(callee, overload_index)
         arity = len(initializer.code.params) - 1
     try:
-        args, stack_count, next_cycle_index = frame.source_args(arity)
+        (
+            args,
+            stack_count,
+            next_cycle_index,
+            next_cycle_stack_remaining,
+        ) = frame.source_args(arity)
     except _StackUnderflow as exc:
         raise RuntimeError(
             _format_call_error(
@@ -2134,6 +2205,7 @@ def _call_object_constructor(
     if stack_count:
         del frame.stack[-stack_count:]
     frame.cycle_index = next_cycle_index
+    frame.cycle_stack_remaining = next_cycle_stack_remaining
 
     if callee.initializer is None:
         fields = dict(callee.defaults)
@@ -2234,7 +2306,12 @@ def _call_resolved_builtin(
         else len(overload.signature.params)
     )
     try:
-        args, stack_count, next_cycle_index = frame.source_args(arity)
+        (
+            args,
+            stack_count,
+            next_cycle_index,
+            next_cycle_stack_remaining,
+        ) = frame.source_args(arity)
     except _StackUnderflow as exc:
         raise RuntimeError(
             _format_call_error(
@@ -2290,6 +2367,7 @@ def _call_resolved_builtin(
         if consumed_count:
             _release_stack_tail(frame.stack, consumed_count, context.call.__self__)
         frame.cycle_index = next_cycle_index
+        frame.cycle_stack_remaining = next_cycle_stack_remaining
         frame.stack.extend(vectorized)
         return
     implementation = overload.implementation
@@ -2311,6 +2389,7 @@ def _call_resolved_builtin(
     if consumed_count:
         _release_stack_tail(frame.stack, consumed_count, context.call.__self__)
     frame.cycle_index = next_cycle_index
+    frame.cycle_stack_remaining = next_cycle_stack_remaining
     frame.stack.extend(result)
 
 
@@ -2318,7 +2397,12 @@ def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
     mode, prestack, poststack = _stack_shuffle_spec(spec)
     arity = len(prestack)
     try:
-        args, stack_count, next_cycle_index = frame.source_args(arity)
+        (
+            args,
+            stack_count,
+            next_cycle_index,
+            next_cycle_stack_remaining,
+        ) = frame.source_args(arity)
     except _StackUnderflow as exc:
         raise RuntimeError(f"stack underflow during {mode}") from exc
 
@@ -2332,6 +2416,7 @@ def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
         for value in outputs:
             _retain_value(value, check_duplication=False)
         frame.cycle_index = next_cycle_index
+        frame.cycle_stack_remaining = next_cycle_stack_remaining
         frame.stack.extend(outputs)
         return
 
@@ -2353,6 +2438,7 @@ def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
     if stack_count:
         _pop_many(frame.stack, stack_count)
     frame.cycle_index = next_cycle_index
+    frame.cycle_stack_remaining = next_cycle_stack_remaining
     for index, (label, value) in enumerate(zip(prestack, args, strict=True)):
         if label is None:
             frame.stack.append(value)
@@ -3082,12 +3168,18 @@ def _index_receiver(frame: _Frame) -> Any:
     if frame.stack:
         return frame.stack.pop()
     try:
-        args, stack_count, next_cycle_index = frame.source_args(1)
+        (
+            args,
+            stack_count,
+            next_cycle_index,
+            next_cycle_stack_remaining,
+        ) = frame.source_args(1)
     except _StackUnderflow as exc:
         raise RuntimeError("stack underflow during indexing") from exc
     if stack_count:
         del frame.stack[-stack_count:]
     frame.cycle_index = next_cycle_index
+    frame.cycle_stack_remaining = next_cycle_stack_remaining
     return args[0]
 
 

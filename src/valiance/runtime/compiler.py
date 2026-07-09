@@ -557,6 +557,7 @@ class _Compiler:
     def friendly_definition(self, owner: str, definition: DefineNode) -> None:
         body = definition.function.body
         if _definition_has_annotation(definition, "self"):
+            body = prepare_constructor_body(body)
             body = (*body, GetVariableNode(Symbol("self")))
         function = FunctionNode(
             params=(FunctionParam(Symbol("self")),)

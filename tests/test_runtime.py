@@ -1433,6 +1433,51 @@ Person("Ada", 36)
         self.assertIsInstance(person, ObjectValue)
         self.assertEqual(person.fields, {"name": "Ada", "age": Decimal("36")})
 
+    def test_self_methods_rebind_augmented_field_assignments(self):
+        output = io.StringIO()
+        source = """
+object Counter =>
+  $value: Integer
+  private $timesIncremented = 0
+
+  define Counter(initialValue: Integer) => $self.value = $initialValue
+
+  @self define increment =>
+    $self.value := + 1
+    $self.timesIncremented := + 1
+  end
+
+  @self define +(:Integer) =>
+    $self.value := +
+    $self.timesIncremented := + 1
+  end
+
+  define incCount => $self.timesIncremented
+end
+
+Counter(0)
+increment increment increment
++ 5
+dup | $.value | println
+incCount | println
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "8\n4\n")
+
+    def test_parameter_cycle_starts_at_top_of_conceptual_input_stack(self):
+        self.assertEqual(
+            execute(
+                "define addSecond(first: Integer, second: Integer) "
+                "-> Integer => + 1\n"
+                "addSecond(10, 20)"
+            ),
+            [Decimal("21")],
+        )
+
     def test_explicit_constructor_preserves_generic_type_arguments(self):
         [box] = execute(
             """

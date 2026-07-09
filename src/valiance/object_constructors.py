@@ -16,6 +16,7 @@ from valiance.asts import (
     IfNode,
     MatchNode,
     SetVariableNode,
+    StackShuffleNode,
     TryNode,
     UnfoldNode,
     WhileNode,
@@ -38,11 +39,27 @@ def constructor_definitions(
 
 
 def prepare_constructor_body(body: tuple[ASTNode, ...]) -> tuple[ASTNode, ...]:
-    """Make direct ``$self.field = ...`` writes update the constructor local."""
+    """Make direct ``$self.field = ...`` writes update the local receiver."""
     transformed: list[ASTNode] = []
     for index, node in enumerate(body):
+        targets_self = isinstance(node, FieldSetNode) and _field_set_targets_self(
+            body,
+            index,
+        )
+        if targets_self and _field_set_reads_target(body, index):
+            transformed.extend(
+                (
+                    GetVariableNode(_SELF, location=node.location),
+                    StackShuffleNode(
+                        Symbol("move"),
+                        (Symbol("value"), Symbol("receiver")),
+                        (Symbol("receiver"), Symbol("value")),
+                        location=node.location,
+                    ),
+                )
+            )
         transformed.append(_prepare_constructor_child(node))
-        if isinstance(node, FieldSetNode) and _field_set_targets_self(body, index):
+        if targets_self:
             transformed.append(SetVariableNode(_SELF, location=node.location))
     return tuple(transformed)
 
