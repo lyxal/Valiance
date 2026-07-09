@@ -848,7 +848,7 @@ class MainTests(unittest.TestCase):
                 '  define \\division =>\n'
                 '    @test("expects a panic")\n'
                 '    define \\zero =>\n'
-                '      testing.assertPanics: fn => "boom" panic end\n'
+                '      testing.assertPanics: fn => RuntimeFault("boom") panic end\n'
                 '    end\n'
                 '  end\n'
                 'end\n'

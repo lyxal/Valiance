@@ -15,7 +15,11 @@ from valiance.analysis import (
 )
 from valiance.analysis.analyser import _branch_argument_substitution
 from valiance.analysis.annotations import AnnotationSpec, register_annotation
-from valiance.analysis.builtins import BUILTIN_ELEMENTS, BUILTIN_ERROR_TYPES
+from valiance.analysis.builtins import (
+    BUILTIN_ELEMENTS,
+    BUILTIN_ERROR_TYPES,
+    BUILTIN_FAULT_TYPES,
+)
 from valiance.asts import (
     BreakNode,
     CallNode,
@@ -2005,6 +2009,71 @@ getName $joe
                 self.assertEqual(constructor.params, (String,))
                 self.assertEqual(constructor.returns, (error_type,))
                 self.assertEqual(constructor.param_names, (Symbol("message"),))
+
+    def test_builtin_fault_types_have_constructors_messages_and_fault_impls(self):
+        env = default_environment()
+
+        for fault_name in BUILTIN_FAULT_TYPES:
+            with self.subTest(fault_type=fault_name.text):
+                fault_type = N(fault_name)
+                definition = env.lookup_object(fault_name)
+                self.assertIsNotNone(definition)
+                self.assertEqual(
+                    definition.attribute_type(Symbol("message")),
+                    String,
+                )
+                self.assertTrue(
+                    assignable(fault_type, N(Symbol("Fault")), env.context)
+                )
+
+                [constructor] = env.overloads_for(fault_name)
+                self.assertEqual(constructor.params, (String,))
+                self.assertEqual(constructor.returns, (fault_type,))
+                self.assertEqual(constructor.param_names, (Symbol("message"),))
+
+    def test_panic_requires_fault_and_preserves_concrete_fault_tag(self):
+        invalid = Analyser()
+        invalid.analyse(parse('"boom" panic'))
+
+        self.assertEqual(len(invalid.diagnostics), 1)
+        self.assertIn("no overloads for element 'panic' match", invalid.diagnostics[0])
+
+        valid = Analyser()
+        typed = valid.analyse(parse('RuntimeFault("boom") panic'))
+
+        self.assertEqual(valid.diagnostics, [])
+        self.assertIsInstance(typed[-1], TypedElementNode)
+        self.assertEqual(
+            typed[-1].overload.element_tags,
+            frozenset(
+                {
+                    ElementTag(
+                        Symbol("Panic"),
+                        (N(Symbol("RuntimeFault")),),
+                    )
+                }
+            ),
+        )
+
+    def test_try_handler_type_must_implement_fault(self):
+        analyser = Analyser()
+        analyser.analyse(
+            parse(
+                '''
+try =>
+  RuntimeFault("boom") panic
+handle String =>
+  "not a fault"
+end
+'''
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "try handler type String does not implement Fault",
+            analyser.diagnostics[0],
+        )
 
     def test_err_type_variant_marks_members_and_parent_as_err(self):
         analyser = Analyser()

@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from valiance.analysis import Analyser
-from valiance.analysis.builtins import BUILTIN_ERROR_TYPES
+from valiance.analysis.builtins import BUILTIN_ERROR_TYPES, BUILTIN_FAULT_TYPES
 from valiance.parsing import parse
 from valiance.runtime import (
     AssertionFailure,
@@ -52,7 +52,7 @@ class RuntimeTests(unittest.TestCase):
                 "import { std.testing }\n"
                 "testing.assertEqual(20 + 22, 42)\n"
                 "testing.assertNotEqual(42, 43)\n"
-                'testing.assertPanics: fn => "boom" panic end'
+                'testing.assertPanics: fn => RuntimeFault("boom") panic end'
             ),
             [],
         )
@@ -1231,6 +1231,55 @@ message
             [error_type.text for error_type in BUILTIN_ERROR_TYPES],
         )
 
+    def test_builtin_fault_types_construct_and_expose_messages(self):
+        constructors = "\n".join(
+            f'{fault_type.text}("{fault_type.text}")'
+            for fault_type in BUILTIN_FAULT_TYPES
+        )
+        values = execute(constructors)
+
+        self.assertEqual(len(values), len(BUILTIN_FAULT_TYPES))
+        for fault_type, value in zip(BUILTIN_FAULT_TYPES, values, strict=True):
+            with self.subTest(fault_type=fault_type.text):
+                self.assertIsInstance(value, ObjectValue)
+                self.assertEqual(value.type_name, fault_type.text)
+                self.assertEqual(value.fields, {"message": fault_type.text})
+
+        messages = "\n".join(
+            f'{fault_type.text}("{fault_type.text}") message'
+            for fault_type in BUILTIN_FAULT_TYPES
+        )
+        self.assertEqual(
+            execute(messages),
+            [fault_type.text for fault_type in BUILTIN_FAULT_TYPES],
+        )
+        self.assertEqual(
+            execute('IndexFault("bad index") getMessage'),
+            ["bad index"],
+        )
+        self.assertEqual(
+            execute('IndexFault("bad index") $.message'),
+            ["bad index"],
+        )
+
+    def test_user_defined_fault_can_be_panicked_and_handled(self):
+        self.assertEqual(
+            execute(
+                """
+object CustomProblem =>
+  $message: String
+end
+object CustomProblem as Fault => end
+try =>
+  CustomProblem("boom") panic
+handle CustomProblem =>
+  "handled"
+end
+"""
+            ),
+            ["handled"],
+        )
+
     def test_builtin_value_error_forms_result_in_safe_division(self):
         source = """
 define safediv(x: Number, y: Number) =>
@@ -1907,8 +1956,8 @@ end | #!infinite | 4 take
             execute(
                 """
 try =>
-  "boom" panic
-handle String =>
+  RuntimeFault("boom") panic
+handle RuntimeFault =>
   "handled"
 handle =>
   "default"
@@ -1923,9 +1972,9 @@ end
             execute(
                 """
 try =>
-  10 panic
-handle String =>
-  "string"
+  ValueFault("boom") panic
+handle KeyFault =>
+  "key"
 handle =>
   "default"
 end
@@ -1934,10 +1983,48 @@ end
             ["default"],
         )
 
+    def test_out_of_bounds_indexing_raises_catchable_index_fault(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            stack = execute(
+                """
+try =>
+  [1, 2, 3] $[5]
+handle IndexFault =>
+  println "Caught IndexFault"
+end
+"""
+            )
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "Caught IndexFault\n")
+
+    def test_missing_dictionary_key_raises_catchable_key_fault(self):
+        self.assertEqual(
+            execute(
+                """
+try =>
+  dict{"present": 1} $["missing"]
+handle KeyFault =>
+  "handled"
+end
+"""
+            ),
+            ["handled"],
+        )
+
     def test_uncaught_panic_is_runtime_error(self):
         with self.assertRaises(RuntimeError) as error:
-            execute('"boom" panic')
-        self.assertIn("uncaught panic: 'boom'", str(error.exception))
+            execute('RuntimeFault("boom") panic')
+        self.assertIn(
+            "uncaught panic: RuntimeFault{message: 'boom'}",
+            str(error.exception),
+        )
+
+    def test_uncaught_index_fault_is_runtime_error(self):
+        with self.assertRaises(RuntimeError) as error:
+            execute("[1, 2, 3] $[5]")
+        self.assertIn("uncaught panic: IndexFault", str(error.exception))
 
     def test_println_writes_output_and_consumes_value(self):
         output = io.StringIO()
