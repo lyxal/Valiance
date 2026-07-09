@@ -448,7 +448,12 @@ def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
     source = normalize(source)
     target = normalize(target)
 
-    if same(source, target) or subtype(source, target, ctx):
+    if same(source, target):
+        return True
+    if isinstance(target, ExactType):
+        return assignable(source, target.inner, ctx)
+
+    if subtype(source, target, ctx):
         return True
 
     if _is_boolean_number_to_integer(source, target):
@@ -542,6 +547,8 @@ def _solve(
             return True
         if same(p, a):
             return True
+        if isinstance(p, ExactType):
+            return rec(p.inner, a)
         if isinstance(p, AtomicType):
             return True
         if _is_optional(p):
@@ -798,7 +805,7 @@ def collection_item_type(t: Type) -> Type | None:
 def _collection_view(t: Type) -> CollectionType | None:
     """Return a collection node through transparent wrappers, if present."""
     t = normalize(t)
-    if isinstance(t, TaggedType):
+    if isinstance(t, (TaggedType, ExactType)):
         return _collection_view(t.inner)
     if isinstance(t, CollectionType):
         return t
@@ -957,6 +964,8 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
         )
     if isinstance(t, TaggedType):
         return Tagged(_substitute(t.inner, subst), *t.tags)
+    if isinstance(t, ExactType):
+        return ExactType(_substitute(t.inner, subst))
     if isinstance(t, AtomicType) and isinstance(t.inner, VarType):
         solved = subst.get(t.inner.name)
         return ExactType(_atomic_of(solved)) if solved else t
@@ -1168,6 +1177,9 @@ def _overload_result_for_args(
 
 
 def _vectorisation_excess(argument: Type, expected: Type, ctx: Context) -> int | None:
+    expected = normalize(expected)
+    if isinstance(expected, ExactType):
+        return 0 if assignable(argument, expected.inner, ctx) else None
     argument_collection = _collection_view(argument)
     if argument_collection is None:
         return 0 if compatible(argument, expected, ctx) else None
@@ -1207,10 +1219,7 @@ def _wrap_returns_for_vector_depth(
 def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:
     """Return whether compatibility can be achieved through vectorisation."""
     if isinstance(parameter, ExactType):
-        return compatible(argument, parameter.inner, ctx) and not (
-            _collection_view(argument) is not None
-            and _collection_view(parameter.inner) is None
-        )
+        return False
     argument_collection = _collection_view(argument)
     parameter_collection = _collection_view(parameter)
     if argument_collection is None:
@@ -1479,6 +1488,25 @@ def try_apply_overload(
                 actual=base_args[index],
             ),
         )
+
+    if not disambiguation:
+        # Automatic vectorisation also needs explicit per-argument depths at
+        # runtime.  A zero depth broadcasts the argument unchanged; this is
+        # essential for exact parameters when a different argument vectorises.
+        automatic_depths: list[int] = []
+        for arg, param, score in zip(base_args, params, scores, strict=False):
+            if score != Specificity.VECTORISED:
+                automatic_depths.append(0)
+                continue
+            excess = _vectorisation_excess(arg, param, ctx)
+            if excess is None or excess <= 0:
+                return OverloadAttempt(
+                    None,
+                    OverloadMismatch(OverloadMismatchReason.VECTORISATION),
+                )
+            automatic_depths.append(excess)
+        if any(depth > 0 for depth in automatic_depths):
+            vectorised_depths = tuple(automatic_depths)
 
     return OverloadAttempt(
         AppliedOverload(

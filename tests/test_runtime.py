@@ -115,6 +115,33 @@ define pick(a: Number, b: Number = 2) -> Number => $a $b +
             [[Decimal("11"), Decimal("12"), Decimal("13")]],
         )
 
+    def test_exact_parameter_executes_as_ordinary_scalar_value(self):
+        self.assertEqual(
+            execute(
+                """
+$myfun = fn (:Number exact) => double
+$myfun(10)
+"""
+            ),
+            [Decimal("20")],
+        )
+
+    def test_exact_collection_broadcasts_while_other_parameter_vectorises(self):
+        self.assertEqual(
+            execute(
+                """
+define keep(xs: Number+ exact, x: Number) -> Number+ => $xs end
+[10, 20, 30] [1, 2] keep
+"""
+            ),
+            [
+                [
+                    [Decimal("10"), Decimal("20"), Decimal("30")],
+                    [Decimal("10"), Decimal("20"), Decimal("30")],
+                ]
+            ],
+        )
+
     def test_extend_default_substitutes_missing_values_and_runs_once(self):
         output = io.StringIO()
 

@@ -477,6 +477,31 @@ Arrays can often be treated as corresponding list types by relation checks:
 Do not assume arrays are fully implemented runtime rectangular values just
 because the type layer has array rank nodes.
 
+### Exact Parameter Markers
+
+`T.Exact(inner)` / `ExactType(inner)` is a parameter call-policy marker, not a
+runtime value wrapper. Surface syntax writes it as a postfix:
+
+```text
+Number exact
+Number+ exact
+Function[Number exact -> Number]
+```
+
+An exact parameter accepts values assignable to its inner type but never uses
+vectorisation to make a higher-ranked argument fit. Thus `Number exact` accepts
+`Integer` but rejects `Integer+`, while `Number+ exact` accepts a rank-1 number
+list and rejects rank 2. Generic `T exact` may bind `T` to a collection type;
+the collection is then treated as one argument value rather than a
+vectorisation target.
+
+The marker remains in `Overload.params` and `FunctionType.params`, so type
+display and introspection preserve it. Function-body analysis strips only the
+outer marker before seeding parameter variables and the cycling stack, then
+reapplies it when constructing the function signature. Data-tag normalization
+hoists `exact` outside the tagged type so `#tag T exact` has the same call-policy
+behaviour as `Exact(Tagged(T, tag))`.
+
 ### Nested Collection Normalization
 
 Surface type syntax rejects mixed rank postfixes unless the outer marker is a

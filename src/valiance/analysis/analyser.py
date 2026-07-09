@@ -1965,9 +1965,10 @@ class Analyser:
             return None if analysed is None else analysed[0]
 
         params = _declared_params(node)
+        body_params = tuple(_parameter_value_type(param) for param in params)
         named_params = tuple(
             (param.name, typ)
-            for param, typ in zip(node.params, params, strict=True)
+            for param, typ in zip(node.params, body_params, strict=True)
             if param.name is not None
         )
         variables = BranchVariables.from_parameters(
@@ -1975,10 +1976,12 @@ class Analyser:
             captures=_function_capture_source(outer),
         )
         initial = AnalysisBranch(
-            inputs=params,
+            inputs=body_params,
             variables=variables,
-            input_mode=InputMode.CYCLE_EXPLICIT_PARAMS if params else InputMode.NILADIC,
-            cycle_params=params,
+            input_mode=(
+                InputMode.CYCLE_EXPLICIT_PARAMS if body_params else InputMode.NILADIC
+            ),
+            cycle_params=body_params,
             origin=outer.origin,
         )
         function_analyser = Analyser(self.env)
@@ -2322,7 +2325,10 @@ class Analyser:
             return None
 
         params = _declared_params(node)
-        body_params = tuple(_anonymous_trait_subject_view(param) for param in params)
+        body_params = tuple(
+            _parameter_value_type(_anonymous_trait_subject_view(param))
+            for param in params
+        )
         if node.params is None:
             mode = InputMode.INFER_INPUTS
         elif not node.params:
@@ -2514,6 +2520,7 @@ class Analyser:
                 and any(_contains_anonymous_trait(param) for param in declared_params)
                 else branch.inputs
             )
+            inputs = _restore_exact_parameter_markers(declared_params, inputs)
             signature = _function_overload(
                 node,
                 params=inputs,
@@ -3913,6 +3920,29 @@ def _declared_params(node: FunctionNode) -> tuple[T.Type, ...]:
     return _params_to_types(node.params)
 
 
+def _parameter_value_type(typ: T.Type) -> T.Type:
+    """Return the type visible inside a function body for one parameter."""
+    typ = T.normalize(typ)
+    return typ.inner if isinstance(typ, T.ExactType) else typ
+
+
+def _restore_exact_parameter_markers(
+    declared: tuple[T.Type, ...],
+    inferred: tuple[T.Type, ...],
+) -> tuple[T.Type, ...]:
+    """Reapply call-policy markers after analysing parameter values."""
+    if len(declared) > len(inferred):
+        return inferred
+    offset = len(inferred) - len(declared)
+    restored = tuple(
+        T.Exact(actual)
+        if isinstance(T.normalize(expected), T.ExactType)
+        else actual
+        for expected, actual in zip(declared, inferred[offset:], strict=True)
+    )
+    return inferred[:offset] + restored
+
+
 def _function_overload(
     node: FunctionNode,
     *,
@@ -4116,7 +4146,7 @@ def _type_contains_rank_var(typ: T.Type) -> bool:
         return any(_type_contains_rank_var(item.typ) for item in typ.items)
     if isinstance(typ, T.FunctionType):
         return _contains_rank_var(typ.params) or _contains_rank_var(typ.returns)
-    if isinstance(typ, T.TaggedType):
+    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
         return _type_contains_rank_var(typ.inner)
     return False
 
@@ -4220,7 +4250,7 @@ def _rank_var_names_in_type(typ: T.Type) -> set[str]:
             return names
         for item in typ.params + typ.returns:
             names.update(_rank_var_names_in_type(item))
-    elif isinstance(typ, T.TaggedType):
+    elif isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
         names.update(_rank_var_names_in_type(typ.inner))
     return names
 
@@ -5250,9 +5280,9 @@ def _collect_rank_values(
             actual,
             lambda left, right: _collect_rank_values(left, right, values) or True,
         )
-    elif isinstance(pattern, T.TaggedType):
+    elif isinstance(pattern, (T.TaggedType, T.ExactType, T.AtomicType)):
         _collect_rank_values(pattern.inner, actual, values)
-    elif isinstance(actual, T.TaggedType):
+    elif isinstance(actual, (T.TaggedType, T.ExactType, T.AtomicType)):
         _collect_rank_values(pattern, actual.inner, values)
 
 
@@ -5514,6 +5544,10 @@ def _substitute_rank_values(typ: T.Type, ranks: dict[str, int]) -> T.Type:
         )
     if isinstance(typ, T.TaggedType):
         return T.Tagged(_substitute_rank_values(typ.inner, ranks), *typ.tags)
+    if isinstance(typ, T.ExactType):
+        return T.Exact(_substitute_rank_values(typ.inner, ranks))
+    if isinstance(typ, T.AtomicType):
+        return T.Atomic(_substitute_rank_values(typ.inner, ranks))
     return typ
 
 

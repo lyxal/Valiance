@@ -80,9 +80,11 @@ from valiance.runtime.bytecode import (
 )
 from valiance.symbols import Symbol
 from valiance.types import (
+    AtomicType,
     ArrayExactType,
     ArrayMinType,
     CollectionType,
+    ExactType,
     FunctionType,
     IntersectionType,
     ListExactType,
@@ -836,6 +838,8 @@ def _overload_dispatch_types(
 
 def _runtime_dispatch_type(typ: Type) -> str | None:
     typ = normalize(typ)
+    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
+        return _runtime_dispatch_type(typ.inner)
     if isinstance(typ, NominalType):
         return show(typ)
     return None
@@ -868,7 +872,7 @@ def _rank_var_names_in_type(typ: Type) -> set[str]:
     elif isinstance(typ, IntersectionType):
         for item in typ.items:
             names.update(_rank_var_names_in_type(item))
-    elif isinstance(typ, TaggedType):
+    elif isinstance(typ, (TaggedType, ExactType, AtomicType)):
         names.update(_rank_var_names_in_type(typ.inner))
     return names
 
@@ -1337,7 +1341,7 @@ def _cast_type_spec(typ: Type) -> object:
             ArrayMinType: "array_min",
         }[type(typ)]
         return ("collection", kind, typ.rank, _cast_type_spec(typ.base))
-    if isinstance(typ, TaggedType):
+    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
         return _cast_type_spec(typ.inner)
     raise CompileError(f"cannot compile checked cast to {typ}")
 

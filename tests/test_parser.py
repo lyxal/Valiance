@@ -57,6 +57,7 @@ from valiance.types import (
     C,
     DataTag,
     ElementTag,
+    Exact,
     Fn,
     ListExactType,
     ListMinType,
@@ -1189,6 +1190,24 @@ end
                 Tagged(C(ListExactType, Number), DataTag("infinite", absent=True)),
             )
         )
+
+    def test_parses_exact_type_marker(self):
+        self.assertTrue(same(parse_type("Number exact"), Exact(Number)))
+        self.assertTrue(
+            same(
+                parse_type("#sorted Number+ exact"),
+                Exact(Tagged(C(ListExactType, Number), "sorted")),
+            )
+        )
+        self.assertTrue(
+            same(
+                parse_type("Function[Number exact -> Number]"),
+                Fn((Exact(Number),), (Number,)),
+            )
+        )
+
+        [node] = parse("fn (:Number exact) -> Number => double")
+        self.assertEqual(node.params[0].typ, Exact(Number))
 
     def test_parses_numeric_rank_postfix_shorthand(self):
         self.assertTrue(same(parse_type("Number++"), parse_type("Number+2")))

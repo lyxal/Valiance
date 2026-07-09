@@ -414,6 +414,8 @@ The type parser currently supports:
 - Intersection types: `A & B`
 - Optional types: `T?`, `T???`, `T?3`, lowered to nested `Some[T] | None`
 - Atomic generic views: `T atomic`, lowered to `Atomic(T)`
+- Exact parameter markers: `T exact`, lowered to `Exact(T)` and retained inside
+  `Function[...]` parameter types
 - List rank postfixes: `T+`, `T+3`, `T+$n`, `T*`, `T*3`, `T*$n`,
   `T~`, `T~3`, `T~$n`
 - Array rank postfixes: `T^`, `T^3`, `T^$n`, `T>`, `T>3`, `T>$n`
@@ -441,6 +443,11 @@ _type_union
 When adding new type syntax, place it at the correct precedence layer. Do not
 bolt it onto `_type_primary` if it is actually a prefix, postfix, union-like, or
 intersection-like form.
+
+`exact` is a terminal postfix for one type expression. It disables
+vectorisation through a function parameter, so the parser keeps it as an outer
+`ExactType` wrapper and does not consume later rank or optional postfixes as
+part of the same type.
 
 Arbitrary-length tuple types are only valid while parsing parameter types. The
 parser uses an internal "allow variadic tuple type" flag around function and

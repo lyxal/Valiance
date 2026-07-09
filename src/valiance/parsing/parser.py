@@ -2142,6 +2142,11 @@ class Parser:
             if self._match_ident("atomic"):
                 typ = Atomic(typ)
                 continue
+            if self._match_ident("exact"):
+                if isinstance(typ, ExactType):
+                    self._error("type is already marked exact")
+                typ = Exact(typ)
+                break
             if self._check(TokenKind.OP) and self._current.value in {
                 "+",
                 "*",

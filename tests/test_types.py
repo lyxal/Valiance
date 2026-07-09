@@ -10,6 +10,7 @@ from valiance.types import (
     ElementTagDefinition,
     ElementTagKind,
     Environment,
+    Exact,
     ExactList,
     Field,
     Fn,
@@ -374,6 +375,58 @@ class TypeLibraryTests(unittest.TestCase):
 
         self.assertIsNotNone(applied)
         self.assertTrue(applied.vectorised)
+        self.assertEqual(applied.actual_returns, (C(ListExactType, Number),))
+
+    def test_exact_parameter_disables_vectorisation(self):
+        overload = Overload((Exact(Number),), (Number,))
+
+        scalar = apply_overload(overload, (Integer,))
+        vector = apply_overload(overload, (C(ListExactType, Integer),))
+
+        self.assertIsNotNone(scalar)
+        self.assertFalse(scalar.vectorised)
+        self.assertIsNone(vector)
+
+    def test_exact_collection_requires_the_declared_rank(self):
+        overload = Overload((Exact(C(ListExactType, Number)),), (Number,))
+
+        matching = apply_overload(overload, (C(ListExactType, Integer),))
+        higher_rank = apply_overload(overload, (C(ListExactType, Integer, 2),))
+
+        self.assertIsNotNone(matching)
+        self.assertFalse(matching.vectorised)
+        self.assertEqual(matching.actual_returns, (Number,))
+        self.assertIsNone(higher_rank)
+
+    def test_generic_exact_parameter_treats_collection_as_one_value(self):
+        overload = Overload((Exact(V("T")),), (V("T"),))
+        argument = C(ListExactType, Integer)
+
+        applied = apply_overload(overload, (argument,))
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.substitution["T"], argument)
+        self.assertEqual(applied.params, (Exact(argument),))
+        self.assertEqual(applied.actual_returns, (argument,))
+        self.assertFalse(applied.vectorised)
+
+    def test_exact_argument_broadcasts_when_another_argument_vectorises(self):
+        overload = Overload(
+            (Exact(C(ListExactType, Number)), Number),
+            (Number,),
+        )
+
+        applied = apply_overload(
+            overload,
+            (
+                C(ListExactType, Integer),
+                C(ListExactType, Integer),
+            ),
+        )
+
+        self.assertIsNotNone(applied)
+        self.assertTrue(applied.vectorised)
+        self.assertEqual(applied.vectorised_depths, (0, 1))
         self.assertEqual(applied.actual_returns, (C(ListExactType, Number),))
 
     def test_collection_item_type_looks_through_tags(self):

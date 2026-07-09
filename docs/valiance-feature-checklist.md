@@ -328,7 +328,7 @@ Current audit total: 426 / 734 items complete (58.0%).
 - [x] Produce arrays when all arguments are arrays and the return type retains arrayness.
 - [x] Produce lists when vectorisation mixes lists and arrays.
 - [ ] Support fine-grained vectorisation depth through overload disambiguation.
-- [ ] Parse exact parameter types.
+- [x] Parse exact parameter types.
 - [x] Prevent vectorisation through exact parameters.
 - [x] Include exact in function types.
 - [ ] Apply vectorisation rules for rugged types and equivalent expanded unions.

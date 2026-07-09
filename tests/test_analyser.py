@@ -386,6 +386,53 @@ define \\f<Read, Write> => 1
             (C(ListExactType, Integer),),
         )
 
+    def test_exact_function_parameter_is_visible_in_type_but_not_body(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                """
+$myfun = fn (:Number exact) => double
+$myfun(10)
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(show(typed[0].typ), "Function[Number exact -> Number]")
+        self.assertEqual(typed[-1].typ, Number)
+
+    def test_exact_function_parameter_rejects_higher_rank_argument(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+$myfun = fn (:Number exact) => double
+$myfun([1, 2, 3])
+"""
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("no overloads for element 'call' match", analyser.diagnostics[0])
+
+    def test_exact_parameter_preserves_rank_variable_solving(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                """
+define rank(xs: Number+$n exact) -> Number => $n end
+[[1], [2]] rank
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Number)
+        self.assertEqual(typed[-1].overload.rank_values, (("n", 2),))
+
     def test_analyses_vectorisation_extensions(self):
         analyser = Analyser()
 

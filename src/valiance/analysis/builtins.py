@@ -223,6 +223,8 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
     typ = T.normalize(typ)
     if isinstance(typ, T.VarType):
         return True
+    if isinstance(typ, T.ExactType):
+        return _runtime_assignable(value, typ.inner)
     if isinstance(typ, T.TaggedType):
         if any(
             tag.absent and tag.name == "infinite" and tag.depth == 0 for tag in typ.tags
@@ -253,6 +255,9 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
 
 
 def _runtime_vector_arg_matches(value: Any, typ: T.Type) -> bool:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.ExactType):
+        return _runtime_assignable(value, typ.inner)
     if is_list_like(value) and not _is_collection_parameter(typ):
         return True
     return _runtime_assignable(value, typ)

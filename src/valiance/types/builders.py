@@ -348,7 +348,13 @@ def normalize(t: Type) -> Type:
         inner = normalize(t.inner)
         if isinstance(inner, TaggedType):
             return Tagged(inner.inner, *(set(t.tags) | set(inner.tags)))
+        if isinstance(inner, ExactType):
+            return Exact(Tagged(inner.inner, *t.tags))
         return TaggedType(inner, t.tags)
+
+    if isinstance(t, ExactType):
+        inner = normalize(t.inner)
+        return inner if isinstance(inner, ExactType) else ExactType(inner)
 
     return t
 
@@ -533,6 +539,8 @@ def show(t: Type) -> str:
         return f"trait{generics} => {requirements} end"
     if isinstance(t, TaggedType):
         return f"{' '.join(_show_tag(tag) for tag in sorted(t.tags))} {show(t.inner)}"
+    if isinstance(t, ExactType):
+        return f"{show(t.inner)} exact"
     if isinstance(t, OverloadSetType):
         entries = ", ".join(
             show(Fn(overload.params, overload.returns)) for overload in t.overloads
