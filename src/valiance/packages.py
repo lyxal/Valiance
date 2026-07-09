@@ -134,9 +134,7 @@ def project_entry_path(manifest: Manifest, name: str = "main") -> Path:
     try:
         resolved.relative_to(root)
     except ValueError as exc:
-        raise PackageError(
-            f"entry {name!r} must stay within the project root"
-        ) from exc
+        raise PackageError(f"entry {name!r} must stay within the project root") from exc
 
     if not resolved.is_file():
         raise PackageError(f"project entry {name!r} does not exist: {resolved}")
@@ -174,6 +172,29 @@ def init_project(
     main = root / "src" / "main.vlnc"
     if not main.exists():
         main.write_text('"Hello, Valiance" println\n', encoding="utf-8")
+
+    tests_dir = root / "tests"
+    tests_dir.mkdir(exist_ok=True)
+    sample_test = tests_dir / "sample.vlnc"
+    if not sample_test.exists():
+        sample_test.write_text(
+            "\n".join(
+                (
+                    "import { std.testing }",
+                    "",
+                    '@testgroup("Sample")',
+                    "define \\sample =>",
+                    '  @test("adds two numbers")',
+                    "  define \\addition =>",
+                    "    testing.assertEqual(20 + 22, 42)",
+                    "  end",
+                    "end",
+                    "",
+                )
+            ),
+            encoding="utf-8",
+        )
+
     gitignore = root / ".gitignore"
     if gitignore.exists():
         contents = gitignore.read_text(encoding="utf-8")
