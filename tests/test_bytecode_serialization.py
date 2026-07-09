@@ -40,7 +40,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x0d"))
+        self.assertTrue(data.startswith(b"VLNCBC\x0e"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)
@@ -116,6 +116,8 @@ class BytecodeSerializationTests(unittest.TestCase):
                             "+",
                             0,
                             vectorised=True,
+                            vectorised_depths=(0, 1),
+                            vectorised_target_ranks=(1, None),
                             extension=extension,
                         ),
                     ),

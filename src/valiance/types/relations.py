@@ -1445,6 +1445,39 @@ def _vectorisation_excess(argument: Type, expected: Type, ctx: Context) -> int |
     return excess if excess >= 0 else None
 
 
+def _dynamic_vectorisation_target_rank(
+    argument: Type,
+    parameter: Type,
+    ctx: Context,
+) -> int | None:
+    """Return the exact parameter rank reached dynamically from a minimum rank."""
+    argument_collection = _collection_view(argument)
+    parameter_collection = _collection_view(parameter)
+    if argument_collection is None or parameter_collection is None:
+        return None
+    if not isinstance(argument_collection, (ListMinType, ArrayMinType)):
+        return None
+    if not isinstance(parameter_collection, (ListExactType, ArrayExactType)):
+        return None
+    if not isinstance(argument_collection.rank, int) or not isinstance(
+        parameter_collection.rank,
+        int,
+    ):
+        return None
+    if argument_collection.rank < parameter_collection.rank:
+        return None
+    if isinstance(parameter_collection, ArrayExactType) and not isinstance(
+        argument_collection,
+        ArrayMinType,
+    ):
+        return None
+    if not compatible(argument_collection.base, parameter_collection.base, ctx):
+        return None
+    if assignable(argument, parameter, ctx):
+        return None
+    return parameter_collection.rank
+
+
 def _wrap_returns_for_vector_depth(
     returns: tuple[Type, ...],
     args: tuple[Type, ...],
@@ -1468,6 +1501,38 @@ def _wrap_returns_for_vector_depth(
     return tuple(C(out_type, ret, vector_rank) for ret in returns)
 
 
+def _wrap_returns_for_vectorisation(
+    returns: tuple[Type, ...],
+    args: tuple[Type, ...],
+    depths: tuple[int, ...],
+    target_ranks: tuple[int | None, ...],
+) -> tuple[Type, ...]:
+    """Apply fixed or runtime-selected vector depth to an overload result stack."""
+    minimum_rank = max(depths, default=0)
+    dynamic = any(rank is not None for rank in target_ranks)
+    if not dynamic:
+        return _wrap_returns_for_vector_depth(returns, args, depths)
+
+    vector_args = tuple(
+        arg
+        for arg, depth, target in zip(
+            args,
+            depths,
+            target_ranks,
+            strict=False,
+        )
+        if depth > 0 or target is not None
+    )
+    array_only = bool(vector_args) and all(
+        isinstance(_collection_view(arg), (ArrayExactType, ArrayMinType))
+        for arg in vector_args
+    )
+    output_type = ArrayMinType if array_only else ListMinType
+    if minimum_rank > 0:
+        return tuple(C(output_type, ret, minimum_rank) for ret in returns)
+    return tuple(U(ret, C(output_type, ret, 1)) for ret in returns)
+
+
 def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:
     """Return whether compatibility can be achieved through vectorisation."""
     if isinstance(parameter, ExactType):
@@ -1476,6 +1541,8 @@ def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:
     parameter_collection = _collection_view(parameter)
     if argument_collection is None:
         return False
+    if _dynamic_vectorisation_target_rank(argument, parameter, ctx) is not None:
+        return True
     if parameter_collection is not None:
         # Unlike exact and minimum-rank collections, rugged collections do not
         # promise enough uniform nesting to vectorise into a collection-valued
@@ -1569,12 +1636,15 @@ def try_apply_overload(
 
     base_args = args
     vectorised_depths: tuple[int, ...] = ()
+    vectorised_target_ranks: tuple[int | None, ...] = ()
     if disambiguation:
         depths: list[int] = []
+        target_ranks: list[int | None] = []
         adapted_args: list[Type] = []
         for arg, hint in zip(args, disambiguation, strict=True):
             if hint is None:
                 depths.append(0)
+                target_ranks.append(None)
                 adapted_args.append(arg)
                 continue
             if not compatible(arg, hint, ctx):
@@ -1599,9 +1669,11 @@ def try_apply_overload(
                     ),
                 )
             depths.append(excess)
+            target_ranks.append(_dynamic_vectorisation_target_rank(arg, hint, ctx))
             adapted_args.append(hint)
         base_args = tuple(adapted_args)
         vectorised_depths = tuple(depths)
+        vectorised_target_ranks = tuple(target_ranks)
 
     constraints: dict[str, list[Type]] = {}
     deferred_function_args: list[
@@ -1709,24 +1781,6 @@ def try_apply_overload(
                 ),
             )
 
-    actual_returns = _overload_result_for_args(
-        Overload(params, returns),
-        base_args,
-        ctx,
-    )
-    if actual_returns is None:
-        return OverloadAttempt(
-            None,
-            OverloadMismatch(OverloadMismatchReason.RESULT),
-        )
-    actual_returns = _wrap_returns_for_vector_depth(
-        actual_returns,
-        args,
-        vectorised_depths,
-    )
-    # returns = declared returns after generic substitution.
-    # actual_returns = returns after call adaptation such as vectorisation.
-
     scores = tuple(
         _match_specificity(arg, param, ctx)
         for arg, param in zip(base_args, params, strict=False)
@@ -1751,19 +1805,48 @@ def try_apply_overload(
         # runtime.  A zero depth broadcasts the argument unchanged; this is
         # essential for exact parameters when a different argument vectorises.
         automatic_depths: list[int] = []
+        automatic_target_ranks: list[int | None] = []
         for arg, param, score in zip(base_args, params, scores, strict=False):
             if score != Specificity.VECTORISED:
                 automatic_depths.append(0)
+                automatic_target_ranks.append(None)
                 continue
             excess = _vectorisation_excess(arg, param, ctx)
-            if excess is None or excess <= 0:
+            target_rank = _dynamic_vectorisation_target_rank(arg, param, ctx)
+            if excess is None or (excess <= 0 and target_rank is None):
                 return OverloadAttempt(
                     None,
                     OverloadMismatch(OverloadMismatchReason.VECTORISATION),
                 )
             automatic_depths.append(excess)
-        if any(depth > 0 for depth in automatic_depths):
+            automatic_target_ranks.append(target_rank)
+        if any(depth > 0 for depth in automatic_depths) or any(
+            rank is not None for rank in automatic_target_ranks
+        ):
             vectorised_depths = tuple(automatic_depths)
+            vectorised_target_ranks = tuple(automatic_target_ranks)
+
+    base_returns = returns
+    if disambiguation:
+        inferred_returns = _overload_result_for_args(
+            Overload(params, returns),
+            base_args,
+            ctx,
+        )
+        if inferred_returns is None:
+            return OverloadAttempt(
+                None,
+                OverloadMismatch(OverloadMismatchReason.RESULT),
+            )
+        base_returns = inferred_returns
+    actual_returns = _wrap_returns_for_vectorisation(
+        base_returns,
+        args,
+        vectorised_depths,
+        vectorised_target_ranks,
+    )
+    # returns = declared returns after generic substitution.
+    # actual_returns = returns after call adaptation such as vectorisation.
 
     return OverloadAttempt(
         AppliedOverload(
@@ -1774,9 +1857,11 @@ def try_apply_overload(
             actual_returns,
             scores,
             any(score == Specificity.VECTORISED for score in scores)
-            or any(depth > 0 for depth in vectorised_depths),
+            or any(depth > 0 for depth in vectorised_depths)
+            or any(rank is not None for rank in vectorised_target_ranks),
             vectorised_depths,
             element_tags=overload.element_tags,
+            vectorised_target_ranks=vectorised_target_ranks,
         )
     )
 

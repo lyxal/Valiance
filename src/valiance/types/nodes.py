@@ -339,6 +339,7 @@ class AppliedOverload:
     runtime_consumed_count: int | None = None
     element_tags: frozenset[ElementTag] = field(default_factory=frozenset[ElementTag])
     multidispatch: bool = field(default=False, compare=False, hash=False)
+    vectorised_target_ranks: tuple[int | None, ...] = ()
 
     def __hash__(self) -> int:
         return hash(
@@ -354,6 +355,7 @@ class AppliedOverload:
                 self.rank_values,
                 self.runtime_consumed_count,
                 self.element_tags,
+                self.vectorised_target_ranks,
             )
         )
 

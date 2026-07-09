@@ -672,6 +672,61 @@ define keep_name(name: String, n: Number) -> String => $name
             ],
         )
 
+    def test_minimum_rank_argument_vectorises_to_exact_parameter_at_runtime(self):
+        self.assertEqual(
+            execute(
+                """
+define exactIn(:Number+) => 1
+define \\rank1 -> Number* => [1, 2]
+define \\rank2 -> Number* => [[1, 2], [3, 4]]
+define \\rank3 -> Number* => [[[1], [2]], [[3], [4]]]
+exactIn \\rank1
+exactIn \\rank2
+exactIn \\rank3
+"""
+            ),
+            [
+                Decimal("1"),
+                [Decimal("1"), Decimal("1")],
+                [
+                    [Decimal("1"), Decimal("1")],
+                    [Decimal("1"), Decimal("1")],
+                ],
+            ],
+        )
+
+    def test_empty_list_return_inference_executes_for_all_rank_modes(self):
+        self.assertEqual(
+            execute(
+                """
+define exactIn(:Number+) => 1
+define minIn(:Number*) => 1
+define ruggedIn(:Number~) => 1
+define[T] exactGen(:T+) => 1
+define[T] minGen(:T*) => 1
+define[T] rugGen(:T~) => 1
+define \\exact -> Number+ => []
+define \\min -> Number* => []
+define \\rugged -> Number~ => []
+exactIn \\exact
+exactIn \\min
+minIn \\exact
+minIn \\min
+ruggedIn \\exact
+ruggedIn \\min
+ruggedIn \\rugged
+exactGen \\exact
+exactGen \\min
+minGen \\exact
+minGen \\min
+rugGen \\exact
+rugGen \\min
+rugGen \\rugged
+"""
+            ),
+            [Decimal("1")] * 14,
+        )
+
     def test_compiler_emits_resolved_user_defined_element_calls(self):
         source = """
 define add_one(n: Number) -> Number => $n 1 +

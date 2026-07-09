@@ -89,6 +89,33 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertFalse(assignable(C(ListExactType, Number), Number))
         self.assertTrue(compatible(C(ListExactType, Number), Number))
 
+    def test_minimum_rank_is_parameter_compatible_with_exact_rank(self):
+        argument = C(ListMinType, Number)
+        parameter = C(ListExactType, Number)
+
+        self.assertFalse(assignable(argument, parameter))
+        applied = apply_overload(Overload((parameter,), (Integer,)), (argument,))
+
+        self.assertIsNotNone(applied)
+        self.assertTrue(applied.vectorised)
+        self.assertEqual(applied.vectorised_depths, (0,))
+        self.assertEqual(applied.vectorised_target_ranks, (1,))
+        self.assertEqual(
+            applied.actual_returns,
+            (U(Integer, C(ListMinType, Integer)),),
+        )
+
+    def test_higher_minimum_rank_preserves_minimum_vectorised_result_rank(self):
+        applied = apply_overload(
+            Overload((C(ListExactType, Number),), (Integer,)),
+            (C(ListMinType, Number, 3),),
+        )
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.vectorised_depths, (2,))
+        self.assertEqual(applied.vectorised_target_ranks, (1,))
+        self.assertEqual(applied.actual_returns, (C(ListMinType, Integer, 2),))
+
     def test_numeric_nominal_hierarchy_is_integer_real_number(self):
         self.assertTrue(assignable(Integer, Real))
         self.assertTrue(assignable(Integer, Number))

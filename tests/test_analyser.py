@@ -446,6 +446,36 @@ define rank(xs: Number+$n exact) -> Number => $n end
         self.assertEqual(typed[-1].typ, Number)
         self.assertEqual(typed[-1].overload.rank_values, (("n", 2),))
 
+    def test_minimum_rank_argument_adapts_to_exact_collection_parameter(self):
+        typed = analyse(
+            parse(
+                """
+define exactIn(:Number+) => 1
+define \\min -> Number* => []
+exactIn \\min
+"""
+            )
+        )
+
+        self.assertEqual(typed[-1].overload.vectorised_depths, (0,))
+        self.assertEqual(typed[-1].overload.vectorised_target_ranks, (1,))
+
+    def test_empty_return_list_is_inferred_from_explicit_return_type(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                """
+define \\exact -> Number+ => []
+define \\minimum -> Number* => []
+define \\rugged -> Number~ => []
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(len(typed), 3)
+
     def test_analyses_vectorisation_extensions(self):
         analyser = Analyser()
 
