@@ -1419,7 +1419,7 @@ class Analyser:
 
         modifier_args = self._modifier_argument_types(branch, node)
         if modifier_args is None:
-            return BranchSet((branch.emit(TypedNode(node, None)),))
+            return BranchSet()
         if node.modifier_args and not _modifier_arity_matches(overloads, modifier_args):
             self._diagnose(
                 f"element '{node.name}' expects "

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import MAX_EMAX, MIN_EMIN, Decimal, localcontext
 from itertools import chain, islice
 from typing import Any
 
@@ -470,6 +470,8 @@ def _peek(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin("dip", (T.Fn(),), call_site=_dip_call_site)
 def _dip(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    if len(args) < 2:
+        raise RuntimeError("dip requires a held value beneath its callable")
     callable_value = args[-1]
     held = args[-2]
     return (*ctx.call(callable_value, list(args[:-2])), held)
@@ -520,6 +522,78 @@ def _runtime_callable_value(value: Any) -> bool:
 # --------------------------------------------------------------------------
 
 
+def _decimal_addition_precision(left: Decimal, right: Decimal) -> int:
+    highest_place = max(left.adjusted(), right.adjusted())
+    lowest_place = min(left.as_tuple().exponent, right.as_tuple().exponent)
+    return max(1, highest_place - lowest_place + 2)
+
+
+def _decimal_multiplication_precision(left: Decimal, right: Decimal) -> int:
+    return max(1, len(left.as_tuple().digits) + len(right.as_tuple().digits))
+
+
+def _decimal_division_precision(left: Decimal, right: Decimal) -> int:
+    return max(1, len(left.as_tuple().digits) + len(right.as_tuple().digits))
+
+
+def _decimal_binary(
+    left: Decimal,
+    right: Decimal,
+    operation: Callable[[Decimal, Decimal], Decimal],
+    precision: int,
+) -> Decimal:
+    with localcontext() as context:
+        context.prec = max(context.prec, precision)
+        context.Emax = MAX_EMAX
+        context.Emin = MIN_EMIN
+        return operation(left, right)
+
+
+def _decimal_add(left: Decimal, right: Decimal) -> Decimal:
+    return _decimal_binary(
+        left,
+        right,
+        lambda a, b: a + b,
+        _decimal_addition_precision(left, right),
+    )
+
+
+def _decimal_subtract(left: Decimal, right: Decimal) -> Decimal:
+    return _decimal_binary(
+        left,
+        right,
+        lambda a, b: a - b,
+        _decimal_addition_precision(left, right),
+    )
+
+
+def _decimal_multiply(left: Decimal, right: Decimal) -> Decimal:
+    return _decimal_binary(
+        left,
+        right,
+        lambda a, b: a * b,
+        _decimal_multiplication_precision(left, right),
+    )
+
+
+def _decimal_remainder(left: Decimal, right: Decimal) -> Decimal:
+    return _decimal_binary(
+        left,
+        right,
+        lambda a, b: a % b,
+        _decimal_addition_precision(left, right),
+    )
+
+
+def _decimal_divide(left: Decimal, right: Decimal) -> Decimal:
+    return _decimal_binary(
+        left,
+        right,
+        lambda a, b: a / b,
+        _decimal_division_precision(left, right),
+    )
+
+
 @builtin("+", (T.Integer, T.Integer), (T.Integer,))
 @builtin("+", (T.Real, T.Real), (T.Real,))
 @builtin("+", (T.Real, T.Integer), (T.Real,))
@@ -527,6 +601,8 @@ def _runtime_callable_value(value: Any) -> bool:
 @builtin("+", (T.Number, T.Number), (T.Number,))
 @builtin("+", (T.String, T.String), (T.String,))
 def _plus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    if isinstance(args[0], Decimal):
+        return (_decimal_add(args[0], args[1]),)
     return (args[0] + args[1],)
 
 
@@ -536,7 +612,7 @@ def _plus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("-", (T.Integer, T.Real), (T.Real,))
 @builtin("-", (T.Number, T.Number), (T.Number,))
 def _minus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    return (args[0] - args[1],)
+    return (_decimal_subtract(args[0], args[1]),)
 
 
 @builtin("*", (T.Integer, T.Integer), (T.Integer,))
@@ -545,7 +621,7 @@ def _minus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("*", (T.Integer, T.Real), (T.Real,))
 @builtin("*", (T.Number, T.Number), (T.Number,))
 def _multiply(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    return (args[0] * args[1],)
+    return (_decimal_multiply(args[0], args[1]),)
 
 
 @builtin("*", (T.Integer, T.String), (T.String,))
@@ -566,7 +642,7 @@ def _string_repeat_reverse(
 @builtin("%", (T.Integer, T.Real), (T.Real,))
 @builtin("%", (T.Number, T.Number), (T.Number,))
 def _percent(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    return (args[0] % args[1],)
+    return (_decimal_remainder(args[0], args[1]),)
 
 
 @builtin("/", (T.Integer, T.Integer), (T.Real,))
@@ -575,7 +651,7 @@ def _percent(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("/", (T.Integer, T.Real), (T.Real,))
 @builtin("/", (T.Number, T.Number), (T.Number,))
 def _slash(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    return (args[0] / args[1],)
+    return (_decimal_divide(args[0], args[1]),)
 
 
 @builtin(
@@ -604,7 +680,7 @@ def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin("double", (T.Number,), (T.Number,))
 def _double(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    return (args[0] * 2,)
+    return (_decimal_multiply(args[0], Decimal(2)),)
 
 
 @builtin("positive?", (T.Number,), (T.Boolean,))

@@ -206,9 +206,10 @@ def format_runtime_value(
     """Format a runtime value for user-visible output and diagnostics."""
     value = unwrap_runtime_value(value)
     if isinstance(value, Decimal):
-        if value == value.to_integral_value():
-            return format(value.quantize(Decimal(1)), "f")
-        return format(value.normalize(), "f")
+        rendered = format(value, "f")
+        if "." in rendered:
+            rendered = rendered.rstrip("0").rstrip(".")
+        return rendered
     if isinstance(value, str):
         return repr(value) if quote_strings else value
     if isinstance(value, list):

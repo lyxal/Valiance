@@ -69,6 +69,23 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(execute("(1 + 2) * (3 + 4)"), [Decimal("21")])
         self.assertEqual(execute("5 -(2, _)"), [Decimal("-3")])
 
+    def test_arithmetic_preserves_arbitrarily_large_integer_precision(self):
+        value = "12345678901234567890123456789"
+
+        self.assertEqual(
+            execute(f"{value} + 2"),
+            [Decimal("12345678901234567890123456791")],
+        )
+        self.assertEqual(
+            execute(f"{value} - 2"),
+            [Decimal("12345678901234567890123456787")],
+        )
+        self.assertEqual(
+            execute(f"{value} * 3"),
+            [Decimal("37037036703703703670370370367")],
+        )
+        self.assertEqual(execute(f"{value} / 1"), [Decimal(value)])
+
     def test_tag_validator_runs_at_runtime(self):
         source = """
 tag #checked as computed

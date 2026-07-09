@@ -568,6 +568,24 @@ define choose(a: Integer?) -> Integer? => $a end
         typed = analyse([ElementNode(MISSING)], Environment())
         self.assertIsNone(typed[0].typ)
 
+    def test_invalid_modifier_body_fails_containing_function_analysis(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+                define discrim(:Integer, :Integer, :Integer) -> Integer =>
+                  copy(a, b, c -> a, c)
+                  * * 4
+                  dip: (** 2)
+                  -
+                end
+                """
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, ["5:25: unknown element '**'"])
+
     def test_diagnostics_include_source_location_when_available(self):
         analyser = Analyser(Environment())
 

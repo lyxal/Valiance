@@ -46,6 +46,20 @@ class BytecodeSerializationTests(unittest.TestCase):
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)
 
+    def test_serializes_arbitrarily_large_decimal_constants(self):
+        value = Decimal("99999999999999999999999999999")
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.PUSH_CONST, value),
+                    Instruction(OpCode.RETURN),
+                ),
+                name="<main>",
+            )
+        )
+
+        self.assertEqual(loads(dumps(program)), program)
+
     def test_serializes_nested_function_code(self):
         inner = FunctionCode(
             (

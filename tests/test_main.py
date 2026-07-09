@@ -185,6 +185,15 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(output.getvalue(), "Stack [\n  0: 3\n]\n")
 
+    def test_main_formats_arbitrarily_large_integer(self):
+        output = io.StringIO()
+        value = "99999999999999999999999999999"
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["run", "--code", value])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), f"Stack [\n  0: {value}\n]\n")
+
     def test_main_formats_lex_errors_with_source_context(self):
         error = io.StringIO()
         with contextlib.redirect_stderr(error):
