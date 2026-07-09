@@ -93,59 +93,9 @@ Most branch operations now live on `AnalysisBranch` and `Analyser`:
 Prefer adding general `BranchSet` operations only when more than one node kind
 will use them. Node-specific checks belong in the node handler.
 
-## Purpose Of The Analyser Refactor
-
-The analyser refactor is not a rewrite of Valiance semantics. Its purpose is to
-make the existing semantics easier to preserve, extend, and test.
-
-Before the refactor, `analyser.py` had accumulated several kinds of complexity
-in the same place:
-
-- one large node-dispatch path mixed unrelated AST features
-- placeholder handlers made internal child nodes look like valid expressions
-- call and overload analysis used tuple-shaped intermediate values that were
-  easy to misread or extend incorrectly
-- genericization/refinement rebuilt dataclasses by copying every field
-- local and imported declaration registration had duplicated object/trait logic
-- branch joins for control flow were embedded directly in node handlers
-
-That shape made feature work risky. A small language change could require edits
-across dispatch, overload selection, branch merging, type transforms, typed-node
-emission, and diagnostics, with no obvious ownership boundary.
-
-The goal is to turn `analyser.py` into a set of explicit feature areas:
-
-- branch/state primitives
-- concrete AST node handlers
-- declaration registration
-- call and overload application
-- control-flow joins
-- literal analysis
-- generic/type transformation
-- diagnostic formatting
-
-The refactor should keep behavior stable while replacing implicit structure with
-named helpers and dataclasses. Each new helper should either remove meaningful
-duplication, encode an invariant, or reveal a future module boundary. Avoid
-mechanical churn that only moves lines around.
-
-What is involved:
-
-1. Keep the branch-centric model intact. Every handler still transforms an
-   `AnalysisBranch` into a `BranchSet`.
-2. Replace broad dispatch and catch-all behavior with exact handlers and
-   explicit internal-node diagnostics.
-3. Consolidate repeated construction paths, especially overloads, object/trait
-   metadata, literal result branches, and control-flow joins.
-4. Prefer structured intermediate objects over anonymous tuples when values
-   cross helper boundaries.
-5. Add or preserve focused tests around each behavior being touched.
-6. Only split files once the helper boundaries are stable enough that a module
-   name describes ownership, not just a line-count escape hatch.
-
 ## Current Analyser Structure
 
-The analyser now uses concrete handler registration:
+The analyser uses concrete handler registration:
 
 ```python
 @register(SomeNode)
@@ -154,13 +104,12 @@ def _some_node(self: Analyser, node: SomeNode, branch: AnalysisBranch) -> Branch
 ```
 
 `Analyser._analyse_node_from_branch(...)` does exact-type lookup in
-`_NODE_HANDLERS`. It no longer contains one large legacy `isinstance` dispatcher.
-Internal AST nodes such as object fields, trait requirements, try handlers,
-match cases, and match patterns are classified by `_INTERNAL_NODE_TYPES`. If one
-reaches normal expression analysis, it produces an `internal-node` diagnostic
-instead of being silently emitted as a placeholder typed node.
+`_NODE_HANDLERS`. Internal AST nodes such as object fields, trait requirements,
+try handlers, match cases, and match patterns are classified by
+`_INTERNAL_NODE_TYPES`. If one reaches normal expression analysis, it produces
+an `internal-node` diagnostic.
 
-Important refactor helpers currently in `analyser.py`:
+Important helpers in `analyser.py`:
 
 - `_function_overload(...)`
   Builds function overloads with parameter names, defaults, and annotation
@@ -181,39 +130,6 @@ Important refactor helpers currently in `analyser.py`:
 - `_literal_branch_results(...)`
   Shared branch/result construction for list, tuple, record, and dictionary
   literals.
-
-When continuing the refactor, prefer moving feature-shaped behavior into helpers
-like these before splitting files. A file split will be cleaner once the current
-clusters have obvious boundaries.
-
-### Refactor Continuation Checklist
-
-Safe next steps, in rough priority order:
-
-1. Continue consolidating element/call application. The useful boundary is around
-   argument sourcing, candidate selection, candidate commitment, and special
-   `call(...)` handling. Keep normal element calls and explicit element syntax on
-   shared helpers.
-2. Extract match-pattern analysis only after the helper names make the boundary
-   obvious. Pattern nodes are already internal child nodes, not normal analyser
-   dispatch targets.
-3. Consider moving object/trait/variant registration helpers to a small
-   declaration-analysis module once `_define_object_shape(...)` and
-   `_define_trait_shape(...)` have settled.
-4. Consider moving literal helpers together after array literal typing is no
-   longer a no-op.
-5. Do not split by line number. Split by ownership: declarations, call/overload
-   application, control flow, literals, generic/type transforms, and diagnostics
-   are plausible future modules.
-
-Recent cleanup removed:
-
-- the legacy all-in-one node dispatcher
-- the placeholder node handler
-- tuple-shaped overload candidate adapters
-- broad overload/dataclass field copying in several genericization/refinement
-  paths
-- unused branch merge/resolution scaffolding
 
 ## Input Modes
 
