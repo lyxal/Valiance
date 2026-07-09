@@ -60,14 +60,39 @@ BUILTIN_ERROR_TYPES = tuple(
     )
 )
 
+BUILTIN_FAULT_TYPES = tuple(
+    Symbol(name)
+    for name in (
+        "RuntimeFault",
+        "ValueFault",
+        "RangeFault",
+        "ParseFault",
+        "DivisionByZeroFault",
+        "IndexFault",
+        "KeyFault",
+        "ShapeFault",
+        "StateFault",
+        "IOFault",
+        "NotFoundFault",
+        "AlreadyExistsFault",
+        "PermissionFault",
+        "ClosedFault",
+        "TimeoutFault",
+        "CancelledFault",
+        "UnwrappedNoneFault",
+        "UnwrappedResultFault",
+        "DuplicationFault",
+        "CleanupFault",
+    )
+)
+
 TRAIT_IMPLS = (
     (INTEGER, REAL),
     (REAL, NUMBER),
     *((error_type, ERR) for error_type in BUILTIN_ERROR_TYPES),
+    *((fault_type, FAULT) for fault_type in BUILTIN_FAULT_TYPES),
     (Symbol("AssertError"), ERR),
     (Symbol("PanicError"), ERR),
-    (Symbol("UnwrappedNoneFault"), FAULT),
-    (Symbol("UnwrappedResultFault"), FAULT),
 )
 
 
@@ -875,36 +900,38 @@ def _join(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 # --------------------------------------------------------------------------
-# Recoverable errors
+# Recoverable errors and panic faults
 # --------------------------------------------------------------------------
 
 
-def _register_builtin_error_type(error_type: Symbol) -> None:
+def _register_builtin_message_type(type_name: Symbol) -> None:
     @builtin(
-        error_type,
+        type_name,
         (T.String,),
-        (T.N(error_type),),
+        (T.N(type_name),),
         param_names=("message",),
     )
     def construct(
         args: tuple[Any, ...],
         ctx: RuntimeContext,
         *,
-        _error_type: Symbol = error_type,
+        _type_name: Symbol = type_name,
     ) -> tuple[Any, ...]:
-        return (ObjectValue(_error_type.text, {"message": args[0]}),)
+        return (ObjectValue(_type_name.text, {"message": args[0]}),)
 
 
-for _error_type in BUILTIN_ERROR_TYPES:
-    _register_builtin_error_type(_error_type)
+for _message_type in (*BUILTIN_ERROR_TYPES, *BUILTIN_FAULT_TYPES):
+    _register_builtin_message_type(_message_type)
 
 
 @builtin("message", (T.N(ERR),), (T.String,))
-def _error_message(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    error = args[0]
-    if not isinstance(error, ObjectValue) or "message" not in error.fields:
-        raise RuntimeError("Err value has no message field")
-    return (error.fields["message"],)
+@builtin("message", (T.N(FAULT),), (T.String,))
+@alias("getMessage")
+def _failure_message(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    failure = args[0]
+    if not isinstance(failure, ObjectValue) or "message" not in failure.fields:
+        raise RuntimeError("Err or Fault value has no message field")
+    return (failure.fields["message"],)
 
 
 # --------------------------------------------------------------------------
@@ -1033,9 +1060,12 @@ def _println(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin(
     "panic",
-    (T.V("Fault"),),
+    (T.TypeVariable("F"),),
     (T.Never(),),
-    element_tags=(T.ElementTag(Symbol("Panic"), (T.V("Fault"),)),),
+    (T.GenericConstraint("F", T.N(FAULT)),),
+    element_tags=(
+        T.ElementTag(Symbol("Panic"), (T.TypeVariable("F"),)),
+    ),
 )
 def _panic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     raise PanicSignal(args[0])
@@ -1101,8 +1131,8 @@ def default_environment() -> T.Environment:
     env.define_trait(ERR)
     env.define_trait(FAULT)
     message_attribute = T.ObjectAttribute(Symbol("message"), T.String)
-    for error_type in BUILTIN_ERROR_TYPES:
-        env.define_object(error_type, (message_attribute,))
+    for message_type in (*BUILTIN_ERROR_TYPES, *BUILTIN_FAULT_TYPES):
+        env.define_object(message_type, (message_attribute,))
     env.context.set_generic_variance(OK, (T.Variance.COVARIANT,))
     env.context.set_generic_variance(
         RESULT,

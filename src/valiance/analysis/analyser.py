@@ -2100,6 +2100,15 @@ class Analyser:
         body_outputs = self.analyse_block(BranchSet((branch,)), node.body)
         outputs: list[AnalysisBranch] = list(body_outputs.branches)
         for handler in node.handlers:
+            if handler.typ is not None and not T.assignable(
+                handler.typ,
+                T.N(Symbol("Fault")),
+                self.env.context,
+            ):
+                self._diagnose(
+                    f"try handler type {T.show(handler.typ)} does not implement Fault",
+                    handler,
+                )
             handler_outputs = self.analyse_block(
                 BranchSet((branch,)),
                 handler.body,
@@ -4704,6 +4713,7 @@ def _call_element_candidates(
                     element_tags=_propagated_element_tags(
                         concrete_overload,
                         concrete_args,
+                        concrete_application.substitution,
                     ),
                     vectorised_target_ranks=(
                         concrete_application.vectorised_target_ranks
@@ -5130,7 +5140,11 @@ def _apply_overload_to_branch(
         applied.vectorised,
         applied.vectorised_depths,
         tuple(sorted(rank_values.items())),
-        element_tags=_propagated_element_tags(overload, specialized_args),
+        element_tags=_propagated_element_tags(
+            overload,
+            specialized_args,
+            applied.substitution,
+        ),
         vectorised_target_ranks=applied.vectorised_target_ranks,
     )
     return OverloadApplication(applied, specialized_branch)
@@ -5241,7 +5255,11 @@ def _apply_call_site_checked_overload(
             candidate.vectorised_depths,
             tuple(sorted(rank_values.items())),
             consumed_count + len(args),
-            element_tags=_propagated_element_tags(concrete, concrete_args),
+            element_tags=_propagated_element_tags(
+                concrete,
+                concrete_args,
+                candidate.substitution,
+            ),
             vectorised_target_ranks=candidate.vectorised_target_ranks,
         )
         return OverloadApplication(
@@ -5318,8 +5336,16 @@ def _call_site_consumed_count(
 def _propagated_element_tags(
     overload: T.Overload,
     args: tuple[T.Type, ...],
+    substitution: dict[str, T.Type] | None = None,
 ) -> frozenset[T.ElementTag]:
-    tags = {tag for tag in overload.element_tags if not tag.absent}
+    tags = {
+        tag
+        for tag in _substitute_branch_element_tags(
+            overload.element_tags,
+            substitution or {},
+        )
+        if not tag.absent
+    }
     for arg in args:
         arg = T.normalize(arg)
         if isinstance(arg, T.FunctionType):

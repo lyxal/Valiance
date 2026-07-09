@@ -1860,7 +1860,9 @@ def try_apply_overload(
             or any(depth > 0 for depth in vectorised_depths)
             or any(rank is not None for rank in vectorised_target_ranks),
             vectorised_depths,
-            element_tags=overload.element_tags,
+            element_tags=frozenset(
+                _substitute_element_tags(overload.element_tags, substitution)
+            ),
             vectorised_target_ranks=vectorised_target_ranks,
         )
     )

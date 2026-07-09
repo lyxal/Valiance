@@ -726,6 +726,20 @@ with normal `object MyError as Err => ...` syntax; the current normalizer is
 still name-convention based because `normalize(...)` does not take an
 environment.
 
+The standard environment also defines message-bearing built-in `Fault` objects:
+`RuntimeFault`, `ValueFault`, `RangeFault`, `ParseFault`,
+`DivisionByZeroFault`, `IndexFault`, `KeyFault`, `ShapeFault`, `StateFault`,
+`IOFault`, `NotFoundFault`, `AlreadyExistsFault`, `PermissionFault`,
+`ClosedFault`, `TimeoutFault`, `CancelledFault`, `UnwrappedNoneFault`,
+`UnwrappedResultFault`, `DuplicationFault`, and `CleanupFault`. Each has the
+same native one-`String` constructor and readable `message` field as built-in
+errors, but implements `Fault` rather than `Err`.
+
+The built-in `panic` overload is generic over `F` with a nominal `Fault` bound.
+This both rejects non-fault values and preserves the concrete `Panic[F]` element
+tag after generic substitution. Typed `try` handlers are likewise required to
+name a type implementing `Fault`; an untyped handler remains a catch-all.
+
 Assignability and overload solving know the Result success/error split:
 
 - `OK[T]` is assignable to `Result[T, E]`.

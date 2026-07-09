@@ -2904,17 +2904,40 @@ end
 ```
 
 ## 21.2. `Panic`s and the `Fault` trait.
-- Sometimes, an error state really should terminate program execution. That is to say, some things should be more than just a `Result`. 
-- The `panic` element takes an object implementing the `Fault` trait, and then immediately returns from all functions until either the top level is reached, or it is caught by a `try/handle`
-- Note that each time a function in the call stack is returned from, the same clean up that would usually happen upon function termination occurs. This means that the panic cleans up each layer of the call stack as it bubbles up.
+- Sometimes, an error state really should terminate program execution. That is to say, some things should be more than just a `Result`.
+- The `panic` element accepts only values implementing the `Fault` trait. Passing an ordinary value, such as a `String`, is a compile error.
+- `panic` immediately returns from functions until either the top level is reached or the value is caught by a `try/handle`.
+- Each function unwound by a panic performs the same cleanup that would normally happen when that function terminates.
 
 ```
 trait Fault =>
-  extend getMessage -> String
+  extend message -> String
 end
 ```
 
-- Using `panic` in a function will cause that function to have the `Panic[T]` element tag, where `T` is the type of the fault.
+The following fault objects are built in. Each constructor takes a single
+`String` message, exposes it through `$.message`, `message`, and `getMessage`,
+and implements `Fault`:
+
+- General and data faults: `RuntimeFault`, `ValueFault`, `RangeFault`,
+  `ParseFault`, `DivisionByZeroFault`, `IndexFault`, `KeyFault`, `ShapeFault`,
+  and `StateFault`.
+- System and concurrency faults: `IOFault`, `NotFoundFault`,
+  `AlreadyExistsFault`, `PermissionFault`, `ClosedFault`, `TimeoutFault`, and
+  `CancelledFault`.
+- Language runtime faults: `UnwrappedNoneFault`, `UnwrappedResultFault`,
+  `DuplicationFault`, and `CleanupFault`.
+
+For example:
+
+```
+RuntimeFault("cannot continue") panic
+```
+
+Out-of-range sequence indexing raises `IndexFault`; indexing a dictionary with
+an absent key raises `KeyFault`. Both are catchable with `try/handle`.
+
+- Using `panic` in a function causes that function to have the `Panic[T]` element tag, where `T` is the concrete fault type.
 
 ## 21.3. `try/handle`
 - A `try/handle` block allows a `Panic` to be caught
@@ -2932,7 +2955,18 @@ end
 
 - The code inside the try block will be executed first. Note that the code inside the try block must be able to panic. If it cannot, a compile error will be raised.
 - There has to be at least one handler. However, not all panic types need to be handled. Additionally, it's valid to only specify the catch-all handler.
+- A typed handler must name a type implementing `Fault`; the untyped `handle =>` form remains the catch-all handler.
 - If a panic is raised with a type that matches a handler, then control flow goes to that handle block.
+
+For example:
+
+```
+try =>
+  [1, 2, 3] $[5]
+handle IndexFault =>
+  println "Caught IndexFault"
+end
+```
 - After the handle block is finished, the function that contains the try block is immediately returned from.
 - The result of the handler will be wrapped in a `PanicError` type (a built-in type implementing `Err`) 
 - If at top level, the program will exit after the handler is finished

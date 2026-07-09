@@ -19,7 +19,7 @@ define \arithmetic =>
     @test("rejects zero divisors")
     define \zeroDivisor =>
       testing.assertPanics: fn =>
-        "division by zero" panic
+        DivisionByZeroFault("division by zero") panic
       end
     end
   end

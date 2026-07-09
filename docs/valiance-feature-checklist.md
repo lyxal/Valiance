@@ -680,6 +680,7 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Provide the standard recoverable built-in error objects.
 - [x] Provide the `Fault` trait.
 - [x] Implement panic values and panic propagation.
+- [x] Require explicit panic values and typed handlers to implement `Fault`.
 - [x] Attach `Panic[T]` element tags to panicking operations.
 - [ ] Distinguish intrinsic runtime faults from explicit panic where specified.
 - [x] Parse `try/handle`.
@@ -693,7 +694,8 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [ ] Provide `AssertError`.
 - [ ] Provide `VectorisationFault`.
 - [ ] Provide `SliceFault`.
-- [ ] Provide other built-in faults referenced by the design.
+- [x] Provide the standard general, system, and runtime built-in faults.
+- [x] Raise catchable `IndexFault` and `KeyFault` values from indexing.
 
 ## 38. `where` clauses and type-level constraints
 

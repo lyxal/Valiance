@@ -550,24 +550,43 @@ class VirtualMachine:
                                 _set_field(receiver, instruction.arg, value)
                             )
                         case OpCode.GET_INDEX:
-                            values = _pop_index_values(frame.stack, instruction.arg)
-                            receiver = _index_receiver(frame)
-                            result = _get_index(receiver, instruction.arg, values)
-                            if instruction.arg[1]:
-                                if not isinstance(result, list):
-                                    raise RuntimeError(
-                                        "spread indexing requires a list result"
-                                    )
-                                frame.stack.extend(result)
-                            else:
-                                frame.stack.append(result)
+                            try:
+                                values = _pop_index_values(frame.stack, instruction.arg)
+                                receiver = _index_receiver(frame)
+                                result = _get_index(receiver, instruction.arg, values)
+                                if instruction.arg[1]:
+                                    if not isinstance(result, list):
+                                        raise RuntimeError(
+                                            "spread indexing requires a list result"
+                                        )
+                                    frame.stack.extend(result)
+                                else:
+                                    frame.stack.append(result)
+                            except PanicSignal as exc:
+                                target = self._handle_panic(frame, exc)
+                                if target is None:
+                                    raise
+                                ip = target
+                                continue
                         case OpCode.SET_INDEX:
-                            values = _pop_index_values(frame.stack, instruction.arg)
-                            receiver = _pop(frame.stack, "indexed assignment")
-                            value = _pop(frame.stack, "indexed assignment")
-                            frame.stack.append(
-                                _set_index(receiver, instruction.arg, values, value)
-                            )
+                            try:
+                                values = _pop_index_values(frame.stack, instruction.arg)
+                                receiver = _pop(frame.stack, "indexed assignment")
+                                value = _pop(frame.stack, "indexed assignment")
+                                frame.stack.append(
+                                    _set_index(
+                                        receiver,
+                                        instruction.arg,
+                                        values,
+                                        value,
+                                    )
+                                )
+                            except PanicSignal as exc:
+                                target = self._handle_panic(frame, exc)
+                                if target is None:
+                                    raise
+                                ip = target
+                                continue
                         case OpCode.JUMP:
                             ip = instruction.arg
                             continue
@@ -2990,7 +3009,10 @@ def _index_many_lazy(receiver: Any, indices: tuple[Any, ...]) -> list[Any]:
             break
     missing = [target for target in targets if target not in results]
     if missing:
-        raise RuntimeError("index out of range")
+        missing_text = ", ".join(str(target) for target in missing)
+        raise PanicSignal(
+            _fault_object("IndexFault", f"index out of range: {missing_text}")
+        )
     return [
         _index_path(results[target], tail) if tail else results[target]
         for target, tail in requests
@@ -3018,13 +3040,25 @@ def _index_one(receiver: Any, index: Any) -> Any:
         try:
             return receiver[index]
         except KeyError as exc:
-            raise RuntimeError(f"dictionary has no key {_format_value(index)}") from exc
-    if isinstance(receiver, tuple):
-        return receiver[_int_index(index)]
-    if isinstance(receiver, str):
-        return receiver[_int_index(index)]
-    if is_eager_sequence(receiver):
-        return receiver[_int_index(index)]
+            raise PanicSignal(
+                _fault_object(
+                    "KeyFault",
+                    f"dictionary has no key {_format_value(index)}",
+                )
+            ) from exc
+    if isinstance(receiver, tuple) or isinstance(receiver, str) or is_eager_sequence(
+        receiver
+    ):
+        target = _int_index(index)
+        try:
+            return receiver[target]
+        except IndexError as exc:
+            raise PanicSignal(
+                _fault_object(
+                    "IndexFault",
+                    _index_fault_message(target, len(receiver)),
+                )
+            ) from exc
     if is_list_like(receiver):
         if not isinstance(index, Decimal):
             raise RuntimeError("lazy list indexing requires a numeric index")
@@ -3034,7 +3068,9 @@ def _index_one(receiver: Any, index: Any) -> Any:
         for offset, item in enumerate(receiver):
             if offset == target:
                 return item
-        raise RuntimeError("index out of range")
+        raise PanicSignal(
+            _fault_object("IndexFault", _index_fault_message(target))
+        )
     raise RuntimeError("value is not indexable")
 
 
@@ -3216,22 +3252,57 @@ def _slice_replacements(value: Any, count: int) -> list[Any]:
 def _set_index_one(receiver: Any, index: Any, value: Any) -> Any:
     if isinstance(receiver, dict):
         if index not in receiver:
-            raise RuntimeError(f"dictionary has no key {_format_value(index)}")
+            raise PanicSignal(
+                _fault_object(
+                    "KeyFault",
+                    f"dictionary has no key {_format_value(index)}",
+                )
+            )
         updated = dict(receiver)
         updated[index] = value
         return updated
     if isinstance(receiver, tuple):
+        target = _int_index(index)
         updated = list(receiver)
-        updated[_int_index(index)] = value
+        try:
+            updated[target] = value
+        except IndexError as exc:
+            raise PanicSignal(
+                _fault_object(
+                    "IndexFault",
+                    _index_fault_message(target, len(receiver)),
+                )
+            ) from exc
         return tuple(updated)
     if isinstance(receiver, str):
         if not isinstance(value, str) or len(value) != 1:
             raise RuntimeError("string indexed assignment requires one character")
-        ind = _int_index(index)
-        return receiver[:ind] + value + receiver[ind + 1 :]
+        target = _int_index(index)
+        if not -len(receiver) <= target < len(receiver):
+            raise PanicSignal(
+                _fault_object(
+                    "IndexFault",
+                    _index_fault_message(target, len(receiver)),
+                )
+            )
+        normalized_target = _normal_index(target, len(receiver))
+        return (
+            receiver[:normalized_target]
+            + value
+            + receiver[normalized_target + 1 :]
+        )
     if is_eager_sequence(receiver):
+        target = _int_index(index)
         updated = list(receiver)
-        updated[_int_index(index)] = value
+        try:
+            updated[target] = value
+        except IndexError as exc:
+            raise PanicSignal(
+                _fault_object(
+                    "IndexFault",
+                    _index_fault_message(target, len(receiver)),
+                )
+            ) from exc
         return updated
     raise RuntimeError("value is not index-assignable")
 
@@ -3251,6 +3322,12 @@ def _int_index(value: Any) -> int:
 
 def _normal_index(index: int, length: int) -> int:
     return index + length if index < 0 else index
+
+
+def _index_fault_message(index: int, length: int | None = None) -> str:
+    if length is None:
+        return f"index {index} is out of range"
+    return f"index {index} is out of range for length {length}"
 
 
 def _get_field(receiver: Any, field: str) -> Any:

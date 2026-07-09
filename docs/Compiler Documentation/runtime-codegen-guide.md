@@ -61,6 +61,10 @@ The runtime implementation is small, but several files must evolve together.
 - `TryNode` compiles to `TRY_BEGIN` / `TRY_END` plus handler jumps. Runtime
   panics are carried by `PanicSignal` and caught by the nearest active handler
   whose nominal type name matches, or by a catch-all handler.
+- `GET_INDEX` and `SET_INDEX` convert out-of-range sequence access into an
+  `IndexFault` `PanicSignal`, and missing dictionary keys into `KeyFault`.
+  These instructions route the signal through the same nearest-handler lookup
+  as explicit `panic` calls before allowing it to unwind the frame.
 - `ForNode` compiles to a runtime foreach operation. Loop bodies may signal
   `break` values; normal completion returns runtime `None` values matching the
   analysed break result shape.
