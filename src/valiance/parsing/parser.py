@@ -101,6 +101,7 @@ from valiance.types import (
     Overload,
     RankVariable,
     Row,
+    RowField,
     RowType,
     Tagged,
     TaggedType,
@@ -2133,6 +2134,10 @@ class Parser:
     def _type_postfix(self) -> Type:
         typ = self._type_primary()
         while True:
+            if self._row_constraint_ahead():
+                self._expect(TokenKind.LPAREN)
+                typ = Row(typ, *self._row_fields())
+                continue
             if self._check_op("<"):
                 self._advance()
                 if not isinstance(typ, FunctionType):
@@ -2230,6 +2235,30 @@ class Parser:
             line=token.line,
             column=token.column,
         )
+
+    def _row_constraint_ahead(self) -> bool:
+        if not self._check(TokenKind.LPAREN):
+            return False
+        ahead = 1
+        while self._peek(ahead).kind is TokenKind.NEWLINE:
+            ahead += 1
+        return self._peek(ahead).kind is TokenKind.DOT
+
+    def _row_fields(self) -> tuple[RowField, ...]:
+        fields: list[RowField] = []
+        self._skip_newlines()
+        if self._check(TokenKind.RPAREN):
+            self._error("row constraint requires at least one field")
+        while True:
+            self._expect(TokenKind.DOT)
+            name = self._symbol("expected row field name")
+            self._expect(TokenKind.COLON)
+            fields.append(Field(name, self.parse_type_expression()))
+            self._skip_newlines()
+            if self._match(TokenKind.RPAREN):
+                return tuple(fields)
+            self._expect(TokenKind.COMMA)
+            self._skip_newlines()
 
     def _type_primary(self) -> Type:
         if self._check_ident("trait"):

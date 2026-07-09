@@ -1296,6 +1296,21 @@ end
 
         self.assertEqual(typed.typ, Fn((V("T"),), (V("T"),)))
 
+    def test_generic_function_literal_uses_explicit_row_constraint(self):
+        analyser = Analyser()
+        [typed] = analyser.analyse(
+            parse("fn[T, U] (x: T(.bar: U)) -> U => $x.bar")
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            typed.typ,
+            Fn(
+                (Row(V("T"), Field(Symbol("bar"), V("U"))),),
+                (V("U"),),
+            ),
+        )
+
     def test_match_infers_missing_inputs_from_multiple_patterns(self):
         typ = analyse_function(
             FunctionNode(

@@ -58,6 +58,7 @@ from valiance.types import (
     DataTag,
     ElementTag,
     Exact,
+    Field,
     Fn,
     ListExactType,
     ListMinType,
@@ -65,6 +66,7 @@ from valiance.types import (
     N,
     Number,
     RankVariable,
+    Row,
     String,
     Tagged,
     TupleTypeItem,
@@ -645,6 +647,17 @@ end
         self.assertEqual(node.generic_variances, (Symbol("above"),))
         self.assertEqual(node.generic_constraints, (N(Symbol("Vehicle")),))
 
+    def test_parses_row_constrained_generic_parameter(self):
+        [node] = parse(
+            "fn[T, U] (x: T(.bar: U)) -> U => $x.bar #? Completely valid"
+        )
+
+        self.assertEqual(
+            node.params[0].typ,
+            Row(N(Symbol("T")), Field(Symbol("bar"), N(Symbol("U")))),
+        )
+        self.assertEqual(node.returns, (N(Symbol("U")),))
+
     def test_parses_symbolic_anonymous_trait_generic_constraint(self):
         [node] = parse(
             """
@@ -1219,6 +1232,14 @@ end
                 parse_type("Result[Number, String]"),
                 N(Symbol("Result"), Number, String),
             )
+        )
+        self.assertEqual(
+            parse_type("T(.bar: U, .baz: String)"),
+            Row(
+                N(Symbol("T")),
+                Field(Symbol("bar"), N(Symbol("U"))),
+                Field(Symbol("baz"), String),
+            ),
         )
         self.assertTrue(
             same(

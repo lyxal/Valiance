@@ -420,6 +420,7 @@ The type parser currently supports:
   `{Number..., String}`, `{Number..., String...}`
 - Union types: `A | B`
 - Intersection types: `A & B`
+- Row-constrained types: `T(.bar: U)` and `T(.bar: U, .baz: String)`
 - Optional types: `T?`, `T???`, `T?3`, lowered to nested `Some[T] | None`
 - Atomic generic views: `T atomic`, lowered to `Atomic(T)`
 - Exact parameter markers: `T exact`, lowered to `Exact(T)` and retained inside
@@ -451,6 +452,12 @@ _type_union
 When adding new type syntax, place it at the correct precedence layer. Do not
 bolt it onto `_type_primary` if it is actually a prefix, postfix, union-like, or
 intersection-like form.
+
+Row constraints are postfix types. After parsing the base type, `_type_postfix`
+recognizes a parenthesized list whose first meaningful token is `.` and lowers
+each `.name: Type` entry through `Row(...)` and `Field(...)`. Looking for the
+leading dot is required because match type patterns independently use
+`Type(pattern, ...)` syntax.
 
 `exact` is a terminal postfix for one type expression. It disables
 vectorisation through a function parameter, so the parser keeps it as an outer
