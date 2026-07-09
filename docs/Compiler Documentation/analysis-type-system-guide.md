@@ -495,6 +495,13 @@ list and rejects rank 2. Generic `T exact` may bind `T` to a collection type;
 the collection is then treated as one argument value rather than a
 vectorisation target.
 
+When an overload mixes exact and vectorising parameters, overload application
+must record an automatic vectorisation depth for every argument, including
+zeroes. A zero depth means that the argument broadcasts unchanged while other
+arguments are indexed. The aggregate `AppliedOverload.vectorised` flag is not
+enough to represent this case: treating every list-shaped runtime argument as a
+vector target would incorrectly iterate an exact collection parameter.
+
 The marker remains in `Overload.params` and `FunctionType.params`, so type
 display and introspection preserve it. Function-body analysis strips only the
 outer marker before seeding parameter variables and the cycling stack, then

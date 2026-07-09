@@ -331,6 +331,10 @@ Current audit total: 426 / 734 items complete (58.0%).
 - [x] Parse exact parameter types.
 - [x] Prevent vectorisation through exact parameters.
 - [x] Include exact in function types.
+- [x] Require declared collection rank for exact collection parameters.
+- [x] Bind generic exact parameters to the whole argument type.
+- [x] Broadcast exact arguments unchanged when another parameter vectorises.
+- [x] Preserve per-argument automatic vectorisation depths in saved bytecode.
 - [ ] Apply vectorisation rules for rugged types and equivalent expanded unions.
 - [ ] Parse and execute `at (...) => ...`.
 - [ ] Support per-argument vectorisation-depth labels in `at`.

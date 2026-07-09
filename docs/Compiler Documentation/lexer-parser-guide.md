@@ -447,7 +447,9 @@ intersection-like form.
 `exact` is a terminal postfix for one type expression. It disables
 vectorisation through a function parameter, so the parser keeps it as an outer
 `ExactType` wrapper and does not consume later rank or optional postfixes as
-part of the same type.
+part of the same type. Consequently, write `T+ exact`, `T? exact`, or
+`#tag T exact`; forms that try to add another type postfix after `exact` are
+invalid.
 
 Arbitrary-length tuple types are only valid while parsing parameter types. The
 parser uses an internal "allow variadic tuple type" flag around function and

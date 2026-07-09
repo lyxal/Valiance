@@ -204,6 +204,15 @@ vectorisation. Codegen can inspect `typed_node.overload.vectorised` on
 `TypedElementNode` or `TypedCallNode` when it needs different lowering for a
 vectorised call shape.
 
+`AppliedOverload.vectorised_depths` records the automatic vectorisation depth
+for each argument. Codegen copies it into
+`ResolvedElementReference.vectorised_depths`, and the serializer preserves the
+tuple in saved bytecode. A depth of zero means broadcast the argument unchanged;
+a positive depth means index that many collection levels before invoking the
+selected scalar implementation. Keep the zero entries: they are required when
+an exact collection parameter is passed alongside another argument that does
+vectorise.
+
 `AppliedOverload.multidispatch` records whether a resolved user-defined call
 should perform runtime multimethod selection. Analysis sets it only when normal
 static overload resolution selected a non-`multi` fallback that has compatible
@@ -630,7 +639,13 @@ For a scalar overload with a runtime implementation:
   implementation directly.
 - If analysis marked the resolved call as vectorised, map the selected scalar
   implementation over the list-shaped arguments.
-- Scalar arguments broadcast across list arguments.
+- Arguments with a recorded vectorisation depth of zero broadcast unchanged,
+  even when they are themselves list-shaped. This is how an exact collection
+  parameter remains intact while another parameter vectorises.
+- Scalar arguments naturally broadcast across list arguments.
+- Arguments with positive depths are indexed one level per vectorisation pass;
+  their remaining depth is decremented recursively until the scalar call shape
+  is reached.
 - Eager sequence list arguments must have the same length before mapping.
 - Lazy list arguments are advanced with iterators and may be infinite.
 - The scalar overload may return multiple stack values; vectorisation collects

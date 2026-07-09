@@ -830,8 +830,20 @@ fn (:Number+, :Number+) => +
 
 ## 7.2. Disabling Vectorisation in an Overload
 
-- By default, parameters vectorise. Marking a parameter with `exact` prevents it from being used as a vectorisation target - arguments of a higher rank than expected will be a compile error.
-- `exact` is part of the parameter's type, not just an overload resolution hint. That is, it appears in the types in `Function[...]`.
+- By default, parameters vectorise. Marking a parameter with the postfix type
+  marker `exact` prevents that parameter from being used as a vectorisation
+  target. An argument must be directly compatible with the marked type;
+  vectorisation cannot peel collection ranks from it to make the call fit.
+- `exact` does not require the runtime value to have exactly the same nominal
+  type. Ordinary assignability still applies, so an `Integer` can satisfy
+  `Number exact`. It only disables the vectorisation fallback for that
+  parameter.
+- `exact` is part of the parameter's type, not just an overload resolution
+  hint. It is preserved in `Function[...]` types and therefore affects calls
+  through function values as well as direct element calls.
+- `exact` is a terminal postfix for the type expression it marks. Put rank,
+  optional, and tag syntax before it, such as `Number+ exact`, `Number? exact`,
+  or `#sorted Number+ exact`.
 
 ```
 $myfun = fn (:Number exact) => double
@@ -843,6 +855,36 @@ $myfunvec = fn => double
 #? Inferred as Function[Number -> Number]
 $myfunvec(10)        #? 20
 $myfunvec([1, 2, 3]) #? [2, 4, 6]
+```
+
+- Marking a collection type exact makes the collection itself one argument and
+  requires its declared rank. `Number+ exact` accepts a rank-1 number list but
+  rejects a rank-2 list instead of vectorising over its outer rank.
+
+```
+$first = fn (xs: Number+ exact) -> Number => $xs head
+$first([1, 2, 3])        #? 1
+$first([[1, 2], [3, 4]]) #? Compile error: No overload found
+```
+
+- Exact arguments broadcast unchanged when another parameter causes the call
+  to vectorise. Only arguments whose parameters permit vectorisation are
+  indexed at each vectorised depth.
+
+```
+define keep(xs: Number+ exact, x: Number) -> Number+ => $xs end
+
+[10, 20, 30] [1, 2] keep
+#? [[10, 20, 30], [10, 20, 30]]
+```
+
+- A generic exact parameter binds the whole argument type. For example,
+  `T exact` given a `Number+` argument binds `T` to `Number+`; it does not bind
+  `T` to `Number` and vectorise the call.
+
+```
+$identity = fn[T] (value: T exact) -> T => $value
+$identity([1, 2, 3]) #? [1, 2, 3]
 ```
 
 ## 7.3. Vectorisation of `T~` and `T~`-able Types
