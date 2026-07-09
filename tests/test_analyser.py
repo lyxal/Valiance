@@ -114,7 +114,7 @@ RIGHT = Symbol("Right")
 class AnalyserTests(unittest.TestCase):
     def test_stack_shuffle_copy_preserves_stack_and_pushes_labelled_copies(self):
         branches = Analyser().analyse_node(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((String, Bool, Number)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((String, Bool, Number))),)),
             StackShuffleNode(
                 Symbol("copy"),
                 (Symbol("a"), Symbol("b")),
@@ -129,8 +129,8 @@ class AnalyserTests(unittest.TestCase):
 
     def test_stack_shuffle_move_removes_labelled_values_and_keeps_skips(self):
         branches = Analyser().analyse_node(
-            BranchSet.one(
-                AnalysisBranch(stack=TypeStack((String, Bool, Integer, Number)))
+            BranchSet(
+                (AnalysisBranch(stack=TypeStack((String, Bool, Integer, Number))),)
             ),
             StackShuffleNode(
                 Symbol("move"),
@@ -406,7 +406,7 @@ define \\f<Read, Write> => 1
 
         analyser = Analyser(env)
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((N(FOO),)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((N(FOO),))),)),
             (ElementNode(OP, disambiguation=(N(LEFT),)),),
         )
 
@@ -423,7 +423,7 @@ define \\f<Read, Write> => 1
         analyser = Analyser(env)
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Number,))),)),
             (ElementNode(AMB),),
         )
 
@@ -531,7 +531,7 @@ define \\f<Read, Write> => 1
     def test_analyser_can_analyse_one_branch_block(self):
         analyser = Analyser(Environment())
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch()),
+            BranchSet((AnalysisBranch(),)),
             (NumberLiteralNode("1"),),
         )
 
@@ -542,11 +542,15 @@ define \\f<Read, Write> => 1
         analyser = Analyser(Environment())
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch()),
+            BranchSet((AnalysisBranch(),)),
             (NumberLiteralNode("1"),),
         )
-        branches = branches.require_stack_top_assignable(Number, analyser.env.context)
-        branches = branches.pop_stack_top()
+        branches = analyser.require_stack_top_assignable(
+            branches,
+            expected=Number,
+            location=None,
+            message="expected Number on top of stack",
+        )
 
         self.assertEqual(len(branches), 1)
         branch = next(iter(branches))
@@ -559,12 +563,17 @@ define \\f<Read, Write> => 1
         env.define_overload(COND, Overload((), (Number,)))
         analyser = Analyser(env)
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(input_mode=InputMode.INFER_INPUTS)),
+            BranchSet((AnalysisBranch(input_mode=InputMode.INFER_INPUTS),)),
             (ElementNode(COND),),
         )
-        branches = branches.require_stack_top_assignable(Bool, env.context)
+        branches = analyser.require_stack_top_assignable(
+            branches,
+            expected=Bool,
+            location=None,
+            message="expected Bool on top of stack",
+        )
 
-        self.assertEqual(len(branches), 0)
+        self.assertTrue(any(branch.failed for branch in branches))
 
     def test_object_attributes_cannot_be_declared_twice(self):
         env = Environment()
@@ -1120,9 +1129,7 @@ end
             [
                 FunctionNode(
                     params=(FunctionParam(X, None),),
-                    body=(
-                        ElementNode(PLUS),
-                    ),
+                    body=(ElementNode(PLUS),),
                 )
             ]
         )
@@ -1619,7 +1626,7 @@ getName $joe
         env.define_object(FOO, (ObjectAttribute(BAR, String),))
 
         branches = Analyser(env).analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((N(FOO),)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((N(FOO),))),)),
             (FieldAccessNode(BAR),),
         )
 
@@ -1647,22 +1654,26 @@ getName $joe
         number_vars = BranchVariables()
         string_vars = BranchVariables()
 
-        number_vars, number_error = number_vars.write(X, Number)
-        string_vars, string_error = string_vars.write(X, String)
+        number_write = number_vars.write(X, Number)
+        string_write = string_vars.write(X, String)
 
-        self.assertIsNone(number_error)
-        self.assertIsNone(string_error)
+        self.assertIsNone(number_write.error)
+        self.assertIsNone(string_write.error)
+        number_vars = number_write.variables
+        string_vars = string_write.variables
+        self.assertIsNotNone(number_vars)
+        self.assertIsNotNone(string_vars)
         self.assertEqual(number_vars.read(X), Number)
         self.assertEqual(string_vars.read(X), String)
 
     def test_branch_variables_reject_incompatible_reassignment(self):
         variables = BranchVariables(function_locals=((X, Number),))
 
-        updated, diagnostic = variables.write(X, String)
+        write = variables.write(X, String)
 
-        self.assertIsNone(updated)
+        self.assertIsNone(write.variables)
         self.assertEqual(
-            diagnostic,
+            write.error,
             "cannot assign String to variable 'x' of type Number",
         )
 
@@ -1671,55 +1682,60 @@ getName $joe
         ctx.trait_impls.setdefault(INTEGER, set()).add(NUMBER)
         variables = BranchVariables(function_locals=((X, Number),))
 
-        updated, diagnostic = variables.write(X, N(INTEGER), ctx=ctx)
+        write = variables.write(X, N(INTEGER), ctx=ctx)
 
-        self.assertIsNone(diagnostic)
-        self.assertEqual(updated.read(X), Number)
+        self.assertIsNone(write.error)
+        self.assertIsNotNone(write.variables)
+        self.assertEqual(write.variables.read(X), Number)
 
     def test_branch_variables_widen_mutable_numeric_reassignment(self):
         variables = BranchVariables(function_locals=((X, Integer),))
 
-        updated, diagnostic = variables.write(X, Number)
+        write = variables.write(X, Number)
 
-        self.assertIsNone(diagnostic)
-        self.assertEqual(updated.read(X), Number)
+        self.assertIsNone(write.error)
+        self.assertIsNotNone(write.variables)
+        self.assertEqual(write.variables.read(X), Number)
 
     def test_branch_variables_check_existing_block_local_assignment(self):
         variables = BranchVariables(block_locals=((ITEM, Number),))
 
-        updated, diagnostic = variables.write(ITEM, String)
+        write = variables.write(ITEM, String)
 
-        self.assertIsNone(updated)
+        self.assertIsNone(write.variables)
         self.assertEqual(
-            diagnostic,
+            write.error,
             "cannot assign String to variable 'item' of type Number",
         )
 
     def test_branch_variables_reject_parameter_writes(self):
         variables = BranchVariables(parameters=((X, Number),))
 
-        updated, diagnostic = variables.write(X, String)
+        write = variables.write(X, String)
 
-        self.assertIsNone(updated)
-        self.assertEqual(diagnostic, "cannot assign to read-only parameter 'x'")
+        self.assertIsNone(write.variables)
+        self.assertEqual(write.error, "cannot assign to read-only parameter 'x'")
 
     def test_branch_variables_reject_constant_writes(self):
-        variables, diagnostic = BranchVariables().write(X, Number, constant=True)
-        self.assertIsNone(diagnostic)
+        write = BranchVariables().write(X, Number, constant=True)
+        self.assertIsNone(write.error)
+        self.assertIsNotNone(write.variables)
+        variables = write.variables
 
-        updated, diagnostic = variables.write(X, Number)
+        write = variables.write(X, Number)
 
-        self.assertIsNone(updated)
-        self.assertEqual(diagnostic, "cannot assign to constant 'x'")
+        self.assertIsNone(write.variables)
+        self.assertEqual(write.error, "cannot assign to constant 'x'")
 
     def test_branch_variables_shadow_captures_on_write(self):
         variables = BranchVariables(captures=((X, Number),))
 
-        updated, diagnostic = variables.write(X, String)
+        write = variables.write(X, String)
 
-        self.assertIsNone(diagnostic)
-        self.assertEqual(updated.read(X), String)
-        self.assertEqual(updated.captures, ((X, Number),))
+        self.assertIsNone(write.error)
+        self.assertIsNotNone(write.variables)
+        self.assertEqual(write.variables.read(X), String)
+        self.assertEqual(write.variables.captures, ((X, Number),))
 
     def test_branch_variables_drop_block_locals(self):
         variables = BranchVariables().with_block_local(ITEM, Number)
@@ -1739,7 +1755,7 @@ getName $joe
         self.assertEqual(analyser.diagnostics, ["2:1: cannot assign to constant 'n'"])
 
     def test_multiple_assignment_sets_corresponding_types(self):
-        typed = analyse(parse("$(a, b) = 1 \"x\"\n$a\n$b"))
+        typed = analyse(parse('$(a, b) = 1 "x"\n$a\n$b'))
 
         self.assertEqual(typed[-2].typ, Integer)
         self.assertEqual(typed[-1].typ, String)
@@ -1751,10 +1767,7 @@ getName $joe
 
         self.assertEqual(
             analyser.diagnostics,
-            [
-                "1:1: cannot assign String to variable 'n' "
-                "of declared type Number"
-            ],
+            ["1:1: cannot assign String to variable 'n' of declared type Number"],
         )
 
     def test_function_return_annotation_must_match(self):
@@ -1783,8 +1796,7 @@ getName $joe
 
         analyser.analyse(
             parse(
-                '@error("no strings") define bad(x: String) -> String => $x\n'
-                '"hi" bad'
+                '@error("no strings") define bad(x: String) -> String => $x\n"hi" bad'
             )
         )
 
@@ -1794,10 +1806,7 @@ getName $joe
         analyser = Analyser()
 
         analyser.analyse(
-            parse(
-                '@warn("prefer safer") define old(x: Number) -> Number => $x\n'
-                "1 old"
-            )
+            parse('@warn("prefer safer") define old(x: Number) -> Number => $x\n1 old')
         )
 
         self.assertEqual(analyser.diagnostics, [])
@@ -1931,7 +1940,7 @@ end
     def test_optional_parameters_do_not_change_plain_element_arity(self):
         analyser = Analyser()
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Number,))),)),
             tuple(
                 parse(
                     """
@@ -1954,7 +1963,7 @@ pick
     def test_optional_parameters_can_be_overridden_with_named_ecs(self):
         analyser = Analyser()
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Number,))),)),
             tuple(
                 parse(
                     """
@@ -1971,7 +1980,7 @@ pick(b = 3)
     def test_optional_parameters_can_be_overridden_with_placeholder_ecs(self):
         analyser = Analyser()
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Number,))),)),
             tuple(
                 parse(
                     """
@@ -2003,7 +2012,7 @@ pick(_, 4)
         function_name = Symbol("callit")
         function_param = Symbol("function")
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Number,))),)),
             (
                 DefineNode(
                     function_name,
@@ -2026,7 +2035,7 @@ pick(_, 4)
     def test_call_site_checked_function_rejects_incompatible_call_site_body(self):
         analyser = Analyser()
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Number,))),)),
             (
                 DefineNode(
                     Symbol("bad_callit"),
@@ -2049,7 +2058,7 @@ pick(_, 4)
     def test_dip_peek_and_fork_exercise_concrete_function_arguments(self):
         analyser = Analyser()
         peek = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Number, Number)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Number, Number))),)),
             tuple(parse("peek: *")),
         )
         self.assertEqual(
@@ -2058,13 +2067,13 @@ pick(_, 4)
         )
 
         dip = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Number, Number, Number)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Number, Number, Number))),)),
             tuple(parse("dip: *")),
         )
         self.assertEqual(next(iter(dip)).stack, TypeStack((Number, Number)))
 
         fork = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Number,))),)),
             (
                 ElementNode(
                     Symbol("fork"),
@@ -2081,7 +2090,7 @@ pick(_, 4)
         analyser = Analyser()
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((String, Number)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((String, Number))),)),
             (
                 ElementNode(
                     Symbol("fork"),
@@ -2128,14 +2137,12 @@ end
         function_param = Symbol("function")
         analyser = Analyser()
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch()),
+            BranchSet((AnalysisBranch(),)),
             (
                 DefineNode(
                     function_name,
                     FunctionNode(
-                        params=(
-                            FunctionParam(function_param, Fn()),
-                        ),
+                        params=(FunctionParam(function_param, Fn()),),
                         body=(GetVariableNode(function_param), CallNode()),
                     ),
                 ),
@@ -2152,7 +2159,7 @@ end
         xs = Symbol("xs")
         analyser = Analyser()
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Tup(Number, String),)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Tup(Number, String),))),)),
             (
                 DefineNode(
                     function_name,
@@ -2195,7 +2202,7 @@ end
         analyser = Analyser(Environment())
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Number,))),)),
             (CallNode(),),
         )
 
@@ -2212,7 +2219,7 @@ end
         analyser = Analyser(env)
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Tagged(Number, "sorted"),)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Tagged(Number, "sorted"),))),)),
             (ElementNode(OP),),
         )
 
@@ -2229,7 +2236,7 @@ end
         analyser = Analyser(env)
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Tagged(Number, "sorted"),)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Tagged(Number, "sorted"),))),)),
             (ElementNode(OP),),
         )
 
@@ -2242,7 +2249,7 @@ end
     def test_constructed_tags_drop_without_overlay_preservation(self):
         analyser = Analyser()
         [branch] = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch()),
+            BranchSet((AnalysisBranch(),)),
             tuple(parse("tag #sticky as constructed\n1 #sticky 2 +")),
         )
 
@@ -2251,7 +2258,7 @@ end
     def test_tag_overlay_preserves_computed_tag_without_runtime_override(self):
         analyser = Analyser()
         [branch] = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch()),
+            BranchSet((AnalysisBranch(),)),
             tuple(
                 parse(
                     """
@@ -2272,7 +2279,7 @@ end
     def test_static_true_tag_validator_is_eliminated_at_application(self):
         analyser = Analyser()
         [branch] = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch()),
+            BranchSet((AnalysisBranch(),)),
             tuple(
                 parse(
                     """
@@ -2291,7 +2298,7 @@ define #checked(:Number) -> #boolean Number => true end
     def test_static_false_tag_validator_is_rejected_at_application(self):
         analyser = Analyser()
         analyser.analyse_block(
-            BranchSet.one(AnalysisBranch()),
+            BranchSet((AnalysisBranch(),)),
             tuple(
                 parse(
                     """
@@ -2308,7 +2315,7 @@ define #checked(:Number) -> #boolean Number => false end
     def test_tag_validator_missing_overload_is_diagnostic(self):
         analyser = Analyser()
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch()),
+            BranchSet((AnalysisBranch(),)),
             tuple(
                 parse(
                     """
@@ -2339,7 +2346,7 @@ end
             main.write_text("", encoding="utf-8")
             analyser = Analyser(module_loader=ModuleLoader(), source_file=main)
             [branch] = analyser.analyse_block(
-                BranchSet.one(AnalysisBranch()),
+                BranchSet((AnalysisBranch(),)),
                 tuple(parse("import { tags.#sorted }\n1 #sorted | 2 +")),
             )
 
@@ -2359,7 +2366,7 @@ public define #sorted normalize(value: Number) -> Number => $value
             main.write_text("", encoding="utf-8")
             analyser = Analyser(module_loader=ModuleLoader(), source_file=main)
             [branch] = analyser.analyse_block(
-                BranchSet.one(AnalysisBranch()),
+                BranchSet((AnalysisBranch(),)),
                 tuple(parse("import { tags.#sorted }\n1 normalize")),
             )
 
@@ -2387,7 +2394,7 @@ define f(value: #left #right Number) -> Number => $value
         analyser = Analyser(env)
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Number,)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Number,))),)),
             (TagApplicationNode(DataTag("sorted")),),
         )
 
@@ -2403,8 +2410,8 @@ define f(value: #left #right Number) -> Number => $value
         analyser = Analyser(env)
 
         branches = analyser.analyse_block(
-            BranchSet.one(
-                AnalysisBranch(stack=TypeStack((Tagged(Number, "infinite"),)))
+            BranchSet(
+                (AnalysisBranch(stack=TypeStack((Tagged(Number, "infinite"),))),)
             ),
             (TagApplicationNode(DataTag("infinite", absent=True)),),
         )
@@ -2420,7 +2427,7 @@ define f(value: #left #right Number) -> Number => $value
         analyser = Analyser(env)
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((tagged_list,)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((tagged_list,))),)),
             (ElementNode(OP),),
         )
 
@@ -2437,11 +2444,13 @@ define f(value: #left #right Number) -> Number => $value
         analyser = Analyser(env)
 
         branches = analyser.analyse_block(
-            BranchSet.one(
-                AnalysisBranch(
-                    stack=TypeStack(
-                        (Tagged(C(ListExactType, Number, 2), "infinite"),)
-                    )
+            BranchSet(
+                (
+                    AnalysisBranch(
+                        stack=TypeStack(
+                            (Tagged(C(ListExactType, Number, 2), "infinite"),)
+                        )
+                    ),
                 )
             ),
             (ElementNode(OP),),
@@ -2462,7 +2471,7 @@ define f(value: #left #right Number) -> Number => $value
         analyser = Analyser(env)
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((tagged,)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((tagged,))),)),
             (ElementNode(OP),),
         )
 
@@ -2476,7 +2485,7 @@ define f(value: #left #right Number) -> Number => $value
         analyser = Analyser(env)
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Tagged(Number, "km"),)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Tagged(Number, "km"),))),)),
             (ElementNode(OP),),
         )
 
@@ -2489,8 +2498,8 @@ define f(value: #left #right Number) -> Number => $value
         analyser = Analyser(env)
 
         branches = analyser.analyse_block(
-            BranchSet.one(
-                AnalysisBranch(stack=TypeStack((Tagged(Number, "infinite"),)))
+            BranchSet(
+                (AnalysisBranch(stack=TypeStack((Tagged(Number, "infinite"),))),)
             ),
             (ElementNode(OP),),
         )
@@ -2504,7 +2513,7 @@ define f(value: #left #right Number) -> Number => $value
         analyser = Analyser(env)
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((Tagged(Number, "sorted"),)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((Tagged(Number, "sorted"),))),)),
             (ElementNode(OP),),
         )
 
@@ -2520,9 +2529,11 @@ define f(value: #left #right Number) -> Number => $value
         analyser = Analyser(env)
 
         branches = analyser.analyse_block(
-            BranchSet.one(
-                AnalysisBranch(
-                    stack=TypeStack((Tagged(C(ListExactType, Number), "infinite"),))
+            BranchSet(
+                (
+                    AnalysisBranch(
+                        stack=TypeStack((Tagged(C(ListExactType, Number), "infinite"),))
+                    ),
                 )
             ),
             (ElementNode(OP),),
@@ -2560,7 +2571,7 @@ define f(value: #left #right Number) -> Number => $value
         analyser = Analyser(Environment())
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((C(ListExactType, Number),)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((C(ListExactType, Number),))),)),
             (
                 ForNode(
                     variable=ITEM,
@@ -2578,7 +2589,7 @@ define f(value: #left #right Number) -> Number => $value
         analyser = Analyser(Environment())
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((C(ListExactType, Number),)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((C(ListExactType, Number),))),)),
             (
                 ForNode(
                     variable=ITEM,
@@ -2626,7 +2637,7 @@ end
         analyser = Analyser(env)
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch(stack=TypeStack((C(ListExactType, Number),)))),
+            BranchSet((AnalysisBranch(stack=TypeStack((C(ListExactType, Number),))),)),
             (
                 ForNode(
                     variable=ITEM,
@@ -2714,7 +2725,7 @@ end
         analyser = Analyser(Environment())
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch()),
+            BranchSet((AnalysisBranch(),)),
             (ListLiteralNode(),),
         )
 
@@ -2733,7 +2744,7 @@ end
         analyser = Analyser(Environment())
 
         branches = analyser.analyse_block(
-            BranchSet.one(AnalysisBranch()),
+            BranchSet((AnalysisBranch(),)),
             (StringLiteralNode("x"), CastNode(Number)),
         )
 
@@ -2763,9 +2774,7 @@ end
         analyser = Analyser(default_environment())
 
         branches = analyser.analyse_block(
-            BranchSet.one(
-                AnalysisBranch(stack=TypeStack((String, Number, Number)))
-            ),
+            BranchSet((AnalysisBranch(stack=TypeStack((String, Number, Number))),)),
             (
                 ListLiteralNode(
                     (

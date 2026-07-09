@@ -45,6 +45,9 @@ from valiance.types.nodes import (
     NominalType,
     NoneTypeNode,
     Overload,
+    OverloadAttempt,
+    OverloadMismatch,
+    OverloadMismatchReason,
     OverloadSetType,
     ResolvedOverload,
     RowType,
@@ -1264,19 +1267,39 @@ def _match_specificity(
     return Specificity.NO_MATCH
 
 
-def apply_overload(
+def try_apply_overload(
     overload: Overload,
     args: tuple[Type, ...],
     ctx: Context | None = None,
     *,
     disambiguation: tuple[Type | None, ...] = (),
-) -> AppliedOverload | None:
-    """Apply one overload to concrete argument types, returning details on success."""
+) -> OverloadAttempt:
+    """Apply one overload to concrete argument types with mismatch evidence."""
     ctx = ctx or Context()
     if len(overload.params) != len(args):
-        return None
+        return OverloadAttempt(
+            None,
+            OverloadMismatch(
+                OverloadMismatchReason.ARITY,
+                matched_arguments=min(len(overload.params), len(args)),
+                detail=(
+                    f"expected {len(overload.params)} argument(s), "
+                    f"received {len(args)}"
+                ),
+            ),
+        )
     if disambiguation and len(disambiguation) != len(args):
-        return None
+        return OverloadAttempt(
+            None,
+            OverloadMismatch(
+                OverloadMismatchReason.DISAMBIGUATION,
+                matched_arguments=min(len(disambiguation), len(args)),
+                detail=(
+                    f"expected {len(args)} disambiguation hint(s), "
+                    f"received {len(disambiguation)}"
+                ),
+            ),
+        )
 
     base_args = args
     vectorised_depths: tuple[int, ...] = ()
@@ -1289,10 +1312,26 @@ def apply_overload(
                 adapted_args.append(arg)
                 continue
             if not compatible(arg, hint, ctx):
-                return None
+                return OverloadAttempt(
+                    None,
+                    OverloadMismatch(
+                        OverloadMismatchReason.DISAMBIGUATION,
+                        argument_index=len(adapted_args),
+                        expected=hint,
+                        actual=arg,
+                    ),
+                )
             excess = _vectorisation_excess(arg, hint, ctx)
             if excess is None:
-                return None
+                return OverloadAttempt(
+                    None,
+                    OverloadMismatch(
+                        OverloadMismatchReason.VECTORISATION,
+                        argument_index=len(adapted_args),
+                        expected=hint,
+                        actual=arg,
+                    ),
+                )
             depths.append(excess)
             adapted_args.append(hint)
         base_args = tuple(adapted_args)
@@ -1302,7 +1341,7 @@ def apply_overload(
     deferred_function_args: list[
         tuple[FunctionType, FunctionType | OverloadSetType]
     ] = []
-    for param, arg in zip(overload.params, base_args, strict=False):
+    for index, (param, arg) in enumerate(zip(overload.params, base_args, strict=False)):
         if isinstance(param, FunctionType) and isinstance(
             arg, (FunctionType, OverloadSetType)
         ):
@@ -1313,7 +1352,16 @@ def apply_overload(
         result = _solve(param, arg, ctx)
         if result is None:
             if _contains_type_var(param):
-                return None
+                return OverloadAttempt(
+                    None,
+                    OverloadMismatch(
+                        OverloadMismatchReason.ARGUMENT_TYPE,
+                        matched_arguments=index,
+                        argument_index=index,
+                        expected=param,
+                        actual=arg,
+                    ),
+                )
             continue
         for key, values in result.items():
             constraints.setdefault(key, []).extend(values)
@@ -1322,7 +1370,13 @@ def apply_overload(
     for key, values in constraints.items():
         combined = _combine_all(values)
         if combined is None:
-            return None
+            return OverloadAttempt(
+                None,
+                OverloadMismatch(
+                    OverloadMismatchReason.GENERIC_CONSTRAINT,
+                    detail=f"generic '{key}' has incompatible inferred bounds",
+                ),
+            )
         substitution[key] = combined
 
     for param, arg in deferred_function_args:
@@ -1341,7 +1395,14 @@ def apply_overload(
                 ctx,
             )
         if result is None:
-            return None
+            return OverloadAttempt(
+                None,
+                OverloadMismatch(
+                    OverloadMismatchReason.ARGUMENT_TYPE,
+                    expected=substituted_param,
+                    actual=arg,
+                ),
+            )
         for key, values in result.items():
             constraints.setdefault(key, []).extend(values)
 
@@ -1349,7 +1410,13 @@ def apply_overload(
     for key, values in constraints.items():
         combined = _combine_all(values)
         if combined is None:
-            return None
+            return OverloadAttempt(
+                None,
+                OverloadMismatch(
+                    OverloadMismatchReason.GENERIC_CONSTRAINT,
+                    detail=f"generic '{key}' has incompatible inferred bounds",
+                ),
+            )
         substitution[key] = combined
 
     params = tuple(_substitute(param, substitution) for param in overload.params)
@@ -1359,12 +1426,22 @@ def apply_overload(
         substitution,
         ctx,
     ):
-        return None
-    if not all(
-        compatible(arg, param, ctx)
-        for arg, param in zip(base_args, params, strict=False)
-    ):
-        return None
+        return OverloadAttempt(
+            None,
+            OverloadMismatch(OverloadMismatchReason.GENERIC_CONSTRAINT),
+        )
+    for index, (arg, param) in enumerate(zip(base_args, params, strict=False)):
+        if not compatible(arg, param, ctx):
+            return OverloadAttempt(
+                None,
+                OverloadMismatch(
+                    OverloadMismatchReason.ARGUMENT_TYPE,
+                    matched_arguments=index,
+                    argument_index=index,
+                    expected=param,
+                    actual=arg,
+                ),
+            )
 
     actual_returns = _overload_result_for_args(
         Overload(params, returns),
@@ -1372,7 +1449,10 @@ def apply_overload(
         ctx,
     )
     if actual_returns is None:
-        return None
+        return OverloadAttempt(
+            None,
+            OverloadMismatch(OverloadMismatchReason.RESULT),
+        )
     actual_returns = _wrap_returns_for_vector_depth(
         actual_returns,
         args,
@@ -1386,20 +1466,50 @@ def apply_overload(
         for arg, param in zip(base_args, params, strict=False)
     )
     if any(score == Specificity.NO_MATCH for score in scores):
-        return None
+        index = next(
+            index for index, score in enumerate(scores) if score == Specificity.NO_MATCH
+        )
+        return OverloadAttempt(
+            None,
+            OverloadMismatch(
+                OverloadMismatchReason.ARGUMENT_TYPE,
+                matched_arguments=index,
+                argument_index=index,
+                expected=params[index],
+                actual=base_args[index],
+            ),
+        )
 
-    return AppliedOverload(
-        overload,
-        substitution,
-        params,
-        returns,
-        actual_returns,
-        scores,
-        any(score == Specificity.VECTORISED for score in scores)
-        or any(depth > 0 for depth in vectorised_depths),
-        vectorised_depths,
-        element_tags=overload.element_tags,
+    return OverloadAttempt(
+        AppliedOverload(
+            overload,
+            substitution,
+            params,
+            returns,
+            actual_returns,
+            scores,
+            any(score == Specificity.VECTORISED for score in scores)
+            or any(depth > 0 for depth in vectorised_depths),
+            vectorised_depths,
+            element_tags=overload.element_tags,
+        )
     )
+
+
+def apply_overload(
+    overload: Overload,
+    args: tuple[Type, ...],
+    ctx: Context | None = None,
+    *,
+    disambiguation: tuple[Type | None, ...] = (),
+) -> AppliedOverload | None:
+    """Apply one overload to concrete argument types, returning details on success."""
+    return try_apply_overload(
+        overload,
+        args,
+        ctx,
+        disambiguation=disambiguation,
+    ).applied
 
 
 def apply_overload_to_stack(

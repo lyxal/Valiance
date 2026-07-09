@@ -79,6 +79,9 @@ from valiance.types.nodes import (
     NominalType,
     NoneTypeNode,
     Overload,
+    OverloadAttempt,
+    OverloadMismatch,
+    OverloadMismatchReason,
     OverloadSetType,
     RankVariable,
     ResolvedOverload,
@@ -108,6 +111,7 @@ from valiance.types.relations import (
     merge_stacks,
     merge_types,
     resolve_overload_result,
+    try_apply_overload,
 )
 from valiance.types.stack import StackApplication, TypeStack
 
@@ -165,6 +169,9 @@ __all__ = [
     "TraitDefinition",
     "TraitRequirement",
     "Overload",
+    "OverloadAttempt",
+    "OverloadMismatch",
+    "OverloadMismatchReason",
     "OverloadSetType",
     "Overloads",
     "RankVariable",
@@ -219,4 +226,5 @@ __all__ = [
     "resolve_overload_result",
     "same",
     "show",
+    "try_apply_overload",
 ]

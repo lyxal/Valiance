@@ -300,7 +300,7 @@ def _apply_callable(
     overload: T.Overload,
     args: tuple[T.Type, ...],
 ) -> _CallableApplication | None:
-    applied = T.apply_overload(overload, args)
+    applied = T.try_apply_overload(overload, args).applied
     if applied is None:
         return None
     return _CallableApplication(

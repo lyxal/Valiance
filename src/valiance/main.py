@@ -395,8 +395,7 @@ def _run_repl() -> int:
         if source in {":reset", ":r", "reset"}:
             session.reset()
             print(
-                "Reset REPL state. Stack, variables, definitions, "
-                "and imports cleared."
+                "Reset REPL state. Stack, variables, definitions, and imports cleared."
             )
             line_number = 1
             continue
@@ -474,7 +473,7 @@ class _ReplSession:
         try:
             program = Parser(lex(source)).parse_program()
             final = self.analyser.analyse_block(
-                BranchSet.one(replace(self.branch, typed_body=())),
+                BranchSet((replace(self.branch, typed_body=()),)),
                 tuple(program),
             )
             if len(final) != 1:

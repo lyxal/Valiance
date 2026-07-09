@@ -323,5 +323,38 @@ class AppliedOverload:
         )
 
 
+class OverloadMismatchReason(Enum):
+    """Why a concrete argument list did not apply to an overload."""
+
+    STACK_UNDERFLOW = auto()
+    ARGUMENT_TYPE = auto()
+    GENERIC_CONSTRAINT = auto()
+    WHERE_CLAUSE = auto()
+    DISAMBIGUATION = auto()
+    VECTORISATION = auto()
+    NAMED_ARGUMENT = auto()
+    DEFAULT_ARGUMENT = auto()
+    CALL_SITE_CHECK = auto()
+    ARITY = auto()
+    RESULT = auto()
+
+
+@dataclass(frozen=True)
+class OverloadMismatch:
+    reason: OverloadMismatchReason
+    matched_arguments: int = 0
+    argument_index: int | None = None
+    parameter_name: Symbol | None = None
+    expected: Type | None = None
+    actual: Type | None = None
+    detail: str | None = None
+
+
+@dataclass(frozen=True)
+class OverloadAttempt:
+    applied: AppliedOverload | None
+    mismatch: OverloadMismatch | None = None
+
+
 def _substitution_items(substitution: dict[str, Type]) -> tuple[tuple[str, Type], ...]:
     return tuple(sorted(substitution.items()))

@@ -6,13 +6,14 @@ from decimal import Decimal, InvalidOperation
 from enum import Enum, auto
 from itertools import count, permutations
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import valiance.analysis.annotations as annotation_hooks
 import valiance.types as T
 from valiance.analysis.builtins import default_environment
 from valiance.asts import (
     AnnotationNode,
+    ArrayLiteralNode,
     AssertNode,
     ASTNode,
     AtNode,
@@ -23,6 +24,7 @@ from valiance.asts import (
     DictLiteralNode,
     ElementNode,
     ElementTagDeclarationNode,
+    EnumMemberNode,
     FunctionNode,
     FunctionOverloadTyping,
     FunctionParam,
@@ -37,6 +39,7 @@ from valiance.asts import (
     ListLiteralNode,
     ListPatternNode,
     LiteralPatternNode,
+    MatchCaseNode,
     MatchNode,
     MatchPatternNode,
     NumberLiteralNode,
@@ -44,6 +47,8 @@ from valiance.asts import (
     OrPatternNode,
     RecordLiteralNode,
     RestPatternNode,
+    ReturnNode,
+    SourceLocation,
     StackShuffleNode,
     StringInterpolationNode,
     StringLiteralNode,
@@ -51,6 +56,7 @@ from valiance.asts import (
     TagDeclarationNode,
     TagOverlayNode,
     TraitRequirementNode,
+    TryHandlerNode,
     TryNode,
     TupleLiteralNode,
     TypedCallNode,
@@ -61,6 +67,7 @@ from valiance.asts import (
     TypedUnfoldNode,
     TypePatternNode,
     UnfoldNode,
+    VariantMemberNode,
     WildcardPatternNode,
 )
 from valiance.asts.nodes import (
@@ -88,6 +95,29 @@ from valiance.types.default_types import Boolean
 from valiance.types.relations import merge_stacks
 
 _branch_ids = count(1)
+
+
+class DiagnosticSeverity(Enum):
+    ERROR = auto()
+    WARNING = auto()
+
+
+@dataclass(frozen=True)
+class Diagnostic:
+    code: str
+    message: str
+    location: SourceLocation | None
+    severity: DiagnosticSeverity = DiagnosticSeverity.ERROR
+    expected: T.Type | None = None
+    actual: T.Type | None = None
+    notes: tuple[str, ...] = ()
+    help: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class VariableWrite:
+    variables: BranchVariables | None
+    error: str | None = None
 
 
 class InputMode(Enum):
@@ -159,20 +189,20 @@ class BranchVariables:
         block_local: bool = False,
         constant: bool = False,
         ctx: T.Context | None = None,
-    ) -> tuple[BranchVariables | None, str | None]:
+    ) -> VariableWrite:
         """Return variables after assigning ``name`` in this branch."""
         ctx = ctx or T.Context()
         existing_block_local = _lookup(self.block_locals, name)
         if existing_block_local is not None:
             if name in self.block_constants:
-                return None, f"cannot assign to constant '{name}'"
+                return VariableWrite(None, f"cannot assign to constant '{name}'")
             stored_type = _assignment_stored_type(existing_block_local, typ, ctx)
             diagnostic = _assignment_error(name, typ, existing_block_local, ctx)
             if diagnostic is not None:
-                return None, diagnostic
+                return VariableWrite(None, diagnostic)
             if T.same(stored_type, existing_block_local):
-                return self, None
-            return (
+                return VariableWrite(self)
+            return VariableWrite(
                 BranchVariables(
                     function_locals=self.function_locals,
                     parameters=self.parameters,
@@ -181,19 +211,21 @@ class BranchVariables:
                     function_constants=self.function_constants,
                     block_constants=self.block_constants,
                 ),
-                None,
             )
         if _lookup(self.parameters, name) is not None:
-            return None, f"cannot assign to read-only parameter '{name}'"
+            return VariableWrite(
+                None,
+                f"cannot assign to read-only parameter '{name}'",
+            )
         existing_function_local = _lookup(self.function_locals, name)
         if existing_function_local is not None:
             if name in self.function_constants:
-                return None, f"cannot assign to constant '{name}'"
+                return VariableWrite(None, f"cannot assign to constant '{name}'")
             stored_type = _assignment_stored_type(existing_function_local, typ, ctx)
             diagnostic = _assignment_error(name, typ, existing_function_local, ctx)
             if diagnostic is not None:
-                return None, diagnostic
-            return (
+                return VariableWrite(None, diagnostic)
+            return VariableWrite(
                 BranchVariables(
                     function_locals=_set_item(self.function_locals, name, stored_type),
                     parameters=self.parameters,
@@ -202,10 +234,9 @@ class BranchVariables:
                     function_constants=self.function_constants,
                     block_constants=self.block_constants,
                 ),
-                None,
             )
         if _lookup(self.captures, name) is not None:
-            return (
+            return VariableWrite(
                 BranchVariables(
                     function_locals=_set_item(self.function_locals, name, typ),
                     parameters=self.parameters,
@@ -216,10 +247,9 @@ class BranchVariables:
                     ),
                     block_constants=self.block_constants,
                 ),
-                None,
             )
         if block_local or _lookup(self.block_locals, name) is not None:
-            return (
+            return VariableWrite(
                 BranchVariables(
                     function_locals=self.function_locals,
                     parameters=self.parameters,
@@ -230,9 +260,8 @@ class BranchVariables:
                         self.block_constants, name, constant
                     ),
                 ),
-                None,
             )
-        return (
+        return VariableWrite(
             BranchVariables(
                 function_locals=_set_item(self.function_locals, name, typ),
                 parameters=self.parameters,
@@ -243,7 +272,6 @@ class BranchVariables:
                 ),
                 block_constants=self.block_constants,
             ),
-            None,
         )
 
     def with_block_local(self, name: Symbol, typ: T.Type) -> BranchVariables:
@@ -339,27 +367,88 @@ class AnalysisBranch:
     cycle_params: tuple[T.Type, ...] = ()
     cycle_index: int = 0
     break_type: T.Type | None = None
-    diagnostics: tuple[str, ...] = ()
+    errors: tuple[Diagnostic, ...] = ()
+    warnings: tuple[Diagnostic, ...] = ()
     origin: int = field(default_factory=lambda: next(_branch_ids))
 
+    @property
+    def top(self) -> T.Type | None:
+        return self.stack[-1] if self.stack else None
+
+    @property
+    def failed(self) -> bool:
+        return bool(self.errors)
+
     def with_stack(self, stack: T.TypeStack) -> AnalysisBranch:
-        return _replace_branch(self, stack=stack)
+        return replace(self, stack=stack)
+
+    def push(self, *types: T.Type) -> AnalysisBranch:
+        return replace(self, stack=self.stack.push(*types))
+
+    def pop(self, count: int = 1) -> AnalysisBranch:
+        return replace(self, stack=self.stack.pop(count))
 
     def with_variables(self, variables: BranchVariables) -> AnalysisBranch:
-        return _replace_branch(self, variables=variables)
+        return replace(self, variables=variables)
 
-    def append_typed(self, typed_node: TypedNode) -> AnalysisBranch:
-        return _replace_branch(self, typed_body=self.typed_body + (typed_node,))
+    def emit(self, typed_node: TypedNode) -> AnalysisBranch:
+        return replace(self, typed_body=(*self.typed_body, typed_node))
 
-    def with_diagnostic(self, message: str) -> AnalysisBranch:
-        return _replace_branch(self, diagnostics=self.diagnostics + (message,))
+    def error(
+        self,
+        message: str,
+        location: SourceLocation | None,
+        *,
+        code: str,
+        expected: T.Type | None = None,
+        actual: T.Type | None = None,
+        notes: tuple[str, ...] = (),
+        help: tuple[str, ...] = (),
+    ) -> AnalysisBranch:
+        return replace(
+            self,
+            errors=(
+                *self.errors,
+                Diagnostic(
+                    code=code,
+                    message=message,
+                    location=location,
+                    expected=expected,
+                    actual=actual,
+                    notes=notes,
+                    help=help,
+                ),
+            ),
+        )
+
+    def warning(
+        self,
+        message: str,
+        location: SourceLocation | None,
+        *,
+        code: str,
+        notes: tuple[str, ...] = (),
+    ) -> AnalysisBranch:
+        return replace(
+            self,
+            warnings=(
+                *self.warnings,
+                Diagnostic(
+                    code=code,
+                    message=message,
+                    location=location,
+                    severity=DiagnosticSeverity.WARNING,
+                    notes=notes,
+                ),
+            ),
+        )
 
     def with_break(self, typ: T.Type | None) -> AnalysisBranch:
-        return _replace_branch(self, break_type=typ)
+        return replace(self, break_type=typ)
 
     def refine_type(self, old: T.Type, new: T.Type) -> AnalysisBranch:
         """Replace one inferred/generic type fact across the branch."""
-        return _replace_branch(
+        return replace(
             self,
             stack=_refine_stack(self.stack, old, new),
             inputs=tuple(_refine_type(item, old, new) for item in self.inputs),
@@ -392,7 +481,7 @@ class AnalysisBranch:
                 inferred = params[:missing]
                 return (
                     inferred + stack_args,
-                    _replace_branch(
+                    replace(
                         self,
                         stack=remaining,
                         inputs=self.inputs + inferred,
@@ -406,7 +495,7 @@ class AnalysisBranch:
                 )
                 return (
                     cycled + stack_args,
-                    _replace_branch(
+                    replace(
                         self,
                         stack=remaining,
                         cycle_index=(self.cycle_index + missing)
@@ -417,19 +506,25 @@ class AnalysisBranch:
                 return None
 
 
-def _empty_branch_set() -> frozenset[AnalysisBranch]:
-    return frozenset()
-
-
 @dataclass(frozen=True)
 class BranchSet:
     """A set of possible analysis branches."""
 
-    branches: frozenset[AnalysisBranch] = field(default_factory=_empty_branch_set)
+    branches: tuple[AnalysisBranch, ...] = ()
 
     @classmethod
-    def one(cls, branch: AnalysisBranch) -> BranchSet:
-        return cls(frozenset((branch,)))
+    def collect(cls, branches: Iterable[AnalysisBranch]) -> BranchSet:
+        unique: list[AnalysisBranch] = []
+        seen: set[AnalysisBranch] = set()
+
+        for branch in branches:
+            if branch in seen:
+                continue
+
+            seen.add(branch)
+            unique.append(branch)
+
+        return cls(tuple(unique))
 
     def __bool__(self) -> bool:
         return bool(self.branches)
@@ -440,92 +535,36 @@ class BranchSet:
     def __len__(self) -> int:
         return len(self.branches)
 
-    def map_node(self, node: ASTNode, analyser: Analyser) -> BranchSet:
-        """Analyse one node from every branch."""
-        return analyser.analyse_node(self, node)
 
-    def extend_block(self, nodes: tuple[ASTNode, ...], analyser: Analyser) -> BranchSet:
-        """Analyse a sequence of nodes from this branch set."""
-        current = self
-        for node in nodes:
-            active = BranchSet(
-                frozenset(branch for branch in current if branch.break_type is None)
-            )
-            stopped = frozenset(
-                branch for branch in current if branch.break_type is not None
-            )
-            if active:
-                current = BranchSet(active.map_node(node, analyser).branches | stopped)
-            else:
-                current = BranchSet(stopped)
-            if not current:
-                return current
-        return current
+NodeHandler = Callable[
+    ["Analyser", ASTNode, AnalysisBranch],
+    BranchSet,
+]
 
-    def require_all(
-        self,
-        predicate: Callable[[AnalysisBranch], bool],
-        diagnostic: str,
-    ) -> BranchSet:
-        """Keep the set only if every branch satisfies ``predicate``."""
-        if all(predicate(branch) for branch in self.branches):
-            return self
-        for branch in self.branches:
-            if not predicate(branch):
-                branch.with_diagnostic(diagnostic)
-        return BranchSet()
+_NODE_HANDLERS: dict[type[ASTNode], NodeHandler] = {}
 
-    def require_stack_top_assignable(
-        self,
-        expected: T.Type,
-        ctx: T.Context,
-    ) -> BranchSet:
-        """Require every branch top to be a non-Never assignable value."""
-        return self.require_all(
-            lambda branch: bool(branch.stack)
-            and not _is_never(branch.stack[-1])
-            and T.assignable(branch.stack[-1], expected, ctx),
-            f"expected {T.show(expected)} on top of stack",
-        )
 
-    def pop_stack_top(self) -> BranchSet:
-        """Pop one stack value from every branch."""
-        return BranchSet(
-            frozenset(
-                branch.with_stack(T.TypeStack(branch.stack.items[:-1]))
-                for branch in self.branches
-                if branch.stack
-            )
-        )
+_INTERNAL_NODE_TYPES: tuple[type[ASTNode], ...] = (
+    AnnotationNode,
+    ObjectFieldNode,
+    TraitRequirementNode,
+    VariantMemberNode,
+    EnumMemberNode,
+    TryHandlerNode,
+    MatchCaseNode,
+    MatchPatternNode,
+)
 
-    def join(self, other: BranchSet, analyser: Analyser) -> BranchSet:
-        """Merge two branch sets pairwise with unioned stacks."""
-        joined: set[AnalysisBranch] = set()
-        for left in self.branches:
-            for right in other.branches:
-                if left.inputs != right.inputs:
-                    continue
-                stack: T.TypeStack = T.merge_stacks(left.stack, right.stack)
-                variables = left.variables.merge_against(
-                    right.variables,
-                    left.variables,
-                )
-                joined.add(_replace_branch(left, stack=stack, variables=variables))
-        return BranchSet(frozenset(joined))
 
-    def rebase(self, from_branches: BranchSet, to_branches: BranchSet) -> BranchSet:
-        """Relate derived branches back to the origins that created them."""
-        origins = {branch.origin for branch in from_branches}
-        valid_targets = {branch.origin for branch in to_branches}
-        if not origins or not valid_targets:
-            return BranchSet()
-        return BranchSet(
-            frozenset(
-                branch
-                for branch in self.branches
-                if branch.origin in origins or branch.origin in valid_targets
-            )
-        )
+def register(node_type: type[ASTNode]) -> Callable[[NodeHandler], NodeHandler]:
+    def decorate(handler: NodeHandler) -> NodeHandler:
+        if node_type in _NODE_HANDLERS:
+            raise RuntimeError(f"duplicate analyser handler for {node_type.__name__}")
+
+        _NODE_HANDLERS[node_type] = handler
+        return handler
+
+    return decorate
 
 
 @dataclass(frozen=True)
@@ -551,6 +590,30 @@ class ModifierArgumentAnalysis:
 
     typ: T.Type
     typed_node: TypedFunctionNode
+
+
+@dataclass(frozen=True)
+class ElementArguments:
+    overload: T.Overload
+    arguments: tuple[T.Type, ...]
+    branch: AnalysisBranch
+    modifiers: tuple[ModifierArgumentAnalysis, ...] = ()
+    call_arg_order: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class OverloadApplication:
+    applied: T.AppliedOverload
+    branch: AnalysisBranch
+
+
+@dataclass(frozen=True)
+class CallCandidate:
+    applied: T.AppliedOverload
+    branch: AnalysisBranch
+    modifiers: tuple[ModifierArgumentAnalysis, ...] = ()
+    call_arg_order: tuple[int, ...] = ()
+    callable_overload_index: int | None = None
 
 
 @dataclass(frozen=True)
@@ -580,7 +643,7 @@ class Analyser:
 
     def analyse(self, program: list[ASTNode]) -> list[TypedNode]:
         """Analyse a top-level sequence into typed nodes."""
-        initial = BranchSet.one(AnalysisBranch(input_mode=InputMode.TOP_LEVEL))
+        initial = BranchSet((AnalysisBranch(input_mode=InputMode.TOP_LEVEL),))
         final = self.analyse_block(initial, tuple(program))
         if len(final) != 1:
             return [TypedNode(node, None) for node in program]
@@ -592,14 +655,82 @@ class Analyser:
         nodes: tuple[ASTNode, ...],
     ) -> BranchSet:
         """Analyse a block as a branch-set transformation."""
-        return initial.extend_block(nodes, self)
+        current = initial
+
+        for node in nodes:
+            current = self.analyse_node(current, node)
+
+            if not current:
+                break
+
+        return current
 
     def analyse_node(self, branches: BranchSet, node: ASTNode) -> BranchSet:
         """Analyse one node from a branch set."""
-        next_branches: set[AnalysisBranch] = set()
+        next_branches: list[AnalysisBranch] = []
         for branch in branches:
-            next_branches.update(self._analyse_node_from_branch(branch, node))
-        return BranchSet(frozenset(next_branches))
+            if branch.failed or branch.break_type is not None:
+                next_branches.append(branch)
+                continue
+            next_branches.extend(self._analyse_node_from_branch(branch, node))
+        return BranchSet.collect(next_branches)
+
+    def analyse_from(
+        self,
+        branch: AnalysisBranch,
+        body: tuple[ASTNode, ...],
+    ) -> BranchSet:
+        return self.analyse_block(BranchSet((branch,)), body)
+
+    def require_stack_top_assignable(
+        self,
+        branches: BranchSet,
+        *,
+        expected: T.Type,
+        location: SourceLocation | None,
+        message: str,
+        code: str = "type-mismatch",
+    ) -> BranchSet:
+        return BranchSet.collect(
+            self.consume_top(
+                branch,
+                expected=expected,
+                message=message,
+                location=location,
+                code=code,
+            )
+            for branch in branches
+        )
+
+    def consume_top(
+        self,
+        branch: AnalysisBranch,
+        *,
+        expected: T.Type,
+        message: str,
+        location: SourceLocation | None,
+        code: str = "type-mismatch",
+    ) -> AnalysisBranch:
+        actual = branch.top
+
+        if actual is None:
+            return branch.error(
+                message,
+                location,
+                code="stack-underflow",
+                expected=expected,
+            )
+
+        if _is_never(actual) or not T.assignable(actual, expected, self.env.context):
+            return branch.error(
+                message,
+                location,
+                code=code,
+                expected=expected,
+                actual=actual,
+            )
+
+        return branch.pop()
 
     def analyse_function(self, node: FunctionNode) -> T.Type | None:
         """Infer the stack-effect type of a function literal."""
@@ -618,180 +749,43 @@ class Analyser:
         self,
         branch: AnalysisBranch,
         node: ASTNode,
-    ) -> set[AnalysisBranch]:
-        match node:
-            case NumberLiteralNode(value):
-                typ = _number_literal_type(value)
-                return {
-                    branch.with_stack(branch.stack.push(typ)).append_typed(
-                        TypedNode(node, typ)
-                    )
-                }
-            case StringLiteralNode(_):
-                return {
-                    branch.with_stack(branch.stack.push(T.String)).append_typed(
-                        TypedNode(node, T.String)
-                    )
-                }
-            case StringInterpolationNode():
-                return self._string_interpolation(branch, node)
-            case ElementNode():
-                return self._element(branch, node)
-            case TagApplicationNode():
-                return self._tag_application(branch, node)
-            case TagDeclarationNode():
-                return self._tag_declaration(branch, node)
-            case ElementTagDeclarationNode():
-                return self._element_tag_declaration(branch, node)
-            case TagOverlayNode():
-                return self._tag_overlay(branch, node)
-            case CastNode():
-                return self._cast(branch, node)
-            case StackShuffleNode():
-                return self._stack_shuffle(branch, node)
-            case FunctionNode():
-                if not self._validate_annotations(node.annotations, "fn", node):
-                    return {branch.append_typed(TypedNode(node, None))}
-                function_node = _genericize_function_node(node, node.generics)
-                result = self._analyse_function_literal(branch, function_node)
-                if result is None:
-                    return {branch.append_typed(TypedNode(node, None))}
-                function, typed_branch = result
-                typed_node = TypedFunctionNode(
-                    function_node, function.typ, function.overloads
-                )
-                return {
-                    typed_branch.with_stack(
-                        typed_branch.stack.push(function.typ)
-                    ).append_typed(typed_node)
-                }
-            case DefineNode(name, function_node):
-                return self._define(branch, node, name, function_node)
-            case ObjectNode():
-                return self._object_declaration(branch, node)
-            case ImportNode():
-                return self._import(branch, node)
-            case ListLiteralNode():
-                return self._list_literal(branch, node)
-            case TupleLiteralNode():
-                return self._tuple_literal(branch, node)
-            case RecordLiteralNode():
-                return self._record_literal(branch, node)
-            case DictLiteralNode():
-                return self._dict_literal(branch, node)
-            case CallNode():
-                return self._call(branch, node)
-            case GetVariableNode(name):
-                typ = branch.variables.read(name)
-                if typ is None:
-                    self._diagnose(f"undefined variable '{name}'", node)
-                    return {branch.append_typed(TypedNode(node, None))}
-                return {
-                    branch.with_stack(branch.stack.push(typ)).append_typed(
-                        TypedNode(node, typ)
-                    )
-                }
-            case SetVariableNode(name, declared_type, constant):
-                if not branch.stack:
-                    if branch.input_mode is InputMode.INFER_INPUTS:
-                        inferred = declared_type or T.V(f"_inferred_{name}")
-                        variables, diagnostic = branch.variables.write(
-                            name,
-                            inferred,
-                            constant=constant,
-                            ctx=self.env.context,
-                        )
-                        if diagnostic is not None:
-                            self._diagnose(diagnostic, node)
-                            return {branch.with_diagnostic(diagnostic)}
-                        if variables is None:
-                            return {
-                                branch.with_diagnostic(
-                                    f"cannot assign to variable '{name}'"
-                                )
-                            }
-                        return {
-                            branch.with_variables(variables).append_typed(
-                                TypedNode(node, inferred)
-                            )
-                        }
-                    return {
-                        branch.with_diagnostic(
-                            f"empty stack when trying to assign to variable '{name}'"
-                        )
-                    }
-                value_type = branch.stack[-1]
-                variable_type = declared_type or value_type
-                if declared_type is not None and not T.assignable(
-                    value_type,
-                    declared_type,
-                    self.env.context,
-                ):
-                    self._diagnose(
-                        f"cannot assign {T.show(value_type)} to variable '{name}' "
-                        f"of declared type {T.show(declared_type)}",
-                        node,
-                    )
-                    return {branch.append_typed(TypedNode(node, None))}
-                variables, diagnostic = branch.variables.write(
-                    name,
-                    variable_type,
-                    block_local=True,
-                    constant=constant,
-                    ctx=self.env.context,
-                )
-                if diagnostic is not None:
-                    self._diagnose(diagnostic, node)
-                    return {branch.with_diagnostic(diagnostic)}
-                if variables is None:
-                    return {
-                        branch.with_diagnostic(f"cannot assign to variable '{name}'")
-                    }
-                return {
-                    branch.with_variables(variables)
-                    .with_stack(branch.stack.pop())
-                    .append_typed(TypedNode(node, variable_type))
-                }
-            case SetVariablesNode(targets):
-                return self._set_variables(branch, node, targets)
-            case FieldAccessNode(name):
-                return self._field_access(branch, node, name)
-            case FieldSetNode(name):
-                return self._field_set(branch, node, name)
-            case IndexAccessNode():
-                return self._index_access(branch, node)
-            case IndexSetNode():
-                return self._index_set(branch, node)
-            case IfNode():
-                return self._if(branch, node)
-            case AssertNode():
-                return self._assert(branch, node)
-            case WhileNode():
-                return self._while(branch, node)
-            case UnfoldNode():
-                return self._unfold(branch, node)
-            case AtNode():
-                return self._at(branch, node)
-            case ForNode():
-                return self._foreach(branch, node)
-            case MatchNode():
-                return self._match(branch, node)
-            case TryNode():
-                return self._try(branch, node)
-            case BreakNode():
-                return self._break(branch, node)
-            case _:
-                return {branch.append_typed(TypedNode(node, None))}
+    ) -> BranchSet:
+        handler = _NODE_HANDLERS.get(type(node))
 
+        if handler is None:
+            if isinstance(node, _INTERNAL_NODE_TYPES):
+                return BranchSet(
+                    (
+                        branch.error(
+                            f"{type(node).__name__} is an internal AST node and "
+                            "cannot be analysed as a standalone expression",
+                            node.location,
+                            code="internal-node",
+                        ),
+                    )
+                )
+            return BranchSet(
+                (
+                    branch.error(
+                        f"Analysis is not implemented for {type(node).__name__}",
+                        node.location,
+                        code="unsupported-node",
+                    ),
+                )
+            )
+
+        return handler(self, node, branch)
+
+    @register(DefineNode)
     def _define(
         self,
-        branch: AnalysisBranch,
         node: DefineNode,
-        name: Symbol,
-        function_node: FunctionNode,
-    ) -> set[AnalysisBranch]:
+        branch: AnalysisBranch,
+    ) -> BranchSet:
+        name = node.name
+        function_node = node.function
         if not self._validate_annotations(node.annotations, "define", node):
-            return {branch.append_typed(TypedNode(node, None))}
+            return BranchSet((branch.emit(TypedNode(node, None)),))
         function_node = annotation_hooks.DEFAULT_REGISTRY.transform_function(
             function_node,
             node.annotations,
@@ -816,7 +810,7 @@ class Analyser:
             self.env.define_overload(name, declared_overload)
         result = self._analyse_function_literal(branch, function_node)
         if result is None:
-            return {branch.append_typed(TypedNode(node, None))}
+            return BranchSet((branch.emit(TypedNode(node, None)),))
         function, typed_branch = result
         generic_constraints = _generic_constraints(
             node.generics,
@@ -827,48 +821,14 @@ class Analyser:
         for typing_index, typing in enumerate(function.overloads):
             if not isinstance(typing.overload, T.Overload):
                 continue
-            overload = typing.overload
-            if not _validate_define_niladic_name(name, overload):
-                if name.text.startswith("\\"):
-                    self._diagnose(
-                        f"{name} named as nilad, but inferred as popping "
-                        f"{len(overload.params)} value(s)",
-                        node,
-                    )
-                else:
-                    self._diagnose(
-                        f"{name} inferred as nilad, but not named as one",
-                        node,
-                    )
-                continue
-            if name.text.startswith("#") and not _validator_overload_ok(
-                overload,
-                self.env.context,
-            ):
-                self._diagnose(
-                    f"tag validator '{name}' must return #boolean Number",
-                    node,
-                )
-                continue
-            self._validate_data_tags((overload.params, overload.returns), node)
-            overload = _with_generic_constraints(overload, generic_constraints)
-            overload = annotation_hooks.DEFAULT_REGISTRY.transform_overload(
-                overload,
-                node.annotations,
+            overload = self.prepare_defined_overload(
+                node,
+                branch,
+                typing.overload,
+                generic_constraints,
             )
-            if node.is_multi:
-                overload = replace(overload, is_multi=True)
-                if not _has_multimethod_fallback(
-                    overload,
-                    self.env.overloads_for(name),
-                    self.env.context,
-                ):
-                    self._diagnose(
-                        f"multi define '{name}' requires a non-multi fallback "
-                        "with compatible parameters and identical returns",
-                        node,
-                    )
-                    continue
+            if overload is None:
+                continue
             overload_typings[typing_index] = replace(typing, overload=overload)
             if overload not in self.env.overloads_for(name):
                 self.env.define_overload(name, overload)
@@ -902,24 +862,64 @@ class Analyser:
                 )
             self.env.define_tag_attached_element(node.attached_tag.name, name)
         typed_node = TypedFunctionNode(node, function.typ, tuple(overload_typings))
-        return {typed_branch.append_typed(typed_node)}
+        return BranchSet((typed_branch.emit(typed_node),))
 
-    def _tag_declaration(
+    def prepare_defined_overload(
         self,
-        branch: AnalysisBranch,
-        node: TagDeclarationNode,
-    ) -> set[AnalysisBranch]:
-        if node.disjoint is not None:
-            self.env.add_disjoint_tags(node.tag.name, node.disjoint.name)
-        elif node.parent is not None:
-            self.env.add_variant_tag(node.tag.name, node.parent.name)
-        elif node.kind == Symbol("constructed"):
-            self.env.add_constructed_tag(node.tag.name)
-        elif node.kind == Symbol("unit"):
-            self.env.add_unit_tag(node.tag.name)
-        else:
-            self.env.add_computed_tag(node.tag.name)
-        return {branch.append_typed(TypedNode(node, None))}
+        node: DefineNode,
+        _branch: AnalysisBranch,
+        overload: T.Overload,
+        generic_constraints: tuple[T.GenericConstraint, ...],
+    ) -> T.Overload | None:
+        name = node.name
+        if not _validate_define_niladic_name(name, overload):
+            if name.text.startswith("\\"):
+                self._diagnose(
+                    f"{name} named as nilad, but inferred as popping "
+                    f"{len(overload.params)} value(s)",
+                    node,
+                )
+            else:
+                self._diagnose(
+                    f"{name} inferred as nilad, but not named as one",
+                    node,
+                )
+            return None
+
+        if name.text.startswith("#") and not _validator_overload_ok(
+            overload,
+            self.env.context,
+        ):
+            self._diagnose(
+                f"tag validator '{name}' must return #boolean Number",
+                node,
+            )
+            return None
+
+        self._validate_data_tags((overload.params, overload.returns), node)
+        overload = _with_generic_constraints(overload, generic_constraints)
+        overload = annotation_hooks.DEFAULT_REGISTRY.transform_overload(
+            overload,
+            node.annotations,
+        )
+
+        if not node.is_multi:
+            return overload
+
+        overload = replace(overload, is_multi=True)
+        if _has_multimethod_fallback(
+            overload,
+            self.env.overloads_for(name),
+            self.env.context,
+        ):
+            return overload
+
+        self._diagnose(
+            f"multi define '{name}' requires a non-multi fallback "
+            "with compatible parameters and identical returns",
+            node,
+        )
+        return None
 
     def _validate_function_element_tags(
         self,
@@ -975,9 +975,7 @@ class Analyser:
             tag
             for tag in node.element_tags
             if not tag.absent
-            and (
-                definition := self.env.lookup_element_tag(tag.name)
-            ) is not None
+            and (definition := self.env.lookup_element_tag(tag.name)) is not None
             and definition.kind is T.ElementTagKind.PROPERTY
         }
         for tag in body_tags:
@@ -1010,123 +1008,45 @@ class Analyser:
                 )
                 return
 
-    def _element_tag_declaration(
-        self,
-        branch: AnalysisBranch,
-        node: ElementTagDeclarationNode,
-    ) -> set[AnalysisBranch]:
-        if node.disjoint is not None:
-            self.env.add_disjoint_element_tags(node.name, node.disjoint)
-        elif node.kind == Symbol("companion"):
-            self.env.add_companion_element_tag(node.name)
-        else:
-            self.env.add_property_element_tag(node.name)
-        return {branch.append_typed(TypedNode(node, None))}
-
-    def _tag_overlay(
-        self,
-        branch: AnalysisBranch,
-        node: TagOverlayNode,
-    ) -> set[AnalysisBranch]:
-        public = node.visibility == Symbol("public")
-        for element in node.elements:
-            for params, returns in node.signatures:
-                self._validate_data_tags((params, returns), node)
-                overload = T.Overload(params, returns)
-                if node.generics:
-                    overload = _genericize_overload(overload, node.generics)
-                self.env.define_tag_overlay(
-                    node.tag.name,
-                    element,
-                    overload,
-                    public=public,
-                )
-        return {branch.append_typed(TypedNode(node, None))}
-
-    def _object_declaration(
-        self,
-        branch: AnalysisBranch,
-        node: ObjectNode,
-    ) -> set[AnalysisBranch]:
-        if not self._validate_annotations(node.annotations, node.kind.text, node):
-            return {branch.append_typed(TypedNode(node, None))}
-        node = annotation_hooks.DEFAULT_REGISTRY.transform_object(node)
-        kind = node.kind.text
-        if kind == "object":
-            return self._object_definition(branch, node)
-        if kind == "trait":
-            return self._trait_definition(branch, node)
-        if kind == "variant":
-            return self._variant_definition(branch, node)
-        if kind == "enum":
-            return self._enum_definition(branch, node)
-        self._diagnose(f"unknown object-like declaration '{node.kind}'", node)
-        return {branch.append_typed(TypedNode(node, None))}
-
     def _object_definition(
         self,
         branch: AnalysisBranch,
         node: ObjectNode,
-    ) -> set[AnalysisBranch]:
+    ) -> BranchSet:
         if not self._validate_object_lifecycle(node):
-            return {branch.append_typed(TypedNode(node, None))}
+            return BranchSet((branch.emit(TypedNode(node, None)),))
         if node.target is not None:
             if node.fields:
                 self._diagnose(
                     "trait implementation blocks cannot declare fields",
                     node,
                 )
-                return {branch.append_typed(TypedNode(node, None))}
+                return BranchSet((branch.emit(TypedNode(node, None)),))
             target = T.normalize(node.target)
             if isinstance(target, T.NominalType):
                 self.env.add_trait_impl(node.name, target.name)
-            current = branch.append_typed(TypedNode(node, None))
-            for definition in node.definitions:
-                current = self._register_friendly_definition(
-                    current,
-                    node.name,
-                    definition,
-                )
-            return {current}
+            current = self._register_friendly_definitions(
+                branch.emit(TypedNode(node, None)),
+                node.name,
+                node.definitions,
+            )
+            return BranchSet((current,))
 
-        attributes = tuple(self._object_attribute(field) for field in node.fields)
-        if any(attribute is None for attribute in attributes):
-            return {branch.append_typed(TypedNode(node, None))}
-        object_attributes = tuple(
-            _genericize_attribute(attribute, node.generics)
-            for attribute in attributes
-            if attribute
-        )
-        generic_variance = _declared_or_inferred_variance(
-            node.generics,
-            node.generic_variances,
-            object_attributes,
-            (),
-        )
-        generic_constraints = _generic_constraints(
-            node.generics,
-            node.generic_variances,
-            node.generic_constraints,
-        )
-        self.env.define_object(
+        object_attributes = self._object_attributes(node.fields, node.generics)
+        if object_attributes is None:
+            return BranchSet((branch.emit(TypedNode(node, None)),))
+        self._define_object_shape(
             node.name,
-            object_attributes,
-            generics=node.generics,
-            generic_variance=generic_variance,
-        )
-        if annotation_hooks.has_annotation(node.annotations, "errType"):
-            self.env.add_trait_impl(node.name, Symbol("Err"))
-        self.env.define_constructor(
-            node.name,
+            node,
             object_attributes,
             defaults=frozenset(field.name for field in node.fields if field.default),
-            result_type=_declared_nominal(node.name, node.generics),
-            generic_constraints=generic_constraints,
         )
-        current = branch.append_typed(TypedNode(node, None))
-        for definition in node.definitions:
-            current = self._register_friendly_definition(current, node.name, definition)
-        return {current}
+        current = self._register_friendly_definitions(
+            branch.emit(TypedNode(node, None)),
+            node.name,
+            node.definitions,
+        )
+        return BranchSet((current,))
 
     def _validate_object_lifecycle(self, node: ObjectNode) -> bool:
         ok = True
@@ -1163,67 +1083,37 @@ class Analyser:
         self,
         branch: AnalysisBranch,
         node: ObjectNode,
-    ) -> set[AnalysisBranch]:
-        requirements = tuple(
-            _genericize_requirement(requirement, node.generics)
-            for item in node.requirements
-            if (requirement := _trait_requirement(item)) is not None
-        )
-        self.env.define_trait(
+    ) -> BranchSet:
+        self._define_trait_shape(node.name, node)
+        current = self._register_friendly_definitions(
+            branch.emit(TypedNode(node, None)),
             node.name,
-            generics=node.generics,
-            generic_variance=_declared_or_inferred_variance(
-                node.generics,
-                node.generic_variances,
-                (),
-                requirements,
-            ),
-            requirements=requirements,
+            node.definitions,
         )
-        if node.target is not None:
-            target = T.normalize(node.target)
-            if isinstance(target, T.NominalType):
-                self.env.add_trait_parent(node.name, target.name)
-        current = branch.append_typed(TypedNode(node, None))
-        for definition in node.definitions:
-            current = self._register_friendly_definition(current, node.name, definition)
-        return {current}
+        return BranchSet((current,))
 
     def _variant_definition(
         self,
         branch: AnalysisBranch,
         node: ObjectNode,
-    ) -> set[AnalysisBranch]:
+    ) -> BranchSet:
         generic_constraints = _generic_constraints(
             node.generics,
             node.generic_variances,
             node.generic_constraints,
         )
-        requirements = tuple(
-            _genericize_requirement(requirement, node.generics)
-            for item in node.requirements
-            if (requirement := _trait_requirement(item)) is not None
-        )
+        requirements = _trait_requirements(node)
         members: list[Symbol] = []
         for member in node.variants:
             member_name = _child_symbol(node.name, member.name)
             members.append(member_name)
-            attributes = tuple(self._object_attribute(field) for field in member.fields)
-            object_attributes = tuple(
-                _genericize_attribute(attribute, node.generics)
-                for attribute in attributes
-                if attribute
-            )
+            object_attributes = self._object_attributes(member.fields, node.generics)
+            if object_attributes is None:
+                return BranchSet((branch.emit(TypedNode(node, None)),))
             variant_type = _declared_nominal(node.name, node.generics)
-            self.env.define_object(
+            self._define_object_shape(
                 member_name,
-                object_attributes,
-                generics=node.generics,
-            )
-            if annotation_hooks.has_annotation(node.annotations, "errType"):
-                self.env.add_trait_impl(member_name, Symbol("Err"))
-            self.env.define_constructor(
-                member_name,
+                node,
                 object_attributes,
                 result_type=variant_type,
                 generic_constraints=generic_constraints,
@@ -1231,9 +1121,9 @@ class Analyser:
             self.env.define_overload(
                 member.name,
                 T.Overload(
-                    tuple(attribute.typ for attribute in object_attributes),
-                    (variant_type,),
-                    generic_constraints,
+                    params=tuple(attribute.typ for attribute in object_attributes),
+                    returns=(variant_type,),
+                    generic_constraints=generic_constraints,
                 ),
             )
         self.env.define_variant(
@@ -1250,17 +1140,19 @@ class Analyser:
         )
         if annotation_hooks.has_annotation(node.annotations, "errType"):
             self.env.add_trait_impl(node.name, Symbol("Err"))
-        return {
-            branch.append_typed(
-                TypedNode(node, _declared_nominal(node.name, node.generics))
+        return BranchSet(
+            (
+                branch.emit(
+                    TypedNode(node, _declared_nominal(node.name, node.generics))
+                ),
             )
-        }
+        )
 
     def _enum_definition(
         self,
         branch: AnalysisBranch,
         node: ObjectNode,
-    ) -> set[AnalysisBranch]:
+    ) -> BranchSet:
         value_type = T.V(node.generics[0].text) if node.generics else None
         members = tuple(
             T.EnumMemberDefinition(
@@ -1271,18 +1163,20 @@ class Analyser:
             for member in node.enum_members
         )
         self.env.define_enum(node.name, members, value_type=value_type)
-        return {
-            branch.append_typed(
-                TypedNode(node, _declared_nominal(node.name, node.generics))
+        return BranchSet(
+            (
+                branch.emit(
+                    TypedNode(node, _declared_nominal(node.name, node.generics))
+                ),
             )
-        }
+        )
 
     def _object_attribute(self, field: ObjectFieldNode) -> T.ObjectAttribute | None:
         if field.typ is not None:
             typ = field.typ
         elif field.default:
             outputs = self.analyse_block(
-                BranchSet.one(AnalysisBranch(input_mode=InputMode.TOP_LEVEL)),
+                BranchSet((AnalysisBranch(input_mode=InputMode.TOP_LEVEL),)),
                 field.default,
             )
             types = tuple(output.stack[-1] for output in outputs if output.stack)
@@ -1303,6 +1197,78 @@ class Analyser:
             has_default=bool(field.default),
         )
 
+    def _object_attributes(
+        self,
+        fields: tuple[ObjectFieldNode, ...],
+        generics: tuple[Symbol, ...],
+    ) -> tuple[T.ObjectAttribute, ...] | None:
+        attributes = tuple(self._object_attribute(field) for field in fields)
+        if any(attribute is None for attribute in attributes):
+            return None
+        return tuple(
+            _genericize_attribute(attribute, generics)
+            for attribute in attributes
+            if attribute is not None
+        )
+
+    def _define_object_shape(
+        self,
+        name: Symbol,
+        node: ObjectNode,
+        attributes: tuple[T.ObjectAttribute, ...],
+        *,
+        defaults: frozenset[Symbol] = frozenset(),
+        result_type: T.Type | None = None,
+        generic_constraints: tuple[T.GenericConstraint, ...] | None = None,
+    ) -> None:
+        constraints = (
+            _generic_constraints(
+                node.generics,
+                node.generic_variances,
+                node.generic_constraints,
+            )
+            if generic_constraints is None
+            else generic_constraints
+        )
+        self.env.define_object(
+            name,
+            attributes,
+            generics=node.generics,
+            generic_variance=_declared_or_inferred_variance(
+                node.generics,
+                node.generic_variances,
+                attributes,
+                (),
+            ),
+        )
+        if annotation_hooks.has_annotation(node.annotations, "errType"):
+            self.env.add_trait_impl(name, Symbol("Err"))
+        self.env.define_constructor(
+            name,
+            attributes,
+            defaults=defaults,
+            result_type=result_type or _declared_nominal(name, node.generics),
+            generic_constraints=constraints,
+        )
+
+    def _define_trait_shape(self, name: Symbol, node: ObjectNode) -> None:
+        requirements = _trait_requirements(node)
+        self.env.define_trait(
+            name,
+            generics=node.generics,
+            generic_variance=_declared_or_inferred_variance(
+                node.generics,
+                node.generic_variances,
+                (),
+                requirements,
+            ),
+            requirements=requirements,
+        )
+        if node.target is not None:
+            target = T.normalize(node.target)
+            if isinstance(target, T.NominalType):
+                self.env.add_trait_parent(name, target.name)
+
     def _register_friendly_definition(
         self,
         branch: AnalysisBranch,
@@ -1310,7 +1276,7 @@ class Analyser:
         definition: DefineNode,
     ) -> AnalysisBranch:
         if not self._validate_annotations(definition.annotations, "define", definition):
-            return branch.append_typed(TypedNode(definition, None))
+            return branch.emit(TypedNode(definition, None))
         owner_definition = self.env.lookup_object(owner)
         self_type = _declared_nominal(
             owner,
@@ -1338,7 +1304,7 @@ class Analyser:
         finally:
             self._friendly_owners = self._friendly_owners[:-1]
         if result is None:
-            return branch.append_typed(TypedNode(definition, None))
+            return branch.emit(TypedNode(definition, None))
         function, typed_branch = result
         generic_constraints = _generic_constraints(
             definition.generics,
@@ -1357,33 +1323,6 @@ class Analyser:
                     ),
                 )
         return typed_branch
-
-    def _import(
-        self,
-        branch: AnalysisBranch,
-        node: ImportNode,
-    ) -> set[AnalysisBranch]:
-        typed_nodes: list[TypedNode] = []
-        for spec in node.specs:
-            try:
-                exports, resolved_spec, definitions = self._load_import_definitions(
-                    spec
-                )
-                objects = import_objects(exports, resolved_spec)
-                import_environment_facts(exports, resolved_spec, self.env)
-            except ModuleLoadError as exc:
-                self._diagnose(str(exc), node)
-                return {branch.append_typed(TypedNode(node, None))}
-            for obj in objects:
-                self._register_imported_object(obj)
-                typed_nodes.append(obj.typed)
-            for definition in definitions:
-                self._register_imported_definition(definition.name, definition.typed)
-                typed_nodes.append(definition.typed)
-        imported = branch
-        for typed_node in typed_nodes:
-            imported = imported.append_typed(typed_node)
-        return {imported.append_typed(TypedNode(node, None))}
 
     def _load_import_definitions(
         self,
@@ -1424,119 +1363,58 @@ class Analyser:
             return
         kind = node.kind.text
         if kind == "trait":
-            requirements = tuple(
-                _genericize_requirement(requirement, node.generics)
-                for item in node.requirements
-                if (requirement := _trait_requirement(item)) is not None
-            )
-            self.env.define_trait(
-                obj.name,
-                generics=node.generics,
-                generic_variance=_declared_or_inferred_variance(
-                    node.generics,
-                    node.generic_variances,
-                    (),
-                    requirements,
-                ),
-                requirements=requirements,
-            )
-            if node.target is not None:
-                target = T.normalize(node.target)
-                if isinstance(target, T.NominalType):
-                    self.env.add_trait_parent(obj.name, target.name)
+            self._define_trait_shape(obj.name, node)
             return
 
         if kind != "object" or node.target is not None:
             return
 
-        attributes = tuple(self._object_attribute(field) for field in node.fields)
-        if any(attribute is None for attribute in attributes):
+        object_attributes = self._object_attributes(node.fields, node.generics)
+        if object_attributes is None:
             return
-        object_attributes = tuple(
-            _genericize_attribute(attribute, node.generics)
-            for attribute in attributes
-            if attribute
-        )
-        generic_constraints = _generic_constraints(
-            node.generics,
-            node.generic_variances,
-            node.generic_constraints,
-        )
-        self.env.define_object(
+        self._define_object_shape(
             obj.name,
+            node,
             object_attributes,
-            generics=node.generics,
-            generic_variance=_declared_or_inferred_variance(
-                node.generics,
-                node.generic_variances,
-                object_attributes,
-                (),
-            ),
-        )
-        self.env.define_constructor(
-            obj.name,
-            object_attributes,
-            result_type=_declared_nominal(obj.name, node.generics),
-            generic_constraints=generic_constraints,
         )
         if obj.import_friendly:
-            current = AnalysisBranch()
-            for definition in node.definitions:
-                current = self._register_friendly_definition(
-                    current,
-                    obj.name,
-                    definition,
-                )
+            self._register_friendly_definitions(
+                AnalysisBranch(),
+                obj.name,
+                node.definitions,
+            )
 
-    def _string_interpolation(
+    def _register_friendly_definitions(
         self,
         branch: AnalysisBranch,
-        node: StringInterpolationNode,
-    ) -> set[AnalysisBranch]:
-        current = BranchSet.one(branch)
-        expression_count = 0
-        for part in node.parts:
-            if isinstance(part, str):
-                continue
-            expression_count += 1
-            current = self.analyse_block(current, part)
-            if not current:
-                return set()
-            if any(not output.stack for output in current):
-                self._diagnose(
-                    "string interpolation expression must leave a value",
-                    node,
-                )
-                return set()
-        return {
-            _replace_branch(
-                output,
-                stack=_pop_stack(output.stack, expression_count).push(T.String),
-                typed_body=branch.typed_body,
-            ).append_typed(TypedNode(node, T.String))
-            for output in current
-            if len(output.stack) >= expression_count
-        }
+        owner: Symbol,
+        definitions: tuple[DefineNode, ...],
+    ) -> AnalysisBranch:
+        current = branch
+        for definition in definitions:
+            current = self._register_friendly_definition(current, owner, definition)
+        return current
 
+    @register(ElementNode)
     def _element(
         self,
-        branch: AnalysisBranch,
         node: ElementNode,
-    ) -> set[AnalysisBranch]:
+        branch: AnalysisBranch,
+    ) -> BranchSet:
         overloads = self.env.overloads_for(node.name)
         if not overloads:
             self._diagnose(f"unknown element '{node.name}'", node)
-            return set()
+            return BranchSet()
         if not annotation_hooks.valid_element_annotations(node.annotations):
             self._diagnose(
                 f"unsupported element annotation on '{node.name}'",
                 node,
             )
-            return set()
+            return BranchSet()
 
         modifier_args = self._modifier_argument_types(branch, node)
         if modifier_args is None:
-            return {branch.append_typed(TypedNode(node, None))}
+            return BranchSet((branch.emit(TypedNode(node, None)),))
         if node.modifier_args and not _modifier_arity_matches(overloads, modifier_args):
             self._diagnose(
                 f"element '{node.name}' expects "
@@ -1544,174 +1422,151 @@ class Analyser:
                 f"got {len(modifier_args)}",
                 node,
             )
-            return set()
+            return BranchSet()
 
-        if node.call_args:
-            if node.name == Symbol("call"):
-                return self._call_element_call(branch, node, overloads)
-            return self._element_call(branch, node, overloads, modifier_args)
+        if node.call_args and node.name == Symbol("call"):
+            return self._call_element_call(branch, node, overloads)
 
-        candidates: list[
-            tuple[
-                T.AppliedOverload,
-                AnalysisBranch,
-                tuple[ModifierArgumentAnalysis, ...],
-                tuple[int, ...],
-            ]
-        ] = []
-        for overload in overloads:
-            for args, popped, ordered_modifiers in _source_element_arguments(
-                branch,
-                overload,
-                modifier_args,
+        sources, _rejected = self.element_argument_sources(
+            node,
+            branch,
+            overloads,
+            modifier_args,
+        )
+        candidates: list[CallCandidate] = []
+        for source in sources:
+            candidate = _apply_overload_to_branch(
+                source.overload,
+                source.arguments,
+                source.branch,
                 self.env.context,
-            ):
-                candidate = _apply_overload_to_branch(
-                    overload,
-                    args,
-                    popped,
-                    self.env.context,
-                    self.env,
-                    node.disambiguation,
-                    self,
+                self.env,
+                node.disambiguation,
+                self,
+            )
+            if candidate is None:
+                continue
+
+            applied = candidate.applied
+            candidate_branch = candidate.branch
+            applied = _apply_tag_overlay(
+                node.name,
+                source.arguments,
+                applied,
+                self.env.context,
+                self.env,
+            )
+            applied = _mark_multidispatch(
+                applied,
+                overloads,
+                self.env.context,
+            )
+            candidates.append(
+                CallCandidate(
+                    applied=applied,
+                    branch=candidate_branch,
+                    modifiers=source.modifiers,
+                    call_arg_order=source.call_arg_order,
                 )
-                if candidate is not None:
-                    applied, candidate_branch = candidate
-                    applied = _apply_tag_overlay(
-                        node.name,
-                        args,
-                        applied,
-                        self.env.context,
-                        self.env,
-                    )
-                    applied = _mark_multidispatch(
-                        applied,
-                        overloads,
-                        self.env.context,
-                    )
-                    candidates.append((applied, candidate_branch, ordered_modifiers))
+            )
 
         stack_before = branch.stack
         winners = _best_candidates(candidates, branch)
         if not winners:
-            self._diagnose(
-                f"no overloads for element '{node.name}' match stack "
-                f"{_show_stack(stack_before)}; available overloads: "
-                f"{_show_overloads(overloads)}",
-                node,
-            )
-            return set()
+            if node.call_args:
+                self._diagnose(
+                    f"no overloads for element '{node.name}' match explicit "
+                    f"call syntax",
+                    node,
+                )
+            else:
+                self._diagnose(
+                    f"no overloads for element '{node.name}' match stack "
+                    f"{_show_stack(stack_before)}; available overloads: "
+                    f"{_show_overloads(overloads)}",
+                    node,
+                )
+            return BranchSet()
         if (
             len(winners) > 1
             and branch.input_mode is not InputMode.INFER_INPUTS
             and not _winners_specialize_inputs(winners, branch)
         ):
-            self._diagnose(
-                f"ambiguous overloads for element '{node.name}' with stack "
-                f"{_show_stack(stack_before)}; candidates: "
-                f"{_show_applied_overloads(winners)}",
-                node,
-            )
-            return set()
+            if node.call_args:
+                self._diagnose(
+                    f"ambiguous overloads for element '{node.name}' with explicit "
+                    f"call syntax; candidates: {_show_applied_overloads(winners)}",
+                    node,
+                )
+            else:
+                self._diagnose(
+                    f"ambiguous overloads for element '{node.name}' with stack "
+                    f"{_show_stack(stack_before)}; candidates: "
+                    f"{_show_applied_overloads(winners)}",
+                    node,
+                )
+            return BranchSet()
 
-        results: set[AnalysisBranch] = set()
-        for applied, popped, ordered_modifiers in winners:
-            if applied.overload.annotation_error is not None:
-                self._diagnose(applied.overload.annotation_error, node)
-                continue
-            if applied.overload.annotation_warning is not None:
-                self._warn(applied.overload.annotation_warning, node)
-            actual_returns = annotation_hooks.annotated_element_returns(
+        results: list[AnalysisBranch] = []
+        for candidate in winners:
+            committed = self.commit_element_candidate(node, overloads, candidate)
+            if committed is not None:
+                results.append(committed)
+        return BranchSet.collect(results)
+
+    def element_argument_sources(
+        self,
+        node: ElementNode,
+        branch: AnalysisBranch,
+        overloads: tuple[T.Overload, ...],
+        modifiers: tuple[ModifierArgumentAnalysis, ...],
+    ) -> tuple[list[ElementArguments], list[AnalysisBranch]]:
+        if node.call_args:
+            return self.explicit_element_arguments(
                 node,
-                applied.actual_returns,
+                branch,
+                overloads,
+                modifiers,
             )
-            results.add(
-                popped.with_stack(popped.stack.push(*actual_returns)).append_typed(
-                    TypedElementNode(
-                        node,
-                        _returns_result_type(actual_returns),
-                        applied,
-                        _overload_index(overloads, applied.overload),
-                        _specialize_modifier_arguments(
-                            applied,
-                            ordered_modifiers,
-                            self.env.context,
-                        ),
+
+        return self.stack_element_arguments(
+            branch,
+            overloads,
+            modifiers,
+        )
+
+    def stack_element_arguments(
+        self,
+        branch: AnalysisBranch,
+        overloads: tuple[T.Overload, ...],
+        modifiers: tuple[ModifierArgumentAnalysis, ...],
+    ) -> tuple[list[ElementArguments], list[AnalysisBranch]]:
+        sources: list[ElementArguments] = []
+        for overload in overloads:
+            for args, popped, ordered_modifiers in _source_element_arguments(
+                branch,
+                overload,
+                modifiers,
+                self.env.context,
+            ):
+                sources.append(
+                    ElementArguments(
+                        overload=overload,
+                        arguments=args,
+                        branch=popped,
+                        modifiers=ordered_modifiers,
                     )
                 )
-            )
-        return results
+        return sources, []
 
-    def _stack_shuffle(
+    def explicit_element_arguments(
         self,
-        branch: AnalysisBranch,
-        node: StackShuffleNode,
-    ) -> set[AnalysisBranch]:
-        params = tuple(
-            T.V(f"_shuffle_{index}") for index, _ in enumerate(node.prestack)
-        )
-        sourced = branch.source_arguments(params)
-        if sourced is None:
-            self._diagnose(
-                f"stack underflow for {node.mode}; expected "
-                f"{len(node.prestack)} value(s)",
-                node,
-            )
-            return set()
-        args, popped = sourced
-        labelled = {
-            label: typ
-            for label, typ in zip(node.prestack, args, strict=True)
-            if label is not None
-        }
-        stack_arg_start = len(node.prestack) - min(
-            len(branch.stack),
-            len(node.prestack),
-        )
-        copy_errors = tuple(
-            _copy_diagnostic(typ, self.env)
-            for typ in _copied_stack_shuffle_types(
-                node,
-                args,
-                labelled,
-                stack_arg_start,
-            )
-        )
-        for error in copy_errors:
-            if error is not None:
-                self._diagnose(error, node)
-                return set()
-        post_types = tuple(labelled[label] for label in node.poststack)
-        if node.mode == Symbol("copy"):
-            stack = branch.stack.push(*post_types)
-        else:
-            kept = tuple(
-                typ
-                for label, typ in zip(node.prestack, args, strict=True)
-                if label is None
-            )
-            stack = popped.stack.push(*kept, *post_types)
-        return {
-            popped.with_stack(stack).append_typed(
-                TypedNode(node, _returns_result_type(post_types))
-            )
-        }
-
-    def _element_call(
-        self,
-        branch: AnalysisBranch,
         node: ElementNode,
+        branch: AnalysisBranch,
         overloads: tuple[T.Overload, ...],
-        modifier_args: tuple[ModifierArgumentAnalysis, ...],
-    ) -> set[AnalysisBranch]:
-        candidates: list[
-            tuple[
-                T.AppliedOverload,
-                AnalysisBranch,
-                tuple[ModifierArgumentAnalysis, ...],
-                tuple[int, ...],
-            ]
-        ] = []
+        modifiers: tuple[ModifierArgumentAnalysis, ...],
+    ) -> tuple[list[ElementArguments], list[AnalysisBranch]]:
+        sources: list[ElementArguments] = []
         for overload in overloads:
             prepared = _prepare_element_call_branches(
                 branch,
@@ -1724,116 +1579,79 @@ class Analyser:
                 for args, popped, ordered_modifiers in _source_element_arguments(
                     preparation.branch,
                     overload,
-                    modifier_args,
+                    modifiers,
                     self.env.context,
                     preparation.call_arg_order,
                 ):
-                    candidate = _apply_overload_to_branch(
-                        overload,
-                        args,
-                        popped,
-                        self.env.context,
-                        self.env,
-                        node.disambiguation,
-                        self,
+                    sources.append(
+                        ElementArguments(
+                            overload=overload,
+                            arguments=args,
+                            branch=popped,
+                            modifiers=ordered_modifiers,
+                            call_arg_order=preparation.call_arg_order,
+                        )
                     )
-                    if candidate is not None:
-                        applied, candidate_branch = candidate
-                        applied = _apply_tag_overlay(
-                            node.name,
-                            args,
-                            applied,
-                            self.env.context,
-                            self.env,
-                        )
-                        applied = _mark_multidispatch(
-                            applied,
-                            overloads,
-                            self.env.context,
-                        )
-                        candidates.append(
-                            (
-                                applied,
-                                candidate_branch,
-                                ordered_modifiers,
-                                preparation.call_arg_order,
-                            )
-                        )
+        return sources, []
 
-        winners = _best_candidates(candidates, branch)
-        if not winners:
-            self._diagnose(
-                f"no overloads for element '{node.name}' match explicit call syntax",
-                node,
-            )
-            return set()
-        if (
-            len(winners) > 1
-            and branch.input_mode is not InputMode.INFER_INPUTS
-            and not _winners_specialize_inputs(winners, branch)
-        ):
-            self._diagnose(
-                f"ambiguous overloads for element '{node.name}' with explicit call "
-                f"syntax; candidates: {_show_applied_overloads(winners)}",
-                node,
-            )
-            return set()
+    def commit_element_candidate(
+        self,
+        node: ElementNode,
+        overloads: tuple[T.Overload, ...],
+        candidate: CallCandidate,
+    ) -> AnalysisBranch | None:
+        overload = candidate.applied.overload
+        if overload.annotation_error is not None:
+            self._diagnose(overload.annotation_error, node)
+            return None
 
-        results: set[AnalysisBranch] = set()
-        for applied, popped, ordered_modifiers, call_arg_order in winners:
-            if applied.overload.annotation_error is not None:
-                self._diagnose(applied.overload.annotation_error, node)
-                continue
-            if applied.overload.annotation_warning is not None:
-                self._warn(applied.overload.annotation_warning, node)
-            actual_returns = annotation_hooks.annotated_element_returns(
+        if overload.annotation_warning is not None:
+            self._warn(overload.annotation_warning, node)
+
+        actual_returns = annotation_hooks.annotated_element_returns(
+            node,
+            candidate.applied.actual_returns,
+        )
+        return candidate.branch.push(*actual_returns).emit(
+            TypedElementNode(
                 node,
-                applied.actual_returns,
+                _returns_result_type(actual_returns),
+                candidate.applied,
+                _overload_index(overloads, overload),
+                _specialize_modifier_arguments(
+                    candidate.applied,
+                    candidate.modifiers,
+                    self.env.context,
+                ),
+                candidate.call_arg_order,
+                candidate.callable_overload_index,
             )
-            results.add(
-                popped.with_stack(popped.stack.push(*actual_returns)).append_typed(
-                    TypedElementNode(
-                        node,
-                        _returns_result_type(actual_returns),
-                        applied,
-                        _overload_index(overloads, applied.overload),
-                        _specialize_modifier_arguments(
-                            applied,
-                            ordered_modifiers,
-                            self.env.context,
-                        ),
-                        call_arg_order,
-                    )
-                )
-            )
-        return results
+        )
 
     def _call_element_call(
         self,
         branch: AnalysisBranch,
         node: ElementNode,
         overloads: tuple[T.Overload, ...],
-    ) -> set[AnalysisBranch]:
+    ) -> BranchSet:
         if node.modifier_args:
             self._diagnose("element 'call' does not accept ':' arguments", node)
-            return set()
+            return BranchSet()
         if any(arg.name is not None or arg.placeholder for arg in node.call_args):
             self._diagnose(
                 "element 'call' explicit arguments must be positional",
                 node,
             )
-            return set()
+            return BranchSet()
 
-        current = BranchSet.one(branch)
+        current = BranchSet((branch,))
         for arg in node.call_args:
-            current = current.extend_block(arg.value, self)
+            current = self.analyse_block(current, arg.value)
             if not current:
-                return set()
+                return BranchSet()
 
         call_arg_count = len(node.call_args)
-        candidates: list[
-            tuple[T.AppliedOverload, AnalysisBranch, tuple[int, ...], int]
-        ] = []
+        candidates: list[CallCandidate] = []
         for arg_branch in current:
             if len(arg_branch.stack) < call_arg_count:
                 continue
@@ -1874,7 +1692,7 @@ class Analyser:
                 "no overloads for element 'call' match explicit call syntax",
                 node,
             )
-            return set()
+            return BranchSet()
         if (
             len(winners) > 1
             and branch.input_mode is not InputMode.INFER_INPUTS
@@ -1885,26 +1703,24 @@ class Analyser:
                 f"candidates: {_show_applied_overloads(winners)}",
                 node,
             )
-            return set()
+            return BranchSet()
 
-        results: set[AnalysisBranch] = set()
-        for applied, popped, call_arg_order, call_overload_index in winners:
-            results.add(
-                popped.with_stack(
-                    popped.stack.push(*applied.actual_returns)
-                ).append_typed(
+        results: list[AnalysisBranch] = []
+        for candidate in winners:
+            results.append(
+                candidate.branch.push(*candidate.applied.actual_returns).emit(
                     TypedElementNode(
                         node,
-                        _returns_result_type(applied.actual_returns),
-                        applied,
+                        _returns_result_type(candidate.applied.actual_returns),
+                        candidate.applied,
                         0,
                         (),
-                        call_arg_order,
-                        call_overload_index,
+                        candidate.call_arg_order,
+                        candidate.callable_overload_index,
                     )
                 )
             )
-        return results
+        return BranchSet.collect(results)
 
     def _modifier_argument_types(
         self,
@@ -1925,814 +1741,27 @@ class Analyser:
             )
         return tuple(analyses)
 
-    def _tag_application(
-        self,
-        branch: AnalysisBranch,
-        node: TagApplicationNode,
-    ) -> set[AnalysisBranch]:
-        if not branch.stack:
-            self._diagnose(
-                f"empty stack when applying tag '{_show_tag(node.tag)}'",
-                node,
-            )
-            return {branch.append_typed(TypedNode(node, None))}
-
-        value_type = branch.stack[-1]
-        if node.tag.absent:
-            tagged = _remove_data_tag(value_type, node.tag)
-            if tagged is None:
-                self._diagnose(
-                    f"cannot remove absent tag '{_show_tag(node.tag)}' from "
-                    f"{value_type}",
-                    node,
-                )
-                return {branch.append_typed(TypedNode(node, None))}
-        else:
-            tagged = _with_data_tags(value_type, (node.tag,), self.env.context)
-            validator: T.AppliedOverload | None = None
-            validator_index: int | None = None
-            validator_name = Symbol(f"#{node.tag.name}")
-            validator_overloads = self.env.overloads_for(validator_name)
-            if validator_overloads:
-                matches: list[tuple[T.AppliedOverload, int]] = []
-                for index, overload in enumerate(validator_overloads):
-                    applied = T.apply_overload(
-                        overload,
-                        (value_type,),
-                        self.env.context,
-                    )
-                    if applied is None:
-                        continue
-                    if not _validator_overload_ok(overload, self.env.context):
-                        self._diagnose(
-                            f"tag validator '{validator_name}' must return "
-                            "#boolean Number",
-                            node,
-                        )
-                        return {branch.append_typed(TypedNode(node, None))}
-                    matches.append((applied, index))
-                if not matches:
-                    self._diagnose(
-                        f"no validator overload for '{validator_name}' matches "
-                        f"{T.show(value_type)}",
-                        node,
-                    )
-                    return {branch.append_typed(TypedNode(node, None))}
-                validator, validator_index = matches[0]
-                static_result = self.env.tag_validator_static_result(
-                    validator_name,
-                    validator_index,
-                )
-                if static_result is True:
-                    validator = None
-                    validator_index = None
-                elif static_result is False:
-                    self._diagnose(
-                        f"tag validator '{validator_name}' is statically false",
-                        node,
-                    )
-                    return {branch.append_typed(TypedNode(node, None))}
-
-        stack = T.TypeStack((*branch.stack.items[:-1], tagged))
-        typed: TypedNode
-        if node.tag.absent:
-            typed = TypedNode(node, tagged)
-        else:
-            typed = TypedTagApplicationNode(node, tagged, validator, validator_index)
-        return {branch.with_stack(stack).append_typed(typed)}
-
-    def _cast(
-        self,
-        branch: AnalysisBranch,
-        node: CastNode,
-    ) -> set[AnalysisBranch]:
-        target = T.normalize(node.typ)
-        if not branch.stack:
-            self._diagnose(
-                f"empty stack when casting to {T.show(target)}",
-                node,
-            )
-            return {branch.append_typed(TypedNode(node, None))}
-
-        source = branch.stack[-1]
-        if node.checked:
-            if T.assignable(source, target, self.env.context):
-                self._diagnose(
-                    f"checked cast to {T.show(target)} is already statically safe",
-                    node,
-                )
-                return set()
-            if not _types_overlap(source, target, self.env.context):
-                if _type_contains_rank_var(target):
-                    stack = T.TypeStack((*branch.stack.items[:-1], target))
-                    return {
-                        branch.with_stack(stack).append_typed(TypedNode(node, target))
-                    }
-                self._diagnose(
-                    f"cannot cast {T.show(source)} to {T.show(target)}",
-                    node,
-                )
-                return set()
-        elif not T.assignable(source, target, self.env.context):
-            self._diagnose(
-                f"cannot safely cast {T.show(source)} to {T.show(target)}",
-                node,
-            )
-            return set()
-
-        stack = T.TypeStack((*branch.stack.items[:-1], target))
-        return {branch.with_stack(stack).append_typed(TypedNode(node, target))}
-
-    def _call(
-        self,
-        branch: AnalysisBranch,
-        node: CallNode,
-    ) -> set[AnalysisBranch]:
-        if not branch.stack:
-            self._diagnose("call requires a function on the stack", node)
-            return set()
-
-        callable_type = T.normalize(branch.stack[-1])
-        overloads = _callable_overloads(callable_type)
-        if not overloads:
-            self._diagnose(
-                f"cannot call non-function value of type {T.show(callable_type)}",
-                node,
-            )
-            return set()
-
-        callable_popped = branch.with_stack(branch.stack.pop())
-        arg_branches = self.analyse_block(BranchSet.one(callable_popped), node.args)
-
-        candidates: list[tuple[T.AppliedOverload, AnalysisBranch]] = []
-        for arg_branch in arg_branches:
-            for overload in overloads:
-                sourced = arg_branch.source_arguments(overload.params)
-                if sourced is None:
-                    continue
-                args, popped = sourced
-                candidate = _apply_overload_to_branch(
-                    overload,
-                    args,
-                    popped,
-                    self.env.context,
-                    analyser=self,
-                )
-                if candidate is not None:
-                    candidates.append(candidate)
-
-        winners = _best_candidates(candidates, callable_popped)
-        if not winners:
-            self._diagnose(
-                f"no overloads for call target {T.show(callable_type)} match stack "
-                f"{_show_stack(callable_popped.stack)}; available overloads: "
-                f"{_show_overloads(overloads)}",
-                node,
-            )
-            return set()
-        if (
-            len(winners) > 1
-            and branch.input_mode is not InputMode.INFER_INPUTS
-            and not _winners_specialize_inputs(winners, callable_popped)
-        ):
-            self._diagnose(
-                f"ambiguous call target {T.show(callable_type)} with stack "
-                f"{_show_stack(callable_popped.stack)}; candidates: "
-                f"{_show_applied_overloads(winners)}",
-                node,
-            )
-            return set()
-
-        results: set[AnalysisBranch] = set()
-        for applied, popped in winners:
-            results.add(
-                popped.with_stack(
-                    popped.stack.push(*applied.actual_returns)
-                ).append_typed(
-                    TypedCallNode(
-                        node,
-                        _returns_result_type(applied.actual_returns),
-                        applied,
-                    )
-                )
-            )
-        return results
-
-    def _set_variables(
-        self,
-        branch: AnalysisBranch,
-        node: SetVariablesNode,
-        targets: tuple[SetVariableNode, ...],
-    ) -> set[AnalysisBranch]:
-        if not targets:
-            return {branch.append_typed(TypedNode(node, None))}
-        available = min(len(branch.stack), len(targets))
-        missing = len(targets) - available
-        if missing and branch.input_mode is not InputMode.INFER_INPUTS:
-            return {
-                branch.with_diagnostic(
-                    "empty stack when trying to assign to multiple variables"
-                )
-            }
-        inferred = tuple(
-            target.declared_type or T.V(f"_inferred_{target.name}")
-            for target in targets[:missing]
-        )
-        value_types = inferred + branch.stack.items[len(branch.stack) - available :]
-        variables = branch.variables
-        for target, value_type in zip(targets, value_types, strict=True):
-            variable_type = target.declared_type or value_type
-            if target.declared_type is not None and not T.assignable(
-                value_type,
-                target.declared_type,
-                self.env.context,
-            ):
-                self._diagnose(
-                    f"cannot assign {T.show(value_type)} to variable "
-                    f"'{target.name}' of declared type {T.show(target.declared_type)}",
-                    target,
-                )
-                return {branch.append_typed(TypedNode(node, None))}
-            variables, diagnostic = variables.write(
-                target.name,
-                variable_type,
-                block_local=True,
-                constant=target.constant,
-                ctx=self.env.context,
-            )
-            if diagnostic is not None:
-                self._diagnose(diagnostic, target)
-                return {branch.with_diagnostic(diagnostic)}
-            if variables is None:
-                return {
-                    branch.with_diagnostic(f"cannot assign to variable '{target.name}'")
-                }
-        return {
-            branch.with_variables(variables)
-            .with_stack(branch.stack.pop(available))
-            .append_typed(TypedNode(node, None))
-        }
-
-    def _field_access(
-        self,
-        branch: AnalysisBranch,
-        node: FieldAccessNode,
-        name: Symbol,
-    ) -> set[AnalysisBranch]:
-        sourced = self._source_field_receiver(branch, name)
-        if sourced is None:
-            self._diagnose(f"empty stack when trying to access field '{name}'", node)
-            return set()
-
-        receiver_type, field_type, branch = sourced
-        if field_type is None:
-            self._diagnose(
-                f"type {T.show(receiver_type)} has no known field '{name}'",
-                node,
-            )
-            return set()
-
-        return {
-            branch.with_stack(branch.stack.push(field_type)).append_typed(
-                TypedNode(node, field_type)
-            )
-        }
-
-    def _field_set(
-        self,
-        branch: AnalysisBranch,
-        node: FieldSetNode,
-        name: Symbol,
-    ) -> set[AnalysisBranch]:
-        if len(branch.stack) < 2:
-            self._diagnose(
-                f"field assignment to '{name}' requires receiver and value",
-                node,
-            )
-            return set()
-        receiver_type = branch.stack[-2]
-        value_type = branch.stack[-1]
-        field_type, refined_receiver = self._field_type(
-            receiver_type,
-            name,
-            branch,
-            write=True,
-        )
-        if field_type is None:
-            self._diagnose(
-                f"type {T.show(receiver_type)} has no writable field '{name}'",
-                node,
-            )
-            return set()
-        if not T.assignable(value_type, field_type, self.env.context):
-            self._diagnose(
-                f"cannot assign {T.show(value_type)} to field '{name}' "
-                f"of type {T.show(field_type)}",
-                node,
-            )
-            return set()
-        result_type = receiver_type if refined_receiver is None else refined_receiver
-        return {
-            branch.with_stack(
-                T.TypeStack(branch.stack.items[:-2]).push(result_type)
-            ).append_typed(TypedNode(node, result_type))
-        }
-
-    def _index_access(
-        self,
-        branch: AnalysisBranch,
-        node: IndexAccessNode,
-    ) -> set[AnalysisBranch]:
-        selector_values = _selector_value_count(node.selectors)
-        required = selector_values + 1
-        if len(branch.stack) >= required:
-            receiver_type = branch.stack[-required]
-            base_branch = branch.with_stack(T.TypeStack(branch.stack.items[:-required]))
-        elif len(branch.stack) == selector_values:
-            source_branch = branch.with_stack(
-                T.TypeStack(branch.stack.items[: len(branch.stack) - selector_values])
-            )
-            sourced = source_branch.source_arguments((T.V("IndexReceiver"),))
-            if sourced is None:
-                self._diagnose("indexing requires receiver and index value(s)", node)
-                return set()
-            (receiver_type,), base_branch = sourced
-        else:
-            self._diagnose("indexing requires receiver and index value(s)", node)
-            return set()
-        index_types = branch.stack.items[-selector_values:] if selector_values else ()
-        if not _selectors_assignable(
-            receiver_type,
-            node.selectors,
-            index_types,
-            self.env.context,
-        ):
-            self._diagnose("list indexing requires Integer index value(s)", node)
-            return set()
-        result_type = _indexed_type(receiver_type, node.selectors, node.spread)
-        return {
-            base_branch.with_stack(base_branch.stack.push(result_type)).append_typed(
-                TypedNode(node, result_type)
-            )
-        }
-
-    def _index_set(
-        self,
-        branch: AnalysisBranch,
-        node: IndexSetNode,
-    ) -> set[AnalysisBranch]:
-        selector_values = _selector_value_count(node.selectors)
-        required = selector_values + 2
-        if len(branch.stack) < required:
-            self._diagnose(
-                "indexed assignment requires value, receiver, and index",
-                node,
-            )
-            return set()
-        value_type = branch.stack[-required]
-        receiver_type = branch.stack[-selector_values - 1]
-        index_types = branch.stack.items[-selector_values:] if selector_values else ()
-        if not _selectors_assignable(
-            receiver_type,
-            node.selectors,
-            index_types,
-            self.env.context,
-        ):
-            self._diagnose("list indexing requires Integer index value(s)", node)
-            return set()
-        item_type = _indexed_type(receiver_type, node.selectors, spread=False)
-        updated_receiver_type = _indexed_assignment_type(
-            receiver_type,
-            node.selectors,
-            value_type,
-            self.env.context,
-        )
-        if updated_receiver_type is None:
-            self._diagnose(
-                f"cannot assign {T.show(value_type)} to indexed item "
-                f"of type {T.show(item_type)}",
-                node,
-            )
-            return set()
-        stack = T.TypeStack(branch.stack.items[:-required]).push(updated_receiver_type)
-        return {
-            branch.with_stack(stack).append_typed(
-                TypedNode(node, updated_receiver_type)
-            )
-        }
-
-    def _list_literal(
-        self,
-        branch: AnalysisBranch,
-        node: ListLiteralNode,
-    ) -> set[AnalysisBranch]:
-        if not node.items:
-            if node.typ is not None:
-                typ = T.normalize(node.typ)
-                if not isinstance(typ, T.CollectionType):
-                    self._diagnose(
-                        f"empty list cast needs a list type, got {T.show(typ)}",
-                        node,
-                    )
-                    return set()
-                return {
-                    branch.with_stack(branch.stack.push(typ)).append_typed(
-                        TypedNode(node, typ)
-                    )
-                }
-            self._diagnose(
-                "empty list literal requires a type annotation or cast",
-                node,
-            )
-            return set()
-
-        item_options: list[tuple[ListItemAnalysis, ...]] = []
-        for item in node.items:
-            item_outputs = self.analyse_block(BranchSet.one(branch), item)
-            options = tuple(
-                item_result
-                for output in item_outputs
-                if (item_result := _list_item_analysis(branch, output)) is not None
-            )
-            if not options:
-                self._diagnose("list item must leave a value on the stack", node)
-                return set()
-            item_options.append(options)
-
-        results: set[AnalysisBranch] = set()
-        for combo in _cartesian_product(tuple(item_options)):
-            inputs = _merge_inferred_inputs(branch.inputs, combo)
-            if inputs is None:
-                continue
-            consumed = max(item.consumed for item in combo)
-            item_type = T.U(*(item.typ for item in combo))
-            list_type = T.C(T.ListExactType, item_type)
-            variables = _merge_list_item_variables(branch.variables, combo)
-            results.add(
-                _replace_branch(
-                    branch,
-                    stack=_pop_stack(branch.stack, consumed).push(list_type),
-                    inputs=inputs,
-                    variables=variables,
-                ).append_typed(TypedNode(node, list_type))
-            )
-        return results
-
-    def _tuple_literal(
-        self,
-        branch: AnalysisBranch,
-        node: TupleLiteralNode,
-    ) -> set[AnalysisBranch]:
-        item_options = self._literal_item_options(branch, node.items, node)
-        if item_options is None:
-            return set()
-
-        results: set[AnalysisBranch] = set()
-        for combo in _cartesian_product(item_options):
-            inputs = _merge_inferred_inputs(branch.inputs, combo)
-            if inputs is None:
-                continue
-            consumed = max((item.consumed for item in combo), default=0)
-            tuple_type = T.Tup(*(item.typ for item in combo))
-            variables = _merge_list_item_variables(branch.variables, combo)
-            results.add(
-                _replace_branch(
-                    branch,
-                    stack=_pop_stack(branch.stack, consumed).push(tuple_type),
-                    inputs=inputs,
-                    variables=variables,
-                ).append_typed(TypedNode(node, tuple_type))
-            )
-        return results
-
-    def _record_literal(
-        self,
-        branch: AnalysisBranch,
-        node: RecordLiteralNode,
-    ) -> set[AnalysisBranch]:
-        expressions = tuple(expr for _, expr in node.fields)
-        item_options = self._literal_item_options(branch, expressions, node)
-        if item_options is None:
-            return set()
-
-        results: set[AnalysisBranch] = set()
-        for combo in _cartesian_product(item_options):
-            inputs = _merge_inferred_inputs(branch.inputs, combo)
-            if inputs is None:
-                continue
-            consumed = max((item.consumed for item in combo), default=0)
-            record_type = T.Row(
-                T.N(Symbol("record")),
-                *(
-                    T.Field(name, item.typ)
-                    for (name, _), item in zip(node.fields, combo, strict=True)
-                ),
-            )
-            variables = _merge_list_item_variables(branch.variables, combo)
-            results.add(
-                _replace_branch(
-                    branch,
-                    stack=_pop_stack(branch.stack, consumed).push(record_type),
-                    inputs=inputs,
-                    variables=variables,
-                ).append_typed(TypedNode(node, record_type))
-            )
-        return results
-
-    def _dict_literal(
-        self,
-        branch: AnalysisBranch,
-        node: DictLiteralNode,
-    ) -> set[AnalysisBranch]:
-        expressions = tuple(expr for entry in node.entries for expr in entry)
-        item_options = self._literal_item_options(branch, expressions, node)
-        if item_options is None:
-            return set()
-
-        results: set[AnalysisBranch] = set()
-        for combo in _cartesian_product(item_options):
-            inputs = _merge_inferred_inputs(branch.inputs, combo)
-            if inputs is None:
-                continue
-            consumed = max((item.consumed for item in combo), default=0)
-            key_types = combo[::2]
-            value_types = combo[1::2]
-            dict_type = T.N(
-                Symbol("Dict"),
-                T.U(*(item.typ for item in key_types)),
-                T.U(*(item.typ for item in value_types)),
-            )
-            variables = _merge_list_item_variables(branch.variables, combo)
-            results.add(
-                _replace_branch(
-                    branch,
-                    stack=_pop_stack(branch.stack, consumed).push(dict_type),
-                    inputs=inputs,
-                    variables=variables,
-                ).append_typed(TypedNode(node, dict_type))
-            )
-        return results
-
     def _literal_item_options(
         self,
         branch: AnalysisBranch,
         expressions: tuple[tuple[ASTNode, ...], ...],
         node: ASTNode,
+        *,
+        message: str = "literal item must leave a value on the stack",
     ) -> tuple[tuple[ListItemAnalysis, ...], ...] | None:
         item_options: list[tuple[ListItemAnalysis, ...]] = []
         for expression in expressions:
-            item_outputs = self.analyse_block(BranchSet.one(branch), expression)
+            item_outputs = self.analyse_block(BranchSet((branch,)), expression)
             options = tuple(
                 item_result
                 for output in item_outputs
                 if (item_result := _list_item_analysis(branch, output)) is not None
             )
             if not options:
-                self._diagnose("literal item must leave a value on the stack", node)
+                self._diagnose(message, node)
                 return None
             item_options.append(options)
         return tuple(item_options)
-
-    def _foreach(self, branch: AnalysisBranch, node: ForNode) -> set[AnalysisBranch]:
-        consumes_stack_iterable = bool(branch.stack)
-        if not branch.stack:
-            item = _anonymous_type_var(branch, 1)
-            sourced = branch.source_arguments((T.ExactList(item),))
-            if sourced is None:
-                self._diagnose("for loop requires iterable on the stack", node)
-                return set()
-            (iterable_type,), branch = sourced
-        else:
-            iterable_type = branch.stack[-1]
-        item_type = T.collection_item_type(iterable_type)
-        if not item_type:
-            self._diagnose(
-                "for loop iterable must actually be iterable. "
-                f"Got {T.show(iterable_type)}",
-                node,
-            )
-            return set()
-        body_stack = branch.stack.pop() if consumes_stack_iterable else branch.stack
-        body_branch = branch.with_stack(body_stack)
-        cycle_params = (item_type,)
-        if node.index_variable is not None:
-            cycle_params = (item_type, T.Integer)
-        body_branch = _replace_branch(
-            body_branch,
-            input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
-            cycle_params=cycle_params,
-        )
-        body_branch = body_branch.with_variables(
-            body_branch.variables.with_block_local(node.variable, item_type)
-        )
-        if node.index_variable is not None:
-            body_branch = body_branch.with_variables(
-                body_branch.variables.with_block_local(node.index_variable, T.Integer)
-            )
-
-        body_outputs = self.analyse_block(BranchSet.one(body_branch), node.body)
-        if not body_outputs:
-            return set()
-        refined_item_type = _loop_variable_output_type(node.variable, body_outputs)
-        if (
-            refined_item_type is not None
-            and _contains_type_var(item_type)
-            and not T.same(item_type, refined_item_type)
-        ):
-            body_branch = body_branch.refine_type(item_type, refined_item_type)
-            body_outputs = BranchSet(
-                frozenset(
-                    output.refine_type(item_type, refined_item_type)
-                    for output in body_outputs
-                )
-            )
-        break_types = tuple(
-            output.break_type
-            for output in body_outputs
-            if output.break_type is not None
-        )
-        result_type = _loop_break_result_type(break_types)
-        loop_locals = (node.variable,) + (
-            (node.index_variable,) if node.index_variable is not None else ()
-        )
-        variables = _merge_loop_variables(
-            body_branch.variables,
-            body_outputs,
-            loop_locals,
-        )
-        typed_for = TypedNode(node, result_type)
-        return {
-            _refine_branch_like(branch, body_branch)
-            .with_stack(body_branch.stack.push(result_type))
-            .with_variables(variables)
-            .append_typed(typed_for)
-        }
-
-    def _assert(
-        self,
-        branch: AnalysisBranch,
-        node: AssertNode,
-    ) -> set[AnalysisBranch]:
-        condition = self.analyse_block(BranchSet.one(branch), node.condition)
-        condition = condition.require_stack_top_assignable(Boolean, self.env.context)
-        if not condition:
-            self._diagnose("assert condition must be a boolean value", node)
-            return set()
-
-        success = branch.append_typed(TypedNode(node, None))
-        if not node.else_branch:
-            return {success}
-
-        else_outputs = self.analyse_block(BranchSet.one(branch), node.else_branch)
-        error_types = tuple(_top_or_none(output.stack) for output in else_outputs)
-        error_type = T.U(*error_types) if error_types else T.NoneType()
-        assert_error = T.N(Symbol("AssertError"), error_type)
-        return {success.with_stack(success.stack.push(assert_error))}
-
-    def _while(
-        self,
-        branch: AnalysisBranch,
-        node: WhileNode,
-    ) -> set[AnalysisBranch]:
-        loop_input = branch
-        if node.params is not None:
-            params = _params_to_types(node.params)
-            sourced = branch.source_arguments(params)
-            if sourced is None:
-                self._diagnose("while loop inputs do not match stack", node)
-                return set()
-            _, loop_input = sourced
-            loop_input = loop_input.with_stack(loop_input.stack.push(*params))
-            named = tuple(
-                (param.name, typ)
-                for param, typ in zip(node.params, params, strict=True)
-                if param.name is not None
-            )
-            if named:
-                loop_input = loop_input.with_variables(
-                    BranchVariables.from_parameters(
-                        named,
-                        captures=loop_input.variables,
-                    )
-                )
-            loop_input = _replace_branch(
-                loop_input,
-                input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
-                cycle_params=params,
-            )
-
-        condition = self.analyse_block(BranchSet.one(loop_input), node.condition)
-        condition = condition.require_stack_top_assignable(Boolean, self.env.context)
-        if not condition:
-            self._diagnose("while condition must be a boolean value", node)
-            return set()
-
-        body_inputs = condition.pop_stack_top()
-        body_outputs = self.analyse_block(body_inputs, node.body)
-        if not body_outputs:
-            return set()
-
-        joined: AnalysisBranch | None = None
-        for output in body_outputs:
-            candidate = output
-            if joined is None:
-                joined = candidate
-                continue
-            if joined.inputs != candidate.inputs:
-                self._diagnose("while body inferred different inputs", node)
-                return set()
-            stack = merge_stacks(joined.stack, candidate.stack)
-            variables = joined.variables.merge_against(
-                candidate.variables,
-                loop_input.variables,
-            )
-            joined = joined.with_stack(stack).with_variables(variables)
-        if joined is None:
-            return set()
-
-        variables = (
-            joined.variables
-            if node.params is None
-            else joined.variables.merge_against(loop_input.variables, branch.variables)
-        )
-        result = _refine_branch_like(branch, joined).with_variables(variables)
-        return {
-            result.append_typed(
-                TypedNode(node, _returns_result_type(result.stack.items))
-            )
-        }
-
-    def _unfold(
-        self,
-        branch: AnalysisBranch,
-        node: UnfoldNode,
-    ) -> set[AnalysisBranch]:
-        body_function = FunctionNode(
-            params=node.params,
-            body=node.body,
-            annotations=(AnnotationNode(Symbol("returnAll")),),
-            element_tags=frozenset(),
-            location=node.location,
-        )
-        body_analysis = self._analyse_unfold_body_function(branch, body_function)
-        if body_analysis is None:
-            return set()
-        body_function_analysis = body_analysis
-
-        candidates: list[tuple[T.AppliedOverload, AnalysisBranch, int]] = []
-        for overload in _callable_overloads(body_function_analysis.typ):
-            state_arity = len(overload.params)
-            if state_arity == 0:
-                self._diagnose("unfold requires at least one state value", node)
-                continue
-            if len(overload.returns) > state_arity + 1:
-                self._diagnose(
-                    "unfold body may not produce more than state arity plus one value",
-                    node,
-                )
-                continue
-            if node.condition:
-                condition_function = FunctionNode(
-                    params=(
-                        tuple(
-                            FunctionParam(param.name, typ)
-                            for param, typ in zip(
-                                node.params or (),
-                                overload.params,
-                                strict=False,
-                            )
-                        )
-                        if node.params is not None
-                        else tuple(FunctionParam(None, typ) for typ in overload.params)
-                    ),
-                    body=node.condition,
-                    returns=(Boolean,),
-                    element_tags=frozenset(),
-                    location=node.location,
-                )
-                if self._analyse_function_literal(branch, condition_function) is None:
-                    self._diagnose("unfold condition must return a boolean value", node)
-                    continue
-            sourced = branch.source_arguments(overload.params)
-            if sourced is None:
-                self._diagnose("unfold inputs do not match stack", node)
-                continue
-            args, popped = sourced
-            applied = T.apply_overload(overload, args, self.env.context)
-            if applied is None:
-                continue
-            candidates.append((applied, popped, state_arity))
-
-        results: set[AnalysisBranch] = set()
-        for applied, popped, state_arity in _best_candidates(candidates, branch):
-            generated = _unfold_emitted_type(applied.params, applied.actual_returns)
-            list_type = T.WithTag(T.ExactList(generated), "infinite")
-            results.add(
-                popped.with_stack(popped.stack.push(list_type)).append_typed(
-                    TypedUnfoldNode(node, list_type, state_arity=state_arity)
-                )
-            )
-        return results
 
     def _analyse_unfold_body_function(
         self,
@@ -2762,7 +1791,7 @@ class Analyser:
         )
         function_analyser = Analyser(self.env)
         function_analyser._friendly_owners = self._friendly_owners
-        final = function_analyser.analyse_block(BranchSet.one(initial), node.body)
+        final = function_analyser.analyse_block(BranchSet((initial,)), node.body)
         signatures = self._function_signatures(node, final)
         analysis = _function_analysis_from_signatures(signatures)
         if analysis is None:
@@ -2772,105 +1801,23 @@ class Analyser:
         self.warnings.extend(function_analyser.warnings)
         return analysis
 
-    def _at(
-        self,
-        branch: AnalysisBranch,
-        node: AtNode,
-    ) -> set[AnalysisBranch]:
-        body_branch = _replace_branch(
-            branch,
-            input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
-            cycle_params=branch.stack.items,
-        )
-        outputs = self.analyse_block(BranchSet.one(body_branch), node.body)
-        return {
-            output.append_typed(
-                TypedNode(node, _returns_result_type(output.stack.items))
-            )
-            for output in outputs
-        }
-
-    def _break(
-        self,
-        branch: AnalysisBranch,
-        node: BreakNode,
-    ) -> set[AnalysisBranch]:
-        value_outputs = self.analyse_block(BranchSet.one(branch), node.values)
-        outputs: set[AnalysisBranch] = set()
-        for value_branch in value_outputs:
-            break_type = _top_or_none(value_branch.stack)
-            outputs.add(
-                value_branch.append_typed(TypedNode(node, break_type)).with_break(
-                    break_type
-                )
-            )
-        return outputs
-
-    def _if(
-        self,
-        branch: AnalysisBranch,
-        node: IfNode,
-    ) -> set[AnalysisBranch]:
-        incoming = BranchSet.one(branch)
-        condition = self.analyse_block(incoming, node.condition)
-        condition = condition.require_stack_top_assignable(Boolean, self.env.context)
-        if not condition:
-            self._diagnose("if condition must be a boolean value", node)
-            return set()
-
-        body_inputs = condition.pop_stack_top()
-        then_outputs = self.analyse_block(body_inputs, node.then_branch)
-        else_outputs = self.analyse_block(body_inputs, node.else_branch)
-
-        outputs: set[AnalysisBranch] = set()
-        saw_mismatched_inputs = False
-        for left in then_outputs:
-            for right in else_outputs:
-                if left.inputs != right.inputs:
-                    saw_mismatched_inputs = True
-                    continue
-                if left.break_type is not None or right.break_type is not None:
-                    for output in (left, right):
-                        typ = output.break_type
-                        if typ is None:
-                            typ = _returns_result_type(output.stack.items)
-                        outputs.add(output.append_typed(TypedNode(node, typ)))
-                    continue
-                stack = merge_stacks(left.stack, right.stack)
-                base = _replace_branch(
-                    _refine_branch_like(branch, left),
-                    inputs=left.inputs,
-                )
-                variables = left.variables.merge_against(
-                    right.variables,
-                    base.variables,
-                )
-                typed_if = TypedNode(node, _returns_result_type(stack.items))
-                outputs.add(
-                    base.with_stack(stack)
-                    .with_variables(variables)
-                    .append_typed(typed_if)
-                )
-        if not outputs and saw_mismatched_inputs:
-            self._diagnose("if branches inferred different inputs", node)
-        return outputs
-
+    @register(MatchNode)
     def _match(
         self,
-        branch: AnalysisBranch,
         node: MatchNode,
-    ) -> set[AnalysisBranch]:
+        branch: AnalysisBranch,
+    ) -> BranchSet:
         if not node.cases:
             self._diagnose("match requires at least one case", node)
-            return set()
+            return BranchSet()
 
         arity = _match_arity(node)
         if arity is None:
             self._diagnose("match cases must match the same number of values", node)
-            return set()
+            return BranchSet()
         if arity == 0:
             self._diagnose("match requires at least one pattern per case", node)
-            return set()
+            return BranchSet()
 
         subject_params = tuple(
             reversed(
@@ -2883,15 +1830,14 @@ class Analyser:
         sourced = branch.source_arguments(subject_params)
         if sourced is None:
             self._diagnose(
-                f"match requires {arity} value{'s' if arity != 1 else ''} "
-                "on the stack",
+                f"match requires {arity} value{'s' if arity != 1 else ''} on the stack",
                 node,
             )
-            return set()
+            return BranchSet()
         stack_subjects, body_input = sourced
         subject_types = tuple(reversed(stack_subjects))
         if not self._match_is_exhaustive(subject_types, node):
-            return set()
+            return BranchSet()
 
         joined: AnalysisBranch | None = None
         subject_variables = _match_subject_variables(branch, arity)
@@ -2912,125 +1858,79 @@ class Analyser:
                     self.env.context,
                 )
             case_input = body_input.with_variables(case_variables)
-            case_input = _replace_branch(
+            case_input = replace(
                 case_input,
                 input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
                 cycle_params=subject_types,
                 cycle_index=0,
             )
             if not self._match_guards_are_valid(subject_types, case.patterns, node):
-                return set()
-            case_outputs = self.analyse_block(BranchSet.one(case_input), case.body)
+                return BranchSet()
+            case_outputs = self.analyse_block(BranchSet((case_input,)), case.body)
             for output in case_outputs:
-                candidate = output
-                if candidate.break_type is not None:
-                    typ = candidate.break_type
-                    if typ is None:
-                        typ = _returns_result_type(candidate.stack.items)
-                    candidate = candidate.append_typed(TypedNode(node, typ))
-                candidate = _replace_branch(
-                    candidate,
-                    typed_body=body_input.typed_body,
-                    input_mode=body_input.input_mode,
-                    cycle_params=body_input.cycle_params,
-                    cycle_index=body_input.cycle_index,
+                candidate = _match_case_output(output, body_input, node)
+                joined = _join_match_output(
+                    original=branch,
+                    baseline=body_input,
+                    joined=joined,
+                    candidate=candidate,
                 )
                 if joined is None:
-                    joined = candidate
-                    continue
-                if joined.inputs != candidate.inputs:
-                    merged_inputs = _merge_branch_inputs(
-                        joined.inputs,
-                        candidate.inputs,
-                    )
-                    if merged_inputs is None:
-                        self._diagnose("match cases inferred different inputs", node)
-                        return set()
-                else:
-                    merged_inputs = joined.inputs
-                stack = merge_stacks(joined.stack, candidate.stack)
-                variables = joined.variables.merge_against(
-                    candidate.variables,
-                    body_input.variables,
-                )
-                base = (
-                    _refine_branch_like(branch, joined)
-                    if len(branch.inputs) == len(joined.inputs)
-                    else joined
-                )
-                joined = (
-                    base.with_stack(stack).with_variables(variables)
-                )
-                joined = _replace_branch(joined, inputs=merged_inputs)
+                    self._diagnose("match cases inferred different inputs", node)
+                    return BranchSet()
             previous_patterns.append(case.patterns)
 
         if joined is None:
-            return set()
-        return {
-            joined.append_typed(
-                TypedNode(node, _returns_result_type(joined.stack.items))
+            return BranchSet()
+        return BranchSet(
+            (
+                joined.emit(
+                    TypedNode(node, _returns_result_type(joined.stack.items))
+                ),
             )
-        }
+        )
 
+    @register(TryNode)
     def _try(
         self,
-        branch: AnalysisBranch,
         node: TryNode,
-    ) -> set[AnalysisBranch]:
+        branch: AnalysisBranch,
+    ) -> BranchSet:
         if not node.handlers:
             self._diagnose("try requires at least one handler", node)
-            return set()
+            return BranchSet()
 
-        body_outputs = self.analyse_block(BranchSet.one(branch), node.body)
-        outputs: set[AnalysisBranch] = set(body_outputs.branches)
+        body_outputs = self.analyse_block(BranchSet((branch,)), node.body)
+        outputs: list[AnalysisBranch] = list(body_outputs.branches)
         for handler in node.handlers:
             handler_outputs = self.analyse_block(
-                BranchSet.one(branch),
+                BranchSet((branch,)),
                 handler.body,
             )
             for output in handler_outputs:
                 if output.inputs != branch.inputs:
                     self._diagnose("try handlers inferred different inputs", handler)
                     continue
-                handler_result = _returns_result_type(output.stack.items)
-                if handler_result is None:
-                    handler_result = T.NoneType()
-                outputs.add(
-                    _refine_branch_like(branch, output)
-                    .with_stack(
-                        branch.stack.push(T.N(Symbol("PanicError"), handler_result))
-                    )
-                    .append_typed(TypedNode(handler, handler_result))
-                )
+                outputs.append(_try_handler_output(output, branch, handler))
 
         if not outputs:
-            return set()
+            return BranchSet()
 
         joined: AnalysisBranch | None = None
         for output in outputs:
+            joined = _join_try_output(branch, joined, output)
             if joined is None:
-                joined = output
-                continue
-            if joined.inputs != output.inputs:
                 self._diagnose("try branches inferred different inputs", node)
-                return set()
-            stack = merge_stacks(joined.stack, output.stack)
-            variables = joined.variables.merge_against(
-                output.variables,
-                branch.variables,
-            )
-            joined = (
-                _refine_branch_like(branch, joined)
-                .with_stack(stack)
-                .with_variables(variables)
-            )
+                return BranchSet()
         if joined is None:
-            return set()
-        return {
-            joined.append_typed(
-                TypedNode(node, _returns_result_type(joined.stack.items))
+            return BranchSet()
+        return BranchSet(
+            (
+                joined.emit(
+                    TypedNode(node, _returns_result_type(joined.stack.items))
+                ),
             )
-        }
+        )
 
     def _match_guards_are_valid(
         self,
@@ -3045,9 +1945,15 @@ class Analyser:
                 variables=BranchVariables(),
                 input_mode=InputMode.TOP_LEVEL,
             )
-            outputs = self.analyse_block(BranchSet.one(guard_input), guard)
-            outputs = outputs.require_stack_top_assignable(Boolean, self.env.context)
-            if not outputs:
+            outputs = self.analyse_block(BranchSet((guard_input,)), guard)
+            outputs = self.require_stack_top_assignable(
+                outputs,
+                expected=Boolean,
+                location=node.location,
+                message="match guard must be a boolean value",
+                code="match-guard-type",
+            )
+            if not outputs or any(output.failed for output in outputs):
                 self._diagnose("match guard must be a boolean value", node)
                 return False
         return True
@@ -3117,7 +2023,7 @@ class Analyser:
         return (
             receiver_type,
             field_type,
-            _replace_branch(branch, inputs=branch.inputs + (receiver_type,)),
+            replace(branch, inputs=branch.inputs + (receiver_type,)),
         )
 
     def _field_type(
@@ -3209,7 +2115,9 @@ class Analyser:
         outer: AnalysisBranch,
         node: FunctionNode,
     ) -> tuple[FunctionAnalysis, AnalysisBranch] | None:
-        if _needs_call_site_checking(node):
+        if node.params is not None and any(
+            _is_call_site_checked_param(param.typ) for param in node.params
+        ):
             return self._call_site_checked_function(outer, node), outer
 
         top_level_captures = _top_level_assignment_capture_nodes(outer, node)
@@ -3223,7 +2131,12 @@ class Analyser:
 
         params = _declared_params(node)
         body_params = tuple(_anonymous_trait_subject_view(param) for param in params)
-        mode = _function_input_mode(node)
+        if node.params is None:
+            mode = InputMode.INFER_INPUTS
+        elif not node.params:
+            mode = InputMode.NILADIC
+        else:
+            mode = InputMode.CYCLE_EXPLICIT_PARAMS
         named_params = tuple(
             (param.name, typ)
             for param, typ in zip(node.params or (), body_params, strict=True)
@@ -3241,7 +2154,7 @@ class Analyser:
                     node,
                 )
                 return None
-            variables, _diagnostic = variables.write(
+            write = variables.write(
                 Symbol("this"),
                 T.Fn(
                     recursive_overload.params,
@@ -3250,19 +2163,22 @@ class Analyser:
                 ),
                 block_local=False,
             )
-            if variables is None:
+            if write.variables is None:
                 return None
+            variables = write.variables
         for name in _static_body_variable_names(node):
-            variables, _diagnostic = variables.write(
+            write = variables.write(
                 name,
                 T.Number,
                 block_local=False,
             )
-            if variables is None:
+            if write.variables is None:
                 variables = BranchVariables.from_parameters(
                     named_params,
                     captures=_function_capture_source(outer),
                 )
+            else:
+                variables = write.variables
         initial_stack = T.TypeStack(
             body_params if mode is InputMode.CYCLE_EXPLICIT_PARAMS else ()
         )
@@ -3296,7 +2212,7 @@ class Analyser:
             function_env.define_overload(Symbol("this"), recursive_overload)
         function_analyser = Analyser(function_env)
         function_analyser._friendly_owners = self._friendly_owners
-        final = function_analyser.analyse_block(BranchSet.one(initial), node.body)
+        final = function_analyser.analyse_block(BranchSet((initial,)), node.body)
         signatures = self._function_signatures(node, final)
         analysis = _function_analysis_from_signatures(signatures)
         if analysis is None:
@@ -3312,18 +2228,11 @@ class Analyser:
         node: FunctionNode,
     ) -> FunctionAnalysis:
         params = _declared_params(node)
-        overload = T.Overload(
-            params,
-            (),
-            param_names=_function_param_names_for_overload(node, params),
+        overload = _function_overload(
+            node,
+            params=params,
+            returns=(),
             call_site_body=(outer, node),
-            annotation_error=annotation_hooks.annotation_error_message(
-                node.annotations
-            ),
-            annotation_warning=annotation_hooks.annotation_warning_message(
-                node.annotations
-            ),
-            param_defaults=_function_param_defaults_for_overload(node, params),
         )
         typ = T.Overloads(overload)
         return FunctionAnalysis(
@@ -3381,7 +2290,7 @@ class Analyser:
         )
         function_analyser = Analyser(self.env)
         function_analyser._friendly_owners = self._friendly_owners
-        final = function_analyser.analyse_block(BranchSet.one(initial), node.body)
+        final = function_analyser.analyse_block(BranchSet((initial,)), node.body)
         signatures = self._function_signatures(call_site_node, final)
         return _function_analysis_from_signatures(signatures)
 
@@ -3413,22 +2322,12 @@ class Analyser:
                 and any(_contains_anonymous_trait(param) for param in declared_params)
                 else branch.inputs
             )
-            signature = T.Overload(
-                inputs,
-                returns,
+            signature = _function_overload(
+                node,
+                params=inputs,
+                returns=returns,
                 where_clause=node.where_clause,
-                param_names=_function_param_names_for_overload(node, inputs),
                 element_tags=final_element_tags,
-                annotation_error=annotation_hooks.annotation_error_message(
-                    node.annotations
-                ),
-                annotation_warning=annotation_hooks.annotation_warning_message(
-                    node.annotations
-                ),
-                param_defaults=_function_param_defaults_for_overload(
-                    node,
-                    inputs,
-                ),
             )
             signatures.setdefault(signature, branch.typed_body)
 
@@ -3495,6 +2394,1315 @@ class Analyser:
         self.warnings.append(_diagnostic_message(message, node))
 
 
+@register(NumberLiteralNode)
+def _number_literal(
+    self: Analyser,
+    node: NumberLiteralNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    typ = _number_literal_type(node.value)
+    return BranchSet((branch.push(typ).emit(TypedNode(node, typ)),))
+
+
+@register(StringLiteralNode)
+def _string_literal(
+    self: Analyser,
+    node: StringLiteralNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    return BranchSet((branch.push(T.String).emit(TypedNode(node, T.String)),))
+
+
+@register(GetVariableNode)
+def _get_variable(
+    self: Analyser,
+    node: GetVariableNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    typ = branch.variables.read(node.name)
+
+    if typ is None:
+        self._diagnose(f"undefined variable '{node.name}'", node)
+        return BranchSet((branch.emit(TypedNode(node, None)),))
+
+    return BranchSet((branch.push(typ).emit(TypedNode(node, typ)),))
+
+
+@register(SetVariableNode)
+def _set_variable(
+    self: Analyser,
+    node: SetVariableNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    if not branch.stack:
+        if branch.input_mode is InputMode.INFER_INPUTS:
+            inferred = node.declared_type or T.V(f"_inferred_{node.name}")
+            write = branch.variables.write(
+                node.name,
+                inferred,
+                constant=node.constant,
+                ctx=self.env.context,
+            )
+
+            if write.error is not None:
+                self._diagnose(write.error, node)
+                return BranchSet(
+                    (
+                        branch.error(
+                            write.error,
+                            node.location,
+                            code="variable-write",
+                        ),
+                    )
+                )
+
+            if write.variables is None:
+                return BranchSet(
+                    (
+                        branch.error(
+                            f"cannot assign to variable '{node.name}'",
+                            node.location,
+                            code="variable-write",
+                        ),
+                    )
+                )
+
+            return BranchSet(
+                (
+                    branch.with_variables(write.variables).emit(
+                        TypedNode(node, inferred)
+                    ),
+                )
+            )
+
+        return BranchSet(
+            (
+                branch.error(
+                    f"empty stack when trying to assign to variable '{node.name}'",
+                    node.location,
+                    code="stack-underflow",
+                ),
+            )
+        )
+
+    value_type = branch.stack[-1]
+    variable_type = node.declared_type or value_type
+
+    if node.declared_type is not None and not T.assignable(
+        value_type,
+        node.declared_type,
+        self.env.context,
+    ):
+        self._diagnose(
+            f"cannot assign {T.show(value_type)} to variable '{node.name}' "
+            f"of declared type {T.show(node.declared_type)}",
+            node,
+        )
+        return BranchSet((branch.emit(TypedNode(node, None)),))
+
+    write = branch.variables.write(
+        node.name,
+        variable_type,
+        block_local=True,
+        constant=node.constant,
+        ctx=self.env.context,
+    )
+
+    if write.error is not None:
+        self._diagnose(write.error, node)
+        return BranchSet(
+            (
+                branch.error(
+                    write.error,
+                    node.location,
+                    code="variable-write",
+                ),
+            )
+        )
+
+    if write.variables is None:
+        return BranchSet(
+            (
+                branch.error(
+                    f"cannot assign to variable '{node.name}'",
+                    node.location,
+                    code="variable-write",
+                ),
+            )
+        )
+
+    return BranchSet(
+        (
+            branch.with_variables(write.variables)
+            .pop()
+            .emit(TypedNode(node, variable_type)),
+        )
+    )
+
+
+@register(SetVariablesNode)
+def _set_variables_node(
+    self: Analyser,
+    node: SetVariablesNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    if not node.targets:
+        return BranchSet((branch.emit(TypedNode(node, None)),))
+
+    available = min(len(branch.stack), len(node.targets))
+    missing = len(node.targets) - available
+    if missing and branch.input_mode is not InputMode.INFER_INPUTS:
+        return BranchSet(
+            (
+                branch.error(
+                    "empty stack when trying to assign to multiple variables",
+                    node.location,
+                    code="stack-underflow",
+                ),
+            )
+        )
+
+    inferred = tuple(
+        target.declared_type or T.V(f"_inferred_{target.name}")
+        for target in node.targets[:missing]
+    )
+    value_types = inferred + branch.stack.items[len(branch.stack) - available :]
+    variables = branch.variables
+    for target, value_type in zip(node.targets, value_types, strict=True):
+        variable_type = target.declared_type or value_type
+        if target.declared_type is not None and not T.assignable(
+            value_type,
+            target.declared_type,
+            self.env.context,
+        ):
+            self._diagnose(
+                f"cannot assign {T.show(value_type)} to variable "
+                f"'{target.name}' of declared type {T.show(target.declared_type)}",
+                target,
+            )
+            return BranchSet((branch.emit(TypedNode(node, None)),))
+
+        write = variables.write(
+            target.name,
+            variable_type,
+            block_local=True,
+            constant=target.constant,
+            ctx=self.env.context,
+        )
+        if write.error is not None:
+            self._diagnose(write.error, target)
+            return BranchSet(
+                (
+                    branch.error(
+                        write.error,
+                        target.location,
+                        code="variable-write",
+                    ),
+                )
+            )
+        if write.variables is None:
+            return BranchSet(
+                (
+                    branch.error(
+                        f"cannot assign to variable '{target.name}'",
+                        target.location,
+                        code="variable-write",
+                    ),
+                )
+            )
+        variables = write.variables
+
+    return BranchSet(
+        (
+            branch.with_variables(variables)
+            .pop(available)
+            .emit(TypedNode(node, None)),
+        )
+    )
+
+
+@register(IfNode)
+def _if_node(
+    self: Analyser,
+    node: IfNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    condition = self.analyse_from(branch, node.condition)
+    body_inputs = self.require_stack_top_assignable(
+        condition,
+        expected=Boolean,
+        location=node.location,
+        message="if condition must be a boolean value",
+        code="if-condition-type",
+    )
+
+    if not body_inputs or any(output.failed for output in body_inputs):
+        self._diagnose("if condition must be a boolean value", node)
+        return BranchSet()
+
+    then_outputs = self.analyse_block(body_inputs, node.then_branch)
+    else_outputs = self.analyse_block(body_inputs, node.else_branch)
+
+    outputs: list[AnalysisBranch] = []
+    saw_mismatched_inputs = False
+    for left in then_outputs:
+        for right in else_outputs:
+            if left.inputs != right.inputs:
+                saw_mismatched_inputs = True
+                continue
+
+            if left.break_type is not None or right.break_type is not None:
+                for output in (left, right):
+                    typ = output.break_type
+                    if typ is None:
+                        typ = _returns_result_type(output.stack.items)
+                    outputs.append(output.emit(TypedNode(node, typ)))
+                continue
+
+            stack = merge_stacks(left.stack, right.stack)
+            base = replace(
+                _refine_branch_like(branch, left),
+                inputs=left.inputs,
+            )
+            variables = left.variables.merge_against(
+                right.variables,
+                base.variables,
+            )
+            typed_if = TypedNode(node, _returns_result_type(stack.items))
+            outputs.append(
+                base.with_stack(stack).with_variables(variables).emit(typed_if)
+            )
+
+    if not outputs and saw_mismatched_inputs:
+        self._diagnose("if branches inferred different inputs", node)
+
+    return BranchSet.collect(outputs)
+
+
+@register(AssertNode)
+def _assert_node(
+    self: Analyser,
+    node: AssertNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    condition = self.analyse_from(branch, node.condition)
+    condition = self.require_stack_top_assignable(
+        condition,
+        expected=Boolean,
+        location=node.location,
+        message="assert condition must be a boolean value",
+        code="assert-condition-type",
+    )
+
+    if not condition or any(output.failed for output in condition):
+        self._diagnose("assert condition must be a boolean value", node)
+        return BranchSet()
+
+    success = branch.emit(TypedNode(node, None))
+    if not node.else_branch:
+        return BranchSet((success,))
+
+    else_outputs = self.analyse_from(branch, node.else_branch)
+    error_types = tuple(_top_or_none(output.stack) for output in else_outputs)
+    error_type = T.U(*error_types) if error_types else T.NoneType()
+    assert_error = T.N(Symbol("AssertError"), error_type)
+    return BranchSet((success.push(assert_error),))
+
+
+@register(BreakNode)
+def _break_node(
+    self: Analyser,
+    node: BreakNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    value_outputs = self.analyse_from(branch, node.values)
+    return BranchSet.collect(
+        value_branch.emit(
+            TypedNode(node, _top_or_none(value_branch.stack))
+        ).with_break(_top_or_none(value_branch.stack))
+        for value_branch in value_outputs
+    )
+
+
+@register(WhileNode)
+def _while_node(
+    self: Analyser,
+    node: WhileNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    loop_input = branch
+    if node.params is not None:
+        params = _params_to_types(node.params)
+        sourced = branch.source_arguments(params)
+        if sourced is None:
+            self._diagnose("while loop inputs do not match stack", node)
+            return BranchSet()
+
+        _, loop_input = sourced
+        loop_input = loop_input.push(*params)
+        named = tuple(
+            (param.name, typ)
+            for param, typ in zip(node.params, params, strict=True)
+            if param.name is not None
+        )
+        if named:
+            loop_input = loop_input.with_variables(
+                BranchVariables.from_parameters(
+                    named,
+                    captures=loop_input.variables,
+                )
+            )
+        loop_input = replace(
+            loop_input,
+            input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
+            cycle_params=params,
+        )
+
+    condition = self.analyse_from(loop_input, node.condition)
+    body_inputs = self.require_stack_top_assignable(
+        condition,
+        expected=Boolean,
+        location=node.location,
+        message="while condition must be a boolean value",
+        code="while-condition-type",
+    )
+    if not body_inputs or any(output.failed for output in body_inputs):
+        self._diagnose("while condition must be a boolean value", node)
+        return BranchSet()
+
+    body_outputs = self.analyse_block(body_inputs, node.body)
+    if not body_outputs:
+        return BranchSet()
+
+    joined: AnalysisBranch | None = None
+    for output in body_outputs:
+        if joined is None:
+            joined = output
+            continue
+
+        if joined.inputs != output.inputs:
+            self._diagnose("while body inferred different inputs", node)
+            return BranchSet()
+
+        stack = merge_stacks(joined.stack, output.stack)
+        variables = joined.variables.merge_against(
+            output.variables,
+            loop_input.variables,
+        )
+        joined = joined.with_stack(stack).with_variables(variables)
+
+    if joined is None:
+        return BranchSet()
+
+    variables = (
+        joined.variables
+        if node.params is None
+        else joined.variables.merge_against(loop_input.variables, branch.variables)
+    )
+    result = _refine_branch_like(branch, joined).with_variables(variables)
+    return BranchSet(
+        (
+            result.emit(
+                TypedNode(node, _returns_result_type(result.stack.items))
+            ),
+        )
+    )
+
+
+@register(ReturnNode)
+def _return_node(
+    self: Analyser,
+    node: ReturnNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    return BranchSet((branch.emit(TypedNode(node, None)),))
+
+
+@register(AtNode)
+def _at_node(
+    self: Analyser,
+    node: AtNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    body_branch = replace(
+        branch,
+        input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
+        cycle_params=branch.stack.items,
+    )
+    outputs = self.analyse_from(body_branch, node.body)
+    return BranchSet.collect(
+        output.emit(TypedNode(node, _returns_result_type(output.stack.items)))
+        for output in outputs
+    )
+
+
+@register(FunctionNode)
+def _function_node(
+    self: Analyser,
+    node: FunctionNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    if not self._validate_annotations(node.annotations, "fn", node):
+        return BranchSet((branch.emit(TypedNode(node, None)),))
+
+    function_node = _genericize_function_node(node, node.generics)
+    result = self._analyse_function_literal(branch, function_node)
+    if result is None:
+        return BranchSet((branch.emit(TypedNode(node, None)),))
+
+    function, typed_branch = result
+    typed_node = TypedFunctionNode(function_node, function.typ, function.overloads)
+    return BranchSet((typed_branch.push(function.typ).emit(typed_node),))
+
+
+@register(CastNode)
+def _cast_node(
+    self: Analyser,
+    node: CastNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    target = T.normalize(node.typ)
+    if not branch.stack:
+        self._diagnose(
+            f"empty stack when casting to {T.show(target)}",
+            node,
+        )
+        return BranchSet((branch.emit(TypedNode(node, None)),))
+
+    source = branch.stack[-1]
+    if node.checked:
+        if T.assignable(source, target, self.env.context):
+            self._diagnose(
+                f"checked cast to {T.show(target)} is already statically safe",
+                node,
+            )
+            return BranchSet()
+        if not _types_overlap(source, target, self.env.context):
+            if _type_contains_rank_var(target):
+                stack = T.TypeStack((*branch.stack.items[:-1], target))
+                return BranchSet(
+                    (branch.with_stack(stack).emit(TypedNode(node, target)),)
+                )
+            self._diagnose(
+                f"cannot cast {T.show(source)} to {T.show(target)}",
+                node,
+            )
+            return BranchSet()
+    elif not T.assignable(source, target, self.env.context):
+        self._diagnose(
+            f"cannot safely cast {T.show(source)} to {T.show(target)}",
+            node,
+        )
+        return BranchSet()
+
+    stack = T.TypeStack((*branch.stack.items[:-1], target))
+    return BranchSet((branch.with_stack(stack).emit(TypedNode(node, target)),))
+
+
+@register(StackShuffleNode)
+def _stack_shuffle_node(
+    self: Analyser,
+    node: StackShuffleNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    params = tuple(
+        T.V(f"_shuffle_{index}") for index, _ in enumerate(node.prestack)
+    )
+    sourced = branch.source_arguments(params)
+    if sourced is None:
+        self._diagnose(
+            f"stack underflow for {node.mode}; expected "
+            f"{len(node.prestack)} value(s)",
+            node,
+        )
+        return BranchSet()
+
+    args, popped = sourced
+    labelled = {
+        label: typ
+        for label, typ in zip(node.prestack, args, strict=True)
+        if label is not None
+    }
+    stack_arg_start = len(node.prestack) - min(
+        len(branch.stack),
+        len(node.prestack),
+    )
+    copy_errors = tuple(
+        _copy_diagnostic(typ, self.env)
+        for typ in _copied_stack_shuffle_types(
+            node,
+            args,
+            labelled,
+            stack_arg_start,
+        )
+    )
+    for error in copy_errors:
+        if error is not None:
+            self._diagnose(error, node)
+            return BranchSet()
+
+    post_types = tuple(labelled[label] for label in node.poststack)
+    if node.mode == Symbol("copy"):
+        stack = branch.stack.push(*post_types)
+    else:
+        kept = tuple(
+            typ
+            for label, typ in zip(node.prestack, args, strict=True)
+            if label is None
+        )
+        stack = popped.stack.push(*kept, *post_types)
+
+    return BranchSet(
+        (
+            popped.with_stack(stack).emit(
+                TypedNode(node, _returns_result_type(post_types))
+            ),
+        )
+    )
+
+
+@register(FieldAccessNode)
+def _field_access_node(
+    self: Analyser,
+    node: FieldAccessNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    sourced = self._source_field_receiver(branch, node.name)
+    if sourced is None:
+        self._diagnose(
+            f"empty stack when trying to access field '{node.name}'",
+            node,
+        )
+        return BranchSet()
+
+    receiver_type, field_type, branch = sourced
+    if field_type is None:
+        self._diagnose(
+            f"type {T.show(receiver_type)} has no known field '{node.name}'",
+            node,
+        )
+        return BranchSet()
+
+    return BranchSet((branch.push(field_type).emit(TypedNode(node, field_type)),))
+
+
+@register(FieldSetNode)
+def _field_set_node(
+    self: Analyser,
+    node: FieldSetNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    if len(branch.stack) < 2:
+        self._diagnose(
+            f"field assignment to '{node.name}' requires receiver and value",
+            node,
+        )
+        return BranchSet()
+
+    receiver_type = branch.stack[-2]
+    value_type = branch.stack[-1]
+    field_type, refined_receiver = self._field_type(
+        receiver_type,
+        node.name,
+        branch,
+        write=True,
+    )
+    if field_type is None:
+        self._diagnose(
+            f"type {T.show(receiver_type)} has no writable field '{node.name}'",
+            node,
+        )
+        return BranchSet()
+
+    if not T.assignable(value_type, field_type, self.env.context):
+        self._diagnose(
+            f"cannot assign {T.show(value_type)} to field '{node.name}' "
+            f"of type {T.show(field_type)}",
+            node,
+        )
+        return BranchSet()
+
+    result_type = receiver_type if refined_receiver is None else refined_receiver
+    stack = T.TypeStack(branch.stack.items[:-2]).push(result_type)
+    return BranchSet((branch.with_stack(stack).emit(TypedNode(node, result_type)),))
+
+
+@register(IndexAccessNode)
+def _index_access_node(
+    self: Analyser,
+    node: IndexAccessNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    selector_values = _selector_value_count(node.selectors)
+    required = selector_values + 1
+    if len(branch.stack) >= required:
+        receiver_type = branch.stack[-required]
+        base_branch = branch.with_stack(T.TypeStack(branch.stack.items[:-required]))
+    elif len(branch.stack) == selector_values:
+        source_branch = branch.with_stack(
+            T.TypeStack(branch.stack.items[: len(branch.stack) - selector_values])
+        )
+        sourced = source_branch.source_arguments((T.V("IndexReceiver"),))
+        if sourced is None:
+            self._diagnose("indexing requires receiver and index value(s)", node)
+            return BranchSet()
+        (receiver_type,), base_branch = sourced
+    else:
+        self._diagnose("indexing requires receiver and index value(s)", node)
+        return BranchSet()
+
+    index_types = branch.stack.items[-selector_values:] if selector_values else ()
+    if not _selectors_assignable(
+        receiver_type,
+        node.selectors,
+        index_types,
+        self.env.context,
+    ):
+        self._diagnose("list indexing requires Integer index value(s)", node)
+        return BranchSet()
+
+    result_type = _indexed_type(receiver_type, node.selectors, node.spread)
+    return BranchSet(
+        (base_branch.push(result_type).emit(TypedNode(node, result_type)),)
+    )
+
+
+@register(IndexSetNode)
+def _index_set_node(
+    self: Analyser,
+    node: IndexSetNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    selector_values = _selector_value_count(node.selectors)
+    required = selector_values + 2
+    if len(branch.stack) < required:
+        self._diagnose(
+            "indexed assignment requires value, receiver, and index",
+            node,
+        )
+        return BranchSet()
+
+    value_type = branch.stack[-required]
+    receiver_type = branch.stack[-selector_values - 1]
+    index_types = branch.stack.items[-selector_values:] if selector_values else ()
+    if not _selectors_assignable(
+        receiver_type,
+        node.selectors,
+        index_types,
+        self.env.context,
+    ):
+        self._diagnose("list indexing requires Integer index value(s)", node)
+        return BranchSet()
+
+    item_type = _indexed_type(receiver_type, node.selectors, spread=False)
+    updated_receiver_type = _indexed_assignment_type(
+        receiver_type,
+        node.selectors,
+        value_type,
+        self.env.context,
+    )
+    if updated_receiver_type is None:
+        self._diagnose(
+            f"cannot assign {T.show(value_type)} to indexed item "
+            f"of type {T.show(item_type)}",
+            node,
+        )
+        return BranchSet()
+
+    stack = T.TypeStack(branch.stack.items[:-required]).push(updated_receiver_type)
+    return BranchSet(
+        (branch.with_stack(stack).emit(TypedNode(node, updated_receiver_type)),)
+    )
+
+
+@register(CallNode)
+def _call_node(
+    self: Analyser,
+    node: CallNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    if not branch.stack:
+        self._diagnose("call requires a function on the stack", node)
+        return BranchSet()
+
+    callable_type = T.normalize(branch.stack[-1])
+    overloads = _callable_overloads(callable_type)
+    if not overloads:
+        self._diagnose(
+            f"cannot call non-function value of type {T.show(callable_type)}",
+            node,
+        )
+        return BranchSet()
+
+    callable_popped = branch.pop()
+    arg_branches = self.analyse_from(callable_popped, node.args)
+
+    candidates: list[CallCandidate] = []
+    for arg_branch in arg_branches:
+        for overload in overloads:
+            sourced = arg_branch.source_arguments(overload.params)
+            if sourced is None:
+                continue
+            args, popped = sourced
+            candidate = _apply_overload_to_branch(
+                overload,
+                args,
+                popped,
+                self.env.context,
+                analyser=self,
+            )
+            if candidate is None:
+                continue
+
+            candidates.append(CallCandidate(candidate.applied, candidate.branch))
+
+    winners = _best_candidates(candidates, callable_popped)
+    if not winners:
+        self._diagnose(
+            f"no overloads for call target {T.show(callable_type)} match stack "
+            f"{_show_stack(callable_popped.stack)}; available overloads: "
+            f"{_show_overloads(overloads)}",
+            node,
+        )
+        return BranchSet()
+
+    if (
+        len(winners) > 1
+        and branch.input_mode is not InputMode.INFER_INPUTS
+        and not _winners_specialize_inputs(winners, callable_popped)
+    ):
+        self._diagnose(
+            f"ambiguous call target {T.show(callable_type)} with stack "
+            f"{_show_stack(callable_popped.stack)}; candidates: "
+            f"{_show_applied_overloads(winners)}",
+            node,
+        )
+        return BranchSet()
+
+    return BranchSet.collect(
+        candidate.branch.push(*candidate.applied.actual_returns).emit(
+            TypedCallNode(
+                node,
+                _returns_result_type(candidate.applied.actual_returns),
+                candidate.applied,
+            )
+        )
+        for candidate in winners
+    )
+
+
+@register(StringInterpolationNode)
+def _string_interpolation_node(
+    self: Analyser,
+    node: StringInterpolationNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    current = BranchSet((branch,))
+    expression_count = 0
+    for part in node.parts:
+        if isinstance(part, str):
+            continue
+
+        expression_count += 1
+        current = self.analyse_block(current, part)
+        if not current:
+            return BranchSet()
+        if any(not output.stack for output in current):
+            self._diagnose(
+                "string interpolation expression must leave a value",
+                node,
+            )
+            return BranchSet()
+
+    return BranchSet.collect(
+        replace(
+            output,
+            stack=_pop_stack(output.stack, expression_count).push(T.String),
+            typed_body=branch.typed_body,
+        ).emit(TypedNode(node, T.String))
+        for output in current
+        if len(output.stack) >= expression_count
+    )
+
+
+@register(ListLiteralNode)
+def _list_literal_node(
+    self: Analyser,
+    node: ListLiteralNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    if not node.items:
+        if node.typ is not None:
+            typ = T.normalize(node.typ)
+            if not isinstance(typ, T.CollectionType):
+                self._diagnose(
+                    f"empty list cast needs a list type, got {T.show(typ)}",
+                    node,
+                )
+                return BranchSet()
+            return BranchSet((branch.push(typ).emit(TypedNode(node, typ)),))
+
+        self._diagnose(
+            "empty list literal requires a type annotation or cast",
+            node,
+        )
+        return BranchSet()
+
+    item_options = self._literal_item_options(
+        branch,
+        node.items,
+        node,
+        message="list item must leave a value on the stack",
+    )
+    if item_options is None:
+        return BranchSet()
+
+    return _literal_branch_results(
+        branch,
+        item_options,
+        node,
+        lambda combo: T.C(T.ListExactType, T.U(*(item.typ for item in combo))),
+    )
+
+
+@register(TupleLiteralNode)
+def _tuple_literal_node(
+    self: Analyser,
+    node: TupleLiteralNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    item_options = self._literal_item_options(branch, node.items, node)
+    if item_options is None:
+        return BranchSet()
+
+    return _literal_branch_results(
+        branch,
+        item_options,
+        node,
+        lambda combo: T.Tup(*(item.typ for item in combo)),
+    )
+
+
+@register(RecordLiteralNode)
+def _record_literal_node(
+    self: Analyser,
+    node: RecordLiteralNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    expressions = tuple(expr for _, expr in node.fields)
+    item_options = self._literal_item_options(branch, expressions, node)
+    if item_options is None:
+        return BranchSet()
+
+    return _literal_branch_results(
+        branch,
+        item_options,
+        node,
+        lambda combo: T.Row(
+            T.N(Symbol("record")),
+            *(
+                T.Field(name, item.typ)
+                for (name, _), item in zip(node.fields, combo, strict=True)
+            ),
+        ),
+    )
+
+
+@register(DictLiteralNode)
+def _dict_literal_node(
+    self: Analyser,
+    node: DictLiteralNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    expressions = tuple(expr for entry in node.entries for expr in entry)
+    item_options = self._literal_item_options(branch, expressions, node)
+    if item_options is None:
+        return BranchSet()
+
+    return _literal_branch_results(
+        branch,
+        item_options,
+        node,
+        lambda combo: T.N(
+            Symbol("Dict"),
+            T.U(*(item.typ for item in combo[::2])),
+            T.U(*(item.typ for item in combo[1::2])),
+        ),
+    )
+
+
+@register(ArrayLiteralNode)
+def _array_literal_node(
+    self: Analyser,
+    node: ArrayLiteralNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    return BranchSet((branch.emit(TypedNode(node, None)),))
+
+
+@register(ForNode)
+def _for_node(
+    self: Analyser,
+    node: ForNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    consumes_stack_iterable = bool(branch.stack)
+    if not branch.stack:
+        item = _anonymous_type_var(branch, 1)
+        sourced = branch.source_arguments((T.ExactList(item),))
+        if sourced is None:
+            self._diagnose("for loop requires iterable on the stack", node)
+            return BranchSet()
+        (iterable_type,), branch = sourced
+    else:
+        iterable_type = branch.stack[-1]
+
+    item_type = T.collection_item_type(iterable_type)
+    if not item_type:
+        self._diagnose(
+            "for loop iterable must actually be iterable. "
+            f"Got {T.show(iterable_type)}",
+            node,
+        )
+        return BranchSet()
+
+    body_stack = branch.stack.pop() if consumes_stack_iterable else branch.stack
+    body_branch = branch.with_stack(body_stack)
+    cycle_params = (item_type,)
+    if node.index_variable is not None:
+        cycle_params = (item_type, T.Integer)
+    body_branch = replace(
+        body_branch,
+        input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
+        cycle_params=cycle_params,
+    )
+    body_branch = body_branch.with_variables(
+        body_branch.variables.with_block_local(node.variable, item_type)
+    )
+    if node.index_variable is not None:
+        body_branch = body_branch.with_variables(
+            body_branch.variables.with_block_local(node.index_variable, T.Integer)
+        )
+
+    body_outputs = self.analyse_from(body_branch, node.body)
+    if not body_outputs:
+        return BranchSet()
+
+    refined_item_type = _loop_variable_output_type(node.variable, body_outputs)
+    if (
+        refined_item_type is not None
+        and _contains_type_var(item_type)
+        and not T.same(item_type, refined_item_type)
+    ):
+        body_branch = body_branch.refine_type(item_type, refined_item_type)
+        body_outputs = BranchSet.collect(
+            output.refine_type(item_type, refined_item_type)
+            for output in body_outputs
+        )
+
+    break_types = tuple(
+        output.break_type for output in body_outputs if output.break_type is not None
+    )
+    result_type = _loop_break_result_type(break_types)
+    loop_locals = (node.variable,) + (
+        (node.index_variable,) if node.index_variable is not None else ()
+    )
+    variables = _merge_loop_variables(
+        body_branch.variables,
+        body_outputs,
+        loop_locals,
+    )
+    typed_for = TypedNode(node, result_type)
+    return BranchSet(
+        (
+            _refine_branch_like(branch, body_branch)
+            .with_stack(body_branch.stack.push(result_type))
+            .with_variables(variables)
+            .emit(typed_for),
+        )
+    )
+
+
+@register(UnfoldNode)
+def _unfold_node(
+    self: Analyser,
+    node: UnfoldNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    body_function = FunctionNode(
+        params=node.params,
+        body=node.body,
+        annotations=(AnnotationNode(Symbol("returnAll")),),
+        element_tags=frozenset(),
+        location=node.location,
+    )
+    body_analysis = self._analyse_unfold_body_function(branch, body_function)
+    if body_analysis is None:
+        return BranchSet()
+
+    candidates: list[CallCandidate] = []
+    for overload in _callable_overloads(body_analysis.typ):
+        state_arity = len(overload.params)
+        if state_arity == 0:
+            self._diagnose("unfold requires at least one state value", node)
+            continue
+        if len(overload.returns) > state_arity + 1:
+            self._diagnose(
+                "unfold body may not produce more than state arity plus one value",
+                node,
+            )
+            continue
+
+        if node.condition:
+            condition_function = FunctionNode(
+                params=(
+                    tuple(
+                        FunctionParam(param.name, typ)
+                        for param, typ in zip(
+                            node.params or (),
+                            overload.params,
+                            strict=False,
+                        )
+                    )
+                    if node.params is not None
+                    else tuple(FunctionParam(None, typ) for typ in overload.params)
+                ),
+                body=node.condition,
+                returns=(Boolean,),
+                element_tags=frozenset(),
+                location=node.location,
+            )
+            if self._analyse_function_literal(branch, condition_function) is None:
+                self._diagnose("unfold condition must return a boolean value", node)
+                continue
+
+        sourced = branch.source_arguments(overload.params)
+        if sourced is None:
+            self._diagnose("unfold inputs do not match stack", node)
+            continue
+        args, popped = sourced
+        applied = T.try_apply_overload(overload, args, self.env.context).applied
+        if applied is None:
+            continue
+        candidates.append(
+            CallCandidate(
+                applied=applied,
+                branch=popped,
+                callable_overload_index=state_arity,
+            )
+        )
+
+    results: list[AnalysisBranch] = []
+    for candidate in _best_candidates(candidates, branch):
+        generated = _unfold_emitted_type(
+            candidate.applied.params,
+            candidate.applied.actual_returns,
+        )
+        list_type = T.WithTag(T.ExactList(generated), "infinite")
+        results.append(
+            candidate.branch.push(list_type).emit(
+                TypedUnfoldNode(
+                    node,
+                    list_type,
+                    state_arity=cast(int, candidate.callable_overload_index),
+                )
+            )
+        )
+    return BranchSet.collect(results)
+
+
+@register(TagDeclarationNode)
+def _tag_declaration_node(
+    self: Analyser,
+    node: TagDeclarationNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    if node.disjoint is not None:
+        self.env.add_disjoint_tags(node.tag.name, node.disjoint.name)
+    elif node.parent is not None:
+        self.env.add_variant_tag(node.tag.name, node.parent.name)
+    elif node.kind == Symbol("constructed"):
+        self.env.add_constructed_tag(node.tag.name)
+    elif node.kind == Symbol("unit"):
+        self.env.add_unit_tag(node.tag.name)
+    else:
+        self.env.add_computed_tag(node.tag.name)
+
+    return BranchSet((branch.emit(TypedNode(node, None)),))
+
+
+@register(ElementTagDeclarationNode)
+def _element_tag_declaration_node(
+    self: Analyser,
+    node: ElementTagDeclarationNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    if node.disjoint is not None:
+        self.env.add_disjoint_element_tags(node.name, node.disjoint)
+    elif node.kind == Symbol("companion"):
+        self.env.add_companion_element_tag(node.name)
+    else:
+        self.env.add_property_element_tag(node.name)
+
+    return BranchSet((branch.emit(TypedNode(node, None)),))
+
+
+@register(TagOverlayNode)
+def _tag_overlay_node(
+    self: Analyser,
+    node: TagOverlayNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    public = node.visibility == Symbol("public")
+    for element in node.elements:
+        for params, returns in node.signatures:
+            self._validate_data_tags((params, returns), node)
+            overload = T.Overload(params=params, returns=returns)
+            if node.generics:
+                overload = _genericize_overload(overload, node.generics)
+            self.env.define_tag_overlay(
+                node.tag.name,
+                element,
+                overload,
+                public=public,
+            )
+
+    return BranchSet((branch.emit(TypedNode(node, None)),))
+
+
+@register(TagApplicationNode)
+def _tag_application_node(
+    self: Analyser,
+    node: TagApplicationNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    if not branch.stack:
+        self._diagnose(
+            f"empty stack when applying tag '{_show_tag(node.tag)}'",
+            node,
+        )
+        return BranchSet((branch.emit(TypedNode(node, None)),))
+
+    value_type = branch.stack[-1]
+    validator: T.AppliedOverload | None = None
+    validator_index: int | None = None
+    if node.tag.absent:
+        tagged = _remove_data_tag(value_type, node.tag)
+        if tagged is None:
+            self._diagnose(
+                f"cannot remove absent tag '{_show_tag(node.tag)}' from "
+                f"{value_type}",
+                node,
+            )
+            return BranchSet((branch.emit(TypedNode(node, None)),))
+    else:
+        tagged = _with_data_tags(value_type, (node.tag,), self.env.context)
+        validator_name = Symbol(f"#{node.tag.name}")
+        validator_overloads = self.env.overloads_for(validator_name)
+        if validator_overloads:
+            matches: list[tuple[T.AppliedOverload, int]] = []
+            for index, overload in enumerate(validator_overloads):
+                applied = T.try_apply_overload(
+                    overload,
+                    (value_type,),
+                    self.env.context,
+                ).applied
+                if applied is None:
+                    continue
+                if not _validator_overload_ok(overload, self.env.context):
+                    self._diagnose(
+                        f"tag validator '{validator_name}' must return "
+                        "#boolean Number",
+                        node,
+                    )
+                    return BranchSet((branch.emit(TypedNode(node, None)),))
+                matches.append((applied, index))
+
+            if not matches:
+                self._diagnose(
+                    f"no validator overload for '{validator_name}' matches "
+                    f"{T.show(value_type)}",
+                    node,
+                )
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+
+            validator, validator_index = matches[0]
+            static_result = self.env.tag_validator_static_result(
+                validator_name,
+                validator_index,
+            )
+            if static_result is True:
+                validator = None
+                validator_index = None
+            elif static_result is False:
+                self._diagnose(
+                    f"tag validator '{validator_name}' is statically false",
+                    node,
+                )
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+
+    stack = T.TypeStack((*branch.stack.items[:-1], tagged))
+    typed: TypedNode
+    if node.tag.absent:
+        typed = TypedNode(node, tagged)
+    else:
+        typed = TypedTagApplicationNode(node, tagged, validator, validator_index)
+    return BranchSet((branch.with_stack(stack).emit(typed),))
+
+
+@register(ImportNode)
+def _import_node(
+    self: Analyser,
+    node: ImportNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    typed_nodes: list[TypedNode] = []
+    for spec in node.specs:
+        try:
+            exports, resolved_spec, definitions = self._load_import_definitions(spec)
+            objects = import_objects(exports, resolved_spec)
+            import_environment_facts(exports, resolved_spec, self.env)
+        except ModuleLoadError as exc:
+            self._diagnose(str(exc), node)
+            return BranchSet((branch.emit(TypedNode(node, None)),))
+
+        for obj in objects:
+            self._register_imported_object(obj)
+            typed_nodes.append(obj.typed)
+        for definition in definitions:
+            self._register_imported_definition(definition.name, definition.typed)
+            typed_nodes.append(definition.typed)
+
+    imported = branch
+    for typed_node in typed_nodes:
+        imported = imported.emit(typed_node)
+    return BranchSet((imported.emit(TypedNode(node, None)),))
+
+
+@register(ObjectNode)
+def _object_node(
+    self: Analyser,
+    node: ObjectNode,
+    branch: AnalysisBranch,
+) -> BranchSet:
+    if not self._validate_annotations(node.annotations, node.kind.text, node):
+        return BranchSet((branch.emit(TypedNode(node, None)),))
+
+    node = annotation_hooks.DEFAULT_REGISTRY.transform_object(node)
+    kind = node.kind.text
+    if kind == "object":
+        return self._object_definition(branch, node)
+    if kind == "trait":
+        return self._trait_definition(branch, node)
+    if kind == "variant":
+        return self._variant_definition(branch, node)
+    if kind == "enum":
+        return self._enum_definition(branch, node)
+
+    self._diagnose(f"unknown object-like declaration '{node.kind}'", node)
+    return BranchSet((branch.emit(TypedNode(node, None)),))
+
+
 def analyse(
     program: list[ASTNode],
     env: T.Environment | None = None,
@@ -3513,38 +3721,32 @@ def analyse_function_details(
     return Analyser(env).analyse_function_details(node)
 
 
-def _replace_branch(
-    branch: AnalysisBranch,
-    *,
-    stack: T.TypeStack | None = None,
-    inputs: tuple[T.Type, ...] | None = None,
-    variables: BranchVariables | None = None,
-    typed_body: tuple[TypedNode, ...] | None = None,
-    input_mode: InputMode | None = None,
-    cycle_params: tuple[T.Type, ...] | None = None,
-    cycle_index: int | None = None,
-    break_type: T.Type | None = None,
-    diagnostics: tuple[str, ...] | None = None,
-    origin: int | None = None,
-) -> AnalysisBranch:
-    return AnalysisBranch(
-        stack=branch.stack if stack is None else stack,
-        inputs=branch.inputs if inputs is None else inputs,
-        variables=branch.variables if variables is None else variables,
-        typed_body=branch.typed_body if typed_body is None else typed_body,
-        input_mode=branch.input_mode if input_mode is None else input_mode,
-        cycle_params=branch.cycle_params if cycle_params is None else cycle_params,
-        cycle_index=branch.cycle_index if cycle_index is None else cycle_index,
-        break_type=branch.break_type if break_type is None else break_type,
-        diagnostics=branch.diagnostics if diagnostics is None else diagnostics,
-        origin=branch.origin if origin is None else origin,
-    )
-
-
 def _declared_params(node: FunctionNode) -> tuple[T.Type, ...]:
     if node.params is None:
         return ()
     return _params_to_types(node.params)
+
+
+def _function_overload(
+    node: FunctionNode,
+    *,
+    params: tuple[T.Type, ...],
+    returns: tuple[T.Type, ...],
+    where_clause: tuple[ASTNode, ...] = (),
+    element_tags: frozenset[T.ElementTag] | None = None,
+    call_site_body: object | None = None,
+) -> T.Overload:
+    return T.Overload(
+        params=params,
+        returns=returns,
+        where_clause=where_clause,
+        param_names=_function_param_names_for_overload(node, params),
+        call_site_body=call_site_body,
+        element_tags=frozenset() if element_tags is None else element_tags,
+        annotation_error=annotation_hooks.annotation_error_message(node.annotations),
+        annotation_warning=annotation_hooks.annotation_warning_message(node.annotations),
+        param_defaults=_function_param_defaults_for_overload(node, params),
+    )
 
 
 def _fully_typed_overload(node: FunctionNode) -> T.Overload | None:
@@ -3553,17 +3755,12 @@ def _fully_typed_overload(node: FunctionNode) -> T.Overload | None:
     if any(param.typ is None for param in node.params):
         return None
     params = tuple(param.typ for param in node.params if param.typ is not None)
-    return T.Overload(
-        params,
-        node.returns,
+    return _function_overload(
+        node,
+        params=params,
+        returns=node.returns,
         where_clause=node.where_clause,
-        param_names=_function_param_names_for_overload(node, params),
         element_tags=node.element_tags,
-        annotation_error=annotation_hooks.annotation_error_message(node.annotations),
-        annotation_warning=annotation_hooks.annotation_warning_message(
-            node.annotations
-        ),
-        param_defaults=_function_param_defaults_for_overload(node, params),
     )
 
 
@@ -3597,12 +3794,6 @@ def _tuple_references_element(value: tuple[object, ...], name: Symbol) -> bool:
         if isinstance(item, tuple) and _tuple_references_element(item, name):
             return True
     return False
-
-
-def _needs_call_site_checking(node: FunctionNode) -> bool:
-    if node.params is None:
-        return False
-    return any(_is_call_site_checked_param(param.typ) for param in node.params)
 
 
 def _is_call_site_checked_param(typ: T.Type | None) -> bool:
@@ -3697,13 +3888,6 @@ def _is_bare_function_type(typ: T.Type) -> bool:
     )
 
 
-def _call_site_checked_returns(analysis: FunctionAnalysis) -> tuple[T.Type, ...] | None:
-    overloads = _callable_overloads(analysis.typ)
-    if len(overloads) != 1:
-        return None
-    return overloads[0].returns
-
-
 def _function_param_names_for_overload(
     node: FunctionNode,
     inputs: tuple[T.Type, ...],
@@ -3766,8 +3950,8 @@ def _contains_type_var(typ: T.Type) -> bool:
     if isinstance(typ, T.VariadicTupleType):
         return any(_contains_type_var(item.typ) for item in typ.items)
     if isinstance(typ, T.FunctionType):
-        return _contains_type_var_in_stack(typ.params) or _contains_type_var_in_stack(
-            typ.returns
+        return any(_contains_type_var(item) for item in typ.params or ()) or any(
+            _contains_type_var(item) for item in typ.returns or ()
         )
     if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
         return _contains_type_var(typ.inner)
@@ -3813,13 +3997,7 @@ def _element_tags_contain_named_type_var(
     tags: frozenset[T.ElementTag],
     name: str,
 ) -> bool:
-    return any(
-        _contains_named_type_var(arg, name) for tag in tags for arg in tag.args
-    )
-
-
-def _contains_type_var_in_stack(types: tuple[T.Type, ...] | None) -> bool:
-    return types is not None and any(_contains_type_var(typ) for typ in types)
+    return any(_contains_named_type_var(arg, name) for tag in tags for arg in tag.args)
 
 
 def _static_body_variable_names(node: FunctionNode) -> tuple[Symbol, ...]:
@@ -3863,14 +4041,6 @@ def _rank_var_names_in_type(typ: T.Type) -> set[str]:
 
 def _params_to_types(params: tuple[FunctionParam, ...]) -> tuple[T.Type, ...]:
     return tuple(_param_type(param, index) for index, param in enumerate(params))
-
-
-def _function_input_mode(node: FunctionNode) -> InputMode:
-    if node.params is None:
-        return InputMode.INFER_INPUTS
-    if not node.params:
-        return InputMode.NILADIC
-    return InputMode.CYCLE_EXPLICIT_PARAMS
 
 
 def _function_capture_source(outer: AnalysisBranch) -> BranchVariables | None:
@@ -3951,15 +4121,9 @@ def _top_level_assignment_capture_reads_in_value(
 
 
 def _function_bound_variable_names(node: FunctionNode) -> frozenset[Symbol]:
-    names = {
-        param.name
-        for param in node.params or ()
-        if param.name is not None
-    }
+    names = {param.name for param in node.params or () if param.name is not None}
     names.update(
-        assigned.name
-        for assigned in node.body
-        if isinstance(assigned, SetVariableNode)
+        assigned.name for assigned in node.body if isinstance(assigned, SetVariableNode)
     )
     for assigned in node.body:
         if isinstance(assigned, SetVariablesNode):
@@ -4000,7 +4164,13 @@ def _callable_overloads(typ: T.Type) -> tuple[T.Overload, ...]:
     if isinstance(typ, T.FunctionType):
         if typ.params is None or typ.returns is None:
             return ()
-        return (T.Overload(typ.params, typ.returns, element_tags=typ.element_tags),)
+        return (
+            T.Overload(
+                params=typ.params,
+                returns=typ.returns,
+                element_tags=typ.element_tags,
+            ),
+        )
     if isinstance(typ, T.OverloadSetType):
         return typ.overloads
     return ()
@@ -4019,11 +4189,11 @@ def _typed_body_element_tags(body: tuple[TypedNode, ...]) -> tuple[T.ElementTag,
 
 
 def _best_candidates(
-    candidates: Iterable[tuple[Any, ...]],
+    candidates: Iterable[CallCandidate],
     original: AnalysisBranch | None = None,
-) -> tuple[tuple[Any, ...], ...]:
+) -> tuple[CallCandidate, ...]:
     ordered = list(candidates)
-    winners: list[tuple[Any, ...]] = []
+    winners: list[CallCandidate] = []
     for candidate in ordered:
         if not any(
             other is not candidate
@@ -4040,11 +4210,11 @@ def _best_candidates(
 
 
 def _candidate_dominates(
-    left: tuple[Any, ...],
-    right: tuple[Any, ...],
+    left: CallCandidate,
+    right: CallCandidate,
 ) -> bool:
-    left_applied = left[0]
-    right_applied = right[0]
+    left_applied = left.applied
+    right_applied = right.applied
     if _dominates(left_applied.scores, right_applied.scores):
         return True
     if left_applied.scores != right_applied.scores:
@@ -4098,14 +4268,14 @@ def _type_more_specific_or_same(left: T.Type, right: T.Type) -> bool:
 
 
 def _preserve_distinct_inferred_specializations(
-    left: tuple[Any, ...],
-    right: tuple[Any, ...],
+    left: CallCandidate,
+    right: CallCandidate,
     original: AnalysisBranch | None,
 ) -> bool:
     if original is None:
         return False
-    left_key = _inferred_specialization_key(left[1], original)
-    right_key = _inferred_specialization_key(right[1], original)
+    left_key = _inferred_specialization_key(left.branch, original)
+    right_key = _inferred_specialization_key(right.branch, original)
     return left_key is not None and right_key is not None and left_key != right_key
 
 
@@ -4123,10 +4293,10 @@ def _inferred_specialization_key(
 
 
 def _winners_specialize_inputs(
-    winners: tuple[tuple[Any, ...], ...],
+    winners: tuple[CallCandidate, ...],
     original: AnalysisBranch,
 ) -> bool:
-    return all(candidate[1].inputs != original.inputs for candidate in winners)
+    return all(candidate.branch.inputs != original.inputs for candidate in winners)
 
 
 def _overload_index(
@@ -4243,21 +4413,19 @@ def _call_element_candidates(
     call_arg_order: tuple[int, ...],
     disambiguation: tuple[T.Type | None, ...],
     ctx: T.Context,
-) -> list[tuple[T.AppliedOverload, AnalysisBranch, tuple[int, ...], int]]:
-    candidates: list[tuple[T.AppliedOverload, AnalysisBranch, tuple[int, ...], int]] = (
-        []
-    )
+) -> list[CallCandidate]:
+    candidates: list[CallCandidate] = []
     if disambiguation and len(disambiguation) != len(explicit_args):
         return candidates
     for callable_index, callable_overload in enumerate(
         _callable_overloads(function_type)
     ):
-        callable_application = T.apply_overload(
+        callable_application = T.try_apply_overload(
             callable_overload,
             explicit_args,
             ctx,
             disambiguation=disambiguation,
-        )
+        ).applied
         if callable_application is None:
             continue
         concrete_function_type = T.Fn(
@@ -4267,15 +4435,15 @@ def _call_element_candidates(
         )
         concrete_args = (*explicit_args, concrete_function_type)
         concrete_overload = T.Overload(
-            concrete_args,
-            callable_application.actual_returns,
+            params=concrete_args,
+            returns=callable_application.actual_returns,
             call_site_body=len(explicit_args),
         )
-        concrete_application = T.apply_overload(
+        concrete_application = T.try_apply_overload(
             concrete_overload,
             concrete_args,
             ctx,
-        )
+        ).applied
         if concrete_application is None:
             continue
         actual_returns = _apply_data_tag_flow(
@@ -4285,8 +4453,8 @@ def _call_element_candidates(
             ctx,
         )
         candidates.append(
-            (
-                T.AppliedOverload(
+            CallCandidate(
+                applied=T.AppliedOverload(
                     call_overload,
                     concrete_application.substitution,
                     concrete_application.params,
@@ -4301,9 +4469,9 @@ def _call_element_candidates(
                         concrete_args,
                     ),
                 ),
-                branch.with_stack(T.TypeStack(base_stack)),
-                call_arg_order,
-                callable_index,
+                branch=branch.with_stack(T.TypeStack(base_stack)),
+                call_arg_order=call_arg_order,
+                callable_overload_index=callable_index,
             )
         )
     return candidates
@@ -4319,10 +4487,10 @@ def _prepare_element_call_branches(
     plan = _element_call_argument_plan(overload, call_args, has_modifier_args)
     if plan is None:
         return ()
-    current = BranchSet.one(branch)
+    current = BranchSet((branch,))
     expressions, call_arg_order = plan
     for expression in expressions:
-        current = current.extend_block(expression, analyser)
+        current = analyser.analyse_block(current, expression)
         if not current:
             return ()
     return tuple(
@@ -4611,7 +4779,7 @@ def _apply_overload_to_branch(
     env: T.Environment | None = None,
     disambiguation: tuple[T.Type | None, ...] = (),
     analyser: Analyser | None = None,
-) -> tuple[T.AppliedOverload, AnalysisBranch] | None:
+) -> OverloadApplication | None:
     if _overload_needs_call_site_checking(overload):
         return _apply_call_site_checked_overload(
             overload,
@@ -4634,12 +4802,13 @@ def _apply_overload_to_branch(
         return None
     specialized_branch = _specialize_branch_arguments(branch, substitution)
     specialized_args = tuple(_substitute_branch_type(arg, substitution) for arg in args)
-    applied = T.apply_overload(
+    attempt = T.try_apply_overload(
         overload,
         specialized_args,
         ctx,
         disambiguation=disambiguation,
     )
+    applied = attempt.applied
     if applied is None:
         return None
     actual_returns = _apply_data_tag_flow(
@@ -4660,7 +4829,7 @@ def _apply_overload_to_branch(
         tuple(sorted(rank_values.items())),
         element_tags=_propagated_element_tags(overload, specialized_args),
     )
-    return applied, specialized_branch
+    return OverloadApplication(applied, specialized_branch)
 
 
 def _apply_tag_overlay(
@@ -4672,7 +4841,7 @@ def _apply_tag_overlay(
 ) -> T.AppliedOverload:
     matches: list[T.AppliedOverload] = []
     for overlay in env.overlays_for(element):
-        candidate = T.apply_overload(overlay.overload, args, ctx)
+        candidate = T.try_apply_overload(overlay.overload, args, ctx).applied
         if candidate is None:
             continue
         actual_returns = _apply_data_tag_flow(
@@ -4713,7 +4882,7 @@ def _apply_call_site_checked_overload(
     env: T.Environment | None,
     disambiguation: tuple[T.Type | None, ...],
     analyser: Analyser | None,
-) -> tuple[T.AppliedOverload, AnalysisBranch] | None:
+) -> OverloadApplication | None:
     args = _row_views_for_arguments(args, overload.params, env)
     if len(args) != len(overload.params):
         return None
@@ -4747,7 +4916,7 @@ def _apply_call_site_checked_overload(
         if rank_values is None:
             continue
         concrete = _substitute_overload_ranks(concrete, rank_values)
-        candidate = T.apply_overload(concrete, concrete_args, ctx)
+        candidate = T.try_apply_overload(concrete, concrete_args, ctx).applied
         if candidate is None:
             continue
         actual_returns = _apply_data_tag_flow(
@@ -4769,7 +4938,10 @@ def _apply_call_site_checked_overload(
             consumed_count + len(args),
             element_tags=_propagated_element_tags(concrete, concrete_args),
         )
-        return applied, branch.with_stack(branch.stack.pop(consumed_count))
+        return OverloadApplication(
+            applied,
+            branch.with_stack(branch.stack.pop(consumed_count)),
+        )
     return None
 
 
@@ -4809,11 +4981,12 @@ def _call_site_checked_overload_signature(
     if not _call_site_explicit_args_match(overload.params, explicit, ctx):
         return None
     return T.Overload(
-        call_params,
-        overload.returns,
-        overload.generic_constraints,
-        overload.where_clause,
-        (None,) * (len(call_params) - len(overload.params)) + overload.param_names,
+        params=call_params,
+        returns=overload.returns,
+        generic_constraints=overload.generic_constraints,
+        where_clause=overload.where_clause,
+        param_names=(None,) * (len(call_params) - len(overload.params))
+        + overload.param_names,
         element_tags=overload.element_tags,
         annotation_error=overload.annotation_error,
         annotation_warning=overload.annotation_warning,
@@ -5109,19 +5282,12 @@ def _substitute_overload_ranks(
     overload: T.Overload,
     ranks: dict[str, int],
 ) -> T.Overload:
-    return T.Overload(
-        tuple(_substitute_rank_values(param, ranks) for param in overload.params),
-        tuple(_substitute_rank_values(ret, ranks) for ret in overload.returns),
-        overload.generic_constraints,
-        overload.where_clause,
-        overload.param_names,
-        overload.call_site_body,
-        frozenset(
+    return _transform_overload_types(
+        overload,
+        lambda typ: _substitute_rank_values(typ, ranks),
+        element_tags=frozenset(
             _substitute_rank_values_in_element_tags(overload.element_tags, ranks)
         ),
-        overload.annotation_error,
-        overload.annotation_warning,
-        overload.param_defaults,
     )
 
 
@@ -5911,6 +6077,93 @@ def _match_case_pattern_types(
         yield from _match_pattern_types(pattern)
 
 
+def _try_handler_output(
+    output: AnalysisBranch,
+    branch: AnalysisBranch,
+    handler: TryHandlerNode,
+) -> AnalysisBranch:
+    handler_result = _returns_result_type(output.stack.items)
+    if handler_result is None:
+        handler_result = T.NoneType()
+    return (
+        _refine_branch_like(branch, output)
+        .with_stack(branch.stack.push(T.N(Symbol("PanicError"), handler_result)))
+        .emit(TypedNode(handler, handler_result))
+    )
+
+
+def _join_try_output(
+    branch: AnalysisBranch,
+    joined: AnalysisBranch | None,
+    output: AnalysisBranch,
+) -> AnalysisBranch | None:
+    if joined is None:
+        return output
+    if joined.inputs != output.inputs:
+        return None
+    stack = merge_stacks(joined.stack, output.stack)
+    variables = joined.variables.merge_against(
+        output.variables,
+        branch.variables,
+    )
+    return (
+        _refine_branch_like(branch, joined)
+        .with_stack(stack)
+        .with_variables(variables)
+    )
+
+
+def _match_case_output(
+    output: AnalysisBranch,
+    baseline: AnalysisBranch,
+    node: MatchNode,
+) -> AnalysisBranch:
+    candidate = output
+    if candidate.break_type is not None:
+        typ = candidate.break_type
+        if typ is None:
+            typ = _returns_result_type(candidate.stack.items)
+        candidate = candidate.emit(TypedNode(node, typ))
+    return replace(
+        candidate,
+        typed_body=baseline.typed_body,
+        input_mode=baseline.input_mode,
+        cycle_params=baseline.cycle_params,
+        cycle_index=baseline.cycle_index,
+    )
+
+
+def _join_match_output(
+    *,
+    original: AnalysisBranch,
+    baseline: AnalysisBranch,
+    joined: AnalysisBranch | None,
+    candidate: AnalysisBranch,
+) -> AnalysisBranch | None:
+    if joined is None:
+        return candidate
+    if joined.inputs != candidate.inputs:
+        merged_inputs = _merge_branch_inputs(joined.inputs, candidate.inputs)
+        if merged_inputs is None:
+            return None
+    else:
+        merged_inputs = joined.inputs
+    stack = merge_stacks(joined.stack, candidate.stack)
+    variables = joined.variables.merge_against(
+        candidate.variables,
+        baseline.variables,
+    )
+    base = (
+        _refine_branch_like(original, joined)
+        if len(original.inputs) == len(joined.inputs)
+        else joined
+    )
+    return replace(
+        base.with_stack(stack).with_variables(variables),
+        inputs=merged_inputs,
+    )
+
+
 def _match_pattern_types(pattern: MatchPatternNode) -> Iterator[T.Type]:
     if isinstance(pattern, TypePatternNode) and pattern.typ is not None:
         yield pattern.typ
@@ -6185,8 +6438,8 @@ def _add_match_binding(
     name: Symbol,
     typ: T.Type,
 ) -> BranchVariables:
-    updated, _diagnostic = variables.write(name, typ, block_local=True)
-    return variables if updated is None else updated
+    write = variables.write(name, typ, block_local=True)
+    return variables if write.variables is None else write.variables
 
 
 def _pattern_binding_type(pattern: MatchPatternNode, name: Symbol) -> T.Type:
@@ -6247,10 +6500,15 @@ def _show_overloads(overloads: Iterable[T.Overload]) -> str:
 
 
 def _show_applied_overloads(
-    candidates: Iterable[tuple[Any, ...]],
+    candidates: Iterable[CallCandidate],
 ) -> str:
     rendered = tuple(
-        T.show(T.Fn(candidate[0].params, candidate[0].actual_returns))
+        T.show(
+            T.Fn(
+                candidate.applied.params,
+                candidate.applied.actual_returns,
+            )
+        )
         for candidate in candidates
     )
     if not rendered:
@@ -6283,6 +6541,31 @@ def _list_item_analysis(
         typ=output.stack[-1],
         consumed=_forked_stack_consumption(base.stack, output.stack.pop()),
     )
+
+
+def _literal_branch_results(
+    branch: AnalysisBranch,
+    item_options: tuple[tuple[ListItemAnalysis, ...], ...],
+    node: ASTNode,
+    literal_type: Callable[[tuple[ListItemAnalysis, ...]], T.Type],
+) -> BranchSet:
+    results: list[AnalysisBranch] = []
+    for combo in _cartesian_product(item_options):
+        inputs = _merge_inferred_inputs(branch.inputs, combo)
+        if inputs is None:
+            continue
+        consumed = max((item.consumed for item in combo), default=0)
+        typ = literal_type(combo)
+        variables = _merge_list_item_variables(branch.variables, combo)
+        results.append(
+            replace(
+                branch,
+                stack=_pop_stack(branch.stack, consumed).push(typ),
+                inputs=inputs,
+                variables=variables,
+            ).emit(TypedNode(node, typ))
+        )
+    return BranchSet.collect(results)
 
 
 def _forked_stack_consumption(base: T.TypeStack, item_remainder: T.TypeStack) -> int:
@@ -6421,10 +6704,18 @@ def _trait_requirement(node: TraitRequirementNode) -> T.TraitRequirement | None:
     return T.TraitRequirement(
         node.name,
         T.Overload(
-            params,
-            returns,
+            params=params,
+            returns=returns,
             param_names=tuple(param.name for param in node.params or ()),
         ),
+    )
+
+
+def _trait_requirements(node: ObjectNode) -> tuple[T.TraitRequirement, ...]:
+    return tuple(
+        _genericize_requirement(requirement, node.generics)
+        for item in node.requirements
+        if (requirement := _trait_requirement(item)) is not None
     )
 
 
@@ -6566,18 +6857,9 @@ def _with_generic_constraints(
 ) -> T.Overload:
     if not constraints:
         return overload
-    return T.Overload(
-        overload.params,
-        overload.returns,
-        overload.generic_constraints + constraints,
-        overload.where_clause,
-        overload.param_names,
-        overload.call_site_body,
-        overload.element_tags,
-        overload.annotation_error,
-        overload.annotation_warning,
-        overload.param_defaults,
-        overload.is_multi,
+    return replace(
+        overload,
+        generic_constraints=overload.generic_constraints + constraints,
     )
 
 
@@ -6649,18 +6931,9 @@ def _genericize_overload(
 ) -> T.Overload:
     if not generics:
         return overload
-    return T.Overload(
-        tuple(_genericize_type(param, generics) for param in overload.params),
-        tuple(_genericize_type(ret, generics) for ret in overload.returns),
-        overload.generic_constraints,
-        overload.where_clause,
-        overload.param_names,
-        overload.call_site_body,
-        overload.element_tags,
-        overload.annotation_error,
-        overload.annotation_warning,
-        overload.param_defaults,
-        overload.is_multi,
+    return _transform_overload_types(
+        overload,
+        lambda typ: _genericize_type(typ, generics),
     )
 
 
@@ -6673,14 +6946,7 @@ def _genericize_function_node(
     params = None
     if function.params is not None:
         params = tuple(
-            FunctionParam(
-                param.name,
-                None if param.typ is None else _genericize_type(param.typ, generics),
-                tuple(
-                    cast(ASTNode, _genericize_ast_node(node, generics))
-                    for node in param.default
-                ),
-            )
+            cast(FunctionParam, _genericize_ast_value(param, generics))
             for param in function.params
         )
     returns = None
@@ -6771,24 +7037,74 @@ def _genericize_requirement(
 ) -> T.TraitRequirement:
     return T.TraitRequirement(
         requirement.name,
-        T.Overload(
-            tuple(
-                _genericize_type(param, generics)
-                for param in requirement.overload.params
-            ),
-            tuple(
-                _genericize_type(ret, generics) for ret in requirement.overload.returns
-            ),
-            requirement.overload.generic_constraints,
-            requirement.overload.where_clause,
-            requirement.overload.param_names,
-            requirement.overload.call_site_body,
-            requirement.overload.element_tags,
-            requirement.overload.annotation_error,
-            requirement.overload.annotation_warning,
-            requirement.overload.param_defaults,
+        _transform_overload_types(
+            requirement.overload,
+            lambda typ: _genericize_type(typ, generics),
         ),
     )
+
+
+def _transform_overload_types(
+    overload: T.Overload,
+    transform: Callable[[T.Type], T.Type],
+    *,
+    element_tags: frozenset[T.ElementTag] | None = None,
+) -> T.Overload:
+    return replace(
+        overload,
+        params=tuple(transform(param) for param in overload.params),
+        returns=tuple(transform(ret) for ret in overload.returns),
+        element_tags=overload.element_tags if element_tags is None else element_tags,
+    )
+
+
+def _transform_type_children(
+    typ: T.Type,
+    transform: Callable[[T.Type], T.Type],
+    *,
+    element_tags: Callable[
+        [frozenset[T.ElementTag]],
+        frozenset[T.ElementTag],
+    ] = lambda tags: tags,
+) -> T.Type:
+    typ = T.normalize(typ)
+    if isinstance(typ, T.NominalType):
+        return T.N(typ.name, *(transform(arg) for arg in typ.args))
+    if isinstance(typ, T.UnionType):
+        return T.U(*(transform(item) for item in typ.items))
+    if isinstance(typ, T.IntersectionType):
+        return T.I(*(transform(item) for item in typ.items))
+    if isinstance(typ, T.TupleType):
+        return T.Tup(*(transform(item) for item in typ.params))
+    if isinstance(typ, T.VariadicTupleType):
+        return T.TupVariadic(
+            *(
+                T.TupleTypeItem(transform(item.typ), item.repeated)
+                for item in typ.items
+            )
+        )
+    if isinstance(typ, T.RowType):
+        return T.Row(
+            transform(typ.base),
+            *(T.Field(field.name, transform(field.typ)) for field in typ.fields),
+        )
+    if isinstance(typ, T.CollectionType):
+        return T.C(type(typ), transform(typ.base), typ.rank)
+    if isinstance(typ, T.FunctionType):
+        if typ.params is None or typ.returns is None:
+            return T.Fn(None, None, element_tags(typ.element_tags))
+        return T.Fn(
+            tuple(transform(param) for param in typ.params),
+            tuple(transform(ret) for ret in typ.returns),
+            element_tags(typ.element_tags),
+        )
+    if isinstance(typ, T.TaggedType):
+        return T.Tagged(transform(typ.inner), *typ.tags)
+    if isinstance(typ, T.ExactType):
+        return T.Exact(transform(typ.inner))
+    if isinstance(typ, T.AtomicType):
+        return T.Atomic(transform(typ.inner))
+    return typ
 
 
 def _genericize_type(typ: T.Type, generics: tuple[Symbol, ...]) -> T.Type:
@@ -6797,45 +7113,6 @@ def _genericize_type(typ: T.Type, generics: tuple[Symbol, ...]) -> T.Type:
     if isinstance(typ, T.NominalType):
         if not typ.args and typ.name.text in names:
             return T.V(typ.name.text)
-        return T.N(
-            typ.name,
-            *(_genericize_type(arg, generics) for arg in typ.args),
-        )
-    if isinstance(typ, T.UnionType):
-        return T.U(*(_genericize_type(item, generics) for item in typ.items))
-    if isinstance(typ, T.IntersectionType):
-        return T.I(*(_genericize_type(item, generics) for item in typ.items))
-    if isinstance(typ, T.TupleType):
-        return T.Tup(*(_genericize_type(item, generics) for item in typ.params))
-    if isinstance(typ, T.VariadicTupleType):
-        return T.TupVariadic(
-            *(
-                T.TupleTypeItem(_genericize_type(item.typ, generics), item.repeated)
-                for item in typ.items
-            )
-        )
-    if isinstance(typ, T.RowType):
-        return T.Row(
-            _genericize_type(typ.base, generics),
-            *(
-                T.Field(field.name, _genericize_type(field.typ, generics))
-                for field in typ.fields
-            ),
-        )
-    if isinstance(typ, T.CollectionType):
-        return T.C(type(typ), _genericize_type(typ.base, generics), typ.rank)
-    if isinstance(typ, T.FunctionType):
-        if typ.params is None or typ.returns is None:
-            return T.Fn(
-                None,
-                None,
-                _genericize_element_tags(typ.element_tags, generics),
-            )
-        return T.Fn(
-            (_genericize_type(param, generics) for param in typ.params),
-            (_genericize_type(ret, generics) for ret in typ.returns),
-            _genericize_element_tags(typ.element_tags, generics),
-        )
     if isinstance(typ, T.AnonymousTraitType):
         return T.AnonymousTrait(
             typ.generics,
@@ -6847,13 +7124,11 @@ def _genericize_type(typ: T.Type, generics: tuple[Symbol, ...]) -> T.Type:
                 for requirement in typ.requirements
             ),
         )
-    if isinstance(typ, T.TaggedType):
-        return T.Tagged(_genericize_type(typ.inner, generics), *typ.tags)
-    if isinstance(typ, T.ExactType):
-        return T.Exact(_genericize_type(typ.inner, generics))
-    if isinstance(typ, T.AtomicType):
-        return T.Atomic(_genericize_type(typ.inner, generics))
-    return typ
+    return _transform_type_children(
+        typ,
+        lambda child: _genericize_type(child, generics),
+        element_tags=lambda tags: _genericize_element_tags(tags, generics),
+    )
 
 
 def _anonymous_trait_overloads(*types: T.Type) -> tuple[tuple[Symbol, T.Overload], ...]:
@@ -6870,46 +7145,7 @@ def _anonymous_trait_subject_view(typ: T.Type) -> T.Type:
         if subject is not None:
             return T.V(subject)
         return typ
-    if isinstance(typ, T.NominalType):
-        return T.N(typ.name, *(_anonymous_trait_subject_view(arg) for arg in typ.args))
-    if isinstance(typ, T.UnionType):
-        return T.U(*(_anonymous_trait_subject_view(item) for item in typ.items))
-    if isinstance(typ, T.IntersectionType):
-        return T.I(*(_anonymous_trait_subject_view(item) for item in typ.items))
-    if isinstance(typ, T.TupleType):
-        return T.Tup(*(_anonymous_trait_subject_view(item) for item in typ.params))
-    if isinstance(typ, T.VariadicTupleType):
-        return T.TupVariadic(
-            *(
-                T.TupleTypeItem(_anonymous_trait_subject_view(item.typ), item.repeated)
-                for item in typ.items
-            )
-        )
-    if isinstance(typ, T.RowType):
-        return T.Row(
-            _anonymous_trait_subject_view(typ.base),
-            *(
-                T.Field(field.name, _anonymous_trait_subject_view(field.typ))
-                for field in typ.fields
-            ),
-        )
-    if isinstance(typ, T.CollectionType):
-        return T.C(type(typ), _anonymous_trait_subject_view(typ.base), typ.rank)
-    if isinstance(typ, T.FunctionType):
-        if typ.params is None or typ.returns is None:
-            return typ
-        return T.Fn(
-            (_anonymous_trait_subject_view(param) for param in typ.params),
-            (_anonymous_trait_subject_view(ret) for ret in typ.returns),
-            typ.element_tags,
-        )
-    if isinstance(typ, T.TaggedType):
-        return T.Tagged(_anonymous_trait_subject_view(typ.inner), *typ.tags)
-    if isinstance(typ, T.ExactType):
-        return T.Exact(_anonymous_trait_subject_view(typ.inner))
-    if isinstance(typ, T.AtomicType):
-        return T.Atomic(_anonymous_trait_subject_view(typ.inner))
-    return typ
+    return _transform_type_children(typ, _anonymous_trait_subject_view)
 
 
 def _anonymous_trait_subject_name(typ: T.AnonymousTraitType) -> str | None:
@@ -7010,8 +7246,7 @@ def _collect_anonymous_trait_overloads(
 ) -> None:
     if isinstance(typ, T.AnonymousTraitType):
         overloads.extend(
-            (requirement.name, requirement.overload)
-            for requirement in typ.requirements
+            (requirement.name, requirement.overload) for requirement in typ.requirements
         )
         for requirement in typ.requirements:
             for item in requirement.overload.params + requirement.overload.returns:
@@ -7308,77 +7543,26 @@ def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
     new = _erase_absent_tag_requirements(new)
     if T.same(typ, old):
         return new
-    if isinstance(typ, T.NominalType):
-        return T.N(typ.name, *(_refine_type(arg, old, new) for arg in typ.args))
-    if isinstance(typ, T.UnionType):
-        return T.U(*(_refine_type(item, old, new) for item in typ.items))
-    if isinstance(typ, T.IntersectionType):
-        return T.I(*(_refine_type(item, old, new) for item in typ.items))
-    if isinstance(typ, T.TupleType):
-        return T.Tup(*(_refine_type(item, old, new) for item in typ.params))
-    if isinstance(typ, T.VariadicTupleType):
-        return T.TupVariadic(
-            *(
-                T.TupleTypeItem(_refine_type(item.typ, old, new), item.repeated)
-                for item in typ.items
-            )
-        )
-    if isinstance(typ, T.RowType):
-        return T.Row(
-            _refine_type(typ.base, old, new),
-            *(
-                T.Field(row_field.name, _refine_type(row_field.typ, old, new))
-                for row_field in typ.fields
-            ),
-        )
-    if isinstance(typ, T.CollectionType):
-        return T.C(type(typ), _refine_type(typ.base, old, new), typ.rank)
-    if isinstance(typ, T.FunctionType):
-        if typ.params is None or typ.returns is None:
-            return typ
-        return T.Fn(
-            (_refine_type(item, old, new) for item in typ.params),
-            (_refine_type(item, old, new) for item in typ.returns),
-        )
     if isinstance(typ, T.AnonymousTraitType):
         return T.AnonymousTrait(
             typ.generics,
             (
                 T.AnonymousTraitRequirement(
                     requirement.name,
-                    T.Overload(
-                        tuple(
-                            _refine_type(param, old, new)
-                            for param in requirement.overload.params
-                        ),
-                        tuple(
-                            _refine_type(ret, old, new)
-                            for ret in requirement.overload.returns
-                        ),
-                        requirement.overload.generic_constraints,
-                        requirement.overload.where_clause,
-                        requirement.overload.param_names,
-                        requirement.overload.call_site_body,
-                        requirement.overload.element_tags,
-                        requirement.overload.annotation_error,
-                        requirement.overload.annotation_warning,
-                        requirement.overload.param_defaults,
-                        requirement.overload.is_multi,
+                    _transform_overload_types(
+                        requirement.overload,
+                        lambda item: _refine_type(item, old, new),
                     ),
                 )
                 for requirement in typ.requirements
             ),
         )
-    if isinstance(typ, T.TaggedType):
-        return T.Tagged(_refine_type(typ.inner, old, new), *typ.tags)
-    if isinstance(typ, T.ExactType):
-        return T.Exact(_refine_type(typ.inner, old, new))
     if isinstance(typ, T.AtomicType):
         inner = _refine_type(typ.inner, old, new)
         if not isinstance(inner, T.VarType):
             return _atomic_base_type(inner)
         return T.Atomic(inner)
-    return typ
+    return _transform_type_children(typ, lambda child: _refine_type(child, old, new))
 
 
 def _atomic_base_type(typ: T.Type) -> T.Type:
@@ -7436,8 +7620,7 @@ def _assignment_error(
     if _assignment_stored_type(target, source, ctx) is not None:
         return None
     return (
-        f"cannot assign {T.show(source)} to variable '{name}' "
-        f"of type {T.show(target)}"
+        f"cannot assign {T.show(source)} to variable '{name}' of type {T.show(target)}"
     )
 
 

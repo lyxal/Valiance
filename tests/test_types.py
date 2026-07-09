@@ -20,6 +20,7 @@ from valiance.types import (
     NoneType,
     OKType,
     Overload,
+    OverloadMismatchReason,
     Overloads,
     Row,
     Specificity,
@@ -48,6 +49,7 @@ from valiance.types import (
     merge_types,
     optional,
     resolve_overload_result,
+    try_apply_overload,
 )
 
 NUMBER = Symbol("Number")
@@ -490,6 +492,24 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(applied.params[0], C(ListExactType, Number, 2))
         self.assertEqual(applied.returns, (C(ListExactType, Number),))
         self.assertFalse(applied.vectorised)
+
+    def test_try_apply_overload_reports_structured_mismatch(self):
+        overload = Overload((Number,), (Number,))
+
+        accepted = try_apply_overload(overload, (Integer,))
+        self.assertIsNotNone(accepted.applied)
+        self.assertIsNone(accepted.mismatch)
+
+        rejected = try_apply_overload(overload, (String,))
+        self.assertIsNone(rejected.applied)
+        self.assertIsNotNone(rejected.mismatch)
+        self.assertEqual(
+            rejected.mismatch.reason,
+            OverloadMismatchReason.ARGUMENT_TYPE,
+        )
+        self.assertEqual(rejected.mismatch.argument_index, 0)
+        self.assertEqual(rejected.mismatch.expected, Number)
+        self.assertEqual(rejected.mismatch.actual, String)
 
     def test_apply_overload_to_stack_can_infer_missing_inputs(self):
         plus = Overload((Number, Number), (Number,))
