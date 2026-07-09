@@ -1433,42 +1433,7 @@ class Analyser:
             overloads,
             modifier_args,
         )
-        candidates: list[CallCandidate] = []
-        for source in sources:
-            candidate = _apply_overload_to_branch(
-                source.overload,
-                source.arguments,
-                source.branch,
-                self.env.context,
-                self.env,
-                node.disambiguation,
-                self,
-            )
-            if candidate is None:
-                continue
-
-            applied = candidate.applied
-            candidate_branch = candidate.branch
-            applied = _apply_tag_overlay(
-                node.name,
-                source.arguments,
-                applied,
-                self.env.context,
-                self.env,
-            )
-            applied = _mark_multidispatch(
-                applied,
-                overloads,
-                self.env.context,
-            )
-            candidates.append(
-                CallCandidate(
-                    applied=applied,
-                    branch=candidate_branch,
-                    modifiers=source.modifiers,
-                    call_arg_order=source.call_arg_order,
-                )
-            )
+        candidates = self.element_call_candidates(node, overloads, sources)
 
         stack_before = branch.stack
         if node.call_args:
@@ -1611,6 +1576,48 @@ class Analyser:
                     )
         return sources, []
 
+    def element_call_candidates(
+        self,
+        node: ElementNode,
+        overloads: tuple[T.Overload, ...],
+        sources: Iterable[ElementArguments],
+    ) -> list[CallCandidate]:
+        candidates: list[CallCandidate] = []
+        for source in sources:
+            candidate = _apply_overload_to_branch(
+                source.overload,
+                source.arguments,
+                source.branch,
+                self.env.context,
+                self.env,
+                node.disambiguation,
+                self,
+            )
+            if candidate is None:
+                continue
+
+            applied = _apply_tag_overlay(
+                node.name,
+                source.arguments,
+                candidate.applied,
+                self.env.context,
+                self.env,
+            )
+            applied = _mark_multidispatch(
+                applied,
+                overloads,
+                self.env.context,
+            )
+            candidates.append(
+                CallCandidate(
+                    applied=applied,
+                    branch=candidate.branch,
+                    modifiers=source.modifiers,
+                    call_arg_order=source.call_arg_order,
+                )
+            )
+        return candidates
+
     def commit_element_candidate(
         self,
         node: ElementNode,
@@ -1670,38 +1677,14 @@ class Analyser:
         call_arg_count = len(node.call_args)
         candidates: list[CallCandidate] = []
         for arg_branch in current:
-            if len(arg_branch.stack) < call_arg_count:
-                continue
-            call_values = (
-                arg_branch.stack.items[-call_arg_count:] if call_arg_count else ()
-            )
-            base_stack = arg_branch.stack.items[:-call_arg_count]
-
-            explicit_function_order = (
-                (*range(1, call_arg_count), 0) if call_arg_count > 1 else ()
-            )
-            branch_candidates = _call_element_candidates(
-                arg_branch,
-                overloads[0],
-                call_values[0],
-                call_values[1:],
-                base_stack,
-                explicit_function_order,
-                node.disambiguation,
-                self.env.context,
-            )
-            if not branch_candidates and base_stack:
-                branch_candidates = _call_element_candidates(
-                    arg_branch,
+            candidates.extend(
+                self.call_element_candidates_for_branch(
+                    node,
                     overloads[0],
-                    base_stack[-1],
-                    call_values,
-                    base_stack[:-1],
-                    (),
-                    node.disambiguation,
-                    self.env.context,
+                    arg_branch,
+                    call_arg_count,
                 )
-            candidates.extend(branch_candidates)
+            )
 
         winners = self.select_call_winners(
             candidates=candidates,
@@ -1733,6 +1716,45 @@ class Analyser:
                 )
             )
         return BranchSet.collect(results)
+
+    def call_element_candidates_for_branch(
+        self,
+        node: ElementNode,
+        call_overload: T.Overload,
+        arg_branch: AnalysisBranch,
+        call_arg_count: int,
+    ) -> list[CallCandidate]:
+        if len(arg_branch.stack) < call_arg_count:
+            return []
+
+        call_values = arg_branch.stack.items[-call_arg_count:] if call_arg_count else ()
+        base_stack = arg_branch.stack.items[:-call_arg_count]
+        explicit_function_order = (
+            (*range(1, call_arg_count), 0) if call_arg_count > 1 else ()
+        )
+        candidates = _call_element_candidates(
+            arg_branch,
+            call_overload,
+            call_values[0],
+            call_values[1:],
+            base_stack,
+            explicit_function_order,
+            node.disambiguation,
+            self.env.context,
+        )
+        if candidates or not base_stack:
+            return candidates
+
+        return _call_element_candidates(
+            arg_branch,
+            call_overload,
+            base_stack[-1],
+            call_values,
+            base_stack[:-1],
+            (),
+            node.disambiguation,
+            self.env.context,
+        )
 
     def _modifier_argument_types(
         self,
