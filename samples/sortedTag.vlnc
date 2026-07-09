@@ -1,0 +1,14 @@
+tag #sorted as computed
+#sorted: + =>
+  (#sorted Number, Number) -> #sorted Number
+end
+
+define sort(:Number+) -> #sorted Number+ => top
+define #sorted min(:#sorted Number+) => println "Cheap min"
+define min(:Number+) => println "Expensive min"
+
+$ns = [1, 2, 3, 4, 5]
+$sortedNs = sort $ns
+
+min $ns
+min $sortedNs

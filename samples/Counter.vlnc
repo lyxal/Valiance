@@ -1,0 +1,24 @@
+object Counter =>
+  $value: Integer
+  private $timesIncremented = 0
+
+  define Counter(initialValue: Integer) => $self.value = $initialValue
+
+  @self define increment =>
+    $self.value := + 1
+    $self.timesIncremented := + 1
+  end
+
+  @self define +(:Integer) =>
+    $self.value := +
+    $self.timesIncremented := + 1
+  end
+
+  define incCount => $self.timesIncremented
+end
+
+Counter(0)
+increment increment increment
++ 5
+dup | $.value | println
+incCount | println
