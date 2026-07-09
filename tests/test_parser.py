@@ -465,6 +465,48 @@ end
             (FunctionNode(body=(ElementNode(Symbol("double")),)),),
         )
 
+    def test_parses_explicit_function_modifier_after_ecs_arguments(self):
+        [node] = parse("map([1, 2, 3]): fn => * 2 end")
+
+        self.assertEqual(node.name, Symbol("map"))
+        self.assertEqual(
+            node.call_args,
+            (
+                CallArgument(
+                    value=(
+                        ListLiteralNode(
+                            (
+                                (NumberLiteralNode("1"),),
+                                (NumberLiteralNode("2"),),
+                                (NumberLiteralNode("3"),),
+                            )
+                        ),
+                    )
+                ),
+            ),
+        )
+        self.assertEqual(
+            node.modifier_args,
+            (
+                FunctionNode(
+                    body=(NumberLiteralNode("2"), ElementNode(Symbol("*"))),
+                ),
+            ),
+        )
+
+    def test_parses_qualified_ecs_call_with_explicit_function_modifier(self):
+        [node] = parse('app.get("/index"): fn => "Hello, World" end')
+
+        self.assertEqual(node.name, Symbol("get", ("app",)))
+        self.assertEqual(
+            node.call_args,
+            (CallArgument(value=(StringLiteralNode("/index"),)),),
+        )
+        self.assertEqual(
+            node.modifier_args,
+            (FunctionNode(body=(StringLiteralNode("Hello, World"),)),),
+        )
+
     def test_pipe_after_colon_modifier_returns_to_outer_chain(self):
         program = parse("[1, 2, 3, 4] map: * 2 | println")
 

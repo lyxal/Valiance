@@ -376,7 +376,11 @@ fork: (sum, length) /
 ```
 
 The parser wraps each modifier chain in a `FunctionNode` and stores those
-functions in `ElementNode.modifier_args`. Do not emit modifier functions as
+functions in `ElementNode.modifier_args`. A modifier may follow an ECS call, so
+`map([1, 2, 3]): * 2` stores both `call_args` and `modifier_args` on the same
+`ElementNode`. When the modifier expression is already exactly one explicit
+`FunctionNode`, as in `map([1, 2, 3]): fn => * 2 end`, preserve that function
+instead of wrapping it in a second function. Do not emit modifier functions as
 ordinary preceding stack values; the analyser matches bound modifier functions
 to function-typed parameters by overload.
 

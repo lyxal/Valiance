@@ -448,6 +448,12 @@ ParseError
             [Decimal("2"), Decimal("4"), Decimal("6")],
         )
 
+    def test_ecs_call_accepts_explicit_function_modifier(self):
+        ecs_stack = execute("map([1, 2, 3]): fn => * 2 end")
+        postfix_stack = execute("[1, 2, 3] map: * 2")
+
+        self.assertEqual(list(ecs_stack[0]), list(postfix_stack[0]))
+
     def test_map_dispatches_overloaded_functions_across_union_items(self):
         output = io.StringIO()
         source = """

@@ -1361,35 +1361,28 @@ class Parser:
             )
             disambiguation = self._element_disambiguation(self._previous)
             call_anchor = self._previous
-            if self._match(TokenKind.COLON):
-                return self._element_piece(
-                    ElementNode(
-                        name,
-                        self._modifier_arguments(token),
-                        disambiguation,
-                        (),
-                        location=_loc(token),
-                    ),
-                    breaks_chain=True,
-                )
+            call_args: tuple[CallArgument, ...] = ()
+            modifier_args: tuple[FunctionNode, ...] = ()
+            breaks_chain = name.text.startswith("\\")
             if self._check(TokenKind.LPAREN) and self._adjacent(
                 call_anchor,
                 self._current,
             ):
                 self._advance()
-                return self._element_piece(
-                    ElementNode(
-                        name,
-                        (),
-                        disambiguation,
-                        self._call_arguments(),
-                        location=_loc(token),
-                    ),
-                    breaks_chain=True,
-                )
+                call_args = self._call_arguments()
+                breaks_chain = True
+            if self._match(TokenKind.COLON):
+                modifier_args = self._modifier_arguments(token)
+                breaks_chain = True
             return self._element_piece(
-                ElementNode(name, (), disambiguation, (), location=_loc(token)),
-                breaks_chain=name.text.startswith("\\"),
+                ElementNode(
+                    name,
+                    modifier_args,
+                    disambiguation,
+                    call_args,
+                    location=_loc(token),
+                ),
+                breaks_chain=breaks_chain,
             )
         self._error("expected expression")
 
@@ -1961,14 +1954,23 @@ class Parser:
     def _modifier_arguments(self, start: Token) -> tuple[FunctionNode, ...]:
         if self._match(TokenKind.LPAREN):
             return tuple(
-                FunctionNode(body=body, location=_loc(start))
+                self._modifier_function(start, body)
                 for body in self._argument_expressions(TokenKind.RPAREN)
             )
 
         body = self._chain_segment_until(_LINE_TERMINATORS | {TokenKind.PIPE})
         if not body:
             self._error("expected modifier function body")
-        return (FunctionNode(body=body, location=_loc(start)),)
+        return (self._modifier_function(start, body),)
+
+    def _modifier_function(
+        self,
+        start: Token,
+        body: tuple[ASTNode, ...],
+    ) -> FunctionNode:
+        if len(body) == 1 and isinstance(body[0], FunctionNode):
+            return body[0]
+        return FunctionNode(body=body, location=_loc(start))
 
     def _record_fields(self) -> tuple[tuple[Symbol, tuple[ASTNode, ...]], ...]:
         fields: list[tuple[Symbol, tuple[ASTNode, ...]]] = []
