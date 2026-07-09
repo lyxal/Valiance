@@ -8,6 +8,7 @@ from valiance.asts.nodes import (
     ASTNode,
     CallArgument,
     CastNode,
+    ElementExtension,
     ElementNode,
     FieldAccessNode,
     FunctionNode,
@@ -25,7 +26,9 @@ from valiance.asts.nodes import (
     TryHandlerNode,
     TryNode,
     TypedCallNode,
+    TypedElementExtension,
     TypedElementNode,
+    TypedExtensionPatternRule,
     TypedFunctionNode,
     TypedNode,
 )
@@ -86,7 +89,7 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
                 "_" if hint is None else str(hint) for hint in value.disambiguation
             )
             disambiguation = f", disambiguation=[{hints}]"
-        if not value.modifier_args and not value.call_args:
+        if not value.modifier_args and not value.call_args and value.extension is None:
             return (
                 f"ElementNode(name={value.name}{disambiguation}"
                 f"{_location_arg(value)})"
@@ -105,6 +108,11 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
             for arg in value.modifier_args:
                 lines.extend(_indent(_pretty(arg, level + 1).splitlines(), 4))
             lines.append("  ]")
+        if value.extension is not None:
+            lines.append("  extension=")
+            lines.extend(
+                _indent(_element_extension(value.extension, level + 1).splitlines(), 4)
+            )
         lines.append(")")
         return "\n".join(lines)
     if isinstance(value, GetVariableNode):
@@ -171,6 +179,64 @@ def _typed_element_node(value: TypedElementNode, level: int) -> str:
         for arg in value.modifier_args:
             lines.extend(_indent(_pretty(arg, level + 1).splitlines(), 2))
         lines.append("  ]")
+    if value.extension is not None:
+        lines.append("  typed_extension=")
+        lines.extend(
+            _indent(
+                _typed_element_extension(value.extension, level + 1).splitlines(),
+                2,
+            )
+        )
+    lines.append(")")
+    return "\n".join(lines)
+
+
+def _element_extension(value: ElementExtension, level: int) -> str:
+    lines = ["ElementExtension("]
+    if value.default is not None:
+        lines.append("  default=")
+        lines.extend(_indent(_pretty(value.default, level + 1).splitlines(), 4))
+    if value.rules:
+        lines.append("  rules=[")
+        for rule in value.rules:
+            pattern = ", ".join(
+                "_" if name is None else str(name) for name in rule.pattern
+            )
+            lines.append(f"    ({pattern}) =>")
+            lines.extend(_indent(_pretty(rule.function, level + 1).splitlines(), 6))
+        lines.append("  ]")
+    if value.selector is not None:
+        lines.append("  selector=")
+        lines.extend(_indent(_pretty(value.selector, level + 1).splitlines(), 4))
+    lines.append(")")
+    return "\n".join(lines)
+
+
+def _typed_element_extension(value: TypedElementExtension, level: int) -> str:
+    lines = ["TypedElementExtension("]
+    if value.default is not None:
+        lines.append("  default=")
+        lines.extend(_indent(_pretty(value.default, level + 1).splitlines(), 4))
+    if value.rules:
+        lines.append("  rules=[")
+        for rule in value.rules:
+            lines.extend(
+                _indent(_typed_extension_rule(rule, level + 1).splitlines(), 4)
+            )
+        lines.append("  ]")
+    if value.selector is not None:
+        lines.append("  selector=")
+        lines.extend(_indent(_pretty(value.selector, level + 1).splitlines(), 4))
+    lines.append(")")
+    return "\n".join(lines)
+
+
+def _typed_extension_rule(value: TypedExtensionPatternRule, level: int) -> str:
+    pattern = ", ".join(
+        "_" if name is None else str(name) for name in value.pattern
+    )
+    lines = [f"TypedExtensionPatternRule(pattern=({pattern}), function="]
+    lines.extend(_indent(_pretty(value.function, level + 1).splitlines()))
     lines.append(")")
     return "\n".join(lines)
 

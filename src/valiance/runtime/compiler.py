@@ -58,6 +58,7 @@ from valiance.asts import (
     TryNode,
     TupleLiteralNode,
     TypedElementNode,
+    TypedElementExtension,
     TypedFunctionNode,
     TypedNode,
     TypedTagApplicationNode,
@@ -68,12 +69,14 @@ from valiance.asts import (
     WildcardPatternNode,
 )
 from valiance.runtime.bytecode import (
+    ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
     Instruction,
     OpCode,
     Program,
     ResolvedElementReference,
+    VectorExtensionReference,
 )
 from valiance.symbols import Symbol
 from valiance.types import (
@@ -1115,6 +1118,33 @@ def _resolved_element_reference(
         arity_override=arity_override,
         consumed_override=consumed_override,
         multidispatch=multidispatch,
+        extension=_compiled_element_extension(node.extension),
+    )
+
+
+def _compiled_element_extension(
+    extension: TypedElementExtension | None,
+) -> VectorExtensionReference | None:
+    if extension is None:
+        return None
+    return VectorExtensionReference(
+        default=(
+            _compile_function_value(extension.default)
+            if extension.default is not None
+            else None
+        ),
+        rules=tuple(
+            ExtensionRuleReference(
+                tuple(name is not None for name in rule.pattern),
+                _compile_function_value(rule.function),
+            )
+            for rule in extension.rules
+        ),
+        selector=(
+            _compile_function_value(extension.selector)
+            if extension.selector is not None
+            else None
+        ),
     )
 
 

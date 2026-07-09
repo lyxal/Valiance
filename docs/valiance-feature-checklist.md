@@ -338,17 +338,17 @@ Current audit total: 426 / 734 items complete (58.0%).
 
 ## 21. Vectorisation extension rules
 
-- [ ] Parse `extend(default)`.
-- [ ] Evaluate an extension default exactly once.
-- [ ] Substitute the default for missing zipped values.
-- [ ] Validate default compatibility with every affected parameter.
-- [ ] Parse pattern-based `extend => ... end`.
-- [ ] Support present-value bindings and missing-value `_` patterns.
-- [ ] Select the matching extension rule for each missing-value combination.
-- [ ] Parse selector-based `extend: selector`.
-- [ ] Require selector arity to match the target element.
-- [ ] Pass optionalised arguments to extension selectors.
-- [ ] Preserve nested optional meaning for already optional target parameters.
+- [x] Parse `extend(default)`.
+- [x] Evaluate an extension default exactly once.
+- [x] Substitute the default for missing zipped values.
+- [x] Validate default compatibility with every affected parameter.
+- [x] Parse pattern-based `extend => ... end`.
+- [x] Support present-value bindings and missing-value `_` patterns.
+- [x] Select the matching extension rule for each missing-value combination.
+- [x] Parse selector-based `extend: selector`.
+- [x] Require selector arity to match the target element.
+- [x] Pass optionalised arguments to extension selectors.
+- [x] Preserve nested optional meaning for already optional target parameters.
 
 ## 22. Function-argument modifier
 

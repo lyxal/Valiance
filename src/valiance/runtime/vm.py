@@ -17,11 +17,13 @@ from valiance.analysis.builtins import (
     runtime_elements,
 )
 from valiance.runtime.bytecode import (
+    ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
     OpCode,
     Program,
     ResolvedElementReference,
+    VectorExtensionReference,
 )
 from valiance.runtime_values import (
     DIAGNOSTIC_LIST_PREVIEW_LIMIT,
@@ -97,6 +99,29 @@ class FunctionValue:
         return f"<{_function_name(self.code)}/{len(self.code.params)}>"
 
     __str__ = __repr__
+
+
+_NO_EXTENSION_DEFAULT = object()
+_MISSING_VECTOR_ITEM = object()
+
+
+@dataclass(slots=True)
+class _RuntimeVectorExtension:
+    default: Any = _NO_EXTENSION_DEFAULT
+    rules: tuple[
+        tuple[tuple[bool, ...], FunctionValue | OverloadedFunctionValue],
+        ...,
+    ] = ()
+    selector: FunctionValue | OverloadedFunctionValue | None = None
+
+    def owned_values(self) -> tuple[Any, ...]:
+        values: list[Any] = []
+        if self.default is not _NO_EXTENSION_DEFAULT:
+            values.append(self.default)
+        values.extend(function for _, function in self.rules)
+        if self.selector is not None:
+            values.append(self.selector)
+        return tuple(values)
 
 
 @dataclass(slots=True)
@@ -709,11 +734,13 @@ class VirtualMachine:
             value,
             overload,
             frame,
+            self,
             reference.vectorised,
             reference.vectorised_depths,
             reference.arity_override,
             reference.consumed_override,
             reference.static_values,
+            reference.extension,
         )
 
     def _call_resolved_function_value(
@@ -724,7 +751,13 @@ class VirtualMachine:
     ) -> None:
         _require_single_resolved_slot(reference, "function")
         frame.stack.extend(reference.static_values)
-        self._call_function(value, frame, vectorised=reference.vectorised)
+        self._call_function(
+            value,
+            frame,
+            vectorised=reference.vectorised,
+            vectorised_depths=reference.vectorised_depths,
+            extension_reference=reference.extension,
+        )
 
     def _call_resolved_overloaded_function(
         self,
@@ -742,7 +775,13 @@ class VirtualMachine:
         if reference.multidispatch:
             overload = _select_multimethod_overload(value, overload, frame)
         frame.stack.extend(reference.static_values)
-        self._call_function(overload, frame, vectorised=reference.vectorised)
+        self._call_function(
+            overload,
+            frame,
+            vectorised=reference.vectorised,
+            vectorised_depths=reference.vectorised_depths,
+            extension_reference=reference.extension,
+        )
 
     def _validate_tag(self, frame: _Frame, spec: object) -> None:
         tag_name, overload_index = spec
@@ -842,6 +881,8 @@ class VirtualMachine:
         frame: _Frame,
         *,
         vectorised: bool = False,
+        vectorised_depths: tuple[int, ...] = (),
+        extension_reference: VectorExtensionReference | None = None,
     ) -> None:
         arity = len(callee.code.params)
         try:
@@ -858,14 +899,27 @@ class VirtualMachine:
             del frame.stack[-stack_count:]
         frame.cycle_index = next_cycle_index
         if vectorised:
+            extension = _materialize_vector_extension(
+                self,
+                extension_reference,
+                frame,
+            )
             try:
-                result = _vectorize_function(self, callee, args)
+                result = _vectorize_function(
+                    self,
+                    callee,
+                    args,
+                    vectorised_depths,
+                    extension,
+                )
             except _py_builtins.RuntimeError as exc:
                 raise _with_call_detail(
                     exc,
                     f"function '{_function_name(callee.code)}'",
                     args,
                 ) from exc
+            finally:
+                _release_runtime_vector_extension(extension, self)
             _mark_mustcall_method(args, result, callee)
             frame.stack.extend(result)
         else:
@@ -1090,6 +1144,92 @@ def _make_function_value(
                 overload.globals["this"] = value
         return value
     raise RuntimeError(f"invalid function bytecode value {code!r}")
+
+
+def _materialize_vector_extension(
+    vm: VirtualMachine,
+    reference: VectorExtensionReference | None,
+    frame: _Frame,
+) -> _RuntimeVectorExtension | None:
+    if reference is None:
+        return None
+
+    created: list[FunctionValue | OverloadedFunctionValue] = []
+    default: Any = _NO_EXTENSION_DEFAULT
+    try:
+        if reference.default is not None:
+            function = _make_function_value(
+                reference.default,
+                frame.globals,
+                frame.locals,
+            )
+            try:
+                result = _call_extension_function(vm, function, ())
+            finally:
+                _release_value(function, vm)
+            if len(result) != 1:
+                raise RuntimeError("extend default must produce exactly one value")
+            default = result[0]
+
+        rules = []
+        for rule in reference.rules:
+            function = _make_function_value(
+                rule.function,
+                frame.globals,
+                frame.locals,
+            )
+            created.append(function)
+            rules.append((rule.presence, function))
+
+        selector = None
+        if reference.selector is not None:
+            selector = _make_function_value(
+                reference.selector,
+                frame.globals,
+                frame.locals,
+            )
+            created.append(selector)
+
+        return _RuntimeVectorExtension(default, tuple(rules), selector)
+    except Exception:
+        if default is not _NO_EXTENSION_DEFAULT:
+            _release_value(default, vm)
+        for function in created:
+            _release_value(function, vm)
+        raise
+
+
+def _call_extension_function(
+    vm: VirtualMachine,
+    function: FunctionValue | OverloadedFunctionValue,
+    args: tuple[Any, ...],
+) -> list[Any]:
+    if isinstance(function, FunctionValue):
+        return vm.call(function, list(args))
+    matches = tuple(
+        overload
+        for overload in function.overloads
+        if len(overload.code.params) == len(args)
+    )
+    if len(matches) != 1:
+        raise RuntimeError(
+            "extend function does not have one unambiguous runtime overload"
+        )
+    return vm.call(matches[0], list(args))
+
+
+def _extension_owned_values(
+    extension: _RuntimeVectorExtension | None,
+) -> tuple[Any, ...]:
+    return () if extension is None else extension.owned_values()
+
+
+def _release_runtime_vector_extension(
+    extension: _RuntimeVectorExtension | None,
+    vm: VirtualMachine,
+) -> None:
+    for value in _extension_owned_values(extension):
+        _release_value(value, vm)
 
 
 def _function_call_locals(
@@ -1642,11 +1782,13 @@ def _call_resolved_builtin(
     callee: BuiltinValue,
     overload: BuiltinOverload,
     frame: _Frame,
+    vm: VirtualMachine,
     vectorised: bool,
     vectorised_depths: tuple[int, ...] = (),
     arity_override: int | None = None,
     consumed_override: int | None = None,
     static_values: tuple[Any, ...] = (),
+    extension_reference: VectorExtensionReference | None = None,
 ) -> None:
     arity = (
         arity_override
@@ -1674,29 +1816,34 @@ def _call_resolved_builtin(
         else callee.context
     )
     if vectorised:
+        extension = _materialize_vector_extension(vm, extension_reference, frame)
         try:
             vectorized = _call_vectorized_resolved_builtin(
                 overload,
                 args,
                 context,
                 vectorised_depths,
+                extension,
             )
+            if vectorized is None:
+                raise RuntimeError(
+                    _format_call_error(
+                        f"element '{callee.element.name}'",
+                        frame.stack,
+                        _show_overload_inputs((overload,)),
+                    )
+                )
+            ownership_args = (*args, *_extension_owned_values(extension))
+            vectorized = _bind_lazy_result_owners(ownership_args, vectorized)
+            _finalize_builtin_result_ownership(ownership_args, vectorized)
         except _py_builtins.RuntimeError as exc:
             raise _with_call_detail(
                 exc,
                 f"element '{callee.element.name}'",
                 args,
             ) from exc
-        if vectorized is None:
-            raise RuntimeError(
-                _format_call_error(
-                    f"element '{callee.element.name}'",
-                    frame.stack,
-                    _show_overload_inputs((overload,)),
-                )
-            )
-        vectorized = _bind_lazy_result_owners(args, vectorized)
-        _finalize_builtin_result_ownership(args, vectorized)
+        finally:
+            _release_runtime_vector_extension(extension, vm)
         if consumed_count:
             _release_stack_tail(frame.stack, consumed_count, context.call.__self__)
         frame.cycle_index = next_cycle_index
@@ -1853,6 +2000,7 @@ def _call_vectorized_resolved_builtin(
     args: tuple[Any, ...],
     context: RuntimeContext,
     vectorised_depths: tuple[int, ...] = (),
+    extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...] | None:
     implementation = overload.implementation
     assert implementation is not None
@@ -1863,8 +2011,9 @@ def _call_vectorized_resolved_builtin(
                 args,
                 context,
                 vectorised_depths,
+                extension,
             )
-        return _vectorize_resolved(implementation, args, context)
+        return _vectorize_resolved(implementation, args, context, extension)
     except _CannotVectorize:
         return None
 
@@ -1891,13 +2040,16 @@ def _vectorize_resolved(
     implementation: Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]],
     args: tuple[Any, ...],
     context: RuntimeContext,
+    extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...]:
     vector_args = tuple(arg for arg in args if is_list_like(arg))
     if not vector_args:
         return implementation(args, context)
     if all(is_eager_sequence(arg) for arg in vector_args):
-        return _vectorize_eager_resolved(implementation, args, context)
-    return (LazyList(_vectorize_lazy_resolved(implementation, args, context)),)
+        return _vectorize_eager_resolved(implementation, args, context, extension)
+    return (
+        LazyList(_vectorize_lazy_resolved(implementation, args, context, extension)),
+    )
 
 
 def _vectorize_resolved_depths(
@@ -1905,21 +2057,29 @@ def _vectorize_resolved_depths(
     args: tuple[Any, ...],
     context: RuntimeContext,
     depths: tuple[int, ...],
+    extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...]:
     if not any(depth > 0 for depth in depths):
-        return _vectorize_resolved(implementation, args, context)
+        return _vectorize_resolved(implementation, args, context, extension)
     vector_args = tuple(
         arg for arg, depth in zip(args, depths, strict=False) if depth > 0
     )
     if not vector_args or not all(is_list_like(arg) for arg in vector_args):
         raise _CannotVectorize
     if all(is_eager_sequence(arg) for arg in vector_args):
-        return _vectorize_eager_resolved_depths(implementation, args, context, depths)
+        return _vectorize_eager_resolved_depths(
+            implementation,
+            args,
+            context,
+            depths,
+            extension,
+        )
     lazy_items = _vectorize_lazy_resolved_depths(
         implementation,
         args,
         context,
         depths,
+        extension,
     )
     return (
         LazyList(lazy_items),
@@ -1930,20 +2090,31 @@ def _vectorize_function(
     vm: VirtualMachine,
     callee: FunctionValue,
     args: tuple[Any, ...],
+    depths: tuple[int, ...] = (),
+    extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...]:
     def implementation(item_args: tuple[Any, ...], _context: RuntimeContext):
         return tuple(vm.call(callee, list(item_args)))
 
-    return _vectorize_resolved(
-        implementation,
-        args,
-        RuntimeContext(
-            vm.output,
-            vm.call_value,
-            vm.format_value,
-            vm.call_value_overload,
-        ),
+    context = RuntimeContext(
+        vm.output,
+        vm.call_value,
+        vm.format_value,
+        vm.call_value_overload,
     )
+    result = (
+        _vectorize_resolved_depths(
+            implementation,
+            args,
+            context,
+            depths,
+            extension,
+        )
+        if depths
+        else _vectorize_resolved(implementation, args, context, extension)
+    )
+    ownership_args = (*args, *_extension_owned_values(extension))
+    return _bind_lazy_result_owners(ownership_args, result)
 
 
 def _vectorize_eager(
@@ -1969,17 +2140,26 @@ def _vectorize_eager_resolved(
     implementation: Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]],
     args: tuple[Any, ...],
     context: RuntimeContext,
+    extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...]:
-    vector_lengths = {len(arg) for arg in args if is_eager_sequence(arg)}
-    if len(vector_lengths) != 1:
+    vector_lengths = tuple(len(arg) for arg in args if is_eager_sequence(arg))
+    if not vector_lengths:
+        raise _CannotVectorize
+    if extension is None and len(set(vector_lengths)) != 1:
         raise RuntimeError("cannot vectorise lists with different lengths")
 
     result_items = []
-    for index in range(next(iter(vector_lengths))):
+    for index in range(max(vector_lengths)):
         item_args = tuple(
-            arg[index] if is_eager_sequence(arg) else arg for arg in args
+            arg[index]
+            if is_eager_sequence(arg) and index < len(arg)
+            else (_MISSING_VECTOR_ITEM if is_eager_sequence(arg) else arg)
+            for arg in args
         )
-        result_items.append(_vectorize_resolved(implementation, item_args, context))
+        item_args = _extend_vector_args(item_args, extension, context)
+        result_items.append(
+            _vectorize_resolved(implementation, item_args, context, extension)
+        )
 
     return _transpose_vectorized_items(result_items)
 
@@ -1989,28 +2169,39 @@ def _vectorize_eager_resolved_depths(
     args: tuple[Any, ...],
     context: RuntimeContext,
     depths: tuple[int, ...],
+    extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...]:
-    vector_lengths = {
+    vector_lengths = tuple(
         len(arg)
         for arg, depth in zip(args, depths, strict=False)
         if depth > 0 and is_eager_sequence(arg)
-    }
-    if len(vector_lengths) != 1:
+    )
+    if not vector_lengths:
+        raise _CannotVectorize
+    if extension is None and len(set(vector_lengths)) != 1:
         raise RuntimeError("cannot vectorise lists with different lengths")
 
     item_depths = tuple(max(depth - 1, 0) for depth in depths)
     result_items = []
-    for index in range(next(iter(vector_lengths))):
+    for index in range(max(vector_lengths)):
         item_args = tuple(
-            arg[index] if depth > 0 and is_eager_sequence(arg) else arg
+            (
+                arg[index]
+                if index < len(arg)
+                else _MISSING_VECTOR_ITEM
+            )
+            if depth > 0 and is_eager_sequence(arg)
+            else arg
             for arg, depth in zip(args, depths, strict=False)
         )
+        item_args = _extend_vector_args(item_args, extension, context)
         result_items.append(
             _vectorize_resolved_depths(
                 implementation,
                 item_args,
                 context,
                 item_depths,
+                extension,
             )
         )
 
@@ -2042,18 +2233,21 @@ def _vectorize_lazy_resolved(
     implementation: Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]],
     args: tuple[Any, ...],
     context: RuntimeContext,
+    extension: _RuntimeVectorExtension | None = None,
 ):
-    sentinel = object()
     iterators = tuple(iter(arg) if is_list_like(arg) else None for arg in args)
     for items in zip_longest(
         *(iterator for iterator in iterators if iterator is not None),
-        fillvalue=sentinel,
+        fillvalue=_MISSING_VECTOR_ITEM,
     ):
-        if sentinel in items:
+        if extension is None and _MISSING_VECTOR_ITEM in items:
             raise RuntimeError("cannot vectorise lists with different lengths")
         item_iter = iter(items)
-        item_args = tuple(next(item_iter) if is_list_like(arg) else arg for arg in args)
-        result = _vectorize_resolved(implementation, item_args, context)
+        item_args = tuple(
+            next(item_iter) if is_list_like(arg) else arg for arg in args
+        )
+        item_args = _extend_vector_args(item_args, extension, context)
+        result = _vectorize_resolved(implementation, item_args, context, extension)
         if len(result) != 1:
             raise RuntimeError("lazy vectorised overload must return one value")
         yield result[0]
@@ -2064,8 +2258,8 @@ def _vectorize_lazy_resolved_depths(
     args: tuple[Any, ...],
     context: RuntimeContext,
     depths: tuple[int, ...],
+    extension: _RuntimeVectorExtension | None = None,
 ):
-    sentinel = object()
     iterators = tuple(
         iter(arg) if depth > 0 and is_list_like(arg) else None
         for arg, depth in zip(args, depths, strict=False)
@@ -2073,24 +2267,96 @@ def _vectorize_lazy_resolved_depths(
     item_depths = tuple(max(depth - 1, 0) for depth in depths)
     for items in zip_longest(
         *(iterator for iterator in iterators if iterator is not None),
-        fillvalue=sentinel,
+        fillvalue=_MISSING_VECTOR_ITEM,
     ):
-        if sentinel in items:
+        if extension is None and _MISSING_VECTOR_ITEM in items:
             raise RuntimeError("cannot vectorise lists with different lengths")
         item_iter = iter(items)
         item_args = tuple(
             next(item_iter) if depth > 0 and is_list_like(arg) else arg
             for arg, depth in zip(args, depths, strict=False)
         )
+        item_args = _extend_vector_args(item_args, extension, context)
         result = _vectorize_resolved_depths(
             implementation,
             item_args,
             context,
             item_depths,
+            extension,
         )
         if len(result) != 1:
             raise RuntimeError("lazy vectorised overload must return one value")
         yield result[0]
+
+
+def _extend_vector_args(
+    args: tuple[Any, ...],
+    extension: _RuntimeVectorExtension | None,
+    context: RuntimeContext,
+) -> tuple[Any, ...]:
+    missing_positions = tuple(
+        index for index, value in enumerate(args) if value is _MISSING_VECTOR_ITEM
+    )
+    if not missing_positions:
+        return args
+    if extension is None:
+        raise RuntimeError("cannot vectorise lists with different lengths")
+
+    substitutions: tuple[Any, ...]
+    if extension.default is not _NO_EXTENSION_DEFAULT:
+        substitutions = (extension.default,) * len(missing_positions)
+    elif extension.rules:
+        presence = tuple(value is not _MISSING_VECTOR_ITEM for value in args)
+        rule = next(
+            (function for pattern, function in extension.rules if pattern == presence),
+            None,
+        )
+        if rule is None:
+            shown = ", ".join("present" if item else "missing" for item in presence)
+            raise RuntimeError(f"no extend pattern matches ({shown})")
+        present_args = tuple(
+            value for value in args if value is not _MISSING_VECTOR_ITEM
+        )
+        vm = cast(VirtualMachine, context.call.__self__)
+        substitutions = tuple(_call_extension_function(vm, rule, present_args))
+        if len(substitutions) != len(missing_positions):
+            raise RuntimeError(
+                "extend pattern rule returned the wrong number of substitutions"
+            )
+    elif extension.selector is not None:
+        selector_args = tuple(
+            ObjectValue("None", {})
+            if value is _MISSING_VECTOR_ITEM
+            else ObjectValue("Some", {"value": value})
+            for value in args
+        )
+        vm = cast(VirtualMachine, context.call.__self__)
+        selected = _call_extension_function(vm, extension.selector, selector_args)
+        if len(selected) != 1:
+            raise RuntimeError("extend selector must produce exactly one value")
+        substitution = _unwrap_extension_selector_result(selected[0])
+        substitutions = (substitution,) * len(missing_positions)
+    else:
+        raise RuntimeError("invalid vector extension")
+
+    values = list(args)
+    for index, substitution in zip(
+        missing_positions,
+        substitutions,
+        strict=True,
+    ):
+        values[index] = substitution
+    return tuple(values)
+
+
+def _unwrap_extension_selector_result(value: Any) -> Any:
+    if isinstance(value, ObjectValue):
+        short_name = value.type_name.rsplit(".", 1)[-1]
+        if short_name == "Some" and "value" in value.fields:
+            return value.fields["value"]
+        if short_name == "None":
+            raise RuntimeError("extend selector returned None for a missing value")
+    return value
 
 
 def _transpose_vectorized_items(result_items: list[tuple[Any, ...]]) -> tuple[Any, ...]:

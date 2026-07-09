@@ -3,12 +3,14 @@ from decimal import Decimal
 
 from valiance.runtime import dumps, loads
 from valiance.runtime.bytecode import (
+    ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
     Instruction,
     OpCode,
     Program,
     ResolvedElementReference,
+    VectorExtensionReference,
 )
 
 
@@ -38,7 +40,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x0c"))
+        self.assertTrue(data.startswith(b"VLNCBC\x0d"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)
@@ -86,6 +88,37 @@ class BytecodeSerializationTests(unittest.TestCase):
             FunctionCode(
                 (
                     Instruction(OpCode.MAKE_FUNCTION, overloads),
+                    Instruction(OpCode.RETURN),
+                ),
+                name="<main>",
+            )
+        )
+
+        self.assertEqual(loads(dumps(program)), program)
+
+    def test_serializes_vector_extension_references(self):
+        identity = FunctionCode(
+            (
+                Instruction(OpCode.LOAD_VAR, "value"),
+                Instruction(OpCode.RETURN),
+            ),
+            params=("value",),
+        )
+        extension = VectorExtensionReference(
+            rules=(ExtensionRuleReference((True, False), identity),),
+        )
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(
+                        OpCode.CALL_RESOLVED_ELEMENT,
+                        ResolvedElementReference(
+                            "+",
+                            0,
+                            vectorised=True,
+                            extension=extension,
+                        ),
+                    ),
                     Instruction(OpCode.RETURN),
                 ),
                 name="<main>",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from valiance.asts import (
     AnnotationNode,
@@ -18,10 +18,12 @@ from valiance.asts import (
     CastNode,
     DefineNode,
     DictLiteralNode,
+    ElementExtension,
     ElementNode,
     ElementTagDeclarationNode,
     EnumMemberNode,
     ExpressionPatternNode,
+    ExtensionPatternRule,
     FieldAccessNode,
     FieldSetNode,
     ForNode,
@@ -1281,18 +1283,15 @@ class Parser:
             )
             disambiguation = self._element_disambiguation(self._previous)
             call_anchor = self._previous
-            return _ChainPiece(
-                (
-                    ElementNode(
-                        name,
-                        (),
-                        disambiguation,
-                        (),
-                        (annotation,),
-                        location=_loc(token),
-                    ),
-                ),
-                is_element=True,
+            return self._element_piece(
+                ElementNode(
+                    name,
+                    (),
+                    disambiguation,
+                    (),
+                    (annotation,),
+                    location=_loc(token),
+                )
             )
         if self._match(TokenKind.AT):
             start = self._previous
@@ -1363,41 +1362,132 @@ class Parser:
             disambiguation = self._element_disambiguation(self._previous)
             call_anchor = self._previous
             if self._match(TokenKind.COLON):
-                return _ChainPiece(
-                    (
-                        ElementNode(
-                            name,
-                            self._modifier_arguments(token),
-                            disambiguation,
-                            (),
-                            location=_loc(token),
-                        ),
+                return self._element_piece(
+                    ElementNode(
+                        name,
+                        self._modifier_arguments(token),
+                        disambiguation,
+                        (),
+                        location=_loc(token),
                     ),
-                    True,
+                    breaks_chain=True,
                 )
             if self._check(TokenKind.LPAREN) and self._adjacent(
                 call_anchor,
                 self._current,
             ):
                 self._advance()
-                return _ChainPiece(
-                    (
-                        ElementNode(
-                            name,
-                            (),
-                            disambiguation,
-                            self._call_arguments(),
-                            location=_loc(token),
-                        ),
+                return self._element_piece(
+                    ElementNode(
+                        name,
+                        (),
+                        disambiguation,
+                        self._call_arguments(),
+                        location=_loc(token),
                     ),
-                    True,
+                    breaks_chain=True,
                 )
-            return _ChainPiece(
-                (ElementNode(name, (), disambiguation, (), location=_loc(token)),),
+            return self._element_piece(
+                ElementNode(name, (), disambiguation, (), location=_loc(token)),
                 breaks_chain=name.text.startswith("\\"),
-                is_element=True,
             )
         self._error("expected expression")
+
+    def _element_piece(
+        self,
+        node: ElementNode,
+        *,
+        breaks_chain: bool = False,
+    ) -> _ChainPiece:
+        extension = self._element_extension()
+        if extension is not None:
+            node = replace(node, extension=extension)
+        return _ChainPiece((node,), breaks_chain=breaks_chain, is_element=True)
+
+    def _element_extension(self) -> ElementExtension | None:
+        if not self._match_ident("extend"):
+            return None
+        start = self._previous
+
+        if self._match(TokenKind.LPAREN):
+            body = self._chain_until({TokenKind.RPAREN})
+            self._expect(TokenKind.RPAREN)
+            if not body:
+                self._error("extend default must produce a value")
+            return ElementExtension(
+                default=FunctionNode(params=(), body=body, location=_loc(start)),
+                location=_loc(start),
+            )
+
+        if self._match(TokenKind.FAT_ARROW):
+            rules: list[ExtensionPatternRule] = []
+            self._skip_separators()
+            while not self._check_ident("end"):
+                if self._check(TokenKind.EOF):
+                    self._error("unterminated extend pattern block")
+                rule_start = self._expect(TokenKind.LPAREN)
+                pattern = self._extension_pattern()
+                self._expect(TokenKind.RPAREN)
+                self._expect(TokenKind.FAT_ARROW)
+                body = self._body()
+                if not body:
+                    self._error("extend pattern rule must produce substitutions")
+                params = tuple(
+                    FunctionParam(name=name)
+                    for name in pattern
+                    if name is not None
+                )
+                rules.append(
+                    ExtensionPatternRule(
+                        pattern,
+                        FunctionNode(
+                            params=params,
+                            body=body,
+                            location=_loc(rule_start),
+                        ),
+                    )
+                )
+                self._skip_separators()
+            self._expect_ident("end")
+            if not rules:
+                self._error("extend pattern block requires at least one rule")
+            return ElementExtension(rules=tuple(rules), location=_loc(start))
+
+        if self._match(TokenKind.COLON):
+            selector_piece = self._term()
+            if not selector_piece.is_element:
+                self._error("extend selector must be an element")
+            selector_body = tuple(_lower_chain_segment((selector_piece,)))
+            return ElementExtension(
+                selector=FunctionNode(body=selector_body, location=_loc(start)),
+                location=_loc(start),
+            )
+
+        self._error("expected '(', '=>', or ':' after extend")
+
+    def _extension_pattern(self) -> tuple[Symbol | None, ...]:
+        pattern: list[Symbol | None] = []
+        names: set[Symbol] = set()
+        self._skip_newlines()
+        if self._check(TokenKind.RPAREN):
+            self._error("extend pattern cannot be empty")
+        while True:
+            token = self._expect(TokenKind.IDENT)
+            if token.value == "_":
+                pattern.append(None)
+            else:
+                name = Symbol(token.value)
+                if name in names:
+                    self._error(f"duplicate extend pattern name '{name}'")
+                names.add(name)
+                pattern.append(name)
+            self._skip_newlines()
+            if not self._match(TokenKind.COMMA):
+                break
+            self._skip_newlines()
+        if all(name is not None for name in pattern):
+            self._error("extend pattern must contain at least one missing '_'")
+        return tuple(pattern)
 
     def _stack_shuffle(self) -> StackShuffleNode:
         start = self._advance()

@@ -639,6 +639,11 @@ For a scalar overload with a runtime implementation:
   to produce exactly one stack value per item.
 - Lazy vectorisation detects mismatched finite/lazy input lengths only when the
   shorter iterator is exhausted.
+- A resolved vectorised call may carry an `extend` reference. Defaults are
+  evaluated once per call after argument sourcing, pattern rules receive only
+  the arguments marked present by their pattern, and selectors receive an
+  explicit `Some`/`None` wrapper for every target parameter. Extension closure
+  ownership is retained by lazy results so deferred iteration remains safe.
 
 For example:
 

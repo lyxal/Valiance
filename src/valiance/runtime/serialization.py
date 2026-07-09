@@ -8,15 +8,17 @@ from decimal import Decimal
 from typing import Any
 
 from valiance.runtime.bytecode import (
+    ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
     Instruction,
     OpCode,
     Program,
     ResolvedElementReference,
+    VectorExtensionReference,
 )
 
-MAGIC = b"VLNCBC\x0c"
+MAGIC = b"VLNCBC\x0d"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -70,6 +72,8 @@ _TUPLE = 0x04
 _FUNCTION = 0x05
 _FUNCTION_SET = 0x06
 _RESOLVED_ELEMENT_REFERENCE = 0x07
+_EXTENSION_RULE_REFERENCE = 0x08
+_VECTOR_EXTENSION_REFERENCE = 0x09
 
 
 class BytecodeFormatError(Exception):
@@ -157,6 +161,12 @@ class _Writer:
         elif isinstance(value, ResolvedElementReference):
             self.u8(_RESOLVED_ELEMENT_REFERENCE)
             self.resolved_element_reference(value)
+        elif isinstance(value, ExtensionRuleReference):
+            self.u8(_EXTENSION_RULE_REFERENCE)
+            self.extension_rule_reference(value)
+        elif isinstance(value, VectorExtensionReference):
+            self.u8(_VECTOR_EXTENSION_REFERENCE)
+            self.vector_extension_reference(value)
         else:
             raise BytecodeFormatError(f"cannot serialize bytecode value {value!r}")
 
@@ -178,6 +188,23 @@ class _Writer:
         self.optional_int(reference.arity_override)
         self.optional_int(reference.consumed_override)
         self.bool(reference.multidispatch)
+        self.value(reference.extension)
+
+    def extension_rule_reference(self, reference: ExtensionRuleReference) -> None:
+        self.u32(len(reference.presence))
+        for present in reference.presence:
+            self.bool(present)
+        self.value(reference.function)
+
+    def vector_extension_reference(
+        self,
+        reference: VectorExtensionReference,
+    ) -> None:
+        self.value(reference.default)
+        self.u32(len(reference.rules))
+        for rule in reference.rules:
+            self.extension_rule_reference(rule)
+        self.value(reference.selector)
 
     def function(self, function: FunctionCode) -> None:
         self.optional_string(function.name)
@@ -265,6 +292,10 @@ class _Reader:
             return FunctionSetCode(tuple(self.function() for _ in range(self.u32())))
         if tag == _RESOLVED_ELEMENT_REFERENCE:
             return self.resolved_element_reference()
+        if tag == _EXTENSION_RULE_REFERENCE:
+            return self.extension_rule_reference()
+        if tag == _VECTOR_EXTENSION_REFERENCE:
+            return self.vector_extension_reference()
         raise BytecodeFormatError(f"unknown bytecode value tag {tag}")
 
     def bool(self) -> bool:
@@ -291,6 +322,7 @@ class _Reader:
         arity_override = self.optional_int()
         consumed_override = self.optional_int()
         multidispatch = self.bool()
+        extension = self.value()
         if not isinstance(vectorised_depths, tuple) or not all(
             isinstance(depth, int) for depth in vectorised_depths
         ):
@@ -301,17 +333,45 @@ class _Reader:
             raise BytecodeFormatError("invalid resolved element type arguments")
         if not isinstance(static_values, tuple):
             raise BytecodeFormatError("invalid resolved element static values")
+        if extension is not None and not isinstance(
+            extension,
+            VectorExtensionReference,
+        ):
+            raise BytecodeFormatError("invalid resolved element extension")
         return ResolvedElementReference(
-            name,
-            overload_index,
-            vectorised,
-            vectorised_depths,
-            type_args,
-            static_values,
-            arity_override,
-            consumed_override,
-            multidispatch,
+            name=name,
+            overload_index=overload_index,
+            vectorised=vectorised,
+            vectorised_depths=vectorised_depths,
+            type_args=type_args,
+            static_values=static_values,
+            arity_override=arity_override,
+            consumed_override=consumed_override,
+            multidispatch=multidispatch,
+            extension=extension,
         )
+
+    def extension_rule_reference(self) -> ExtensionRuleReference:
+        presence = tuple(self.bool() for _ in range(self.u32()))
+        function = self.value()
+        if not isinstance(function, (FunctionCode, FunctionSetCode)):
+            raise BytecodeFormatError("invalid extend pattern function")
+        return ExtensionRuleReference(presence, function)
+
+    def vector_extension_reference(self) -> VectorExtensionReference:
+        default = self.value()
+        rules = tuple(self.extension_rule_reference() for _ in range(self.u32()))
+        selector = self.value()
+        for name, function in (("default", default), ("selector", selector)):
+            if function is not None and not isinstance(
+                function,
+                (FunctionCode, FunctionSetCode),
+            ):
+                raise BytecodeFormatError(f"invalid extend {name} function")
+        configured = sum((default is not None, bool(rules), selector is not None))
+        if configured != 1:
+            raise BytecodeFormatError("invalid vector extension configuration")
+        return VectorExtensionReference(default, rules, selector)
 
     def function(self) -> FunctionCode:
         name = self.optional_string()

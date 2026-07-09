@@ -41,6 +41,7 @@ class TypedElementNode(TypedNode):
     modifier_args: tuple[TypedFunctionNode, ...] = ()
     call_arg_order: tuple[int, ...] = ()
     call_overload_index: int | None = None
+    extension: TypedElementExtension | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +97,36 @@ class CallArgument:
 
 
 @dataclass(frozen=True)
+class ExtensionPatternRule:
+    """One missing/present argument pattern and its substitution function."""
+
+    pattern: tuple[Symbol | None, ...]
+    function: FunctionNode
+
+
+@dataclass(frozen=True)
+class ElementExtension(ASTNode):
+    """Vectorisation length-mismatch handling attached to an element call."""
+
+    default: FunctionNode | None = None
+    rules: tuple[ExtensionPatternRule, ...] = ()
+    selector: FunctionNode | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TypedExtensionPatternRule:
+    pattern: tuple[Symbol | None, ...]
+    function: TypedFunctionNode
+
+
+@dataclass(frozen=True, slots=True)
+class TypedElementExtension:
+    default: TypedFunctionNode | None = None
+    rules: tuple[TypedExtensionPatternRule, ...] = ()
+    selector: TypedFunctionNode | None = None
+
+
+@dataclass(frozen=True)
 class NumberLiteralNode(ASTNode):
     """A numeric literal."""
 
@@ -125,6 +156,7 @@ class ElementNode(ASTNode):
     disambiguation: tuple[Type | None, ...] = ()
     call_args: tuple[CallArgument, ...] = ()
     annotations: tuple[ASTNode, ...] = ()
+    extension: ElementExtension | None = None
 
 
 @dataclass(frozen=True)

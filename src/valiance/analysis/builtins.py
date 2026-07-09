@@ -909,6 +909,18 @@ def _or_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (args[0] or args[1],)
 
 
+@builtin(
+    "or",
+    (
+        T.optional(T.TypeVariable("T")),
+        T.optional(T.TypeVariable("T")),
+    ),
+    (T.optional(T.TypeVariable("T")),),
+)
+def _or_optional(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    return (args[1] if _is_none_value(args[0]) else args[0],)
+
+
 # --------------------------------------------------------------------------
 # Assembly
 # --------------------------------------------------------------------------

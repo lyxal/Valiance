@@ -22,6 +22,7 @@ from valiance.asts import (
     CastNode,
     DefineNode,
     DictLiteralNode,
+    ElementExtension,
     ElementNode,
     ElementTagDeclarationNode,
     EnumMemberNode,
@@ -60,7 +61,9 @@ from valiance.asts import (
     TryNode,
     TupleLiteralNode,
     TypedCallNode,
+    TypedElementExtension,
     TypedElementNode,
+    TypedExtensionPatternRule,
     TypedFunctionNode,
     TypedNode,
     TypedTagApplicationNode,
@@ -1636,6 +1639,13 @@ class Analyser:
             node,
             candidate.applied.actual_returns,
         )
+        extension = self._analyse_element_extension(
+            node.extension,
+            candidate.applied,
+            candidate.branch,
+        )
+        if node.extension is not None and extension is None:
+            return None
         return candidate.branch.push(*actual_returns).emit(
             TypedElementNode(
                 node,
@@ -1649,8 +1659,148 @@ class Analyser:
                 ),
                 candidate.call_arg_order,
                 candidate.callable_overload_index,
+                extension,
             )
         )
+
+    def _analyse_element_extension(
+        self,
+        extension: ElementExtension | None,
+        applied: T.AppliedOverload,
+        outer: AnalysisBranch,
+    ) -> TypedElementExtension | None:
+        if extension is None:
+            return None
+
+        if extension.default is not None:
+            typed = self._analyse_extension_function(outer, extension.default)
+            if typed is None:
+                return None
+            returns = _single_function_return(typed)
+            if returns is None:
+                self._diagnose(
+                    "extend default must produce exactly one value",
+                    extension,
+                )
+                return None
+            if not all(
+                T.compatible(returns, param, self.env.context)
+                for param in applied.params
+            ):
+                self._diagnose(
+                    "extend default must be compatible with every element parameter",
+                    extension,
+                )
+                return None
+            return TypedElementExtension(default=typed)
+
+        if extension.rules:
+            typed_rules: list[TypedExtensionPatternRule] = []
+            seen_patterns: set[tuple[bool, ...]] = set()
+            for rule in extension.rules:
+                if len(rule.pattern) != len(applied.params):
+                    self._diagnose(
+                        "extend pattern arity must match the target element arity",
+                        extension,
+                    )
+                    return None
+                presence = tuple(name is not None for name in rule.pattern)
+                if presence in seen_patterns:
+                    self._diagnose("duplicate extend pattern", extension)
+                    return None
+                seen_patterns.add(presence)
+
+                typed_params = tuple(
+                    FunctionParam(name=name, typ=param)
+                    for name, param in zip(
+                        rule.pattern,
+                        applied.params,
+                        strict=True,
+                    )
+                    if name is not None
+                )
+                function = replace(rule.function, params=typed_params)
+                typed = self._analyse_extension_function(outer, function)
+                if typed is None:
+                    return None
+                returns = _consistent_function_returns(typed)
+                missing = tuple(
+                    param
+                    for name, param in zip(
+                        rule.pattern,
+                        applied.params,
+                        strict=True,
+                    )
+                    if name is None
+                )
+                if returns is None or len(returns) != len(missing):
+                    self._diagnose(
+                        "extend pattern rule must produce one substitution "
+                        "for each missing argument",
+                        extension,
+                    )
+                    return None
+                if not all(
+                    T.compatible(actual, expected, self.env.context)
+                    for actual, expected in zip(returns, missing, strict=True)
+                ):
+                    self._diagnose(
+                        "extend pattern substitutions must match the missing "
+                        "parameter types",
+                        extension,
+                    )
+                    return None
+                typed_rules.append(TypedExtensionPatternRule(rule.pattern, typed))
+            return TypedElementExtension(rules=tuple(typed_rules))
+
+        if extension.selector is not None:
+            optional_params = tuple(T.optional(param) for param in applied.params)
+            selector = replace(
+                extension.selector,
+                params=tuple(FunctionParam(typ=param) for param in optional_params),
+            )
+            typed = self._analyse_extension_function(outer, selector)
+            if typed is None:
+                return None
+            selector_arity = _extension_selector_arity(typed)
+            if selector_arity != len(applied.params):
+                self._diagnose(
+                    "extend selector arity must match the target element arity",
+                    extension,
+                )
+                return None
+            returned = _single_function_return(typed)
+            if returned is None:
+                self._diagnose(
+                    "extend selector must produce exactly one value",
+                    extension,
+                )
+                return None
+            if not all(
+                T.compatible(returned, T.optional(param), self.env.context)
+                for param in applied.params
+            ):
+                self._diagnose(
+                    "extend selector result must be optional-compatible with "
+                    "every element parameter",
+                    extension,
+                )
+                return None
+            return TypedElementExtension(selector=typed)
+
+        self._diagnose("invalid extend clause", extension)
+        return None
+
+    def _analyse_extension_function(
+        self,
+        outer: AnalysisBranch,
+        function: FunctionNode,
+    ) -> TypedFunctionNode | None:
+        result = self._analyse_function_literal(outer, function)
+        if result is None:
+            return None
+        analysis, _ = result
+        return TypedFunctionNode(function, analysis.typ, analysis.overloads)
 
     def _call_element_call(
         self,
@@ -1702,6 +1852,13 @@ class Analyser:
 
         results: list[AnalysisBranch] = []
         for candidate in winners:
+            extension = self._analyse_element_extension(
+                node.extension,
+                candidate.applied,
+                candidate.branch,
+            )
+            if node.extension is not None and extension is None:
+                continue
             results.append(
                 candidate.branch.push(*candidate.applied.actual_returns).emit(
                     TypedElementNode(
@@ -1712,6 +1869,7 @@ class Analyser:
                         (),
                         candidate.call_arg_order,
                         candidate.callable_overload_index,
+                        extension,
                     )
                 )
             )
@@ -5881,6 +6039,49 @@ def _returns_result_type(returns: tuple[T.Type, ...]) -> T.Type | None:
     return None
 
 
+def _consistent_function_returns(
+    function: TypedFunctionNode,
+) -> tuple[T.Type, ...] | None:
+    returns: tuple[T.Type, ...] | None = None
+    for overload in function.overloads:
+        typ = overload.typ
+        if not isinstance(typ, T.FunctionType) or typ.returns is None:
+            return None
+        current = tuple(typ.returns)
+        if returns is None:
+            returns = current
+            continue
+        if len(returns) != len(current) or not all(
+            T.same(left, right)
+            for left, right in zip(returns, current, strict=True)
+        ):
+            return None
+    return returns
+
+
+def _single_function_return(function: TypedFunctionNode) -> T.Type | None:
+    returns = _consistent_function_returns(function)
+    if returns is None or len(returns) != 1:
+        return None
+    return returns[0]
+
+
+def _extension_selector_arity(function: TypedFunctionNode) -> int | None:
+    arity: int | None = None
+    for overload in function.overloads:
+        if len(overload.body) != 1:
+            return None
+        [body_node] = overload.body
+        if not isinstance(body_node, TypedElementNode) or body_node.overload is None:
+            return None
+        current = len(body_node.overload.params)
+        if arity is None:
+            arity = current
+        elif arity != current:
+            return None
+    return arity
+
+
 def _unfold_emitted_type(
     state_types: tuple[T.Type, ...],
     returns: tuple[T.Type, ...],
@@ -7550,6 +7751,7 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.modifier_args,
             typed_node.call_arg_order,
             typed_node.call_overload_index,
+            _refine_typed_extension(typed_node.extension, old, new),
         )
     if isinstance(typed_node, TypedCallNode):
         return TypedCallNode(
@@ -7564,6 +7766,34 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.state_arity,
         )
     return TypedNode(typed_node.node, typ)
+
+
+def _refine_typed_extension(
+    extension: TypedElementExtension | None,
+    old: T.Type,
+    new: T.Type,
+) -> TypedElementExtension | None:
+    if extension is None:
+        return None
+
+    def refine_function(function: TypedFunctionNode | None) -> TypedFunctionNode | None:
+        if function is None:
+            return None
+        refined = _refine_typed_node(function, old, new)
+        assert isinstance(refined, TypedFunctionNode)
+        return refined
+
+    return TypedElementExtension(
+        default=refine_function(extension.default),
+        rules=tuple(
+            TypedExtensionPatternRule(
+                rule.pattern,
+                cast(TypedFunctionNode, _refine_typed_node(rule.function, old, new)),
+            )
+            for rule in extension.rules
+        ),
+        selector=refine_function(extension.selector),
+    )
 
 
 def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:

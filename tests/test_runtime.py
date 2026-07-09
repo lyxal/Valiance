@@ -115,6 +115,71 @@ define pick(a: Number, b: Number = 2) -> Number => $a $b +
             [[Decimal("11"), Decimal("12"), Decimal("13")]],
         )
 
+    def test_extend_default_substitutes_missing_values_and_runs_once(self):
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            result = execute(
+                '[1, 2, 3] [4] + extend(0 | "default evaluated" println)'
+            )
+
+        self.assertEqual(
+            result,
+            [[Decimal("5"), Decimal("2"), Decimal("3")]],
+        )
+        self.assertEqual(output.getvalue(), "default evaluated\n")
+
+    def test_extend_patterns_select_by_missing_argument_positions(self):
+        self.assertEqual(
+            execute(
+                """
+[1, 2, 3] [4, 5] + extend =>
+  (lhs, _) => $lhs end
+  (_, rhs) => $rhs end
+end
+[1, 2] [4, 5, 6] + extend =>
+  (lhs, _) => $lhs end
+  (_, rhs) => $rhs end
+end
+"""
+            ),
+            [
+                [Decimal("5"), Decimal("7"), Decimal("6")],
+                [Decimal("5"), Decimal("7"), Decimal("12")],
+            ],
+        )
+
+    def test_extend_selector_receives_optionals(self):
+        self.assertEqual(
+            execute("[1, 2, 3] [4, 5] + extend: or"),
+            [[Decimal("5"), Decimal("7"), Decimal("6")]],
+        )
+
+    def test_extend_applies_to_vectorised_user_functions(self):
+        source = """
+define add(a: Integer, b: Integer) -> Integer => $a $b + end
+[1, 2, 3] [4, 5] add extend(0)
+"""
+        program = parse(source)
+        analyser = Analyser()
+        typed = analyser.analyse(program)
+        self.assertEqual(analyser.diagnostics, [])
+        bytecode = loads(dumps(compile_program(typed)))
+
+        self.assertEqual(
+            run(bytecode),
+            [[Decimal("5"), Decimal("7"), Decimal("3")]],
+        )
+
+    def test_extend_preserves_lazy_vectorisation(self):
+        [result] = execute("range(1, 3) [10, 20] + extend(0)")
+
+        self.assertIsInstance(result, LazyList)
+        self.assertEqual(
+            list(result),
+            [Decimal("11"), Decimal("22"), Decimal("3")],
+        )
+
     def test_repeats_strings_with_number_on_either_side(self):
         self.assertEqual(execute('3 "ha" *'), ["hahaha"])
         self.assertEqual(execute('"ha" 3 *'), ["hahaha"])

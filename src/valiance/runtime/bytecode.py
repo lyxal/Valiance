@@ -77,6 +77,7 @@ class ResolvedElementReference:
     arity_override: int | None = None
     consumed_override: int | None = None
     multidispatch: bool = False
+    extension: VectorExtensionReference | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +99,23 @@ class FunctionSetCode:
     """Executable bytecode for every statically analysed overload of a function."""
 
     overloads: tuple[FunctionCode, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ExtensionRuleReference:
+    """Compiled substitution rule for one present/missing argument pattern."""
+
+    presence: tuple[bool, ...]
+    function: FunctionCode | FunctionSetCode
+
+
+@dataclass(frozen=True, slots=True)
+class VectorExtensionReference:
+    """Compiled length-mismatch behavior for a vectorised element call."""
+
+    default: FunctionCode | FunctionSetCode | None = None
+    rules: tuple[ExtensionRuleReference, ...] = ()
+    selector: FunctionCode | FunctionSetCode | None = None
 
 
 @dataclass(frozen=True, slots=True)

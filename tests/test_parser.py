@@ -9,6 +9,7 @@ from valiance.asts import (
     CallArgument,
     CastNode,
     DefineNode,
+    ElementExtension,
     ElementNode,
     ElementTagDeclarationNode,
     EnumMemberNode,
@@ -108,6 +109,43 @@ class LexerTests(unittest.TestCase):
 
 
 class ParserTests(unittest.TestCase):
+    def test_parses_vectorisation_extend_forms(self):
+        default_nodes = parse("[1, 2, 3] [4, 5] + extend(0)")
+        default_extension = default_nodes[-1].extension
+
+        self.assertIsInstance(default_extension, ElementExtension)
+        self.assertEqual(default_extension.default.params, ())
+        self.assertEqual(default_extension.default.body, (NumberLiteralNode("0"),))
+
+        pattern_nodes = parse(
+            """
+[1, 2, 3] [4, 5] + extend =>
+  (lhs, _) => $lhs end
+  (_, rhs) => $rhs end
+end
+"""
+        )
+        pattern_extension = pattern_nodes[-1].extension
+
+        self.assertIsInstance(pattern_extension, ElementExtension)
+        self.assertEqual(
+            tuple(rule.pattern for rule in pattern_extension.rules),
+            ((Symbol("lhs"), None), (None, Symbol("rhs"))),
+        )
+        self.assertEqual(
+            pattern_extension.rules[0].function.body,
+            (GetVariableNode(Symbol("lhs")),),
+        )
+
+        selector_nodes = parse("[1, 2, 3] [4, 5] + extend: or")
+        selector_extension = selector_nodes[-1].extension
+
+        self.assertIsInstance(selector_extension, ElementExtension)
+        self.assertEqual(
+            selector_extension.selector.body,
+            (ElementNode(Symbol("or")),),
+        )
+
     def test_parses_stack_shuffle_copy_and_expands_skips(self):
         self.assertEqual(
             parse("copy(a, _2, b -> a, b, b)"),

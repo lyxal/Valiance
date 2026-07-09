@@ -386,6 +386,46 @@ define \\f<Read, Write> => 1
             (C(ListExactType, Integer),),
         )
 
+    def test_analyses_vectorisation_extensions(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(parse("[1, 2, 3] [4, 5] + extend: or"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertIsInstance(typed[-1], TypedElementNode)
+        self.assertIsNotNone(typed[-1].extension)
+        self.assertIsNotNone(typed[-1].extension.selector)
+
+    def test_extend_default_must_match_every_parameter(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse('["a", "b"] [2] * extend(1)'))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "1:18: extend default must be compatible with every "
+                "element parameter"
+            ],
+        )
+
+    def test_extend_selector_arity_must_match_target(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+define choose(a: Integer?) -> Integer? => $a end
+[1, 2] [3] + extend: choose
+"""
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["3:14: extend selector arity must match the target element arity"],
+        )
+
     def test_element_disambiguation_controls_vectorisation_depth(self):
         typed = analyse(parse("[[1, 2], [3, 4]] +[Number+, _] [10, 20]"))
 
