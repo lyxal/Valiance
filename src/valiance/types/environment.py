@@ -227,10 +227,29 @@ class Environment:
     tag_validator_static_results: dict[Symbol, dict[int, bool]] = field(
         default_factory=dict[Symbol, dict[int, bool]]
     )
+    runtime_names: dict[Symbol, Symbol] = field(
+        default_factory=dict[Symbol, Symbol]
+    )
 
     def child_scope(self) -> Environment:
         """Return a child frame that can read this environment."""
         return Environment(context=self.context, parent=self)
+
+    def lexical_child_scope(self) -> Environment:
+        """Return a child frame whose declarations and relation facts are local."""
+        return Environment(context=self.context.copy(), parent=self)
+
+    def bind_runtime_name(self, source_name: Symbol, runtime_name: Symbol) -> None:
+        """Bind one source-level name to its compiled runtime storage name."""
+        self.runtime_names[source_name] = runtime_name
+
+    def runtime_name_for(self, source_name: Symbol) -> Symbol:
+        """Return the runtime storage name visible for a source-level symbol."""
+        if source_name in self.runtime_names:
+            return self.runtime_names[source_name]
+        if self.parent is not None:
+            return self.parent.runtime_name_for(source_name)
+        return source_name
 
     def define_object(
         self,

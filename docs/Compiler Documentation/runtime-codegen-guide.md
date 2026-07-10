@@ -52,6 +52,11 @@ The runtime implementation is small, but several files must evolve together.
 - `compile_program(nodes: list[TypedNode]) -> Program` rejects raw AST nodes.
 - Function literals and definitions become `MAKE_FUNCTION`.
 - Definitions compile as `MAKE_FUNCTION` followed by `STORE_VAR`.
+- `ImportNode` itself emits no runtime instruction. Analysis prepends each
+  required imported runtime declaration to a deduplicated program prelude, so a
+  nested import is initialized once rather than once per call, branch, or loop
+  iteration. Typed references carry an internal runtime name when a lexical
+  import alias must remain distinct from the same alias in another block.
 - List literals and array literals currently both compile to `BUILD_LIST`.
 - Object and variant declarations compile constructor globals with
   `MAKE_OBJECT_CONSTRUCTOR`; enum members compile constants with

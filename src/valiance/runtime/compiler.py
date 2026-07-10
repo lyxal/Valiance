@@ -63,6 +63,8 @@ from valiance.asts import (
     TypedForNode,
     TypedFunctionNode,
     TypedIfNode,
+    TypedImportedFunctionNode,
+    TypedImportedObjectNode,
     TypedLiteralNode,
     TypedMatchNode,
     TypedNode,
@@ -207,6 +209,12 @@ class _Compiler:
                 for target in reversed(targets):
                     self.emit(OpCode.STORE_VAR, _symbol_runtime_name(target.name))
             case ElementNode(name, modifier_args):
+                runtime_name = (
+                    typed_node.runtime_name
+                    if isinstance(typed_node, TypedElementNode)
+                    and typed_node.runtime_name is not None
+                    else name
+                )
                 if typed_node is None and node.call_args:
                     for arg in node.call_args:
                         if arg.placeholder or arg.name is not None:
@@ -265,7 +273,10 @@ class _Compiler:
                     )
                 resolved = _resolved_element_reference(typed_node)
                 if resolved is None:
-                    self.emit(OpCode.LOAD_ELEMENT, _symbol_runtime_name(name))
+                    self.emit(
+                        OpCode.LOAD_ELEMENT,
+                        _symbol_runtime_name(runtime_name),
+                    )
                     self.emit(OpCode.CALL)
                 else:
                     self.emit(OpCode.CALL_RESOLVED_ELEMENT, resolved)
@@ -282,12 +293,15 @@ class _Compiler:
                     validator_index = typed_node.validator_index
                     added_tags = typed_node.added_tags
                     removed_tags = typed_node.removed_tags
+                    validator_runtime_name = typed_node.validator_runtime_name
                 elif node.tag.absent:
                     validator_index = None
                     added_tags = ()
                     removed_tags = (DataTag(node.tag.name, node.tag.depth),)
+                    validator_runtime_name = None
                 else:
                     validator_index = None
+                    validator_runtime_name = None
                     added = [DataTag(node.tag.name, node.tag.depth)]
                     parent = self.tag_parents.get(node.tag.name)
                     if parent is not None:
@@ -300,7 +314,11 @@ class _Compiler:
                 self.emit(
                     OpCode.VALIDATE_TAG,
                     (
-                        f"#{node.tag.name}",
+                        (
+                            f"#{node.tag.name}"
+                            if validator_runtime_name is None
+                            else _symbol_runtime_name(validator_runtime_name)
+                        ),
                         validator_index,
                         tuple((tag.name, tag.depth) for tag in added_tags),
                         tuple((tag.name, tag.depth) for tag in removed_tags),
@@ -321,14 +339,20 @@ class _Compiler:
                     _compile_function_value(typed_node or node),
                 )
             case DefineNode(name, function):
+                runtime_name = (
+                    typed_node.runtime_name
+                    if isinstance(typed_node, TypedImportedFunctionNode)
+                    and typed_node.runtime_name is not None
+                    else name
+                )
                 self.emit(
                     OpCode.MAKE_FUNCTION,
                     _compile_function_value(
                         typed_node or function,
-                        _symbol_runtime_name(name),
+                        _symbol_runtime_name(runtime_name),
                     ),
                 )
-                self.emit(OpCode.STORE_VAR, _symbol_runtime_name(name))
+                self.emit(OpCode.STORE_VAR, _symbol_runtime_name(runtime_name))
             case ImportNode():
                 pass
             case ListLiteralNode(items) | ArrayLiteralNode(items):
@@ -376,7 +400,13 @@ class _Compiler:
                     self.expression(typed_items[index] if typed_items else expr)
                 self.emit(OpCode.BUILD_DICT, len(entries))
             case ObjectNode():
-                self.object_declaration(node)
+                runtime_name = (
+                    typed_node.runtime_name
+                    if isinstance(typed_node, TypedImportedObjectNode)
+                    and typed_node.runtime_name is not None
+                    else None
+                )
+                self.object_declaration(node, runtime_name=runtime_name)
             case FieldAccessNode(name):
                 argument = (name.text, "optional") if node.optional_safe else name.text
                 self.emit(OpCode.GET_FIELD, argument)
@@ -464,33 +494,44 @@ class _Compiler:
             template.append(None)
         self.emit(OpCode.BUILD_STRING, tuple(template))
 
-    def object_declaration(self, node: ObjectNode) -> None:
+    def object_declaration(
+        self,
+        node: ObjectNode,
+        *,
+        runtime_name: Symbol | None = None,
+    ) -> None:
         """Compile an object-like declaration and publish its runtime values."""
         match node.kind.text:
             case "object":
-                runtime_name = _symbol_runtime_name(node.name)
+                type_name = _symbol_runtime_name(node.name)
+                binding_name = (
+                    type_name
+                    if runtime_name is None
+                    else _symbol_runtime_name(runtime_name)
+                )
                 constructors = constructor_definitions(node.name, node.definitions)
                 if node.target is None:
-                    self.object_runtime_metadata[runtime_name] = (
+                    self.object_runtime_metadata[type_name] = (
                         _object_runtime_metadata(
-                            runtime_name,
+                            type_name,
                             node.annotations,
                             node.definitions,
                         )
                     )
                     self.object_constructor(
-                        runtime_name,
+                        type_name,
                         node.fields,
+                        store_name=binding_name,
                         alias=(
-                            runtime_name
-                            if not node.name.namespace
+                            type_name
+                            if runtime_name is None and not node.name.namespace
                             else None
                         ),
                         initializers=constructors,
                     )
                 for definition in node.definitions:
                     if definition not in constructors:
-                        self.friendly_definition(runtime_name, definition)
+                        self.friendly_definition(type_name, definition)
             case "trait":
                 runtime_name = _symbol_runtime_name(node.name)
                 for definition in node.definitions:
@@ -545,6 +586,7 @@ class _Compiler:
         name: str,
         fields: object,
         *,
+        store_name: str | None = None,
         alias: str | None = None,
         initializers: tuple[DefineNode, ...] = (),
     ) -> None:
@@ -587,9 +629,10 @@ class _Compiler:
                 initializer=initializer_code,
             ),
         )
-        self.emit(OpCode.STORE_VAR, name)
-        if alias is not None and alias != name:
-            self.emit(OpCode.LOAD_ELEMENT, name)
+        binding_name = name if store_name is None else store_name
+        self.emit(OpCode.STORE_VAR, binding_name)
+        if alias is not None and alias != binding_name:
+            self.emit(OpCode.LOAD_ELEMENT, binding_name)
             self.emit(OpCode.STORE_VAR, alias)
 
     def friendly_definition(
@@ -1431,10 +1474,13 @@ def _resolved_element_reference(
     ast = node.node
     if not isinstance(ast, ElementNode):
         return None
-    runtime_name = _symbol_runtime_name(ast.name).removeprefix("*::")
+    source_runtime_name = _symbol_runtime_name(ast.name).removeprefix("*::")
+    runtime_name = _symbol_runtime_name(
+        node.runtime_name if node.runtime_name is not None else ast.name
+    ).removeprefix("*::")
     type_args = _resolved_constructor_type_args(ast, node)
     elements = runtime_elements()
-    element = elements.get(runtime_name)
+    element = elements.get(source_runtime_name)
     if element is not None:
         if not 0 <= node.overload_index < len(element.definitions):
             return None
@@ -1442,7 +1488,7 @@ def _resolved_element_reference(
         if definition.implementation is None:
             raise CompileError(
                 f"cannot compile static-only overload {node.overload_index} "
-                f"of built-in element '{runtime_name}'"
+                f"of built-in element '{source_runtime_name}'"
             )
         if (
             node.overload is not None
@@ -1453,7 +1499,7 @@ def _resolved_element_reference(
             return None
     if (
         element is None
-        and Symbol(runtime_name) in {item.name for item in BUILTIN_ELEMENTS}
+        and Symbol(source_runtime_name) in {item.name for item in BUILTIN_ELEMENTS}
         and not type_args
     ):
         return None

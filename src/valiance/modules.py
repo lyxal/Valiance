@@ -58,6 +58,7 @@ class ModuleExports:
     objects: tuple[ModuleObject, ...] = ()
     tags: tuple[T.DataTagDefinition, ...] = ()
     overlays: tuple[T.TagOverlayDefinition, ...] = ()
+    runtime_prelude: tuple[TypedNode, ...] = ()
 
     def public_definitions(self) -> tuple[ModuleDefinition, ...]:
         """Return the definitions exported publicly by this module."""
@@ -126,6 +127,7 @@ class ModuleLoader:
                 objects,
                 tags,
                 overlays,
+                analyser.runtime_prelude,
             )
             self._cache[source_file] = exports
             return exports

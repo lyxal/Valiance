@@ -180,7 +180,7 @@ still separate.
 
 ## Environment
 
-`Environment` stores facts that do not vary per branch:
+`Environment` stores declarations and type facts:
 
 - element overloads
 - object definitions and attributes
@@ -188,8 +188,14 @@ still separate.
 - variant membership
 - data tag declarations and disjointness
 - element tag declarations
+- analysis-only runtime-name bindings for scoped imports
 
-Do not put mutable local variables in `Environment`.
+Do not put mutable local variables in `Environment`. `child_scope()` shares the
+long-lived declaration context and is appropriate where declarations are meant
+to remain visible. `lexical_child_scope()` copies that context for a nested
+structure body. Imports and relation facts added to a lexical child are visible
+within that body and its descendants, but cannot leak to a sibling body or its
+parent.
 
 Built-ins should be added in `src/valiance/analysis/builtins.py`. Prefer readable
 type builders:
@@ -1172,8 +1178,11 @@ The normal workflow:
 A node handler should not mutate a branch. Use branch replacement helpers such
 as `with_stack`, `with_variables`, `push`, `pop`, or `emit`.
 
-If the node contains sub-blocks, call `self.analyse_block(...)` rather than
-manually iterating through AST nodes.
+If the node contains sub-blocks, use `self.analyse_scoped_block(...)` for a
+lexical structure body rather than manually iterating through AST nodes. This is
+what makes declarations such as nested imports local to that body. Use
+`self.analyse_block(...)` only when the caller intentionally wants to analyse in
+the current lexical environment.
 
 ## Diagnostics
 

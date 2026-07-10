@@ -3419,6 +3419,121 @@ end
         self.assertEqual(typed[-1].typ, Number)
         self.assertIsInstance(typed[0], TypedFunctionNode)
 
+    def test_import_inside_define_is_visible_only_in_define_body(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "helper.vlnc").write_text(
+                "public define bump(n: Number) -> Number => $n 1 +\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            valid_source = """
+define apply(n: Number) -> Number =>
+  import { helper.[bump] }
+  $n bump
+end
+41 apply
+"""
+            main.write_text(valid_source, encoding="utf-8")
+
+            analyser = Analyser(source_file=main)
+            typed = analyser.analyse(parse(valid_source))
+
+            outside = Analyser(source_file=main)
+            outside.analyse(parse(f"{valid_source}\n1 bump\n"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Number)
+        self.assertEqual(outside.diagnostics, ["8:3: unknown element 'bump'"])
+
+    def test_import_inside_if_branch_is_not_visible_in_sibling_branch(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "helper.vlnc").write_text(
+                "public define bump(n: Number) -> Number => $n 1 +\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            analyser = Analyser(source_file=main)
+            analyser.analyse(
+                parse(
+                    """
+if true =>
+  import { helper.[bump] }
+  1 bump
+else =>
+  2 bump
+end
+"""
+                )
+            )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["6:5: unknown element 'bump'"],
+        )
+
+    def test_repeated_block_imports_share_one_runtime_prelude_definition(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "helper.vlnc").write_text(
+                "public define bump(n: Number) -> Number => $n 1 +\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = """
+if true =>
+  import { helper.[bump] }
+  1 bump
+else => 0
+end
+if true =>
+  import { helper.[bump] }
+  2 bump
+else => 0
+end
+"""
+
+            analyser = Analyser(source_file=main)
+            typed = analyser.analyse(parse(source))
+
+        imported = [
+            node
+            for node in typed
+            if isinstance(node, TypedFunctionNode)
+            and isinstance(node.node, DefineNode)
+            and node.node.name == Symbol("bump")
+        ]
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(len(imported), 1)
+
+    def test_imported_tag_inside_block_does_not_escape_relation_context(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tags.vlnc").write_text(
+                "public tag #local as computed\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            analyser = Analyser(source_file=main)
+            analyser.analyse(
+                parse(
+                    """
+if true =>
+  import { tags.#local }
+  1 #local
+else => 2
+end
+"""
+                )
+            )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertIsNone(analyser.env.lookup_tag(Symbol("local")))
+        self.assertNotIn(Symbol("local"), analyser.env.context.data_tags)
+
     def test_import_namespace_uses_qualified_element_name(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

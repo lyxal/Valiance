@@ -57,6 +57,7 @@ class TypedElementNode(TypedNode):
     call_arg_order: tuple[int, ...] = ()
     call_overload_index: int | None = None
     extension: TypedElementExtension | None = None
+    runtime_name: Symbol | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +75,7 @@ class TypedTagApplicationNode(TypedNode):
     validator_index: int | None = None
     added_tags: tuple[DataTag, ...] = ()
     removed_tags: tuple[DataTag, ...] = ()
+    validator_runtime_name: Symbol | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +129,20 @@ class FunctionOverloadTyping:
 class TypedFunctionNode(TypedNode):
     overloads: tuple[FunctionOverloadTyping, ...] = ()
     dispatch_plan: UnionDispatchPlan | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TypedImportedFunctionNode(TypedFunctionNode):
+    """An imported function declaration stored under a hidden runtime name."""
+
+    runtime_name: Symbol | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TypedImportedObjectNode(TypedNode):
+    """An imported object declaration stored under a hidden runtime name."""
+
+    runtime_name: Symbol | None = None
 
 
 @dataclass(frozen=True)

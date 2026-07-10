@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, fields, replace
 from decimal import Decimal, InvalidOperation
 from enum import Enum, auto
+from hashlib import sha1
 from itertools import count, permutations
 from pathlib import Path
 from typing import cast
@@ -70,6 +71,8 @@ from valiance.asts import (
     TypedForNode,
     TypedFunctionNode,
     TypedIfNode,
+    TypedImportedFunctionNode,
+    TypedImportedObjectNode,
     TypedLiteralNode,
     TypedMatchNode,
     TypedNode,
@@ -736,6 +739,58 @@ class ElementCallPreparation:
     call_arg_order: tuple[int, ...]
 
 
+@dataclass
+class _AnalysisPrelude:
+    """Runtime declarations imported during one analysis session."""
+
+    namespace_seed: str
+    nodes: list[TypedNode] = field(default_factory=list)
+    bindings: list[tuple[TypedNode, Symbol, Symbol]] = field(default_factory=list)
+
+    def add(self, node: TypedNode) -> None:
+        """Add one imported runtime declaration exactly once."""
+        if node not in self.nodes:
+            self.nodes.append(node)
+
+    def add_declaration(self, node: TypedNode, source_name: Symbol) -> Symbol:
+        """Hoist one declaration and return its hidden runtime binding."""
+        for existing, existing_source, runtime_name in self.bindings:
+            if existing == node and existing_source == source_name:
+                return runtime_name
+        index = len(self.bindings)
+        runtime_name = Symbol(
+            source_name.text,
+            (f"__valiance_import_{self.namespace_seed}_{index}",),
+        )
+        self.nodes.append(_with_import_runtime_name(node, runtime_name))
+        self.bindings.append((node, source_name, runtime_name))
+        return runtime_name
+
+
+def _prelude_seed(source_file: Path | None) -> str:
+    """Return a stable internal namespace seed for imported declarations."""
+    identity = "<inline>" if source_file is None else str(source_file.resolve())
+    return sha1(identity.encode("utf-8")).hexdigest()[:12]
+
+
+def _with_import_runtime_name(
+    node: TypedNode,
+    runtime_name: Symbol,
+) -> TypedNode:
+    """Attach a hidden runtime binding without changing source-level names."""
+    if isinstance(node, TypedFunctionNode):
+        return TypedImportedFunctionNode(
+            node.node,
+            node.typ,
+            node.overloads,
+            node.dispatch_plan,
+            runtime_name,
+        )
+    if isinstance(node.node, ObjectNode):
+        return TypedImportedObjectNode(node.node, node.typ, runtime_name)
+    return node
+
+
 class Analyser:
     """Analysis session owning global environment, diagnostics, and dispatch."""
 
@@ -745,11 +800,14 @@ class Analyser:
         *,
         module_loader: ModuleLoader | None = None,
         source_file: Path | None = None,
+        _prelude: _AnalysisPrelude | None = None,
     ):
         """Initialize an analysis session with its environment and module context."""
         self.env = env if env is not None else default_environment().child_scope()
         self.module_loader = module_loader or ModuleLoader()
         self.source_file = source_file
+        self._prelude = _prelude or _AnalysisPrelude(_prelude_seed(source_file))
+        self._owns_prelude = _prelude is None
         self.diagnostics: list[str] = []
         self.warnings: list[str] = []
         self._friendly_owners: tuple[Symbol, ...] = ()
@@ -759,11 +817,19 @@ class Analyser:
 
     def analyse(self, program: list[ASTNode]) -> list[TypedNode]:
         """Analyse a top-level sequence into typed nodes."""
+        if self._owns_prelude:
+            self._prelude.nodes.clear()
+            self._prelude.bindings.clear()
         initial = BranchSet((AnalysisBranch(input_mode=InputMode.TOP_LEVEL),))
         final = self.analyse_block(initial, tuple(program))
         if len(final) != 1:
             return [TypedNode(node, None) for node in program]
-        return list(next(iter(final)).typed_body)
+        return [*self._prelude.nodes, *next(iter(final)).typed_body]
+
+    @property
+    def runtime_prelude(self) -> tuple[TypedNode, ...]:
+        """Return declarations hoisted from imports for one-time initialization."""
+        return tuple(self._prelude.nodes)
 
     def analyse_block(
         self,
@@ -796,8 +862,32 @@ class Analyser:
         branch: AnalysisBranch,
         body: tuple[ASTNode, ...],
     ) -> BranchSet:
-        """Analyse a block starting from one existing analysis branch."""
-        return self.analyse_block(BranchSet((branch,)), body)
+        """Analyse a nested lexical block from one existing branch."""
+        return self.analyse_scoped_block(BranchSet((branch,)), body)
+
+    def analyse_scoped_block(
+        self,
+        initial: BranchSet,
+        nodes: tuple[ASTNode, ...],
+    ) -> BranchSet:
+        """Analyse a nested block with declarations local to that block."""
+        outer = self.env
+        self.env = outer.lexical_child_scope()
+        try:
+            return self.analyse_block(initial, nodes)
+        finally:
+            self.env = outer
+
+    def _child_analyser(self, env: T.Environment) -> Analyser:
+        """Create a nested analyser sharing module resolution and import prelude."""
+        child = Analyser(
+            env,
+            module_loader=self.module_loader,
+            source_file=self.source_file,
+            _prelude=self._prelude,
+        )
+        child._friendly_owners = self._friendly_owners
+        return child
 
     def require_stack_top_assignable(
         self,
@@ -1724,7 +1814,7 @@ class Analyser:
         if field.typ is not None:
             typ = field.typ
         elif field.default:
-            outputs = self.analyse_block(
+            outputs = self.analyse_scoped_block(
                 BranchSet((AnalysisBranch(input_mode=InputMode.TOP_LEVEL),)),
                 field.default,
             )
@@ -2060,8 +2150,10 @@ class Analyser:
         self,
         name: Symbol,
         typed_node: TypedFunctionNode,
+        runtime_name: Symbol,
     ) -> None:
         """Register imported definition during static analysis."""
+        self.env.bind_runtime_name(name, runtime_name)
         declared = tuple(
             typing.overload
             for typing in typed_node.overloads
@@ -2082,8 +2174,10 @@ class Analyser:
     def _register_imported_object(
         self,
         obj,
+        runtime_name: Symbol,
     ) -> None:
         """Register imported object during static analysis."""
+        self.env.bind_runtime_name(obj.name, runtime_name)
         node = obj.typed.node
         if not isinstance(node, ObjectNode):
             return
@@ -2436,6 +2530,7 @@ class Analyser:
                 candidate.call_arg_order,
                 candidate.callable_overload_index,
                 extension,
+                self.env.runtime_name_for(node.name),
             )
         )
 
@@ -2599,7 +2694,7 @@ class Analyser:
 
         current = BranchSet((branch,))
         for arg in node.call_args:
-            current = self.analyse_block(current, arg.value)
+            current = self.analyse_scoped_block(current, arg.value)
             if not current:
                 return BranchSet()
 
@@ -2725,7 +2820,10 @@ class Analyser:
         """Compute literal item options during static analysis."""
         item_options: list[tuple[ListItemAnalysis, ...]] = []
         for expression in expressions:
-            item_outputs = self.analyse_block(BranchSet((branch,)), expression)
+            item_outputs = self.analyse_scoped_block(
+                BranchSet((branch,)),
+                expression,
+            )
             options = tuple(
                 item_result
                 for output in item_outputs
@@ -2767,8 +2865,7 @@ class Analyser:
             cycle_params=body_params,
             origin=outer.origin,
         )
-        function_analyser = Analyser(self.env)
-        function_analyser._friendly_owners = self._friendly_owners
+        function_analyser = self._child_analyser(self.env.lexical_child_scope())
         final = function_analyser.analyse_block(BranchSet((initial,)), node.body)
         signatures = self._function_signatures(node, final)
         analysis = _function_analysis_from_signatures(signatures)
@@ -2846,7 +2943,10 @@ class Analyser:
             )
             if not self._match_guards_are_valid(subject_types, case.patterns, node):
                 return BranchSet()
-            case_outputs = self.analyse_block(BranchSet((case_input,)), case.body)
+            case_outputs = self.analyse_scoped_block(
+                BranchSet((case_input,)),
+                case.body,
+            )
             typed_case_bodies.append(
                 _typed_block(
                     case_outputs,
@@ -2892,7 +2992,7 @@ class Analyser:
             self._diagnose("try requires at least one handler", node)
             return BranchSet()
 
-        body_outputs = self.analyse_block(BranchSet((branch,)), node.body)
+        body_outputs = self.analyse_scoped_block(BranchSet((branch,)), node.body)
         outputs: list[AnalysisBranch] = list(body_outputs.branches)
         for handler in node.handlers:
             if handler.typ is not None and not T.assignable(
@@ -2904,7 +3004,7 @@ class Analyser:
                     f"try handler type {T.show(handler.typ)} does not implement Fault",
                     handler,
                 )
-            handler_outputs = self.analyse_block(
+            handler_outputs = self.analyse_scoped_block(
                 BranchSet((branch,)),
                 handler.body,
             )
@@ -2947,7 +3047,7 @@ class Analyser:
                 variables=BranchVariables(),
                 input_mode=InputMode.TOP_LEVEL,
             )
-            outputs = self.analyse_block(BranchSet((guard_input,)), guard)
+            outputs = self.analyse_scoped_block(BranchSet((guard_input,)), guard)
             outputs = self.require_stack_top_assignable(
                 outputs,
                 expected=Boolean,
@@ -3296,18 +3396,15 @@ class Analyser:
             *params,
             *(constraint.bound for constraint in generic_constraints),
         )
-        function_env = self.env.child_scope() if structural_overloads else self.env
+        function_env = self.env.lexical_child_scope()
         for name, overload in structural_overloads:
             function_env.overloads.setdefault(name, []).append(overload)
         if recursive_overload is not None and annotation_hooks.has_annotation(
             node.annotations,
             "recursive",
         ):
-            if function_env is self.env:
-                function_env = self.env.child_scope()
             function_env.define_overload(Symbol("this"), recursive_overload)
-        function_analyser = Analyser(function_env)
-        function_analyser._friendly_owners = self._friendly_owners
+        function_analyser = self._child_analyser(function_env)
         final = function_analyser.analyse_block(BranchSet((initial,)), node.body)
         signatures = self._function_signatures(node, final)
         analysis = _function_analysis_from_signatures(signatures)
@@ -3393,8 +3490,7 @@ class Analyser:
             input_mode=InputMode.NILADIC,
             origin=outer.origin,
         )
-        function_analyser = Analyser(self.env)
-        function_analyser._friendly_owners = self._friendly_owners
+        function_analyser = self._child_analyser(self.env.lexical_child_scope())
         final = function_analyser.analyse_block(BranchSet((initial,)), node.body)
         signatures = self._function_signatures(call_site_node, final)
         return _function_analysis_from_signatures(signatures)
@@ -3946,7 +4042,7 @@ def _while_node(
         self._diagnose("while condition must be a boolean value", node)
         return BranchSet()
 
-    body_outputs = self.analyse_block(body_inputs, node.body)
+    body_outputs = self.analyse_scoped_block(body_inputs, node.body)
     if not body_outputs:
         return BranchSet()
 
@@ -4536,7 +4632,7 @@ def _string_interpolation_node(
             continue
 
         expression_count += 1
-        current = self.analyse_block(current, part)
+        current = self.analyse_scoped_block(current, part)
         if not current:
             return BranchSet()
         if any(not output.stack for output in current):
@@ -4971,6 +5067,7 @@ def _tag_application_node(
     (value_type,), base_branch = sourced
     validator: T.AppliedOverload | None = None
     validator_index: int | None = None
+    validator_runtime_name: Symbol | None = None
     added_tags: tuple[T.DataTag, ...] = ()
     removed_tags: tuple[T.DataTag, ...] = ()
     if node.tag.absent:
@@ -5040,6 +5137,8 @@ def _tag_application_node(
                     node,
                 )
                 return BranchSet((branch.emit(TypedNode(node, None)),))
+            if validator is not None:
+                validator_runtime_name = self.env.runtime_name_for(validator_name)
 
     stack = base_branch.stack.push(tagged)
     typed = TypedTagApplicationNode(
@@ -5049,6 +5148,7 @@ def _tag_application_node(
         validator_index,
         added_tags,
         removed_tags,
+        validator_runtime_name,
     )
     return BranchSet((base_branch.with_stack(stack).emit(typed),))
 
@@ -5060,7 +5160,6 @@ def _import_node(
     branch: AnalysisBranch,
 ) -> BranchSet:
     """Analyse a `ImportNode` node and return the surviving branches."""
-    typed_nodes: list[TypedNode] = []
     for spec in node.specs:
         try:
             exports, resolved_spec, definitions = self._load_import_definitions(spec)
@@ -5070,17 +5169,23 @@ def _import_node(
             self._diagnose(str(exc), node)
             return BranchSet((branch.emit(TypedNode(node, None)),))
 
+        for typed_node in exports.runtime_prelude:
+            self._prelude.add(typed_node)
         for obj in objects:
-            self._register_imported_object(obj)
-            typed_nodes.append(obj.typed)
+            runtime_name = self._prelude.add_declaration(obj.typed, obj.name)
+            self._register_imported_object(obj, runtime_name)
         for definition in definitions:
-            self._register_imported_definition(definition.name, definition.typed)
-            typed_nodes.append(definition.typed)
+            runtime_name = self._prelude.add_declaration(
+                definition.typed,
+                definition.name,
+            )
+            self._register_imported_definition(
+                definition.name,
+                definition.typed,
+                runtime_name,
+            )
 
-    imported = branch
-    for typed_node in typed_nodes:
-        imported = imported.emit(typed_node)
-    return BranchSet((imported.emit(TypedNode(node, None)),))
+    return BranchSet((branch.emit(TypedNode(node, None)),))
 
 
 @register(ObjectNode)
@@ -10106,6 +10211,21 @@ def _refine_typed_body(
 def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> TypedNode:
     """Refine typed node during static analysis."""
     typ = None if typed_node.typ is None else _refine_type(typed_node.typ, old, new)
+    if isinstance(typed_node, TypedImportedFunctionNode):
+        return TypedImportedFunctionNode(
+            typed_node.node,
+            typ,
+            tuple(
+                FunctionOverloadTyping(
+                    _refine_type(overload.typ, old, new),
+                    _refine_typed_body(overload.body, old, new),
+                    overload.overload,
+                )
+                for overload in typed_node.overloads
+            ),
+            typed_node.dispatch_plan,
+            typed_node.runtime_name,
+        )
     if isinstance(typed_node, TypedFunctionNode):
         return TypedFunctionNode(
             typed_node.node,
@@ -10136,6 +10256,7 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.validator_index,
             typed_node.added_tags,
             typed_node.removed_tags,
+            typed_node.validator_runtime_name,
         )
     if isinstance(typed_node, TypedElementNode):
         return TypedElementNode(
@@ -10147,6 +10268,7 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.call_arg_order,
             typed_node.call_overload_index,
             _refine_typed_extension(typed_node.extension, old, new),
+            typed_node.runtime_name,
         )
     if isinstance(typed_node, TypedCallNode):
         return TypedCallNode(
@@ -10194,6 +10316,12 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             refined_function,
             typed_node.overload,
             typed_node.function_overload_index,
+        )
+    if isinstance(typed_node, TypedImportedObjectNode):
+        return TypedImportedObjectNode(
+            typed_node.node,
+            typ,
+            typed_node.runtime_name,
         )
     return TypedNode(typed_node.node, typ)
 

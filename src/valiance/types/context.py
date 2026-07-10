@@ -45,6 +45,28 @@ class Context:
         default_factory=dict[Symbol, list[Overload]]
     )
 
+    def copy(self) -> Context:
+        """Return an independent copy of the currently visible type facts."""
+        return Context(
+            trait_impls={
+                name: set(traits) for name, traits in self.trait_impls.items()
+            },
+            trait_parents={
+                name: set(parents) for name, parents in self.trait_parents.items()
+            },
+            variant_members=dict(self.variant_members),
+            data_tags=dict(self.data_tags),
+            tag_parents=dict(self.tag_parents),
+            disjoint_tags={
+                name: set(disjoints) for name, disjoints in self.disjoint_tags.items()
+            },
+            generic_variance=dict(self.generic_variance),
+            structural_overloads={
+                name: list(overloads)
+                for name, overloads in self.structural_overloads.items()
+            },
+        )
+
     def implements(self, type_name: Symbol, trait_name: Symbol) -> bool:
         """Return whether a nominal type implements a trait, following parents."""
         seen: set[Symbol] = set()

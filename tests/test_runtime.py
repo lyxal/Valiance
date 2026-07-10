@@ -1207,6 +1207,193 @@ $name = "Valiance"
 
         self.assertEqual(stack, [Decimal("42")])
 
+    def test_executes_component_imported_inside_define(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "helper.vlnc").write_text(
+                "public define bump(n: Number) -> Number => $n 1 +\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            stack = execute(
+                """
+define apply(n: Number) -> Number =>
+  import { helper.[bump] }
+  $n bump
+end
+41 apply
+""",
+                main,
+            )
+
+        self.assertEqual(stack, [Decimal("42")])
+
+    def test_executes_component_imported_inside_function_literal(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "helper.vlnc").write_text(
+                "public define bump(n: Number) -> Number => $n 1 +\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            stack = execute(
+                """
+41 (fn (:Number) =>
+  import { helper.[bump] }
+  bump
+end) call
+""",
+                main,
+            )
+
+        self.assertEqual(stack, [Decimal("42")])
+
+    def test_executes_object_imported_inside_define(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "person.vlnc").write_text(
+                """
+public object Person =>
+  $name: String
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            stack = execute(
+                """
+define make(name: String) -> Person =>
+  import { person.Person }
+  Person($name)
+end
+"Ada" make
+""",
+                main,
+            )
+
+        self.assertEqual(stack, [ObjectValue("Person", {"name": "Ada"})])
+
+    def test_executes_tag_validator_imported_inside_define(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tags.vlnc").write_text(
+                """
+public tag #checked as computed
+public define #checked(value: Number) -> #boolean Number => $value 2 == end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            stack = execute(
+                """
+define check(value: Number) -> #checked Number =>
+  import { tags.#checked }
+  $value #checked
+end
+2 check
+""",
+                main,
+            )
+
+        [value] = stack
+        self.assertEqual(value.value, Decimal("2"))
+        self.assertEqual({tag.name for tag in value.tags}, {"checked"})
+
+    def test_imported_definition_carries_block_import_runtime_prelude(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "helper.vlnc").write_text(
+                "public define bump(n: Number) -> Number => $n 1 +\n",
+                encoding="utf-8",
+            )
+            (root / "wrapper.vlnc").write_text(
+                """
+public define apply(n: Number) -> Number =>
+  import { helper.[bump] }
+  $n bump
+end
+""",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            stack = execute("import { wrapper.[apply] }\n41 apply", main)
+
+        self.assertEqual(stack, [Decimal("42")])
+
+    def test_foreach_block_import_is_initialized_outside_loop_body(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "helper.vlnc").write_text(
+                "public define bump(n: Number) -> Number => $n 1 +\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = """
+[1, 2, 3] foreach (n) =>
+  import { helper.[bump] }
+  $n bump
+end
+"""
+            analyser = Analyser(source_file=main)
+            typed = analyser.analyse(parse(source))
+            program = compile_program(typed)
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            sum(
+                instruction.op is OpCode.MAKE_FUNCTION
+                for instruction in program.main.instructions
+            ),
+            1,
+        )
+        foreach = next(
+            instruction
+            for instruction in program.main.instructions
+            if instruction.op is OpCode.FOREACH
+        )
+        body, _indexed, _completion_count = foreach.arg
+        self.assertNotIn(
+            OpCode.MAKE_FUNCTION,
+            tuple(instruction.op for instruction in body.instructions),
+        )
+        self.assertEqual(run(program), [ObjectValue("None", {})])
+
+    def test_sibling_blocks_can_import_different_elements_under_same_name(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "small.vlnc").write_text(
+                "public define bump(n: Number) -> Number => $n 1 +\n",
+                encoding="utf-8",
+            )
+            (root / "large.vlnc").write_text(
+                "public define bump(n: Number) -> Number => $n 10 +\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+
+            stack = execute(
+                """
+if true =>
+  import { small.[bump] }
+  1 bump
+else => 0
+end
+if true =>
+  import { large.[bump] }
+  2 bump
+else => 0
+end
+""",
+                main,
+            )
+
+        self.assertEqual(stack, [Decimal("2"), Decimal("12")])
+
     def test_executes_imported_namespace_definition(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

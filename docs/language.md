@@ -3252,6 +3252,36 @@ An import entry may import:
 * a trait implementation;
 * all overloads of an element except selected overloads.
 
+### Block-scoped imports
+
+Imports may appear in any structure body, including function and `define`
+bodies, conditional branches, loop bodies, `match` cases, and `try` handlers.
+The imported names are visible from the import statement to the end of the
+innermost enclosing body. They are not visible in sibling branches or after the
+body ends.
+
+```vlnc
+define format(value) => (
+  import {text.format}
+  format(value)       # available here
+)
+
+if condition then (
+  import {debug.log}
+  log("inside")      # available in this branch
+) else (
+  # log is not available here
+)
+
+# neither format nor log is available here
+```
+
+Import resolution is an analysis-time operation. Runtime declarations needed by
+a scoped import are initialized once in the program's import prelude, not each
+time a function is called, a branch is taken, or a loop iterates. Separate
+blocks may therefore use the same local import alias without sharing or
+replacing one another's binding.
+
 ## 23.3. Module Imports
 
 Importing a module without selecting a component imports the module as a namespace:

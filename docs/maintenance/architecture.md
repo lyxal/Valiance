@@ -169,7 +169,12 @@ place. When adding a value kind, review:
 ## Modules, packages, and tools
 
 `modules.py` analyses imports and moves public declarations and type facts
-between module environments. `packages.py` handles project manifests,
+between module environments. An import is resolved during analysis. Nested
+structure bodies use lexical child environments so imported names do not escape
+their body, while required runtime declarations are collected into a shared,
+deduplicated program prelude. Module exports carry that prelude transitively so
+an exported definition containing a local relative import still works when
+consumed by another module. `packages.py` handles project manifests,
 dependencies, entries, and installation paths.
 
 `source_tools.py` powers source rewriting and generated reference docs.
