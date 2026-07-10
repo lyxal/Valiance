@@ -96,8 +96,12 @@ advance or replace ip
 ```
 
 A frame contains a physical value stack, locals, globals, input-cycling state,
-panic handlers, and ownership bookkeeping. Calls create new frames. Returns
-move the callee's final stack back into the caller.
+panic handlers, and ownership bookkeeping. The VM stores resumable `_Activation`
+records in an explicit Python list. User-function calls push an activation and
+returns pop it, so Valiance recursion does not consume Python recursion depth.
+A cached direct-leaf check lets functions containing only ownership-trivial
+resolved built-ins execute without entering the scheduler; any function that may
+call user code still uses the activation stack.
 
 The runtime still performs genuinely dynamic work where values matter:
 
@@ -455,10 +459,13 @@ built-in may inspect those facts.
 
 That is validation or value-case behaviour, not overload resolution.
 
-## One VM frame at a time
+## One VM activation at a time
 
-`VirtualMachine.call(...)` creates a new `_Frame` and executes one
-`FunctionCode`. Every function has its own physical stack.
+`VirtualMachine.call(...)` creates a root `_Activation` containing a `_Frame` and
+an instruction pointer. `_drive_frames(...)` repeatedly runs the top activation
+until it returns or requests another user-function call. Every function still
+has its own physical stack, but nested calls are represented by activation
+records instead of nested Python `execute()` calls.
 
 A frame contains:
 
@@ -577,8 +584,10 @@ existing non-persistent call semantics.
 
 ## The interpreter loop is a small state machine
 
-`VirtualMachine.execute(...)` initializes `ip = 0` and repeatedly matches on the
-current opcode.
+`VirtualMachine.execute(...)` creates the root activation. `_run_activation(...)`
+repeatedly matches on its current opcode until the activation returns or suspends
+at a user-function call. The caller's instruction pointer and pending call are
+stored on `_Activation`, so the driver can resume it without a Python call stack.
 
 Most opcodes fall into a few families.
 
@@ -586,18 +595,23 @@ Most opcodes fall into a few families.
 
 - `PUSH_CONST`
 - `LOAD_VAR`
+- `LOAD_VAR_BORROW`
 - `STORE_VAR`
 - `LOAD_ELEMENT`
 - `POP`
 - `STACK_SHUFFLE`
 - `SOURCE_ARGS`
 
-These move values while applying retain/release rules. Plain immutable scalar
-values and containers already classified as ownership-trivial take a direct
-stack path because they cannot own runtime resources. Closures, objects, tagged
-payloads, lazy values, and containers with lifecycle-bearing contents still use
-the full ownership helpers. Frame cleanup iterates locals once and clears the
-map after releases rather than snapshotting and deleting every entry.
+These move values while applying retain/release rules. `LOAD_VAR_BORROW` is
+emitted only for the root variable of a field or indexed assignment that stores
+back to the same binding. It places a non-owning receiver wrapper on the stack;
+ordinary reads continue to use `LOAD_VAR` and retain ownership normally. Plain
+immutable scalar values and containers already classified as ownership-trivial
+take a direct stack path because they cannot own runtime resources. Closures,
+objects, tagged payloads, lazy values, and containers with lifecycle-bearing
+contents still use the full ownership helpers. Frame cleanup iterates locals
+once and clears the map after releases rather than snapshotting and deleting
+every entry.
 
 ### Construction operations
 
@@ -778,10 +792,12 @@ captures, deferred work, or nested values.
 
 - Python immutable primitives such as `Decimal` and `str` need no explicit
   ownership action.
-- `ListValue` is an eager list with optional exact rank evidence and a cached
-  classification for lists whose direct items require no ownership traversal.
-- `DictValue` is the corresponding eager mapping/record wrapper; it caches the
-  same direct-value ownership classification and invalidates it on mutation.
+- `ListValue` is a reference-counted eager list with optional exact rank
+  evidence and a cached classification for lists whose direct items require no
+  ownership traversal.
+- `DictValue` is the corresponding reference-counted eager mapping/record
+  wrapper; it caches the same direct-value ownership classification and
+  invalidates it on mutation.
 - `LazyList` stores an iterable, retained owners, and a reference count.
 - `TaggedValue` wraps a payload with reified data-tag evidence.
 - `ObjectValue` stores nominal name, fields, generic type arguments, lifecycle
@@ -811,13 +827,17 @@ Stack operations are therefore not merely Python `append` and `pop`. A semantic
 copy may increase ownership; a consumed stack tail must release its values.
 The VM first checks whether a consumed tail contains any ownership-bearing value
 and skips the recursive release walk for scalar-only tails. `ListValue` and
-`DictValue` cache that same direct-item/value classification, invalidate it after
-Python-side mutation, and preserve it when reconstruction only installs scalar
-replacements. Large numeric buffers and scalar records therefore pay one
-classification scan instead of a recursive walk on every load, call, or frame
-cleanup. Return-tag and collection-rank attachment similarly return immediately
-when the analysed metadata is empty. These are performance fast paths, not
-changes to ownership or type semantics.
+`DictValue` also carry container reference counts. Ordinary loads increment the
+count; releases decrement it and traverse children only when the final owner is
+dropped. Borrowed assignment receivers do not increment the count. A uniquely
+owned, ownership-trivial container can therefore be updated in place, while an
+aliased container is cloned and the original remains unchanged. The cached
+direct-item/value classification is invalidated after Python-side mutation and
+preserved when a clone only installs scalar replacements. Large numeric buffers
+and scalar records therefore avoid both recursive ownership walks and repeated
+whole-container copies. Return-tag and collection-rank attachment similarly
+return immediately when the analysed metadata is empty. These are performance
+fast paths, not changes to ownership or value semantics.
 
 ### Object duplication, cleanup, and must-call rules
 
@@ -839,11 +859,16 @@ When an object's reference count reaches zero, cleanup runs once. The VM may:
 A destructor is not allowed to panic. A missing must-call obligation becomes a
 cleanup fault.
 
-### Visible object updates reconstruct values
+### Visible updates use ownership-aware copy-on-write
 
-Field and indexed updates return updated values rather than relying on arbitrary
-in-place mutation. Generic type arguments and runtime lifecycle metadata must be
-preserved during reconstruction.
+Field and indexed assignments still have value semantics. Code generation marks
+only the assignment receiver as borrowed, and the VM mutates a `ListValue` or
+`DictValue` in place only when its reference count proves it is uniquely owned
+and its direct ownership metadata is trivial. Shared containers are copied before
+the update, so aliases continue to observe the old value. Object values and
+lifecycle-bearing container contents retain the conservative reconstruction
+path. Generic type arguments, runtime rank evidence, ownership metadata, and
+lifecycle state must be preserved by every clone.
 
 When adding a runtime value form, check:
 

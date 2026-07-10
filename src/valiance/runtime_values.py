@@ -47,6 +47,7 @@ class ListValue(list[Any]):
         """Initialize this list value."""
         super().__init__(iterable)
         self.runtime_rank = runtime_rank
+        self.refcount = 1
         self._ownership_trivial: bool | None = None
 
     def _invalidate_ownership_cache(self) -> None:
@@ -119,6 +120,7 @@ class DictValue(dict[Any, Any]):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize this mapping value."""
         super().__init__(*args, **kwargs)
+        self.refcount = 1
         self._ownership_trivial: bool | None = None
 
     def _invalidate_ownership_cache(self) -> None:

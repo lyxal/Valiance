@@ -155,6 +155,7 @@ class _Compiler:
         self.tag_disjoints: dict[str, set[str]] = {}
         self.tag_parents: dict[str, str] = {}
         self._temporary_index = 0
+        self._borrowed_assignment_nodes: set[int] = set()
 
     def compile_function(
         self,
@@ -173,6 +174,7 @@ class _Compiler:
         param_collection_ranks: tuple[int | None, ...] = (),
     ) -> FunctionCode:
         """Compile a typed function body and its captured runtime metadata."""
+        self._borrowed_assignment_nodes = _borrowed_assignment_receivers(body)
         for index, node in enumerate(body):
             self.node(node)
             if index + 1 < len(body) and _should_pop_statement_result(node):
@@ -195,6 +197,7 @@ class _Compiler:
 
     def node(self, node: ASTNode | TypedNode) -> None:
         """Lower one typed AST node into bytecode instructions."""
+        source_node = node
         typed_node = node if isinstance(node, TypedNode) else None
         node = _unwrap(node)
         match node:
@@ -205,7 +208,12 @@ class _Compiler:
             case StringInterpolationNode(parts):
                 self.string_interpolation(parts)
             case GetVariableNode(name):
-                self.emit(OpCode.LOAD_VAR, _symbol_runtime_name(name))
+                opcode = (
+                    OpCode.LOAD_VAR_BORROW
+                    if id(source_node) in self._borrowed_assignment_nodes
+                    else OpCode.LOAD_VAR
+                )
+                self.emit(opcode, _symbol_runtime_name(name))
             case SetVariableNode(name):
                 self.emit(OpCode.STORE_VAR, _symbol_runtime_name(name))
             case SetVariablesNode(targets):
@@ -448,9 +456,16 @@ class _Compiler:
                 self.unsupported(node, type(node).__name__)
 
     def expression(self, nodes: tuple[ASTNode | TypedNode, ...]) -> None:
-        """Lower an expression body and preserve its stack result."""
-        for node in nodes:
-            self.node(node)
+        """Lower an expression body with assignment-receiver borrow metadata."""
+        previous = self._borrowed_assignment_nodes
+        self._borrowed_assignment_nodes = (
+            previous | _borrowed_assignment_receivers(nodes)
+        )
+        try:
+            for node in nodes:
+                self.node(node)
+        finally:
+            self._borrowed_assignment_nodes = previous
 
     def collection(
         self,
@@ -698,16 +713,13 @@ class _Compiler:
             condition = typed_node.condition
             then_branch = typed_node.then_branch
             else_branch = typed_node.else_branch
-        for condition_node in condition:
-            self.node(condition_node)
+        self.expression(condition)
         jump_to_else = self.emit(OpCode.JUMP_IF_FALSE, None)
-        for branch_node in then_branch:
-            self.node(branch_node)
+        self.expression(then_branch)
         jump_to_end = self.emit(OpCode.JUMP, None)
         else_start = len(self.instructions)
         self.patch(jump_to_else, else_start)
-        for branch_node in else_branch:
-            self.node(branch_node)
+        self.expression(else_branch)
         self.patch(jump_to_end, len(self.instructions))
 
     def assert_node(self, node: AssertNode, typed_node: TypedNode | None) -> None:
@@ -717,8 +729,7 @@ class _Compiler:
         if isinstance(typed_node, TypedAssertNode):
             condition = typed_node.condition
             else_branch = typed_node.else_branch
-        for condition_node in condition:
-            self.node(condition_node)
+        self.expression(condition)
         if not else_branch:
             self.emit(OpCode.ASSERT_TRUE)
             return
@@ -726,8 +737,7 @@ class _Compiler:
         jump_to_end = self.emit(OpCode.JUMP, None)
         else_start = len(self.instructions)
         self.patch(jump_to_else, else_start)
-        for branch_node in else_branch:
-            self.node(branch_node)
+        self.expression(else_branch)
         self.emit(OpCode.WRAP_ASSERT_ERROR)
         self.patch(jump_to_end, len(self.instructions))
 
@@ -869,15 +879,15 @@ class _Compiler:
             )
             self.emit(OpCode.MATCH_ERROR)
             self.patch_match(default_jump, len(self.instructions))
-            for branch_node in body_by_case.get(id(default_case), default_case.body):
-                self.node(branch_node)
+            self.expression(
+                body_by_case.get(id(default_case), default_case.body)
+            )
             self.emit(OpCode.CYCLE_END)
             end_jumps.append(self.emit(OpCode.JUMP, None))
 
         for jump, case in case_jumps:
             self.patch_match(jump, len(self.instructions))
-            for branch_node in body_by_case.get(id(case), case.body):
-                self.node(branch_node)
+            self.expression(body_by_case.get(id(case), case.body))
             self.emit(OpCode.CYCLE_END)
             end_jumps.append(self.emit(OpCode.JUMP, None))
         end = len(self.instructions)
@@ -892,8 +902,7 @@ class _Compiler:
             body = typed_node.body
             handler_bodies = typed_node.handler_bodies
         begin = self.emit(OpCode.TRY_BEGIN, ())
-        for body_node in body:
-            self.node(body_node)
+        self.expression(body)
         self.emit(OpCode.TRY_END)
         success_jump = self.emit(OpCode.JUMP, None)
 
@@ -904,8 +913,7 @@ class _Compiler:
             handler_body: tuple[ASTNode | TypedNode, ...] = handler.body
             if index < len(handler_bodies):
                 handler_body = handler_bodies[index]
-            for handler_node in handler_body:
-                self.node(handler_node)
+            self.expression(handler_body)
             end_jumps.append(self.emit(OpCode.JUMP, None))
 
         end = len(self.instructions)
@@ -963,11 +971,9 @@ class _Compiler:
             return
         loop_start = len(self.instructions)
         self.loops.append(_LoopPatch([]))
-        for condition_node in condition:
-            self.node(condition_node)
+        self.expression(condition)
         jump_to_end = self.emit(OpCode.JUMP_IF_FALSE, None)
-        for body_node in body:
-            self.node(body_node)
+        self.expression(body)
         self.emit(OpCode.JUMP, loop_start)
         loop_end = len(self.instructions)
         self.patch(jump_to_end, loop_end)
@@ -1122,6 +1128,36 @@ def _single_element_function_arity(ast: FunctionNode) -> int | None:
         if overload.call_site_body is None
     }
     return next(iter(arities)) if len(arities) == 1 else None
+
+
+def _borrowed_assignment_receivers(
+    body: tuple[ASTNode | TypedNode, ...],
+) -> set[int]:
+    """Find target-variable loads that may borrow a unique container binding."""
+    borrowed: set[int] = set()
+    for index, candidate in enumerate(body):
+        ast = _unwrap(candidate)
+        if not isinstance(ast, SetVariableNode):
+            continue
+        target_name = ast.name
+        target_location = ast.location
+        saw_container_set = False
+        for previous in reversed(body[:index]):
+            previous_ast = _unwrap(previous)
+            if isinstance(previous_ast, (FieldSetNode, IndexSetNode)):
+                if previous_ast.location == target_location:
+                    saw_container_set = True
+                continue
+            if saw_container_set and isinstance(previous_ast, GetVariableNode):
+                if (
+                    previous_ast.name == target_name
+                    and previous_ast.location == target_location
+                ):
+                    borrowed.add(id(previous))
+                    break
+            if isinstance(previous_ast, SetVariableNode):
+                break
+    return borrowed
 
 
 def _should_pop_statement_result(node: ASTNode | TypedNode) -> bool:

@@ -167,6 +167,82 @@ end
         self.assertIs(point._ownership_trivial, True)
         self.assertEqual(point["x"], Decimal("2"))
 
+    def test_container_updates_use_borrowed_copy_on_write_receivers(self):
+        """Mutate unique containers in place without leaking through aliases."""
+        source = """
+$list = [1, 2]
+$list_alias = $list
+$list[0] = 9
+$record = record{x: 1, y: 2}
+$record_alias = $record
+$record.x = 9
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = loads(dumps(compile_program(typed)))
+        borrowed = [
+            instruction
+            for instruction in program.main.instructions
+            if instruction.op is OpCode.LOAD_VAR_BORROW
+        ]
+        self.assertEqual(
+            [instruction.arg for instruction in borrowed],
+            ["list", "record"],
+        )
+
+        vm = VirtualMachine(output=lambda _value: None)
+        self.assertEqual(vm.run(program), [])
+        self.assertEqual(vm.globals["list"], [Decimal("9"), Decimal("2")])
+        self.assertEqual(
+            vm.globals["list_alias"],
+            [Decimal("1"), Decimal("2")],
+        )
+        self.assertIsNot(vm.globals["list"], vm.globals["list_alias"])
+        self.assertEqual(
+            vm.globals["record"],
+            {"x": Decimal("9"), "y": Decimal("2")},
+        )
+        self.assertEqual(
+            vm.globals["record_alias"],
+            {"x": Decimal("1"), "y": Decimal("2")},
+        )
+        self.assertIsNot(vm.globals["record"], vm.globals["record_alias"])
+
+    def test_deep_recursion_uses_iterative_vm_frames(self):
+        """Run recursive Valiance calls beyond Python's recursion limit."""
+        self.assertEqual(
+            execute(
+                """
+$down = @recursive fn (n: Integer) -> Integer =>
+  if ($n == 0) => return 0
+  this($n - 1)
+end
+$down(5000)
+"""
+            ),
+            [Decimal("0")],
+        )
+
+    def test_deep_recursive_panic_unwinds_activation_stack(self):
+        """Propagate panics through deep iterative activations into handlers."""
+        self.assertEqual(
+            execute(
+                """
+$down = @recursive fn (n: Integer) -> Integer =>
+  if ($n == 0) => ValueFault("done") panic
+  this($n - 1)
+end
+try =>
+  $down(3000)
+handle ValueFault =>
+  42
+end
+"""
+            ),
+            [Decimal("42")],
+        )
+
     def test_executes_stack_arithmetic(self):
         self.assertEqual(execute("*(+(1, 2), 3)"), [Decimal("9")])
         self.assertEqual(execute("(1 + 2) * (3 + 4)"), [Decimal("21")])

@@ -83,7 +83,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x10"))
+        self.assertTrue(data.startswith(b"VLNCBC\x11"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)

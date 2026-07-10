@@ -102,7 +102,8 @@ collection-valued stopped parameter is not automatically vectorised again.
 
 `src/valiance/runtime/vm.py`
 
-- Executes bytecode with a stack per frame.
+- Executes bytecode with a stack per frame and an explicit `_Activation` list
+  for nested user-function calls, avoiding Python recursion growth.
 - Built-in elements are loaded into VM globals from
   `valiance.analysis.builtins.runtime_elements()`.
 - User functions are represented as `FunctionValue`.
@@ -552,6 +553,8 @@ tests.
    `runtime/serialization.py`.
 5. Add decoding coverage through `_BYTE_TO_OP`.
 6. Add tests for direct execution and bytecode round trip.
+7. Bump the bytecode `MAGIC` when an older reader would misinterpret the new
+   opcode or payload. `LOAD_VAR_BORROW` introduced format version `0x11`.
 
 Choose opcode arguments that the serializer can encode. Currently supported
 argument value tags are:
@@ -743,9 +746,14 @@ that metadata for call-site checked functions and for correct scalar/list
 argument sourcing. Any change to these fields requires a bytecode magic/version
 change and round-trip tests.
 
-A function call normally owns an isolated stack. The `accepts_stack_inputs` path
-is narrowly used for analysed stack-polymorphic bodies such as user-defined
-`dip`; it lets the caller supply the exact extra suffix proven by analysis.
+A function call normally owns an isolated stack. Direct user-function calls
+suspend the caller activation and push a callee activation onto the VM's explicit
+frame list; return metadata is applied when that activation is popped. A runtime
+cache may execute a proved leaf directly when every resolved call is an
+ownership-trivial built-in and no opcode can invoke user code. The
+`accepts_stack_inputs` path is narrowly used for analysed stack-polymorphic
+bodies such as user-defined `dip`; it lets the caller supply the exact extra
+suffix proven by analysis.
 
 ## Static Union Dispatch Plans
 
@@ -878,11 +886,16 @@ For scalar-heavy execution, keep no-op metadata and ownership paths cheap. The
 VM may bypass release scans when no value can own resources, return unchanged
 results when no return tags or collection ranks were declared, and skip lazy
 owner binding when no result is lazy. `ListValue` and `DictValue` cache whether
-their direct contents are ownership-trivial; reconstruction must preserve a
-still-valid cache, while mutating methods must invalidate it. Built-in overload
-order and return-tag deltas are declaration-time facts and must be cached rather
-than recomputed for every call. Main-frame closures must not retain top-level
-globals again as lexical local captures.
+their direct contents are ownership-trivial and carry a container reference
+count. For an indexed or field assignment, codegen may emit `LOAD_VAR_BORROW`
+for the receiver variable when the updated value is stored back into that same
+binding. The VM may mutate only a uniquely owned, ownership-trivial container;
+shared containers must be cloned, and ordinary reads must continue to retain.
+Cloning must preserve a still-valid cache and retain any lifecycle-bearing child
+that remains in the copy, while Python-side mutating methods must invalidate the
+cache. Built-in overload order and return-tag deltas are declaration-time facts
+and must be cached rather than recomputed for every call. Main-frame closures
+must not retain top-level globals again as lexical local captures.
 Nested-function locals still require ordinary capture isolation. Do not extend
 these shortcuts to objects, closures, overloaded functions, tagged payloads, or
 lazy values without preserving their retain/release behavior.

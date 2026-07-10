@@ -14,6 +14,7 @@ class OpCode(Enum):
 
     PUSH_CONST = "push_const"
     LOAD_VAR = "load_var"
+    LOAD_VAR_BORROW = "load_var_borrow"
     STORE_VAR = "store_var"
     LOAD_ELEMENT = "load_element"
     MAKE_FUNCTION = "make_function"

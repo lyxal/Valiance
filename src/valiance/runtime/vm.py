@@ -122,6 +122,11 @@ class FunctionValue:
     globals: dict[str, Any]
     owned_names: frozenset[str] = frozenset()
     refcount: int = 1
+    direct_leaf: bool | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __repr__(self) -> str:
         """Return a developer-facing representation of this function value."""
@@ -243,6 +248,24 @@ class _PanicHandler:
     stack_depth: int
 
 
+@dataclass(frozen=True, slots=True)
+class _FunctionCallRequest:
+    """A suspended user-function call executed by the VM trampoline."""
+
+    callee: FunctionValue
+    args: tuple[Any, ...]
+    target: str
+    release_after: FunctionValue | OverloadedFunctionValue | None = None
+    isolate_captures: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class _BorrowedValue:
+    """A non-owning assignment receiver reference carried on the VM stack."""
+
+    value: Any
+
+
 @dataclass(slots=True)
 class _Frame:
     stack: list[Any]
@@ -322,6 +345,16 @@ class _Frame:
             next_cycle_index,
             initial_start,
         )
+
+
+@dataclass(slots=True)
+class _Activation:
+    """One resumable Valiance bytecode frame on the VM activation stack."""
+
+    code: FunctionCode
+    frame: _Frame
+    ip: int = 0
+    pending_call: _FunctionCallRequest | None = None
 
 
 class _StackUnderflow(Exception):
@@ -522,17 +555,242 @@ class VirtualMachine:
         initial_stack: list[Any] | None = None,
         retained_locals: frozenset[str] = frozenset(),
     ) -> list[Any]:
-        """Execute bytecode in a new frame and return its final stack."""
-        frame = _Frame(
-            stack=list(initial_stack or ()),
-            locals=locals_,
-            globals=globals_,
-            cycle_values=cycle_values,
-            cycle_stack_remaining=(len(cycle_values) if code.cycle_params else 0),
-            retained_locals=retained_locals,
-            is_global_scope=code.name == "<main>",
+        """Execute bytecode with an explicit, non-recursive activation stack."""
+        return self._drive_frames(
+            self._new_activation(
+                code,
+                locals_,
+                globals_,
+                cycle_values,
+                initial_stack,
+                retained_locals,
+            )
         )
-        ip = 0
+
+    def _drive_frames(self, root: _Activation) -> list[Any]:
+        """Drive bytecode activations without nesting Python function calls."""
+        frames: list[tuple[_Activation, _FunctionCallRequest | None]] = [
+            (root, None)
+        ]
+        while frames:
+            activation, completed_request = frames[-1]
+            try:
+                event = self._run_activation(activation)
+            except Exception as exc:
+                frames.pop()
+                if not frames:
+                    raise
+                self._propagate_frame_error(frames, exc)
+                continue
+            if isinstance(event, _FunctionCallRequest):
+                try:
+                    child = self._function_request_activation(event)
+                except Exception as exc:
+                    self._propagate_frame_error(frames, exc)
+                else:
+                    frames.append((child, event))
+                continue
+
+            frames.pop()
+            try:
+                result = (
+                    self._finalize_function_request(completed_request, event)
+                    if completed_request is not None
+                    else event
+                )
+            except Exception as exc:
+                if not frames:
+                    raise
+                self._propagate_frame_error(frames, exc)
+                continue
+            if not frames:
+                return result
+            try:
+                self._resume_call_success(frames[-1][0], result)
+            except Exception as exc:
+                frames.pop()
+                if not frames:
+                    raise
+                self._propagate_frame_error(frames, exc)
+        raise RuntimeError("VM activation driver terminated without a result")
+
+    def _propagate_frame_error(
+        self,
+        frames: list[tuple[_Activation, _FunctionCallRequest | None]],
+        error: Exception,
+    ) -> None:
+        """Propagate one failed child call until an activation handles it."""
+        while frames:
+            activation = frames[-1][0]
+            try:
+                self._resume_call_error(activation, error)
+            except Exception as exc:
+                frames.pop()
+                error = exc
+            else:
+                return
+        raise error
+
+    def _function_request_activation(
+        self,
+        request: _FunctionCallRequest,
+    ) -> _Activation:
+        """Prepare one user-function activation for the VM frame stack."""
+        function = request.callee
+        args = request.args
+        parameter_count = len(function.code.params)
+        if function.code.accepts_stack_inputs:
+            if len(args) < parameter_count:
+                raise RuntimeError(
+                    f"{_function_name(function.code)} expected at least "
+                    f"{parameter_count} arguments, got {len(args)}"
+                )
+            explicit_args = args[-parameter_count:] if parameter_count else ()
+            stack_args = args[:-parameter_count] if parameter_count else args
+        else:
+            if len(args) != parameter_count:
+                raise RuntimeError(
+                    f"{_function_name(function.code)} expected "
+                    f"{parameter_count} arguments, got {len(args)}"
+                )
+            explicit_args = args
+            stack_args = ()
+        locals_, retained_locals = _function_call_locals(
+            function,
+            explicit_args,
+            isolate_captures=request.isolate_captures,
+        )
+        cycle_values = tuple(explicit_args) if function.code.cycle_params else ()
+        initial_stack = list(stack_args)
+        if function.code.params and not cycle_values:
+            initial_stack.extend(explicit_args)
+        return self._new_activation(
+            function.code,
+            locals_,
+            function.globals,
+            cycle_values,
+            initial_stack,
+            retained_locals,
+        )
+
+    def _finalize_function_request(
+        self,
+        request: _FunctionCallRequest,
+        result: list[Any],
+    ) -> list[Any]:
+        """Apply one completed function's compiled return metadata."""
+        function = request.callee
+        ranked = (
+            _apply_runtime_collection_ranks(
+                result,
+                function.code.return_collection_ranks,
+            )
+            if function.code.return_collection_ranks
+            else result
+        )
+        tagged = (
+            _apply_runtime_return_tags(ranked, function.code.return_tags)
+            if function.code.return_tags
+            else ranked
+        )
+        return list(tagged)
+
+    def _resume_call_success(
+        self,
+        activation: _Activation,
+        result: list[Any],
+    ) -> None:
+        """Resume a suspended caller after a successful child activation."""
+        request = activation.pending_call
+        if request is None:
+            raise RuntimeError("completed function has no suspended caller")
+        activation.pending_call = None
+        try:
+            if request.release_after is not None:
+                _release_value(request.release_after, self)
+            _mark_mustcall_method(request.args, result, request.callee)
+            activation.frame.stack.extend(result)
+        except Exception as exc:
+            self._raise_activation_error(activation, exc)
+        activation.ip += 1
+
+    def _resume_call_error(
+        self,
+        activation: _Activation,
+        error: Exception,
+    ) -> None:
+        """Resume a suspended caller by injecting a failed child call."""
+        request = activation.pending_call
+        if request is None:
+            self._raise_activation_error(activation, error)
+            return
+        activation.pending_call = None
+        if isinstance(error, _py_builtins.RuntimeError):
+            error = _with_call_detail(error, request.target, request.args)
+        if request.release_after is not None:
+            try:
+                _release_value(request.release_after, self)
+            except Exception as exc:
+                error = exc
+        self._raise_activation_error(activation, error)
+
+    def _raise_activation_error(
+        self,
+        activation: _Activation,
+        error: Exception,
+    ) -> None:
+        """Handle or propagate an exception at an activation's current opcode."""
+        frame = activation.frame
+        if isinstance(error, PanicSignal):
+            target = self._handle_panic(frame, error)
+            if target is not None:
+                activation.ip = target
+                return
+        if isinstance(error, _py_builtins.RuntimeError):
+            runtime_error = (
+                error if isinstance(error, RuntimeError) else RuntimeError(error)
+            )
+            runtime_error.add_execution_context(
+                _function_name(activation.code),
+                activation.ip,
+                activation.code.instructions[activation.ip],
+                frame.stack,
+            )
+            self._discard_frame(frame)
+            raise runtime_error from error
+        self._discard_frame(frame)
+        raise error
+
+    def _new_activation(
+        self,
+        code: FunctionCode,
+        locals_: dict[str, Any],
+        globals_: dict[str, Any],
+        cycle_values: tuple[Any, ...] = (),
+        initial_stack: list[Any] | None = None,
+        retained_locals: frozenset[str] = frozenset(),
+    ) -> _Activation:
+        """Create one resumable bytecode activation."""
+        return _Activation(
+            code,
+            _Frame(
+                stack=list(initial_stack or ()),
+                locals=locals_,
+                globals=globals_,
+                cycle_values=cycle_values,
+                cycle_stack_remaining=(
+                    len(cycle_values) if code.cycle_params else 0
+                ),
+                retained_locals=retained_locals,
+                is_global_scope=code.name == "<main>",
+            ),
+        )
+
+    def _run_activation(self, activation: _Activation) -> object:
+        """Run one activation until it calls another function or returns."""
+        code = activation.code
+        frame = activation.frame
+        ip = activation.ip
         instructions = code.instructions
         try:
             while ip < len(instructions):
@@ -553,6 +811,16 @@ class VirtualMachine:
                                 or not _needs_release(value)
                                 else _retain_value(value)
                             )
+                        case OpCode.LOAD_VAR_BORROW:
+                            frame.stack.append(
+                                _BorrowedValue(
+                                    _load_name(
+                                        instruction.arg,
+                                        frame.locals,
+                                        frame.globals,
+                                    )
+                                )
+                            )
                         case OpCode.STORE_VAR:
                             value = _pop(frame.stack, "store variable")
                             target = (
@@ -572,7 +840,11 @@ class VirtualMachine:
                                 stored = _store_value(existing, value)
                             else:
                                 stored = value
-                            if existing is not None and _needs_release(existing):
+                            if (
+                                existing is not None
+                                and existing is not stored
+                                and _needs_release(existing)
+                            ):
                                 _release_value(existing, self)
                             target[instruction.arg] = stored
                             if code.name == "<main>":
@@ -604,7 +876,11 @@ class VirtualMachine:
                             )
                         case OpCode.CALL:
                             try:
-                                self._call_stack_top(frame)
+                                request = self._call_stack_top(frame)
+                                if request is not None:
+                                    activation.pending_call = request
+                                    activation.ip = ip
+                                    return request
                             except PanicSignal as exc:
                                 target = self._handle_panic(frame, exc)
                                 if target is None:
@@ -613,7 +889,13 @@ class VirtualMachine:
                                 continue
                         case OpCode.CALL_RESOLVED_ELEMENT:
                             try:
-                                self._call_resolved_element(frame, instruction.arg)
+                                request = self._call_resolved_element(
+                                    frame, instruction.arg
+                                )
+                                if request is not None:
+                                    activation.pending_call = request
+                                    activation.ip = ip
+                                    return request
                             except PanicSignal as exc:
                                 target = self._handle_panic(frame, exc)
                                 if target is None:
@@ -732,7 +1014,13 @@ class VirtualMachine:
                                     )
                                 )
                             else:
-                                frame.stack.append(_get_field(receiver, field))
+                                frame.stack.append(
+                                    _consume_receiver_result(
+                                        receiver,
+                                        _get_field(receiver, field),
+                                        self,
+                                    )
+                                )
                         case OpCode.SET_FIELD:
                             field, optional_safe = _field_instruction_arg(
                                 instruction.arg
@@ -742,6 +1030,9 @@ class VirtualMachine:
                                 2,
                                 "field assignment",
                             )
+                            borrowed = isinstance(receiver, _BorrowedValue)
+                            if borrowed:
+                                receiver = receiver.value
                             frame.stack.append(
                                 _optional_safe_set_field(
                                     receiver,
@@ -750,13 +1041,22 @@ class VirtualMachine:
                                     self,
                                 )
                                 if optional_safe
-                                else _set_field(receiver, field, value)
+                                else _set_field(
+                                    receiver,
+                                    field,
+                                    value,
+                                    in_place=borrowed,
+                                )
                             )
                         case OpCode.GET_INDEX:
                             try:
                                 values = _pop_index_values(frame.stack, instruction.arg)
                                 receiver = _index_receiver(frame)
-                                result = _get_index(receiver, instruction.arg, values)
+                                result = _consume_receiver_result(
+                                    receiver,
+                                    _get_index(receiver, instruction.arg, values),
+                                    self,
+                                )
                                 if instruction.arg[1]:
                                     if not isinstance(result, list):
                                         raise RuntimeError(
@@ -775,6 +1075,9 @@ class VirtualMachine:
                             try:
                                 values = _pop_index_values(frame.stack, instruction.arg)
                                 receiver = _pop(frame.stack, "indexed assignment")
+                                borrowed = isinstance(receiver, _BorrowedValue)
+                                if borrowed:
+                                    receiver = receiver.value
                                 value = _pop(frame.stack, "indexed assignment")
                                 frame.stack.append(
                                     _set_index(
@@ -782,6 +1085,7 @@ class VirtualMachine:
                                         instruction.arg,
                                         values,
                                         value,
+                                        in_place=borrowed,
                                     )
                                 )
                             except PanicSignal as exc:
@@ -905,6 +1209,7 @@ class VirtualMachine:
                     )
                     raise error from exc
                 ip += 1
+                activation.ip = ip
             result = frame.stack
             frame.stack = []
             return self._finalize_frame(frame, result)
@@ -951,36 +1256,49 @@ class VirtualMachine:
                     return target
         return None
 
-    def _call_stack_top(self, frame: _Frame) -> None:
-        """Invoke stack top during VM execution."""
+    def _call_stack_top(
+        self,
+        frame: _Frame,
+    ) -> _FunctionCallRequest | None:
+        """Invoke stack top or suspend for a user-function activation."""
         callee = _pop(frame.stack, "call")
+        release_callee = isinstance(
+            callee,
+            (FunctionValue, OverloadedFunctionValue),
+        )
         try:
             if isinstance(callee, BuiltinValue):
                 _call_builtin(callee, frame)
-                return
+                return None
             if isinstance(callee, FunctionValue):
-                self._call_function(callee, frame)
-                return
+                request = self._call_function(callee, frame)
+                if request is None:
+                    return None
+                release_callee = False
+                return replace(request, release_after=callee)
             if isinstance(callee, ObjectConstructorValue):
                 _call_object_constructor(callee, frame, self)
-                return
+                return None
             if isinstance(callee, OverloadedFunctionValue):
                 if len(callee.overloads) == 1:
-                    self._call_function(callee.overloads[0], frame)
-                    return
+                    request = self._call_function(callee.overloads[0], frame)
+                    if request is None:
+                        return None
+                    release_callee = False
+                    return replace(request, release_after=callee)
                 raise RuntimeError(
                     "cannot call overloaded function without resolved slot"
                 )
             raise RuntimeError(f"cannot call value {_format_value(callee)}")
         finally:
-            if isinstance(callee, (FunctionValue, OverloadedFunctionValue)):
+            if release_callee:
                 _release_value(callee, self)
 
     def _call_resolved_element(
         self,
         frame: _Frame,
         reference: object,
-    ) -> None:
+    ) -> _FunctionCallRequest | None:
         """Invoke resolved element during VM execution."""
         if not isinstance(reference, ResolvedElementReference):
             raise RuntimeError(f"invalid resolved element reference {reference!r}")
@@ -1006,7 +1324,7 @@ class VirtualMachine:
                 reference.static_values,
                 reference.extension,
             )
-            return
+            return None
         value = _load_name(reference.name, frame.locals, frame.globals)
         if isinstance(value, BuiltinValue):
             try:
@@ -1036,13 +1354,11 @@ class VirtualMachine:
                 reference.static_values,
                 reference.extension,
             )
-            return
+            return None
         if isinstance(value, FunctionValue):
-            self._call_resolved_function_value(value, frame, reference)
-            return
+            return self._call_resolved_function_value(value, frame, reference)
         if isinstance(value, OverloadedFunctionValue):
-            self._call_resolved_overloaded_function(value, frame, reference)
-            return
+            return self._call_resolved_overloaded_function(value, frame, reference)
         if isinstance(value, ObjectConstructorValue):
             _call_object_constructor(
                 value,
@@ -1051,14 +1367,14 @@ class VirtualMachine:
                 reference.type_args,
                 reference.overload_index,
             )
-            return
+            return None
         if isinstance(value, ObjectValue):
             _require_single_resolved_slot(reference, "enum member")
             frame.stack.append(_retain_value(value))
-            return
+            return None
         if reference.overload_index == 0 and not callable(value):
             frame.stack.append(_retain_value(value))
-            return
+            return None
         raise RuntimeError(f"resolved element '{reference.name}' is not callable")
 
     def _call_resolved_builtin_value(
@@ -1095,11 +1411,11 @@ class VirtualMachine:
         value: FunctionValue,
         frame: _Frame,
         reference: ResolvedElementReference,
-    ) -> None:
+    ) -> _FunctionCallRequest | None:
         """Invoke resolved function value during VM execution."""
         _require_single_resolved_slot(reference, "function")
         frame.stack.extend(reference.static_values)
-        self._call_function(
+        return self._call_function(
             value,
             frame,
             vectorised=reference.vectorised,
@@ -1113,7 +1429,7 @@ class VirtualMachine:
         value: OverloadedFunctionValue,
         frame: _Frame,
         reference: ResolvedElementReference,
-    ) -> None:
+    ) -> _FunctionCallRequest | None:
         """Invoke resolved overloaded function during VM execution."""
         try:
             overload = value.overloads[reference.overload_index]
@@ -1125,7 +1441,7 @@ class VirtualMachine:
         if reference.multidispatch:
             overload = _select_multimethod_overload(value, overload, frame)
         frame.stack.extend(reference.static_values)
-        self._call_function(
+        return self._call_function(
             overload,
             frame,
             vectorised=reference.vectorised,
@@ -1258,8 +1574,8 @@ class VirtualMachine:
         vectorised_depths: tuple[int, ...] = (),
         vectorised_target_ranks: tuple[int | None, ...] = (),
         extension_reference: VectorExtensionReference | None = None,
-    ) -> None:
-        """Invoke function during VM execution."""
+    ) -> _FunctionCallRequest | None:
+        """Invoke or suspend a user function during VM execution."""
         arity = len(callee.code.params)
         try:
             (
@@ -1306,16 +1622,102 @@ class VirtualMachine:
             _mark_mustcall_method(args, result, callee)
             frame.stack.extend(result)
         else:
-            try:
-                result = self.call(callee, args)
-            except _py_builtins.RuntimeError as exc:
-                raise _with_call_detail(
-                    exc,
-                    f"function '{_function_name(callee.code)}'",
-                    args,
-                ) from exc
-            _mark_mustcall_method(args, result, callee)
-            frame.stack.extend(result)
+            target = f"function '{_function_name(callee.code)}'"
+            if self._can_execute_direct_leaf(callee):
+                try:
+                    result = self._execute_direct_leaf(callee, args)
+                except _py_builtins.RuntimeError as exc:
+                    raise _with_call_detail(exc, target, args) from exc
+                _mark_mustcall_method(args, result, callee)
+                frame.stack.extend(result)
+            else:
+                return _FunctionCallRequest(callee, args, target)
+        return None
+
+    def _can_execute_direct_leaf(
+        self,
+        function: FunctionValue,
+    ) -> bool:
+        """Return whether a proved leaf can bypass activation scheduling."""
+        if function.direct_leaf is None:
+            direct_leaf = True
+            for instruction in function.code.instructions:
+                if instruction.op in {
+                    OpCode.CALL,
+                    OpCode.FOREACH,
+                    OpCode.LOAD_ELEMENT,
+                    OpCode.MAKE_FUNCTION,
+                    OpCode.VALIDATE_TAG,
+                }:
+                    direct_leaf = False
+                    break
+                if instruction.op is OpCode.CALL_RESOLVED_ELEMENT:
+                    reference = instruction.arg
+                    if (
+                        not isinstance(reference, ResolvedElementReference)
+                        or reference.extension is not None
+                    ):
+                        direct_leaf = False
+                        break
+                    value = function.globals.get(reference.name)
+                    if not isinstance(value, BuiltinValue):
+                        direct_leaf = False
+                        break
+                    try:
+                        overload = value.element.definitions[
+                            reference.overload_index
+                        ]
+                    except IndexError:
+                        direct_leaf = False
+                        break
+                    if not overload.ownership_trivial:
+                        direct_leaf = False
+                        break
+                elif (
+                    instruction.op in {OpCode.LOAD_VAR, OpCode.LOAD_VAR_BORROW}
+                    and instruction.arg not in function.code.params
+                ):
+                    value = function.globals.get(instruction.arg, _MISSING_NAME)
+                    if value is _MISSING_NAME or _needs_release(value):
+                        direct_leaf = False
+                        break
+            function.direct_leaf = direct_leaf
+        return function.direct_leaf and not function.code.accepts_stack_inputs
+
+    def _execute_direct_leaf(
+        self,
+        function: FunctionValue,
+        args: tuple[Any, ...],
+    ) -> list[Any]:
+        """Execute a proved leaf without entering the frame scheduler."""
+        locals_, retained_locals = _function_call_locals(function, args)
+        cycle_values = tuple(args) if function.code.cycle_params else ()
+        initial_stack = [] if cycle_values else list(args)
+        activation = self._new_activation(
+            function.code,
+            locals_,
+            function.globals,
+            cycle_values,
+            initial_stack,
+            retained_locals,
+        )
+        result = self._run_activation(activation)
+        if isinstance(result, _FunctionCallRequest):
+            raise RuntimeError("direct leaf unexpectedly suspended at a call")
+        ranked = (
+            _apply_runtime_collection_ranks(
+                result,
+                function.code.return_collection_ranks,
+            )
+            if function.code.return_collection_ranks
+            else result
+        )
+        tagged = (
+            _apply_runtime_return_tags(ranked, function.code.return_tags)
+            if function.code.return_tags
+            else ranked
+        )
+        return list(tagged)
 
     def _match_patterns(
         self,
@@ -1921,6 +2323,8 @@ def _needs_release(value: Any) -> bool:
         value = value.value
         if isinstance(value, _SCALAR_RUNTIME_TYPES):
             return False
+    if isinstance(value, (ListValue, DictValue)):
+        return True
     if isinstance(value, list):
         return not _list_ownership_is_trivial(value)
     if isinstance(value, dict):
@@ -1980,6 +2384,9 @@ def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
     if isinstance(value, OverloadedFunctionValue):
         value.refcount += 1
         return value
+    if isinstance(value, (ListValue, DictValue)):
+        value.refcount += 1
+        return value
     if isinstance(value, list):
         if _list_ownership_is_trivial(value):
             return value
@@ -2034,6 +2441,22 @@ def _release_value(value: Any, vm: VirtualMachine) -> None:
             return
         for overload in value.overloads:
             _release_value(overload, vm)
+        return
+    if isinstance(value, ListValue):
+        value.refcount -= 1
+        if value.refcount > 0:
+            return
+        if not _list_ownership_is_trivial(value):
+            for item in value:
+                _release_value(item, vm)
+        return
+    if isinstance(value, DictValue):
+        value.refcount -= 1
+        if value.refcount > 0:
+            return
+        if not _dict_ownership_is_trivial(value):
+            for item in value.values():
+                _release_value(item, vm)
         return
     if isinstance(value, list):
         if _list_ownership_is_trivial(value):
@@ -3802,6 +4225,22 @@ def _index_receiver(frame: _Frame) -> Any:
     return args[0]
 
 
+def _consume_receiver_result(
+    receiver: Any,
+    result: Any,
+    vm: VirtualMachine,
+) -> Any:
+    """Transfer a consumed receiver's ownership to its extracted result."""
+    if not _needs_release(receiver):
+        return result
+    if isinstance(result, LazyList):
+        result.owned_values = (*result.owned_values, receiver)
+        return result
+    retained = _retain_value(result)
+    _release_value(receiver, vm)
+    return retained
+
+
 def _get_index(
     receiver: Any,
     spec: tuple[tuple[tuple[int, int, int, int], ...], int],
@@ -3826,14 +4265,20 @@ def _set_index(
     spec: tuple[tuple[tuple[int, int, int, int], ...], int],
     selectors: list[tuple[bool, Any, Any, Any]],
     value: Any,
+    *,
+    in_place: bool = False,
 ) -> Any:
     """Update index during VM execution."""
     if len(selectors) == 1 and selectors[0][0]:
         _, start, stop, step = selectors[0]
-        return _set_slice_value(receiver, start, stop, step, value)
+        return _set_slice_value(
+            receiver, start, stop, step, value, in_place=in_place
+        )
     if len(selectors) != 1:
         raise RuntimeError("indexed assignment requires one non-slice index")
-    return _set_index_path(receiver, selectors[0][1], value)
+    return _set_index_path(
+        receiver, selectors[0][1], value, in_place=in_place
+    )
 
 
 def _index_path(receiver: Any, index: Any) -> Any:
@@ -3982,15 +4427,22 @@ def _slice_path(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
     return [_slice_path(item, start[1:], stop[1:], step_value) for item in head]
 
 
-def _set_index_path(receiver: Any, index: Any, value: Any) -> Any:
+def _set_index_path(
+    receiver: Any,
+    index: Any,
+    value: Any,
+    *,
+    in_place: bool = False,
+) -> Any:
     """Update index path during VM execution."""
     if _is_path(index):
         if not index:
             return value
         head, *tail = index
         current = _index_one(receiver, head)
-        return _set_index_one(receiver, head, _set_index_path(current, tail, value))
-    return _set_index_one(receiver, index, value)
+        updated = _set_index_path(current, tail, value)
+        return _set_index_one(receiver, head, updated, in_place=in_place)
+    return _set_index_one(receiver, index, value, in_place=in_place)
 
 
 def _set_slice_value(
@@ -3999,6 +4451,8 @@ def _set_slice_value(
     stop: Any,
     step: Any,
     value: Any,
+    *,
+    in_place: bool = False,
 ) -> Any:
     """Update slice value during VM execution."""
     if _is_path(start) or _is_path(stop):
@@ -4006,7 +4460,9 @@ def _set_slice_value(
     if isinstance(receiver, str):
         return _set_string_slice(receiver, start, stop, step, value)
     if is_eager_sequence(receiver):
-        return _set_eager_slice(receiver, start, stop, step, value)
+        return _set_eager_slice(
+            receiver, start, stop, step, value, in_place=in_place
+        )
     if is_list_like(receiver):
         return _set_lazy_slice(receiver, start, stop, step, value)
     raise RuntimeError("value is not slice-assignable")
@@ -4018,11 +4474,23 @@ def _set_eager_slice(
     stop: Any,
     step: Any,
     value: Any,
+    *,
+    in_place: bool = False,
 ) -> list[Any]:
     """Update eager slice during VM execution."""
     indexes = _eager_slice_indexes(len(receiver), start, stop, step)
     replacements = _slice_replacements(value, len(indexes))
-    updated = _copy_eager_list(receiver)
+    updated = (
+        receiver
+        if in_place
+        and isinstance(receiver, ListValue)
+        and receiver.refcount == 1
+        and _list_ownership_is_trivial(receiver)
+        else _copy_eager_list(
+            receiver,
+            skip_indexes=frozenset(indexes),
+        )
+    )
     for index, replacement in zip(indexes, replacements, strict=True):
         list.__setitem__(updated, index, replacement)
     _update_list_ownership_after_replacements(updated, replacements)
@@ -4123,13 +4591,19 @@ def _slice_replacements(value: Any, count: int) -> list[Any]:
 def _copy_eager_list(
     receiver: Any,
     values: Iterable[Any] | None = None,
+    *,
+    skip_indexes: frozenset[int] = frozenset(),
 ) -> list[Any]:
-    """Copy an eager list while preserving Valiance runtime metadata."""
+    """Copy an eager list while preserving metadata and child ownership."""
     source = receiver if values is None else values
     if not isinstance(receiver, ListValue):
         return list(source)
     copied = ListValue(source, runtime_rank=receiver.runtime_rank)
     copied._ownership_trivial = receiver._ownership_trivial
+    if copied._ownership_trivial is not True:
+        for index, item in enumerate(copied):
+            if index not in skip_indexes:
+                _retain_value(item)
     return copied
 
 
@@ -4144,12 +4618,35 @@ def _update_list_ownership_after_replacements(
         value._ownership_trivial = False
 
 
-def _set_index_one(receiver: Any, index: Any, value: Any) -> Any:
+def _set_index_one(
+    receiver: Any,
+    index: Any,
+    value: Any,
+    *,
+    in_place: bool = False,
+) -> Any:
     """Update index one during VM execution."""
     if isinstance(receiver, dict):
-        updated = DictValue(receiver) if isinstance(receiver, DictValue) else dict(receiver)
+        if (
+            in_place
+            and isinstance(receiver, DictValue)
+            and receiver.refcount == 1
+            and _dict_ownership_is_trivial(receiver)
+        ):
+            updated = receiver
+        else:
+            updated = (
+                DictValue(receiver)
+                if isinstance(receiver, DictValue)
+                else dict(receiver)
+            )
+            if isinstance(updated, DictValue):
+                updated._ownership_trivial = receiver._ownership_trivial
+                if updated._ownership_trivial is not True:
+                    for key, item in updated.items():
+                        if key != index:
+                            _retain_value(item)
         if isinstance(updated, DictValue):
-            updated._ownership_trivial = receiver._ownership_trivial
             dict.__setitem__(updated, index, value)
             if updated._ownership_trivial is True and _needs_release(value):
                 updated._ownership_trivial = False
@@ -4188,16 +4685,26 @@ def _set_index_one(receiver: Any, index: Any, value: Any) -> Any:
         )
     if is_eager_sequence(receiver):
         target = _int_index(index)
-        updated = _copy_eager_list(receiver)
-        try:
-            list.__setitem__(updated, target, value)
-        except IndexError as exc:
+        if not -len(receiver) <= target < len(receiver):
             raise PanicSignal(
                 _fault_object(
                     "IndexFault",
                     _index_fault_message(target, len(receiver)),
                 )
-            ) from exc
+            )
+        normalized_target = _normal_index(target, len(receiver))
+        updated = (
+            receiver
+            if in_place
+            and isinstance(receiver, ListValue)
+            and receiver.refcount == 1
+            and _list_ownership_is_trivial(receiver)
+            else _copy_eager_list(
+                receiver,
+                skip_indexes=frozenset((normalized_target,)),
+            )
+        )
+        list.__setitem__(updated, target, value)
         _update_list_ownership_after_replacements(updated, (value,))
         return updated
     raise RuntimeError("value is not index-assignable")
@@ -4336,7 +4843,13 @@ def _get_field(receiver: Any, field: str) -> Any:
         raise RuntimeError(f"value has no field '{field}'") from exc
 
 
-def _set_field(receiver: Any, field: str, value: Any) -> Any:
+def _set_field(
+    receiver: Any,
+    field: str,
+    value: Any,
+    *,
+    in_place: bool = False,
+) -> Any:
     """Update field during VM execution."""
     receiver = unwrap_runtime_value(receiver)
     if isinstance(receiver, ObjectValue):
@@ -4354,9 +4867,26 @@ def _set_field(receiver: Any, field: str, value: Any) -> Any:
     if isinstance(receiver, dict):
         if field not in receiver:
             raise RuntimeError(f"record has no field '{field}'")
-        fields = DictValue(receiver) if isinstance(receiver, DictValue) else dict(receiver)
+        if (
+            in_place
+            and isinstance(receiver, DictValue)
+            and receiver.refcount == 1
+            and _dict_ownership_is_trivial(receiver)
+        ):
+            fields = receiver
+        else:
+            fields = (
+                DictValue(receiver)
+                if isinstance(receiver, DictValue)
+                else dict(receiver)
+            )
+            if isinstance(fields, DictValue):
+                fields._ownership_trivial = receiver._ownership_trivial
+                if fields._ownership_trivial is not True:
+                    for key, item in fields.items():
+                        if key != field:
+                            _retain_value(item)
         if isinstance(fields, DictValue):
-            fields._ownership_trivial = receiver._ownership_trivial
             dict.__setitem__(fields, field, value)
             if fields._ownership_trivial is True and _needs_release(value):
                 fields._ownership_trivial = False
