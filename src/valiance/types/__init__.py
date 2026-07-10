@@ -114,6 +114,7 @@ from valiance.types.relations import (
     merge_stacks,
     merge_types,
     resolve_overload_result,
+    subtype,
     union_dispatched_callable_plan,
     try_apply_overload,
 )
@@ -231,6 +232,7 @@ __all__ = [
     "normalize",
     "optional",
     "resolve_overload_result",
+    "subtype",
     "union_dispatched_callable_plan",
     "same",
     "show",

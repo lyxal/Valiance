@@ -18,7 +18,7 @@ For more information, check out the [working docs](docs/language.md).
 
 Start with [`docs/maintenance/README.md`](docs/maintenance/README.md) before
 changing the compiler or runtime. It links to an architecture tour, task-oriented
-change playbooks, debugging guidance, and the production docstring policy.
+change playbooks, debugging guidance, a human-first [type-system guide](docs/maintenance/type-system.md), and the production docstring policy.
 
 ## Testing
 

@@ -28,6 +28,9 @@ behaviour becomes harder to reason about and static guarantees become weaker.
 
 - [Architecture tour](architecture.md) explains the major packages and the
   ownership boundaries between them.
+- [Understanding the type system](type-system.md) gives a human-first mental
+  model of type relations, generic solving, overload application, and branch
+  analysis, with traced examples and an API decision table.
 - [Change playbooks](change-playbooks.md) gives step-by-step recipes for common
   work such as adding syntax, an element, a runtime value, or a CLI command.
 - [Testing and debugging](testing-and-debugging.md) explains the test layers,

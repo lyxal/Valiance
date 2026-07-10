@@ -8,6 +8,9 @@ The analyser is currently branch-centric. Every analysed block starts from a
 set of possible analysis branches and returns a new set of possible branches.
 Ordinary, non-inference analysis is just the one-branch case.
 
+For an approachable explanation before this exhaustive reference, read
+[Understanding Valiance's type system](../maintenance/type-system.md).
+
 ## Main Files
 
 - `src/valiance/analysis/analyser.py`

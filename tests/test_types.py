@@ -51,6 +51,7 @@ from valiance.types import (
     merge_types,
     optional,
     resolve_overload_result,
+    subtype,
     try_apply_overload,
 )
 
@@ -88,6 +89,10 @@ class TypeLibraryTests(unittest.TestCase):
     def test_assignment_does_not_vectorise(self):
         self.assertFalse(assignable(C(ListExactType, Number), Number))
         self.assertTrue(compatible(C(ListExactType, Number), Number))
+
+    def test_public_subtype_api_checks_nominal_widening(self):
+        self.assertTrue(subtype(Integer, Number))
+        self.assertFalse(subtype(Number, Integer))
 
     def test_minimum_rank_is_parameter_compatible_with_exact_rank(self):
         argument = C(ListMinType, Number)

@@ -2,6 +2,8 @@ Make sure you read the compiler guides in `docs/Compiler Documentation` before m
 any changes.
 Start with `docs/maintenance/README.md` for the human-facing architecture and
 change playbooks, then use the compiler guides for subsystem detail.
+For analyser or type-relation work, read `docs/maintenance/type-system.md`
+before the exhaustive compiler type-system reference.
 
 Windows notes for future agents:
 
