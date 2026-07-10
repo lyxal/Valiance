@@ -60,12 +60,14 @@ class RuntimeError(_py_builtins.RuntimeError):
     """Raised when bytecode execution fails."""
 
     def __init__(self, message: object) -> None:
+        """Initialize this runtime error."""
         super().__init__(message)
         self.message = str(message)
         self.call_details: list[tuple[str, tuple[Any, ...]]] = []
         self.execution_contexts: list[_ExecutionContext] = []
 
     def add_call_detail(self, target: str, args: tuple[Any, ...]) -> None:
+        """Attach one unique failed-call description to this runtime error."""
         detail = target, args
         if detail not in self.call_details:
             self.call_details.append(detail)
@@ -77,11 +79,13 @@ class RuntimeError(_py_builtins.RuntimeError):
         instruction: object,
         stack: list[Any],
     ) -> None:
+        """Attach one unique instruction and stack snapshot to this error."""
         context = _ExecutionContext(function_name, ip, instruction, tuple(stack))
         if context not in self.execution_contexts:
             self.execution_contexts.append(context)
 
     def __str__(self) -> str:
+        """Return the human-readable representation of this runtime error."""
         lines = [self.message]
         if self.call_details:
             lines.append("runtime call:")
@@ -118,6 +122,7 @@ class FunctionValue:
     refcount: int = 1
 
     def __repr__(self) -> str:
+        """Return a developer-facing representation of this function value."""
         return f"<{_function_name(self.code)}/{len(self.code.params)}>"
 
     __str__ = __repr__
@@ -138,6 +143,7 @@ class _RuntimeVectorExtension:
     selector: FunctionValue | OverloadedFunctionValue | None = None
 
     def owned_values(self) -> tuple[Any, ...]:
+        """Return values whose ownership is retained by this vector extension."""
         values: list[Any] = []
         if self.default is not _NO_EXTENSION_DEFAULT:
             values.append(self.default)
@@ -156,6 +162,7 @@ class OverloadedFunctionValue:
     refcount: int = 1
 
     def __repr__(self) -> str:
+        """Return a developer-facing representation of this overloaded function value."""
         arities = ", ".join(
             str(len(overload.code.params)) for overload in self.overloads
         )
@@ -172,6 +179,7 @@ class BuiltinValue:
     context: RuntimeContext
 
     def __repr__(self) -> str:
+        """Return a developer-facing representation of this builtin value."""
         return f"<builtin {self.element.name.text}>"
 
     __str__ = __repr__
@@ -189,6 +197,7 @@ class ObjectConstructorValue:
     initializer: FunctionValue | OverloadedFunctionValue | None = None
 
     def __repr__(self) -> str:
+        """Return a developer-facing representation of this object constructor value."""
         return f"<constructor {self.type_name}>"
 
     __str__ = __repr__
@@ -273,6 +282,7 @@ class VirtualMachine:
         output: Callable[[str], None] | None = None,
         list_preview_limit: int | None = None,
     ) -> None:
+        """Initialize this virtual machine."""
         self.output = (lambda value: print(value, end="")) if output is None else output
         self.format_value = lambda value: format_runtime_value(
             value,
@@ -307,6 +317,7 @@ class VirtualMachine:
         *,
         isolate_captures: bool = True,
     ) -> list[Any]:
+        """Invoke one compiled function with explicit runtime arguments."""
         if len(args) != len(function.code.params):
             raise RuntimeError(
                 f"{_function_name(function.code)} expected "
@@ -334,6 +345,7 @@ class VirtualMachine:
         return list(_apply_runtime_return_tags(ranked, function.code.return_tags))
 
     def call_value(self, value: Any, args: list[Any]) -> list[Any]:
+        """Invoke a runtime callable, resolving overload and vectorisation behaviour."""
         if isinstance(value, FunctionValue):
             if any(is_list_like(arg) for arg in args):
                 try:
@@ -385,6 +397,7 @@ class VirtualMachine:
         args: list[Any],
         overload_index: int,
     ) -> list[Any]:
+        """Invoke one statically selected overload of a runtime callable."""
         if isinstance(value, FunctionValue):
             if overload_index == 0:
                 return self.call(value, args)
@@ -407,6 +420,7 @@ class VirtualMachine:
         initial_stack: list[Any] | None = None,
         retained_locals: frozenset[str] = frozenset(),
     ) -> list[Any]:
+        """Execute bytecode in a new frame and return its final stack."""
         frame = _Frame(
             stack=list(initial_stack or ()),
             locals=locals_,
@@ -761,20 +775,24 @@ class VirtualMachine:
             raise
 
     def _finalize_frame(self, frame: _Frame, result: list[Any]) -> list[Any]:
+        """Compute finalize frame during VM execution."""
         self._release_frame_locals(frame)
         return result
 
     def _discard_frame(self, frame: _Frame) -> None:
+        """Update discard frame state during VM execution."""
         _release_stack_tail(frame.stack, len(frame.stack), self)
         self._release_frame_locals(frame)
 
     def _release_frame_locals(self, frame: _Frame) -> None:
+        """Release frame locals during VM execution."""
         for name, value in tuple(frame.locals.items()):
             if name in frame.retained_locals or frame.globals.get(name) is not value:
                 _release_value(value, self)
             del frame.locals[name]
 
     def _handle_panic(self, frame: _Frame, panic: PanicSignal) -> int | None:
+        """Handle panic during VM execution."""
         while frame.panic_handlers:
             handler = frame.panic_handlers.pop()
             for type_name, target in handler.handlers:
@@ -788,6 +806,7 @@ class VirtualMachine:
         return None
 
     def _call_stack_top(self, frame: _Frame) -> None:
+        """Invoke stack top during VM execution."""
         callee = _pop(frame.stack, "call")
         try:
             if isinstance(callee, BuiltinValue):
@@ -816,6 +835,7 @@ class VirtualMachine:
         frame: _Frame,
         reference: object,
     ) -> None:
+        """Invoke resolved element during VM execution."""
         if not isinstance(reference, ResolvedElementReference):
             raise RuntimeError(f"invalid resolved element reference {reference!r}")
         value = _load_name(reference.name, frame.locals, frame.globals)
@@ -852,6 +872,7 @@ class VirtualMachine:
         frame: _Frame,
         reference: ResolvedElementReference,
     ) -> None:
+        """Invoke resolved builtin value during VM execution."""
         try:
             overload = value.element.definitions[reference.overload_index]
         except IndexError as exc:
@@ -880,6 +901,7 @@ class VirtualMachine:
         frame: _Frame,
         reference: ResolvedElementReference,
     ) -> None:
+        """Invoke resolved function value during VM execution."""
         _require_single_resolved_slot(reference, "function")
         frame.stack.extend(reference.static_values)
         self._call_function(
@@ -897,6 +919,7 @@ class VirtualMachine:
         frame: _Frame,
         reference: ResolvedElementReference,
     ) -> None:
+        """Invoke resolved overloaded function during VM execution."""
         try:
             overload = value.overloads[reference.overload_index]
         except IndexError as exc:
@@ -917,6 +940,7 @@ class VirtualMachine:
         )
 
     def _validate_tag(self, frame: _Frame, spec: object) -> None:
+        """Update validate tag state during VM execution."""
         tag_name, overload_index, added, removed = spec
         if not frame.stack:
             raise RuntimeError(f"cannot validate {tag_name} on an empty stack")
@@ -941,6 +965,7 @@ class VirtualMachine:
         )
 
     def _unfold(self, frame: _Frame, config: object) -> LazyList:
+        """Compute unfold during VM execution."""
         condition_code, body_code, arity = config
         state = list(_source_args(frame, arity, "unfold"))
         body = _make_function_value(body_code, frame.globals, frame.locals)
@@ -951,6 +976,7 @@ class VirtualMachine:
         )
 
         def generated():
+            """Handle generated during VM execution."""
             nonlocal state
             while True:
                 if condition is not None:
@@ -976,6 +1002,7 @@ class VirtualMachine:
         return LazyList(generated())
 
     def _while(self, frame: _Frame, config: object) -> None:
+        """Update while state during VM execution."""
         condition_code, body_code, arity = config
         state = list(_source_args(frame, arity, "while"))
         condition = _make_function_value(condition_code, frame.globals, frame.locals)
@@ -993,6 +1020,7 @@ class VirtualMachine:
             state = list(outputs[:arity])
 
     def _foreach(self, frame: _Frame, config: object) -> None:
+        """Update foreach state during VM execution."""
         body_code, has_index, completion_count = config
         iterable = _source_args(frame, 1, "foreach")[0]
         if not is_list_like(iterable):
@@ -1024,6 +1052,7 @@ class VirtualMachine:
         vectorised_target_ranks: tuple[int | None, ...] = (),
         extension_reference: VectorExtensionReference | None = None,
     ) -> None:
+        """Invoke function during VM execution."""
         arity = len(callee.code.params)
         try:
             (
@@ -1086,6 +1115,7 @@ class VirtualMachine:
         frame: _Frame,
         patterns: tuple[object, ...],
     ) -> tuple[dict[str, Any], tuple[Any, ...]] | None:
+        """Match patterns during VM execution."""
         if len(frame.stack) < len(patterns):
             return None
         bindings: dict[str, Any] = {}
@@ -1103,6 +1133,7 @@ class VirtualMachine:
         pattern: object,
         bindings: dict[str, Any],
     ) -> bool:
+        """Return the Boolean result of match pattern during virtual-machine execution."""
         if not isinstance(pattern, tuple) or not pattern:
             return False
         kind = pattern[0]
@@ -1143,6 +1174,7 @@ class VirtualMachine:
         items: tuple[object, ...],
         bindings: dict[str, Any],
     ) -> bool:
+        """Return the Boolean result of match list pattern during virtual-machine execution."""
         if not is_eager_sequence(value):
             return False
         return self._match_list_items(tuple(value), items, bindings, 0, 0)
@@ -1155,6 +1187,7 @@ class VirtualMachine:
         value_index: int,
         pattern_index: int,
     ) -> bool:
+        """Return the Boolean result of match list items during virtual-machine execution."""
         if pattern_index == len(patterns):
             return value_index == len(values)
         pattern = patterns[pattern_index]
@@ -1200,6 +1233,7 @@ class VirtualMachine:
         patterns: tuple[object, ...],
         bindings: dict[str, Any],
     ) -> bool:
+        """Return the Boolean result of match pattern sequence during virtual-machine execution."""
         snapshot = dict(bindings)
         for value, pattern in zip(values, patterns, strict=True):
             if not self._match_pattern(value, pattern, bindings):
@@ -1214,6 +1248,7 @@ class VirtualMachine:
         pattern: tuple[object, ...],
         bindings: dict[str, Any],
     ) -> bool:
+        """Return the Boolean result of match type pattern during virtual-machine execution."""
         _, type_spec, binding_name, fields, guard = pattern
         if type_spec is not None and not _matches_cast_type(value, type_spec):
             return False
@@ -1234,6 +1269,7 @@ class VirtualMachine:
         return guard is None or self._guard_truthy(guard, value)
 
     def _guard_truthy(self, guard: FunctionCode, value: Any) -> bool:
+        """Return the Boolean result of guard truthy during virtual-machine execution."""
         result = self.call(FunctionValue(guard, self.globals), [value])
         return bool(result) and _truthy(result[-1])
 
@@ -1255,6 +1291,7 @@ def _require_single_resolved_slot(
     reference: ResolvedElementReference,
     target_kind: str,
 ) -> None:
+    """Update require single resolved slot state during VM execution."""
     if reference.overload_index == 0:
         return
     raise RuntimeError(
@@ -1268,6 +1305,7 @@ def _make_function_value(
     globals_: dict[str, Any],
     locals_: dict[str, Any] | None = None,
 ) -> FunctionValue | OverloadedFunctionValue:
+    """Create function value during VM execution."""
     captured = dict(globals_)
     local_values = {} if locals_ is None else dict(locals_)
     captured.update(local_values)
@@ -1299,6 +1337,7 @@ def _materialize_vector_extension(
     reference: VectorExtensionReference | None,
     frame: _Frame,
 ) -> _RuntimeVectorExtension | None:
+    """Compute materialize vector extension during VM execution."""
     if reference is None:
         return None
 
@@ -1352,6 +1391,7 @@ def _call_extension_function(
     function: FunctionValue | OverloadedFunctionValue,
     args: tuple[Any, ...],
 ) -> list[Any]:
+    """Invoke extension function during VM execution."""
     if isinstance(function, FunctionValue):
         return vm.call(function, list(args))
     matches = tuple(
@@ -1369,6 +1409,7 @@ def _call_extension_function(
 def _extension_owned_values(
     extension: _RuntimeVectorExtension | None,
 ) -> tuple[Any, ...]:
+    """Collect the values for extension owned during VM execution."""
     return () if extension is None else extension.owned_values()
 
 
@@ -1376,6 +1417,7 @@ def _release_runtime_vector_extension(
     extension: _RuntimeVectorExtension | None,
     vm: VirtualMachine,
 ) -> None:
+    """Release runtime vector extension during VM execution."""
     for value in _extension_owned_values(extension):
         _release_value(value, vm)
 
@@ -1386,6 +1428,7 @@ def _function_call_locals(
     *,
     isolate_captures: bool = True,
 ) -> tuple[dict[str, Any], frozenset[str]]:
+    """Compute function call locals during VM execution."""
     locals_: dict[str, Any] = dict(zip(function.code.params, args, strict=True))
     if not isolate_captures:
         return locals_, frozenset()
@@ -1399,6 +1442,7 @@ def _function_call_locals(
 
 
 def _source_args(frame: _Frame, arity: int, context: str) -> tuple[Any, ...]:
+    """Compute source args during VM execution."""
     try:
         (
             args,
@@ -1423,6 +1467,7 @@ def _call_unfold_function(
     value: Any,
     state: list[Any],
 ) -> list[Any]:
+    """Invoke unfold function during VM execution."""
     if isinstance(value, FunctionValue):
         return _execute_unfold_function(vm, value, state)
     if isinstance(value, OverloadedFunctionValue):
@@ -1449,6 +1494,7 @@ def _execute_unfold_function(
     function: FunctionValue,
     state: list[Any],
 ) -> list[Any]:
+    """Execute unfold function during VM execution."""
     if len(state) != len(function.code.params):
         raise RuntimeError(
             f"{_function_name(function.code)} expected "
@@ -1470,6 +1516,7 @@ def _execute_unfold_function(
 
 
 def _unfold_present_emission(value: Any) -> Any:
+    """Compute unfold present emission during VM execution."""
     if _is_none_result_value(value):
         return _SKIP_UNFOLD_EMISSION
     if (
@@ -1482,6 +1529,7 @@ def _unfold_present_emission(value: Any) -> Any:
 
 
 def _sync_captured_globals(frame: _Frame, captured: dict[str, Any]) -> None:
+    """Update sync captured globals state during VM execution."""
     frame.globals.update(captured)
     for name in tuple(frame.locals):
         if name in captured:
@@ -1489,6 +1537,7 @@ def _sync_captured_globals(frame: _Frame, captured: dict[str, Any]) -> None:
 
 
 def _enter_cycle(frame: _Frame, spec: object) -> None:
+    """Update enter cycle state during VM execution."""
     if not isinstance(spec, tuple) or len(spec) != 2:
         raise RuntimeError(f"invalid cycle scope {spec!r}")
     arity, seed_stack = spec
@@ -1513,6 +1562,7 @@ def _enter_cycle(frame: _Frame, spec: object) -> None:
 
 
 def _exit_cycle(frame: _Frame) -> None:
+    """Update exit cycle state during VM execution."""
     if not frame.cycle_scopes:
         raise RuntimeError("cycle scope underflow")
     (
@@ -1523,6 +1573,7 @@ def _exit_cycle(frame: _Frame) -> None:
 
 
 def _store_value(existing: Any, value: Any) -> Any:
+    """Store value during VM execution."""
     if _is_function_value(existing) and _is_function_value(value):
         for overload in _function_overloads(existing) + _function_overloads(value):
             _retain_value(overload)
@@ -1533,6 +1584,7 @@ def _store_value(existing: Any, value: Any) -> Any:
 
 
 def _bind_recursive_value(value: Any, name: str) -> None:
+    """Bind recursive value during VM execution."""
     if isinstance(value, FunctionValue):
         value.globals.setdefault(name, value)
         return
@@ -1542,10 +1594,12 @@ def _bind_recursive_value(value: Any, name: str) -> None:
 
 
 def _is_function_value(value: Any) -> bool:
+    """Return whether the value is function value."""
     return isinstance(value, (FunctionValue, OverloadedFunctionValue))
 
 
 def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
+    """Determine the type of object runtime during VM execution."""
     if value is None:
         return None
     if not isinstance(value, tuple) or len(value) != 6:
@@ -1612,6 +1666,7 @@ def _object_constructor_reference(value: object) -> ObjectConstructorReference:
 
 
 def _release_stack_tail(stack: list[Any], count: int, vm: VirtualMachine) -> None:
+    """Release stack tail during VM execution."""
     if count <= 0:
         return
     values = _pop_many(stack, count)
@@ -1620,6 +1675,7 @@ def _release_stack_tail(stack: list[Any], count: int, vm: VirtualMachine) -> Non
 
 
 def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
+    """Retain value during VM execution."""
     if isinstance(value, TaggedValue):
         _retain_value(value.value, check_duplication=check_duplication)
         return value
@@ -1662,6 +1718,7 @@ def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
 
 
 def _release_value(value: Any, vm: VirtualMachine) -> None:
+    """Release value during VM execution."""
     if isinstance(value, TaggedValue):
         _release_value(value.value, vm)
         return
@@ -1710,6 +1767,7 @@ def _release_value(value: Any, vm: VirtualMachine) -> None:
 
 
 def _run_object_cleanup(value: ObjectValue, vm: VirtualMachine) -> None:
+    """Update run object cleanup state during VM execution."""
     if value.destroyed:
         return
     value.cleaning_up = True
@@ -1746,6 +1804,7 @@ def _run_object_cleanup(value: ObjectValue, vm: VirtualMachine) -> None:
 
 
 def _mustcall_satisfied(value: ObjectValue) -> bool:
+    """Return the Boolean result of mustcall satisfied during virtual-machine execution."""
     runtime = value.runtime_type
     if runtime is None or runtime.mustcall_mode is None or not runtime.mustcall_methods:
         return True
@@ -1759,6 +1818,7 @@ def _mustcall_satisfied(value: ObjectValue) -> bool:
 
 
 def _cleanup_fault_message(value: ObjectValue) -> str:
+    """Format the message for cleanup fault during VM execution."""
     runtime = value.runtime_type
     if runtime is None or not runtime.mustcall_methods:
         return f"{_object_type_name(value)} was dropped without required cleanup"
@@ -1767,6 +1827,7 @@ def _cleanup_fault_message(value: ObjectValue) -> str:
 
 
 def _fault_object(type_name: str, message: str) -> ObjectValue:
+    """Compute fault object during VM execution."""
     return ObjectValue(type_name, {"message": message})
 
 
@@ -1775,6 +1836,7 @@ def _mark_mustcall_method(
     result: list[Any] | tuple[Any, ...],
     callee: FunctionValue,
 ) -> None:
+    """Update mark mustcall method state during VM execution."""
     if not args or not isinstance(args[0], ObjectValue):
         return
     runtime = args[0].runtime_type
@@ -1794,6 +1856,7 @@ def _finalize_builtin_result_ownership(
     args: tuple[Any, ...],
     result: tuple[Any, ...],
 ) -> None:
+    """Update finalize builtin result ownership state during VM execution."""
     counts: Counter[int] = Counter()
     values: dict[int, Any] = {}
     arg_ids = {
@@ -1823,6 +1886,7 @@ def _bind_lazy_result_owners(
     args: tuple[Any, ...],
     result: tuple[Any, ...],
 ) -> tuple[Any, ...]:
+    """Bind lazy result owners during VM execution."""
     bound: list[Any] = []
     for value in result:
         if not isinstance(value, LazyList):
@@ -1838,6 +1902,7 @@ def _bind_lazy_result_owners(
 
 
 def _panic_matches(value: Any, type_name: str) -> bool:
+    """Return the Boolean result of panic matches during virtual-machine execution."""
     if isinstance(value, ObjectValue):
         return value.type_name == type_name
     if type_name == "String":
@@ -1855,6 +1920,7 @@ def _function_overloads(value: FunctionValue | OverloadedFunctionValue) -> tuple
     FunctionValue,
     ...
 ]:
+    """Collect the overloads for function during VM execution."""
     if isinstance(value, FunctionValue):
         return (value,)
     return value.overloads
@@ -1885,6 +1951,7 @@ def _select_union_dispatch_overload(
     value: OverloadedFunctionValue,
     args: tuple[Any, ...],
 ) -> FunctionValue:
+    """Select union dispatch overload during VM execution."""
     matches = tuple(
         branch
         for branch in value.dispatch_plan
@@ -1909,6 +1976,7 @@ def _select_union_dispatch_overload(
 
 
 def _runtime_pattern_matches(value: Any, pattern: RuntimeTypePattern) -> bool:
+    """Return the Boolean result of runtime pattern matches during virtual-machine execution."""
     if pattern.kind == "tagged":
         actual_tags = runtime_value_tags(value)
         for required in pattern.tags:
@@ -1940,10 +2008,12 @@ def _runtime_collection_pattern_matches(
     value: Any,
     pattern: RuntimeTypePattern,
 ) -> bool:
+    """Return the Boolean result of runtime collection pattern matches during virtual-machine execution."""
     if not is_list_like(value) or pattern.rank is None or not pattern.children:
         return False
 
     def matches_rank(item: Any, rank: int) -> bool:
+        """Return whether the value matches rank."""
         if rank == 0:
             return _runtime_pattern_matches(item, pattern.children[0])
         if not is_list_like(item):
@@ -1954,6 +2024,7 @@ def _runtime_collection_pattern_matches(
 
 
 def _runtime_value_pattern(value: Any) -> RuntimeTypePattern | None:
+    """Compute runtime value pattern during VM execution."""
     value = unwrap_runtime_value(value)
     if isinstance(value, ObjectValue):
         return RuntimeTypePattern(
@@ -1974,6 +2045,7 @@ def _runtime_pattern_subtype(
     actual: RuntimeTypePattern,
     target: RuntimeTypePattern,
 ) -> bool:
+    """Return the Boolean result of runtime pattern subtype during virtual-machine execution."""
     if target.kind == "union":
         return any(_runtime_pattern_subtype(actual, item) for item in target.children)
     if actual.kind != target.kind:
@@ -2008,6 +2080,7 @@ def _runtime_patterns_same_type(
     left: RuntimeTypePattern,
     right: RuntimeTypePattern,
 ) -> bool:
+    """Return the Boolean result of runtime patterns same type during virtual-machine execution."""
     return (
         left.kind == right.kind
         and left.name == right.name
@@ -2023,6 +2096,7 @@ def _runtime_patterns_same_type(
 
 
 def _parse_runtime_type_pattern(text: str) -> RuntimeTypePattern:
+    """Compute parse runtime type pattern during VM execution."""
     text = text.strip()
     union_parts = _split_runtime_type_args(text, "|")
     if len(union_parts) > 1:
@@ -2047,6 +2121,7 @@ def _parse_runtime_type_pattern(text: str) -> RuntimeTypePattern:
 
 
 def _split_runtime_type_args(text: str, separator: str) -> tuple[str, ...]:
+    """Compute split runtime type args during VM execution."""
     depth = 0
     start = 0
     parts: list[str] = []
@@ -2067,6 +2142,7 @@ def _select_multimethod_overload(
     fallback: FunctionValue,
     frame: _Frame,
 ) -> FunctionValue:
+    """Select multimethod overload during VM execution."""
     arity = len(fallback.code.params)
     try:
         args, _, _, _ = frame.source_args(arity)
@@ -2094,6 +2170,7 @@ def _runtime_types_match(
     args: tuple[Any, ...],
     dispatch_types: tuple[str | None, ...],
 ) -> bool:
+    """Return the Boolean result of runtime types match during virtual-machine execution."""
     if len(args) != len(dispatch_types):
         return False
     return all(
@@ -2106,6 +2183,7 @@ def _runtime_multimethod_types_match(
     args: tuple[Any, ...],
     dispatch_types: tuple[str | None, ...],
 ) -> bool:
+    """Return the Boolean result of runtime multimethod types match during virtual-machine execution."""
     if len(args) != len(dispatch_types) or not any(
         expected is not None for expected in dispatch_types
     ):
@@ -2117,6 +2195,7 @@ def _runtime_multimethod_types_match(
 
 
 def _runtime_argument_type_matches(value: Any, expected: str) -> bool:
+    """Return the Boolean result of runtime argument type matches during virtual-machine execution."""
     value = unwrap_runtime_value(value)
     if isinstance(value, ObjectValue) and value.type_name == expected:
         return True
@@ -2124,6 +2203,7 @@ def _runtime_argument_type_matches(value: Any, expected: str) -> bool:
 
 
 def _runtime_type_name(value: Any) -> str | None:
+    """Return the canonical name for runtime type during VM execution."""
     value = unwrap_runtime_value(value)
     if isinstance(value, ObjectValue):
         if not value.type_args:
@@ -2141,6 +2221,7 @@ def _runtime_type_name(value: Any) -> str | None:
 
 
 def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
+    """Invoke builtin during VM execution."""
     candidates = sorted(
         callee.element.definitions,
         key=lambda overload: len(overload.signature.params),
@@ -2211,6 +2292,7 @@ def _call_object_constructor(
     type_args: tuple[str, ...] = (),
     overload_index: int | None = None,
 ) -> None:
+    """Invoke object constructor during VM execution."""
     if callee.initializer is None:
         arity = len(callee.required)
     else:
@@ -2291,6 +2373,7 @@ def _object_constructor_initializer(
     callee: ObjectConstructorValue,
     overload_index: int | None,
 ) -> FunctionValue:
+    """Compute object constructor initializer during VM execution."""
     initializer = callee.initializer
     if isinstance(initializer, FunctionValue):
         if overload_index not in (None, 0):
@@ -2329,6 +2412,7 @@ def _call_resolved_builtin(
     static_values: tuple[Any, ...] = (),
     extension_reference: VectorExtensionReference | None = None,
 ) -> None:
+    """Invoke resolved builtin during VM execution."""
     arity = (
         arity_override
         if arity_override is not None
@@ -2423,6 +2507,7 @@ def _call_resolved_builtin(
 
 
 def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
+    """Update stack shuffle state during VM execution."""
     mode, prestack, poststack = _stack_shuffle_spec(spec)
     arity = len(prestack)
     try:
@@ -2479,6 +2564,7 @@ def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
 def _stack_shuffle_spec(
     spec: object,
 ) -> tuple[str, tuple[str | None, ...], tuple[str, ...]]:
+    """Compute stack shuffle spec during VM execution."""
     if not isinstance(spec, tuple) or len(spec) != 3:
         raise RuntimeError(f"invalid stack shuffle spec {spec!r}")
     mode, prestack, poststack = spec
@@ -2502,6 +2588,7 @@ def _stack_shuffle_spec(
 
 
 def _extract_object_field(receiver: ObjectValue, field: str, vm: VirtualMachine) -> Any:
+    """Compute extract object field during VM execution."""
     try:
         value = receiver.fields[field]
     except KeyError as exc:
@@ -2516,6 +2603,7 @@ def _extract_object_field(receiver: ObjectValue, field: str, vm: VirtualMachine)
 
 
 def _try_unwrap(stack: list[Any], vm: VirtualMachine) -> bool:
+    """Return the Boolean result of try unwrap during virtual-machine execution."""
     value = _pop(stack, "?")
     if _is_none_result_value(value) or _is_error_result_value(value):
         stack.append(value)
@@ -2532,6 +2620,7 @@ def _try_unwrap(stack: list[Any], vm: VirtualMachine) -> bool:
 
 
 def _is_none_result_value(value: Any) -> bool:
+    """Return whether the value is none result value."""
     return value is None or (
         isinstance(value, ObjectValue)
         and value.type_name.rsplit(".", 1)[-1] == "None"
@@ -2539,6 +2628,7 @@ def _is_none_result_value(value: Any) -> bool:
 
 
 def _is_error_result_value(value: Any) -> bool:
+    """Return whether the value is error result value."""
     return isinstance(value, ObjectValue) and (
         value.type_name == "Err"
         or value.type_name.endswith("Error")
@@ -2551,6 +2641,7 @@ def _call_vectorized_builtin(
     args: tuple[Any, ...],
     context: RuntimeContext,
 ) -> tuple[Any, ...] | None:
+    """Invoke vectorized builtin during VM execution."""
     if overload.implementation is None or not any(is_list_like(arg) for arg in args):
         return None
     if not overload.runtime_vector_matches(args):
@@ -2569,12 +2660,14 @@ def _call_vectorized_resolved_builtin(
     vectorised_target_ranks: tuple[int | None, ...] = (),
     extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...] | None:
+    """Invoke vectorized resolved builtin during VM execution."""
     implementation = overload.implementation
     assert implementation is not None
     def typed_implementation(
         item_args: tuple[Any, ...],
         item_context: RuntimeContext,
     ) -> tuple[Any, ...]:
+        """Compute typed implementation during VM execution."""
         return _apply_declared_return_tags(
             implementation(_unwrapped_args(item_args), item_context),
             overload.signature.returns,
@@ -2610,6 +2703,7 @@ def _vectorize(
     args: tuple[Any, ...],
     context: RuntimeContext,
 ) -> tuple[Any, ...]:
+    """Compute vectorize during VM execution."""
     vector_args = tuple(arg for arg in args if is_list_like(arg))
     if not vector_args:
         if not overload.runtime_matches(args):
@@ -2632,6 +2726,7 @@ def _vectorize_resolved(
     context: RuntimeContext,
     extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...]:
+    """Vectorize resolved during VM execution."""
     vector_args = tuple(arg for arg in args if is_list_like(arg))
     if not vector_args:
         return implementation(_unwrapped_args(args), context)
@@ -2651,6 +2746,7 @@ def _vectorize_resolved_depths(
     *,
     stop_at_zero: bool = False,
 ) -> tuple[Any, ...]:
+    """Vectorize resolved depths during VM execution."""
     if not any(depth > 0 for depth in depths):
         if stop_at_zero:
             return implementation(_unwrapped_args(args), context)
@@ -2715,6 +2811,7 @@ def _resolve_vectorisation_depths(
 
 
 def _parameter_stops_vectorisation(typ: Any) -> bool:
+    """Return the Boolean result of parameter stops vectorisation during virtual-machine execution."""
     typ = normalize(typ)
     if isinstance(typ, (TaggedType, ExactType, AtomicType)):
         return _parameter_stops_vectorisation(typ.inner)
@@ -2729,7 +2826,9 @@ def _vectorize_function(
     target_ranks: tuple[int | None, ...] = (),
     extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...]:
+    """Vectorize function during VM execution."""
     def implementation(item_args: tuple[Any, ...], _context: RuntimeContext):
+        """Handle implementation during VM execution."""
         return tuple(vm.call(callee, list(item_args)))
 
     context = RuntimeContext(
@@ -2759,6 +2858,7 @@ def _vectorize_eager(
     args: tuple[Any, ...],
     context: RuntimeContext,
 ) -> tuple[Any, ...]:
+    """Vectorize eager during VM execution."""
     vector_lengths = {len(arg) for arg in args if is_eager_sequence(arg)}
     if len(vector_lengths) != 1:
         raise RuntimeError("cannot vectorise lists with different lengths")
@@ -2779,6 +2879,7 @@ def _vectorize_eager_resolved(
     context: RuntimeContext,
     extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...]:
+    """Vectorize eager resolved during VM execution."""
     vector_lengths = tuple(len(arg) for arg in args if is_eager_sequence(arg))
     if not vector_lengths:
         raise _CannotVectorize
@@ -2810,6 +2911,7 @@ def _vectorize_eager_resolved_depths(
     *,
     stop_at_zero: bool = False,
 ) -> tuple[Any, ...]:
+    """Vectorize eager resolved depths during VM execution."""
     vector_lengths = tuple(
         len(arg)
         for arg, depth in zip(args, depths, strict=False)
@@ -2853,6 +2955,7 @@ def _vectorize_lazy(
     args: tuple[Any, ...],
     context: RuntimeContext,
 ):
+    """Vectorize lazy during VM execution."""
     sentinel = object()
     iterators = tuple(iter(arg) if is_list_like(arg) else None for arg in args)
     for items in zip_longest(
@@ -2875,6 +2978,7 @@ def _vectorize_lazy_resolved(
     context: RuntimeContext,
     extension: _RuntimeVectorExtension | None = None,
 ):
+    """Vectorize lazy resolved during VM execution."""
     iterators = tuple(iter(arg) if is_list_like(arg) else None for arg in args)
     for items in zip_longest(
         *(iterator for iterator in iterators if iterator is not None),
@@ -2902,6 +3006,7 @@ def _vectorize_lazy_resolved_depths(
     *,
     stop_at_zero: bool = False,
 ):
+    """Vectorize lazy resolved depths during VM execution."""
     iterators = tuple(
         iter(arg) if depth > 0 and is_list_like(arg) else None
         for arg, depth in zip(args, depths, strict=False)
@@ -2937,6 +3042,7 @@ def _extend_vector_args(
     extension: _RuntimeVectorExtension | None,
     context: RuntimeContext,
 ) -> tuple[Any, ...]:
+    """Extend vector args during VM execution."""
     missing_positions = tuple(
         index for index, value in enumerate(args) if value is _MISSING_VECTOR_ITEM
     )
@@ -2993,6 +3099,7 @@ def _extend_vector_args(
 
 
 def _unwrap_extension_selector_result(value: Any) -> Any:
+    """Compute the result for unwrap extension selector during VM execution."""
     if isinstance(value, ObjectValue):
         short_name = value.type_name.rsplit(".", 1)[-1]
         if short_name == "Some" and "value" in value.fields:
@@ -3003,6 +3110,7 @@ def _unwrap_extension_selector_result(value: Any) -> Any:
 
 
 def _transpose_vectorized_items(result_items: list[tuple[Any, ...]]) -> tuple[Any, ...]:
+    """Transpose vectorized items during VM execution."""
     if not result_items:
         return ([],)
     width = len(result_items[0])
@@ -3016,12 +3124,14 @@ class _CannotVectorize(Exception):
 
 
 def _pop(stack: list[Any], context: str) -> Any:
+    """Compute pop during VM execution."""
     if not stack:
         raise RuntimeError(f"stack underflow during {context}")
     return stack.pop()
 
 
 def _pop_many(stack: list[Any], count: int) -> list[Any]:
+    """Pop many during VM execution."""
     if count < 0:
         raise RuntimeError(f"cannot pop negative count {count}")
     if len(stack) < count:
@@ -3034,6 +3144,7 @@ def _pop_many(stack: list[Any], count: int) -> list[Any]:
 
 
 def _build_string(stack: list[Any], template: tuple[object, ...]) -> str:
+    """Compute build string during VM execution."""
     expression_count = sum(part is None for part in template)
     values = iter(_pop_many(stack, expression_count))
     pieces: list[str] = []
@@ -3048,6 +3159,7 @@ def _build_string(stack: list[Any], template: tuple[object, ...]) -> str:
 
 
 def _load_name(name: str, locals_: dict[str, Any], globals_: dict[str, Any]) -> Any:
+    """Load name during VM execution."""
     if name in locals_:
         return locals_[name]
     if name in globals_:
@@ -3060,6 +3172,7 @@ def _load_element_name(
     locals_: dict[str, Any],
     globals_: dict[str, Any],
 ) -> Any:
+    """Load element name during VM execution."""
     if name in globals_:
         return globals_[name]
     if name in locals_:
@@ -3068,15 +3181,18 @@ def _load_element_name(
 
 
 def _constant(value: Any) -> Any:
+    """Compute constant during VM execution."""
     return value
 
 
 def _truthy(value: Any) -> bool:
+    """Return the Boolean result of truthy during virtual-machine execution."""
     value = unwrap_runtime_value(value)
     return value != 0 and value is not None
 
 
 def _matches_type_pattern(value: Any, pattern: str) -> bool:
+    """Return whether the value matches type pattern."""
     value = unwrap_runtime_value(value)
     if pattern == "Integer":
         return isinstance(value, Decimal) and value == value.to_integral_value()
@@ -3099,6 +3215,7 @@ def _matches_type_pattern(value: Any, pattern: str) -> bool:
 
 
 def _matches_cast_type(value: Any, spec: object) -> bool:
+    """Return whether the value matches cast type."""
     if not isinstance(spec, tuple) or not spec:
         return False
     kind = spec[0]
@@ -3133,6 +3250,7 @@ def _matches_collection_cast(
     rank: int,
     base: object,
 ) -> bool:
+    """Return whether the value matches collection cast."""
     if kind in {"array_exact", "array_min"} and not is_eager_sequence(value):
         return False
     if rank <= 0:
@@ -3160,6 +3278,7 @@ def _matches_collection_cast(
 
 
 def _bind_match_name(bindings: dict[str, Any], name: str, value: Any) -> bool:
+    """Return the Boolean result of bind match name during virtual-machine execution."""
     if name in bindings:
         return bindings[name] == value
     bindings[name] = value
@@ -3167,6 +3286,7 @@ def _bind_match_name(bindings: dict[str, Any], name: str, value: Any) -> bool:
 
 
 def _is_rest_pattern(pattern: object) -> bool:
+    """Return whether the value is rest pattern."""
     return isinstance(pattern, tuple) and bool(pattern) and pattern[0] == "rest"
 
 
@@ -3174,6 +3294,7 @@ def _pop_index_values(
     stack: list[Any],
     spec: tuple[tuple[tuple[int, int, int, int], ...], int],
 ) -> list[tuple[bool, Any, Any, Any]]:
+    """Pop index values during VM execution."""
     values = iter(_pop_many(stack, _index_value_count(spec)))
     selectors = []
     for is_slice, has_start, has_stop, has_step in spec[0]:
@@ -3187,6 +3308,7 @@ def _pop_index_values(
 def _index_value_count(
     spec: tuple[tuple[tuple[int, int, int, int], ...], int],
 ) -> int:
+    """Index value count during VM execution."""
     return sum(
         has_start + has_stop + has_step
         for _, has_start, has_stop, has_step in spec[0]
@@ -3194,6 +3316,7 @@ def _index_value_count(
 
 
 def _index_receiver(frame: _Frame) -> Any:
+    """Index receiver during VM execution."""
     if frame.stack:
         return frame.stack.pop()
     try:
@@ -3217,6 +3340,7 @@ def _get_index(
     spec: tuple[tuple[tuple[int, int, int, int], ...], int],
     selectors: list[tuple[bool, Any, Any, Any]],
 ) -> Any:
+    """Find the index for get during VM execution."""
     if len(selectors) > 1 and all(not item[0] for item in selectors):
         if is_list_like(receiver) and not is_eager_sequence(receiver):
             return _index_many_lazy(receiver, tuple(item[1] for item in selectors))
@@ -3236,6 +3360,7 @@ def _set_index(
     selectors: list[tuple[bool, Any, Any, Any]],
     value: Any,
 ) -> Any:
+    """Update index during VM execution."""
     if len(selectors) == 1 and selectors[0][0]:
         _, start, stop, step = selectors[0]
         return _set_slice_value(receiver, start, stop, step, value)
@@ -3245,6 +3370,7 @@ def _set_index(
 
 
 def _index_path(receiver: Any, index: Any) -> Any:
+    """Index path during VM execution."""
     if _is_path(index):
         result = receiver
         for item in index:
@@ -3254,6 +3380,7 @@ def _index_path(receiver: Any, index: Any) -> Any:
 
 
 def _index_many_lazy(receiver: Any, indices: tuple[Any, ...]) -> list[Any]:
+    """Index many lazy during VM execution."""
     requests = tuple(_lazy_index_request(index) for index in indices)
     targets = sorted({target for target, _ in requests})
     results: dict[int, Any] = {}
@@ -3283,6 +3410,7 @@ def _index_many_lazy(receiver: Any, indices: tuple[Any, ...]) -> list[Any]:
 
 
 def _lazy_index_request(index: Any) -> tuple[int, list[Any]]:
+    """Compute lazy index request during VM execution."""
     tail: list[Any] = []
     target = index
     if _is_path(index):
@@ -3299,6 +3427,7 @@ def _lazy_index_request(index: Any) -> tuple[int, list[Any]]:
 
 
 def _index_one(receiver: Any, index: Any) -> Any:
+    """Index one during VM execution."""
     if isinstance(receiver, dict):
         try:
             return receiver[index]
@@ -3338,6 +3467,7 @@ def _index_one(receiver: Any, index: Any) -> Any:
 
 
 def _slice_value(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
+    """Slice value during VM execution."""
     if _is_path(start) or _is_path(stop):
         return _slice_path(receiver, start, stop, step)
     if not (is_eager_sequence(receiver) or isinstance(receiver, str)):
@@ -3356,6 +3486,7 @@ def _slice_value(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
 
 
 def _slice_lazy(receiver: Any, start: Any, stop: Any, step: Any) -> LazyList:
+    """Slice lazy during VM execution."""
     step_int = 1 if step is None else _int_index(step)
     if step_int <= 0:
         raise RuntimeError("lazy list slicing requires a positive step")
@@ -3370,6 +3501,7 @@ def _slice_lazy(receiver: Any, start: Any, stop: Any, step: Any) -> LazyList:
 
 
 def _slice_path(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
+    """Slice path during VM execution."""
     if not (_is_path(start) and _is_path(stop)):
         raise RuntimeError("multidimensional slices need start and stop paths")
     if len(start) != len(stop):
@@ -3384,6 +3516,7 @@ def _slice_path(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
 
 
 def _set_index_path(receiver: Any, index: Any, value: Any) -> Any:
+    """Update index path during VM execution."""
     if _is_path(index):
         if not index:
             return value
@@ -3400,6 +3533,7 @@ def _set_slice_value(
     step: Any,
     value: Any,
 ) -> Any:
+    """Update slice value during VM execution."""
     if _is_path(start) or _is_path(stop):
         raise RuntimeError("multidimensional slice assignment is not implemented")
     if isinstance(receiver, str):
@@ -3418,6 +3552,7 @@ def _set_eager_slice(
     step: Any,
     value: Any,
 ) -> list[Any]:
+    """Update eager slice during VM execution."""
     indexes = _eager_slice_indexes(len(receiver), start, stop, step)
     replacements = _slice_replacements(value, len(indexes))
     updated = list(receiver)
@@ -3433,6 +3568,7 @@ def _set_string_slice(
     step: Any,
     value: Any,
 ) -> str:
+    """Update string slice during VM execution."""
     if not isinstance(value, str):
         raise RuntimeError("string slice assignment requires a string value")
     indexes = _eager_slice_indexes(len(receiver), start, stop, step)
@@ -3452,6 +3588,7 @@ def _set_lazy_slice(
     step: Any,
     value: Any,
 ) -> LazyList:
+    """Update lazy slice during VM execution."""
     step_int = 1 if step is None else _int_index(step)
     if step_int <= 0:
         raise RuntimeError("lazy list slice assignment requires a positive step")
@@ -3464,6 +3601,7 @@ def _set_lazy_slice(
     replacement_iter = iter(value) if is_list_like(value) else None
 
     def updated_items():
+        """Collect the items for updated during VM execution."""
         for offset, item in enumerate(receiver):
             in_slice = offset >= start_int and (stop_int is None or offset <= stop_int)
             if in_slice and (offset - start_int) % step_int == 0:
@@ -3494,6 +3632,7 @@ def _eager_slice_indexes(
     stop: Any,
     step: Any,
 ) -> list[int]:
+    """Compute eager slice indexes during VM execution."""
     step_int = 1 if step is None else _int_index(step)
     if step_int == 0:
         raise RuntimeError("slice step cannot be 0")
@@ -3504,6 +3643,7 @@ def _eager_slice_indexes(
 
 
 def _slice_replacements(value: Any, count: int) -> list[Any]:
+    """Slice replacements during VM execution."""
     if is_list_like(value):
         replacements = list(value)
         if len(replacements) != count:
@@ -3513,6 +3653,7 @@ def _slice_replacements(value: Any, count: int) -> list[Any]:
 
 
 def _set_index_one(receiver: Any, index: Any, value: Any) -> Any:
+    """Update index one during VM execution."""
     if isinstance(receiver, dict):
         updated = dict(receiver)
         updated[index] = value
@@ -3564,10 +3705,12 @@ def _set_index_one(receiver: Any, index: Any, value: Any) -> Any:
 
 
 def _is_path(value: Any) -> bool:
+    """Return whether the value is path."""
     return isinstance(value, list)
 
 
 def _int_index(value: Any) -> int:
+    """Find the index for int during VM execution."""
     value = unwrap_runtime_value(value)
     if isinstance(value, Decimal) and value == value.to_integral_value():
         return int(value)
@@ -3577,16 +3720,19 @@ def _int_index(value: Any) -> int:
 
 
 def _normal_index(index: int, length: int) -> int:
+    """Find the index for normal during VM execution."""
     return index + length if index < 0 else index
 
 
 def _index_fault_message(index: int, length: int | None = None) -> str:
+    """Index fault message during VM execution."""
     if length is None:
         return f"index {index} is out of range"
     return f"index {index} is out of range for length {length}"
 
 
 def _get_field(receiver: Any, field: str) -> Any:
+    """Compute get field during VM execution."""
     receiver = unwrap_runtime_value(receiver)
     if is_list_like(receiver):
         if is_eager_sequence(receiver):
@@ -3611,6 +3757,7 @@ def _get_field(receiver: Any, field: str) -> Any:
 
 
 def _set_field(receiver: Any, field: str, value: Any) -> Any:
+    """Update field during VM execution."""
     receiver = unwrap_runtime_value(receiver)
     if isinstance(receiver, ObjectValue):
         if field not in receiver.fields:
@@ -3634,6 +3781,7 @@ def _set_field(receiver: Any, field: str, value: Any) -> Any:
 
 
 def _function_name(code: FunctionCode) -> str:
+    """Return the canonical name for function during VM execution."""
     return "function" if code.name is None else code.name
 
 
@@ -3642,6 +3790,7 @@ def _with_call_detail(
     target: str,
     args: tuple[Any, ...],
 ) -> RuntimeError:
+    """Compute with call detail during VM execution."""
     error = exc if isinstance(exc, RuntimeError) else RuntimeError(exc)
     error.add_call_detail(target, args)
     return error
@@ -3652,6 +3801,7 @@ def _format_call_error(
     stack: list[Any],
     expected_inputs: list[str],
 ) -> str:
+    """Format call error during VM execution."""
     lines = [f"cannot call {target} with current stack"]
     lines.append(f"stack: {_format_stack(stack)}")
     lines.append(f"stack types: {_format_stack_types(stack)}")
@@ -3662,6 +3812,7 @@ def _format_call_error(
 
 
 def _format_execution_context(context: _ExecutionContext) -> str:
+    """Format execution context during VM execution."""
     lines = [
         f"{context.function_name} ip {context.ip}: "
         f"{_format_instruction(context.instruction)}"
@@ -3672,6 +3823,7 @@ def _format_execution_context(context: _ExecutionContext) -> str:
 
 
 def _format_instruction(instruction: object) -> str:
+    """Format instruction during VM execution."""
     if not hasattr(instruction, "op"):
         return repr(instruction)
     op = instruction.op
@@ -3683,6 +3835,7 @@ def _format_instruction(instruction: object) -> str:
 
 
 def _format_instruction_arg(arg: object) -> str:
+    """Format instruction arg during VM execution."""
     if isinstance(arg, str):
         return repr(arg)
     if isinstance(arg, Decimal):
@@ -3697,6 +3850,7 @@ def _format_instruction_arg(arg: object) -> str:
 
 
 def _show_overload_inputs(overloads: tuple[BuiltinOverload, ...]) -> list[str]:
+    """Compute show overload inputs during VM execution."""
     return [
         "(" + ", ".join(str(param) for param in overload.signature.params) + ")"
         for overload in overloads
@@ -3704,24 +3858,28 @@ def _show_overload_inputs(overloads: tuple[BuiltinOverload, ...]) -> list[str]:
 
 
 def _object_type_name(value: ObjectValue) -> str:
+    """Return the canonical name for object type during VM execution."""
     if not value.type_args:
         return value.type_name
     return f"{value.type_name}[{', '.join(value.type_args)}]"
 
 
 def _format_stack(stack: list[Any]) -> str:
+    """Format stack during VM execution."""
     if not stack:
         return "[]"
     return "[" + ", ".join(_format_value(value) for value in stack) + "]"
 
 
 def _format_stack_types(stack: list[Any]) -> str:
+    """Format stack types during VM execution."""
     if not stack:
         return "[]"
     return "[" + ", ".join(_runtime_type_name(value) for value in stack) + "]"
 
 
 def _format_value(value: Any) -> str:
+    """Format value during VM execution."""
     compact = _compact_diagnostic_value(value)
     if compact is not None:
         return compact
@@ -3733,6 +3891,7 @@ def _format_value(value: Any) -> str:
 
 
 def _compact_diagnostic_value(value: Any) -> str | None:
+    """Compute compact diagnostic value during VM execution."""
     if isinstance(value, FunctionValue):
         name = _function_name(value.code)
         arity = len(value.code.params)
@@ -3758,6 +3917,7 @@ def _compact_diagnostic_value(value: Any) -> str | None:
 
 
 def _compact_sequence(opening: str, closing: str, values: Iterable[Any]) -> str:
+    """Compute compact sequence during VM execution."""
     preview = []
     has_more = False
     for index, item in enumerate(values):
@@ -3772,6 +3932,7 @@ def _compact_sequence(opening: str, closing: str, values: Iterable[Any]) -> str:
 
 
 def _compact_mapping(value: dict[Any, Any]) -> str:
+    """Compute compact mapping during VM execution."""
     items = []
     for index, (key, item) in enumerate(value.items()):
         if index >= DIAGNOSTIC_LIST_PREVIEW_LIMIT:
@@ -3782,10 +3943,12 @@ def _compact_mapping(value: dict[Any, Any]) -> str:
 
 
 def _string_value(value: Any) -> str:
+    """Compute string value during VM execution."""
     return format_runtime_value(value)
 
 
 def _runtime_type_name(value: Any) -> str:
+    """Return the canonical name for runtime type during VM execution."""
     value = unwrap_runtime_value(value)
     if isinstance(value, Decimal):
         return "Integer" if value == value.to_integral_value() else "Real"
@@ -3807,6 +3970,7 @@ def _runtime_type_name(value: Any) -> str:
 
 
 def _unwrapped_args(args: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Compute unwrapped args during VM execution."""
     return tuple(unwrap_runtime_value(arg) for arg in args)
 
 
@@ -3814,11 +3978,13 @@ def _apply_declared_return_tags(
     values: tuple[Any, ...],
     types: tuple[Any, ...],
 ) -> tuple[Any, ...]:
+    """Apply declared return tags during VM execution."""
     tag_sets = tuple(_declared_runtime_tags(typ) for typ in types)
     return _apply_runtime_return_tags(values, tag_sets)
 
 
 def _declared_runtime_tags(typ: Any) -> tuple[DataTag, ...]:
+    """Compute declared runtime tags during VM execution."""
     typ = normalize(typ)
     if isinstance(typ, TaggedType):
         return tuple(sorted(tag for tag in typ.tags if tag.depth == 0))
@@ -3829,6 +3995,7 @@ def _apply_runtime_return_tags(
     values: tuple[Any, ...] | list[Any],
     tag_sets: tuple[tuple[DataTag, ...], ...],
 ) -> tuple[Any, ...]:
+    """Apply runtime return tags during VM execution."""
     if len(values) != len(tag_sets):
         return tuple(values)
     return tuple(
@@ -3845,6 +4012,7 @@ def _apply_runtime_collection_ranks(
     values: tuple[Any, ...] | list[Any],
     ranks: tuple[int | None, ...],
 ) -> tuple[Any, ...]:
+    """Apply runtime collection ranks during VM execution."""
     if len(values) != len(ranks):
         return tuple(values)
     return tuple(

@@ -6,6 +6,7 @@ from typing import Any
 
 import valiance.types as T
 from valiance.analysis.builtins import RuntimeContext
+from valiance.documentation import element_documentation
 from valiance.runtime.vm import AssertionFailure
 from valiance.runtime_values import PanicSignal
 from valiance.stdlib_native import stdlib_element
@@ -18,8 +19,15 @@ _VALUE = T.V("Value")
     (_VALUE, _VALUE),
     (),
     param_names=("actual", "expected"),
+    documentation=element_documentation(
+        "Assert that two values are equal.",
+        parameters=(("actual", "Observed value."), ("expected", "Required value.")),
+        returns="No stack values when the assertion succeeds.",
+        category="Testing",
+    ),
 )
 def _assert_equal(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `testing.assertEqual` standard-library element."""
     actual, expected = args
     if actual != expected:
         raise AssertionFailure(
@@ -35,8 +43,15 @@ def _assert_equal(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
     (_VALUE, _VALUE),
     (),
     param_names=("actual", "unexpected"),
+    documentation=element_documentation(
+        "Assert that two values are different.",
+        parameters=(("actual", "Observed value."), ("unexpected", "Value that must not match.")),
+        returns="No stack values when the assertion succeeds.",
+        category="Testing",
+    ),
 )
 def _assert_not_equal(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `testing.assertNotEqual` standard-library element."""
     actual, unexpected = args
     if actual == unexpected:
         raise AssertionFailure(
@@ -51,8 +66,15 @@ def _assert_not_equal(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
     (T.Fn(),),
     (),
     param_names=("operation",),
+    documentation=element_documentation(
+        "Assert that invoking a callable raises a panic.",
+        parameters=(("operation", "Niladic callable expected to panic."),),
+        returns="No stack values when a panic is observed.",
+        category="Testing",
+    ),
 )
 def _assert_panics(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `testing.assertPanics` standard-library element."""
     try:
         ctx.call(args[0], [])
     except PanicSignal:
@@ -65,7 +87,14 @@ def _assert_panics(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
     (T.String,),
     (),
     param_names=("message",),
+    documentation=element_documentation(
+        "Fail the current test immediately.",
+        parameters=(("message", "Failure message shown by the test runner."),),
+        returns="Never returns normally.",
+        category="Testing",
+    ),
 )
 def _fail(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `testing.fail` standard-library element."""
     del ctx
     raise AssertionFailure(args[0])

@@ -1,3 +1,5 @@
+"""Branch-based static analysis, type inference, and overload resolution."""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
@@ -387,28 +389,35 @@ class AnalysisBranch:
 
     @property
     def top(self) -> T.Type | None:
+        """Return the top stack type, or `None` for an empty stack."""
         return self.stack[-1] if self.stack else None
 
     @property
     def failed(self) -> bool:
+        """Return whether this analysis path contains an error diagnostic."""
         return bool(self.errors)
 
     def with_stack(self, stack: T.TypeStack) -> AnalysisBranch:
+        """Return a branch with its type stack replaced."""
         return replace(self, stack=stack)
 
     def push(self, *types: T.Type) -> AnalysisBranch:
+        """Return a branch with additional types pushed onto its stack."""
         return replace(self, stack=self.stack.push(*types))
 
     def pop(self, count: int = 1) -> AnalysisBranch:
+        """Return a branch with the requested stack types removed."""
         return replace(self, stack=self.stack.pop(count))
 
     def with_variables(self, variables: BranchVariables) -> AnalysisBranch:
+        """Return a branch with updated branch-local variable facts."""
         return replace(self, variables=variables)
 
     def with_element_tags(
         self,
         tags: Iterable[T.ElementTag],
     ) -> AnalysisBranch:
+        """Return a branch carrying the additional positive element tags."""
         return replace(
             self,
             element_tags=frozenset(
@@ -420,12 +429,14 @@ class AnalysisBranch:
         self,
         uses: Iterable[tuple[Symbol, Symbol]],
     ) -> AnalysisBranch:
+        """Return a branch recording additional data-tag element uses."""
         return replace(
             self,
             data_element_uses=frozenset((*self.data_element_uses, *uses)),
         )
 
     def emit(self, typed_node: TypedNode) -> AnalysisBranch:
+        """Append a typed node and accumulate its element-tag effects."""
         element_tags = set(self.element_tags)
         data_element_uses = set(self.data_element_uses)
         applied: T.AppliedOverload | None = None
@@ -466,6 +477,7 @@ class AnalysisBranch:
         notes: tuple[str, ...] = (),
         help: tuple[str, ...] = (),
     ) -> AnalysisBranch:
+        """Return a failed branch containing a structured error diagnostic."""
         return replace(
             self,
             errors=(
@@ -490,6 +502,7 @@ class AnalysisBranch:
         code: str,
         notes: tuple[str, ...] = (),
     ) -> AnalysisBranch:
+        """Return a branch containing a structured warning diagnostic."""
         return replace(
             self,
             warnings=(
@@ -505,6 +518,7 @@ class AnalysisBranch:
         )
 
     def with_break(self, typ: T.Type | None) -> AnalysisBranch:
+        """Return a branch carrying the merged type of a break value."""
         return replace(self, break_type=typ)
 
     def refine_type(self, old: T.Type, new: T.Type) -> AnalysisBranch:
@@ -583,6 +597,7 @@ class BranchSet:
 
     @classmethod
     def collect(cls, branches: Iterable[AnalysisBranch]) -> BranchSet:
+        """Flatten, diagnose, and deduplicate a collection of analysis branches."""
         unique: list[AnalysisBranch] = []
         seen: set[AnalysisBranch] = set()
 
@@ -596,12 +611,15 @@ class BranchSet:
         return cls(tuple(unique))
 
     def __bool__(self) -> bool:
+        """Return whether at least one analysis branch survives."""
         return bool(self.branches)
 
     def __iter__(self) -> Iterator[AnalysisBranch]:
+        """Iterate over the surviving analysis branches."""
         return iter(self.branches)
 
     def __len__(self) -> int:
+        """Return the number of surviving analysis branches."""
         return len(self.branches)
 
 
@@ -626,7 +644,9 @@ _INTERNAL_NODE_TYPES: tuple[type[ASTNode], ...] = (
 
 
 def register(node_type: type[ASTNode]) -> Callable[[NodeHandler], NodeHandler]:
+    """Create a decorator that registers an analyser handler for one AST type."""
     def decorate(handler: NodeHandler) -> NodeHandler:
+        """Store the decorated analyser handler in the node-handler registry."""
         if node_type in _NODE_HANDLERS:
             raise RuntimeError(f"duplicate analyser handler for {node_type.__name__}")
 
@@ -707,6 +727,7 @@ class Analyser:
         module_loader: ModuleLoader | None = None,
         source_file: Path | None = None,
     ):
+        """Initialize an analysis session with its environment and module context."""
         self.env = env if env is not None else default_environment().child_scope()
         self.module_loader = module_loader or ModuleLoader()
         self.source_file = source_file
@@ -756,6 +777,7 @@ class Analyser:
         branch: AnalysisBranch,
         body: tuple[ASTNode, ...],
     ) -> BranchSet:
+        """Analyse a block starting from one existing analysis branch."""
         return self.analyse_block(BranchSet((branch,)), body)
 
     def require_stack_top_assignable(
@@ -767,6 +789,7 @@ class Analyser:
         message: str,
         code: str = "type-mismatch",
     ) -> BranchSet:
+        """Validate and consume an assignable top value from every branch."""
         return BranchSet.collect(
             self.consume_top(
                 branch,
@@ -787,6 +810,7 @@ class Analyser:
         location: SourceLocation | None,
         code: str = "type-mismatch",
     ) -> AnalysisBranch:
+        """Validate and remove one top stack type from a branch."""
         actual = branch.top
 
         if actual is None:
@@ -826,6 +850,7 @@ class Analyser:
         branch: AnalysisBranch,
         node: ASTNode,
     ) -> BranchSet:
+        """Analyse node from branch during static analysis."""
         handler = _NODE_HANDLERS.get(type(node))
 
         if handler is None:
@@ -891,6 +916,7 @@ class Analyser:
         node: DefineNode,
         branch: AnalysisBranch,
     ) -> BranchSet:
+        """Analyse a `DefineNode` node and return the surviving branches."""
         name = node.name
         function_node = node.function
         if not self._validate_annotations(node.annotations, "define", node):
@@ -989,6 +1015,7 @@ class Analyser:
         overload: T.Overload,
         generic_constraints: tuple[T.GenericConstraint, ...],
     ) -> T.Overload | None:
+        """Apply definition annotations and register the resulting overload metadata."""
         name = node.name
         if not _validate_define_niladic_name(name, overload):
             if name.text.startswith("\\"):
@@ -1044,6 +1071,7 @@ class Analyser:
         node: FunctionNode,
         origin: ASTNode,
     ) -> None:
+        """Validate function element tags during static analysis."""
         self._validate_element_tag_set(
             node.element_tags,
             origin,
@@ -1067,6 +1095,7 @@ class Analyser:
         *,
         companion_tags_allowed: frozenset[T.ElementTag] | None = None,
     ) -> None:
+        """Validate element tag set during static analysis."""
         tag_tuple = tuple(tags)
         positives = tuple(tag for tag in tag_tuple if not tag.absent)
         absences = tuple(tag for tag in tag_tuple if tag.absent)
@@ -1112,6 +1141,7 @@ class Analyser:
         types: Iterable[T.Type],
         origin: ASTNode,
     ) -> None:
+        """Validate element tags in types during static analysis."""
         for typ in types:
             for tags in _function_type_element_tag_sets(typ):
                 self._validate_element_tag_set(
@@ -1127,6 +1157,7 @@ class Analyser:
         tags: Iterable[T.ElementTag],
         origin: ASTNode,
     ) -> None:
+        """Validate element tag disjoints during static analysis."""
         seen: set[Symbol] = set()
         for tag in tags:
             disjoint = self.env.element_tag_disjoints(tag.name)
@@ -1145,6 +1176,7 @@ class Analyser:
         body_tags: frozenset[T.ElementTag],
         final_tags: frozenset[T.ElementTag],
     ) -> None:
+        """Validate inferred element tags during static analysis."""
         self._validate_element_tag_disjoints(
             (tag for tag in final_tags if not tag.absent),
             node,
@@ -1203,6 +1235,7 @@ class Analyser:
         element_tags: Iterable[T.ElementTag],
         origin: ASTNode,
     ) -> None:
+        """Validate data element tag disjoints during static analysis."""
         positive_elements = tuple(tag for tag in element_tags if not tag.absent)
         if not positive_elements:
             return
@@ -1231,6 +1264,7 @@ class Analyser:
         uses: Iterable[tuple[Symbol, Symbol]],
         origin: ASTNode,
     ) -> None:
+        """Validate recorded data element uses during static analysis."""
         for data_name, element_name in uses:
             if element_name not in self.env.data_tag_element_disjoints(data_name):
                 continue
@@ -1249,6 +1283,7 @@ class Analyser:
         groups: Iterable[Iterable[T.Type]],
         origin: ASTNode,
     ) -> None:
+        """Validate data tags during static analysis."""
         for group in groups:
             for typ in group:
                 conflict = _disjoint_data_tags(typ, self.env.context)
@@ -1266,6 +1301,7 @@ class Analyser:
         branch: AnalysisBranch,
         node: ObjectNode,
     ) -> BranchSet:
+        """Build the definition for object during static analysis."""
         if not self._validate_object_lifecycle(node):
             return BranchSet((branch.emit(TypedNode(node, None)),))
         if node.target is not None:
@@ -1318,6 +1354,7 @@ class Analyser:
         return BranchSet((current,))
 
     def _validate_object_lifecycle(self, node: ObjectNode) -> bool:
+        """Return the Boolean result of validate object lifecycle during static analysis."""
         ok = True
         mustcall = _mustcall_methods(node.annotations)
         defined = {definition.name.text for definition in node.definitions}
@@ -1353,6 +1390,7 @@ class Analyser:
         branch: AnalysisBranch,
         node: ObjectNode,
     ) -> BranchSet:
+        """Build the definition for trait during static analysis."""
         self._define_trait_shape(node.name, node)
         current = self._register_friendly_definitions(
             branch.emit(TypedNode(node, None)),
@@ -1366,6 +1404,7 @@ class Analyser:
         branch: AnalysisBranch,
         node: ObjectNode,
     ) -> BranchSet:
+        """Build the definition for variant during static analysis."""
         generic_constraints = _generic_constraints(
             node.generics,
             node.generic_variances,
@@ -1455,6 +1494,7 @@ class Analyser:
         definition: DefineNode,
         requirement: T.TraitRequirement | None,
     ) -> AnalysisBranch:
+        """Register variant member definition during static analysis."""
         if requirement is None:
             return self._register_friendly_definition(branch, owner, definition)
         if not self._validate_annotations(definition.annotations, "define", definition):
@@ -1600,6 +1640,7 @@ class Analyser:
         branch: AnalysisBranch,
         node: ObjectNode,
     ) -> BranchSet:
+        """Build the definition for enum during static analysis."""
         value_type = T.V(node.generics[0].text) if node.generics else None
         members = tuple(
             T.EnumMemberDefinition(
@@ -1619,6 +1660,7 @@ class Analyser:
         )
 
     def _object_attribute(self, field: ObjectFieldNode) -> T.ObjectAttribute | None:
+        """Compute object attribute during static analysis."""
         if field.typ is not None:
             typ = field.typ
         elif field.default:
@@ -1649,6 +1691,7 @@ class Analyser:
         fields: tuple[ObjectFieldNode, ...],
         generics: tuple[Symbol, ...],
     ) -> tuple[T.ObjectAttribute, ...] | None:
+        """Compute object attributes during static analysis."""
         attributes = tuple(self._object_attribute(field) for field in fields)
         if any(attribute is None for attribute in attributes):
             return None
@@ -1669,6 +1712,7 @@ class Analyser:
         generic_constraints: tuple[T.GenericConstraint, ...] | None = None,
         synthesize_constructor: bool = True,
     ) -> None:
+        """Record object shape during static analysis."""
         constraints = (
             _generic_constraints(
                 node.generics,
@@ -1708,6 +1752,7 @@ class Analyser:
             )
 
     def _define_trait_shape(self, name: Symbol, node: ObjectNode) -> None:
+        """Record trait shape during static analysis."""
         requirements = _trait_requirements(node)
         self.env.define_trait(
             name,
@@ -1732,6 +1777,7 @@ class Analyser:
         definition: DefineNode,
         defaults: frozenset[Symbol],
     ) -> AnalysisBranch:
+        """Register constructor definition during static analysis."""
         if not self._validate_annotations(definition.annotations, "define", definition):
             return branch
 
@@ -1853,6 +1899,7 @@ class Analyser:
         owner: Symbol,
         definition: DefineNode,
     ) -> AnalysisBranch:
+        """Register friendly definition during static analysis."""
         if not self._validate_annotations(definition.annotations, "define", definition):
             return branch.emit(TypedNode(definition, None))
         owner_definition = self.env.lookup_object(owner)
@@ -1920,6 +1967,7 @@ class Analyser:
         self,
         spec: ImportSpec,
     ):
+        """Load import definitions during static analysis."""
         try:
             exports = self.module_loader.load(
                 spec.path,
@@ -1943,6 +1991,7 @@ class Analyser:
         name: Symbol,
         typed_node: TypedFunctionNode,
     ) -> None:
+        """Register imported definition during static analysis."""
         for overload in _callable_overloads(typed_node.typ):
             self.env.define_overload(name, overload)
 
@@ -1950,6 +1999,7 @@ class Analyser:
         self,
         obj,
     ) -> None:
+        """Register imported object during static analysis."""
         node = obj.typed.node
         if not isinstance(node, ObjectNode):
             return
@@ -1999,6 +2049,7 @@ class Analyser:
         owner: Symbol,
         definitions: tuple[DefineNode, ...],
     ) -> AnalysisBranch:
+        """Register friendly definitions during static analysis."""
         current = branch
         for definition in definitions:
             current = self._register_friendly_definition(current, owner, definition)
@@ -2010,6 +2061,7 @@ class Analyser:
         node: ElementNode,
         branch: AnalysisBranch,
     ) -> BranchSet:
+        """Analyse a `ElementNode` node and return the surviving branches."""
         overloads = self.env.overloads_for(node.name)
         if not overloads:
             self._diagnose(f"unknown element '{node.name}'", node)
@@ -2087,6 +2139,7 @@ class Analyser:
         overloads: tuple[T.Overload, ...],
         modifiers: tuple[ModifierArgumentAnalysis, ...],
     ) -> tuple[list[ElementArguments], list[AnalysisBranch]]:
+        """Enumerate valid parameter-ordered argument sources for one element overload."""
         if node.call_args:
             return self.explicit_element_arguments(
                 node,
@@ -2110,6 +2163,7 @@ class Analyser:
         no_match_message: str,
         ambiguous_message: str,
     ) -> tuple[CallCandidate, ...] | None:
+        """Select the most specific viable call candidates and diagnose ambiguity."""
         winners = _collapse_equivalent_friendly_multidispatch_winners(
             _best_candidates(candidates, branch)
         )
@@ -2134,6 +2188,7 @@ class Analyser:
         overloads: tuple[T.Overload, ...],
         modifiers: tuple[ModifierArgumentAnalysis, ...],
     ) -> tuple[list[ElementArguments], list[AnalysisBranch]]:
+        """Source an element overload's ordinary arguments from the branch stack."""
         sources: list[ElementArguments] = []
         for overload_index, overload in enumerate(overloads):
             for args, popped, ordered_modifiers in _source_element_arguments(
@@ -2160,6 +2215,7 @@ class Analyser:
         overloads: tuple[T.Overload, ...],
         modifiers: tuple[ModifierArgumentAnalysis, ...],
     ) -> tuple[list[ElementArguments], list[AnalysisBranch]]:
+        """Merge explicit call arguments with stack inputs in parameter order."""
         sources: list[ElementArguments] = []
         for overload_index, overload in enumerate(overloads):
             prepared = _prepare_element_call_branches(
@@ -2195,6 +2251,7 @@ class Analyser:
         overloads: tuple[T.Overload, ...],
         sources: Iterable[ElementArguments],
     ) -> list[CallCandidate]:
+        """Build viable typed candidates for an explicit element call."""
         candidates: list[CallCandidate] = []
         for source in sources:
             candidate = _apply_overload_to_branch(
@@ -2253,6 +2310,7 @@ class Analyser:
         overloads: tuple[T.Overload, ...],
         candidate: CallCandidate,
     ) -> AnalysisBranch | None:
+        """Emit the typed node for a selected element-call candidate."""
         overload = candidate.applied.overload
         if overload.annotation_error is not None:
             self._diagnose(overload.annotation_error, node)
@@ -2299,6 +2357,7 @@ class Analyser:
         applied: T.AppliedOverload,
         outer: AnalysisBranch,
     ) -> TypedElementExtension | None:
+        """Analyse element extension during static analysis."""
         if extension is None:
             return None
 
@@ -2426,6 +2485,7 @@ class Analyser:
         outer: AnalysisBranch,
         function: FunctionNode,
     ) -> TypedFunctionNode | None:
+        """Analyse extension function during static analysis."""
         result = self._analyse_function_literal(outer, function)
         if result is None:
             return None
@@ -2438,6 +2498,7 @@ class Analyser:
         node: ElementNode,
         overloads: tuple[T.Overload, ...],
     ) -> BranchSet:
+        """Compute call element call during static analysis."""
         if node.modifier_args:
             self._diagnose("element 'call' does not accept ':' arguments", node)
             return BranchSet()
@@ -2512,6 +2573,7 @@ class Analyser:
         arg_branch: AnalysisBranch,
         call_arg_count: int,
     ) -> list[CallCandidate]:
+        """Build callable-value candidates for the built-in `call` element."""
         if len(arg_branch.stack) < call_arg_count:
             return []
 
@@ -2549,6 +2611,7 @@ class Analyser:
         branch: AnalysisBranch,
         node: ElementNode,
     ) -> tuple[ModifierArgumentAnalysis, ...] | None:
+        """Determine the types used for modifier argument during static analysis."""
         analyses: list[ModifierArgumentAnalysis] = []
         for arg in node.modifier_args:
             result = self._analyse_function_literal(branch, arg)
@@ -2571,6 +2634,7 @@ class Analyser:
         *,
         message: str = "literal item must leave a value on the stack",
     ) -> tuple[tuple[ListItemAnalysis, ...], ...] | None:
+        """Compute literal item options during static analysis."""
         item_options: list[tuple[ListItemAnalysis, ...]] = []
         for expression in expressions:
             item_outputs = self.analyse_block(BranchSet((branch,)), expression)
@@ -2590,6 +2654,7 @@ class Analyser:
         outer: AnalysisBranch,
         node: FunctionNode,
     ) -> FunctionAnalysis | None:
+        """Analyse unfold body function during static analysis."""
         if node.params is None:
             analysed = self._analyse_function_literal(outer, node)
             return None if analysed is None else analysed[0]
@@ -2632,6 +2697,7 @@ class Analyser:
         node: MatchNode,
         branch: AnalysisBranch,
     ) -> BranchSet:
+        """Analyse a `MatchNode` node and return the surviving branches."""
         if not node.cases:
             self._diagnose("match requires at least one case", node)
             return BranchSet()
@@ -2721,6 +2787,7 @@ class Analyser:
         node: TryNode,
         branch: AnalysisBranch,
     ) -> BranchSet:
+        """Analyse a `TryNode` node and return the surviving branches."""
         if not node.handlers:
             self._diagnose("try requires at least one handler", node)
             return BranchSet()
@@ -2772,6 +2839,7 @@ class Analyser:
         patterns: tuple[MatchPatternNode, ...],
         node: MatchNode,
     ) -> bool:
+        """Return the Boolean result of match guards are valid during static analysis."""
         guards = tuple(_match_pattern_guards(patterns, subject_types))
         for guard, subject_type in guards:
             guard_input = AnalysisBranch(
@@ -2797,6 +2865,7 @@ class Analyser:
         subject_types: tuple[T.Type, ...],
         node: MatchNode,
     ) -> bool:
+        """Return the Boolean result of match is exhaustive during static analysis."""
         if any(
             case.is_default or _is_default_match_case(case.patterns)
             for case in node.cases
@@ -2839,6 +2908,7 @@ class Analyser:
         branch: AnalysisBranch,
         name: Symbol,
     ) -> tuple[T.Type, T.Type | None, AnalysisBranch] | None:
+        """Source field receiver during static analysis."""
         if branch.stack:
             receiver_type = branch.stack[-1]
             popped = branch.with_stack(branch.stack.pop())
@@ -2868,6 +2938,7 @@ class Analyser:
         *,
         write: bool = False,
     ) -> tuple[T.Type | None, T.Type | None]:
+        """Determine the type of field during static analysis."""
         receiver_type = T.normalize(receiver_type)
         if isinstance(receiver_type, T.RowType):
             if write:
@@ -2937,6 +3008,7 @@ class Analyser:
         *,
         write: bool,
     ) -> bool:
+        """Return whether the analyser can access attribute."""
         access = attribute.access.text
         if access == "public":
             return True
@@ -2951,6 +3023,7 @@ class Analyser:
         *,
         initial_function_locals: tuple[tuple[Symbol, T.Type], ...] = (),
     ) -> tuple[FunctionAnalysis, AnalysisBranch] | None:
+        """Analyse function literal during static analysis."""
         node = _contextualize_function_empty_returns(node)
         if node.params is not None and any(
             _is_call_site_checked_param(param.typ) for param in node.params
@@ -3074,6 +3147,7 @@ class Analyser:
         outer: AnalysisBranch,
         node: FunctionNode,
     ) -> FunctionAnalysis:
+        """Compute call site checked function during static analysis."""
         params = _declared_params(node)
         overload = _function_overload(
             node,
@@ -3093,6 +3167,7 @@ class Analyser:
         node: FunctionNode,
         call_params: tuple[T.Type, ...],
     ) -> FunctionAnalysis | None:
+        """Analyse function at call site during static analysis."""
         declared = tuple(node.params or ())
         if len(call_params) < len(declared):
             return None
@@ -3146,6 +3221,7 @@ class Analyser:
         node: FunctionNode,
         branches: BranchSet,
     ) -> dict[T.Overload, tuple[TypedNode, ...]]:
+        """Build the signatures for function during static analysis."""
         signatures: dict[T.Overload, tuple[TypedNode, ...]] = {}
         surviving_element_tags = frozenset(
             tag for branch in branches for tag in branch.element_tags
@@ -3210,6 +3286,7 @@ class Analyser:
         node: FunctionNode,
         branch: AnalysisBranch,
     ) -> tuple[tuple[T.Type, ...], AnalysisBranch] | None:
+        """Determine the return types for function during static analysis."""
         if annotation_hooks.has_annotation(node.annotations, "returnAll"):
             return branch.stack.items, branch
         if node.returns is None:
@@ -3245,6 +3322,7 @@ class Analyser:
         target: str,
         node: ASTNode,
     ) -> bool:
+        """Return the Boolean result of validate annotations during static analysis."""
         diagnostics = annotation_hooks.DEFAULT_REGISTRY.validate(
             annotations,
             target,
@@ -3255,9 +3333,11 @@ class Analyser:
         return not diagnostics
 
     def _diagnose(self, message: str, node: ASTNode | None = None) -> None:
+        """Update diagnose state during static analysis."""
         self.diagnostics.append(_diagnostic_message(message, node))
 
     def _warn(self, message: str, node: ASTNode | None = None) -> None:
+        """Update warn state during static analysis."""
         self.warnings.append(_diagnostic_message(message, node))
 
 
@@ -3267,6 +3347,7 @@ def _number_literal(
     node: NumberLiteralNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `NumberLiteralNode` node and return the surviving branches."""
     typ = _number_literal_type(node.value)
     return BranchSet((branch.push(typ).emit(TypedNode(node, typ)),))
 
@@ -3277,6 +3358,7 @@ def _string_literal(
     node: StringLiteralNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `StringLiteralNode` node and return the surviving branches."""
     return BranchSet((branch.push(T.String).emit(TypedNode(node, T.String)),))
 
 
@@ -3286,6 +3368,7 @@ def _get_variable(
     node: GetVariableNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `GetVariableNode` node and return the surviving branches."""
     typ = branch.variables.read(node.name)
 
     if typ is None:
@@ -3310,6 +3393,7 @@ def _set_variable(
     node: SetVariableNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `SetVariableNode` node and return the surviving branches."""
     if not branch.stack:
         if branch.input_mode is InputMode.INFER_INPUTS:
             inferred = node.declared_type or T.V(f"_inferred_{node.name}")
@@ -3422,6 +3506,7 @@ def _set_variables_node(
     node: SetVariablesNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `SetVariablesNode` node and return the surviving branches."""
     if not node.targets:
         return BranchSet((branch.emit(TypedNode(node, None)),))
 
@@ -3503,6 +3588,7 @@ def _if_node(
     node: IfNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `IfNode` node and return the surviving branches."""
     condition = self.analyse_from(branch, node.condition)
     body_inputs = self.require_stack_top_assignable(
         condition,
@@ -3563,6 +3649,7 @@ def _assert_node(
     node: AssertNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `AssertNode` node and return the surviving branches."""
     condition = self.analyse_from(branch, node.condition)
     condition = self.require_stack_top_assignable(
         condition,
@@ -3608,6 +3695,7 @@ def _break_node(
     node: BreakNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `BreakNode` node and return the surviving branches."""
     value_outputs = self.analyse_from(branch, node.values)
     return BranchSet.collect(
         value_branch.emit(
@@ -3623,6 +3711,7 @@ def _while_node(
     node: WhileNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `WhileNode` node and return the surviving branches."""
     loop_input = branch
     if node.params is not None:
         params = _params_to_types(node.params)
@@ -3710,10 +3799,12 @@ def _return_node(
     node: ReturnNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `ReturnNode` node and return the surviving branches."""
     return BranchSet((branch.emit(TypedNode(node, None)),))
 
 
 def _at_collection_view(typ: T.Type) -> T.CollectionType | None:
+    """Build the view of at collection during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
         return _at_collection_view(typ.inner)
@@ -3721,6 +3812,7 @@ def _at_collection_view(typ: T.Type) -> T.CollectionType | None:
 
 
 def _at_level_type(source: T.Type, target_rank: int) -> T.Type | None:
+    """Determine the type of at level during static analysis."""
     source = T.normalize(source)
     if isinstance(source, (T.TaggedType, T.ExactType, T.AtomicType)):
         return _at_level_type(source.inner, target_rank)
@@ -3748,6 +3840,7 @@ def _at_node(
     node: AtNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `AtNode` node and return the surviving branches."""
     arity = len(node.levels)
     source_hints = tuple(
         T.V(f"_at_{branch.origin}_{index}") for index in range(arity)
@@ -3855,6 +3948,7 @@ def _function_node(
     node: FunctionNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `FunctionNode` node and return the surviving branches."""
     if not self._validate_annotations(node.annotations, "fn", node):
         return BranchSet((branch.emit(TypedNode(node, None)),))
 
@@ -3875,6 +3969,7 @@ def _cast_node(
     node: CastNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `CastNode` node and return the surviving branches."""
     target = T.normalize(node.typ)
     self._validate_element_tags_in_types((target,), node)
     if not branch.stack:
@@ -3920,6 +4015,7 @@ def _stack_shuffle_node(
     node: StackShuffleNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `StackShuffleNode` node and return the surviving branches."""
     params = tuple(
         T.V(f"_shuffle_{index}") for index, _ in enumerate(node.prestack)
     )
@@ -3982,6 +4078,7 @@ def _field_access_node(
     node: FieldAccessNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `FieldAccessNode` node and return the surviving branches."""
     sourced = self._source_field_receiver(branch, node.name)
     if sourced is None:
         self._diagnose(
@@ -4007,6 +4104,7 @@ def _field_set_node(
     node: FieldSetNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `FieldSetNode` node and return the surviving branches."""
     if len(branch.stack) < 2:
         self._diagnose(
             f"field assignment to '{node.name}' requires receiver and value",
@@ -4048,6 +4146,7 @@ def _index_access_node(
     node: IndexAccessNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `IndexAccessNode` node and return the surviving branches."""
     selector_values = _selector_value_count(node.selectors)
     required = selector_values + 1
     if len(branch.stack) >= required:
@@ -4088,6 +4187,7 @@ def _index_set_node(
     node: IndexSetNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `IndexSetNode` node and return the surviving branches."""
     selector_values = _selector_value_count(node.selectors)
     required = selector_values + 2
     if len(branch.stack) < required:
@@ -4136,6 +4236,7 @@ def _call_node(
     node: CallNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `CallNode` node and return the surviving branches."""
     if not branch.stack:
         self._diagnose("call requires a function on the stack", node)
         return BranchSet()
@@ -4206,6 +4307,7 @@ def _string_interpolation_node(
     node: StringInterpolationNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `StringInterpolationNode` node and return the surviving branches."""
     current = BranchSet((branch,))
     expression_count = 0
     for part in node.parts:
@@ -4240,6 +4342,7 @@ def _list_literal_node(
     node: ListLiteralNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `ListLiteralNode` node and return the surviving branches."""
     if not node.items:
         if node.typ is not None:
             typ = T.normalize(node.typ)
@@ -4280,6 +4383,7 @@ def _tuple_literal_node(
     node: TupleLiteralNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `TupleLiteralNode` node and return the surviving branches."""
     item_options = self._literal_item_options(branch, node.items, node)
     if item_options is None:
         return BranchSet()
@@ -4298,6 +4402,7 @@ def _record_literal_node(
     node: RecordLiteralNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `RecordLiteralNode` node and return the surviving branches."""
     expressions = tuple(expr for _, expr in node.fields)
     item_options = self._literal_item_options(branch, expressions, node)
     if item_options is None:
@@ -4323,6 +4428,7 @@ def _dict_literal_node(
     node: DictLiteralNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `DictLiteralNode` node and return the surviving branches."""
     expressions = tuple(expr for entry in node.entries for expr in entry)
     item_options = self._literal_item_options(branch, expressions, node)
     if item_options is None:
@@ -4346,6 +4452,7 @@ def _array_literal_node(
     node: ArrayLiteralNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `ArrayLiteralNode` node and return the surviving branches."""
     return BranchSet((branch.emit(TypedNode(node, None)),))
 
 
@@ -4355,6 +4462,7 @@ def _for_node(
     node: ForNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `ForNode` node and return the surviving branches."""
     consumes_stack_iterable = bool(branch.stack)
     if not branch.stack:
         item = _anonymous_type_var(branch, 1)
@@ -4446,6 +4554,7 @@ def _unfold_node(
     node: UnfoldNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `UnfoldNode` node and return the surviving branches."""
     body_function = FunctionNode(
         params=node.params,
         body=node.body,
@@ -4548,6 +4657,7 @@ def _tag_declaration_node(
     node: TagDeclarationNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `TagDeclarationNode` node and return the surviving branches."""
     if node.disjoint is not None:
         if isinstance(node.disjoint, T.DataTag):
             self.env.add_disjoint_tags(node.tag.name, node.disjoint.name)
@@ -4571,6 +4681,7 @@ def _element_tag_declaration_node(
     node: ElementTagDeclarationNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `ElementTagDeclarationNode` node and return the surviving branches."""
     if node.disjoint is not None:
         if isinstance(node.disjoint, T.DataTag):
             self.env.add_disjoint_data_element_tags(node.disjoint.name, node.name)
@@ -4590,6 +4701,7 @@ def _tag_overlay_node(
     node: TagOverlayNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `TagOverlayNode` node and return the surviving branches."""
     public = node.visibility == Symbol("public")
     for element in node.elements:
         for params, returns in node.signatures:
@@ -4613,6 +4725,7 @@ def _tag_application_node(
     node: TagApplicationNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `TagApplicationNode` node and return the surviving branches."""
     if not branch.stack:
         self._diagnose(
             f"empty stack when applying tag '{_show_tag(node.tag)}'",
@@ -4711,6 +4824,7 @@ def _import_node(
     node: ImportNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `ImportNode` node and return the surviving branches."""
     typed_nodes: list[TypedNode] = []
     for spec in node.specs:
         try:
@@ -4740,6 +4854,7 @@ def _object_node(
     node: ObjectNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
+    """Analyse a `ObjectNode` node and return the surviving branches."""
     if not self._validate_annotations(node.annotations, node.kind.text, node):
         return BranchSet((branch.emit(TypedNode(node, None)),))
 
@@ -4762,10 +4877,12 @@ def analyse(
     program: list[ASTNode],
     env: T.Environment | None = None,
 ) -> list[TypedNode]:
+    """Analyse a complete raw AST program and return typed nodes."""
     return Analyser(env).analyse(program)
 
 
 def analyse_function(node: FunctionNode, env: T.Environment) -> T.Type | None:
+    """Infer and return the stack-effect type of a function literal."""
     return Analyser(env).analyse_function(node)
 
 
@@ -4773,10 +4890,12 @@ def analyse_function_details(
     node: FunctionNode,
     env: T.Environment,
 ) -> FunctionAnalysis | None:
+    """Infer a function literal and return its typed overload details."""
     return Analyser(env).analyse_function_details(node)
 
 
 def _declared_params(node: FunctionNode) -> tuple[T.Type, ...]:
+    """Determine the parameters for declared during static analysis."""
     if node.params is None:
         return ()
     return _params_to_types(node.params)
@@ -4814,6 +4933,7 @@ def _function_overload(
     element_tags: frozenset[T.ElementTag] | None = None,
     call_site_body: object | None = None,
 ) -> T.Overload:
+    """Build or resolve the overload for function during static analysis."""
     return T.Overload(
         params=params,
         returns=returns,
@@ -4828,6 +4948,7 @@ def _function_overload(
 
 
 def _fully_typed_overload(node: FunctionNode) -> T.Overload | None:
+    """Build or resolve the overload for fully typed during static analysis."""
     if node.params is None or node.returns is None:
         return None
     if any(param.typ is None for param in node.params):
@@ -4843,16 +4964,19 @@ def _fully_typed_overload(node: FunctionNode) -> T.Overload | None:
 
 
 def _validate_define_niladic_name(name: Symbol, overload: T.Overload) -> bool:
+    """Return the Boolean result of validate define niladic name during static analysis."""
     is_named_nilad = name.text.startswith("\\")
     is_inferred_nilad = len(overload.params) == 0
     return is_named_nilad == is_inferred_nilad
 
 
 def _body_references_element(body: tuple[ASTNode, ...], name: Symbol) -> bool:
+    """Return the Boolean result of body references element during static analysis."""
     return any(_node_references_element(node, name) for node in body)
 
 
 def _node_references_element(node: ASTNode, name: Symbol) -> bool:
+    """Return the Boolean result of node references element during static analysis."""
     if isinstance(node, ElementNode) and node.name == name:
         return True
     for item in fields(node):
@@ -4866,6 +4990,7 @@ def _node_references_element(node: ASTNode, name: Symbol) -> bool:
 
 
 def _tuple_references_element(value: tuple[object, ...], name: Symbol) -> bool:
+    """Return the Boolean result of tuple references element during static analysis."""
     for item in value:
         if isinstance(item, ASTNode) and _node_references_element(item, name):
             return True
@@ -4875,6 +5000,7 @@ def _tuple_references_element(value: tuple[object, ...], name: Symbol) -> bool:
 
 
 def _is_call_site_checked_param(typ: T.Type | None) -> bool:
+    """Return whether the value is call site checked param."""
     if typ is None:
         return False
     typ = T.normalize(typ)
@@ -4890,6 +5016,7 @@ def _is_call_site_checked_param(typ: T.Type | None) -> bool:
 
 
 def _is_call_site_checked_type(typ: T.Type) -> bool:
+    """Return whether the value is call site checked type."""
     typ = T.normalize(typ)
     if isinstance(typ, T.NominalType):
         return any(_is_call_site_checked_type(arg) for arg in typ.args)
@@ -4921,6 +5048,7 @@ def _call_site_substituted_params(
     actuals: tuple[T.Type, ...],
     ctx: T.Context,
 ) -> tuple[FunctionParam, ...] | None:
+    """Determine the parameters for call site substituted during static analysis."""
     if len(params) != len(actuals):
         return None
     substituted: list[FunctionParam] = []
@@ -4946,6 +5074,7 @@ def _call_site_placeholder_accepts(
     actual: T.Type,
     ctx: T.Context,
 ) -> bool:
+    """Return the Boolean result of call site placeholder accepts during static analysis."""
     declared = T.normalize(declared)
     if _is_bare_function_type(declared):
         return isinstance(T.normalize(actual), (T.FunctionType, T.OverloadSetType))
@@ -4953,6 +5082,7 @@ def _call_site_placeholder_accepts(
 
 
 def _call_site_substitute_type(declared: T.Type, actual: T.Type) -> T.Type:
+    """Determine the type of call site substitute during static analysis."""
     declared = T.normalize(declared)
     if _is_bare_function_type(declared) or isinstance(declared, T.VariadicTupleType):
         return actual
@@ -4960,6 +5090,7 @@ def _call_site_substitute_type(declared: T.Type, actual: T.Type) -> T.Type:
 
 
 def _is_bare_function_type(typ: T.Type) -> bool:
+    """Return whether the value is bare function type."""
     typ = T.normalize(typ)
     return (
         isinstance(typ, T.FunctionType) and typ.params is None and typ.returns is None
@@ -4970,6 +5101,7 @@ def _function_param_names_for_overload(
     node: FunctionNode,
     inputs: tuple[T.Type, ...],
 ) -> tuple[Symbol | None, ...]:
+    """Build or resolve the overload for function param names for during static analysis."""
     if node.params is None:
         return (None,) * len(inputs)
     names = tuple(param.name for param in node.params)
@@ -4982,6 +5114,7 @@ def _function_param_defaults_for_overload(
     node: FunctionNode,
     inputs: tuple[T.Type, ...],
 ) -> tuple[tuple[object, ...] | None, ...]:
+    """Build or resolve the overload for function param defaults for during static analysis."""
     if node.params is None:
         return (None,) * len(inputs)
     defaults = tuple(param.default or None for param in node.params)
@@ -4991,10 +5124,12 @@ def _function_param_defaults_for_overload(
 
 
 def _contains_rank_var(types: tuple[T.Type, ...]) -> bool:
+    """Return whether the value contains rank var."""
     return any(_type_contains_rank_var(typ) for typ in types)
 
 
 def _type_contains_rank_var(typ: T.Type) -> bool:
+    """Return the Boolean result of type contains rank var during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.CollectionType):
         return isinstance(typ.rank, T.RankVariable) or _type_contains_rank_var(typ.base)
@@ -5014,6 +5149,7 @@ def _type_contains_rank_var(typ: T.Type) -> bool:
 
 
 def _contains_type_var(typ: T.Type) -> bool:
+    """Return whether the value contains type var."""
     typ = T.normalize(typ)
     if isinstance(typ, T.VarType):
         return True
@@ -5037,6 +5173,7 @@ def _contains_type_var(typ: T.Type) -> bool:
 
 
 def _contains_named_type_var(typ: T.Type, name: str) -> bool:
+    """Return whether the value contains named type var."""
     typ = T.normalize(typ)
     if isinstance(typ, T.VarType):
         return typ.name == name
@@ -5075,10 +5212,12 @@ def _element_tags_contain_named_type_var(
     tags: frozenset[T.ElementTag],
     name: str,
 ) -> bool:
+    """Return the Boolean result of element tags contain named type var during static analysis."""
     return any(_contains_named_type_var(arg, name) for tag in tags for arg in tag.args)
 
 
 def _static_body_variable_names(node: FunctionNode) -> tuple[Symbol, ...]:
+    """Collect the names for static body variable during static analysis."""
     names: set[Symbol] = set()
     for typ in (*_declared_params(node), *(node.returns or ())):
         names.update(Symbol(name) for name in _rank_var_names_in_type(typ))
@@ -5089,6 +5228,7 @@ def _static_body_variable_names(node: FunctionNode) -> tuple[Symbol, ...]:
 
 
 def _rank_var_names_in_type(typ: T.Type) -> set[str]:
+    """Determine the type of rank var names in during static analysis."""
     typ = T.normalize(typ)
     names: set[str] = set()
     if isinstance(typ, T.CollectionType):
@@ -5118,10 +5258,12 @@ def _rank_var_names_in_type(typ: T.Type) -> set[str]:
 
 
 def _params_to_types(params: tuple[FunctionParam, ...]) -> tuple[T.Type, ...]:
+    """Determine the types used for params to during static analysis."""
     return tuple(_param_type(param, index) for index, param in enumerate(params))
 
 
 def _function_capture_source(outer: AnalysisBranch) -> BranchVariables | None:
+    """Compute function capture source during static analysis."""
     if outer.input_mode is InputMode.TOP_LEVEL:
         return None
     return outer.variables
@@ -5131,6 +5273,7 @@ def _top_level_assignment_capture_nodes(
     outer: AnalysisBranch,
     node: FunctionNode,
 ) -> tuple[GetVariableNode, ...]:
+    """Compute top level assignment capture nodes during static analysis."""
     if outer.input_mode is not InputMode.TOP_LEVEL:
         return ()
     visible = {name for name, _typ in outer.variables.visible_items()}
@@ -5144,6 +5287,7 @@ def _top_level_assignment_capture_reads_in_function(
     visible: set[Symbol],
     inherited_bound: frozenset[Symbol],
 ) -> tuple[GetVariableNode, ...]:
+    """Compute top level assignment capture reads in function during static analysis."""
     bound = inherited_bound | _function_bound_variable_names(node)
     return _top_level_assignment_capture_reads_in_nodes(node.body, visible, bound)
 
@@ -5153,6 +5297,7 @@ def _top_level_assignment_capture_reads_in_nodes(
     visible: set[Symbol],
     bound: frozenset[Symbol],
 ) -> tuple[GetVariableNode, ...]:
+    """Compute top level assignment capture reads in nodes during static analysis."""
     reads: list[GetVariableNode] = []
     for node in nodes:
         if isinstance(node, GetVariableNode):
@@ -5184,6 +5329,7 @@ def _top_level_assignment_capture_reads_in_value(
     visible: set[Symbol],
     bound: frozenset[Symbol],
 ) -> tuple[GetVariableNode, ...]:
+    """Compute top level assignment capture reads in value during static analysis."""
     if isinstance(value, FunctionNode):
         return _top_level_assignment_capture_reads_in_function(value, visible, bound)
     if isinstance(value, ASTNode):
@@ -5199,6 +5345,7 @@ def _top_level_assignment_capture_reads_in_value(
 
 
 def _function_bound_variable_names(node: FunctionNode) -> frozenset[Symbol]:
+    """Collect the names for function bound variable during static analysis."""
     names = {param.name for param in node.params or () if param.name is not None}
     names.update(
         assigned.name for assigned in node.body if isinstance(assigned, SetVariableNode)
@@ -5212,6 +5359,7 @@ def _function_bound_variable_names(node: FunctionNode) -> frozenset[Symbol]:
 def _function_analysis_from_signatures(
     signatures: dict[T.Overload, tuple[TypedNode, ...]],
 ) -> FunctionAnalysis | None:
+    """Build the signatures for function analysis from during static analysis."""
     if not signatures:
         return None
 
@@ -5238,6 +5386,7 @@ def _function_analysis_from_signatures(
 
 
 def _callable_overloads(typ: T.Type) -> tuple[T.Overload, ...]:
+    """Collect the overloads for callable during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.FunctionType):
         if typ.params is None or typ.returns is None:
@@ -5303,6 +5452,7 @@ def _types_may_overlap(
     right: T.Type,
     ctx: T.Context,
 ) -> bool:
+    """Return the Boolean result of types may overlap during static analysis."""
     left = T.normalize(left)
     right = T.normalize(right)
     if isinstance(left, T.UnionType):
@@ -5317,6 +5467,7 @@ def _final_function_element_tags(
     body_tags: frozenset[T.ElementTag],
     env: T.Environment,
 ) -> frozenset[T.ElementTag]:
+    """Compute final function element tags during static analysis."""
     declared = set(node.element_tags)
     if not node.element_tags_explicit:
         return frozenset(declared | set(body_tags))
@@ -5451,6 +5602,7 @@ def _best_candidates(
     candidates: Iterable[CallCandidate],
     original: AnalysisBranch | None = None,
 ) -> tuple[CallCandidate, ...]:
+    """Collect viable candidates for best during static analysis."""
     ordered = list(candidates)
     winners: list[CallCandidate] = []
     for candidate in ordered:
@@ -5472,6 +5624,7 @@ def _candidate_dominates(
     left: CallCandidate,
     right: CallCandidate,
 ) -> bool:
+    """Return the Boolean result of candidate dominates during static analysis."""
     left_applied = left.applied
     right_applied = right.applied
     if left.dispatch_priority != right.dispatch_priority:
@@ -5487,6 +5640,7 @@ def _params_more_specific(
     left: tuple[T.Type, ...],
     right: tuple[T.Type, ...],
 ) -> bool:
+    """Return the Boolean result of params more specific during static analysis."""
     return all(
         _type_more_specific_or_same(left_item, right_item)
         for left_item, right_item in zip(left, right, strict=False)
@@ -5497,6 +5651,7 @@ def _params_more_specific(
 
 
 def _type_more_specific_or_same(left: T.Type, right: T.Type) -> bool:
+    """Return the Boolean result of type more specific or same during static analysis."""
     left = T.normalize(left)
     right = T.normalize(right)
     if T.same(left, right) or T.assignable(left, right):
@@ -5533,6 +5688,7 @@ def _preserve_distinct_inferred_specializations(
     right: CallCandidate,
     original: AnalysisBranch | None,
 ) -> bool:
+    """Return the Boolean result of preserve distinct inferred specializations during static analysis."""
     if original is None:
         return False
     left_key = _inferred_specialization_key(left.branch, original)
@@ -5544,6 +5700,7 @@ def _inferred_specialization_key(
     branch: AnalysisBranch,
     original: AnalysisBranch,
 ) -> tuple[object, ...] | None:
+    """Build the comparison key for inferred specialization during static analysis."""
     if branch.inputs != original.inputs:
         return ("inputs", branch.inputs)
     if branch.cycle_params != original.cycle_params:
@@ -5557,6 +5714,7 @@ def _winners_specialize_inputs(
     winners: tuple[CallCandidate, ...],
     original: AnalysisBranch,
 ) -> bool:
+    """Return the Boolean result of winners specialize inputs during static analysis."""
     return all(candidate.branch.inputs != original.inputs for candidate in winners)
 
 
@@ -5564,6 +5722,7 @@ def _overload_index(
     overloads: tuple[T.Overload, ...],
     overload: T.Overload,
 ) -> int | None:
+    """Find the index for overload during static analysis."""
     try:
         return overloads.index(overload)
     except ValueError:
@@ -5583,6 +5742,7 @@ def _source_element_arguments(
         tuple[ModifierArgumentAnalysis, ...],
     ]
 ]:
+    """Source element arguments during static analysis."""
     if not modifier_args:
         params = _call_args_in_current_order(overload.params, call_arg_order)
         sourced = branch.source_arguments(params)
@@ -5644,6 +5804,7 @@ def _call_args_in_current_order(
     items: tuple[T.Type, ...],
     call_arg_order: tuple[int, ...],
 ) -> tuple[T.Type, ...]:
+    """Compute call args in current order during static analysis."""
     if not call_arg_order:
         return items
     return tuple(items[index] for index in _invert_call_arg_order(call_arg_order))
@@ -5653,12 +5814,14 @@ def _call_args_in_parameter_order(
     items: tuple[T.Type, ...],
     call_arg_order: tuple[int, ...],
 ) -> tuple[T.Type, ...]:
+    """Compute call args in parameter order during static analysis."""
     if not call_arg_order:
         return items
     return tuple(items[index] for index in call_arg_order)
 
 
 def _invert_call_arg_order(call_arg_order: tuple[int, ...]) -> tuple[int, ...]:
+    """Compute invert call arg order during static analysis."""
     current_to_parameter = [0] * len(call_arg_order)
     for parameter_index, current_index in enumerate(call_arg_order):
         current_to_parameter[current_index] = parameter_index
@@ -5675,6 +5838,7 @@ def _call_element_candidates(
     disambiguation: tuple[T.Type | None, ...],
     ctx: T.Context,
 ) -> list[CallCandidate]:
+    """Collect viable candidates for call element during static analysis."""
     candidates: list[CallCandidate] = []
     if disambiguation and len(disambiguation) != len(explicit_args):
         return candidates
@@ -5749,6 +5913,7 @@ def _prepare_element_call_branches(
     has_modifier_args: bool,
     analyser: Analyser,
 ) -> tuple[ElementCallPreparation, ...]:
+    """Prepare element call branches during static analysis."""
     plan = _element_call_argument_plan(overload, call_args, has_modifier_args)
     if plan is None:
         return ()
@@ -5768,6 +5933,7 @@ def _element_call_argument_plan(
     call_args: tuple[CallArgument, ...],
     has_modifier_args: bool,
 ) -> tuple[tuple[tuple[ASTNode, ...], ...], tuple[int, ...]] | None:
+    """Build the plan for element call argument during static analysis."""
     param_count = len(overload.params)
     if param_count == 0:
         return ((), ()) if not call_args else None
@@ -5851,6 +6017,7 @@ def _merge_element_arguments(
     stack_args: tuple[T.Type, ...],
     modifiers: tuple[ModifierArgumentAnalysis, ...],
 ) -> tuple[T.Type, ...]:
+    """Merge element arguments during static analysis."""
     args: list[T.Type] = []
     stack_index = 0
     modifier_index = 0
@@ -5872,6 +6039,7 @@ def _specialized_modifier_orders(
     substitution: dict[str, T.Type],
     ctx: T.Context,
 ) -> Iterator[tuple[dict[str, T.Type], tuple[ModifierArgumentAnalysis, ...]]]:
+    """Compute specialized modifier orders during static analysis."""
     if not modifier_indexes:
         yield substitution, ()
         return
@@ -5881,6 +6049,7 @@ def _specialized_modifier_orders(
         current_substitution: dict[str, T.Type],
         current_modifiers: tuple[ModifierArgumentAnalysis, ...],
     ) -> Iterator[tuple[dict[str, T.Type], tuple[ModifierArgumentAnalysis, ...]]]:
+        """Recursively continue the specialized modifier orders algorithm."""
         if position == len(modifier_indexes):
             yield current_substitution, current_modifiers
             return
@@ -5904,6 +6073,7 @@ def _modifier_variants_for_expected(
     expected: T.Type,
     ctx: T.Context,
 ) -> Iterator[tuple[ModifierArgumentAnalysis, dict[str, T.Type]]]:
+    """Compute modifier variants for expected during static analysis."""
     expected = T.normalize(expected)
     if not isinstance(expected, T.FunctionType) or _is_bare_function_type(expected):
         if T.compatible(modifier.typ, expected, ctx):
@@ -5975,6 +6145,7 @@ def _merge_substitutions(
     left: dict[str, T.Type],
     right: dict[str, T.Type],
 ) -> dict[str, T.Type] | None:
+    """Merge substitutions during static analysis."""
     merged = dict(left)
     for name, typ in right.items():
         existing = merged.get(name)
@@ -5985,6 +6156,7 @@ def _merge_substitutions(
 
 
 def _function_has_union_parameter(typ: T.FunctionType) -> bool:
+    """Return the Boolean result of function has union parameter during static analysis."""
     return typ.params is not None and any(
         isinstance(T.normalize(param), T.UnionType) for param in typ.params
     )
@@ -5994,6 +6166,7 @@ def _modifier_arity_matches(
     overloads: tuple[T.Overload, ...],
     modifier_args: tuple[ModifierArgumentAnalysis, ...],
 ) -> bool:
+    """Return the Boolean result of modifier arity matches during static analysis."""
     return len(modifier_args) in {
         len(_modifier_param_indexes(overload.params)) for overload in overloads
     }
@@ -6004,6 +6177,7 @@ def _specialize_modifier_arguments(
     modifier_args: tuple[ModifierArgumentAnalysis, ...],
     ctx: T.Context,
 ) -> tuple[TypedFunctionNode, ...]:
+    """Specialize modifier arguments during static analysis."""
     if not modifier_args:
         return ()
 
@@ -6043,6 +6217,7 @@ def _union_dispatch_plan_for_function(
     expected: T.Type,
     ctx: T.Context,
 ) -> T.UnionDispatchPlan | None:
+    """Compute union dispatch plan for function during static analysis."""
     expected = T.normalize(expected)
     if not isinstance(expected, T.FunctionType):
         return None
@@ -6061,6 +6236,7 @@ def _function_overload_matches_type(
     expected: T.FunctionType,
     ctx: T.Context,
 ) -> bool:
+    """Return the Boolean result of function overload matches type during static analysis."""
     typ = T.normalize(overload.typ)
     return isinstance(typ, T.FunctionType) and (
         T.same(typ, expected) or T.compatible(typ, expected, ctx)
@@ -6068,6 +6244,7 @@ def _function_overload_matches_type(
 
 
 def _show_modifier_counts(overloads: tuple[T.Overload, ...]) -> str:
+    """Format modifier counts during static analysis."""
     counts = sorted(
         {len(_modifier_param_indexes(overload.params)) for overload in overloads}
     )
@@ -6077,12 +6254,14 @@ def _show_modifier_counts(overloads: tuple[T.Overload, ...]) -> str:
 
 
 def _modifier_param_indexes(params: tuple[T.Type, ...]) -> tuple[int, ...]:
+    """Compute modifier param indexes during static analysis."""
     return tuple(
         index for index, param in enumerate(params) if _is_callable_parameter(param)
     )
 
 
 def _is_callable_parameter(param: T.Type) -> bool:
+    """Return whether the value is callable parameter."""
     param = T.normalize(param)
     return isinstance(param, T.FunctionType) or _is_bare_function_type(param)
 
@@ -6090,6 +6269,7 @@ def _is_callable_parameter(param: T.Type) -> bool:
 def _unique_permutations(
     modifier_args: tuple[ModifierArgumentAnalysis, ...],
 ) -> Iterator[tuple[ModifierArgumentAnalysis, ...]]:
+    """Compute unique permutations during static analysis."""
     seen: set[tuple[T.Type, ...]] = set()
     for candidate in permutations(modifier_args):
         key = tuple(item.typ for item in candidate)
@@ -6108,6 +6288,7 @@ def _apply_overload_to_branch(
     disambiguation: tuple[T.Type | None, ...] = (),
     analyser: Analyser | None = None,
 ) -> OverloadApplication | None:
+    """Apply overload to branch during static analysis."""
     if _overload_needs_call_site_checking(overload):
         return _apply_call_site_checked_overload(
             overload,
@@ -6172,6 +6353,7 @@ def _apply_tag_overlay(
     ctx: T.Context,
     env: T.Environment,
 ) -> T.AppliedOverload:
+    """Apply tag overlay during static analysis."""
     matches: list[T.AppliedOverload] = []
     for overlay in env.overlays_for(element):
         candidate = T.try_apply_overload(overlay.overload, args, ctx).applied
@@ -6217,6 +6399,7 @@ def _apply_call_site_checked_overload(
     disambiguation: tuple[T.Type | None, ...],
     analyser: Analyser | None,
 ) -> OverloadApplication | None:
+    """Apply call site checked overload during static analysis."""
     args = _row_views_for_arguments(args, overload.params, env)
     if len(args) != len(overload.params):
         return None
@@ -6285,6 +6468,7 @@ def _apply_call_site_checked_overload(
 
 
 def _overload_needs_call_site_checking(overload: T.Overload) -> bool:
+    """Return the Boolean result of overload needs call site checking during static analysis."""
     return any(_is_call_site_checked_param(param) for param in overload.params)
 
 
@@ -6293,6 +6477,7 @@ def _call_site_explicit_args_match(
     args: tuple[T.Type, ...],
     ctx: T.Context,
 ) -> bool:
+    """Return the Boolean result of call site explicit args match during static analysis."""
     return all(
         _call_site_placeholder_accepts(param, arg, ctx)
         for param, arg in zip(params, args, strict=True)
@@ -6305,6 +6490,7 @@ def _call_site_checked_overload_signature(
     ctx: T.Context,
     analyser: Analyser | None,
 ) -> T.Overload | None:
+    """Build the signature for call site checked overload during static analysis."""
     if callable(overload.call_site_body):
         return overload.call_site_body(call_params)
     if overload.call_site_body is not None and analyser is not None:
@@ -6338,6 +6524,7 @@ def _call_site_consumed_count(
     concrete: T.Overload,
     extra_count: int,
 ) -> int | None:
+    """Compute call site consumed count during static analysis."""
     consumed = (
         concrete.call_site_body
         if isinstance(concrete.call_site_body, int)
@@ -6353,6 +6540,7 @@ def _propagated_element_tags(
     args: tuple[T.Type, ...],
     substitution: dict[str, T.Type] | None = None,
 ) -> frozenset[T.ElementTag]:
+    """Compute propagated element tags during static analysis."""
     tags = {
         tag
         for tag in _substitute_branch_element_tags(
@@ -6375,6 +6563,7 @@ def _initial_rank_values(
     params: tuple[T.Type, ...],
     args: tuple[T.Type, ...],
 ) -> dict[str, int]:
+    """Collect the values for initial rank during static analysis."""
     values: dict[str, int] = {}
     for param, arg in zip(params, args, strict=False):
         _collect_rank_values(param, arg, values)
@@ -6386,6 +6575,7 @@ def _collect_rank_values(
     actual: T.Type,
     values: dict[str, int],
 ) -> None:
+    """Collect rank values during static analysis."""
     pattern = T.normalize(pattern)
     actual = T.normalize(actual)
     if isinstance(pattern, T.CollectionType) and isinstance(actual, T.CollectionType):
@@ -6422,7 +6612,9 @@ def _match_variadic_tuple_types(
     actual: T.TupleType,
     match: Callable[[T.Type, T.Type], bool],
 ) -> bool:
+    """Return the Boolean result of match variadic tuple types during static analysis."""
     def rec(pattern_index: int, actual_index: int) -> bool:
+        """Recursively continue the match variadic tuple types algorithm."""
         if pattern_index == len(pattern.items):
             return actual_index == len(actual.params)
         item = pattern.items[pattern_index]
@@ -6452,6 +6644,7 @@ def _evaluate_where_clause(
     args: tuple[T.Type, ...],
     rank_values: dict[str, int],
 ) -> dict[str, int] | None:
+    """Evaluate where clause during static analysis."""
     if not overload.where_clause:
         return rank_values
     variables: dict[str, StaticValue] = {
@@ -6479,6 +6672,7 @@ def _static_eval_node(
     stack: list[StaticValue],
     variables: dict[str, StaticValue],
 ) -> bool:
+    """Return the Boolean result of static eval node during static analysis."""
     match node:
         case NumberLiteralNode(value):
             stack.append(int(value))
@@ -6529,7 +6723,9 @@ def _static_eval_node(
 
 
 def _static_eval_element(name: str, stack: list[StaticValue]) -> bool:
+    """Return the Boolean result of static eval element during static analysis."""
     def pop_truthy_values(count: int) -> tuple[int | bool, ...] | None:
+        """Collect the values for pop truthy during static analysis."""
         if len(stack) < count:
             return None
         values = tuple(stack[-count:])
@@ -6629,6 +6825,7 @@ def _substitute_overload_ranks(
     overload: T.Overload,
     ranks: dict[str, int],
 ) -> T.Overload:
+    """Substitute overload ranks during static analysis."""
     return _transform_overload_types(
         overload,
         lambda typ: _substitute_rank_values(typ, ranks),
@@ -6639,6 +6836,7 @@ def _substitute_overload_ranks(
 
 
 def _substitute_rank_values(typ: T.Type, ranks: dict[str, int]) -> T.Type:
+    """Substitute rank values during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.CollectionType):
         rank = typ.rank
@@ -6686,6 +6884,7 @@ def _substitute_rank_values_in_element_tags(
     tags: frozenset[T.ElementTag],
     ranks: dict[str, int],
 ) -> tuple[T.ElementTag, ...]:
+    """Substitute rank values in element tags during static analysis."""
     return tuple(
         T.ElementTag(
             tag.name,
@@ -6701,6 +6900,7 @@ def _row_views_for_arguments(
     params: tuple[T.Type, ...],
     env: T.Environment | None,
 ) -> tuple[T.Type, ...]:
+    """Determine the arguments for row views for during static analysis."""
     if env is None:
         return args
     return tuple(
@@ -6714,6 +6914,7 @@ def _row_view_for_argument(
     param: T.Type,
     env: T.Environment,
 ) -> T.Type:
+    """Compute row view for argument during static analysis."""
     arg = T.normalize(arg)
     param = T.normalize(param)
     if not isinstance(param, T.RowType):
@@ -6739,6 +6940,7 @@ def _specialize_branch_arguments(
     branch: AnalysisBranch,
     substitution: dict[str, T.Type],
 ) -> AnalysisBranch:
+    """Specialize branch arguments during static analysis."""
     for name, typ in substitution.items():
         if _contains_named_type_var(typ, name):
             continue
@@ -6765,6 +6967,7 @@ def _apply_data_tag_flow(
 
 
 def _explicit_tags(typ: T.Type) -> frozenset[T.DataTag]:
+    """Compute explicit tags during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
         return typ.tags | _explicit_tags(typ.inner)
@@ -6783,6 +6986,7 @@ def _strip_implicit_computed_tags(
     explicit_tags: frozenset[T.DataTag],
     ctx: T.Context,
 ) -> T.Type:
+    """Compute strip implicit computed tags during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
         kept = tuple(tag for tag in typ.tags if tag in explicit_tags)
@@ -6811,6 +7015,7 @@ class StickyInputTag:
 
 
 def _sticky_input_tags(typ: T.Type, ctx: T.Context) -> tuple[StickyInputTag, ...]:
+    """Compute sticky input tags during static analysis."""
     typ = T.normalize(typ)
     if not isinstance(typ, T.TaggedType):
         return ()
@@ -6826,6 +7031,7 @@ def _propagate_sticky_tags(
     sticky_inputs: tuple[StickyInputTag, ...],
     ctx: T.Context,
 ) -> T.Type:
+    """Compute propagate sticky tags during static analysis."""
     result = typ
     output_rank = _type_rank(result)
     for sticky in sticky_inputs:
@@ -6840,6 +7046,7 @@ def _propagate_sticky_tags(
 
 
 def _tag_at_depth(typ: T.Type, tag: str, depth: int, ctx: T.Context) -> T.Type:
+    """Compute tag at depth during static analysis."""
     return _with_data_tags(typ, (T.DataTag(tag, depth),), ctx)
 
 
@@ -6848,6 +7055,7 @@ def _with_data_tags(
     tags: Iterable[T.DataTag],
     ctx: T.Context,
 ) -> T.Type:
+    """Compute with data tags during static analysis."""
     existing: set[T.DataTag] = set()
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
@@ -6867,6 +7075,7 @@ def _with_data_tags(
 
 
 def _remove_data_tag(typ: T.Type, tag: T.DataTag) -> T.Type | None:
+    """Remove data tag during static analysis."""
     typ = T.normalize(typ)
     if not isinstance(typ, T.TaggedType):
         return None
@@ -6879,12 +7088,14 @@ def _remove_data_tag(typ: T.Type, tag: T.DataTag) -> T.Type | None:
 
 
 def _show_tag(tag: T.DataTag) -> str:
+    """Format tag during static analysis."""
     prefix = "#!" if tag.absent else "#"
     depth = "+" * tag.depth
     return f"{prefix}{tag.name}{depth}"
 
 
 def _validator_overload_ok(overload: T.Overload, ctx: T.Context) -> bool:
+    """Return the Boolean result of validator overload ok during static analysis."""
     return len(overload.returns) == 1 and T.assignable(
         overload.returns[0],
         T.WithTag(T.Number, "boolean"),
@@ -6893,6 +7104,7 @@ def _validator_overload_ok(overload: T.Overload, ctx: T.Context) -> bool:
 
 
 def _static_validator_result(body: tuple[TypedNode, ...]) -> bool | None:
+    """Compute the result for static validator during static analysis."""
     if len(body) != 1:
         return None
     node = body[0].node
@@ -6908,6 +7120,7 @@ def _disjoint_data_tags(
     typ: T.Type,
     ctx: T.Context,
 ) -> tuple[Symbol, Symbol] | None:
+    """Compute disjoint data tags during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
         positive = [Symbol(tag.name) for tag in typ.tags if not tag.absent]
@@ -6937,6 +7150,7 @@ def _disjoint_data_tags(
 
 
 def _type_rank(typ: T.Type) -> int:
+    """Determine the collection rank for type during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
         return _type_rank(typ.inner)
@@ -6949,6 +7163,7 @@ def _refine_branch_like(
     branch: AnalysisBranch,
     refined: AnalysisBranch,
 ) -> AnalysisBranch:
+    """Refine branch like during static analysis."""
     substitution = _branch_pair_substitution(branch.inputs, refined.inputs)
     if substitution is None:
         return replace(
@@ -6967,6 +7182,7 @@ def _branch_pair_substitution(
     source: tuple[T.Type, ...],
     target: tuple[T.Type, ...],
 ) -> dict[str, T.Type] | None:
+    """Compute branch pair substitution during static analysis."""
     if len(source) != len(target):
         return None
     substitution: dict[str, T.Type] = {}
@@ -6987,6 +7203,7 @@ def _branch_argument_substitution(
     params: tuple[T.Type, ...],
     ctx: T.Context,
 ) -> dict[str, T.Type] | None:
+    """Compute branch argument substitution during static analysis."""
     substitution: dict[str, T.Type] = {}
     for arg, param in zip(args, params, strict=True):
         arg = _substitute_branch_type(arg, substitution)
@@ -7011,6 +7228,7 @@ def _solve_type_argument(
     param: T.Type,
     ctx: T.Context | None = None,
 ) -> dict[str, T.Type] | None:
+    """Compute solve type argument during static analysis."""
     solved = T._solve(param, arg, ctx)
     if solved is None:
         return None
@@ -7028,9 +7246,11 @@ def _solve_branch_argument(
     param: T.Type,
     ctx: T.Context,
 ) -> dict[str, T.Type] | None:
+    """Compute solve branch argument during static analysis."""
     constraints: dict[str, T.Type] = {}
 
     def bind(name: str, typ: T.Type) -> bool:
+        """Bind one inferred value during static analysis."""
         previous = constraints.get(name)
         if previous is None:
             constraints[name] = typ
@@ -7038,6 +7258,7 @@ def _solve_branch_argument(
         return T.same(previous, typ)
 
     def rec(actual: T.Type, expected: T.Type) -> bool:
+        """Recursively continue the solve branch argument algorithm."""
         actual = T.normalize(actual)
         expected = T.normalize(expected)
         if isinstance(actual, T.VarType):
@@ -7114,6 +7335,7 @@ def _solve_branch_argument(
 
 
 def _substitute_branch_type(typ: T.Type, substitution: dict[str, T.Type]) -> T.Type:
+    """Substitute branch type during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.VarType):
         return substitution.get(typ.name, typ)
@@ -7181,6 +7403,7 @@ def _substitute_branch_element_tags(
     tags: frozenset[T.ElementTag],
     substitution: dict[str, T.Type],
 ) -> tuple[T.ElementTag, ...]:
+    """Substitute branch element tags during static analysis."""
     return tuple(
         T.ElementTag(
             tag.name,
@@ -7195,6 +7418,7 @@ def _dominates(
     left: tuple[T.Specificity, ...],
     right: tuple[T.Specificity, ...],
 ) -> bool:
+    """Return the Boolean result of dominates during static analysis."""
     if len(left) != len(right):
         return False
     saw_strict = False
@@ -7207,6 +7431,7 @@ def _dominates(
 
 
 def _returns_result_type(returns: tuple[T.Type, ...]) -> T.Type | None:
+    """Determine the type of returns result during static analysis."""
     if len(returns) == 1:
         return returns[0]
     return None
@@ -7215,6 +7440,7 @@ def _returns_result_type(returns: tuple[T.Type, ...]) -> T.Type | None:
 def _consistent_function_returns(
     function: TypedFunctionNode,
 ) -> tuple[T.Type, ...] | None:
+    """Determine the return types for consistent function during static analysis."""
     returns: tuple[T.Type, ...] | None = None
     for overload in function.overloads:
         typ = overload.typ
@@ -7233,6 +7459,7 @@ def _consistent_function_returns(
 
 
 def _single_function_return(function: TypedFunctionNode) -> T.Type | None:
+    """Compute single function return during static analysis."""
     returns = _consistent_function_returns(function)
     if returns is None or len(returns) != 1:
         return None
@@ -7240,6 +7467,7 @@ def _single_function_return(function: TypedFunctionNode) -> T.Type | None:
 
 
 def _extension_selector_arity(function: TypedFunctionNode) -> int | None:
+    """Determine the required arity for extension selector during static analysis."""
     arity: int | None = None
     for overload in function.overloads:
         if len(overload.body) != 1:
@@ -7259,6 +7487,7 @@ def _unfold_emitted_type(
     state_types: tuple[T.Type, ...],
     returns: tuple[T.Type, ...],
 ) -> T.Type:
+    """Determine the type of unfold emitted during static analysis."""
     if len(returns) <= len(state_types):
         missing = len(state_types) - len(returns)
         next_state = state_types[-missing:] + returns if missing else returns
@@ -7267,6 +7496,7 @@ def _unfold_emitted_type(
 
 
 def _optional_present_type(typ: T.Type) -> T.Type:
+    """Determine the type of optional present during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.NoneTypeNode):
         return T.Never()
@@ -7297,6 +7527,7 @@ def _optional_present_type(typ: T.Type) -> T.Type:
 
 
 def _selector_value_count(selectors: tuple[IndexSelector, ...]) -> int:
+    """Compute selector value count during static analysis."""
     count = 0
     for selector in selectors:
         count += bool(selector.start)
@@ -7310,6 +7541,7 @@ def _indexed_type(
     selectors: tuple[IndexSelector, ...],
     spread: bool,
 ) -> T.Type:
+    """Determine the type of indexed during static analysis."""
     typ = T.normalize(receiver_type)
     for index, selector in enumerate(selectors):
         item = typ if selector.is_slice else _single_index_type(typ)
@@ -7330,6 +7562,7 @@ def _selectors_assignable(
     index_types: tuple[T.Type, ...],
     ctx: T.Context,
 ) -> bool:
+    """Return the Boolean result of selectors assignable during static analysis."""
     expected = _selector_expected_types(receiver_type, selectors)
     return len(expected) == len(index_types) and all(
         T.assignable(actual, target, ctx)
@@ -7341,6 +7574,7 @@ def _selector_expected_types(
     receiver_type: T.Type,
     selectors: tuple[IndexSelector, ...],
 ) -> tuple[T.Type, ...]:
+    """Determine the types used for selector expected during static analysis."""
     typ = T.normalize(receiver_type)
     expected: list[T.Type] = []
     for selector in selectors:
@@ -7362,6 +7596,7 @@ def _indexed_assignment_type(
     value_type: T.Type,
     ctx: T.Context,
 ) -> T.Type | None:
+    """Determine the type of indexed assignment during static analysis."""
     if len(selectors) == 1 and selectors[0].is_slice:
         slice_type = _indexed_type(receiver_type, selectors, spread=False)
         if T.assignable(value_type, slice_type, ctx):
@@ -7378,6 +7613,7 @@ def _single_index_assignment_type(
     value_type: T.Type,
     ctx: T.Context,
 ) -> T.Type | None:
+    """Determine the type of single index assignment during static analysis."""
     typ = T.normalize(receiver_type)
     if isinstance(typ, T.TaggedType):
         updated = _single_index_assignment_type(typ.inner, value_type, ctx)
@@ -7403,6 +7639,7 @@ def _single_index_assignment_type(
 
 
 def _single_index_key_type(typ: T.Type) -> T.Type:
+    """Determine the type of single index key during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
         return _single_index_key_type(typ.inner)
@@ -7418,6 +7655,7 @@ def _single_index_key_type(typ: T.Type) -> T.Type:
 
 
 def _single_index_type(typ: T.Type) -> T.Type:
+    """Determine the type of single index during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
         return _single_index_type(typ.inner)
@@ -7436,6 +7674,7 @@ def _single_index_type(typ: T.Type) -> T.Type:
 
 
 def _nominal_name(typ: T.Type) -> Symbol | None:
+    """Return the canonical name for nominal during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.NominalType):
         return typ.name
@@ -7446,6 +7685,7 @@ def _closed_match_members(
     env: T.Environment,
     name: Symbol,
 ) -> tuple[Symbol, ...] | None:
+    """Compute closed match members during static analysis."""
     variant = env.lookup_variant(name)
     if variant is not None:
         return variant.members
@@ -7459,6 +7699,7 @@ def _resolve_closed_member(
     expected: tuple[Symbol, ...],
     typ: T.Type,
 ) -> Symbol | None:
+    """Compute resolve closed member during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.NoneTypeNode):
         name = Symbol("None")
@@ -7475,6 +7716,7 @@ def _resolve_closed_member(
 def _match_case_pattern_types(
     patterns: tuple[MatchPatternNode, ...],
 ) -> Iterator[T.Type]:
+    """Determine the types used for match case pattern during static analysis."""
     for pattern in patterns:
         yield from _match_pattern_types(pattern)
 
@@ -7484,6 +7726,7 @@ def _try_handler_output(
     branch: AnalysisBranch,
     handler: TryHandlerNode,
 ) -> AnalysisBranch:
+    """Compute try handler output during static analysis."""
     handler_result = _returns_result_type(output.stack.items)
     if handler_result is None:
         handler_result = T.NoneType()
@@ -7499,6 +7742,7 @@ def _join_try_output(
     joined: AnalysisBranch | None,
     output: AnalysisBranch,
 ) -> AnalysisBranch | None:
+    """Join try output during static analysis."""
     if joined is None:
         return output
     if joined.inputs != output.inputs:
@@ -7522,6 +7766,7 @@ def _match_case_output(
     baseline: AnalysisBranch,
     node: MatchNode,
 ) -> AnalysisBranch:
+    """Compute match case output during static analysis."""
     candidate = output
     if candidate.break_type is not None:
         typ = candidate.break_type
@@ -7544,6 +7789,7 @@ def _join_match_output(
     joined: AnalysisBranch | None,
     candidate: AnalysisBranch,
 ) -> AnalysisBranch | None:
+    """Join match output during static analysis."""
     if joined is None:
         return candidate
     if joined.inputs != candidate.inputs:
@@ -7572,6 +7818,7 @@ def _join_match_output(
 
 
 def _match_pattern_types(pattern: MatchPatternNode) -> Iterator[T.Type]:
+    """Determine the types used for match pattern during static analysis."""
     if isinstance(pattern, TypePatternNode) and pattern.typ is not None:
         yield pattern.typ
     if isinstance(pattern, OrPatternNode):
@@ -7580,6 +7827,7 @@ def _match_pattern_types(pattern: MatchPatternNode) -> Iterator[T.Type]:
 
 
 def _match_arity(node: MatchNode) -> int | None:
+    """Determine the required arity for match during static analysis."""
     arity: int | None = None
     for case in node.cases:
         case_arity = len(case.patterns)
@@ -7595,6 +7843,7 @@ def _match_subject_pattern_type(
     node: MatchNode,
     index: int,
 ) -> T.Type:
+    """Determine the type of match subject pattern during static analysis."""
     inferred = tuple(
         typ
         for case in node.cases
@@ -7610,6 +7859,7 @@ def _match_subject_pattern_type(
 
 
 def _pattern_subject_type(pattern: MatchPatternNode) -> T.Type | None:
+    """Determine the type of pattern subject during static analysis."""
     if isinstance(pattern, TypePatternNode):
         return pattern.typ
     if isinstance(pattern, BindingPatternNode):
@@ -7649,12 +7899,14 @@ def _pattern_subject_type(pattern: MatchPatternNode) -> T.Type | None:
 
 
 def _is_default_match_case(patterns: tuple[MatchPatternNode, ...]) -> bool:
+    """Return whether the value is default match case."""
     return bool(patterns) and all(
         _is_default_match_pattern(pattern) for pattern in patterns
     )
 
 
 def _is_default_match_pattern(pattern: MatchPatternNode) -> bool:
+    """Return whether the value is default match pattern."""
     return isinstance(pattern, (WildcardPatternNode, RestPatternNode)) or (
         isinstance(pattern, TypePatternNode) and pattern.typ is None
     )
@@ -7665,6 +7917,7 @@ def _match_case_variables(
     patterns: tuple[MatchPatternNode, ...],
     subject_types: tuple[T.Type, ...] = (),
 ) -> BranchVariables:
+    """Determine variable facts for match case during static analysis."""
     result = variables
     if subject_types:
         result = _add_match_binding(result, Symbol("top"), subject_types[0])
@@ -7677,6 +7930,7 @@ def _match_subject_variables(
     branch: AnalysisBranch,
     arity: int,
 ) -> tuple[Symbol | None, ...]:
+    """Determine variable facts for match subject during static analysis."""
     if arity <= 0 or len(branch.typed_body) < arity:
         return ()
     subject_nodes = branch.typed_body[-arity:]
@@ -7697,6 +7951,7 @@ def _refine_match_subject_variables(
     previous_patterns: tuple[tuple[MatchPatternNode, ...], ...],
     ctx: T.Context,
 ) -> BranchVariables:
+    """Refine match subject variables during static analysis."""
     result = variables
     for index, name in enumerate(subject_variables):
         if name is None or index >= len(subject_types) or index >= len(patterns):
@@ -7722,6 +7977,7 @@ def _narrow_variable(
     name: Symbol,
     typ: T.Type,
 ) -> BranchVariables:
+    """Compute narrow variable during static analysis."""
     if _lookup(variables.block_locals, name) is not None:
         return BranchVariables(
             function_locals=variables.function_locals,
@@ -7767,6 +8023,7 @@ def _match_case_subject_type(
     previous_patterns: tuple[MatchPatternNode, ...],
     ctx: T.Context,
 ) -> T.Type | None:
+    """Determine the type of match case subject during static analysis."""
     pattern_type = _pattern_subject_type(pattern)
     if pattern_type is not None:
         return pattern_type
@@ -7787,6 +8044,7 @@ def _subtract_match_types(
     excluded: tuple[T.Type, ...],
     ctx: T.Context,
 ) -> T.Type:
+    """Determine the types used for subtract match during static analysis."""
     subject_type = T.normalize(subject_type)
     if not isinstance(subject_type, T.UnionType):
         return subject_type
@@ -7804,6 +8062,7 @@ def _add_match_pattern_variables(
     variables: BranchVariables,
     pattern: MatchPatternNode,
 ) -> BranchVariables:
+    """Add match pattern variables during static analysis."""
     if isinstance(pattern, BindingPatternNode):
         return _add_match_binding(
             _add_match_pattern_variables(variables, pattern.pattern),
@@ -7845,11 +8104,13 @@ def _add_match_binding(
     name: Symbol,
     typ: T.Type,
 ) -> BranchVariables:
+    """Add match binding during static analysis."""
     write = variables.write(name, typ, block_local=True)
     return variables if write.variables is None else write.variables
 
 
 def _pattern_binding_type(pattern: MatchPatternNode, name: Symbol) -> T.Type:
+    """Determine the type of pattern binding during static analysis."""
     if isinstance(pattern, RestPatternNode):
         return T.C(T.ListExactType, T.V(f"_matched_{name}"))
     if isinstance(pattern, TypePatternNode) and pattern.typ is not None:
@@ -7861,6 +8122,7 @@ def _match_pattern_guards(
     patterns: tuple[MatchPatternNode, ...],
     subject_types: tuple[T.Type, ...],
 ) -> Iterator[tuple[tuple[ASTNode, ...], T.Type]]:
+    """Compute match pattern guards during static analysis."""
     for pattern, subject_type in zip(patterns, subject_types, strict=True):
         yield from _pattern_guards(pattern, subject_type)
 
@@ -7869,6 +8131,7 @@ def _pattern_guards(
     pattern: MatchPatternNode,
     subject_type: T.Type,
 ) -> Iterator[tuple[tuple[ASTNode, ...], T.Type]]:
+    """Compute pattern guards during static analysis."""
     if isinstance(pattern, GuardPatternNode):
         yield pattern.condition, subject_type
     elif isinstance(pattern, TypePatternNode) and pattern.guard:
@@ -7885,12 +8148,14 @@ def _pattern_guards(
 
 
 def _show_stack(stack: T.TypeStack) -> str:
+    """Format stack during static analysis."""
     if not stack:
         return "[]"
     return "[" + ", ".join(T.show(item) for item in stack.items) + "]"
 
 
 def _diagnostic_message(message: str, node: ASTNode | None) -> str:
+    """Format the message for diagnostic during static analysis."""
     if node is None or node.location is None:
         return message
     location = node.location
@@ -7898,6 +8163,7 @@ def _diagnostic_message(message: str, node: ASTNode | None) -> str:
 
 
 def _show_overloads(overloads: Iterable[T.Overload]) -> str:
+    """Format overloads during static analysis."""
     rendered = tuple(
         T.show(T.Fn(overload.params, overload.returns)) for overload in overloads
     )
@@ -7909,6 +8175,7 @@ def _show_overloads(overloads: Iterable[T.Overload]) -> str:
 def _show_applied_overloads(
     candidates: Iterable[CallCandidate],
 ) -> str:
+    """Format applied overloads during static analysis."""
     rendered = tuple(
         T.show(
             T.Fn(
@@ -7924,12 +8191,14 @@ def _show_applied_overloads(
 
 
 def _top_or_none(stack: T.TypeStack) -> T.Type:
+    """Compute top or none during static analysis."""
     if stack:
         return stack[-1]
     return T.NoneType()
 
 
 def _loop_break_result_type(break_types: tuple[T.Type, ...]) -> T.Type:
+    """Determine the type of loop break result during static analysis."""
     if not break_types:
         return T.NoneType()
     if len(break_types) == 1:
@@ -7941,6 +8210,7 @@ def _list_item_analysis(
     base: AnalysisBranch,
     output: AnalysisBranch,
 ) -> ListItemAnalysis | None:
+    """Compute list item analysis during static analysis."""
     if output.break_type is not None or not output.stack:
         return None
     return ListItemAnalysis(
@@ -7957,6 +8227,7 @@ def _literal_branch_results(
     node: ASTNode,
     literal_type: Callable[[tuple[ListItemAnalysis, ...]], T.Type],
 ) -> BranchSet:
+    """Compute the results for literal branch during static analysis."""
     results: list[AnalysisBranch] = []
     for combo in _cartesian_product(item_options):
         inputs = _merge_inferred_inputs(branch.inputs, combo)
@@ -7990,6 +8261,7 @@ def _literal_branch_results(
 
 
 def _forked_stack_consumption(base: T.TypeStack, item_remainder: T.TypeStack) -> int:
+    """Compute forked stack consumption during static analysis."""
     prefix = 0
     limit = min(len(base), len(item_remainder))
     while prefix < limit and T.same(base[prefix], item_remainder[prefix]):
@@ -8000,6 +8272,7 @@ def _forked_stack_consumption(base: T.TypeStack, item_remainder: T.TypeStack) ->
 def _cartesian_product(
     options: tuple[tuple[ListItemAnalysis, ...], ...],
 ) -> Iterator[tuple[ListItemAnalysis, ...]]:
+    """Compute cartesian product during static analysis."""
     if not options:
         yield ()
         return
@@ -8013,6 +8286,7 @@ def _merge_inferred_inputs(
     base_inputs: tuple[T.Type, ...],
     items: tuple[ListItemAnalysis, ...],
 ) -> tuple[T.Type, ...] | None:
+    """Merge inferred inputs during static analysis."""
     suffixes: list[tuple[T.Type, ...]] = []
     for item in items:
         if item.branch.inputs[: len(base_inputs)] != base_inputs:
@@ -8031,6 +8305,7 @@ def _merge_branch_inputs(
     left: tuple[T.Type, ...],
     right: tuple[T.Type, ...],
 ) -> tuple[T.Type, ...] | None:
+    """Merge branch inputs during static analysis."""
     if len(left) != len(right):
         return None
     return tuple(
@@ -8045,6 +8320,7 @@ def _merge_list_item_variables(
     before: BranchVariables,
     items: tuple[ListItemAnalysis, ...],
 ) -> BranchVariables:
+    """Merge list item variables during static analysis."""
     merged = before
     for item in items:
         merged = merged.merge_against(item.branch.variables, before)
@@ -8052,6 +8328,7 @@ def _merge_list_item_variables(
 
 
 def _pop_stack(stack: T.TypeStack, count: int) -> T.TypeStack:
+    """Compute pop stack during static analysis."""
     if count == 0:
         return stack
     return stack.pop(count)
@@ -8062,6 +8339,7 @@ def _merge_loop_variables(
     outputs: BranchSet,
     loop_locals: tuple[Symbol, ...],
 ) -> BranchVariables:
+    """Merge loop variables during static analysis."""
     before_loop = _drop_named_block_locals(before, loop_locals)
     merged = before_loop
     for output in outputs:
@@ -8076,6 +8354,7 @@ def _drop_named_block_locals(
     variables: BranchVariables,
     names: tuple[Symbol, ...],
 ) -> BranchVariables:
+    """Compute drop named block locals during static analysis."""
     blocked = set(names)
     return BranchVariables(
         function_locals=variables.function_locals,
@@ -8091,6 +8370,7 @@ def _loop_variable_output_type(
     name: Symbol,
     outputs: BranchSet,
 ) -> T.Type | None:
+    """Determine the type of loop variable output during static analysis."""
     types = tuple(
         typ for output in outputs if (typ := output.variables.read(name)) is not None
     )
@@ -8103,14 +8383,17 @@ def _loop_variable_output_type(
 
 
 def _has_never_return(overload: T.Overload) -> bool:
+    """Return whether the analyser helper has never return."""
     return any(isinstance(T.normalize(ret), T.NeverType) for ret in overload.returns)
 
 
 def _is_never(t: T.Type) -> bool:
+    """Return whether the value is never."""
     return isinstance(T.normalize(t), T.NeverType)
 
 
 def _param_type(param: FunctionParam, index: int) -> T.Type:
+    """Determine the type of param during static analysis."""
     if param.typ is not None:
         return param.typ
     name = param.name.text if param.name is not None else f"_{index}"
@@ -8118,6 +8401,7 @@ def _param_type(param: FunctionParam, index: int) -> T.Type:
 
 
 def _trait_requirement(node: TraitRequirementNode) -> T.TraitRequirement | None:
+    """Compute trait requirement during static analysis."""
     params = tuple(
         _param_type(param, index) for index, param in enumerate(node.params or ())
     )
@@ -8133,6 +8417,7 @@ def _trait_requirement(node: TraitRequirementNode) -> T.TraitRequirement | None:
 
 
 def _trait_requirements(node: ObjectNode) -> tuple[T.TraitRequirement, ...]:
+    """Compute trait requirements during static analysis."""
     return tuple(
         _genericize_requirement(requirement, node.generics)
         for item in node.requirements
@@ -8141,10 +8426,12 @@ def _trait_requirements(node: ObjectNode) -> tuple[T.TraitRequirement, ...]:
 
 
 def _declared_nominal(name: Symbol, generics: tuple[Symbol, ...]) -> T.Type:
+    """Compute declared nominal during static analysis."""
     return T.N(name, *(T.V(generic.text) for generic in generics))
 
 
 def _types_overlap(source: T.Type, target: T.Type, ctx: T.Context) -> bool:
+    """Return the Boolean result of types overlap during static analysis."""
     source = T.normalize(source)
     target = T.normalize(target)
     if T.assignable(source, target, ctx) or T.assignable(target, source, ctx):
@@ -8162,6 +8449,7 @@ def _copied_stack_shuffle_types(
     labelled: dict[Symbol, T.Type],
     stack_arg_start: int,
 ) -> tuple[T.Type, ...]:
+    """Determine the types used for copied stack shuffle during static analysis."""
     if node.mode == Symbol("copy"):
         return tuple(dict.fromkeys(labelled[label] for label in node.poststack))
 
@@ -8183,6 +8471,7 @@ def _copied_stack_shuffle_types(
 
 
 def _copy_diagnostic(typ: T.Type, env: T.Environment) -> str | None:
+    """Compute copy diagnostic during static analysis."""
     reason = _noncopyable_reason(typ, env)
     if reason is None:
         return None
@@ -8190,6 +8479,7 @@ def _copy_diagnostic(typ: T.Type, env: T.Environment) -> str | None:
 
 
 def _noncopyable_reason(typ: T.Type, env: T.Environment) -> str | None:
+    """Compute noncopyable reason during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
         return _noncopyable_reason(typ.inner, env)
@@ -8225,6 +8515,7 @@ def _noncopyable_reason(typ: T.Type, env: T.Environment) -> str | None:
 
 
 def _nominal_copy_error(name: Symbol, env: T.Environment) -> str | None:
+    """Return the error description for nominal copy during static analysis."""
     overloads = env.overloads_for(Symbol(f"{name}::dup"))
     for overload in overloads:
         if overload.annotation_error is not None:
@@ -8233,6 +8524,7 @@ def _nominal_copy_error(name: Symbol, env: T.Environment) -> str | None:
 
 
 def _number_literal_type(value: str) -> T.Type:
+    """Determine the type of number literal during static analysis."""
     if "i" in value.lower():
         return T.Number
     try:
@@ -8249,6 +8541,7 @@ def _generic_constraints(
     variances: tuple[Symbol | None, ...],
     constraints: tuple[T.Type | None, ...],
 ) -> tuple[T.GenericConstraint, ...]:
+    """Compute generic constraints during static analysis."""
     if len(generics) != len(constraints):
         return ()
     if len(variances) != len(generics):
@@ -8265,6 +8558,7 @@ def _generic_constraints(
 
 
 def _constraint_variance_from_marker(marker: Symbol | None) -> T.Variance:
+    """Compute constraint variance from marker during static analysis."""
     if marker is None or marker.text == "any":
         return T.Variance.COVARIANT
     if marker.text == "above":
@@ -8276,6 +8570,7 @@ def _with_generic_constraints(
     overload: T.Overload,
     constraints: tuple[T.GenericConstraint, ...],
 ) -> T.Overload:
+    """Compute with generic constraints during static analysis."""
     if not constraints:
         return overload
     return replace(
@@ -8289,6 +8584,7 @@ def _has_multimethod_fallback(
     candidates: tuple[T.Overload, ...],
     ctx: T.Context,
 ) -> bool:
+    """Return whether the analyser helper has multimethod fallback."""
     return any(
         not candidate.is_multi
         and len(candidate.params) == len(overload.params)
@@ -8303,6 +8599,7 @@ def _mark_multidispatch(
     overloads: tuple[T.Overload, ...],
     ctx: T.Context,
 ) -> T.AppliedOverload:
+    """Compute mark multidispatch during static analysis."""
     if applied.overload.is_multi:
         if any(
             candidate is not applied.overload
@@ -8321,6 +8618,7 @@ def _mark_multidispatch(
 def _collapse_equivalent_friendly_multidispatch_winners(
     winners: tuple[CallCandidate, ...],
 ) -> tuple[CallCandidate, ...]:
+    """Compute collapse equivalent friendly multidispatch winners during static analysis."""
     if len(winners) <= 1:
         return winners
     first = winners[0]
@@ -8352,6 +8650,7 @@ def _has_runtime_multimethod_candidate(
     overloads: tuple[T.Overload, ...],
     ctx: T.Context,
 ) -> bool:
+    """Return whether the analyser helper has runtime multimethod candidate."""
     return any(
         candidate.is_multi
         and candidate is not fallback
@@ -8367,6 +8666,7 @@ def _multimethod_params_covered_by(
     fallback: tuple[T.Type, ...],
     ctx: T.Context,
 ) -> bool:
+    """Return the Boolean result of multimethod params covered by during static analysis."""
     return all(
         T.assignable(specific_param, fallback_param, ctx)
         for specific_param, fallback_param in zip(specific, fallback, strict=True)
@@ -8377,6 +8677,7 @@ def _same_returns(
     left: tuple[T.Type, ...],
     right: tuple[T.Type, ...],
 ) -> bool:
+    """Return the Boolean result of same returns during static analysis."""
     return len(left) == len(right) and all(
         T.same(left_item, right_item)
         for left_item, right_item in zip(left, right, strict=True)
@@ -8387,6 +8688,7 @@ def _genericize_overload(
     overload: T.Overload,
     generics: tuple[Symbol, ...],
 ) -> T.Overload:
+    """Generalize overload during static analysis."""
     if not generics:
         return overload
     return _transform_overload_types(
@@ -8399,6 +8701,7 @@ def _genericize_function_node(
     function: FunctionNode,
     generics: tuple[Symbol, ...],
 ) -> FunctionNode:
+    """Generalize function node during static analysis."""
     if not generics:
         return function
     params = None
@@ -8446,6 +8749,7 @@ def _contextualize_return_block(
     body: tuple[ASTNode, ...],
     returns: tuple[T.Type, ...],
 ) -> tuple[ASTNode, ...]:
+    """Compute contextualize return block during static analysis."""
     nodes = tuple(_contextualize_explicit_return(node, returns) for node in body)
     if not nodes:
         return nodes
@@ -8470,6 +8774,7 @@ def _contextualize_explicit_return(
     node: ASTNode,
     returns: tuple[T.Type, ...],
 ) -> ASTNode:
+    """Compute contextualize explicit return during static analysis."""
     if isinstance(node, ReturnNode) and len(node.values) == len(returns):
         return replace(
             node,
@@ -8482,6 +8787,7 @@ def _contextualize_explicit_return(
 
 
 def _contextualize_return_expression(node: ASTNode, expected: T.Type) -> ASTNode:
+    """Compute contextualize return expression during static analysis."""
     if isinstance(node, ListLiteralNode) and not node.items and node.typ is None:
         inferred = _empty_list_return_type(expected)
         return node if inferred is None else replace(node, typ=inferred)
@@ -8518,6 +8824,7 @@ def _contextualize_return_expression(node: ASTNode, expected: T.Type) -> ASTNode
 
 
 def _empty_list_return_type(expected: T.Type) -> T.Type | None:
+    """Determine the type of empty list return during static analysis."""
     expected = T.normalize(expected)
     if isinstance(expected, (T.TaggedType, T.ExactType)):
         return _empty_list_return_type(expected.inner)
@@ -8529,6 +8836,7 @@ def _empty_list_return_type(expected: T.Type) -> T.Type | None:
 
 
 def _genericize_ast_node(node: ASTNode, generics: tuple[Symbol, ...]) -> ASTNode:
+    """Generalize AST node during static analysis."""
     if isinstance(node, FunctionNode) and node.generics:
         shadowed = {generic.text for generic in node.generics}
         generics = tuple(
@@ -8546,6 +8854,7 @@ def _genericize_ast_node(node: ASTNode, generics: tuple[Symbol, ...]) -> ASTNode
 
 
 def _genericize_ast_value(value: object, generics: tuple[Symbol, ...]) -> object:
+    """Generalize AST value during static analysis."""
     if isinstance(value, T.Type):
         return _genericize_type(value, generics)
     if isinstance(value, FunctionParam):
@@ -8575,6 +8884,7 @@ def _genericize_attribute(
     attribute: T.ObjectAttribute,
     generics: tuple[Symbol, ...],
 ) -> T.ObjectAttribute:
+    """Generalize attribute during static analysis."""
     return T.ObjectAttribute(
         attribute.name,
         _genericize_type(attribute.typ, generics),
@@ -8587,6 +8897,7 @@ def _genericize_requirement(
     requirement: T.TraitRequirement,
     generics: tuple[Symbol, ...],
 ) -> T.TraitRequirement:
+    """Generalize requirement during static analysis."""
     return T.TraitRequirement(
         requirement.name,
         _transform_overload_types(
@@ -8602,6 +8913,7 @@ def _transform_overload_types(
     *,
     element_tags: frozenset[T.ElementTag] | None = None,
 ) -> T.Overload:
+    """Determine the types used for transform overload during static analysis."""
     return replace(
         overload,
         params=tuple(transform(param) for param in overload.params),
@@ -8619,6 +8931,7 @@ def _transform_type_children(
         frozenset[T.ElementTag],
     ] = lambda tags: tags,
 ) -> T.Type:
+    """Compute transform type children during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.NominalType):
         return T.N(typ.name, *(transform(arg) for arg in typ.args))
@@ -8660,6 +8973,7 @@ def _transform_type_children(
 
 
 def _genericize_type(typ: T.Type, generics: tuple[Symbol, ...]) -> T.Type:
+    """Generalize type during static analysis."""
     names = {generic.text for generic in generics}
     typ = T.normalize(typ)
     if isinstance(typ, T.NominalType):
@@ -8684,6 +8998,7 @@ def _genericize_type(typ: T.Type, generics: tuple[Symbol, ...]) -> T.Type:
 
 
 def _anonymous_trait_overloads(*types: T.Type) -> tuple[tuple[Symbol, T.Overload], ...]:
+    """Collect the overloads for anonymous trait during static analysis."""
     overloads: list[tuple[Symbol, T.Overload]] = []
     for typ in types:
         _collect_anonymous_trait_overloads(T.normalize(typ), overloads)
@@ -8691,6 +9006,7 @@ def _anonymous_trait_overloads(*types: T.Type) -> tuple[tuple[Symbol, T.Overload
 
 
 def _anonymous_trait_subject_view(typ: T.Type) -> T.Type:
+    """Build the view of anonymous trait subject during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.AnonymousTraitType):
         subject = _anonymous_trait_subject_name(typ)
@@ -8701,6 +9017,7 @@ def _anonymous_trait_subject_view(typ: T.Type) -> T.Type:
 
 
 def _anonymous_trait_subject_name(typ: T.AnonymousTraitType) -> str | None:
+    """Return the canonical name for anonymous trait subject during static analysis."""
     if typ.generics:
         return typ.generics[0].text
     for requirement in typ.requirements:
@@ -8712,6 +9029,7 @@ def _anonymous_trait_subject_name(typ: T.AnonymousTraitType) -> str | None:
 
 
 def _first_type_var_name(typ: T.Type) -> str | None:
+    """Return the canonical name for first type var during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.VarType):
         return typ.name
@@ -8764,6 +9082,7 @@ def _first_type_var_name(typ: T.Type) -> str | None:
 
 
 def _contains_anonymous_trait(typ: T.Type) -> bool:
+    """Return whether the value contains anonymous trait."""
     typ = T.normalize(typ)
     if isinstance(typ, T.AnonymousTraitType):
         return True
@@ -8796,6 +9115,7 @@ def _collect_anonymous_trait_overloads(
     typ: T.Type,
     overloads: list[tuple[Symbol, T.Overload]],
 ) -> None:
+    """Collect anonymous trait overloads during static analysis."""
     if isinstance(typ, T.AnonymousTraitType):
         overloads.extend(
             (requirement.name, requirement.overload) for requirement in typ.requirements
@@ -8842,6 +9162,7 @@ def _genericize_element_tags(
     tags: frozenset[T.ElementTag],
     generics: tuple[Symbol, ...],
 ) -> tuple[T.ElementTag, ...]:
+    """Generalize element tags during static analysis."""
     return tuple(
         T.ElementTag(
             tag.name,
@@ -8858,6 +9179,7 @@ def _declared_or_inferred_variance(
     attributes: tuple[T.ObjectAttribute, ...],
     requirements: tuple[T.TraitRequirement, ...],
 ) -> tuple[T.Variance, ...]:
+    """Compute declared or inferred variance during static analysis."""
     inferred = _infer_generic_variance(generics, attributes, requirements)
     if len(explicit) != len(generics):
         return inferred
@@ -8868,6 +9190,7 @@ def _declared_or_inferred_variance(
 
 
 def _variance_from_marker(marker: Symbol) -> T.Variance:
+    """Compute variance from marker during static analysis."""
     if marker.text in {"any", "covariant"}:
         return T.Variance.COVARIANT
     if marker.text in {"above", "contravariant"}:
@@ -8880,6 +9203,7 @@ def _infer_generic_variance(
     attributes: tuple[T.ObjectAttribute, ...],
     requirements: tuple[T.TraitRequirement, ...],
 ) -> tuple[T.Variance, ...]:
+    """Infer generic variance during static analysis."""
     usage = {generic.text: [False, False] for generic in generics}
     for attribute in attributes:
         _record_variance_use(attribute.typ, +1, usage)
@@ -8907,6 +9231,7 @@ def _record_variance_use(
     polarity: int,
     usage: dict[str, list[bool]],
 ) -> None:
+    """Record variance use during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.VarType):
         if typ.name in usage:
@@ -8962,6 +9287,7 @@ def _record_variance_use(
 
 
 def _anonymous_type_var(branch: AnalysisBranch, offset: int) -> T.Type:
+    """Compute anonymous type var during static analysis."""
     taken = _anonymous_type_indices(
         *branch.stack.items,
         *branch.inputs,
@@ -8973,6 +9299,7 @@ def _anonymous_type_var(branch: AnalysisBranch, offset: int) -> T.Type:
 
 
 def _anonymous_type_indices(*types: T.Type) -> set[int]:
+    """Compute anonymous type indices during static analysis."""
     indices: set[int] = set()
     for typ in types:
         _collect_anonymous_type_indices(T.normalize(typ), indices)
@@ -8980,6 +9307,7 @@ def _anonymous_type_indices(*types: T.Type) -> set[int]:
 
 
 def _collect_anonymous_type_indices(typ: T.Type, indices: set[int]) -> None:
+    """Collect anonymous type indices during static analysis."""
     if isinstance(typ, T.VarType) and typ.name.startswith("@"):
         suffix = typ.name[1:]
         if suffix.isdecimal():
@@ -9025,6 +9353,7 @@ def _collect_anonymous_type_indices(typ: T.Type, indices: set[int]) -> None:
 
 
 def _row_field_type(row: T.RowType, name: Symbol) -> T.Type | None:
+    """Determine the type of row field during static analysis."""
     for row_field in row.fields:
         if row_field.name == name:
             return row_field.typ
@@ -9032,6 +9361,7 @@ def _row_field_type(row: T.RowType, name: Symbol) -> T.Type | None:
 
 
 def _refine_stack(stack: T.TypeStack, old: T.Type, new: T.Type) -> T.TypeStack:
+    """Refine stack during static analysis."""
     return T.TypeStack(tuple(_refine_type(item, old, new) for item in stack.items))
 
 
@@ -9040,6 +9370,7 @@ def _refine_items(
     old: T.Type,
     new: T.Type,
 ) -> tuple[tuple[Symbol, T.Type], ...]:
+    """Refine items during static analysis."""
     return tuple((name, _refine_type(typ, old, new)) for name, typ in items)
 
 
@@ -9048,10 +9379,12 @@ def _refine_typed_body(
     old: T.Type,
     new: T.Type,
 ) -> tuple[TypedNode, ...]:
+    """Refine typed body during static analysis."""
     return tuple(_refine_typed_node(node, old, new) for node in typed_body)
 
 
 def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> TypedNode:
+    """Refine typed node during static analysis."""
     typ = None if typed_node.typ is None else _refine_type(typed_node.typ, old, new)
     if isinstance(typed_node, TypedFunctionNode):
         return TypedFunctionNode(
@@ -9132,10 +9465,12 @@ def _refine_typed_extension(
     old: T.Type,
     new: T.Type,
 ) -> TypedElementExtension | None:
+    """Refine typed extension during static analysis."""
     if extension is None:
         return None
 
     def refine_function(function: TypedFunctionNode | None) -> TypedFunctionNode | None:
+        """Refine function during static analysis."""
         if function is None:
             return None
         refined = _refine_typed_node(function, old, new)
@@ -9156,6 +9491,7 @@ def _refine_typed_extension(
 
 
 def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
+    """Refine type during static analysis."""
     typ = T.normalize(typ)
     new = _erase_absent_tag_requirements(new)
     if T.same(typ, old):
@@ -9183,6 +9519,7 @@ def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
 
 
 def _atomic_base_type(typ: T.Type) -> T.Type:
+    """Determine the type of atomic base during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
         return _atomic_base_type(typ.inner)
@@ -9192,6 +9529,7 @@ def _atomic_base_type(typ: T.Type) -> T.Type:
 
 
 def _erase_absent_tag_requirements(typ: T.Type) -> T.Type:
+    """Compute erase absent tag requirements during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType) and all(tag.absent for tag in typ.tags):
         return typ.inner
@@ -9203,6 +9541,7 @@ def _stack_assignable(
     expected: T.TypeStack,
     ctx: T.Context,
 ) -> bool:
+    """Return the Boolean result of stack assignable during static analysis."""
     if len(actual) < len(expected):
         return False
     actual_returns = actual.items[-len(expected) :] if expected else ()
@@ -9215,6 +9554,7 @@ def _stack_returns(
     actual: T.TypeStack,
     expected: T.TypeStack,
 ) -> tuple[T.Type, ...]:
+    """Determine the return types for stack during static analysis."""
     return actual.items[-len(expected) :] if expected else ()
 
 
@@ -9236,6 +9576,7 @@ def _lookup(
     items: tuple[tuple[Symbol, T.Type], ...],
     name: Symbol,
 ) -> T.Type | None:
+    """Compute lookup during static analysis."""
     for key, typ in items:
         if key == name:
             return typ
@@ -9248,6 +9589,7 @@ def _assignment_error(
     target: T.Type,
     ctx: T.Context,
 ) -> str | None:
+    """Return the error description for assignment during static analysis."""
     if _assignment_stored_type(target, source, ctx) is not None:
         return None
     return (
@@ -9260,6 +9602,7 @@ def _assignment_stored_type(
     source: T.Type,
     ctx: T.Context,
 ) -> T.Type | None:
+    """Determine the type of assignment stored during static analysis."""
     if T.assignable(source, existing, ctx):
         return existing
     if T.assignable(existing, source, ctx):
@@ -9268,6 +9611,7 @@ def _assignment_stored_type(
 
 
 def _mustcall_methods(annotations: tuple[ASTNode, ...]) -> tuple[str, ...]:
+    """Compute mustcall methods during static analysis."""
     for annotation in annotations:
         if not isinstance(annotation, AnnotationNode):
             continue
@@ -9288,6 +9632,7 @@ def _mustcall_methods(annotations: tuple[ASTNode, ...]) -> tuple[str, ...]:
 
 
 def _child_symbol(parent: Symbol, child: Symbol) -> Symbol:
+    """Compute child symbol during static analysis."""
     return Symbol(child.text, (*parent.namespace, parent.text, *child.namespace))
 
 
@@ -9296,6 +9641,7 @@ def _set_item(
     name: Symbol,
     typ: T.Type,
 ) -> tuple[tuple[Symbol, T.Type], ...]:
+    """Compute set item during static analysis."""
     result = {key: value for key, value in items}
     result[name] = typ
     return _sorted_items(result.items())
@@ -9306,6 +9652,7 @@ def _set_symbol_flag(
     name: Symbol,
     enabled: bool,
 ) -> tuple[Symbol, ...]:
+    """Compute set symbol flag during static analysis."""
     result = set(items)
     if enabled:
         result.add(name)
@@ -9317,6 +9664,7 @@ def _set_symbol_flag(
 def _sorted_items(
     items: Iterable[tuple[Symbol, T.Type]],
 ) -> tuple[tuple[Symbol, T.Type], ...]:
+    """Collect the items for sorted during static analysis."""
     return tuple(sorted(items, key=lambda item: item[0]))
 
 

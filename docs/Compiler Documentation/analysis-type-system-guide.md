@@ -200,6 +200,12 @@ T.Fn((T.TypeVariable("Item"),), (T.TypeVariable("Mapped"),))
 Avoid reaching for `T.C(...)`, `T.V(...)`, or raw `T.DataTag(...)` in built-ins
 unless the readable helper does not exist yet.
 
+Every canonical built-in also requires `ElementDocumentation`. Core entries are
+kept in `_BUILTIN_DOCUMENTATION`; dynamically generated declarations may pass
+`documentation=` directly to `@builtin(...)`. Aliases inherit the canonical
+metadata. `collect_builtin_references()` validates completeness and turns the
+same registry into renderer-neutral `ElementReference` records.
+
 Standard-library modules are separate from built-ins. Do not add importable
 stdlib functions to `analysis/builtins.py` just because their runtime behavior is
 implemented in Python. Built-ins are globally available; stdlib functions must be
@@ -218,6 +224,11 @@ also exists, the loader analyses it in an environment that contains only that
 module's native hooks, then combines the Python and Valiance exports. The native
 hook names are therefore visible while analysing the stdlib module itself, but
 ordinary user code still sees them only through imported module exports.
+
+Python-backed public stdlib functions pass `documentation=` to
+`@stdlib_element(...)`. Valiance-backed public stdlib definitions use contiguous
+`#??` blocks. `reference_docs.py` combines both sources when generating the
+language reference.
 
 ## Union-Covered Callable Overloads
 

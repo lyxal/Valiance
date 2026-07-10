@@ -1,5 +1,7 @@
 Make sure you read the compiler guides in `docs/Compiler Documentation` before making
 any changes.
+Start with `docs/maintenance/README.md` for the human-facing architecture and
+change playbooks, then use the compiler guides for subsystem detail.
 
 Windows notes for future agents:
 

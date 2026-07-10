@@ -357,6 +357,7 @@ def format_source(source: str, *, indent_width: int = 2) -> str:
 
 
 def _walk_ast(value: Any) -> Iterable[ASTNode]:
+    """Compute walk AST for source rewriting and generated documentation."""
     if isinstance(value, ASTNode):
         yield value
     if isinstance(value, (str, bytes, int, float, type(None))):
@@ -374,6 +375,7 @@ def _walk_ast(value: Any) -> Iterable[ASTNode]:
 
 
 def _line_starts(source: str) -> tuple[int, ...]:
+    """Compute line starts for source rewriting and generated documentation."""
     starts = [0]
     for index, character in enumerate(source):
         if character == "\n":
@@ -385,6 +387,7 @@ def _doc_block_before(
     lines: Sequence[str],
     definition_line_index: int,
 ) -> tuple[str, ...] | None:
+    """Compute doc block before for source rewriting and generated documentation."""
     index = definition_line_index - 1
     while index >= 0 and lines[index].lstrip().startswith("@"):
         index -= 1
@@ -397,6 +400,7 @@ def _doc_block_before(
 
 
 def _docstring_stub(definition: DefineNode, indent: str) -> str:
+    """Compute docstring stub for source rewriting and generated documentation."""
     lines = [f"{indent}{DOC_COMMENT_PREFIX} TODO: Describe `{definition.name}`."]
     field_lines: list[str] = []
     for generic in definition.generics:
@@ -425,6 +429,7 @@ def _docstring_stub(definition: DefineNode, indent: str) -> str:
 
 
 def _definition_signature(definition: DefineNode) -> str:
+    """Build the signature for definition for source rewriting and generated documentation."""
     parts: list[str] = []
     if definition.visibility is not None:
         parts.append(str(definition.visibility))
@@ -452,6 +457,7 @@ def _definition_signature(definition: DefineNode) -> str:
 
 
 def _parameter_signature(param: FunctionParam) -> str:
+    """Build the signature for parameter for source rewriting and generated documentation."""
     name = "" if param.name is None else str(param.name)
     typ = "?" if param.typ is None else show(param.typ)
     label = f"{name}: {typ}" if name else f":{typ}"
@@ -461,6 +467,7 @@ def _parameter_signature(param: FunctionParam) -> str:
 
 
 def _definition_card(definition: DefinitionReference, anchor: str) -> str:
+    """Compute definition card for source rewriting and generated documentation."""
     doc = definition.docstring
     body: list[str] = [
         f'<article class="definition" id="{html.escape(anchor)}">',
@@ -476,6 +483,7 @@ def _definition_card(definition: DefinitionReference, anchor: str) -> str:
 
 
 def _description_html(lines: Sequence[str]) -> tuple[str, ...]:
+    """Compute description html for source rewriting and generated documentation."""
     paragraphs: list[str] = []
     current: list[str] = []
     for line in lines:
@@ -491,6 +499,7 @@ def _description_html(lines: Sequence[str]) -> tuple[str, ...]:
 
 
 def _fields_html(doc: ParsedDocstring) -> tuple[str, ...]:
+    """Compute fields html for source rewriting and generated documentation."""
     rows: list[tuple[str, str, str]] = []
     rows.extend(
         ("Type parameter", field.name, field.description)
@@ -512,6 +521,7 @@ def _fields_html(doc: ParsedDocstring) -> tuple[str, ...]:
 
 
 def _inline_doc_html(value: str) -> str:
+    """Compute inline doc html for source rewriting and generated documentation."""
     pieces = re.split(r"(`[^`]+`)", value)
     rendered: list[str] = []
     for piece in pieces:
@@ -523,11 +533,13 @@ def _inline_doc_html(value: str) -> str:
 
 
 def _slug(value: str) -> str:
+    """Compute slug for source rewriting and generated documentation."""
     slug = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
     return slug or "item"
 
 
 def _unique_anchor(value: str, used: set[str]) -> str:
+    """Compute unique anchor for source rewriting and generated documentation."""
     base = _slug(value)
     anchor = base
     suffix = 2
@@ -539,6 +551,7 @@ def _unique_anchor(value: str, used: set[str]) -> str:
 
 
 def _split_line_ending(line: str) -> tuple[str, str]:
+    """Split line ending for source rewriting and generated documentation."""
     if line.endswith("\r\n"):
         return line[:-2], "\r\n"
     if line.endswith("\n") or line.endswith("\r"):
@@ -547,10 +560,12 @@ def _split_line_ending(line: str) -> tuple[str, str]:
 
 
 def _indent_columns(value: str) -> int:
+    """Compute indent columns for source rewriting and generated documentation."""
     return len(value.expandtabs(2))
 
 
 def _string_continuation_lines(tokens: Sequence[Token]) -> frozenset[int]:
+    """Compute string continuation lines for source rewriting and generated documentation."""
     lines: set[int] = set()
     for token in tokens:
         if token.kind is not TokenKind.STRING or token.raw is None:
@@ -561,6 +576,7 @@ def _string_continuation_lines(tokens: Sequence[Token]) -> frozenset[int]:
 
 
 def _last_frame(frames: Sequence[_FormatFrame], kinds: set[str]) -> int | None:
+    """Compute last frame for source rewriting and generated documentation."""
     for index in range(len(frames) - 1, -1, -1):
         if frames[index].kind in kinds:
             return index
@@ -568,6 +584,7 @@ def _last_frame(frames: Sequence[_FormatFrame], kinds: set[str]) -> int | None:
 
 
 def _format_frame_kind(identifiers: Sequence[str]) -> str:
+    """Format frame kind for source rewriting and generated documentation."""
     if "define" in identifiers:
         return "define"
     if "match" in identifiers:
@@ -593,6 +610,7 @@ def _format_frame_kind(identifiers: Sequence[str]) -> str:
 
 
 def _looks_like_match_case_start(tokens: Sequence[Token]) -> bool:
+    """Return the Boolean result of looks like match case start for source rewriting and generated documentation."""
     if not tokens:
         return False
     first = tokens[0]

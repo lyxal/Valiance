@@ -1,0 +1,179 @@
+# Testing and debugging
+
+Valiance is easiest to debug by identifying the first stage whose output is
+wrong. A runtime symptom can originate in parsing, analysis, code-generation,
+serialization, or execution, so jumping directly to the VM often treats the
+last visible failure rather than the cause.
+
+## Test layers
+
+The repository uses `unittest`. Important suites include:
+
+- `tests/test_parser.py`: tokenisation, grammar, source lowering, and AST shape.
+- `tests/test_analyser.py`: stack effects, name resolution, overloads, types,
+  control flow, objects, traits, variants, tags, and diagnostics.
+- `tests/test_runtime.py`: compiled execution and user-visible behaviour.
+- `tests/test_bytecode_serialization.py`: portable bytecode round trips.
+- `tests/test_types.py`: type relationships and overload solving.
+- `tests/test_programs.py`: fundamental Valiance behaviour. Do not casually
+  edit these tests to accommodate a regression.
+- `tests/test_main.py` and `tests/test_repl.py`: CLI and persistent-session
+  behaviour.
+- `tests/test_source_tools.py`: tidy and documentation generation.
+- `tests/test_docstring_coverage.py`: production module and function docstrings.
+
+## Useful commands
+
+The project metadata requires Python 3.14. The canonical full-suite command is:
+
+```powershell
+uv run python -m unittest discover -s tests -v
+```
+
+Run a focused module while iterating:
+
+```powershell
+uv run python -m unittest tests.test_analyser -v
+uv run python -m unittest tests.test_runtime -v
+uv run python -m unittest tests.test_bytecode_serialization -v
+```
+
+A particular test can be named directly:
+
+```powershell
+uv run python -m unittest \
+  tests.test_runtime.RuntimeTests.test_descriptive_name -v
+```
+
+When working in an environment whose available interpreter is older but still
+parses the checkout, direct `python -m unittest ...` can be useful for local
+feedback. Release and CI validation should still use the version declared in
+`pyproject.toml`.
+
+## Stage-by-stage diagnosis
+
+Start with a minimal source string and inspect each boundary.
+
+### 1. Parse
+
+Use:
+
+```text
+vln parse --code "..."
+```
+
+Or call `parse(...)` in a focused test. Check node order, parameter names,
+source locations, nesting, and chain lowering.
+
+### 2. Analyse
+
+Use:
+
+```text
+vln analyse --code "..."
+```
+
+Check:
+
+- the stack before and after the failing node;
+- selected overload and overload index;
+- argument order and vectorisation plan;
+- variable scopes and captures;
+- field visibility decisions;
+- typed node payload; and
+- diagnostics emitted on failed branches.
+
+If analysis is already wrong, do not compensate in code-generation or the VM.
+
+### 3. Compile
+
+Compile the typed nodes and inspect instructions. Confirm that the selected
+static information is represented explicitly. Common losses include overload
+indexes, call argument order, dispatch flags, ranks, tags, and constructor
+metadata.
+
+### 4. Serialize
+
+For any bytecode-relevant issue, compare direct and round-tripped execution:
+
+```python
+program = compile_program(typed)
+assert run(program) == run(loads(dumps(program)))
+```
+
+A difference isolates the problem to serialization or record compatibility.
+
+### 5. Execute
+
+Only after the earlier stages agree should the VM be inspected. Record the
+instruction pointer, instruction, frame stack, locals, globals, cycle state,
+and selected runtime overload. Runtime errors already collect call and
+execution context; preserve that detail when adding new failure paths.
+
+## Regression-test shape
+
+A strong language regression usually has three parts:
+
+1. the exact source program that exposed the bug;
+2. a nearby invalid or competing case that protects the intended boundary; and
+3. a bytecode round trip when the behaviour crosses serialization.
+
+For dispatch work, test both unqualified and qualified access. For imports, test
+local and imported definitions. For vectorisation, test scalar broadcasting and
+ragged shapes. For mutation-like syntax, verify whether values are reconstructed
+or mutated and whether lower stack values are preserved.
+
+## Diagnosing overload problems
+
+Write down the candidate signatures and the actual typed stack. Then inspect:
+
+- how arguments were sourced;
+- whether explicit and modifier arguments were merged in parameter order;
+- generic substitutions;
+- vectorisation depth and stop rank;
+- candidate scores;
+- specificity comparison;
+- external versus object-friendly priority; and
+- whether an overload index was recovered by equality instead of preserved from
+  selection.
+
+A correct static winner should be stored directly. Recomputing it later risks
+collapsing distinct but structurally equal overloads.
+
+## Diagnosing variable problems
+
+Check scope in this order:
+
+```text
+block locals -> function locals -> parameters -> captures
+```
+
+Explicit parameters are read-only. Captured names become function-local when
+assigned. Iterator or structured-control bindings should be represented as
+real parameters or block locals during analysis, not invented only by runtime
+execution.
+
+## Diagnosing stack-order problems
+
+Keep four orders separate:
+
+- the order written in source;
+- the raw/typed AST order;
+- physical order on the runtime stack; and
+- parameter order in a callable.
+
+Print or assert all four in a focused test. Avoid generic stack cycling when a
+compile-time call plan can state the order exactly.
+
+## Before finishing
+
+Run, in order:
+
+1. the new focused tests;
+2. the affected subsystem module;
+3. `tests/test_programs.py`;
+4. serialization tests for bytecode work; and
+5. the full suite.
+
+Also run the docstring coverage test after introducing helpers. A feature is not
+finished if maintainers cannot tell why its new functions exist.

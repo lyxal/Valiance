@@ -1,7 +1,15 @@
+#?? Multiply a number by itself.
+#??
+#?? @param n Number to square.
+#?? @returns The square of `n`.
 public define square(n: Number) -> Number =>
   $n $n *
 end
 
+#?? Raise a number to the third power.
+#??
+#?? @param n Number to cube.
+#?? @returns The cube of `n`.
 public define cube(n: Number) -> Number =>
   $n $n * $n *
 end

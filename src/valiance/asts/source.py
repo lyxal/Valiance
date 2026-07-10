@@ -37,6 +37,7 @@ def typed_source(
 
 
 def _typed_node_source(node: ASTNode | TypedNode) -> str:
+    """Compute typed node source while reconstructing Valiance source."""
     if isinstance(node, TypedFunctionNode):
         return _typed_function_source(node)
     if isinstance(node, TypedNode):
@@ -45,6 +46,7 @@ def _typed_node_source(node: ASTNode | TypedNode) -> str:
 
 
 def _typed_function_source(node: TypedFunctionNode) -> str:
+    """Compute typed function source while reconstructing Valiance source."""
     ast = node.node
     typ = normalize(node.typ) if node.typ is not None else None
     if isinstance(ast, DefineNode) and isinstance(typ, FunctionType):
@@ -64,6 +66,7 @@ def _function_signature(
     *,
     definition: bool = False,
 ) -> str:
+    """Build the signature for function while reconstructing Valiance source."""
     params = typ.params or ()
     returns = typ.returns or ()
     if definition and node.params is None and not params:
@@ -77,6 +80,7 @@ def _params_source(
     source_params: tuple[FunctionParam, ...] | None,
     params: tuple[Type, ...],
 ) -> str:
+    """Compute params source while reconstructing Valiance source."""
     labels: list[str] = []
     for index, typ in enumerate(params):
         name = f"_{index}"
@@ -89,6 +93,7 @@ def _params_source(
 
 
 def _return_clause(returns: tuple[Type, ...]) -> str:
+    """Compute return clause while reconstructing Valiance source."""
     if not returns:
         return " ->"
     return " -> " + ", ".join(show(ret) for ret in returns)
@@ -105,6 +110,7 @@ def _annotate_original_source(
     value: Sequence[ASTNode | TypedNode],
     source: str,
 ) -> str | None:
+    """Compute annotate original source while reconstructing Valiance source."""
     from valiance.parsing.lexer import lex
 
     try:
@@ -136,6 +142,7 @@ def _function_replacements(
     source: str,
     tokens: Sequence[Any],
 ) -> list[_Replacement]:
+    """Compute function replacements while reconstructing Valiance source."""
     replacements: list[_Replacement] = []
     if isinstance(node, TypedFunctionNode):
         replacements.extend(_signature_replacements(node, source, tokens))
@@ -154,6 +161,7 @@ def _raw_function_replacements(
     source: str,
     tokens: Sequence[Any],
 ) -> list[_Replacement]:
+    """Compute raw function replacements while reconstructing Valiance source."""
     replacements: list[_Replacement] = []
     if isinstance(node, DefineNode):
         replacements.extend(_raw_function_replacements(node.function, source, tokens))
@@ -172,6 +180,7 @@ def _signature_replacements(
     source: str,
     tokens: Sequence[Any],
 ) -> list[_Replacement]:
+    """Compute signature replacements while reconstructing Valiance source."""
     from valiance.parsing.lexer import TokenKind
 
     ast = node.node
@@ -251,6 +260,7 @@ def _needs_parameter_annotations(
     function: FunctionNode,
     inferred_params: tuple[Type, ...],
 ) -> bool:
+    """Return the Boolean result of needs parameter annotations while reconstructing Valiance source."""
     if function.params is None:
         return bool(inferred_params)
     return any(param.typ is None for param in function.params)
@@ -260,6 +270,7 @@ def _function_fat_arrow_index(
     tokens: Sequence[Any],
     start: int,
 ) -> int | None:
+    """Find the index for function fat arrow while reconstructing Valiance source."""
     from valiance.parsing.lexer import TokenKind
 
     paren_depth = 0
@@ -296,6 +307,7 @@ def _token_index(
     start: int,
     end: int | None = None,
 ) -> int | None:
+    """Find the index for token while reconstructing Valiance source."""
     for index, token in enumerate(tokens):
         if token.offset < start:
             continue
@@ -312,6 +324,7 @@ def _last_token_index(
     start: int,
     end: int,
 ) -> int | None:
+    """Find the index for last token while reconstructing Valiance source."""
     from valiance.parsing.lexer import TokenKind
 
     found = None
@@ -350,6 +363,7 @@ def _params_span(
     start: int,
     fat_arrow_index: int,
 ) -> tuple[int, int] | None:
+    """Compute params span while reconstructing Valiance source."""
     from valiance.parsing.lexer import TokenKind
 
     square_depth = 0
@@ -382,6 +396,7 @@ def _return_insert_token(
     start: int,
     fat_arrow_index: int,
 ) -> Any:
+    """Compute return insert token while reconstructing Valiance source."""
     where_index = _where_index(tokens, start, fat_arrow_index)
     return tokens[where_index] if where_index is not None else tokens[fat_arrow_index]
 
@@ -391,6 +406,7 @@ def _where_index(
     start: int,
     fat_arrow_index: int,
 ) -> int | None:
+    """Find the index for where while reconstructing Valiance source."""
     from valiance.parsing.lexer import TokenKind
 
     paren_depth = 0
@@ -423,6 +439,7 @@ def _where_index(
 
 
 def _leading_whitespace_start(source: str, offset: int) -> int:
+    """Compute leading whitespace start while reconstructing Valiance source."""
     index = offset
     while index > 0 and source[index - 1] in " \t":
         index -= 1
@@ -430,10 +447,12 @@ def _leading_whitespace_start(source: str, offset: int) -> int:
 
 
 def _body_source(body: tuple[ASTNode, ...]) -> str:
+    """Compute body source while reconstructing Valiance source."""
     return " ".join(_node_source(node) for node in body)
 
 
 def _node_source(node: ASTNode) -> str:
+    """Compute node source while reconstructing Valiance source."""
     if isinstance(node, NumberLiteralNode):
         return node.value
     if isinstance(node, StringLiteralNode):

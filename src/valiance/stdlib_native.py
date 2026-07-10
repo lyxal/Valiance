@@ -10,6 +10,7 @@ from typing import Any
 
 import valiance.types as T
 from valiance.analysis.builtins import BuiltinElement, BuiltinOverload, RuntimeContext
+from valiance.documentation import ElementDocumentation
 from valiance.asts import (
     DefineNode,
     ElementNode,
@@ -35,6 +36,7 @@ class NativeFunction:
     returns: tuple[T.Type, ...]
     implementation: NativeImpl
     param_names: tuple[Symbol, ...] = ()
+    documentation: ElementDocumentation | None = None
 
 
 def native_function(
@@ -44,6 +46,7 @@ def native_function(
     implementation: NativeImpl,
     *,
     param_names: tuple[str, ...] = (),
+    documentation: ElementDocumentation | None = None,
 ) -> NativeFunction:
     """Declare one importable Python-backed stdlib function."""
     return NativeFunction(
@@ -52,6 +55,7 @@ def native_function(
         returns,
         implementation,
         tuple(Symbol(item) for item in param_names),
+        documentation,
     )
 
 
@@ -61,16 +65,19 @@ def stdlib_element(
     returns: tuple[T.Type, ...],
     *,
     param_names: tuple[str, ...] = (),
+    documentation: ElementDocumentation | None = None,
 ) -> Callable[[NativeImpl], NativeImpl]:
     """Decorate a Python implementation as an importable stdlib function."""
 
     def register(fn: NativeImpl) -> NativeImpl:
+        """Record the decorated native function as a standard-library export."""
         fn.__valiance_native_function__ = native_function(
             name,
             params,
             returns,
             fn,
             param_names=param_names,
+            documentation=documentation,
         )
         return fn
 
@@ -110,7 +117,13 @@ def runtime_stdlib_elements() -> dict[str, BuiltinElement]:
     return result
 
 
+def native_stdlib_functions() -> dict[str, tuple[NativeFunction, ...]]:
+    """Return documented native exports grouped by standard-library module."""
+    return _all_native_modules()
+
+
 def _module_definition(module_name: str, function: NativeFunction):
+    """Build the definition for module for native standard-library registration."""
     from valiance.modules import ModuleDefinition
 
     return ModuleDefinition(
@@ -121,6 +134,7 @@ def _module_definition(module_name: str, function: NativeFunction):
 
 
 def _typed_wrapper(module_name: str, function: NativeFunction) -> TypedFunctionNode:
+    """Compute typed wrapper for native standard-library registration."""
     param_names = _param_names(function)
     runtime_name = Symbol(function.name.text, ("std", module_name))
     overload = T.Overload(function.params, function.returns, param_names=param_names)
@@ -168,6 +182,7 @@ def _typed_wrapper(module_name: str, function: NativeFunction) -> TypedFunctionN
 
 
 def _runtime_element(module_name: str, function: NativeFunction) -> BuiltinElement:
+    """Compute runtime element for native standard-library registration."""
     return BuiltinElement(
         Symbol(function.name.text, ("std", module_name)),
         (
@@ -176,16 +191,19 @@ def _runtime_element(module_name: str, function: NativeFunction) -> BuiltinEleme
                 function.implementation,
             ),
         ),
+        function.documentation,
     )
 
 
 def _param_names(function: NativeFunction) -> tuple[Symbol, ...]:
+    """Collect the names for param for native standard-library registration."""
     if function.param_names:
         return function.param_names
     return tuple(Symbol(f"_{index}") for index, _ in enumerate(function.params))
 
 
 def _native_functions(module_name: str) -> tuple[NativeFunction, ...] | None:
+    """Compute native functions for native standard-library registration."""
     try:
         module = importlib.import_module(f"valiance.std.{module_name}")
     except ModuleNotFoundError as exc:
@@ -206,6 +224,7 @@ def _native_functions(module_name: str) -> tuple[NativeFunction, ...] | None:
 
 
 def _all_native_modules() -> dict[str, tuple[NativeFunction, ...]]:
+    """Compute all native modules for native standard-library registration."""
     import valiance.std as std_package
 
     result: dict[str, tuple[NativeFunction, ...]] = {}

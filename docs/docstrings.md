@@ -72,3 +72,30 @@ vln docs
 Use `--output` to choose another destination and `--title` to override the page
 title. The generated file is self-contained HTML with an inline stylesheet and
 contains only definitions that have `#??` documentation blocks.
+
+## Generating the language reference
+
+Built-ins and standard-library functions have a separate generated catalogue.
+Built-ins and Python-backed stdlib functions carry structured metadata in their
+declarations; Valiance-defined stdlib functions use the same `#??` blocks shown
+above.
+
+Generate a searchable HTML reference:
+
+```text
+vln docs --language
+```
+
+The default output is `docs/language-reference.html` beneath the current
+directory. Markdown and versioned JSON are also available:
+
+```text
+vln docs --language --format markdown
+vln docs --language --format json --output build/valiance-reference.json
+```
+
+Use `--output -` to write any language-reference format to standard output.
+The JSON format is intended for documentation sites, editor integrations, and
+other tooling. Maintainers should read
+[`docs/maintenance/reference-documentation.md`](maintenance/reference-documentation.md)
+before adding or changing the metadata schema.

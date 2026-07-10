@@ -312,6 +312,7 @@ class ResolvedOverload:
     scores: tuple[Specificity, ...]
 
     def __hash__(self) -> int:
+        """Return a stable hash for this resolved overload."""
         return hash(
             (
                 self.overload,
@@ -342,6 +343,7 @@ class AppliedOverload:
     vectorised_target_ranks: tuple[int | None, ...] = ()
 
     def __hash__(self) -> int:
+        """Return a stable hash for this applied overload."""
         return hash(
             (
                 self.overload,
@@ -394,4 +396,5 @@ class OverloadAttempt:
 
 
 def _substitution_items(substitution: dict[str, Type]) -> tuple[tuple[str, Type], ...]:
+    """Collect the items for substitution for immutable type-system records."""
     return tuple(sorted(substitution.items()))

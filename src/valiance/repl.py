@@ -127,6 +127,7 @@ class PlainReplFrontend:
     fancy: bool = False
 
     def read(self, line_number: int) -> str:
+        """Read one source entry from the portable plain-text REPL."""
         return input(self.prompt(line_number))
 
 
@@ -284,6 +285,7 @@ def merge_completion_items(
 
 
 def _quoted_end(line: str, start: int) -> int:
+    """Compute quoted end for interactive terminal presentation."""
     index = start + 1
     while index < len(line):
         if line[index] == "\\":
@@ -296,6 +298,7 @@ def _quoted_end(line: str, start: int) -> int:
 
 
 def _is_tty(stream: TextIO) -> bool:
+    """Return whether the value is tty."""
     try:
         return bool(stream.isatty())
     except (AttributeError, OSError):
@@ -313,6 +316,7 @@ class _PromptToolkitFrontend:
         completion_provider: Callable[[], Iterable[ReplCompletion]],
         type_hint_provider: Callable[[str], str | None],
     ) -> None:
+        """Initialize this prompt toolkit frontend."""
         from prompt_toolkit import PromptSession
         from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
         from prompt_toolkit.history import InMemoryHistory
@@ -325,11 +329,13 @@ class _PromptToolkitFrontend:
 
         @bindings.add("f2")
         def _toggle_type_hints(event) -> None:
+            """Update toggle type hints state for interactive terminal presentation."""
             self._type_hints_enabled = not self._type_hints_enabled
             event.app.invalidate()
 
         @bindings.add("c-space")
         def _complete(event) -> None:
+            """Update complete state for interactive terminal presentation."""
             event.current_buffer.start_completion(select_first=False)
 
         self._session = PromptSession(
@@ -366,12 +372,14 @@ class _PromptToolkitFrontend:
         )
 
     def read(self, line_number: int) -> str:
+        """Read one source entry using the interactive prompt-toolkit frontend."""
         return self._session.prompt(
             [("class:prompt", f"vln:{line_number}> ")],
             bottom_toolbar=self._bottom_toolbar,
         )
 
     def _bottom_toolbar(self):
+        """Handle bottom toolbar for interactive terminal presentation."""
         controls = "F2 types · Tab/Ctrl-Space complete · history suggestions"
         if not self._type_hints_enabled:
             return [("class:bottom-toolbar", f" types off · {controls}")]
@@ -394,9 +402,11 @@ class _PromptToolkitFrontend:
 
 class _ValiancePromptLexer:
     def lex_document(self, document):
+        """Return prompt-toolkit line fragments for a partially typed document."""
         lines = document.lines
 
         def get_line(lineno: int):
+            """Return the highlighted fragments for one requested display line."""
             if lineno >= len(lines):
                 return []
             return highlighted_fragments(lines[lineno])
@@ -409,9 +419,11 @@ class _ValianceCompleter:
         self,
         provider: Callable[[], Iterable[ReplCompletion]],
     ) -> None:
+        """Initialize this valiance completer."""
         self._provider = provider
 
     def get_completions(self, document, complete_event):
+        """Yield completion candidates matching the text before the cursor."""
         from prompt_toolkit.completion import Completion
 
         before = document.text_before_cursor
@@ -429,5 +441,6 @@ class _ValianceCompleter:
             )
 
     async def get_completions_async(self, document, complete_event):
+        """Yield completion candidates through prompt-toolkit's async interface."""
         for completion in self.get_completions(document, complete_event):
             yield completion

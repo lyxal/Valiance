@@ -360,6 +360,7 @@ def normalize(t: Type) -> Type:
 
 
 def _normalize_result_union(items: set[Type]) -> Type | None:
+    """Normalize result union for type construction and display."""
     ok_items: list[Type] = []
     err_items: list[Type] = []
     saw_explicit_ok = False
@@ -391,6 +392,7 @@ def _normalize_result_union(items: set[Type]) -> Type | None:
 
 
 def _normalize_numeric_union(items: set[Type]) -> set[Type]:
+    """Normalize numeric union for type construction and display."""
     names = {
         item.name
         for item in items
@@ -415,6 +417,7 @@ def _normalize_numeric_union(items: set[Type]) -> set[Type]:
 
 
 def _is_err_nominal(t: Type) -> bool:
+    """Return whether the value is err nominal."""
     return (
         isinstance(t, NominalType)
         and not t.args
@@ -423,6 +426,7 @@ def _is_err_nominal(t: Type) -> bool:
 
 
 def _normalize_row_fields(fields: tuple[RowField, ...]) -> tuple[RowField, ...]:
+    """Normalize row fields for type construction and display."""
     merged: dict[Symbol, Type] = {}
     for field in fields:
         typ = normalize(field.typ)
@@ -550,6 +554,7 @@ def show(t: Type) -> str:
 
 
 def _show_collection_base(t: Type) -> str:
+    """Format collection base for type construction and display."""
     rendered = show(t)
     if isinstance(normalize(t), (UnionType, IntersectionType)):
         return f"({rendered})"
@@ -557,6 +562,7 @@ def _show_collection_base(t: Type) -> str:
 
 
 def _tag(tag: TagSpec) -> DataTag:
+    """Compute tag for type construction and display."""
     if isinstance(tag, DataTag):
         return tag
     absent = tag.startswith("!")
@@ -565,6 +571,7 @@ def _tag(tag: TagSpec) -> DataTag:
 
 
 def _element_tag(tag: ElementTag | str) -> ElementTag:
+    """Compute element tag for type construction and display."""
     if isinstance(tag, ElementTag):
         return tag
     absent = tag.startswith("!")
@@ -573,12 +580,14 @@ def _element_tag(tag: ElementTag | str) -> ElementTag:
 
 
 def _show_function_with_tags(base: str, tags: frozenset[ElementTag]) -> str:
+    """Format function with tags for type construction and display."""
     if not tags:
         return base
     return f"{base}<{', '.join(_show_element_tag(tag) for tag in sorted(tags))}>"
 
 
 def _show_element_tag(tag: ElementTag) -> str:
+    """Format element tag for type construction and display."""
     prefix = "!" if tag.absent else ""
     if not tag.args:
         return f"{prefix}{tag.name}"
@@ -586,6 +595,7 @@ def _show_element_tag(tag: ElementTag) -> str:
 
 
 def _show_tag(tag: DataTag) -> str:
+    """Format tag for type construction and display."""
     prefix = "#!" if tag.absent else "#"
     depth = "+" * tag.depth
     return f"{prefix}{tag.name}{depth}"

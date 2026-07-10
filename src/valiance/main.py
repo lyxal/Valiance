@@ -1,3 +1,5 @@
+"""Command-line entry points and persistent REPL session orchestration."""
+
 from __future__ import annotations
 
 import argparse
@@ -24,6 +26,11 @@ from valiance.packages import (
 )
 from valiance.parsing import LexError, ParseError, Parser, lex
 from valiance.repl import ReplCompletion, create_repl_frontend
+from valiance.reference_docs import (
+    DocumentationError,
+    collect_language_references,
+    render_language_reference,
+)
 from valiance.runtime import (
     BytecodeFormatError,
     CompileError,
@@ -82,6 +89,7 @@ HELP = """usage: valiance
        valiance analyse <file>
        valiance tidy [<file>] [--types] [--docstrings] [--format]
        valiance docs [<file>] [-o <file>]
+       valiance docs --language [--format html|markdown|json] [-o <file>]
        valiance install
        valiance init [directory]
        valiance add <package-or-source> <version> [as <name>]
@@ -97,7 +105,7 @@ actions:
   parse               print the parsed AST
   analyse             print the typed AST
   tidy                rewrite one file or every project source file
-  docs                generate an HTML reference from #?? doc comments
+  docs                generate project or language reference documentation
   annotate            legacy alias for `tidy --types --stdout`
   install             install project dependencies and update valiance.lock
   init                create a new project manifest and starter source tree
@@ -122,6 +130,8 @@ options:
   --format             normalize indentation to two spaces with tidy
   --stdout             print tidy output instead of rewriting a file
   --title <title>      set the generated HTML reference title
+  --language           document built-ins and standard-library functions
+  --format <format>    output html, markdown, or json with docs --language
 
 repl commands:
   :help               show REPL help
@@ -133,6 +143,7 @@ repl commands:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Parse command-line arguments and dispatch the requested Valiance action."""
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
         return _run_repl()
@@ -214,6 +225,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _parse_args(args: list[str]) -> argparse.Namespace | None:
+    """Parse args for CLI and REPL orchestration."""
     action = "compile"
     explicit_action: str | None = None
     if args and args[0] in _ACTIONS:
@@ -363,6 +375,7 @@ def _parse_tidy_args(
     action: str,
     args: list[str],
 ) -> argparse.Namespace | None:
+    """Parse tidy args for CLI and REPL orchestration."""
     parser = argparse.ArgumentParser(prog=f"valiance {action}", add_help=False)
     parser.add_argument("-c", "--code")
     parser.add_argument("--file", dest="explicit_source_file")
@@ -424,11 +437,19 @@ def _parse_tidy_args(
 
 
 def _parse_docs_args(args: list[str]) -> argparse.Namespace | None:
+    """Parse docs args for CLI and REPL orchestration."""
     parser = argparse.ArgumentParser(prog="valiance docs", add_help=False)
     parser.add_argument("-c", "--code")
     parser.add_argument("--file", dest="explicit_source_file")
     parser.add_argument("-o", "--output")
     parser.add_argument("--title")
+    parser.add_argument("--language", dest="language_reference", action="store_true")
+    parser.add_argument(
+        "--format",
+        dest="docs_format",
+        choices=("html", "markdown", "json"),
+        default="html",
+    )
     parser.add_argument("-h", "--help", action="store_true")
     parser.add_argument("file", nargs="?")
     try:
@@ -448,13 +469,30 @@ def _parse_docs_args(args: list[str]) -> argparse.Namespace | None:
             file=sys.stderr,
         )
         return None
+    if parsed.language_reference and selected_inputs:
+        print(
+            "error: --language cannot be combined with a source file or --code",
+            file=sys.stderr,
+        )
+        return None
+    if not parsed.language_reference and parsed.docs_format != "html":
+        print(
+            "error: --format is currently supported only with --language",
+            file=sys.stderr,
+        )
+        return None
     parsed.action = "docs"
     parsed.source_file = parsed.explicit_source_file or parsed.file
-    parsed.project_mode = parsed.code is None and parsed.source_file is None
+    parsed.project_mode = (
+        not parsed.language_reference
+        and parsed.code is None
+        and parsed.source_file is None
+    )
     return parsed
 
 
 def _parse_test_args(args: list[str]) -> argparse.Namespace | None:
+    """Parse test args for CLI and REPL orchestration."""
     parser = argparse.ArgumentParser(prog="valiance test", add_help=False)
     parser.add_argument("--filter", dest="test_filter")
     parser.add_argument("--list", dest="test_list", action="store_true")
@@ -477,6 +515,7 @@ def _parse_test_args(args: list[str]) -> argparse.Namespace | None:
 
 
 def _validate_package_args(parsed: argparse.Namespace) -> argparse.Namespace | None:
+    """Validate package args for CLI and REPL orchestration."""
     args = [item for item in (parsed.file, *parsed.extra) if item is not None]
     if parsed.action == "install":
         if args:
@@ -517,6 +556,7 @@ def _validate_package_args(parsed: argparse.Namespace) -> argparse.Namespace | N
 
 
 def _run_package_command(parsed: argparse.Namespace) -> int:
+    """Run package command for CLI and REPL orchestration."""
     try:
         if parsed.action == "install":
             manifest, lock_path = install()
@@ -555,6 +595,7 @@ def _run_package_command(parsed: argparse.Namespace) -> int:
 
 
 def _run_repl() -> int:
+    """Run REPL for CLI and REPL orchestration."""
     session = _ReplSession()
     color = should_color(sys.stdout)
     frontend = create_repl_frontend(
@@ -603,6 +644,7 @@ def _run_repl() -> int:
 
 
 def _print_repl_banner(*, color: bool, fancy: bool = False) -> None:
+    """Print REPL banner for CLI and REPL orchestration."""
     print(_repl_style("Valiance REPL", _ANSI_BOLD + _ANSI_CYAN, color))
     print(_repl_style("-------------", _ANSI_DIM, color))
     if fancy:
@@ -613,6 +655,7 @@ def _print_repl_banner(*, color: bool, fancy: bool = False) -> None:
 
 
 def _print_repl_help(*, color: bool, fancy: bool = False) -> None:
+    """Print REPL help for CLI and REPL orchestration."""
     print(_repl_style("REPL commands", _ANSI_BOLD, color))
     print("  :help   show this message")
     print("  :reset  clear stack, variables, definitions, and imports")
@@ -630,11 +673,13 @@ def _print_repl_help(*, color: bool, fancy: bool = False) -> None:
 
 
 def _repl_prompt(line_number: int, *, color: bool) -> str:
+    """Compute REPL prompt for CLI and REPL orchestration."""
     prompt = f"vln:{line_number}> "
     return _repl_style(prompt, _ANSI_GREEN, color)
 
 
 def _repl_style(text: str, code: str, enabled: bool) -> str:
+    """Compute REPL style for CLI and REPL orchestration."""
     if not enabled:
         return text
     return f"{code}{text}{_ANSI_RESET}"
@@ -651,9 +696,11 @@ class _ReplSession:
     _hint_cache: tuple[int, str, str | None] | None = None
 
     def __post_init__(self) -> None:
+        """Validate invariants after constructing this REPL session."""
         self.reset()
 
     def reset(self) -> None:
+        """Reset persistent analyser, globals, stack, and output state."""
         self.analyser = Analyser()
         self.branch = AnalysisBranch(input_mode=InputMode.TOP_LEVEL)
         self.output = _OutputTracker()
@@ -663,6 +710,7 @@ class _ReplSession:
         self._hint_cache = None
 
     def completion_items(self) -> tuple[ReplCompletion, ...]:
+        """Return completion metadata derived from the current REPL session."""
         if self.analyser is None or self.branch is None:
             return ()
         items: dict[str, ReplCompletion] = {}
@@ -693,6 +741,7 @@ class _ReplSession:
         return tuple(items.values())
 
     def type_hint(self, source: str) -> str | None:
+        """Preview the resulting type stack without mutating REPL state."""
         source = source.strip()
         if not source:
             return None
@@ -704,6 +753,7 @@ class _ReplSession:
         return result
 
     def _type_hint_uncached(self, source: str) -> str | None:
+        """Compute type hint uncached for CLI and REPL orchestration."""
         if self.analyser is None or self.branch is None:
             return None
         try:
@@ -733,6 +783,7 @@ class _ReplSession:
         )
 
     def run(self, source: str) -> bool:
+        """Compile and execute one source entry in the persistent REPL session."""
         if (
             self.analyser is None
             or self.branch is None
@@ -796,10 +847,12 @@ class _ReplSession:
 
 
 def _format_type_stack(stack: T.TypeStack) -> str:
+    """Format type stack for CLI and REPL orchestration."""
     return "[" + ", ".join(T.show(item) for item in stack) + "]"
 
 
 def _read_source_file(filename: str) -> str | None:
+    """Read source file for CLI and REPL orchestration."""
     try:
         return Path(filename).read_text(encoding="utf-8")
     except OSError as exc:
@@ -808,6 +861,7 @@ def _read_source_file(filename: str) -> str | None:
 
 
 def _run_tidy_command(parsed: argparse.Namespace) -> int:
+    """Run tidy command for CLI and REPL orchestration."""
     project_root: Path | None = None
     if parsed.project_mode:
         try:
@@ -896,6 +950,7 @@ def _tidy_source(
     add_docstrings: bool,
     apply_format: bool,
 ) -> str:
+    """Compute tidy source for CLI and REPL orchestration."""
     program = Parser(lex(source)).parse_program()
     rendered = source
     if add_types:
@@ -911,6 +966,10 @@ def _tidy_source(
 
 
 def _run_docs_command(parsed: argparse.Namespace) -> int:
+    """Run docs command for CLI and REPL orchestration."""
+    if parsed.language_reference:
+        return _run_language_docs_command(parsed)
+
     project_root: Path | None = None
     project_title: str | None = None
     if parsed.project_mode:
@@ -999,7 +1058,44 @@ def _run_docs_command(parsed: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _run_language_docs_command(parsed: argparse.Namespace) -> int:
+    """Generate built-in and standard-library reference documentation."""
+    title = parsed.title or "Valiance Built-ins and Standard Library Reference"
+    try:
+        references = collect_language_references()
+        rendered = render_language_reference(
+            references,
+            output_format=parsed.docs_format,
+            title=title,
+        )
+    except (DocumentationError, ValueError) as exc:
+        print(f"documentation error: {exc}", file=sys.stderr)
+        return 1
+
+    suffixes = {"html": ".html", "markdown": ".md", "json": ".json"}
+    if parsed.output == "-":
+        print(rendered, end="")
+        return 0
+    output_path = (
+        Path(parsed.output)
+        if parsed.output is not None
+        else Path.cwd() / "docs" / f"language-reference{suffixes[parsed.docs_format]}"
+    )
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+    except OSError as exc:
+        print(f"error: could not write {output_path}: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Wrote {len(references)} built-in and standard-library entries: "
+        f"{output_path}"
+    )
+    return 0
+
+
 def _safe_typed_source(typed, source: str) -> str:
+    """Compute safe typed source for CLI and REPL orchestration."""
     rendered = typed_source(typed, source)
     try:
         Parser(lex(rendered)).parse_program()
@@ -1019,6 +1115,7 @@ def _run_source(
     implicit_output: bool = False,
     preview_lists: bool = False,
 ) -> int:
+    """Run source for CLI and REPL orchestration."""
     try:
         tokens = lex(source)
         program = Parser(tokens).parse_program()
@@ -1090,6 +1187,7 @@ def _run_source(
 
 
 def _project_bytecode_path(project_root: Path, entry: str) -> Path:
+    """Resolve the path for project bytecode for CLI and REPL orchestration."""
     path = (
         project_root
         / DEFAULT_PROJECT_BYTECODE_DIR
@@ -1109,6 +1207,7 @@ def _run_bytecode_file(
     implicit_output: bool = False,
     preview_lists: bool = False,
 ) -> int:
+    """Run bytecode file for CLI and REPL orchestration."""
     try:
         bytecode = loads(Path(filename).read_bytes())
         _run_bytecode(
@@ -1129,6 +1228,7 @@ def _resolve_bytecode_output_path(
     project_root: Path | None = None,
     project_entry: str | None = None,
 ) -> Path:
+    """Resolve bytecode output path for CLI and REPL orchestration."""
     if filename is None:
         if project_root is not None and project_entry is not None:
             return (
@@ -1146,6 +1246,7 @@ def _resolve_bytecode_output_path(
 
 
 def _write_bytecode_file(filename: str | Path, data: bytes) -> None:
+    """Write bytecode file for CLI and REPL orchestration."""
     path = Path(filename)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
@@ -1157,6 +1258,7 @@ def _print_exception_diagnostic(
     source: str | None = None,
     source_file: Path | None = None,
 ) -> None:
+    """Print exception diagnostic for CLI and REPL orchestration."""
     if isinstance(exc, LexError):
         stage = "Lex error"
     elif isinstance(exc, ParseError):
@@ -1175,6 +1277,7 @@ def _print_diagnostic(
     source: str | None = None,
     source_file: Path | None = None,
 ) -> None:
+    """Print diagnostic for CLI and REPL orchestration."""
     print(
         render(
             diagnostic,
@@ -1191,6 +1294,7 @@ def _print_analyser_messages(
     source: str,
     source_file: Path | None,
 ) -> None:
+    """Print analyser messages for CLI and REPL orchestration."""
     for warning in analyser.warnings:
         _print_diagnostic(
             from_message("Type warning", warning),
@@ -1211,6 +1315,7 @@ def _run_bytecode(
     implicit_output: bool = False,
     preview_lists: bool = False,
 ) -> None:
+    """Run bytecode for CLI and REPL orchestration."""
     output = _OutputTracker()
     preview_limit = DIAGNOSTIC_LIST_PREVIEW_LIMIT if preview_lists else None
     stack = run(bytecode, output=output, list_preview_limit=preview_limit)
@@ -1220,14 +1325,17 @@ def _run_bytecode(
 
 class _OutputTracker:
     def __init__(self) -> None:
+        """Initialize this output tracker."""
         self.did_print = False
 
     def __call__(self, value: str) -> None:
+        """Invoke this output tracker with the supplied arguments."""
         self.did_print = True
         print(value, end="")
 
 
 def _format_stack(stack: list[Any], *, preview_limit: int | None = None) -> str:
+    """Format stack for CLI and REPL orchestration."""
     if not stack:
         return "Stack []"
     lines = ["Stack ["]
@@ -1238,6 +1346,7 @@ def _format_stack(stack: list[Any], *, preview_limit: int | None = None) -> str:
 
 
 def _format_value(value: Any, *, preview_limit: int | None = None) -> str:
+    """Format value for CLI and REPL orchestration."""
     return format_runtime_value(
         value,
         quote_strings=True,

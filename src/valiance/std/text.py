@@ -6,9 +6,23 @@ from typing import Any
 
 import valiance.types as T
 from valiance.analysis.builtins import RuntimeContext
+from valiance.documentation import element_documentation
 from valiance.stdlib_native import stdlib_element
 
 
-@stdlib_element("trim", (T.String,), (T.String,), param_names=("value",))
+@stdlib_element(
+    "trim",
+    (T.String,),
+    (T.String,),
+    param_names=("value",),
+    documentation=element_documentation(
+        "Remove leading and trailing whitespace from a string.",
+        parameters=(("value", "String to trim."),),
+        returns="The trimmed string.",
+        examples=(('"  hello  " | trim', "hello"),),
+        category="Text",
+    ),
+)
 def _trim(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `text.trim` standard-library element."""
     return (args[0].strip(),)

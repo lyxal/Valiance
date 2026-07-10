@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Mapping, Sequence, Sized
 from dataclasses import dataclass, field
 from decimal import Decimal
 from itertools import islice
+import json
 from typing import Any
 
 from valiance.types import DataTag
@@ -22,9 +22,11 @@ class LazyList:
     refcount: int = field(default=1, compare=False, repr=False)
 
     def __iter__(self):
+        """Iterate over values stored by this lazy list."""
         return iter(self.iterable)
 
     def __eq__(self, other: object) -> bool:
+        """Return whether this lazy list equals another value."""
         if isinstance(other, LazyList):
             return list(self) == list(other)
         if isinstance(other, Sequence) and not isinstance(other, (str, bytes, tuple)):
@@ -41,6 +43,7 @@ class ListValue(list[Any]):
         *,
         runtime_rank: int | None = None,
     ) -> None:
+        """Initialize this list value."""
         super().__init__(iterable)
         self.runtime_rank = runtime_rank
 
@@ -53,15 +56,19 @@ class TaggedValue:
     tags: frozenset[DataTag] = field(default_factory=frozenset)
 
     def __iter__(self):
+        """Iterate over values stored by this tagged value."""
         return iter(self.value)
 
     def __len__(self) -> int:
+        """Return the number of values stored by this tagged value."""
         return len(self.value)
 
     def __getitem__(self, index: Any) -> Any:
+        """Return an item selected from this tagged value."""
         return self.value[index]
 
     def __eq__(self, other: object) -> bool:
+        """Return whether this tagged value equals another value."""
         return self.value == unwrap_runtime_value(other)
 
 
@@ -128,6 +135,7 @@ class PanicSignal(Exception):
     """Internal runtime signal carrying a Valiance panic value."""
 
     def __init__(self, value: Any):
+        """Initialize this panic signal."""
         super().__init__(value)
         self.value = value
 
@@ -280,6 +288,7 @@ def _format_lazy_list(
     tuple_single_comma: bool,
     lazy_preview_limit: int | None,
 ) -> str:
+    """Format lazy list for shared runtime-value behaviour."""
     if lazy_preview_limit is None:
         return _format_list_items(
             value,
@@ -309,6 +318,7 @@ def _format_list_items(
     lazy_preview_limit: int | None,
     has_more: bool = False,
 ) -> str:
+    """Format list items for shared runtime-value behaviour."""
     rendered = [
         format_runtime_value(
             item,
@@ -329,6 +339,7 @@ def _format_nested(
     tuple_single_comma: bool,
     lazy_preview_limit: int | None,
 ) -> str:
+    """Format nested for shared runtime-value behaviour."""
     return format_runtime_value(
         value,
         quote_strings=quote_strings,
@@ -344,6 +355,7 @@ def _format_mapping_item(
     tuple_single_comma: bool,
     lazy_preview_limit: int | None,
 ) -> str:
+    """Format mapping item for shared runtime-value behaviour."""
     rendered_key = _format_mapping_key(
         key,
         tuple_single_comma,
@@ -363,6 +375,7 @@ def _format_mapping_key(
     tuple_single_comma: bool,
     lazy_preview_limit: int | None,
 ) -> str:
+    """Format mapping key for shared runtime-value behaviour."""
     key = unwrap_runtime_value(key)
     if isinstance(key, str):
         return json.dumps(key, ensure_ascii=False)
@@ -381,6 +394,7 @@ def _format_field_item(
     tuple_single_comma: bool,
     lazy_preview_limit: int | None,
 ) -> str:
+    """Format field item for shared runtime-value behaviour."""
     rendered_item = _format_nested(
         item,
         quote_strings,
@@ -391,6 +405,7 @@ def _format_field_item(
 
 
 def _object_type_name(value: ObjectValue) -> str:
+    """Return the canonical name for object type for shared runtime-value behaviour."""
     if not value.type_args:
         return value.type_name
     return f"{value.type_name}[{', '.join(value.type_args)}]"

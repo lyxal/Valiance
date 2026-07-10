@@ -82,6 +82,7 @@ def _match_variadic_tuple(
     seen: set[tuple[int, int]] = set()
 
     def rec(pattern_index: int, actual_index: int) -> bool:
+        """Recursively continue the match variadic tuple algorithm."""
         state = (pattern_index, actual_index)
         if state in seen:
             return False
@@ -190,6 +191,7 @@ def _satisfies_anonymous_trait(
     target: AnonymousTraitType,
     ctx: Context,
 ) -> bool:
+    """Return whether the value satisfies anonymous trait."""
     return _solve_anonymous_trait(source, target, ctx) is not None
 
 
@@ -198,6 +200,7 @@ def _solve_anonymous_trait(
     target: AnonymousTraitType,
     ctx: Context,
 ) -> dict[str, list[Type]] | None:
+    """Solve anonymous trait during type and overload solving."""
     constraints: dict[str, list[Type]] = {}
     subject = _anonymous_trait_subject_name(target)
     if subject is not None:
@@ -211,6 +214,7 @@ def _solve_anonymous_trait(
 
 
 def _anonymous_trait_subject_name(target: AnonymousTraitType) -> str | None:
+    """Return the canonical name for anonymous trait subject during type and overload solving."""
     if target.generics:
         return target.generics[0].text
     for requirement in target.requirements:
@@ -222,6 +226,7 @@ def _anonymous_trait_subject_name(target: AnonymousTraitType) -> str | None:
 
 
 def _first_type_var_name(typ: Type) -> str | None:
+    """Return the canonical name for first type var during type and overload solving."""
     typ = normalize(typ)
     if isinstance(typ, VarType):
         return typ.name
@@ -278,6 +283,7 @@ def _anonymous_requirement_constraints(
     constraints: dict[str, list[Type]],
     ctx: Context,
 ) -> dict[str, list[Type]] | None:
+    """Compute anonymous requirement constraints during type and overload solving."""
     for candidate in ctx.overloads_for_structural_trait(requirement.name):
         merged = {key: list(values) for key, values in constraints.items()}
         subst = _combined_substitution(merged)
@@ -301,6 +307,7 @@ def _anonymous_requirement_constraints(
 def _combined_substitution(
     constraints: dict[str, list[Type]],
 ) -> dict[str, Type] | None:
+    """Compute combined substitution during type and overload solving."""
     substitution: dict[str, Type] = {}
     for key, values in constraints.items():
         combined = _combine_all(values)
@@ -315,6 +322,7 @@ def _solve_overload_shape(
     candidate: Overload,
     ctx: Context,
 ) -> dict[str, list[Type]] | None:
+    """Solve overload shape during type and overload solving."""
     if len(expected.params) != len(candidate.params) or len(expected.returns) != len(
         candidate.returns
     ):
@@ -340,6 +348,7 @@ def _overload_satisfies_requirement(
     expected: Overload,
     ctx: Context,
 ) -> bool:
+    """Return the Boolean result of overload satisfies requirement during type solving and overload resolution."""
     if len(candidate.params) == len(expected.params) and len(candidate.returns) == len(
         expected.returns
     ) and all(
@@ -445,6 +454,7 @@ def _collection_subtype(source: Type, target: Type, ctx: Context) -> bool:
 
 
 def _rank_ge(left: object, right: object) -> bool:
+    """Return the Boolean result of rank ge during type solving and overload resolution."""
     return isinstance(left, int) and isinstance(right, int) and left >= right
 
 
@@ -504,6 +514,7 @@ def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
 
 
 def _is_boolean_number_to_integer(source: Type, target: Type) -> bool:
+    """Return whether the value is boolean number to integer."""
     source = normalize(source)
     target = normalize(target)
     if not isinstance(source, TaggedType) or not isinstance(target, TaggedType):
@@ -518,6 +529,7 @@ def _source_subtypes_result(
     target: NominalType,
     ctx: Context,
 ) -> bool:
+    """Return the Boolean result of source subtypes result during type solving and overload resolution."""
     ok, err = target.args
     if source.name == OK and len(source.args) == 1:
         return assignable(source.args[0], ok, ctx)
@@ -525,6 +537,7 @@ def _source_subtypes_result(
 
 
 def _is_builtin_err(source: NominalType) -> bool:
+    """Return whether the value is builtin err."""
     return not source.args and source.name.text.endswith("Error")
 
 
@@ -545,6 +558,7 @@ def _solve(
         required: frozenset[ElementTag],
         actual: frozenset[ElementTag],
     ) -> bool:
+        """Return the Boolean result of rec element tags during type solving and overload resolution."""
         present = tuple(tag for tag in actual if not tag.absent)
         for requirement in required:
             candidates = tuple(
@@ -770,14 +784,18 @@ def _solve(
         return False
 
     def solve_variadic_tuple(pattern: VariadicTupleType, actual: TupleType) -> bool:
+        """Return the Boolean result of solve variadic tuple during type solving and overload resolution."""
         def save() -> dict[str, list[Type]]:
+            """Save the current backtracking state for later restoration."""
             return {key: list(values) for key, values in constraints.items()}
 
         def restore(saved: dict[str, list[Type]]) -> None:
+            """Restore the most recently saved backtracking state."""
             constraints.clear()
             constraints.update(saved)
 
         def rec_tuple(pattern_index: int, actual_index: int) -> bool:
+            """Return the Boolean result of rec tuple during type solving and overload resolution."""
             if pattern_index == len(pattern.items):
                 return actual_index == len(actual.params)
             item = pattern.items[pattern_index]
@@ -1058,6 +1076,7 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
 
 
 def _substitute_overload(overload: Overload, subst: dict[str, Type]) -> Overload:
+    """Substitute overload during type and overload solving."""
     return Overload(
         tuple(_substitute(param, subst) for param in overload.params),
         tuple(_substitute(ret, subst) for ret in overload.returns),
@@ -1273,11 +1292,13 @@ def _union_dispatched_callable_returns(
     expected: FunctionType,
     ctx: Context,
 ) -> tuple[Type, ...] | None:
+    """Determine the return types for union dispatched callable during type and overload solving."""
     plan = union_dispatched_callable_plan(argument, expected, ctx)
     return None if plan is None else plan.returns
 
 
 def _union_input_alternatives(typ: Type) -> tuple[Type, ...]:
+    """Compute union input alternatives during type and overload solving."""
     typ = normalize(typ)
     if isinstance(typ, UnionType):
         return tuple(sorted(typ.items, key=show))
@@ -1288,6 +1309,7 @@ def _runtime_dispatch_pattern(
     typ: Type,
     ctx: Context,
 ) -> RuntimeTypePattern | None:
+    """Compute runtime dispatch pattern during type and overload solving."""
     typ = normalize(typ)
     if isinstance(typ, (ExactType, AtomicType)):
         return _runtime_dispatch_pattern(typ.inner, ctx)
@@ -1342,6 +1364,7 @@ def _runtime_dispatch_pattern(
 
 
 def _runtime_nominal_subtypes(typ: NominalType, ctx: Context) -> set[str]:
+    """Compute runtime nominal subtypes during type and overload solving."""
     names = {str(typ.name)}
     candidates = set(ctx.trait_impls) | set(ctx.variant_members)
     candidates.update({INTEGER, REAL, NUMBER})
@@ -1355,6 +1378,7 @@ def _dispatch_plan_has_ambiguous_overlap(
     branches: tuple[UnionDispatchBranch, ...],
     ctx: Context,
 ) -> bool:
+    """Return the Boolean result of dispatch plan has ambiguous overlap during type solving and overload resolution."""
     for index, left in enumerate(branches):
         for right in branches[index + 1 :]:
             if left.overload_index == right.overload_index:
@@ -1372,6 +1396,7 @@ def _runtime_patterns_overlap(
     right: RuntimeTypePattern,
     ctx: Context,
 ) -> bool:
+    """Return the Boolean result of runtime patterns overlap during type solving and overload resolution."""
     left_inner, left_tags = _runtime_pattern_tags(left)
     right_inner, right_tags = _runtime_pattern_tags(right)
     if not _runtime_tag_requirements_overlap(left_tags, right_tags, ctx):
@@ -1410,6 +1435,7 @@ def _runtime_patterns_overlap(
 def _runtime_pattern_tags(
     pattern: RuntimeTypePattern,
 ) -> tuple[RuntimeTypePattern, tuple[DataTag, ...]]:
+    """Compute runtime pattern tags during type and overload solving."""
     if pattern.kind != "tagged":
         return pattern, ()
     return pattern.children[0], pattern.tags
@@ -1420,6 +1446,7 @@ def _runtime_tag_requirements_overlap(
     right: tuple[DataTag, ...],
     ctx: Context,
 ) -> bool:
+    """Return the Boolean result of runtime tag requirements overlap during type solving and overload resolution."""
     left_present = {tag for tag in left if not tag.absent}
     right_present = {tag for tag in right if not tag.absent}
     left_absent = {(tag.name, tag.depth) for tag in left if tag.absent}
@@ -1497,6 +1524,7 @@ def _overload_result_for_args(
 
 
 def _vectorisation_excess(argument: Type, expected: Type, ctx: Context) -> int | None:
+    """Compute vectorisation excess during type and overload solving."""
     expected = normalize(expected)
     if isinstance(expected, ExactType):
         return 0 if assignable(argument, expected.inner, ctx) else None
@@ -1556,6 +1584,7 @@ def _wrap_returns_for_vector_depth(
     args: tuple[Type, ...],
     depths: tuple[int, ...],
 ) -> tuple[Type, ...]:
+    """Compute wrap returns for vector depth during type and overload solving."""
     vector_rank = max(depths, default=0)
     if vector_rank <= 0:
         return returns
@@ -2072,6 +2101,7 @@ def _resolve_applied_overload(
     args: tuple[Type, ...],
     ctx: Context,
 ) -> AppliedOverload | None:
+    """Resolve applied overload during type and overload solving."""
     candidates = tuple(
         applied
         for overload in overloads
@@ -2179,6 +2209,7 @@ def _application_dominates(
     right: StackApplication,
     ctx: Context,
 ) -> bool:
+    """Return the Boolean result of application dominates during type solving and overload resolution."""
     return _overload_match_dominates(
         left.scores,
         left.params,
@@ -2193,6 +2224,7 @@ def _resolved_overload_dominates(
     right: ResolvedOverload,
     ctx: Context,
 ) -> bool:
+    """Return the Boolean result of resolved overload dominates during type solving and overload resolution."""
     return _overload_match_dominates(
         left.scores,
         left.params,
@@ -2209,6 +2241,7 @@ def _overload_match_dominates(
     right_params: tuple[Type, ...],
     ctx: Context,
 ) -> bool:
+    """Return the Boolean result of overload match dominates during type solving and overload resolution."""
     if _dominates(left_scores, right_scores):
         return True
     if left_scores != right_scores:
@@ -2221,6 +2254,7 @@ def _params_more_specific(
     right: tuple[Type, ...],
     ctx: Context,
 ) -> bool:
+    """Return the Boolean result of params more specific during type solving and overload resolution."""
     return all(
         _type_more_specific_or_same(left_item, right_item, ctx)
         for left_item, right_item in zip(left, right, strict=False)
@@ -2231,6 +2265,7 @@ def _params_more_specific(
 
 
 def _type_more_specific_or_same(left: Type, right: Type, ctx: Context) -> bool:
+    """Return the Boolean result of type more specific or same during type solving and overload resolution."""
     left = normalize(left)
     right = normalize(right)
     if same(left, right) or subtype(left, right, ctx):
@@ -2282,6 +2317,7 @@ def _element_tag_requirements_met(
     required: frozenset[ElementTag],
     ctx: Context,
 ) -> bool:
+    """Return the Boolean result of element tag requirements met during type solving and overload resolution."""
     present = tuple(tag for tag in actual if not tag.absent)
     for tag in required:
         matches = tuple(
@@ -2306,6 +2342,7 @@ def _element_tag_matches(
     required: ElementTag,
     ctx: Context,
 ) -> bool:
+    """Return the Boolean result of element tag matches during type solving and overload resolution."""
     if actual.name != required.name:
         return False
     if not required.args:
@@ -2345,6 +2382,7 @@ def _element_tag_conflicts(
 
 
 def _types_may_overlap(left: Type, right: Type, ctx: Context) -> bool:
+    """Return the Boolean result of types may overlap during type solving and overload resolution."""
     left = normalize(left)
     right = normalize(right)
     if isinstance(left, UnionType):
@@ -2358,6 +2396,7 @@ def _substitute_element_tags(
     tags: frozenset[ElementTag],
     subst: dict[str, Type],
 ) -> tuple[ElementTag, ...]:
+    """Substitute element tags during type and overload solving."""
     return tuple(
         ElementTag(
             tag.name,
@@ -2369,6 +2408,7 @@ def _substitute_element_tags(
 
 
 def _element_tags_contain_type_var(tags: frozenset[ElementTag]) -> bool:
+    """Return the Boolean result of element tags contain type var during type solving and overload resolution."""
     return any(_contains_type_var(arg) for tag in tags for arg in tag.args)
 
 
@@ -2376,10 +2416,12 @@ def _element_tags_contain_named_type_var(
     tags: frozenset[ElementTag],
     name: str,
 ) -> bool:
+    """Return the Boolean result of element tags contain named type var during type solving and overload resolution."""
     return any(
         _contains_named_type_var(arg, name) for tag in tags for arg in tag.args
     )
 
 
 def _has_unit_tag(tags: frozenset[DataTag], ctx: Context) -> bool:
+    """Return whether the relations helper has unit tag."""
     return any(not tag.absent and ctx.is_unit_tag(tag.name) for tag in tags)

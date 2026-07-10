@@ -148,11 +148,13 @@ def parse_type(source: str) -> Type:
 
 class Parser:
     def __init__(self, tokens: Iterable[Token]) -> None:
+        """Initialize this parser."""
         self.tokens = list(tokens)
         self.index = 0
         self._allow_variadic_tuple_type = False
 
     def parse_program(self) -> list[ASTNode]:
+        """Parse all top-level statements from the current token stream."""
         nodes: list[ASTNode] = []
         self._skip_newlines()
         while not self._check(TokenKind.EOF):
@@ -165,6 +167,7 @@ class Parser:
         return nodes
 
     def _statement(self) -> tuple[ASTNode, ...]:
+        """Parse statement from the current token stream."""
         annotations = self._annotations()
         visibility: Symbol | None = None
         is_multi = False
@@ -241,6 +244,7 @@ class Parser:
         return self._chain_until(_LINE_TERMINATORS)
 
     def _constant(self, start: Token) -> tuple[ASTNode, ...]:
+        """Parse constant from the current token stream."""
         self._expect(TokenKind.DOLLAR)
         if self._check(TokenKind.LPAREN):
             return self._multiple_assignment(start, constant=True)
@@ -261,6 +265,7 @@ class Parser:
         )
 
     def _import(self, start: Token, *, public: bool = False) -> ImportNode:
+        """Parse import from the current token stream."""
         self._expect(TokenKind.LBRACE)
         specs: list[ImportSpec] = []
         self._skip_newlines()
@@ -276,6 +281,7 @@ class Parser:
         return ImportNode(tuple(specs), public, location=_loc(start))
 
     def _import_spec(self) -> ImportSpec:
+        """Parse import spec from the current token stream."""
         path = self._import_path()
         components: tuple[ImportComponent, ...] = ()
         if self._match(TokenKind.DOT):
@@ -291,6 +297,7 @@ class Parser:
         return ImportSpec(path, alias, components)
 
     def _import_path(self) -> ImportPath:
+        """Parse import path from the current token stream."""
         root = None
         parts: list[str] = []
         if self._check(TokenKind.OP) and self._current.value == "~":
@@ -316,6 +323,7 @@ class Parser:
         return ImportPath(tuple(parts), root)
 
     def _import_components(self) -> tuple[ImportComponent, ...]:
+        """Parse import components from the current token stream."""
         components: list[ImportComponent] = []
         self._skip_newlines()
         if self._match(TokenKind.RBRACKET):
@@ -329,6 +337,7 @@ class Parser:
             self._skip_newlines()
 
     def _import_component(self) -> ImportComponent:
+        """Parse import component from the current token stream."""
         if self._match_ident("object"):
             object_name = self._symbol("expected imported object name")
             self._expect_ident("as")
@@ -356,11 +365,13 @@ class Parser:
         return ImportComponent(name, alias, signature, exclusions)
 
     def _import_signature(self) -> tuple[Type, ...]:
+        """Parse import signature from the current token stream."""
         params = self._type_list_until({TokenKind.RPAREN})
         self._expect(TokenKind.RPAREN)
         return params
 
     def _import_exclusions(self) -> tuple[tuple[Type, ...], ...]:
+        """Parse import exclusions from the current token stream."""
         self._expect(TokenKind.LBRACKET)
         exclusions: list[tuple[Type, ...]] = []
         self._skip_newlines()
@@ -380,6 +391,7 @@ class Parser:
         start: Token,
         visibility: Symbol | None,
     ) -> TagDeclarationNode | ElementTagDeclarationNode:
+        """Parse tag declaration from the current token stream."""
         if not (self._check(TokenKind.OP) and self._current.value.startswith("#")):
             name = self._symbol("expected element tag name")
             if self._match_ident("disjoint"):
@@ -444,6 +456,7 @@ class Parser:
         start: Token,
         visibility: Symbol | None,
     ) -> TagOverlayNode:
+        """Parse tag overlay from the current token stream."""
         tag = _tag_from_token(self._advance())
         self._expect(TokenKind.COLON)
         generics, _, _ = self._generic_parameters()
@@ -460,6 +473,7 @@ class Parser:
         )
 
     def _overlay_elements(self) -> tuple[Symbol, ...]:
+        """Parse overlay elements from the current token stream."""
         if self._match(TokenKind.LPAREN):
             elements: list[Symbol] = []
             self._skip_newlines()
@@ -475,6 +489,7 @@ class Parser:
         return (self._overlay_element_symbol(),)
 
     def _overlay_element_symbol(self) -> Symbol:
+        """Parse overlay element symbol from the current token stream."""
         if not self._check(TokenKind.IDENT, TokenKind.OP):
             self._error("expected overlay element name")
         token = self._advance()
@@ -485,6 +500,7 @@ class Parser:
     def _overlay_signatures(
         self,
     ) -> tuple[tuple[tuple[Type, ...], tuple[Type, ...]], ...]:
+        """Parse overlay signatures from the current token stream."""
         signatures: list[tuple[tuple[Type, ...], tuple[Type, ...]]] = []
         single_line = not self._check(TokenKind.NEWLINE)
         self._skip_newlines()
@@ -514,6 +530,7 @@ class Parser:
         *,
         eager: bool = False,
     ) -> DefineNode:
+        """Parse define from the current token stream."""
         generics, generic_variances, generic_constraints = self._generic_parameters()
         attached_tag = None
         if (
@@ -570,6 +587,7 @@ class Parser:
         annotations: tuple[ASTNode, ...],
         visibility: Symbol | None = None,
     ) -> ObjectNode:
+        """Parse object like from the current token stream."""
         generics, generic_variances, generic_constraints = self._generic_parameters()
         name = self._symbol("expected object name")
         target = self.parse_type_expression() if self._match_ident("as") else None
@@ -607,12 +625,14 @@ class Parser:
         )
 
     def _generic_names(self) -> tuple[Symbol, ...]:
+        """Parse generic names from the current token stream."""
         names, _, _ = self._generic_parameters()
         return names
 
     def _generic_parameters(
         self,
     ) -> tuple[tuple[Symbol, ...], tuple[Symbol | None, ...], tuple[Type | None, ...]]:
+        """Parse generic parameters from the current token stream."""
         if not self._match(TokenKind.LBRACKET):
             return (), (), ()
         names: list[Symbol] = []
@@ -646,6 +666,7 @@ class Parser:
         tuple[TraitRequirementNode, ...],
         tuple[VariantMemberNode, ...],
     ]:
+        """Parse object body from the current token stream."""
         single_line = not self._check(TokenKind.NEWLINE)
         fields: list[ObjectFieldNode] = []
         definitions: list[DefineNode] = []
@@ -688,6 +709,7 @@ class Parser:
         self,
         owner: Symbol,
     ) -> ObjectFieldNode | DefineNode | TraitRequirementNode:
+        """Parse object body item from the current token stream."""
         annotations = self._annotations()
         visibility: Symbol | None = None
         if self._match_ident("public", "private"):
@@ -701,6 +723,7 @@ class Parser:
         return self._field(owner, visibility)
 
     def _extend(self, start: Token) -> TraitRequirementNode:
+        """Parse extend from the current token stream."""
         if not self._check(TokenKind.IDENT, TokenKind.OP):
             self._error("expected required element name")
         token = self._advance()
@@ -718,6 +741,7 @@ class Parser:
         return TraitRequirementNode(name, params, returns, location=_loc(start))
 
     def _field(self, owner: Symbol, visibility: Symbol | None) -> ObjectFieldNode:
+        """Parse field from the current token stream."""
         access = visibility
         if access is None and self._match_ident("readable"):
             access = Symbol("readable")
@@ -737,6 +761,7 @@ class Parser:
         return ObjectFieldNode(name, typ, default, access, location=_loc(start))
 
     def _variant_member(self) -> VariantMemberNode:
+        """Parse variant member from the current token stream."""
         start = self._current
         name = self._symbol("expected variant member name")
         self._expect(TokenKind.FAT_ARROW)
@@ -746,6 +771,7 @@ class Parser:
         return VariantMemberNode(name, fields, definitions, location=_loc(start))
 
     def _enum_body(self) -> tuple[EnumMemberNode, ...]:
+        """Parse enum body from the current token stream."""
         members: list[EnumMemberNode] = []
         single_line = not self._check(TokenKind.NEWLINE)
         if single_line and self._check_ident("end"):
@@ -768,6 +794,7 @@ class Parser:
         start: Token,
         annotations: tuple[ASTNode, ...] = (),
     ) -> FunctionNode:
+        """Parse function from the current token stream."""
         generics, generic_variances, generic_constraints = self._generic_parameters()
         params = (
             self._params(allow_empty=True)
@@ -793,12 +820,14 @@ class Parser:
         )
 
     def _function_element_tags(self) -> tuple[frozenset[ElementTag], bool]:
+        """Parse function element tags from the current token stream."""
         if not self._check_op("<"):
             return frozenset(), False
         self._advance()
         return self._element_tag_list(), True
 
     def _where_clause(self) -> tuple[ASTNode, ...]:
+        """Parse where clause from the current token stream."""
         self._skip_newlines()
         if not self._match_ident("where"):
             return ()
@@ -808,6 +837,7 @@ class Parser:
         return _flatten(expressions)
 
     def _if(self, start: Token) -> IfNode:
+        """Parse if from the current token stream."""
         condition = self._condition()
         self._expect(TokenKind.FAT_ARROW)
         then_branch = self._body({"else", "end"})
@@ -824,12 +854,14 @@ class Parser:
         return IfNode(condition, then_branch, else_branch, location=_loc(start))
 
     def _while(self, start: Token) -> WhileNode:
+        """Parse while from the current token stream."""
         condition = self._condition()
         params = self._control_params()
         self._expect(TokenKind.FAT_ARROW)
         return WhileNode(condition, params, self._body(), location=_loc(start))
 
     def _assert(self, start: Token) -> AssertNode:
+        """Parse assert from the current token stream."""
         self._expect(TokenKind.FAT_ARROW)
         condition = self._body({"else", "end"})
         else_branch: tuple[ASTNode, ...] = ()
@@ -840,6 +872,7 @@ class Parser:
         return AssertNode(condition, else_branch, location=_loc(start))
 
     def _unfold(self, start: Token) -> UnfoldNode:
+        """Parse unfold from the current token stream."""
         condition: tuple[ASTNode, ...] = ()
         if self._check(TokenKind.LPAREN):
             condition = self._condition()
@@ -848,6 +881,7 @@ class Parser:
         return UnfoldNode(condition, params, self._body(), location=_loc(start))
 
     def _try(self, start: Token) -> TryNode:
+        """Parse try from the current token stream."""
         self._expect(TokenKind.FAT_ARROW)
         body = self._body({"handle", "end"})
         handlers: list[TryHandlerNode] = []
@@ -872,6 +906,7 @@ class Parser:
         return TryNode(body, tuple(handlers), location=_loc(start))
 
     def _at(self, start: Token) -> AtNode:
+        """Parse at from the current token stream."""
         self._expect(TokenKind.LPAREN)
         levels: list[AtLevel] = []
         self._skip_newlines()
@@ -893,12 +928,14 @@ class Parser:
         return AtNode(tuple(levels), self._body(), location=_loc(start))
 
     def _control_params(self) -> tuple[FunctionParam, ...] | None:
+        """Parse control params from the current token stream."""
         if not self._match(TokenKind.ARROW):
             return None
         self._expect(TokenKind.LPAREN)
         return self._params()
 
     def _foreach(self, start: Token) -> ForNode:
+        """Parse foreach from the current token stream."""
         self._expect(TokenKind.LPAREN)
         variable = self._symbol("expected foreach variable")
         index_variable = None
@@ -910,6 +947,7 @@ class Parser:
         return ForNode(variable, index_variable, self._body(), location=_loc(start))
 
     def _match_node(self, start: Token) -> MatchNode:
+        """Parse match node from the current token stream."""
         self._expect(TokenKind.FAT_ARROW)
         cases: list[MatchCaseNode] = []
         self._skip_newlines()
@@ -953,6 +991,7 @@ class Parser:
         return MatchNode(tuple(cases), location=_loc(start))
 
     def _match_case_patterns(self) -> tuple[MatchPatternNode, ...]:
+        """Parse match case patterns from the current token stream."""
         patterns: list[MatchPatternNode] = []
         while not self._check(TokenKind.FAT_ARROW):
             patterns.append(self._match_pattern({TokenKind.COMMA, TokenKind.FAT_ARROW}))
@@ -965,6 +1004,7 @@ class Parser:
         self,
         terminators: set[TokenKind],
     ) -> MatchPatternNode:
+        """Parse match pattern from the current token stream."""
         options = [self._match_pattern_atom(terminators | {TokenKind.PIPE})]
         while (
             self._check(TokenKind.PIPE)
@@ -982,6 +1022,7 @@ class Parser:
         self,
         terminators: set[TokenKind],
     ) -> MatchPatternNode:
+        """Parse match pattern atom from the current token stream."""
         if self._match_ident("as"):
             return self._type_match_pattern(self._previous, terminators)
         if self._match_ident("if"):
@@ -1031,6 +1072,7 @@ class Parser:
         start: Token,
         terminators: set[TokenKind],
     ) -> TypePatternNode:
+        """Parse type match pattern from the current token stream."""
         name = None
         typ = None
         if self._match(TokenKind.COLON):
@@ -1053,6 +1095,7 @@ class Parser:
         return TypePatternNode(typ, name, fields, guard, location=_loc(start))
 
     def _type_match_fields(self) -> tuple[MatchPatternNode, ...]:
+        """Parse type match fields from the current token stream."""
         fields: list[MatchPatternNode] = []
         self._skip_newlines()
         if self._match(TokenKind.RPAREN):
@@ -1078,6 +1121,7 @@ class Parser:
             self._skip_newlines()
 
     def _list_match_patterns(self) -> tuple[MatchPatternNode, ...]:
+        """Parse list match patterns from the current token stream."""
         items: list[MatchPatternNode] = []
         self._skip_newlines()
         if self._match(TokenKind.RBRACKET):
@@ -1090,6 +1134,7 @@ class Parser:
             self._skip_newlines()
 
     def _match_body(self) -> tuple[ASTNode, ...]:
+        """Parse match body from the current token stream."""
         single_line = not self._check(TokenKind.NEWLINE)
         if single_line:
             body = self._chain_until(_LINE_TERMINATORS)
@@ -1105,11 +1150,13 @@ class Parser:
         return tuple(nodes)
 
     def _at_match_case_start(self) -> bool:
+        """Return the Boolean result of at match case start from the current parser token stream."""
         if self._check_ident("as", "default", "if", "_"):
             return True
         return self._check(TokenKind.NUMBER, TokenKind.STRING, TokenKind.LBRACKET)
 
     def _body(self, stop_words: set[str] | None = None) -> tuple[ASTNode, ...]:
+        """Parse body from the current token stream."""
         single_line = not self._check(TokenKind.NEWLINE)
         if single_line:
             body_line = self._current.line
@@ -1129,6 +1176,7 @@ class Parser:
         return tuple(nodes)
 
     def _condition(self) -> tuple[ASTNode, ...]:
+        """Parse condition from the current token stream."""
         if self._match(TokenKind.LPAREN):
             condition = self._chain_until({TokenKind.RPAREN})
             self._expect(TokenKind.RPAREN)
@@ -1136,6 +1184,7 @@ class Parser:
         return self._chain_until({TokenKind.FAT_ARROW})
 
     def _optional_values(self) -> tuple[ASTNode, ...]:
+        """Parse optional values from the current token stream."""
         if self._check(TokenKind.NEWLINE, TokenKind.EOF) or self._check_ident(
             "end", "else"
         ):
@@ -1145,6 +1194,7 @@ class Parser:
         return self._chain_until(_LINE_TERMINATORS)
 
     def _chain_until(self, terminators: set[TokenKind | str]) -> tuple[ASTNode, ...]:
+        """Parse chain until from the current token stream."""
         nodes: list[ASTNode] = []
         segment: list[_ChainPiece] = []
         self._skip_newlines()
@@ -1165,6 +1215,7 @@ class Parser:
         self,
         terminators: set[TokenKind | str],
     ) -> tuple[ASTNode, ...]:
+        """Parse chain segment until from the current token stream."""
         segment: list[_ChainPiece] = []
         self._skip_newlines()
         while not self._at_terminator(terminators):
@@ -1175,6 +1226,7 @@ class Parser:
         return tuple(_lower_chain_segment(segment))
 
     def _term(self) -> _ChainPiece:
+        """Parse term from the current token stream."""
         if self._match(TokenKind.NUMBER):
             token = self._previous
             return _ChainPiece(
@@ -1403,12 +1455,14 @@ class Parser:
         *,
         breaks_chain: bool = False,
     ) -> _ChainPiece:
+        """Parse element piece from the current token stream."""
         extension = self._element_extension()
         if extension is not None:
             node = replace(node, extension=extension)
         return _ChainPiece((node,), breaks_chain=breaks_chain, is_element=True)
 
     def _element_extension(self) -> ElementExtension | None:
+        """Parse element extension from the current token stream."""
         if not self._match_ident("extend"):
             return None
         start = self._previous
@@ -1470,6 +1524,7 @@ class Parser:
         self._error("expected '(', '=>', or ':' after extend")
 
     def _extension_pattern(self) -> tuple[Symbol | None, ...]:
+        """Parse extension pattern from the current token stream."""
         pattern: list[Symbol | None] = []
         names: set[Symbol] = set()
         self._skip_newlines()
@@ -1494,6 +1549,7 @@ class Parser:
         return tuple(pattern)
 
     def _stack_shuffle(self) -> StackShuffleNode:
+        """Parse stack shuffle from the current token stream."""
         start = self._advance()
         mode = Symbol(start.value)
         self._expect(TokenKind.LPAREN)
@@ -1522,6 +1578,7 @@ class Parser:
         return StackShuffleNode(mode, prestack, poststack, location=_loc(start))
 
     def _non_skip_shuffle_labels(self) -> tuple[Symbol, ...]:
+        """Parse non skip shuffle labels from the current token stream."""
         return tuple(
             label
             for label in self._shuffle_labels(allow_skip=True)
@@ -1529,6 +1586,7 @@ class Parser:
         )
 
     def _shuffle_labels(self, *, allow_skip: bool) -> tuple[Symbol | None, ...]:
+        """Parse shuffle labels from the current token stream."""
         labels: list[Symbol | None] = []
         self._skip_newlines()
         if self._check(TokenKind.ARROW, TokenKind.RPAREN):
@@ -1545,6 +1603,7 @@ class Parser:
             self._skip_newlines()
 
     def _shuffle_label(self, *, allow_skip: bool) -> Symbol | None | object:
+        """Parse shuffle label from the current token stream."""
         token = self._expect(TokenKind.IDENT)
         value = token.value
         if value == "_":
@@ -1556,6 +1615,7 @@ class Parser:
         return Symbol(value)
 
     def _cast(self, start: Token) -> _ChainPiece:
+        """Parse cast from the current token stream."""
         checked = self._check_op("!")
         if checked:
             self._advance()
@@ -1564,6 +1624,7 @@ class Parser:
         )
 
     def _empty_list_cast(self) -> CastNode | None:
+        """Parse empty list cast from the current token stream."""
         if self._check_ident("as"):
             start = self._advance()
             [cast] = self._cast(start).nodes
@@ -1573,6 +1634,7 @@ class Parser:
         return None
 
     def _string_node(self, token: Token) -> ASTNode:
+        """Parse string node from the current token stream."""
         raw = token.raw if token.raw is not None else token.value
         parts = _string_parts(raw, token)
         if len(parts) == 1 and isinstance(parts[0], str):
@@ -1580,6 +1642,7 @@ class Parser:
         return StringInterpolationNode(parts, location=_loc(token))
 
     def _qualified_symbol(self, start: Token) -> Symbol:
+        """Parse qualified symbol from the current token stream."""
         parts = [start.value]
         while self._check(TokenKind.DOT) and self._peek(1).kind in (
             TokenKind.IDENT,
@@ -1619,6 +1682,7 @@ class Parser:
         return Symbol(name)
 
     def _variable(self, start: Token) -> _ChainPiece:
+        """Parse variable from the current token stream."""
         if self._check(TokenKind.LPAREN):
             return _ChainPiece(self._multiple_assignment(start), True)
         if self._match(TokenKind.LBRACKET):
@@ -1793,6 +1857,7 @@ class Parser:
         *,
         constant: bool = False,
     ) -> tuple[ASTNode, ...]:
+        """Parse multiple assignment from the current token stream."""
         self._expect(TokenKind.LPAREN)
         targets: list[SetVariableNode] = []
         self._skip_newlines()
@@ -1828,6 +1893,7 @@ class Parser:
         )
 
     def _index_selectors(self) -> tuple[IndexSelector, ...]:
+        """Parse index selectors from the current token stream."""
         selectors: list[IndexSelector] = []
         self._skip_newlines()
         if self._match(TokenKind.RBRACKET):
@@ -1881,6 +1947,7 @@ class Parser:
         self,
         selectors: tuple[IndexSelector, ...],
     ) -> tuple[ASTNode, ...]:
+        """Parse selector expressions from the current token stream."""
         nodes: list[ASTNode] = []
         for selector in selectors:
             nodes.extend(selector.start)
@@ -1889,6 +1956,7 @@ class Parser:
         return tuple(nodes)
 
     def _comma_expressions(self, closer: TokenKind) -> tuple[tuple[ASTNode, ...], ...]:
+        """Parse comma expressions from the current token stream."""
         items: list[tuple[ASTNode, ...]] = []
         self._skip_newlines()
         if self._match(closer):
@@ -1903,12 +1971,14 @@ class Parser:
     def _argument_expressions(
         self, closer: TokenKind
     ) -> tuple[tuple[ASTNode, ...], ...]:
+        """Parse argument expressions from the current token stream."""
         self._skip_newlines()
         if self._check(closer):
             self._error("empty argument lists are invalid; use a \\nilad name")
         return self._comma_expressions(closer)
 
     def _call_arguments(self) -> tuple[CallArgument, ...]:
+        """Parse call arguments from the current token stream."""
         args: list[CallArgument] = []
         self._skip_newlines()
         if self._check(TokenKind.RPAREN):
@@ -1941,6 +2011,7 @@ class Parser:
             self._expect(TokenKind.COMMA)
 
     def _element_disambiguation(self, start: Token) -> tuple[Type | None, ...]:
+        """Parse element disambiguation from the current token stream."""
         if not self._check(TokenKind.LBRACKET) or self._current.offset != (
             start.offset + len(start.value)
         ):
@@ -1963,6 +2034,7 @@ class Parser:
             self._skip_newlines()
 
     def _modifier_arguments(self, start: Token) -> tuple[FunctionNode, ...]:
+        """Parse modifier arguments from the current token stream."""
         if self._match(TokenKind.LPAREN):
             return tuple(
                 self._modifier_function(start, body)
@@ -1979,11 +2051,13 @@ class Parser:
         start: Token,
         body: tuple[ASTNode, ...],
     ) -> FunctionNode:
+        """Parse modifier function from the current token stream."""
         if len(body) == 1 and isinstance(body[0], FunctionNode):
             return body[0]
         return FunctionNode(body=body, location=_loc(start))
 
     def _record_fields(self) -> tuple[tuple[Symbol, tuple[ASTNode, ...]], ...]:
+        """Parse record fields from the current token stream."""
         fields: list[tuple[Symbol, tuple[ASTNode, ...]]] = []
         self._skip_newlines()
         if self._match(TokenKind.RBRACE):
@@ -2001,6 +2075,7 @@ class Parser:
     def _dict_entries(
         self,
     ) -> tuple[tuple[tuple[ASTNode, ...], tuple[ASTNode, ...]], ...]:
+        """Parse dict entries from the current token stream."""
         entries: list[tuple[tuple[ASTNode, ...], tuple[ASTNode, ...]]] = []
         self._skip_newlines()
         if self._match(TokenKind.RBRACE):
@@ -2015,6 +2090,7 @@ class Parser:
             self._expect(TokenKind.COMMA)
 
     def _annotations(self) -> tuple[ASTNode, ...]:
+        """Parse annotations from the current token stream."""
         annotations: list[ASTNode] = []
         while self._check(TokenKind.AT) and self._peek(1).kind is not TokenKind.AT:
             self._advance()
@@ -2032,6 +2108,7 @@ class Parser:
         self,
         closer: TokenKind,
     ) -> tuple[tuple[ASTNode, ...], tuple[tuple[Symbol, ASTNode], ...]]:
+        """Parse annotation arguments from the current token stream."""
         args: list[ASTNode] = []
         kwargs: list[tuple[Symbol, ASTNode]] = []
         self._skip_newlines()
@@ -2052,6 +2129,7 @@ class Parser:
             self._expect(TokenKind.COMMA)
 
     def _annotation_argument_value(self, terminators: set[TokenKind]) -> ASTNode:
+        """Parse annotation argument value from the current token stream."""
         values = self._chain_until(terminators)
         if len(values) != 1:
             self._error("annotation arguments must contain exactly one expression")
@@ -2063,6 +2141,7 @@ class Parser:
         allow_defaults: bool = False,
         allow_empty: bool = False,
     ) -> tuple[FunctionParam, ...]:
+        """Parse params from the current token stream."""
         params: list[FunctionParam] = []
         seen_default = False
         self._skip_newlines()
@@ -2099,6 +2178,7 @@ class Parser:
             self._skip_newlines()
 
     def _returns(self) -> tuple[Type, ...] | None:
+        """Parse returns from the current token stream."""
         if not self._match(TokenKind.ARROW):
             return None
         if self._check(TokenKind.FAT_ARROW):
@@ -2113,6 +2193,7 @@ class Parser:
         return tuple(returns)
 
     def _parameter_type(self) -> Type:
+        """Parse parameter type from the current token stream."""
         previous = self._allow_variadic_tuple_type
         self._allow_variadic_tuple_type = True
         try:
@@ -2121,15 +2202,18 @@ class Parser:
             self._allow_variadic_tuple_type = previous
 
     def parse_type_expression(self) -> Type:
+        """Parse one complete type expression from the current token stream."""
         return self._type_union()
 
     def _type_union(self) -> Type:
+        """Parse type union from the current token stream."""
         typ = self._type_intersection()
         while self._match(TokenKind.PIPE):
             typ = U(typ, self._type_intersection())
         return typ
 
     def _type_intersection(self) -> Type:
+        """Parse type intersection from the current token stream."""
         typ = self._type_tagged()
         while self._check_op("&"):
             self._advance()
@@ -2137,6 +2221,7 @@ class Parser:
         return typ
 
     def _type_tagged(self) -> Type:
+        """Parse type tagged from the current token stream."""
         tags: list[DataTag] = []
         while self._check(TokenKind.OP) and self._current.value.startswith("#"):
             tags.append(_tag_from_token(self._advance()))
@@ -2144,6 +2229,7 @@ class Parser:
         return Tagged(typ, *tags) if tags else typ
 
     def _type_postfix(self) -> Type:
+        """Parse type postfix from the current token stream."""
         typ = self._type_primary()
         while True:
             if self._row_constraint_ahead():
@@ -2201,6 +2287,7 @@ class Parser:
     def _type_postfix_rank(
         self, op_token: Token, op: str
     ) -> int | RankVariable:
+        """Parse type postfix rank from the current token stream."""
         if self._match(TokenKind.NUMBER):
             return int(self._previous.value)
         if op != "?" and self._match(TokenKind.DOLLAR):
@@ -2228,6 +2315,7 @@ class Parser:
         rank: int | RankVariable,
         token: Token,
     ) -> Type:
+        """Parse apply collection postfix from the current token stream."""
         if not isinstance(typ, CollectionType):
             return C(collection, typ, rank)
 
@@ -2249,6 +2337,7 @@ class Parser:
         )
 
     def _row_constraint_ahead(self) -> bool:
+        """Return the Boolean result of row constraint ahead from the current parser token stream."""
         if not self._check(TokenKind.LPAREN):
             return False
         ahead = 1
@@ -2257,6 +2346,7 @@ class Parser:
         return self._peek(ahead).kind is TokenKind.DOT
 
     def _row_fields(self) -> tuple[RowField, ...]:
+        """Parse row fields from the current token stream."""
         fields: list[RowField] = []
         self._skip_newlines()
         if self._check(TokenKind.RPAREN):
@@ -2273,6 +2363,7 @@ class Parser:
             self._skip_newlines()
 
     def _type_primary(self) -> Type:
+        """Parse type primary from the current token stream."""
         if self._check_ident("trait"):
             return self._anonymous_trait_type()
         if self._match(TokenKind.LBRACE):
@@ -2358,6 +2449,7 @@ class Parser:
         self._error("expected type")
 
     def _anonymous_trait_type(self) -> Type:
+        """Parse anonymous trait type from the current token stream."""
         self._expect_ident("trait")
         generics = self._generic_names()
         self._expect(TokenKind.FAT_ARROW)
@@ -2382,6 +2474,7 @@ class Parser:
         node: TraitRequirementNode,
         generics: tuple[Symbol, ...],
     ) -> AnonymousTraitRequirement:
+        """Parse anonymous trait requirement from the current token stream."""
         params = tuple(
             _local_generic_type(_parser_param_type(param, index), generics)
             for index, param in enumerate(node.params or ())
@@ -2399,6 +2492,7 @@ class Parser:
         )
 
     def _element_tag_list(self) -> frozenset[ElementTag]:
+        """Parse element tag list from the current token stream."""
         tags: list[ElementTag] = []
         if self._check_op(">"):
             self._advance()
@@ -2423,6 +2517,7 @@ class Parser:
             self._expect(TokenKind.COMMA)
 
     def _type_list_until(self, terminators: set[TokenKind]) -> tuple[Type, ...]:
+        """Parse type list until from the current token stream."""
         items: list[Type] = []
         if self._current.kind in terminators:
             return ()
@@ -2433,6 +2528,7 @@ class Parser:
         return tuple(items)
 
     def _symbol(self, message: str) -> Symbol:
+        """Parse symbol from the current token stream."""
         if (
             self._check(TokenKind.OP)
             and self._current.value in {"~", "&"}
@@ -2446,23 +2542,28 @@ class Parser:
         self._error(message)
 
     def _expect_tag_token(self) -> Token:
+        """Parse expect tag token from the current token stream."""
         if self._check(TokenKind.OP) and self._current.value.startswith("#"):
             return self._advance()
         self._error("expected data tag")
 
     def _skip_newlines(self) -> None:
+        """Consume consecutive newline tokens."""
         while self._match(TokenKind.NEWLINE):
             pass
 
     def _skip_separators(self) -> None:
+        """Consume statement separators and blank lines."""
         while self._match(TokenKind.NEWLINE, TokenKind.PIPE):
             pass
 
     def _consume_optional_end(self) -> None:
+        """Parse consume optional end from the current token stream."""
         if self._match_ident("end"):
             return
 
     def _at_terminator(self, terminators: set[TokenKind | str]) -> bool:
+        """Return the Boolean result of at terminator from the current parser token stream."""
         if self._check(TokenKind.EOF):
             return True
         if self._current.kind in terminators:
@@ -2472,17 +2573,20 @@ class Parser:
         )
 
     def _match_ident(self, *values: str) -> bool:
+        """Return the Boolean result of match ident from the current parser token stream."""
         if self._check_ident(*values):
             self._advance()
             return True
         return False
 
     def _expect_ident(self, value: str) -> Token:
+        """Parse expect ident from the current token stream."""
         if self._match_ident(value):
             return self._previous
         self._error(f"expected {value}")
 
     def _match_ellipsis(self) -> bool:
+        """Return the Boolean result of match ellipsis from the current parser token stream."""
         if not self._check(TokenKind.DOT):
             return False
         first, second, third = self._current, self._peek(1), self._peek(2)
@@ -2499,9 +2603,11 @@ class Parser:
         return False
 
     def _check_ident(self, *values: str) -> bool:
+        """Return the Boolean result of check ident from the current parser token stream."""
         return self._check(TokenKind.IDENT) and self._current.value in values
 
     def _check_op(self, value: str) -> bool:
+        """Return the Boolean result of check op from the current parser token stream."""
         return self._check(TokenKind.OP) and self._current.value == value
 
     def _adjacent(self, first: Token, second: Token) -> bool:
@@ -2515,20 +2621,24 @@ class Parser:
         return second.offset == first.offset + len(first.value)
 
     def _match(self, *kinds: TokenKind) -> bool:
+        """Return the Boolean result of match from the current parser token stream."""
         if self._check(*kinds):
             self._advance()
             return True
         return False
 
     def _check(self, *kinds: TokenKind) -> bool:
+        """Return the Boolean result of check from the current parser token stream."""
         return self._current.kind in kinds
 
     def _expect(self, kind: TokenKind) -> Token:
+        """Consume the required token or raise a parse error."""
         if self._match(kind):
             return self._previous
         self._error(f"expected {kind.value}")
 
     def _advance(self) -> Token:
+        """Consume and return the current token."""
         while (
             self.index < len(self.tokens) - 1
             and self.tokens[self.index].kind is TokenKind.WHITESPACE
@@ -2540,6 +2650,7 @@ class Parser:
         return token
 
     def _peek(self, ahead: int = 0) -> Token:
+        """Return a lookahead token without consuming input."""
         pos = self.index
         remaining = ahead
         while True:
@@ -2555,13 +2666,16 @@ class Parser:
 
     @property
     def _current(self) -> Token:
+        """Return the current exposed by this parser."""
         return self._peek()
 
     @property
     def _previous(self) -> Token:
+        """Return the previous exposed by this parser."""
         return self.tokens[self.index - 1]
 
     def _error(self, message: str) -> None:
+        """Raise a source-located parse error at the current token."""
         token = self._current
         raise ParseError(message, line=token.line, column=token.column)
 
@@ -2578,14 +2692,17 @@ _LINE_TERMINATORS: set[TokenKind | str] = {
 
 
 def _flatten(items: tuple[tuple[ASTNode, ...], ...]) -> tuple[ASTNode, ...]:
+    """Parse flatten from the current token stream."""
     return tuple(node for item in items for node in item)
 
 
 def _element_tags(*names: str) -> frozenset[ElementTag]:
+    """Parse element tags from the current token stream."""
     return frozenset(ElementTag(Symbol(name)) for name in names)
 
 
 def _expanded_skip_count(token: Token) -> int:
+    """Parse expanded skip count from the current token stream."""
     value = token.value
     if value.startswith("_") and value[1:].isdecimal():
         return int(value[1:])
@@ -2596,6 +2713,7 @@ def _collection_postfix_superset(
     inner: type[CollectionType],
     outer: type[CollectionType],
 ) -> bool:
+    """Return the Boolean result of collection postfix superset from the current parser token stream."""
     if inner is outer:
         return True
     return (inner, outer) in {
@@ -2605,12 +2723,14 @@ def _collection_postfix_superset(
 
 
 def _optionalize_type(typ: Type, depth: int) -> Type:
+    """Parse optionalize type from the current token stream."""
     for _ in range(depth):
         typ = U(N(Symbol("Some"), typ), NoneType())
     return typ
 
 
 def _parser_param_type(param: FunctionParam, index: int) -> Type:
+    """Parse parser param type from the current token stream."""
     if param.typ is not None:
         return param.typ
     name = param.name.text if param.name is not None else f"_{index}"
@@ -2618,6 +2738,7 @@ def _parser_param_type(param: FunctionParam, index: int) -> Type:
 
 
 def _local_generic_type(typ: Type, generics: tuple[Symbol, ...]) -> Type:
+    """Parse local generic type from the current token stream."""
     names = {generic.text for generic in generics}
     if isinstance(typ, NominalType):
         if not typ.args and typ.name.text in names:
@@ -2671,6 +2792,7 @@ def _append_object_body_item(
     definitions: list[DefineNode],
     requirements: list[TraitRequirementNode],
 ) -> None:
+    """Parse append object body item from the current token stream."""
     if isinstance(item, ObjectFieldNode):
         fields.append(item)
     elif isinstance(item, DefineNode):
@@ -2682,10 +2804,12 @@ def _append_object_body_item(
 
 
 def _loc(token: Token) -> SourceLocation:
+    """Parse loc from the current token stream."""
     return SourceLocation(token.line, token.column, token.offset)
 
 
 def _tag_from_token(token: Token) -> DataTag:
+    """Parse tag from token from the current token stream."""
     value = token.value
     if not value.startswith("#"):
         raise ParseError("expected data tag", line=token.line, column=token.column)
@@ -2716,6 +2840,7 @@ def _tag_from_token(token: Token) -> DataTag:
 
 
 def _lower_chain_segment(segment: list[_ChainPiece]) -> tuple[ASTNode, ...]:
+    """Parse lower chain segment from the current token stream."""
     if not segment:
         return ()
 
@@ -2735,6 +2860,7 @@ def _lower_chain_segment(segment: list[_ChainPiece]) -> tuple[ASTNode, ...]:
 
 
 def _string_parts(raw: str, token: Token) -> tuple[str | tuple[ASTNode, ...], ...]:
+    """Parse string parts from the current token stream."""
     parts: list[str | tuple[ASTNode, ...]] = []
     literal: list[str] = []
     index = 0
@@ -2796,6 +2922,7 @@ def _interpolation_expression(
     expression: str,
     token: Token,
 ) -> tuple[ASTNode, ...]:
+    """Parse interpolation expression from the current token stream."""
     return tuple(parse(expression))
 
 
@@ -2803,6 +2930,7 @@ def _contextual_empty_list(
     nodes: tuple[ASTNode, ...],
     typ: Type,
 ) -> tuple[ASTNode, ...]:
+    """Parse contextual empty list from the current token stream."""
     if len(nodes) != 1:
         return nodes
     node = nodes[0]
@@ -2812,6 +2940,7 @@ def _contextual_empty_list(
 
 
 def _interpolation_end(raw: str, start: int, token: Token) -> int:
+    """Parse interpolation end from the current token stream."""
     depth = 1
     index = start
     while index < len(raw):
@@ -2837,6 +2966,7 @@ def _interpolation_end(raw: str, start: int, token: Token) -> int:
 
 
 def _skip_raw_string(raw: str, start: int, token: Token) -> int:
+    """Parse skip raw string from the current token stream."""
     index = start
     while index < len(raw):
         if raw[index] == "\\":
@@ -2853,8 +2983,10 @@ def _skip_raw_string(raw: str, start: int, token: Token) -> int:
 
 
 def _is_string_ident_start(char: str) -> bool:
+    """Return whether the value is string ident start."""
     return char == "_" or char.isalpha()
 
 
 def _is_string_ident_part(char: str) -> bool:
+    """Return whether the value is string ident part."""
     return char == "_" or char.isalpha() or char.isdigit()

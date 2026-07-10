@@ -1,3 +1,5 @@
+"""Raw and typed abstract-syntax-tree node definitions."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

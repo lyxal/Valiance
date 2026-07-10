@@ -111,38 +111,47 @@ def loads(data: bytes) -> Program:
 
 class _Writer:
     def __init__(self) -> None:
+        """Initialize this writer."""
         self.buffer = bytearray()
 
     def finish(self) -> bytes:
+        """Return the complete immutable bytecode buffer."""
         return bytes(self.buffer)
 
     def bytes(self, value: bytes) -> None:
+        """Append raw bytes to the bytecode buffer."""
         self.buffer.extend(value)
 
     def u8(self, value: int) -> None:
+        """Encode an unsigned eight-bit integer."""
         if not 0 <= value <= 0xFF:
             raise BytecodeFormatError(f"u8 out of range: {value}")
         self.buffer.append(value)
 
     def u32(self, value: int) -> None:
+        """Encode an unsigned thirty-two-bit integer."""
         if not 0 <= value <= 0xFFFFFFFF:
             raise BytecodeFormatError(f"u32 out of range: {value}")
         self.buffer.extend(struct.pack(">I", value))
 
     def i64(self, value: int) -> None:
+        """Encode a signed sixty-four-bit integer."""
         self.buffer.extend(struct.pack(">q", value))
 
     def string(self, value: str) -> None:
+        """Encode a length-prefixed UTF-8 string."""
         encoded = value.encode("utf-8")
         self.u32(len(encoded))
         self.bytes(encoded)
 
     def optional_string(self, value: str | None) -> None:
+        """Encode an optional UTF-8 string with a presence marker."""
         self.u8(0 if value is None else 1)
         if value is not None:
             self.string(value)
 
     def value(self, value: Any) -> None:
+        """Encode one supported tagged bytecode value."""
         if value is None:
             self.u8(_NONE)
         elif isinstance(value, int):
@@ -181,14 +190,17 @@ class _Writer:
             raise BytecodeFormatError(f"cannot serialize bytecode value {value!r}")
 
     def bool(self, value: bool) -> None:
+        """Encode a Boolean presence byte."""
         self.u8(1 if value else 0)
 
     def optional_int(self, value: int | None) -> None:
+        """Encode an optional integer with a presence marker."""
         self.u8(0 if value is None else 1)
         if value is not None:
             self.i64(value)
 
     def resolved_element_reference(self, reference: ResolvedElementReference) -> None:
+        """Encode resolved element reference in the portable bytecode stream."""
         self.string(reference.name)
         self.i64(reference.overload_index)
         self.bool(reference.vectorised)
@@ -203,6 +215,7 @@ class _Writer:
         self.value(reference.extension)
 
     def extension_rule_reference(self, reference: ExtensionRuleReference) -> None:
+        """Encode extension rule reference in the portable bytecode stream."""
         self.u32(len(reference.presence))
         for present in reference.presence:
             self.bool(present)
@@ -212,6 +225,7 @@ class _Writer:
         self,
         reference: VectorExtensionReference,
     ) -> None:
+        """Encode vector extension reference in the portable bytecode stream."""
         self.value(reference.default)
         self.u32(len(reference.rules))
         for rule in reference.rules:
@@ -222,6 +236,7 @@ class _Writer:
         self,
         reference: ObjectConstructorReference,
     ) -> None:
+        """Encode object constructor reference in the portable bytecode stream."""
         self.string(reference.type_name)
         self.value(reference.fields)
         self.value(reference.required)
@@ -230,6 +245,7 @@ class _Writer:
         self.value(reference.initializer)
 
     def function_set(self, function_set: FunctionSetCode) -> None:
+        """Encode function set in the portable bytecode stream."""
         self.u32(len(function_set.overloads))
         for overload in function_set.overloads:
             self.function(overload)
@@ -238,12 +254,14 @@ class _Writer:
             self.union_dispatch_branch(branch)
 
     def union_dispatch_branch(self, branch: UnionDispatchBranch) -> None:
+        """Encode union dispatch branch in the portable bytecode stream."""
         self.u32(len(branch.params))
         for pattern in branch.params:
             self.runtime_type_pattern(pattern)
         self.i64(branch.overload_index)
 
     def runtime_type_pattern(self, pattern: RuntimeTypePattern) -> None:
+        """Encode runtime type pattern in the portable bytecode stream."""
         self.string(pattern.kind)
         self.optional_string(pattern.name)
         self.u32(len(pattern.children))
@@ -270,6 +288,7 @@ class _Writer:
         self.optional_string(pattern.collection_kind)
 
     def function(self, function: FunctionCode) -> None:
+        """Encode function in the portable bytecode stream."""
         self.optional_string(function.name)
         self.u8(1 if function.cycle_params else 0)
         self.u8(1 if function.recursive else 0)
@@ -309,15 +328,18 @@ class _Reader:
     offset: int = 0
 
     def expect(self, value: bytes) -> None:
+        """Consume and validate an expected byte sequence."""
         if self.data[self.offset : self.offset + len(value)] != value:
             raise BytecodeFormatError("not a Valiance bytecode file")
         self.offset += len(value)
 
     def expect_eof(self) -> None:
+        """Reject trailing data after the expected bytecode payload."""
         if self.offset != len(self.data):
             raise BytecodeFormatError("trailing bytes after Valiance bytecode")
 
     def take(self, count: int) -> bytes:
+        """Consume an exact number of bytes or reject truncated input."""
         end = self.offset + count
         if end > len(self.data):
             raise BytecodeFormatError("truncated Valiance bytecode")
@@ -326,18 +348,23 @@ class _Reader:
         return value
 
     def u8(self) -> int:
+        """Decode an unsigned eight-bit integer."""
         return self.take(1)[0]
 
     def u32(self) -> int:
+        """Decode an unsigned thirty-two-bit integer."""
         return struct.unpack(">I", self.take(4))[0]
 
     def i64(self) -> int:
+        """Decode a signed sixty-four-bit integer."""
         return struct.unpack(">q", self.take(8))[0]
 
     def string(self) -> str:
+        """Decode a length-prefixed UTF-8 string."""
         return self.take(self.u32()).decode("utf-8")
 
     def optional_string(self) -> str | None:
+        """Decode an optional UTF-8 string."""
         marker = self.u8()
         if marker == 0:
             return None
@@ -346,6 +373,7 @@ class _Reader:
         raise BytecodeFormatError(f"invalid optional string marker {marker}")
 
     def value(self) -> Any:
+        """Decode one supported tagged bytecode value."""
         tag = self.u8()
         if tag == _NONE:
             return None
@@ -372,12 +400,14 @@ class _Reader:
         raise BytecodeFormatError(f"unknown bytecode value tag {tag}")
 
     def bool(self) -> bool:
+        """Decode a Boolean byte and validate its representation."""
         value = self.u8()
         if value not in {0, 1}:
             raise BytecodeFormatError(f"invalid boolean marker {value}")
         return bool(value)
 
     def optional_int(self) -> int | None:
+        """Decode an optional integer."""
         marker = self.u8()
         if marker == 0:
             return None
@@ -386,6 +416,7 @@ class _Reader:
         raise BytecodeFormatError(f"invalid optional integer marker {marker}")
 
     def resolved_element_reference(self) -> ResolvedElementReference:
+        """Decode resolved element reference in the portable bytecode stream."""
         name = self.string()
         overload_index = self.i64()
         vectorised = self.bool()
@@ -443,6 +474,7 @@ class _Reader:
         )
 
     def extension_rule_reference(self) -> ExtensionRuleReference:
+        """Decode extension rule reference in the portable bytecode stream."""
         presence = tuple(self.bool() for _ in range(self.u32()))
         function = self.value()
         if not isinstance(function, (FunctionCode, FunctionSetCode)):
@@ -450,6 +482,7 @@ class _Reader:
         return ExtensionRuleReference(presence, function)
 
     def vector_extension_reference(self) -> VectorExtensionReference:
+        """Decode vector extension reference in the portable bytecode stream."""
         default = self.value()
         rules = tuple(self.extension_rule_reference() for _ in range(self.u32()))
         selector = self.value()
@@ -465,6 +498,7 @@ class _Reader:
         return VectorExtensionReference(default, rules, selector)
 
     def object_constructor_reference(self) -> ObjectConstructorReference:
+        """Decode object constructor reference in the portable bytecode stream."""
         type_name = self.string()
         fields = self.value()
         required = self.value()
@@ -501,6 +535,7 @@ class _Reader:
         )
 
     def function_set(self) -> FunctionSetCode:
+        """Decode function set in the portable bytecode stream."""
         overloads = tuple(self.function() for _ in range(self.u32()))
         dispatch_plan = tuple(
             self.union_dispatch_branch() for _ in range(self.u32())
@@ -508,6 +543,7 @@ class _Reader:
         return FunctionSetCode(overloads, dispatch_plan)
 
     def union_dispatch_branch(self) -> UnionDispatchBranch:
+        """Decode union dispatch branch in the portable bytecode stream."""
         params = tuple(self.runtime_type_pattern() for _ in range(self.u32()))
         overload_index = self.i64()
         if not 0 <= overload_index:
@@ -515,6 +551,7 @@ class _Reader:
         return UnionDispatchBranch(params, overload_index)
 
     def runtime_type_pattern(self) -> RuntimeTypePattern:
+        """Decode runtime type pattern in the portable bytecode stream."""
         kind = self.string()
         name = self.optional_string()
         children = tuple(self.runtime_type_pattern() for _ in range(self.u32()))
@@ -552,6 +589,7 @@ class _Reader:
         )
 
     def function(self) -> FunctionCode:
+        """Decode function in the portable bytecode stream."""
         name = self.optional_string()
         cycle_params = self.u8()
         if cycle_params not in {0, 1}:

@@ -25,12 +25,14 @@ class DiagnosticError(Exception):
         line: int | None = None,
         column: int | None = None,
     ) -> None:
+        """Initialize this diagnostic error."""
         super().__init__(message)
         self.message = message
         self.line = line
         self.column = column
 
     def __str__(self) -> str:
+        """Return the human-readable representation of this diagnostic error."""
         if self.line is None or self.column is None:
             return self.message
         return f"{self.message} at {self.line}:{self.column}"
@@ -126,6 +128,7 @@ def should_color(stream: TextIO | None = None) -> bool:
 
 
 def _source_line(source: str, line: int) -> str | None:
+    """Source line while rendering compiler diagnostics."""
     lines = source.splitlines()
     if line < 1 or line > len(lines):
         return None
@@ -133,20 +136,24 @@ def _source_line(source: str, line: int) -> str | None:
 
 
 def _style(text: str, code: str, enabled: bool) -> str:
+    """Compute style while rendering compiler diagnostics."""
     if not enabled:
         return text
     return f"{code}{text}{_RESET}"
 
 
 def _diagnostic_color(stage: str) -> str:
+    """Compute diagnostic color while rendering compiler diagnostics."""
     return _YELLOW if "warning" in stage.lower() else _RED
 
 
 def _style_stage(stage: str, color: bool) -> str:
+    """Compute style stage while rendering compiler diagnostics."""
     return _style(stage, _BOLD + _diagnostic_color(stage), color)
 
 
 def _help_for(message: str) -> str | None:
+    """Compute help for while rendering compiler diagnostics."""
     if message.startswith("unknown element "):
         return (
             "Check the element name, define it before use, or import the module "

@@ -48,12 +48,15 @@ class AnnotationRegistry:
     """Registry for built-in and future plugin-provided annotations."""
 
     def __init__(self) -> None:
+        """Initialize this annotation registry."""
         self._specs: dict[str, AnnotationSpec] = {}
 
     def register(self, spec: AnnotationSpec) -> None:
+        """Register one compiler annotation specification by name."""
         self._specs[spec.name] = spec
 
     def spec(self, name: str) -> AnnotationSpec | None:
+        """Return the registered specification for an annotation name."""
         return self._specs.get(name)
 
     def validate(
@@ -62,6 +65,7 @@ class AnnotationRegistry:
         target: str,
         node: ASTNode,
     ) -> tuple[str, ...]:
+        """Validate annotations for the requested compiler target."""
         diagnostics: list[str] = []
         for annotation in annotation_nodes(annotations):
             spec = self.spec(annotation.name.text)
@@ -79,6 +83,7 @@ class AnnotationRegistry:
         function: FunctionNode,
         annotations: tuple[ASTNode, ...],
     ) -> FunctionNode:
+        """Apply registered annotation transforms to a function node."""
         current = replace(
             function,
             annotations=function.annotations + annotations,
@@ -91,6 +96,7 @@ class AnnotationRegistry:
         return current
 
     def transform_object(self, node: ObjectNode) -> ObjectNode:
+        """Apply registered annotation transforms to an object declaration."""
         current = node
         nodes = annotation_nodes(node.annotations)
         for annotation in nodes:
@@ -104,6 +110,7 @@ class AnnotationRegistry:
         overload: T.Overload,
         annotations: tuple[ASTNode, ...],
     ) -> T.Overload:
+        """Apply registered annotation transforms to an overload signature."""
         current = overload
         nodes = annotation_nodes(annotations)
         for annotation in nodes:
@@ -122,6 +129,7 @@ def register_annotation(spec: AnnotationSpec) -> None:
 
 
 def annotation_nodes(annotations: tuple[ASTNode, ...]) -> tuple[AnnotationNode, ...]:
+    """Compute annotation nodes while applying compiler annotations."""
     return tuple(
         annotation
         for annotation in annotations
@@ -130,6 +138,7 @@ def annotation_nodes(annotations: tuple[ASTNode, ...]) -> tuple[AnnotationNode, 
 
 
 def has_annotation(annotations: tuple[ASTNode, ...], name: str) -> bool:
+    """Return whether the annotations helper has annotation."""
     return any(
         annotation.name.text == name
         for annotation in annotation_nodes(annotations)
@@ -137,6 +146,7 @@ def has_annotation(annotations: tuple[ASTNode, ...], name: str) -> bool:
 
 
 def annotation_error_message(annotations: tuple[ASTNode, ...]) -> str | None:
+    """Format the message for annotation error while applying compiler annotations."""
     for annotation in annotation_nodes(annotations):
         if annotation.name.text != "error":
             continue
@@ -148,6 +158,7 @@ def annotation_error_message(annotations: tuple[ASTNode, ...]) -> str | None:
 
 
 def annotation_warning_message(annotations: tuple[ASTNode, ...]) -> str | None:
+    """Format the message for annotation warning while applying compiler annotations."""
     for annotation in annotation_nodes(annotations):
         if annotation.name.text not in {"warn", "deprecated"}:
             continue
@@ -161,6 +172,7 @@ def annotation_warning_message(annotations: tuple[ASTNode, ...]) -> str | None:
 
 
 def valid_element_annotations(annotations: tuple[ASTNode, ...]) -> bool:
+    """Return the Boolean result of valid element annotations while applying compiler annotations."""
     return (
         DEFAULT_REGISTRY.validate(annotations, "element", ElementNode(Symbol("_")))
         == ()
@@ -171,12 +183,14 @@ def annotated_element_returns(
     node: ElementNode,
     returns: tuple[T.Type, ...],
 ) -> tuple[T.Type, ...]:
+    """Determine the return types for annotated element while applying compiler annotations."""
     if has_annotation(node.annotations, "@@tupled"):
         return (T.Tup(*returns),)
     return returns
 
 
 def commutative_overloads(overload: T.Overload) -> tuple[T.Overload, ...]:
+    """Collect the overloads for commutative while applying compiler annotations."""
     if len(overload.params) < 2:
         return ()
     generated: list[T.Overload] = []
@@ -214,6 +228,7 @@ def commutative_overload_typing(
     generated: T.Overload,
     original_index: int,
 ) -> FunctionOverloadTyping:
+    """Compute commutative overload typing while applying compiler annotations."""
     body: list[TypedNode] = []
     names = original.param_names or tuple(None for _ in original.params)
     for param_name, typ in zip(names, original.params, strict=True):
@@ -247,6 +262,7 @@ def recursive_overload(
     node: FunctionNode,
     params: tuple[T.Type, ...],
 ) -> T.Overload | None:
+    """Build or resolve the overload for recursive while applying compiler annotations."""
     if node.returns is None:
         return None
     return T.Overload(
@@ -266,6 +282,7 @@ def recursive_overload(
 
 
 def _returns_result_type(returns: tuple[T.Type, ...]) -> T.Type | None:
+    """Determine the type of returns result while applying compiler annotations."""
     if len(returns) == 1:
         return returns[0]
     return None
@@ -275,6 +292,7 @@ def _function_param_names_for_overload(
     node: FunctionNode,
     inputs: tuple[T.Type, ...],
 ) -> tuple[Symbol | None, ...]:
+    """Build or resolve the overload for function param names for while applying compiler annotations."""
     if node.params is None:
         return (None,) * len(inputs)
     names = tuple(param.name for param in node.params)
@@ -288,6 +306,7 @@ def _validate_test_annotation(
     target: str,
     node: ASTNode,
 ) -> tuple[str, ...]:
+    """Validate test annotation while applying compiler annotations."""
     del target
     diagnostics: list[str] = []
     if annotation.kwargs:
@@ -320,6 +339,7 @@ def _validate_return_all(
     target: str,
     node: ASTNode,
 ) -> tuple[str, ...]:
+    """Validate return all while applying compiler annotations."""
     function = node.function if isinstance(node, DefineNode) else node
     if isinstance(function, FunctionNode) and function.returns is not None:
         return ("@returnAll cannot be used with an explicit return type",)
@@ -331,6 +351,7 @@ def _validate_commutative(
     target: str,
     node: ASTNode,
 ) -> tuple[str, ...]:
+    """Validate commutative while applying compiler annotations."""
     if not isinstance(node, DefineNode):
         return ()
     params = node.function.params or ()
@@ -344,6 +365,7 @@ def _validate_mustcall(
     target: str,
     node: ASTNode,
 ) -> tuple[str, ...]:
+    """Validate mustcall while applying compiler annotations."""
     del target, node
     kwargs = dict(annotation.kwargs)
     has_all = Symbol("all") in kwargs
@@ -364,6 +386,7 @@ def _self_transform(
     function: FunctionNode,
     annotations: tuple[AnnotationNode, ...],
 ) -> FunctionNode:
+    """Compute self transform while applying compiler annotations."""
     if not has_annotation(annotations, "self") or not function.params:
         return function
     self_param = function.params[0]
@@ -382,6 +405,7 @@ def _error_overload_transform(
     overload: T.Overload,
     annotations: tuple[AnnotationNode, ...],
 ) -> T.Overload:
+    """Compute error overload transform while applying compiler annotations."""
     message = annotation_error_message(annotations)
     if message is None:
         return overload
@@ -392,6 +416,7 @@ def _warning_overload_transform(
     overload: T.Overload,
     annotations: tuple[AnnotationNode, ...],
 ) -> T.Overload:
+    """Compute warning overload transform while applying compiler annotations."""
     message = annotation_warning_message(annotations)
     if message is None:
         return overload
@@ -402,6 +427,7 @@ def _err_type_object_transform(
     node: ObjectNode,
     annotations: tuple[AnnotationNode, ...],
 ) -> ObjectNode:
+    """Compute err type object transform while applying compiler annotations."""
     if not has_annotation(annotations, "errType"):
         return node
     if node.kind.text == "object":
@@ -420,6 +446,7 @@ def _err_type_object_transform(
 def _ensure_message_field(
     fields: tuple[ObjectFieldNode, ...],
 ) -> tuple[ObjectFieldNode, ...]:
+    """Compute ensure message field while applying compiler annotations."""
     if any(field.name == Symbol("message") for field in fields):
         return fields
     return (
@@ -431,6 +458,7 @@ def _ensure_message_field(
 def _ensure_message_definition(
     definitions: tuple[DefineNode, ...],
 ) -> tuple[DefineNode, ...]:
+    """Build the definition for ensure message while applying compiler annotations."""
     if any(definition.name == Symbol("message") for definition in definitions):
         return definitions
     return (
@@ -446,6 +474,7 @@ def _ensure_message_definition(
 
 
 def _install_builtin_annotations() -> None:
+    """Install builtin annotations while applying compiler annotations."""
     register_annotation(AnnotationSpec("recursive", frozenset({"define", "fn"})))
     register_annotation(
         AnnotationSpec(

@@ -1,3 +1,5 @@
+"""Public entry points for static analysis and the default type environment."""
+
 from valiance.analysis.analyser import (
     Analyser,
     AnalysisBranch,

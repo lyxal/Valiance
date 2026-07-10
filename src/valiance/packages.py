@@ -29,13 +29,16 @@ class Dependency:
 
     @property
     def identity(self) -> str:
+        """Return the lockfile identity for this dependency source."""
         return self.package or self.source or self.local_name
 
     @property
     def kind(self) -> str:
+        """Return the manifest source kind for this dependency."""
         return "vcs" if self.source is not None else "registry"
 
     def manifest_value(self) -> str | dict[str, str]:
+        """Return the TOML-compatible manifest value for this dependency."""
         if self.source is not None:
             return {"source": self.source, "version": self.version}
         if self.package is not None and self.package != self.local_name:
@@ -54,9 +57,11 @@ class Manifest:
 
     @property
     def path(self) -> Path:
+        """Return the filesystem path containing this project manifest."""
         return self.root / "valiance.toml"
 
     def dependency(self, name: str) -> Dependency | None:
+        """Return the named dependency declared by this manifest, if present."""
         for dependency in self.dependencies:
             if dependency.local_name == name:
                 return dependency
@@ -75,6 +80,7 @@ def find_project_root(start: Path | None = None) -> Path | None:
 
 
 def load_manifest(root: Path) -> Manifest:
+    """Read and parse a project manifest from disk."""
     path = root / "valiance.toml"
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -110,6 +116,7 @@ def load_manifest(root: Path) -> Manifest:
 
 
 def require_manifest(start: Path | None = None) -> Manifest:
+    """Load the nearest project manifest or raise a package error."""
     root = find_project_root(start)
     if root is None:
         raise PackageError("no enclosing valiance.toml found")
@@ -236,6 +243,7 @@ def add_dependency(
     alias: str | None = None,
     start: Path | None = None,
 ) -> Manifest:
+    """Add or replace a project dependency and persist the manifest."""
     manifest = require_manifest(start)
     _validate_exact_version(version)
     if _is_vcs_source(target):
@@ -259,6 +267,7 @@ def add_dependency(
 
 
 def remove_dependency(name: str, *, start: Path | None = None) -> Manifest:
+    """Remove a project dependency and persist the manifest."""
     manifest = require_manifest(start)
     _validate_dependency_name(name)
     dependencies = _without_dependency(manifest.dependencies, name)
@@ -282,6 +291,7 @@ def upgrade_dependency(
     *,
     start: Path | None = None,
 ) -> Manifest:
+    """Update a dependency version and reinstall the resolved package set."""
     manifest = require_manifest(start)
     _validate_dependency_name(name)
     _validate_exact_version(version)
@@ -305,6 +315,7 @@ def upgrade_dependency(
 
 
 def write_manifest(manifest: Manifest) -> None:
+    """Serialize the project manifest to deterministic TOML."""
     lines = ["[project]"]
     for key, value in manifest.project.items():
         lines.append(f"{key} = {_toml_value(value)}")
@@ -320,6 +331,7 @@ def write_manifest(manifest: Manifest) -> None:
 
 
 def write_lockfile(manifest: Manifest) -> Path:
+    """Write the resolved dependency set to the project lockfile."""
     lock = {
         "version": 1,
         "package": {
@@ -348,6 +360,7 @@ def write_lockfile(manifest: Manifest) -> Path:
 
 
 def dependency_install_root(manifest: Manifest, name: str) -> Path:
+    """Return the directory used for installed project dependencies."""
     dependency = manifest.dependency(name)
     if dependency is None:
         raise PackageError(f"dependency {name!r} is not declared")
@@ -355,6 +368,7 @@ def dependency_install_root(manifest: Manifest, name: str) -> Path:
 
 
 def _parse_dependency(name: str, value: object) -> Dependency:
+    """Parse dependency for project and dependency management."""
     _validate_dependency_name(name)
     if isinstance(value, str):
         _validate_exact_version(value)
@@ -377,6 +391,7 @@ def _parse_dependency(name: str, value: object) -> Dependency:
 
 
 def _validate_dependency_name(name: str) -> None:
+    """Validate dependency name for project and dependency management."""
     if name in RESERVED_DEPENDENCY_NAMES:
         raise PackageError(f"{name!r} is reserved and cannot be a dependency name")
     if not NAME_RE.fullmatch(name):
@@ -384,6 +399,7 @@ def _validate_dependency_name(name: str) -> None:
 
 
 def _validate_exact_version(version: str) -> None:
+    """Validate exact version for project and dependency management."""
     if not VERSION_RE.fullmatch(version):
         raise PackageError(f"version {version!r} is not an exact numeric version")
 
@@ -392,16 +408,19 @@ def _without_dependency(
     dependencies: tuple[Dependency, ...],
     name: str,
 ) -> tuple[Dependency, ...]:
+    """Compute without dependency for project and dependency management."""
     return tuple(
         dependency for dependency in dependencies if dependency.local_name != name
     )
 
 
 def _is_vcs_source(target: str) -> bool:
+    """Return whether the value is VCS source."""
     return "/" in target
 
 
 def _dependency_lines(dependency: Dependency) -> list[str]:
+    """Compute dependency lines for project and dependency management."""
     value = dependency.manifest_value()
     if isinstance(value, str):
         return [f"{dependency.local_name} = {_toml_value(value)}"]
@@ -410,6 +429,7 @@ def _dependency_lines(dependency: Dependency) -> list[str]:
 
 
 def _toml_value(value: object) -> str:
+    """Compute toml value for project and dependency management."""
     if isinstance(value, str):
         return json.dumps(value)
     if isinstance(value, bool):

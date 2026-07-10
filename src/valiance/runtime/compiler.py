@@ -128,6 +128,7 @@ class _Compiler:
         break_as_signal: bool = False,
         return_as_signal: bool = False,
     ) -> None:
+        """Initialize this compiler."""
         self.instructions: list[Instruction] = []
         self.loops: list[_LoopPatch] = []
         self.break_as_signal = break_as_signal
@@ -160,6 +161,7 @@ class _Compiler:
         return_tags: tuple[tuple[DataTag, ...], ...] = (),
         return_collection_ranks: tuple[int | None, ...] = (),
     ) -> FunctionCode:
+        """Compile a typed function body and its captured runtime metadata."""
         for index, node in enumerate(body):
             self.node(node)
             if index + 1 < len(body) and _should_pop_statement_result(node):
@@ -179,6 +181,7 @@ class _Compiler:
         )
 
     def node(self, node: ASTNode | TypedNode) -> None:
+        """Lower one typed AST node into bytecode instructions."""
         typed_node = node if isinstance(node, TypedNode) else None
         node = _unwrap(node)
         match node:
@@ -402,6 +405,7 @@ class _Compiler:
                 self.unsupported(node, type(node).__name__)
 
     def expression(self, nodes: tuple[ASTNode | TypedNode, ...]) -> None:
+        """Lower an expression body and preserve its stack result."""
         for node in nodes:
             self.node(node)
 
@@ -412,11 +416,13 @@ class _Compiler:
         *,
         argument: object | None = None,
     ) -> None:
+        """Compile collection items and emit the requested construction opcode."""
         for item in items:
             self.expression(item)
         self.emit(op, len(items) if argument is None else argument)
 
     def _register_runtime_tag_declaration(self, node: TagDeclarationNode) -> None:
+        """Lower register runtime tag declaration into bytecode instructions."""
         name = node.tag.name
         if node.parent is not None:
             self.tag_parents[name] = node.parent.name
@@ -429,6 +435,7 @@ class _Compiler:
         self,
         parts: tuple[str | tuple[ASTNode, ...], ...],
     ) -> None:
+        """Compile interpolation parts and concatenate their runtime strings."""
         template: list[str | None] = []
         for part in parts:
             if isinstance(part, str):
@@ -439,6 +446,7 @@ class _Compiler:
         self.emit(OpCode.BUILD_STRING, tuple(template))
 
     def object_declaration(self, node: ObjectNode) -> None:
+        """Compile an object-like declaration and publish its runtime values."""
         match node.kind.text:
             case "object":
                 runtime_name = _symbol_runtime_name(node.name)
@@ -517,6 +525,7 @@ class _Compiler:
         alias: str | None = None,
         initializers: tuple[DefineNode, ...] = (),
     ) -> None:
+        """Build constructor bytecode and lifecycle metadata for an object."""
         field_names: list[str] = []
         default_values: list[tuple[str, object]] = []
         for field in fields:
@@ -567,6 +576,7 @@ class _Compiler:
         *,
         variant_dispatch: bool = False,
     ) -> None:
+        """Compile and store an object-friendly element implementation."""
         body = definition.function.body
         if _definition_has_annotation(definition, "self"):
             body = prepare_constructor_body(body)
@@ -611,6 +621,7 @@ class _Compiler:
         self.emit(OpCode.STORE_VAR, f"{owner}::{runtime_definition_name}")
 
     def if_node(self, node: IfNode) -> None:
+        """Lower a typed conditional with patched branch targets."""
         for condition_node in node.condition:
             self.node(condition_node)
         jump_to_else = self.emit(OpCode.JUMP_IF_FALSE, None)
@@ -624,6 +635,7 @@ class _Compiler:
         self.patch(jump_to_end, len(self.instructions))
 
     def assert_node(self, node: AssertNode) -> None:
+        """Lower an assertion and its optional failure branch."""
         for condition_node in node.condition:
             self.node(condition_node)
         if not node.else_branch:
@@ -639,6 +651,7 @@ class _Compiler:
         self.patch(jump_to_end, len(self.instructions))
 
     def unfold_node(self, node: UnfoldNode, typed_node: TypedNode | None) -> None:
+        """Lower an unfold operation through its analysed callable body."""
         arity = _unfold_state_arity(node, typed_node)
         body = FunctionNode(
             params=node.params or tuple(FunctionParam(None) for _ in range(arity)),
@@ -660,6 +673,7 @@ class _Compiler:
         self.emit(OpCode.UNFOLD, (condition_code, body_code, arity))
 
     def at_node(self, node: AtNode, typed_node: TypedNode | None) -> None:
+        """Lower an `at` body and its statically resolved stop ranks."""
         if not isinstance(typed_node, TypedAtNode):
             raise CompileError("at expressions require typed vectorisation metadata")
         if typed_node.function is None or typed_node.overload is None:
@@ -694,6 +708,7 @@ class _Compiler:
         )
 
     def foreach_node(self, node: ForNode) -> None:
+        """Lower a foreach loop and its break-result handling."""
         params = (FunctionParam(node.variable),)
         if node.index_variable is not None:
             params += (FunctionParam(node.index_variable),)
@@ -715,6 +730,7 @@ class _Compiler:
         )
 
     def match_node(self, node: MatchNode) -> None:
+        """Lower typed match cases, guards, bindings, and join targets."""
         arity = _match_arity(node)
         if arity:
             self.emit(OpCode.SOURCE_ARGS, arity)
@@ -760,6 +776,7 @@ class _Compiler:
             self.patch(jump, end)
 
     def try_node(self, node: TryNode) -> None:
+        """Lower panic handlers and their protected instruction range."""
         begin = self.emit(OpCode.TRY_BEGIN, ())
         for body_node in node.body:
             self.node(body_node)
@@ -781,6 +798,7 @@ class _Compiler:
         self.instructions[begin] = Instruction(OpCode.TRY_BEGIN, tuple(handlers))
 
     def while_node(self, node: WhileNode) -> None:
+        """Lower a while loop with condition and exit jumps."""
         if node.params is not None:
             condition = FunctionNode(
                 params=node.params,
@@ -815,6 +833,7 @@ class _Compiler:
             self.patch(jump, loop_end)
 
     def break_node(self, node: BreakNode) -> None:
+        """Lower a loop break and patch it to the current loop exit."""
         if self.break_as_signal:
             for value in node.values:
                 self.node(value)
@@ -827,19 +846,23 @@ class _Compiler:
         self.loops[-1].break_jumps.append(self.emit(OpCode.JUMP, None))
 
     def emit(self, op: OpCode, arg: object = None) -> int:
+        """Append one bytecode instruction and return its index."""
         self.instructions.append(Instruction(op, arg))
         return len(self.instructions) - 1
 
     def patch(self, index: int, target: int) -> None:
+        """Replace one instruction argument after its target becomes known."""
         instruction = self.instructions[index]
         self.instructions[index] = Instruction(instruction.op, target)
 
     def patch_match(self, index: int, target: int) -> None:
+        """Patch a match instruction while retaining its compiled pattern."""
         instruction = self.instructions[index]
         pattern, _ = instruction.arg
         self.instructions[index] = Instruction(instruction.op, (pattern, target))
 
     def unsupported(self, node: ASTNode, feature: str) -> NoReturn:
+        """Raise a compiler error for an unexpected typed AST node."""
         location = ""
         if node.location is not None:
             location = f" at {node.location.line}:{node.location.column}"
@@ -855,6 +878,7 @@ def compile_program(nodes: list[TypedNode]) -> Program:
 
 
 def _compile_object_initializer(name: str, definition: DefineNode) -> FunctionCode:
+    """Compile object initializer during typed-AST bytecode lowering."""
     body = prepare_constructor_body(definition.function.body)
     function = FunctionNode(
         params=(FunctionParam(Symbol("self")),)
@@ -876,6 +900,7 @@ def _compile_function_value(
     node: FunctionNode | TypedNode,
     name: str | None = None,
 ) -> FunctionCode | FunctionSetCode:
+    """Compile function value during typed-AST bytecode lowering."""
     typed = node if isinstance(node, TypedFunctionNode) else None
     if typed is not None and typed.overloads:
         ast = _function_ast(node)
@@ -901,6 +926,7 @@ def _compile_function_node(
     multi: bool = False,
     dispatch_types: tuple[str | None, ...] = (),
 ) -> FunctionCode:
+    """Compile function node during typed-AST bytecode lowering."""
     ast = _function_ast(node)
     params = ()
     if ast.params is not None:
@@ -924,6 +950,7 @@ def _compile_function_node(
 
 
 def _should_pop_statement_result(node: ASTNode | TypedNode) -> bool:
+    """Return whether the compiler helper should pop statement result."""
     ast = _unwrap(node)
     return (
         isinstance(ast, ForNode)
@@ -937,6 +964,7 @@ def _compile_function_overload(
     overload: FunctionOverloadTyping,
     name: str | None,
 ) -> FunctionCode:
+    """Compile function overload during typed-AST bytecode lowering."""
     typ = overload.typ
     if not isinstance(typ, FunctionType):
         raise CompileError(
@@ -957,6 +985,7 @@ def _compile_function_overload(
 
 
 def _function_param_names(ast: FunctionNode, arity: int) -> tuple[str, ...]:
+    """Collect the names for function param during typed-AST bytecode lowering."""
     if ast.params is None:
         return tuple(f"_{index}" for index in range(arity))
     return tuple(
@@ -969,6 +998,7 @@ def _overload_param_names(
     ast: FunctionNode,
     overload: FunctionOverloadTyping,
 ) -> tuple[str, ...]:
+    """Collect the names for overload param during typed-AST bytecode lowering."""
     source = overload.overload
     typ = overload.typ
     if isinstance(source, Overload) and source.param_names:
@@ -982,6 +1012,7 @@ def _overload_param_names(
 
 
 def _static_param_names(overload: FunctionOverloadTyping) -> tuple[str, ...]:
+    """Collect the names for static param during typed-AST bytecode lowering."""
     source = overload.overload
     if source is None:
         return ()
@@ -998,6 +1029,7 @@ def _static_param_names(overload: FunctionOverloadTyping) -> tuple[str, ...]:
 
 
 def _overload_is_multi(overload: FunctionOverloadTyping) -> bool:
+    """Return the Boolean result of overload is multi during typed-AST bytecode lowering."""
     source = overload.overload
     return isinstance(source, Overload) and source.is_multi
 
@@ -1005,6 +1037,7 @@ def _overload_is_multi(overload: FunctionOverloadTyping) -> bool:
 def _overload_dispatch_types(
     overload: FunctionOverloadTyping,
 ) -> tuple[str | None, ...]:
+    """Determine the types used for overload dispatch during typed-AST bytecode lowering."""
     source = overload.overload
     if not isinstance(source, Overload):
         return ()
@@ -1014,6 +1047,7 @@ def _overload_dispatch_types(
 def _function_return_tags(
     typ: FunctionType,
 ) -> tuple[tuple[DataTag, ...], ...]:
+    """Compute function return tags during typed-AST bytecode lowering."""
     if typ.returns is None:
         return ()
     return tuple(_top_level_runtime_tags(ret) for ret in typ.returns)
@@ -1022,12 +1056,14 @@ def _function_return_tags(
 def _function_return_collection_ranks(
     typ: FunctionType,
 ) -> tuple[int | None, ...]:
+    """Compute function return collection ranks during typed-AST bytecode lowering."""
     if typ.returns is None:
         return ()
     return tuple(_runtime_collection_rank(ret) for ret in typ.returns)
 
 
 def _top_level_runtime_tags(typ: Type) -> tuple[DataTag, ...]:
+    """Compute top level runtime tags during typed-AST bytecode lowering."""
     typ = normalize(typ)
     if isinstance(typ, TaggedType):
         return tuple(sorted(tag for tag in typ.tags if tag.depth == 0))
@@ -1035,6 +1071,7 @@ def _top_level_runtime_tags(typ: Type) -> tuple[DataTag, ...]:
 
 
 def _runtime_dispatch_type(typ: Type) -> str | None:
+    """Determine the type of runtime dispatch during typed-AST bytecode lowering."""
     typ = normalize(typ)
     if isinstance(typ, (TaggedType, ExactType, AtomicType)):
         return _runtime_dispatch_type(typ.inner)
@@ -1044,6 +1081,7 @@ def _runtime_dispatch_type(typ: Type) -> str | None:
 
 
 def _rank_var_names_in_type(typ: Type) -> set[str]:
+    """Determine the type of rank var names in during typed-AST bytecode lowering."""
     typ = normalize(typ)
     names: set[str] = set()
     if isinstance(typ, CollectionType):
@@ -1076,6 +1114,7 @@ def _rank_var_names_in_type(typ: Type) -> set[str]:
 
 
 def _compiled_function_arity(code: FunctionCode | FunctionSetCode) -> int:
+    """Determine the required arity for compiled function during typed-AST bytecode lowering."""
     if isinstance(code, FunctionCode):
         return len(code.params)
     if not code.overloads:
@@ -1084,6 +1123,7 @@ def _compiled_function_arity(code: FunctionCode | FunctionSetCode) -> int:
 
 
 def _unfold_state_arity(node: UnfoldNode, typed_node: TypedNode | None) -> int:
+    """Determine the required arity for unfold state during typed-AST bytecode lowering."""
     if isinstance(typed_node, TypedUnfoldNode):
         return typed_node.state_arity
     if node.params is not None:
@@ -1092,6 +1132,7 @@ def _unfold_state_arity(node: UnfoldNode, typed_node: TypedNode | None) -> int:
 
 
 def _function_ast(node: FunctionNode | TypedNode) -> FunctionNode:
+    """Compute function AST during typed-AST bytecode lowering."""
     ast = _unwrap(node)
     if isinstance(ast, DefineNode):
         ast = ast.function
@@ -1101,10 +1142,12 @@ def _function_ast(node: FunctionNode | TypedNode) -> FunctionNode:
 
 
 def _max_break_values(nodes: tuple[ASTNode, ...]) -> int:
+    """Collect the values for max break during typed-AST bytecode lowering."""
     return max((_node_max_break_values(node) for node in nodes), default=0)
 
 
 def _node_max_break_values(node: ASTNode) -> int:
+    """Collect the values for node max break during typed-AST bytecode lowering."""
     best = 0
     if isinstance(node, BreakNode):
         best = len(node.values)
@@ -1117,6 +1160,7 @@ def _node_max_break_values(node: ASTNode) -> int:
 
 
 def _tuple_max_break_values(values: tuple[object, ...]) -> int:
+    """Collect the values for tuple max break during typed-AST bytecode lowering."""
     best = 0
     for value in values:
         if isinstance(value, ASTNode):
@@ -1129,6 +1173,7 @@ def _tuple_max_break_values(values: tuple[object, ...]) -> int:
 def _function_element_tag_names(
     node: FunctionNode | TypedNode | Type,
 ) -> tuple[str, ...]:
+    """Collect the names for function element tag during typed-AST bytecode lowering."""
     typ = node.typ if isinstance(node, TypedNode) else node
     if isinstance(typ, FunctionType):
         return tuple(
@@ -1143,6 +1188,7 @@ def _function_element_tag_names(
 
 
 def _function_is_recursive(ast: FunctionNode) -> bool:
+    """Return the Boolean result of function is recursive during typed-AST bytecode lowering."""
     return any(
         isinstance(annotation, AnnotationNode)
         and annotation.name.text == "recursive"
@@ -1151,6 +1197,7 @@ def _function_is_recursive(ast: FunctionNode) -> bool:
 
 
 def _definition_has_annotation(definition: DefineNode, name: str) -> bool:
+    """Return the Boolean result of definition has annotation during typed-AST bytecode lowering."""
     return any(
         isinstance(annotation, AnnotationNode)
         and annotation.name.text == name
@@ -1163,6 +1210,7 @@ def _object_runtime_metadata(
     annotations: tuple[ASTNode, ...],
     definitions: tuple[DefineNode, ...],
 ) -> tuple[str | None, str | None, str | None, str | None, str | None, tuple[str, ...]]:
+    """Compute object runtime metadata during typed-AST bytecode lowering."""
     destructor_name = None
     pop_name = None
     dup_name = None
@@ -1189,6 +1237,7 @@ def _object_runtime_metadata(
 def _mustcall_annotation_metadata(
     annotations: tuple[ASTNode, ...],
 ) -> tuple[str | None, tuple[str, ...]]:
+    """Compute mustcall annotation metadata during typed-AST bytecode lowering."""
     for annotation in annotations:
         if not isinstance(annotation, AnnotationNode):
             continue
@@ -1204,6 +1253,7 @@ def _mustcall_annotation_metadata(
 
 
 def _string_list_literal(value: ASTNode | None) -> tuple[str, ...] | None:
+    """Compute string list literal during typed-AST bytecode lowering."""
     if not isinstance(value, ListLiteralNode):
         return None
     methods: list[str] = []
@@ -1215,6 +1265,7 @@ def _string_list_literal(value: ASTNode | None) -> tuple[str, ...] | None:
 
 
 def _annotation_message(annotations: tuple[ASTNode, ...], name: str) -> str | None:
+    """Format the message for annotation during typed-AST bytecode lowering."""
     for annotation in annotations:
         if not isinstance(annotation, AnnotationNode):
             continue
@@ -1230,6 +1281,7 @@ def _tupled_element_return_count(
     node: ElementNode,
     typed_node: TypedNode | None,
 ) -> int | None:
+    """Compute tupled element return count during typed-AST bytecode lowering."""
     if not any(
         isinstance(annotation, AnnotationNode)
         and annotation.name.text == "@@tupled"
@@ -1242,18 +1294,21 @@ def _tupled_element_return_count(
 
 
 def _unwrap(node: ASTNode | TypedNode) -> ASTNode:
+    """Compute unwrap during typed-AST bytecode lowering."""
     if isinstance(node, TypedNode):
         return node.node
     return node
 
 
 def _symbol_runtime_name(symbol: Symbol) -> str:
+    """Return the canonical name for symbol runtime during typed-AST bytecode lowering."""
     return symbol.dotted()
 
 
 def _resolved_element_reference(
     node: TypedNode | None,
 ) -> ResolvedElementReference | None:
+    """Compute resolved element reference during typed-AST bytecode lowering."""
     if not isinstance(node, TypedElementNode):
         return None
     if node.overload_index is None:
@@ -1337,6 +1392,7 @@ def _resolved_element_reference(
 
 
 def _runtime_collection_rank(typ: Type | None) -> int | None:
+    """Determine the collection rank for runtime collection during typed-AST bytecode lowering."""
     if typ is None:
         return None
     typ = normalize(typ)
@@ -1350,6 +1406,7 @@ def _runtime_collection_rank(typ: Type | None) -> int | None:
 def _compiled_element_extension(
     extension: TypedElementExtension | None,
 ) -> VectorExtensionReference | None:
+    """Compute compiled element extension during typed-AST bytecode lowering."""
     if extension is None:
         return None
     return VectorExtensionReference(
@@ -1374,6 +1431,7 @@ def _compiled_element_extension(
 
 
 def _runtime_rank_values(node: TypedElementNode) -> tuple[Decimal, ...]:
+    """Collect the values for runtime rank during typed-AST bytecode lowering."""
     if node.overload is None or not node.overload.rank_values:
         return ()
     return tuple(
@@ -1386,6 +1444,7 @@ def _resolved_constructor_type_args(
     ast: ElementNode,
     node: TypedElementNode,
 ) -> tuple[str, ...]:
+    """Compute resolved constructor type args during typed-AST bytecode lowering."""
     if node.overload is None or not node.overload.actual_returns:
         return ()
     returned = node.overload.actual_returns[0]
@@ -1400,6 +1459,7 @@ def _index_spec(
     selectors: tuple[IndexSelector, ...],
     spread: bool,
 ) -> tuple[tuple[int, int, int, int], int]:
+    """Compute index spec during typed-AST bytecode lowering."""
     return (
         tuple(
             (
@@ -1417,6 +1477,7 @@ def _index_spec(
 def _stack_shuffle_spec(
     node: StackShuffleNode,
 ) -> tuple[str, tuple[str | None, ...], tuple[str, ...]]:
+    """Compute stack shuffle spec during typed-AST bytecode lowering."""
     return (
         node.mode.text,
         tuple(None if label is None else label.text for label in node.prestack),
@@ -1425,6 +1486,7 @@ def _stack_shuffle_spec(
 
 
 def _literal_expression_value(nodes: tuple[ASTNode, ...]) -> object:
+    """Compute literal expression value during typed-AST bytecode lowering."""
     if len(nodes) != 1:
         raise CompileError("object and enum default values must be literal values")
     node = nodes[0]
@@ -1444,6 +1506,7 @@ def _literal_expression_value(nodes: tuple[ASTNode, ...]) -> object:
 
 
 def _number(value: str, node: ASTNode) -> Decimal:
+    """Compute number during typed-AST bytecode lowering."""
     try:
         return Decimal(value)
     except InvalidOperation as exc:
@@ -1457,10 +1520,12 @@ def _number(value: str, node: ASTNode) -> Decimal:
 def _compile_case_patterns(
     patterns: tuple[MatchPatternNode, ...],
 ) -> tuple[object, ...]:
+    """Compile case patterns during typed-AST bytecode lowering."""
     return tuple(_compile_match_pattern(pattern) for pattern in patterns)
 
 
 def _match_arity(node: MatchNode) -> int | None:
+    """Determine the required arity for match during typed-AST bytecode lowering."""
     if not node.cases:
         return None
     arities = {len(case.patterns) for case in node.cases}
@@ -1470,6 +1535,7 @@ def _match_arity(node: MatchNode) -> int | None:
 
 
 def _handler_type_name(handler: TryHandlerNode) -> str | None:
+    """Return the canonical name for handler type during typed-AST bytecode lowering."""
     if handler.typ is None:
         return None
     typ = handler.typ
@@ -1479,6 +1545,7 @@ def _handler_type_name(handler: TryHandlerNode) -> str | None:
 
 
 def _compile_match_pattern(pattern: MatchPatternNode) -> object:
+    """Compile match pattern during typed-AST bytecode lowering."""
     match pattern:
         case LiteralPatternNode(value):
             return ("literal", _literal_pattern_value(value))
@@ -1511,6 +1578,7 @@ def _compile_match_pattern(pattern: MatchPatternNode) -> object:
 
 
 def _literal_pattern_value(node: ASTNode) -> object:
+    """Compute literal pattern value during typed-AST bytecode lowering."""
     match node:
         case NumberLiteralNode(value):
             return _number(value, node)
@@ -1523,10 +1591,12 @@ def _literal_pattern_value(node: ASTNode) -> object:
 
 
 def _compile_guard(condition: tuple[ASTNode, ...]) -> FunctionCode:
+    """Compile guard during typed-AST bytecode lowering."""
     return _Compiler().compile_function(condition, params=("_",), name="<match guard>")
 
 
 def _type_pattern_name(typ: object) -> str:
+    """Return the canonical name for type pattern during typed-AST bytecode lowering."""
     from valiance.types import NominalType, NoneTypeNode, normalize
 
     typ = normalize(typ)
@@ -1538,6 +1608,7 @@ def _type_pattern_name(typ: object) -> str:
 
 
 def _cast_type_spec(typ: Type) -> object:
+    """Compute cast type spec during typed-AST bytecode lowering."""
     from valiance.types import VarType
 
     typ = normalize(typ)
@@ -1568,10 +1639,12 @@ def _cast_type_spec(typ: Type) -> object:
 
 
 def _is_default_case(patterns: tuple[MatchPatternNode, ...]) -> bool:
+    """Return whether the value is default case."""
     return bool(patterns) and all(_is_default_pattern(pattern) for pattern in patterns)
 
 
 def _is_default_pattern(pattern: MatchPatternNode) -> bool:
+    """Return whether the value is default pattern."""
     return isinstance(pattern, (WildcardPatternNode, RestPatternNode)) or (
         isinstance(pattern, TypePatternNode) and pattern.typ is None
     )

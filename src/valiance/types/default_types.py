@@ -1,3 +1,5 @@
+"""Canonical names for the built-in types used throughout the compiler."""
+
 from valiance.symbols import Symbol
 from valiance.types.builders import N, Tagged
 

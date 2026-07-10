@@ -321,6 +321,28 @@ class MainTests(unittest.TestCase):
             self.assertIn("demo Reference", rendered)
             self.assertIn("src/main.vlnc", rendered)
 
+    def test_main_docs_language_generates_builtin_and_stdlib_reference(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output_file = Path(directory) / "language-reference.json"
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "docs",
+                        "--language",
+                        "--format",
+                        "json",
+                        "--output",
+                        str(output_file),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            rendered = output_file.read_text(encoding="utf-8")
+            self.assertIn('"qualified_name": "println"', rendered)
+            self.assertIn('"qualified_name": "std.regex.matches"', rendered)
+            self.assertIn("98 built-in and standard-library entries", output.getvalue())
+
     def test_main_runs_inline_code(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

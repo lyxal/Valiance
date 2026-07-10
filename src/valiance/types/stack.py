@@ -19,15 +19,19 @@ class TypeStack:
     items: tuple[Type, ...] = ()
 
     def __iter__(self):
+        """Iterate over values stored by this type stack."""
         return iter(self.items)
 
     def __len__(self) -> int:
+        """Return the number of values stored by this type stack."""
         return len(self.items)
 
     def __getitem__(self, index: int):
+        """Return an item selected from this type stack."""
         return self.items[index]
 
     def __bool__(self) -> bool:
+        """Return whether this type stack contains a meaningful value."""
         return bool(self.items)
 
     def push(self, *types: Type) -> TypeStack:

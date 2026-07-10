@@ -145,6 +145,8 @@ collection-valued stopped parameter is not automatically vectorised again.
 - `BuiltinOverload.signature` is the analyser-visible stack effect.
 - `BuiltinOverload.element_tags` is the analyser-visible element tag set.
 - `BuiltinOverload.implementation` is the runtime implementation.
+- `BuiltinElement.documentation` is renderer-neutral human-facing metadata.
+- `BuiltinElement.canonical_name` links aliases to their canonical entry.
 - `default_environment()` publishes static overloads to the analyser.
 - `runtime_elements()` publishes runtime-capable built-ins to the VM.
 
@@ -154,12 +156,18 @@ collection-valued stopped parameter is not automatically vectorised again.
   globally available built-ins.
 - `@stdlib_element(...)` records importable native functions for modules under
   `src/valiance/std`.
+- `NativeFunction.documentation` supplies reference metadata without affecting
+  analysis or runtime identity.
 - `native_module_exports()` synthesizes typed function exports for Python-only
   stdlib modules.
 - `install_native_stdlib()` installs one std module's private native hooks while
   analysing a mixed `.py` + `.vlnc` stdlib module.
 - `runtime_stdlib_elements()` publishes native stdlib hooks to the VM runtime
   globals so imported wrapper functions can execute.
+
+`src/valiance/reference_docs.py` reads those metadata fields plus `#??` blocks
+from packaged Valiance stdlib sources. It produces HTML, Markdown, and versioned
+JSON without adding documentation payloads to bytecode.
 
 `src/valiance/main.py`
 

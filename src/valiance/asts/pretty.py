@@ -50,6 +50,7 @@ def pretty_ast(value: ASTNode | TypedNode | Sequence[ASTNode | TypedNode]) -> st
 
 
 def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> str:
+    """Compute pretty for AST diagnostic output."""
     if isinstance(value, TypedFunctionNode):
         return _typed_function_node(value, level)
     if isinstance(value, TypedElementNode):
@@ -155,6 +156,7 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
 
 
 def _typed_node(value: TypedNode, level: int) -> str:
+    """Compute typed node for AST diagnostic output."""
     lines = [f"TypedNode(type={_type_label(value.typ)}, node="]
     lines.extend(_indent(_pretty(value.node, level + 1).splitlines()))
     lines.append(")")
@@ -162,6 +164,7 @@ def _typed_node(value: TypedNode, level: int) -> str:
 
 
 def _typed_element_node(value: TypedElementNode, level: int) -> str:
+    """Compute typed element node for AST diagnostic output."""
     overload = "unresolved"
     if value.overload is not None:
         overload = str(value.overload.overload)
@@ -192,6 +195,7 @@ def _typed_element_node(value: TypedElementNode, level: int) -> str:
 
 
 def _element_extension(value: ElementExtension, level: int) -> str:
+    """Compute element extension for AST diagnostic output."""
     lines = ["ElementExtension("]
     if value.default is not None:
         lines.append("  default=")
@@ -213,6 +217,7 @@ def _element_extension(value: ElementExtension, level: int) -> str:
 
 
 def _typed_element_extension(value: TypedElementExtension, level: int) -> str:
+    """Compute typed element extension for AST diagnostic output."""
     lines = ["TypedElementExtension("]
     if value.default is not None:
         lines.append("  default=")
@@ -232,6 +237,7 @@ def _typed_element_extension(value: TypedElementExtension, level: int) -> str:
 
 
 def _typed_extension_rule(value: TypedExtensionPatternRule, level: int) -> str:
+    """Compute typed extension rule for AST diagnostic output."""
     pattern = ", ".join(
         "_" if name is None else str(name) for name in value.pattern
     )
@@ -242,6 +248,7 @@ def _typed_extension_rule(value: TypedExtensionPatternRule, level: int) -> str:
 
 
 def _typed_call_node(value: TypedCallNode, level: int) -> str:
+    """Compute typed call node for AST diagnostic output."""
     overload = "unresolved"
     if value.overload is not None:
         overload = str(value.overload.overload)
@@ -258,6 +265,7 @@ def _typed_call_node(value: TypedCallNode, level: int) -> str:
 
 
 def _typed_function_node(value: TypedFunctionNode, level: int) -> str:
+    """Compute typed function node for AST diagnostic output."""
     lines = [f"TypedFunctionNode(type={_type_label(value.typ)}, node="]
     lines.extend(_indent(_pretty(value.node, level + 1).splitlines()))
     if value.overloads:
@@ -270,6 +278,7 @@ def _typed_function_node(value: TypedFunctionNode, level: int) -> str:
 
 
 def _function_overload_typing(value: FunctionOverloadTyping, level: int) -> str:
+    """Compute function overload typing for AST diagnostic output."""
     lines = [f"FunctionOverloadTyping(type={value.typ}, body=["]
     for node in value.body:
         lines.extend(_indent(_pretty(node, level + 1).splitlines()))
@@ -278,6 +287,7 @@ def _function_overload_typing(value: FunctionOverloadTyping, level: int) -> str:
 
 
 def _function_node(value: FunctionNode, level: int) -> str:
+    """Compute function node for AST diagnostic output."""
     lines = [
         "FunctionNode(",
         f"  params={_params_label(value.params)},",
@@ -293,6 +303,7 @@ def _function_node(value: FunctionNode, level: int) -> str:
 
 
 def _try_node(value: TryNode, level: int) -> str:
+    """Compute try node for AST diagnostic output."""
     lines = ["TryNode(", "  body=["]
     for node in value.body:
         lines.extend(_indent(_pretty(node, level + 1).splitlines(), 2))
@@ -305,6 +316,7 @@ def _try_node(value: TryNode, level: int) -> str:
 
 
 def _try_handler_node(value: TryHandlerNode, level: int) -> str:
+    """Compute try handler node for AST diagnostic output."""
     lines = [f"TryHandlerNode(type={_type_label(value.typ)}, body=["]
     for node in value.body:
         lines.extend(_indent(_pretty(node, level + 1).splitlines()))
@@ -313,12 +325,14 @@ def _try_handler_node(value: TryHandlerNode, level: int) -> str:
 
 
 def _params_label(params: tuple[FunctionParam, ...] | None) -> str:
+    """Compute params label for AST diagnostic output."""
     if params is None:
         return "infer"
     return "[" + ", ".join(_param_label(param) for param in params) + "]"
 
 
 def _param_label(param: FunctionParam) -> str:
+    """Compute param label for AST diagnostic output."""
     name = "_" if param.name is None else str(param.name)
     typ = "infer" if param.typ is None else str(param.typ)
     if not param.default:
@@ -327,6 +341,7 @@ def _param_label(param: FunctionParam) -> str:
 
 
 def _call_argument_label(arg: CallArgument) -> str:
+    """Invoke argument label for AST diagnostic output."""
     if arg.placeholder:
         return "_"
     value = _nodes_label(arg.value)
@@ -336,28 +351,33 @@ def _call_argument_label(arg: CallArgument) -> str:
 
 
 def _nodes_label(nodes: tuple[ASTNode, ...]) -> str:
+    """Compute nodes label for AST diagnostic output."""
     if len(nodes) == 1:
         return _pretty(nodes[0], 0)
     return "[" + ", ".join(_pretty(node, 0) for node in nodes) + "]"
 
 
 def _types_label(types: tuple[Type, ...] | None) -> str:
+    """Compute types label for AST diagnostic output."""
     if types is None:
         return "infer"
     return "[" + ", ".join(str(typ) for typ in types) + "]"
 
 
 def _type_label(typ: Type | None) -> str:
+    """Compute type label for AST diagnostic output."""
     return "untyped" if typ is None else str(typ)
 
 
 def _location_arg(node: ASTNode) -> str:
+    """Compute location arg for AST diagnostic output."""
     if node.location is None:
         return ""
     return f", location={_location_label(node)}"
 
 
 def _location_label(node: ASTNode) -> str:
+    """Compute location label for AST diagnostic output."""
     location = node.location
     if location is None:
         return "unknown"
@@ -365,15 +385,18 @@ def _location_label(node: ASTNode) -> str:
 
 
 def _tag_label(node: TagApplicationNode) -> str:
+    """Compute tag label for AST diagnostic output."""
     prefix = "#!" if node.tag.absent else "#"
     depth = "+" * node.tag.depth
     return f"{prefix}{node.tag.name}{depth}"
 
 
 def _shuffle_label(label: Symbol | None) -> str:
+    """Compute shuffle label for AST diagnostic output."""
     return "_" if label is None else str(label)
 
 
 def _indent(lines: list[str], spaces: int = 2) -> list[str]:
+    """Compute indent for AST diagnostic output."""
     prefix = " " * spaces
     return [prefix + line for line in lines]

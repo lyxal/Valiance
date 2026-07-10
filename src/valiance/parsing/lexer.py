@@ -77,6 +77,7 @@ def lex(source: str) -> list[Token]:
 
 class _Lexer:
     def __init__(self, source: str) -> None:
+        """Initialize this lexer."""
         self.source = source
         self.length = len(source)
         self.index = 0
@@ -85,6 +86,7 @@ class _Lexer:
         self.tokens: list[Token] = []
 
     def lex(self) -> list[Token]:
+        """Tokenize the complete source stream and append the EOF token."""
         while not self._at_end:
             char = self._peek()
             if char in " \t\r":
@@ -123,15 +125,18 @@ class _Lexer:
 
     @property
     def _at_end(self) -> bool:
+        """Return the at end exposed by this lexer."""
         return self.index >= self.length
 
     def _peek(self, ahead: int = 0) -> str:
+        """Return a lookahead character without consuming it."""
         pos = self.index + ahead
         if pos >= self.length:
             return ""
         return self.source[pos]
 
     def _advance(self, count: int = 1) -> str:
+        """Consume and return the next source character."""
         start = self.index
         for _ in range(count):
             char = self.source[self.index]
@@ -151,6 +156,7 @@ class _Lexer:
         col: int | None = None,
         offset: int | None = None,
     ) -> None:
+        """Scan emit while tokenizing Valiance source."""
         self.tokens.append(
             Token(
                 kind,
@@ -162,6 +168,7 @@ class _Lexer:
         )
 
     def _comment_or_tag(self) -> None:
+        """Scan comment or tag while tokenizing Valiance source."""
         if self._peek(1) == "?":
             while not self._at_end and self._peek() != "\n":
                 self._advance()
@@ -184,6 +191,7 @@ class _Lexer:
         self._tag()
 
     def _tag(self) -> None:
+        """Scan tag while tokenizing Valiance source."""
         line, col, offset = self.line, self.column, self.index
         self._advance()
         if self._peek() == "!":
@@ -202,6 +210,7 @@ class _Lexer:
         )
 
     def _string(self) -> None:
+        """Scan string while tokenizing Valiance source."""
         line, col, offset = self.line, self.column, self.index
         self._advance()
         pieces: list[str] = []
@@ -243,6 +252,7 @@ class _Lexer:
         self._fail("unterminated string", line, col)
 
     def _string_interpolation_nested_string(self, pieces: list[str]) -> None:
+        """Scan string interpolation nested string while tokenizing Valiance source."""
         while not self._at_end:
             char = self._advance()
             pieces.append(char)
@@ -255,12 +265,14 @@ class _Lexer:
         self._fail("unterminated nested string")
 
     def _starts_number(self) -> bool:
+        """Return the Boolean result of starts number while tokenizing Valiance source."""
         char = self._peek()
         if char.isdigit():
             return True
         return char == "-" and self._peek(1).isdigit()
 
     def _number(self) -> None:
+        """Scan number while tokenizing Valiance source."""
         line, col, offset = self.line, self.column, self.index
         if self._peek() == "-":
             self._advance()
@@ -280,6 +292,7 @@ class _Lexer:
         )
 
     def _number_part(self) -> None:
+        """Scan number part while tokenizing Valiance source."""
         while self._peek().isdigit():
             self._advance()
         if self._peek() == "." and self._peek(1).isdigit():
@@ -288,6 +301,7 @@ class _Lexer:
                 self._advance()
 
     def _exponent(self) -> None:
+        """Scan exponent while tokenizing Valiance source."""
         self._advance()
         if self._peek() in "+-":
             self._advance()
@@ -297,6 +311,7 @@ class _Lexer:
             self._advance()
 
     def _ident(self) -> None:
+        """Scan ident while tokenizing Valiance source."""
         line, col, offset = self.line, self.column, self.index
         self._advance()
         while self._is_ident_part(self._peek()):
@@ -308,6 +323,7 @@ class _Lexer:
         )
 
     def _operator(self) -> None:
+        """Scan operator while tokenizing Valiance source."""
         line, col, offset = self.line, self.column, self.index
         if self._peek() == "\\":
             self._advance()
@@ -346,13 +362,16 @@ class _Lexer:
 
     @staticmethod
     def _is_ident_start(char: str) -> bool:
+        """Return whether the value is ident start."""
         return char == "_" or char.isalpha()
 
     @staticmethod
     def _is_ident_part(char: str) -> bool:
+        """Return whether the value is ident part."""
         return char == "_" or char.isalpha() or char.isdigit()
 
     def _fail(
         self, message: str, line: int | None = None, col: int | None = None
     ) -> None:
+        """Scan fail while tokenizing Valiance source."""
         raise LexError(message, line=line or self.line, column=col or self.column)

@@ -153,6 +153,7 @@ class ConstructorDefinition:
 
     @property
     def required_fields(self) -> tuple[ObjectAttribute, ...]:
+        """Return fields that must be initialized before construction completes."""
         return tuple(field for field in self.fields if field.name not in self.defaults)
 
 
@@ -744,10 +745,12 @@ def _failed_application_shape(
 
 
 def _is_call_site_checked(overload: Overload) -> bool:
+    """Return whether the value is call site checked."""
     return any(_is_call_site_checked_type(param) for param in overload.params)
 
 
 def _is_call_site_checked_type(typ: Type) -> bool:
+    """Return whether the value is call site checked type."""
     if isinstance(typ, FunctionType) and typ.params is None and typ.returns is None:
         return True
     if isinstance(typ, VariadicTupleType):
@@ -766,6 +769,7 @@ def _generic_variance(
     generics: tuple[Symbol, ...],
     variances: tuple[Variance, ...],
 ) -> tuple[Variance, ...]:
+    """Compute generic variance in the global type environment."""
     if len(variances) == len(generics):
         return variances
     return (Variance.INVARIANT,) * len(generics)

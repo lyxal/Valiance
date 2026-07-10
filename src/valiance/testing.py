@@ -35,6 +35,7 @@ class TestGroup:
 
     @property
     def aliases(self) -> frozenset[str]:
+        """Return selector aliases accepted for this test group."""
         return frozenset((self.canonical_id, self.local_id))
 
 
@@ -52,10 +53,12 @@ class TestCase:
 
     @property
     def aliases(self) -> frozenset[str]:
+        """Return selector aliases accepted for this test case."""
         return frozenset((self.canonical_id, self.local_id))
 
     @property
     def searchable_text(self) -> str:
+        """Return normalized text used by test-name filtering."""
         return " ".join(
             (
                 self.canonical_id,
@@ -86,6 +89,7 @@ class _Trie:
     label: str | None
 
     def __init__(self) -> None:
+        """Initialize this trie."""
         self.children = {}
         self.label = None
 
@@ -144,6 +148,7 @@ def _split_arguments(
     project_root: Path,
     arguments: Iterable[str],
 ) -> tuple[tuple[Path, ...], tuple[str, ...]]:
+    """Split arguments for the Valiance-language test runner."""
     paths: list[Path] = []
     selectors: list[str] = []
     for argument in arguments:
@@ -167,6 +172,7 @@ def _selected_source_files(
     tests_root: Path,
     paths: tuple[Path, ...],
 ) -> tuple[Path, ...]:
+    """Compute selected source files for the Valiance-language test runner."""
     root = project_root.resolve()
     if not paths:
         if not tests_root.is_dir():
@@ -198,6 +204,7 @@ def _selected_source_files(
 
 
 def _discover_file(source_file: Path, tests_root: Path) -> _DiscoveredFile:
+    """Discover file for the Valiance-language test runner."""
     try:
         source = source_file.read_text(encoding="utf-8")
         program = Parser(lex(source)).parse_program()
@@ -267,6 +274,7 @@ def _collect_group(
     tests: list[TestCase],
     groups: list[TestGroup],
 ) -> None:
+    """Collect group for the Valiance-language test runner."""
     group_name = _validate_test_definition(definition, "testgroup", source_file)
     group_parts = (*parent_parts, group_name)
     group_label = _annotation_label(definition, "testgroup") or group_name
@@ -334,6 +342,7 @@ def _make_test_case(
     group_parts: tuple[str, ...],
     group_labels: tuple[str, ...],
 ) -> TestCase:
+    """Create test case for the Valiance-language test runner."""
     name = definition.name.text.removeprefix("\\")
     local_parts = (*group_parts, name)
     canonical_parts = _canonical_parts(module_parts, local_parts)
@@ -355,12 +364,14 @@ def _canonical_parts(
     module_parts: tuple[str, ...],
     local_parts: tuple[str, ...],
 ) -> tuple[str, ...]:
+    """Compute canonical parts for the Valiance-language test runner."""
     if module_parts and local_parts and module_parts[-1] == local_parts[0]:
         return (*module_parts, *local_parts[1:])
     return (*module_parts, *local_parts)
 
 
 def _module_parts(source_file: Path, tests_root: Path) -> tuple[str, ...]:
+    """Compute module parts for the Valiance-language test runner."""
     try:
         relative = source_file.relative_to(tests_root)
     except ValueError:
@@ -369,6 +380,7 @@ def _module_parts(source_file: Path, tests_root: Path) -> tuple[str, ...]:
 
 
 def _test_kind(definition: DefineNode) -> str | None:
+    """Compute test kind for the Valiance-language test runner."""
     names = {
         annotation.name.text
         for annotation in annotation_nodes(definition.annotations)
@@ -384,6 +396,7 @@ def _validate_test_definition(
     kind: str,
     source_file: Path,
 ) -> str:
+    """Validate test definition for the Valiance-language test runner."""
     location = _location_text(definition)
     if kind == "invalid":
         raise TestCommandError(
@@ -421,6 +434,7 @@ def _validate_test_definition(
 
 
 def _annotation_label(definition: DefineNode, name: str) -> str | None:
+    """Compute annotation label for the Valiance-language test runner."""
     for annotation in annotation_nodes(definition.annotations):
         if annotation.name.text != name or not annotation.args:
             continue
@@ -431,6 +445,7 @@ def _annotation_label(definition: DefineNode, name: str) -> str | None:
 
 
 def _location_text(node: ASTNode) -> str:
+    """Compute location text for the Valiance-language test runner."""
     if node.location is None:
         return ""
     return f":{node.location.line}:{node.location.column}"
@@ -441,6 +456,7 @@ def _select_cases(
     groups: tuple[TestGroup, ...],
     selectors: tuple[str, ...],
 ) -> tuple[TestCase, ...]:
+    """Select cases for the Valiance-language test runner."""
     ordered = tuple(
         sorted(
             cases,
@@ -486,6 +502,7 @@ def _select_cases(
 
 
 def _run_case(case: TestCase) -> TestResult:
+    """Run case for the Valiance-language test runner."""
     definition = _strip_test_annotations(case.definition)
     call = ElementNode(definition.name, location=definition.location)
     program = [*case.base_nodes, definition, call]
@@ -535,6 +552,7 @@ def _run_case(case: TestCase) -> TestResult:
 
 
 def _strip_test_annotations(definition: DefineNode) -> DefineNode:
+    """Strip test annotations for the Valiance-language test runner."""
     kept = tuple(
         annotation
         for annotation in definition.annotations
@@ -559,6 +577,7 @@ def _strip_test_annotations(definition: DefineNode) -> DefineNode:
 
 
 def _is_assert_error(value: Any) -> bool:
+    """Return whether the value is assert error."""
     return (
         isinstance(value, ObjectValue)
         and value.type_name.rsplit(".", 1)[-1] == "AssertError"
@@ -566,6 +585,7 @@ def _is_assert_error(value: Any) -> bool:
 
 
 def _is_err(value: Any) -> bool:
+    """Return whether the value is err."""
     if not isinstance(value, ObjectValue):
         return False
     name = value.type_name.rsplit(".", 1)[-1]
@@ -573,6 +593,7 @@ def _is_err(value: Any) -> bool:
 
 
 def _error_detail(value: Any) -> str:
+    """Compute error detail for the Valiance-language test runner."""
     if not isinstance(value, ObjectValue):
         return format_runtime_value(value, quote_strings=True)
     detail = value.fields.get("detail")
@@ -585,6 +606,7 @@ def _error_detail(value: Any) -> str:
 
 
 def _print_result(result: TestResult, *, show_output: bool) -> None:
+    """Print result for the Valiance-language test runner."""
     marker = {"pass": "PASS", "fail": "FAIL", "error": "ERROR"}[result.outcome]
     local_name = result.case.local_id.rsplit(".", 1)[-1]
     description = (
@@ -601,6 +623,7 @@ def _print_result(result: TestResult, *, show_output: bool) -> None:
 
 
 def _print_test_tree(cases: tuple[TestCase, ...]) -> None:
+    """Print test tree for the Valiance-language test runner."""
     trie = _Trie()
     for case in cases:
         canonical_parts = tuple(case.canonical_id.split("."))
@@ -618,6 +641,7 @@ def _print_test_tree(cases: tuple[TestCase, ...]) -> None:
 
 
 def _print_trie(node: _Trie, depth: int) -> None:
+    """Print trie for the Valiance-language test runner."""
     for name, child in sorted(node.children.items()):
         suffix = f" — {child.label}" if child.label and child.label != name else ""
         print(f"{'  ' * depth}{name}{suffix}")

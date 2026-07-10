@@ -140,6 +140,7 @@ def definitely_initialized_fields(
 
 
 def _prepare_constructor_child(node: ASTNode) -> ASTNode:
+    """Prepare constructor child while analysing object construction."""
     if isinstance(node, IfNode):
         return replace(
             node,
@@ -190,6 +191,7 @@ def _prepare_constructor_child(node: ASTNode) -> ASTNode:
 
 
 def _field_set_targets_self(body: tuple[ASTNode, ...], index: int) -> bool:
+    """Return the Boolean result of field set targets self while analysing object construction."""
     target = body[index]
     if not isinstance(target, FieldSetNode) or target.location is None:
         return False

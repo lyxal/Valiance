@@ -60,9 +60,11 @@ class ModuleExports:
     overlays: tuple[T.TagOverlayDefinition, ...] = ()
 
     def public_definitions(self) -> tuple[ModuleDefinition, ...]:
+        """Return the definitions exported publicly by this module."""
         return tuple(definition for definition in self.definitions if definition.public)
 
     def public_objects(self) -> tuple[ModuleObject, ...]:
+        """Return the object declarations exported publicly by this module."""
         return tuple(obj for obj in self.objects if obj.public)
 
 
@@ -84,6 +86,7 @@ class ModuleLoader:
         *,
         current_file: Path | None = None,
     ) -> ModuleExports:
+        """Load, analyse, and cache a module and its exported facts."""
         source_file = self.resolve(path, current_file=current_file)
         native_exports = _native_std_exports(path)
         if source_file in self._cache:
@@ -140,6 +143,7 @@ class ModuleLoader:
         *,
         current_file: Path | None = None,
     ) -> Path:
+        """Resolve an import path relative to the requesting source file."""
         if path.root == Symbol("dep"):
             return self._resolve_dependency(path, current_file=current_file)
         if path.parts and path.parts[0] == "std":
@@ -163,6 +167,7 @@ class ModuleLoader:
         *,
         current_file: Path | None = None,
     ) -> Path:
+        """Resolve dependency during module loading and import resolution."""
         if not path.parts:
             raise ModuleLoadError("dep imports require a dependency name")
         project_root = _project_root(current_file)
@@ -295,6 +300,7 @@ def _module_definitions(
     program: list,
     typed: list[TypedNode],
 ) -> tuple[ModuleDefinition, ...]:
+    """Collect the definitions for module during module loading and import resolution."""
     public_names = {
         node.name
         for node in program
@@ -325,6 +331,7 @@ def _module_definitions(
 def _module_objects(
     typed: list[TypedNode],
 ) -> tuple[ModuleObject, ...]:
+    """Compute module objects during module loading and import resolution."""
     friendly_by_owner: dict[Symbol, list[DefineNode]] = {}
     for typed_node in typed:
         node = typed_node.node
@@ -355,6 +362,7 @@ def _module_objects(
 
 
 def _module_tags(program: list, env) -> tuple[T.DataTagDefinition, ...]:
+    """Compute module tags during module loading and import resolution."""
     public = {
         Symbol(node.tag.name)
         for node in program
@@ -370,6 +378,7 @@ def _module_tags(program: list, env) -> tuple[T.DataTagDefinition, ...]:
 
 
 def _module_overlays(program: list, env) -> tuple[T.TagOverlayDefinition, ...]:
+    """Compute module overlays during module loading and import resolution."""
     public_tags = {
         Symbol(node.tag.name)
         for node in program
@@ -387,6 +396,7 @@ def _renamed_definition(
     definition: ModuleDefinition,
     name: Symbol,
 ) -> ModuleDefinition:
+    """Build the definition for renamed during module loading and import resolution."""
     node = definition.typed.node
     if not isinstance(node, DefineNode):
         return definition
@@ -407,6 +417,7 @@ def _renamed_object(
     friendly_prefix: Symbol | None = None,
     import_friendly: bool = False,
 ) -> ModuleObject:
+    """Compute renamed object during module loading and import resolution."""
     node = obj.typed.node
     if not isinstance(node, ObjectNode):
         return obj
@@ -455,6 +466,7 @@ def _renamed_object(
 
 
 def _renamed_define_node(node: DefineNode, name: Symbol) -> DefineNode:
+    """Compute renamed define node during module loading and import resolution."""
     return DefineNode(
         name,
         FunctionNode(
@@ -486,6 +498,7 @@ def _renamed_friendly_definitions(
     definitions: tuple[DefineNode, ...],
     prefix: Symbol | None,
 ) -> tuple[DefineNode, ...]:
+    """Collect the definitions for renamed friendly during module loading and import resolution."""
     if prefix is None:
         return definitions
     return tuple(
@@ -498,6 +511,7 @@ def _renamed_friendly_definitions(
 
 
 def _namespaced_symbol(name: Symbol, prefix: Symbol) -> Symbol:
+    """Compute namespaced symbol during module loading and import resolution."""
     return Symbol(name.text, (*prefix.namespace, prefix.text, *name.namespace))
 
 
@@ -506,6 +520,7 @@ def _select_overloads(
     component,
     module_name: str,
 ) -> ModuleDefinition:
+    """Select overloads during module loading and import resolution."""
     if component.signature is None and not component.exclusions:
         return definition
     overloads = _definition_overloads(definition)
@@ -553,17 +568,20 @@ def _select_overloads(
 
 
 def _source_path(root: Path, parts: tuple[str, ...]) -> Path:
+    """Source path during module loading and import resolution."""
     if not parts:
         raise ModuleLoadError("empty module path")
     return root.joinpath(*parts).with_suffix(".vlnc").resolve()
 
 
 def _project_root(current_file: Path | None) -> Path | None:
+    """Compute project root during module loading and import resolution."""
     start = Path.cwd() if current_file is None else current_file.resolve().parent
     return find_project_root(start)
 
 
 def _module_name(path: ImportPath) -> str:
+    """Return the canonical name for module during module loading and import resolution."""
     if path.root == Symbol("@"):
         return "@" + ".".join(path.parts)
     if path.root is not None:
@@ -572,6 +590,7 @@ def _module_name(path: ImportPath) -> str:
 
 
 def _native_std_exports(path: ImportPath) -> ModuleExports | None:
+    """Compute native std exports during module loading and import resolution."""
     if path.root is not None:
         return None
     if len(path.parts) != 2 or path.parts[0] != "std":
@@ -585,6 +604,7 @@ def _native_std_exports(path: ImportPath) -> ModuleExports | None:
 
 
 def _definition_overloads(definition: ModuleDefinition) -> tuple[T.Overload, ...]:
+    """Collect the overloads for definition during module loading and import resolution."""
     typ = definition.typed.typ
     if (
         isinstance(typ, T.FunctionType)
@@ -598,10 +618,12 @@ def _definition_overloads(definition: ModuleDefinition) -> tuple[T.Overload, ...
 
 
 def _same_signature(left: tuple[T.Type, ...], right: tuple[T.Type, ...]) -> bool:
+    """Return the Boolean result of same signature during module loading and import resolution."""
     return len(left) == len(right) and all(
         T.same(a, b) for a, b in zip(left, right, strict=True)
     )
 
 
 def _show_signature(signature: tuple[T.Type, ...]) -> str:
+    """Format signature during module loading and import resolution."""
     return "(" + ", ".join(T.show(item) for item in signature) + ")"

@@ -14,6 +14,12 @@ Ultimately, Valiance acts to elevate array languages beyond rough sketches and a
 
 For more information, check out the [working docs](docs/language.md).
 
+## Maintenance
+
+Start with [`docs/maintenance/README.md`](docs/maintenance/README.md) before
+changing the compiler or runtime. It links to an architecture tour, task-oriented
+change playbooks, debugging guidance, and the production docstring policy.
+
 ## Testing
 
 Run the full test suite with:
@@ -166,8 +172,19 @@ vln docs src/main.vlnc
 vln docs
 ```
 
+Generate the built-in and standard-library reference directly from compiler
+metadata and packaged stdlib sources:
+
+```powershell
+vln docs --language
+vln docs --language --format markdown
+vln docs --language --format json --output docs/language-reference.json
+```
+
+The JSON form is versioned for editor, website, and language-tool integrations.
+
 See [`docs/docstrings.md`](docs/docstrings.md) for the comment format, supported
-fields, and output defaults.
+fields, output defaults, and language-reference generation.
 
 Execute previously compiled bytecode without recompiling:
 
