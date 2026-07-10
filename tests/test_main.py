@@ -1021,5 +1021,54 @@ class MainTests(unittest.TestCase):
         self.assertIn("1 passed, 1 failed, 0 errors", rendered)
 
 
+    def test_main_preserves_source_location_for_multiline_suggestions(self):
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            exit_code = main(["compile", "--code", "1 pritn"])
+
+        self.assertEqual(exit_code, 1)
+        rendered = error.getvalue()
+        self.assertIn("Type error: unknown element 'pritn'", rendered)
+        self.assertNotIn("Type error: 1:3:", rendered)
+        self.assertIn("--> <code>:1:3", rendered)
+        self.assertIn("did you mean:", rendered)
+        self.assertIn("  - print(", rendered)
+
+    def test_main_renders_multiline_overloads_without_function_prefixes(self):
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            exit_code = main(
+                [
+                    "compile",
+                    "--code",
+                    "define convert(value: Integer) -> String => \"\"\n"
+                    "define convert(text: String) -> Integer => 0\n"
+                    "None convert",
+                ]
+            )
+
+        self.assertEqual(exit_code, 1)
+        rendered = error.getvalue()
+        self.assertIn(
+            "available overloads:\n  - convert(value: Integer) -> String",
+            rendered,
+        )
+        self.assertIn("  - convert(text: String) -> Integer", rendered)
+        self.assertNotIn("Function[", rendered)
+
+    def test_main_renders_lints_with_actionable_replacement(self):
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            exit_code = main(["compile", "--code", "1 as! Number"])
+
+        self.assertEqual(exit_code, 0)
+        rendered = error.getvalue()
+        self.assertIn(
+            "Lint warning: checked cast to Number is statically safe",
+            rendered,
+        )
+        self.assertIn("write `as Number` instead of `as! Number`", rendered)
+
+
 if __name__ == "__main__":
     unittest.main()

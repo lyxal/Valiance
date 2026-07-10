@@ -165,6 +165,20 @@ class BranchVariables:
     function_constants: tuple[Symbol, ...] = ()
     block_constants: tuple[Symbol, ...] = ()
 
+    def visible_names(self) -> tuple[Symbol, ...]:
+        """Return variable names readable from this branch frame."""
+        names = {
+            name
+            for entries in (
+                self.function_locals,
+                self.parameters,
+                self.captures,
+                self.block_locals,
+            )
+            for name, _ in entries
+        }
+        return tuple(sorted(names, key=str))
+
     @classmethod
     def from_parameters(
         cls,
@@ -818,6 +832,7 @@ class Analyser:
         self._owns_prelude = _prelude is None
         self.diagnostics: list[str] = []
         self.warnings: list[str] = []
+        self.lints: list[str] = []
         self._friendly_owners: tuple[Symbol, ...] = ()
         self._reported_data_element_disjoints: set[
             tuple[int, Symbol, Symbol]
@@ -2252,7 +2267,7 @@ class Analyser:
         """Analyse a `ElementNode` node and return the surviving branches."""
         overloads = self.env.overloads_for(node.name)
         if not overloads:
-            self._diagnose(f"unknown element '{node.name}'", node)
+            self._diagnose(self._unknown_element_message(node, branch), node)
             return BranchSet()
         if not annotation_hooks.valid_element_annotations(node.annotations):
             self._diagnose(
@@ -2291,8 +2306,14 @@ class Analyser:
 
         stack_before = branch.stack
         if node.call_args:
+            call_shape_message = self._explicit_call_shape_message(node, overloads)
             no_match_message = (
-                f"no overloads for element '{node.name}' match explicit call syntax"
+                f"{call_shape_message}\n{_show_overload_list(node.name, overloads)}"
+                if call_shape_message is not None
+                else (
+                    f"no overloads for element '{node.name}' match explicit call "
+                    f"syntax\n{_show_overload_list(node.name, overloads)}"
+                )
             )
             ambiguous_message = (
                 f"ambiguous overloads for element '{node.name}' "
@@ -2301,8 +2322,8 @@ class Analyser:
         else:
             no_match_message = (
                 f"no overloads for element '{node.name}' match stack "
-                f"{_show_stack(stack_before)}; available overloads: "
-                f"{_show_overloads(overloads)}"
+                f"{_show_stack(stack_before)}\n"
+                f"{_show_overload_list(node.name, overloads)}"
             )
             ambiguous_message = (
                 f"ambiguous overloads for element '{node.name}' with stack "
@@ -2324,6 +2345,126 @@ class Analyser:
             if committed is not None:
                 results.append(committed)
         return BranchSet.collect(results)
+
+    def _unknown_element_message(
+        self,
+        node: ElementNode,
+        branch: AnalysisBranch,
+    ) -> str:
+        """Build an unknown-element message with type-viable typo suggestions."""
+        message = f"unknown element '{node.name}'"
+        suggestions = self._element_name_suggestions(node, branch)
+        if not suggestions:
+            return message
+        return f"{message}\ndid you mean:\n" + "\n".join(
+            f"  - {suggestion}" for suggestion in suggestions
+        )
+
+    def _element_name_suggestions(
+        self,
+        node: ElementNode,
+        branch: AnalysisBranch,
+    ) -> tuple[str, ...]:
+        """Return close visible element signatures that can consume this call."""
+        attempted = str(node.name)
+        ranked: list[tuple[float, Symbol]] = []
+        for name in self.env.visible_overload_names():
+            if _internal_element_name(name):
+                continue
+            score = _name_similarity(attempted, str(name))
+            if score >= 0.62:
+                ranked.append((score, name))
+        ranked.sort(key=lambda item: (-item[0], str(item[1])))
+
+        suggestions: list[str] = []
+        for _, name in ranked[:12]:
+            for overload in self._viable_suggestion_overloads(node, branch, name):
+                rendered = _show_overload_signature(name, overload)
+                if rendered not in suggestions:
+                    suggestions.append(rendered)
+                if len(suggestions) == 3:
+                    return tuple(suggestions)
+        return tuple(suggestions)
+
+    def _viable_suggestion_overloads(
+        self,
+        node: ElementNode,
+        branch: AnalysisBranch,
+        name: Symbol,
+    ) -> tuple[T.Overload, ...]:
+        """Probe one similar name without leaking speculative diagnostics."""
+        overloads = self.env.overloads_for(name)
+        if not overloads:
+            return ()
+        candidate_node = replace(node, name=name, annotations=(), extension=None)
+        probe = self._child_analyser(self.env.lexical_child_scope())
+        prelude_nodes = len(self._prelude.nodes)
+        prelude_bindings = len(self._prelude.bindings)
+        try:
+            modifiers = probe._modifier_argument_types(branch, candidate_node)
+            if modifiers is None:
+                return ()
+            if candidate_node.modifier_args and not _modifier_arity_matches(
+                overloads,
+                modifiers,
+            ):
+                return ()
+            if candidate_node.call_args and name == Symbol("call"):
+                return ()
+            sources, _ = probe.element_argument_sources(
+                candidate_node,
+                branch,
+                overloads,
+                modifiers,
+            )
+            candidates = probe.element_call_candidates(
+                candidate_node,
+                overloads,
+                sources,
+            )
+            viable: list[T.Overload] = []
+            for candidate in candidates:
+                overload = candidate.applied.overload
+                if overload.annotation_error is not None or overload in viable:
+                    continue
+                viable.append(overload)
+            return tuple(viable)
+        finally:
+            del self._prelude.nodes[prelude_nodes:]
+            del self._prelude.bindings[prelude_bindings:]
+
+    def _explicit_call_shape_message(
+        self,
+        node: ElementNode,
+        overloads: tuple[T.Overload, ...],
+    ) -> str | None:
+        """Diagnose named-argument mistakes before generic overload failure."""
+        named_args = tuple(arg.name for arg in node.call_args if arg.name is not None)
+        seen: set[Symbol] = set()
+        for name in named_args:
+            if name in seen:
+                return (
+                    f"named argument '{name}' is provided more than once for "
+                    f"element '{node.name}'"
+                )
+            seen.add(name)
+
+        parameter_names = tuple(
+            name
+            for overload in overloads
+            for name in overload.param_names
+            if name is not None
+        )
+        known = set(parameter_names)
+        for name in named_args:
+            if name in known:
+                continue
+            message = f"unknown named argument '{name}' for element '{node.name}'"
+            suggestions = _similar_names(str(name), parameter_names, limit=1)
+            if suggestions:
+                message += f"\ndid you mean '{suggestions[0]}'?"
+            return message
+        return None
 
     def element_argument_sources(
         self,
@@ -2371,7 +2512,8 @@ class Analyser:
             and not _winners_specialize_inputs(winners, branch)
         ):
             self._diagnose(
-                f"{ambiguous_message}; candidates: {_show_applied_overloads(winners)}",
+                f"{ambiguous_message}\n"
+                f"candidate overloads:\n{_show_applied_overloads(winners)}",
                 node,
             )
             return None
@@ -2897,8 +3039,10 @@ class Analyser:
         if analysis is None:
             self.diagnostics.extend(function_analyser.diagnostics)
             self.warnings.extend(function_analyser.warnings)
+            self.lints.extend(function_analyser.lints)
             return None
         self.warnings.extend(function_analyser.warnings)
+        self.lints.extend(function_analyser.lints)
         return analysis
 
     @register(MatchNode)
@@ -3466,11 +3610,14 @@ class Analyser:
                 and not function_analyser.diagnostics
             ):
                 self.warnings.extend(function_analyser.warnings)
+                self.lints.extend(function_analyser.lints)
                 return self._call_site_checked_function(outer, node), outer
             self.diagnostics.extend(function_analyser.diagnostics)
             self.warnings.extend(function_analyser.warnings)
+            self.lints.extend(function_analyser.lints)
             return None
         self.warnings.extend(function_analyser.warnings)
+        self.lints.extend(function_analyser.lints)
         return analysis, outer
 
     def _call_site_checked_function(
@@ -3672,6 +3819,12 @@ class Analyser:
         """Update warn state during static analysis."""
         self.warnings.append(_diagnostic_message(message, node))
 
+    def _lint(self, message: str, node: ASTNode | None = None) -> None:
+        """Record a non-fatal, actionable source-pattern recommendation."""
+        lint = _diagnostic_message(message, node)
+        if lint not in self.lints:
+            self.lints.append(lint)
+
 
 @register(NumberLiteralNode)
 def _number_literal(
@@ -3705,6 +3858,9 @@ def _get_variable(
 
     if typ is None:
         message = f"undefined variable '{node.name}'"
+        suggestions = _similar_names(str(node.name), branch.variables.visible_names())
+        if suggestions:
+            message += f"\ndid you mean '${suggestions[0]}'?"
         self._diagnose(message, node)
         return BranchSet(
             (
@@ -4387,12 +4543,20 @@ def _cast_node(
     source = branch.stack[-1]
     if node.checked:
         if T.assignable(source, target, self.env.context):
-            self._diagnose(
-                f"checked cast to {T.show(target)} is already statically safe",
-                node,
-            )
-            return BranchSet()
-        if not _types_overlap(source, target, self.env.context):
+            if T.same(source, target):
+                self._lint(
+                    f"unnecessary checked cast to {T.show(target)}; "
+                    f"remove `as! {T.show(target)}`",
+                    node,
+                )
+            else:
+                self._lint(
+                    f"checked cast to {T.show(target)} is statically safe; "
+                    f"write `as {T.show(target)}` instead of "
+                    f"`as! {T.show(target)}`",
+                    node,
+                )
+        elif not _types_overlap(source, target, self.env.context):
             if _type_contains_rank_var(target):
                 stack = T.TypeStack((*branch.stack.items[:-1], target))
                 return BranchSet(
@@ -4409,6 +4573,12 @@ def _cast_node(
             node,
         )
         return BranchSet()
+    elif T.same(source, target):
+        self._lint(
+            f"unnecessary cast to {T.show(target)}; "
+            f"remove `as {T.show(target)}`",
+            node,
+        )
 
     stack = T.TypeStack((*branch.stack.items[:-1], target))
     return BranchSet((branch.with_stack(stack).emit(TypedNode(node, target)),))
@@ -4434,6 +4604,13 @@ def _stack_shuffle_node(
         return BranchSet()
 
     args, popped = sourced
+    if _is_noop_move(node):
+        labels = ", ".join(str(label) for label in node.poststack)
+        self._lint(
+            "this move leaves the stack unchanged; "
+            f"remove `move({labels} -> {labels})`",
+            node,
+        )
     labelled = {
         label: typ
         for label, typ in zip(node.prestack, args, strict=True)
@@ -4717,8 +4894,8 @@ def _call_node(
         node=node,
         no_match_message=(
             f"no overloads for call target {T.show(callable_type)} match stack "
-            f"{_show_stack(callable_popped.stack)}; available overloads: "
-            f"{_show_overloads(overloads)}"
+            f"{_show_stack(callable_popped.stack)}\n"
+            f"{_show_overload_list(None, overloads)}"
         ),
         ambiguous_message=(
             f"ambiguous call target {T.show(callable_type)} with stack "
@@ -9067,6 +9244,16 @@ def _pattern_guards(
         yield from _pattern_guards(pattern.pattern, subject_type)
 
 
+def _is_noop_move(node: StackShuffleNode) -> bool:
+    """Return whether a move names the same unique stack segment in order."""
+    if node.mode != Symbol("move"):
+        return False
+    if any(label is None for label in node.prestack):
+        return False
+    labels = tuple(cast(Symbol, label) for label in node.prestack)
+    return labels == node.poststack and len(set(labels)) == len(labels)
+
+
 def _show_stack(stack: T.TypeStack) -> str:
     """Format stack during static analysis."""
     if not stack:
@@ -9082,32 +9269,151 @@ def _diagnostic_message(message: str, node: ASTNode | None) -> str:
     return f"{location.line}:{location.column}: {message}"
 
 
-def _show_overloads(overloads: Iterable[T.Overload]) -> str:
-    """Format overloads during static analysis."""
-    rendered = tuple(
-        T.show(T.Fn(overload.params, overload.returns)) for overload in overloads
-    )
+def _show_overload_list(
+    name: Symbol | None,
+    overloads: Iterable[T.Overload],
+) -> str:
+    """Render available overloads as a scan-friendly signature list."""
+    rendered = tuple(_show_overload_signature(name, overload) for overload in overloads)
     if not rendered:
-        return "none"
-    return "; ".join(rendered)
+        return "available overloads: none"
+    return "available overloads:\n" + "\n".join(
+        f"  - {signature}" for signature in rendered
+    )
+
+
+def _show_overload_signature(
+    name: Symbol | None,
+    overload: T.Overload,
+    *,
+    params: tuple[T.Type, ...] | None = None,
+    returns: tuple[T.Type, ...] | None = None,
+) -> str:
+    """Render one callable signature without repeating ``Function``."""
+    actual_params = overload.params if params is None else params
+    actual_returns = overload.returns if returns is None else returns
+    param_names = overload.param_names
+    if len(param_names) < len(actual_params):
+        param_names = (None,) * (len(actual_params) - len(param_names)) + param_names
+    rendered_params = []
+    for index, param in enumerate(actual_params):
+        param_name = param_names[index] if index < len(param_names) else None
+        rendered = T.show(param)
+        rendered_params.append(
+            f"{param_name}: {rendered}" if param_name is not None else rendered
+        )
+    if not actual_returns:
+        rendered_returns = "()"
+    elif len(actual_returns) == 1:
+        rendered_returns = T.show(actual_returns[0])
+    else:
+        rendered_returns = (
+            "(" + ", ".join(T.show(item) for item in actual_returns) + ")"
+        )
+    prefix = "" if name is None else str(name)
+    signature = f"{prefix}({', '.join(rendered_params)}) -> {rendered_returns}"
+    if overload.element_tags:
+        tags = ", ".join(
+            _show_element_tag(tag) for tag in sorted(overload.element_tags)
+        )
+        signature += f" <{tags}>"
+    if overload.generic_constraints:
+        constraints = ", ".join(
+            f"{constraint.name}: {T.show(constraint.bound)}"
+            for constraint in overload.generic_constraints
+        )
+        signature += f" where {constraints}"
+    return signature
+
+
+def _show_element_tag(tag: T.ElementTag) -> str:
+    """Render one effect tag used by an overload signature."""
+    prefix = "!" if tag.absent else ""
+    if not tag.args:
+        return f"{prefix}{tag.name}"
+    return f"{prefix}{tag.name}[{', '.join(T.show(arg) for arg in tag.args)}]"
 
 
 def _show_applied_overloads(
     candidates: Iterable[CallCandidate],
 ) -> str:
-    """Format applied overloads during static analysis."""
+    """Format applied overload candidates as a multiline signature list."""
     rendered = tuple(
-        T.show(
-            T.Fn(
-                candidate.applied.params,
-                candidate.applied.actual_returns,
-            )
+        _show_overload_signature(
+            None,
+            candidate.applied.overload,
+            params=candidate.applied.params,
+            returns=candidate.applied.actual_returns,
         )
         for candidate in candidates
     )
     if not rendered:
-        return "none"
-    return "; ".join(rendered)
+        return "  - none"
+    return "\n".join(f"  - {signature}" for signature in rendered)
+
+
+def _name_similarity(attempted: str, candidate: str) -> float:
+    """Return a transposition-aware, case-insensitive typo similarity score."""
+    left = attempted.casefold()
+    right = candidate.casefold()
+    if left == right:
+        return 1.0
+    if not left or not right:
+        return 0.0
+
+    rows = len(left) + 1
+    columns = len(right) + 1
+    distance = [[0] * columns for _ in range(rows)]
+    for row in range(rows):
+        distance[row][0] = row
+    for column in range(columns):
+        distance[0][column] = column
+
+    for row in range(1, rows):
+        for column in range(1, columns):
+            substitution = 0 if left[row - 1] == right[column - 1] else 1
+            distance[row][column] = min(
+                distance[row - 1][column] + 1,
+                distance[row][column - 1] + 1,
+                distance[row - 1][column - 1] + substitution,
+            )
+            if (
+                row > 1
+                and column > 1
+                and left[row - 1] == right[column - 2]
+                and left[row - 2] == right[column - 1]
+            ):
+                distance[row][column] = min(
+                    distance[row][column],
+                    distance[row - 2][column - 2] + 1,
+                )
+
+    return 1.0 - distance[-1][-1] / max(len(left), len(right))
+
+
+def _similar_names(
+    attempted: str,
+    names: Iterable[Symbol],
+    *,
+    limit: int = 3,
+) -> tuple[str, ...]:
+    """Return close source-visible names ordered by typo likelihood."""
+    ranked = sorted(
+        (
+            (_name_similarity(attempted, str(name)), str(name))
+            for name in names
+            if not _internal_element_name(name)
+        ),
+        key=lambda item: (-item[0], item[1]),
+    )
+    return tuple(name for score, name in ranked if score >= 0.62)[:limit]
+
+
+def _internal_element_name(name: Symbol) -> bool:
+    """Return whether a compiler-generated callable should stay hidden."""
+    return name.text.startswith("*::") or any(
+        part.startswith("__valiance_") for part in name.namespace
+    )
 
 
 def _top_or_none(stack: T.TypeStack) -> T.Type:

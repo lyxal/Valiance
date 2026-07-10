@@ -17,8 +17,13 @@ from itertools import permutations
 from pathlib import Path
 from typing import Any
 
-from valiance.analysis import Analyser, default_environment
-from valiance.asts import ASTNode, pretty_ast
+from valiance.analysis import (
+    Analyser,
+    AnalysisBranch,
+    BranchSet,
+    default_environment,
+)
+from valiance.asts import ASTNode, ElementNode, pretty_ast
 from valiance.parsing import LexError, ParseError, lex, parse
 from valiance.parsing.lexer import TokenKind
 from valiance.runtime import (
@@ -51,6 +56,7 @@ from valiance.types import (
     DataTag,
     Exact,
     ExactArray,
+    Environment,
     ExactList,
     Field,
     Fn,
@@ -1704,6 +1710,144 @@ def _fuzz_analyser_never_recovery(
         raise _GeneratedCaseFailure(case, exc) from exc
 
 
+def _fuzz_smart_diagnostics(
+    rng: random.Random,
+    _iteration: int,
+    _config: FuzzConfig,
+) -> object:
+    """Exercise typo suggestions, readable overload lists, and lint recovery."""
+    mode = rng.randrange(5)
+    if mode == 0:
+        base = rng.choice(("increment", "decrement", "normalize", "flatten"))
+        cut = rng.randrange(1, len(base) - 1)
+        typo = base[:cut] + base[cut + 1 :]
+        input_type, other_type = (
+            (Integer, String) if rng.randrange(2) == 0 else (String, Integer)
+        )
+        env = Environment()
+        env.define_overload(
+            Symbol(base),
+            Overload(
+                (input_type,),
+                (input_type,),
+                param_names=(Symbol("value"),),
+            ),
+        )
+        incompatible = base + "Text"
+        env.define_overload(
+            Symbol(incompatible),
+            Overload(
+                (other_type,),
+                (other_type,),
+                param_names=(Symbol("value"),),
+            ),
+        )
+        case = ("suggestion", typo, base, incompatible, show(input_type))
+        try:
+            analyser = Analyser(env)
+            analyser.analyse_node(
+                BranchSet((AnalysisBranch(stack=TypeStack((input_type,))),)),
+                ElementNode(Symbol(typo)),
+            )
+            if len(analyser.diagnostics) != 1:
+                raise AssertionError(analyser.diagnostics)
+            message = analyser.diagnostics[0]
+            if base not in message or incompatible in message:
+                raise AssertionError(f"bad suggestions: {message!r}")
+            if "Function[" in message:
+                raise AssertionError(f"legacy signature rendering: {message!r}")
+            return case
+        except BaseException as exc:
+            raise _GeneratedCaseFailure(case, exc) from exc
+
+    if mode == 1:
+        env = Environment()
+        name = Symbol("convert")
+        env.define_overload(
+            name,
+            Overload((Integer,), (String,), param_names=(Symbol("value"),)),
+        )
+        env.define_overload(
+            name,
+            Overload((String,), (Integer,), param_names=(Symbol("text"),)),
+        )
+        case = ("overloads",)
+        try:
+            analyser = Analyser(env)
+            analyser.analyse_node(
+                BranchSet((AnalysisBranch(stack=TypeStack((NoneType(),))),)),
+                ElementNode(name),
+            )
+            [message] = analyser.diagnostics
+            if "available overloads:\n  - " not in message:
+                raise AssertionError(f"overloads are not multiline: {message!r}")
+            if "Function[" in message:
+                raise AssertionError(f"legacy signature rendering: {message!r}")
+            return case
+        except BaseException as exc:
+            raise _GeneratedCaseFailure(case, exc) from exc
+
+    if mode == 2:
+        env = Environment()
+        name = Symbol("format")
+        env.define_overload(
+            name,
+            Overload((Integer,), (String,), param_names=(Symbol("value"),)),
+        )
+        env.define_overload(
+            name,
+            Overload((String,), (String,), param_names=(Symbol("text"),)),
+        )
+        case = ("explicit-suggestion",)
+        try:
+            analyser = Analyser(env)
+            analyser.analyse(parse("formt(1)"))
+            [message] = analyser.diagnostics
+            if "format(value: Integer) -> String" not in message:
+                raise AssertionError(message)
+            if "format(text: String)" in message:
+                raise AssertionError(f"incompatible signature suggested: {message!r}")
+            return case
+        except BaseException as exc:
+            raise _GeneratedCaseFailure(case, exc) from exc
+
+    if mode == 3:
+        env = Environment()
+        env.define_overload(
+            Symbol("convert"),
+            Overload((Integer,), (String,), param_names=(Symbol("value"),)),
+        )
+        case = ("named-argument",)
+        try:
+            analyser = Analyser(env)
+            analyser.analyse(parse("convert(vaule = 1)"))
+            [message] = analyser.diagnostics
+            if "unknown named argument 'vaule'" not in message:
+                raise AssertionError(message)
+            if "did you mean 'value'?" not in message:
+                raise AssertionError(message)
+            return case
+        except BaseException as exc:
+            raise _GeneratedCaseFailure(case, exc) from exc
+
+    source = rng.choice(
+        ("1 as Integer", "1 as! Number", "1 move(value -> value)")
+    )
+    case = ("lint", source)
+    try:
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        if analyser.diagnostics:
+            raise AssertionError(f"lint became an error: {analyser.diagnostics!r}")
+        if len(analyser.lints) != 1:
+            raise AssertionError(f"expected one lint: {analyser.lints!r}")
+        if "remove" not in analyser.lints[0] and "instead" not in analyser.lints[0]:
+            raise AssertionError(f"lint is not actionable: {analyser.lints[0]!r}")
+        return case
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(case, exc) from exc
+
+
 TARGETS: dict[str, Target] = {
     "lexer-parser": _fuzz_lexer_parser,
     "source-mutations": _fuzz_source_mutations,
@@ -1718,6 +1862,7 @@ TARGETS: dict[str, Target] = {
     "type-algebra": _fuzz_type_algebra,
     "structural-types": _fuzz_structural_types,
     "analyser-never": _fuzz_analyser_never_recovery,
+    "smart-diagnostics": _fuzz_smart_diagnostics,
 }
 
 

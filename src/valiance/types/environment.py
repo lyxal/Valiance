@@ -536,6 +536,16 @@ class Environment:
             return local
         return self.parent.overloads_for(name)
 
+    def visible_overload_names(self) -> tuple[Symbol, ...]:
+        """Return callable names visible through lexical shadowing."""
+        names: dict[Symbol, None] = {}
+        current: Environment | None = self
+        while current is not None:
+            for name in current.overloads:
+                names.setdefault(name, None)
+            current = current.parent
+        return tuple(sorted(names, key=str))
+
     def value_type(self, name: Symbol) -> Type | None:
         """Return the overload-set type of a named callable value."""
         overloads = self.overloads_for(name)

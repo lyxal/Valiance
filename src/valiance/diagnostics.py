@@ -51,7 +51,10 @@ _BOLD = "\033[1m"
 _RED = "\033[31m"
 _YELLOW = "\033[33m"
 _BLUE = "\033[34m"
-_LOCATION_PREFIX = re.compile(r"^(?P<line>\d+):(?P<column>\d+):\s*(?P<message>.*)$")
+_LOCATION_PREFIX = re.compile(
+    r"^(?P<line>\d+):(?P<column>\d+):\s*(?P<message>.*)$",
+    re.DOTALL,
+)
 
 
 def from_message(stage: str, message: str) -> Diagnostic:

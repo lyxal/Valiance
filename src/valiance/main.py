@@ -765,6 +765,7 @@ class _ReplSession:
         analyser = copy.deepcopy(self.analyser)
         analyser.diagnostics.clear()
         analyser.warnings.clear()
+        analyser.lints.clear()
         initial = replace(copy.deepcopy(self.branch), typed_body=())
         try:
             final = analyser.analyse_block(BranchSet((initial,)), tuple(program))
@@ -799,6 +800,7 @@ class _ReplSession:
         assert self.runtime_stack is not None
         self.analyser.diagnostics.clear()
         self.analyser.warnings.clear()
+        self.analyser.lints.clear()
         self.output.did_print = False
         try:
             program = Parser(lex(source)).parse_program()
@@ -814,6 +816,8 @@ class _ReplSession:
                     )
                 return False
             next_branch = next(iter(final))
+            for lint in self.analyser.lints:
+                _print_diagnostic(from_message("Lint warning", lint), source)
             for warning in self.analyser.warnings:
                 _print_diagnostic(from_message("Type warning", warning), source)
             if self.analyser.diagnostics:
@@ -1138,6 +1142,12 @@ def _run_source(
             print(typed_source(typed, source))
             return 0
 
+        for lint in analyser.lints:
+            _print_diagnostic(
+                from_message("Lint warning", lint),
+                source,
+                source_file,
+            )
         for warning in analyser.warnings:
             _print_diagnostic(
                 from_message("Type warning", warning),
@@ -1295,6 +1305,12 @@ def _print_analyser_messages(
     source_file: Path | None,
 ) -> None:
     """Print analyser messages for CLI and REPL orchestration."""
+    for lint in analyser.lints:
+        _print_diagnostic(
+            from_message("Lint warning", lint),
+            source,
+            source_file,
+        )
     for warning in analyser.warnings:
         _print_diagnostic(
             from_message("Type warning", warning),

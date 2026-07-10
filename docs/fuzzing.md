@@ -51,6 +51,10 @@ base seed, and iteration number.
   verifies that nested primary errors do not produce generic wrapper
   diagnostics, and that a direct `Never` result terminates subsequent analysis
   while preserving the typed prefix.
+- `smart-diagnostics` checks that typo suggestions are name-similar and
+  overload-viable, explicit-call and named-argument mistakes receive focused
+  guidance, overload lists stay multiline and omit repeated `Function`
+  wrappers, and actionable lint patterns remain non-fatal.
 - `structural-types` builds contexts containing nominal subtype facts,
   declaration-site variance, row fields, and structural overloads. It generates
   named and anonymous generics, rows, anonymous traits, functions, collections,

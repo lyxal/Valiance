@@ -2503,8 +2503,9 @@ pick
         self.assertEqual(
             analyser.diagnostics,
             [
-                "3:1: no overloads for element 'pick' match stack [Number]; "
-                "available overloads: Function[Number, Number -> Number]"
+                "3:1: no overloads for element 'pick' match stack [Number]\n"
+                "available overloads:\n"
+                "  - pick(a: Number, b: Number) -> Number"
             ],
         )
 
@@ -3187,7 +3188,9 @@ define f(value: #left #right Number) -> Number => $value
             analyser.diagnostics,
             [
                 "1:25: no overloads for element 'length' match stack [#infinite "
-                "Integer+]; available overloads: Function[String -> Integer]; Function[#!infinite Item+ -> Integer]"
+                "Integer+]\navailable overloads:\n"
+                "  - length(String) -> Integer\n"
+                "  - length(#!infinite Item+) -> Integer"
             ],
         )
 
@@ -3903,6 +3906,203 @@ class NeverDiagnosticRecoveryTests(unittest.TestCase):
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, Never())
+
+
+class SmartDiagnosticTests(unittest.TestCase):
+    def test_unknown_element_ranks_the_nearest_typo_first(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("1 pritn"))
+
+        [message] = analyser.diagnostics
+        self.assertIn("  - print(", message)
+        if "  - println(" in message:
+            self.assertLess(message.index("  - print("), message.index("  - println("))
+
+    def test_unknown_element_suggests_only_similar_viable_overloads(self):
+        env = Environment()
+        env.define_overload(
+            Symbol("increment"),
+            Overload((Integer,), (Integer,), param_names=(Symbol("value"),)),
+        )
+        env.define_overload(
+            Symbol("incrementText"),
+            Overload((String,), (String,), param_names=(Symbol("value"),)),
+        )
+        analyser = Analyser(env)
+
+        analyser.analyse(parse("1 incremnt"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "1:3: unknown element 'incremnt'\n"
+                "did you mean:\n"
+                "  - increment(value: Integer) -> Integer"
+            ],
+        )
+
+    def test_unknown_explicit_call_suggests_only_compatible_signature(self):
+        env = Environment()
+        env.define_overload(
+            Symbol("format"),
+            Overload((Integer,), (String,), param_names=(Symbol("value"),)),
+        )
+        env.define_overload(
+            Symbol("format"),
+            Overload((String,), (String,), param_names=(Symbol("text"),)),
+        )
+        analyser = Analyser(env)
+
+        analyser.analyse(parse("formt(1)"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "1:1: unknown element 'formt'\n"
+                "did you mean:\n"
+                "  - format(value: Integer) -> String"
+            ],
+        )
+
+    def test_unknown_named_argument_suggests_parameter_name(self):
+        env = Environment()
+        env.define_overload(
+            Symbol("convert"),
+            Overload((Integer,), (String,), param_names=(Symbol("value"),)),
+        )
+        analyser = Analyser(env)
+
+        analyser.analyse(parse("convert(vaule = 1)"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "1:1: unknown named argument 'vaule' for element 'convert'\n"
+                "did you mean 'value'?\n"
+                "available overloads:\n"
+                "  - convert(value: Integer) -> String"
+            ],
+        )
+
+    def test_unknown_element_does_not_suggest_similar_but_unusable_element(self):
+        env = Environment()
+        env.define_overload(
+            Symbol("increment"),
+            Overload((String,), (String,), param_names=(Symbol("value"),)),
+        )
+        analyser = Analyser(env)
+
+        analyser.analyse(parse("1 incremnt"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["1:3: unknown element 'incremnt'"],
+        )
+
+    def test_unknown_variable_suggests_visible_similar_variable(self):
+        analyser = Analyser(Environment())
+
+        analyser.analyse(parse("$counter = 1\n$countre"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "2:1: undefined variable 'countre'\n"
+                "did you mean '$counter'?"
+            ],
+        )
+
+    def test_overload_formatting_right_aligns_partial_parameter_names(self):
+        env = Environment()
+        env.define_overload(
+            Symbol("join"),
+            Overload(
+                (Integer, String),
+                (String,),
+                param_names=(Symbol("text"),),
+            ),
+        )
+        analyser = Analyser(env)
+
+        analyser.analyse_node(
+            BranchSet((AnalysisBranch(stack=TypeStack((NoneType(),))),)),
+            ElementNode(Symbol("join")),
+        )
+
+        [message] = analyser.diagnostics
+        self.assertIn("  - join(Integer, text: String) -> String", message)
+        self.assertNotIn("join(text: Integer, String)", message)
+
+    def test_overload_failure_formats_signatures_as_multiline_list(self):
+        env = Environment()
+        env.define_overload(
+            Symbol("convert"),
+            Overload((Integer,), (String,), param_names=(Symbol("value"),)),
+        )
+        env.define_overload(
+            Symbol("convert"),
+            Overload((String,), (Integer,), param_names=(Symbol("text"),)),
+        )
+        analyser = Analyser(env)
+        branches = analyser.analyse_node(
+            BranchSet((AnalysisBranch(stack=TypeStack((NoneType(),))),)),
+            ElementNode(Symbol("convert")),
+        )
+
+        self.assertFalse(branches)
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "no overloads for element 'convert' match stack [None]\n"
+                "available overloads:\n"
+                "  - convert(value: Integer) -> String\n"
+                "  - convert(text: String) -> Integer"
+            ],
+        )
+        self.assertNotIn("Function", analyser.diagnostics[0])
+
+    def test_noop_move_is_a_lint_and_analysis_continues(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(parse("1 move(value -> value) 2 +"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            analyser.lints,
+            [
+                "1:3: this move leaves the stack unchanged; "
+                "remove `move(value -> value)`"
+            ],
+        )
+        self.assertEqual(typed[-1].typ, Integer)
+
+    def test_identity_cast_is_a_lint_and_analysis_continues(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(parse("1 as Integer 2 +"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            analyser.lints,
+            ["1:3: unnecessary cast to Integer; remove `as Integer`"],
+        )
+        self.assertEqual(typed[-1].typ, Integer)
+
+    def test_statically_safe_checked_cast_is_a_lint_with_replacement(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(parse("1 as! Number 2 +"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            analyser.lints,
+            [
+                "1:3: checked cast to Number is statically safe; "
+                "write `as Number` instead of `as! Number`"
+            ],
+        )
+        self.assertEqual(typed[-1].typ, Number)
 
 
 if __name__ == "__main__":

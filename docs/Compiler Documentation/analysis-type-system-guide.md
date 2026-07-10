@@ -1203,13 +1203,31 @@ the current lexical environment.
 
 ## Diagnostics
 
-The analyser stores error and warning strings separately. Use
-`_diagnose(message, node)` for fatal compiler diagnostics and `_warn(message,
-node)` for non-fatal warnings so source locations are included when available.
+The analyser stores errors, warnings, and lints separately. Use
+`_diagnose(message, node)` for fatal compiler diagnostics, `_warn(message,
+node)` for semantic or annotation warnings, and `_lint(message, node)` for
+non-fatal source-pattern advice. All three helpers attach source locations when
+available.
+
+Lint messages should be actionable: explain what is redundant or risky and give
+a concrete replacement such as removing an identity cast or replacing a
+statically safe checked cast with an ordinary cast. A lint must not stop typed
+analysis or code generation.
+
+Unknown-element suggestions are filtered twice: the source name must be close
+enough to the requested spelling, and at least one overload must be applicable
+to the current stack or explicit-call arguments. Do not suggest a similarly
+named element that would immediately fail overload resolution.
+
+Overload failures use one signature per line. Diagnostic signatures intentionally
+omit the repeated `Function` wrapper and retain parameter names, return types,
+effect tags, and generic constraints where available.
 
 For speculative inference, avoid emitting diagnostics for branches that are
 cleanly trimmed. Diagnostics should explain final invalid programs, not every
-failed candidate that was part of normal inference.
+failed candidate that was part of normal inference. Likewise, speculative typo
+probes must not leak diagnostics, lints, warnings, imports, or prelude bindings
+into the real analysis session.
 
 ## Tests
 
