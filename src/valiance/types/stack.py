@@ -80,11 +80,15 @@ class TypeStack:
             infer_missing=infer_missing,
         )
 
-    def merge(self, other: TypeStack) -> TypeStack:
+    def merge(
+        self,
+        other: TypeStack,
+        ctx: Context | None = None,
+    ) -> TypeStack:
         """Merge this stack with another branch stack."""
         from valiance.types.relations import merge_stacks
 
-        return merge_stacks(self, other)
+        return merge_stacks(self, other, ctx)
 
 
 @dataclass(frozen=True)

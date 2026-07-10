@@ -101,6 +101,65 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertTrue(compatible(optional(Integer), optional(Number)))
         self.assertFalse(assignable(optional(Number), optional(Integer)))
 
+    def test_some_covariance_preserves_optional_subtype_transitivity(self):
+        some_integer = N(Symbol("Some"), Integer)
+
+        self.assertTrue(subtype(some_integer, optional(Integer)))
+        self.assertTrue(subtype(optional(Integer), optional(Number)))
+        self.assertTrue(subtype(some_integer, optional(Number)))
+        self.assertTrue(subtype(some_integer, N(Symbol("Some"), Number)))
+
+    def test_merge_none_with_explicit_some_does_not_double_wrap(self):
+        some_integer = N(Symbol("Some"), Integer)
+
+        self.assertEqual(merge_types(NoneType(), some_integer), optional(Integer))
+        self.assertEqual(merge_types(some_integer, NoneType()), optional(Integer))
+        self.assertEqual(
+            merge_types(optional(Number), some_integer),
+            optional(Number),
+        )
+
+    def test_tagged_unions_and_intersections_decompose_before_tag_checks(self):
+        tagged_integer = Tagged(Integer, "x")
+        tagged_number = Tagged(Number, "x")
+        tagged_real = Tagged(Real, "x")
+        source_intersection = I(tagged_integer, Tagged(Number, "y"))
+        source_union = U(tagged_integer, tagged_real)
+
+        self.assertTrue(subtype(source_intersection, tagged_integer))
+        self.assertTrue(subtype(source_union, tagged_number))
+
+    def test_unit_tags_cannot_be_laundered_through_absent_requirements(self):
+        ctx = Context()
+        ctx.define_tag("km", TagKind.UNIT)
+        ctx.define_tag("sec", TagKind.UNIT)
+        seconds = Tagged(Integer, "sec")
+        not_kilometres = Tagged(Integer, DataTag("km", absent=True))
+
+        self.assertFalse(subtype(seconds, not_kilometres, ctx))
+        self.assertFalse(assignable(seconds, not_kilometres, ctx))
+        self.assertFalse(subtype(seconds, Integer, ctx))
+        self.assertTrue(
+            subtype(seconds, Tagged(Number, DataTag("sec")), ctx)
+        )
+
+    def test_contextual_branch_merges_preserve_unit_tags(self):
+        ctx = Context()
+        ctx.define_tag("km", TagKind.UNIT)
+        kilometres = Tagged(Integer, "km")
+
+        merged = merge_types(Integer, kilometres, ctx)
+        merged_stack = merge_stacks(
+            TypeStack((Integer,)),
+            TypeStack((kilometres,)),
+            ctx,
+        )
+
+        self.assertEqual(merged, U(Integer, kilometres))
+        self.assertEqual(merged_stack, TypeStack((U(Integer, kilometres),)))
+        self.assertTrue(assignable(Integer, merged, ctx))
+        self.assertTrue(assignable(kilometres, merged, ctx))
+
     def test_numeric_intersections_remove_redundant_supertypes(self):
         self.assertEqual(I(Integer, Real), Integer)
         self.assertEqual(I(Integer, Number), Integer)

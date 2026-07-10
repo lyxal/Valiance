@@ -2388,6 +2388,26 @@ end
             analyser.diagnostics[0],
         )
 
+    def test_try_handler_type_must_be_a_concrete_fault_type(self):
+        analyser = Analyser()
+        analyser.analyse(
+            parse(
+                '''
+try =>
+  ValueFault("boom") panic
+handle Fault =>
+  "not concrete"
+end
+'''
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "try handler type Fault is not a concrete runtime fault type",
+            analyser.diagnostics[0],
+        )
+
     def test_err_type_variant_marks_members_and_parent_as_err(self):
         analyser = Analyser()
 

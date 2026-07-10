@@ -128,19 +128,9 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
             return source_inner is target_inner
         return assignable(source_inner, target_inner, ctx)
 
-    if isinstance(source, TaggedType):
-        if not _has_unit_tag(source.tags, ctx) and subtype(source.inner, target, ctx):
-            return True
-
-    if isinstance(target, TaggedType):
-        # Positive tag requirements must be present; absent tag requirements
-        # are encoded as ``DataTag(absent=True)``.
-        actual_tags = source.tags if isinstance(source, TaggedType) else frozenset()
-        inner = source.inner if isinstance(source, TaggedType) else source
-        if not _tag_requirements_met(actual_tags, target.tags):
-            return False
-        return subtype(inner, target.inner, ctx)
-
+    # Decompose algebraic source/target forms before applying target-specific
+    # refinements. Otherwise a tagged/row target sees the aggregate node rather
+    # than each union branch or one guaranteed intersection constituent.
     if isinstance(source, UnionType):
         return all(subtype(s, target, ctx) for s in source.items)
 
@@ -152,6 +142,21 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
 
     if isinstance(source, IntersectionType):
         return any(subtype(s, target, ctx) for s in source.items)
+
+    if isinstance(source, TaggedType):
+        if not _has_unit_tag(source.tags, ctx) and subtype(source.inner, target, ctx):
+            return True
+
+    if isinstance(target, TaggedType):
+        # Positive tag requirements must be present; absent tag requirements
+        # are encoded as ``DataTag(absent=True)``.
+        actual_tags = source.tags if isinstance(source, TaggedType) else frozenset()
+        inner = source.inner if isinstance(source, TaggedType) else source
+        if not _unit_tags_preserved(actual_tags, target.tags, ctx):
+            return False
+        if not _tag_requirements_met(actual_tags, target.tags):
+            return False
+        return subtype(inner, target.inner, ctx)
 
     if isinstance(target, RowType):
         return _row_subtype(source, target, ctx)
@@ -429,7 +434,14 @@ def _nominal_args_subtype(
     ctx: Context,
 ) -> bool:
     """Return whether nominal args satisfy declared variance for this constructor."""
-    variances = ctx.variance_for(source.name, len(source.args))
+    # ``Some`` is the reified present branch of Optional and therefore follows
+    # the same covariance as Optional itself, even in a bare Context that has
+    # not loaded the built-in environment declarations.
+    variances = (
+        (Variance.COVARIANT,)
+        if source.name == SOME and len(source.args) == 1
+        else ctx.variance_for(source.name, len(source.args))
+    )
     for actual, expected, variance in zip(
         source.args,
         target.args,
@@ -1138,8 +1150,9 @@ def _combine_all(
     return out
 
 
-def _reduced_union(*types: Type) -> Type:
+def _reduced_union(*types: Type, ctx: Context | None = None) -> Type:
     """Build a deterministic union with assignable subtype members removed."""
+    ctx = ctx or Context()
     members: set[Type] = set()
     for typ in types:
         normalized = normalize(typ)
@@ -1155,9 +1168,9 @@ def _reduced_union(*types: Type) -> Type:
         for other_index, other in enumerate(ordered):
             if index == other_index or same(member, other):
                 continue
-            if not assignable(member, other):
+            if not assignable(member, other, ctx):
                 continue
-            if not assignable(other, member) or other_index < index:
+            if not assignable(other, member, ctx) or other_index < index:
                 redundant = True
                 break
         if not redundant:
@@ -1165,8 +1178,9 @@ def _reduced_union(*types: Type) -> Type:
     return U(*kept)
 
 
-def merge_types(a: Type, b: Type) -> Type:
+def merge_types(a: Type, b: Type, ctx: Context | None = None) -> Type:
     """Merge branch result types as a commutative, associative type join."""
+    ctx = ctx or Context()
     a, b = normalize(a), normalize(b)
     if same(a, b):
         return a
@@ -1175,33 +1189,42 @@ def merge_types(a: Type, b: Type) -> Type:
     if isinstance(b, NeverType):
         return a
     if isinstance(a, NoneTypeNode):
-        return b if _is_optional(b) else optional(b)
+        return b if _is_optional(b) else optional(_present_payload(b))
     if isinstance(b, NoneTypeNode):
-        return a if _is_optional(a) else optional(a)
+        return a if _is_optional(a) else optional(_present_payload(a))
 
     a_optional = _optional_inner(a) if _is_optional(a) else None
     b_optional = _optional_inner(b) if _is_optional(b) else None
     if a_optional is not None and b_optional is not None:
-        return optional(merge_types(a_optional, b_optional))
+        return optional(merge_types(a_optional, b_optional, ctx))
     if a_optional is not None:
-        return optional(merge_types(a_optional, b))
+        return optional(merge_types(a_optional, _present_payload(b), ctx))
     if b_optional is not None:
-        return optional(merge_types(a, b_optional))
+        return optional(merge_types(_present_payload(a), b_optional, ctx))
 
-    a_to_b = assignable(a, b)
-    b_to_a = assignable(b, a)
+    a_to_b = assignable(a, b, ctx)
+    b_to_a = assignable(b, a, ctx)
     if a_to_b and b_to_a:
         return min((a, b), key=_type_join_key)
     if a_to_b:
         return b
     if b_to_a:
         return a
-    return _reduced_union(a, b)
+    return _reduced_union(a, b, ctx=ctx)
+
+
+def _present_payload(typ: Type) -> Type:
+    """Return the payload represented by an explicit ``Some[T]`` value."""
+    typ = normalize(typ)
+    if isinstance(typ, NominalType) and typ.name == SOME and len(typ.args) == 1:
+        return typ.args[0]
+    return typ
 
 
 def merge_stacks(
     a: TypeStack,
     b: TypeStack,
+    ctx: Context | None = None,
 ) -> TypeStack:
     """Merge two branch stacks pairwise, padding shorter stacks with ``None``."""
     # Padding on the left treats missing values as absent lower stack outputs.
@@ -1211,7 +1234,7 @@ def merge_stacks(
     left = (NoneType(),) * (length - len(a)) + a.items
     right = (NoneType(),) * (length - len(b)) + b.items
     return TypeStack(
-        tuple(merge_types(x, y) for x, y in zip(left, right, strict=False))
+        tuple(merge_types(x, y, ctx) for x, y in zip(left, right, strict=False))
     )
 
 
@@ -2531,6 +2554,24 @@ def _tag_requirements_met(
         elif positive not in actual:
             return False
     return True
+
+
+def _unit_tags_preserved(
+    actual: frozenset[DataTag],
+    required: frozenset[DataTag],
+    ctx: Context,
+) -> bool:
+    """Return whether a tagged target preserves every actual unit dimension."""
+    required_positive = {
+        DataTag(tag.name, tag.depth)
+        for tag in required
+        if not tag.absent
+    }
+    return all(
+        tag in required_positive
+        for tag in actual
+        if not tag.absent and ctx.is_unit_tag(tag.name)
+    )
 
 
 def _element_tag_requirements_met(

@@ -72,6 +72,7 @@ from valiance.types import (
     Row,
     RuntimeTypePattern,
     String,
+    TagKind,
     Tagged,
     Tup,
     Type,
@@ -2086,6 +2087,137 @@ def _fuzz_match_safety(
         raise _GeneratedCaseFailure((case, source), exc) from exc
 
 
+def _fuzz_soundness_boundaries(
+    rng: random.Random,
+    _iteration: int,
+    _config: FuzzConfig,
+) -> object:
+    """Exercise static/runtime agreement at safety-sensitive boundaries."""
+    mode = rng.randrange(10)
+    case: object = ("mode", mode)
+    try:
+        if mode == 0:
+            some_integer = N(Symbol("Some"), Integer)
+            case = ("optional-subtyping", some_integer)
+            if not subtype(some_integer, optional(Number)):
+                raise AssertionError("Some covariance broke optional transitivity")
+        elif mode == 1:
+            some_integer = N(Symbol("Some"), Integer)
+            case = ("optional-join", some_integer)
+            if not same(merge_types(NoneType(), some_integer), optional(Integer)):
+                raise AssertionError("None/Some join double-wrapped its payload")
+        elif mode == 2:
+            tagged_integer = Tagged(Integer, "x")
+            case = ("tagged-decomposition", tagged_integer)
+            if not subtype(
+                U(tagged_integer, Tagged(Real, "x")),
+                Tagged(Number, "x"),
+            ):
+                raise AssertionError("tagged union was not checked branchwise")
+            if not subtype(
+                I(tagged_integer, Tagged(Number, "y")),
+                tagged_integer,
+            ):
+                raise AssertionError("intersection did not project a tagged member")
+        elif mode == 3:
+            ctx = Context()
+            ctx.define_tag("km", TagKind.UNIT)
+            ctx.define_tag("sec", TagKind.UNIT)
+            seconds = Tagged(Integer, "sec")
+            not_kilometres = Tagged(Integer, DataTag("km", absent=True))
+            case = ("unit-laundering", seconds, not_kilometres)
+            if assignable(seconds, not_kilometres, ctx):
+                raise AssertionError("unit tag was laundered through an absent tag")
+            merged = merge_types(Integer, Tagged(Integer, "km"), ctx)
+            if not (
+                assignable(Integer, merged, ctx)
+                and assignable(Tagged(Integer, "km"), merged, ctx)
+            ):
+                raise AssertionError("contextual join erased a unit-tagged branch")
+        elif mode == 4:
+            source = """
+tag #km as unit
+1
+match =>
+  as :#km Number => "tagged"
+  _ => "plain"
+end
+"""
+            case = ("runtime-tag-pattern", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or run(compile_program(typed)) != ["plain"]:
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 5:
+            source = """
+None
+match =>
+  as :None => "none"
+  _ => "other"
+end
+"""
+            case = ("runtime-none-pattern", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or run(compile_program(typed)) != ["none"]:
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 6:
+            source = """
+object[T] Box =>
+  public $value: T
+end
+Box("s")
+match =>
+  as :Box[Number] => "number"
+  _ => "other"
+end
+"""
+            case = ("runtime-generic-pattern", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or run(compile_program(typed)) != ["other"]:
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 7:
+            source = 'ValueError("x") as! Err'
+            case = ("safe-checked-upcast", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            [value] = run(compile_program(typed))
+            if getattr(value, "type_name", None) != "ValueError":
+                raise AssertionError(value)
+        elif mode == 8:
+            source = """
+try =>
+  ValueFault("x") panic
+handle Fault =>
+  "caught"
+end
+"""
+            case = ("trait-panic-handler", source)
+            analyser = Analyser()
+            analyser.analyse(parse(source))
+            if not any("not a concrete runtime fault type" in item for item in analyser.diagnostics):
+                raise AssertionError(analyser.diagnostics)
+        else:
+            target = rng.choice((-1, 2))
+            case = ("invalid-jump", target)
+            program = Program(
+                FunctionCode((Instruction(OpCode.JUMP, target),), name="<main>")
+            )
+            try:
+                run(program)
+            except ValianceRuntimeError as exc:
+                if "invalid jump target" not in str(exc):
+                    raise
+            else:
+                raise AssertionError("invalid jump target was accepted")
+        return case
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(case, exc) from exc
+
+
 TARGETS: dict[str, Target] = {
     "lexer-parser": _fuzz_lexer_parser,
     "source-mutations": _fuzz_source_mutations,
@@ -2102,6 +2234,7 @@ TARGETS: dict[str, Target] = {
     "analyser-never": _fuzz_analyser_never_recovery,
     "smart-diagnostics": _fuzz_smart_diagnostics,
     "match-safety": _fuzz_match_safety,
+    "soundness-boundaries": _fuzz_soundness_boundaries,
 }
 
 

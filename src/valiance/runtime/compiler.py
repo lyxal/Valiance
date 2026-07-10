@@ -1845,8 +1845,21 @@ def _cast_type_spec(typ: Type) -> object:
         return ("none",)
     if isinstance(typ, VarType):
         return ("var", typ.name)
+    if isinstance(typ, TaggedType):
+        return (
+            "tagged",
+            _cast_type_spec(typ.inner),
+            tuple(
+                (str(tag.name), tag.depth, tag.absent)
+                for tag in sorted(typ.tags)
+            ),
+        )
     if isinstance(typ, NominalType):
-        return ("nominal", typ.name.text)
+        return (
+            "nominal",
+            typ.name.text,
+            tuple(show(arg) for arg in typ.args),
+        )
     if isinstance(typ, UnionType):
         return ("union", tuple(_cast_type_spec(item) for item in typ.items))
     if isinstance(typ, IntersectionType):
@@ -1862,6 +1875,6 @@ def _cast_type_spec(typ: Type) -> object:
             ArrayMinType: "array_min",
         }[type(typ)]
         return ("collection", kind, typ.rank, _cast_type_spec(typ.base))
-    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
+    if isinstance(typ, (ExactType, AtomicType)):
         return _cast_type_spec(typ.inner)
     raise CompileError(f"cannot compile checked cast to {typ}")

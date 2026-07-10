@@ -1,3 +1,7 @@
+import os
+import subprocess
+import sys
+import textwrap
 import unittest
 from decimal import Decimal
 
@@ -93,6 +97,40 @@ class BytecodeSerializationTests(unittest.TestCase):
 
         with self.assertRaises(BytecodeFormatError):
             loads(_nested_tuple_bytecode(2_000))
+
+    def test_invalid_jump_targets_are_rejected_without_hanging(self):
+        root = os.path.dirname(os.path.dirname(__file__))
+        script = textwrap.dedent(
+            """
+            from valiance.runtime import RuntimeError, run
+            from valiance.runtime.bytecode import FunctionCode, Instruction, OpCode, Program
+
+            for target in (-1, 3):
+                program = Program(
+                    FunctionCode((Instruction(OpCode.JUMP, target),), name="<main>")
+                )
+                try:
+                    run(program)
+                except RuntimeError as exc:
+                    if "invalid jump target" not in str(exc):
+                        raise
+                else:
+                    raise AssertionError(f"jump target {target} was accepted")
+            """
+        )
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.path.join(root, "src")
+
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            env=env,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_malformed_decoded_instructions_raise_language_runtime_errors(self):
         instructions = (

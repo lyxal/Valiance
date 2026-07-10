@@ -1156,6 +1156,58 @@ define keep_name(name: String, n: Number) -> String => $name
             run(program)
         self.assertIn("checked cast failed", str(error.exception))
 
+    def test_statically_safe_checked_cast_is_lowered_as_an_unchecked_upcast(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse('ValueError("x") as! Err'))
+        self.assertEqual(analyser.diagnostics, [])
+
+        program = compile_program(typed)
+        ops = tuple(instruction.op for instruction in program.main.instructions)
+
+        self.assertNotIn(OpCode.CHECK_CAST, ops)
+        [value] = run(program)
+        self.assertIsInstance(value, ObjectValue)
+        self.assertEqual(value.type_name, "ValueError")
+
+    def test_none_type_patterns_match_the_runtime_none_value(self):
+        self.assertEqual(
+            execute(
+                """
+None
+match =>
+  as :None => "none"
+  _ => "other"
+end
+"""
+            ),
+            ["none"],
+        )
+
+    def test_tagged_type_patterns_require_the_runtime_tag(self):
+        source = """
+tag #km as unit
+{value}
+match =>
+  as :#km Number => "tagged"
+  _ => "plain"
+end
+"""
+        self.assertEqual(execute(source.format(value="1")), ["plain"])
+        self.assertEqual(execute(source.format(value="1 #km")), ["tagged"])
+
+    def test_generic_type_patterns_check_reified_type_arguments(self):
+        source = """
+object[T] Box =>
+  public $value: T
+end
+Box("s")
+match =>
+  as :Box[Number] => "number"
+  _ => "other"
+end
+"""
+        self.assertEqual(execute(source), ["other"])
+
     def test_empty_list_cast_executes_as_empty_list(self):
         self.assertEqual(execute("[] as Number+"), [[]])
 

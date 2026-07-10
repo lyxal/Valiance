@@ -361,6 +361,7 @@ class BranchVariables:
         self,
         other: BranchVariables,
         before: BranchVariables,
+        ctx: T.Context | None = None,
     ) -> BranchVariables:
         """Merge two branch outputs, preserving only variables visible before."""
         locals_by_name: dict[Symbol, T.Type] = {}
@@ -374,7 +375,7 @@ class BranchVariables:
             )
             if left is not None and right is not None:
                 locals_by_name[name] = (
-                    left if left == right else T.merge_types(left, right)
+                    left if left == right else T.merge_types(left, right, ctx)
                 )
         block_locals_by_name: dict[Symbol, T.Type] = {}
         before_block_names = {name for name, _ in before.block_locals}
@@ -387,7 +388,7 @@ class BranchVariables:
             )
             if left is not None and right is not None:
                 block_locals_by_name[name] = (
-                    left if left == right else T.merge_types(left, right)
+                    left if left == right else T.merge_types(left, right, ctx)
                 )
         return BranchVariables(
             function_locals=_sorted_items(locals_by_name.items()),
@@ -3070,7 +3071,7 @@ class Analyser:
         subject_params = tuple(
             reversed(
                 tuple(
-                    _match_subject_pattern_type(branch, node, index)
+                    _match_subject_pattern_type(branch, node, index, self.env)
                     for index in range(arity)
                 )
             )
@@ -3137,6 +3138,7 @@ class Analyser:
                     baseline=body_input,
                     joined=joined,
                     candidate=candidate,
+                    ctx=self.env.context,
                 )
                 if joined is None:
                     self._diagnose("match cases inferred different inputs", node)
@@ -3177,15 +3179,26 @@ class Analyser:
         outputs: list[AnalysisBranch] = list(body_outputs.branches)
         typed_handler_bodies: list[tuple[ASTNode | TypedNode, ...]] = []
         for handler in node.handlers:
-            if handler.typ is not None and not T.assignable(
-                handler.typ,
-                T.N(Symbol("Fault")),
-                self.env.context,
-            ):
-                self._diagnose(
-                    f"try handler type {T.show(handler.typ)} does not implement Fault",
-                    handler,
-                )
+            if handler.typ is not None:
+                normalized_handler = T.normalize(handler.typ)
+                if (
+                    isinstance(normalized_handler, T.NominalType)
+                    and self.env.lookup_trait(normalized_handler.name) is not None
+                ):
+                    self._diagnose(
+                        f"try handler type {T.show(handler.typ)} is not a concrete "
+                        "runtime fault type",
+                        handler,
+                    )
+                elif not T.assignable(
+                    handler.typ,
+                    T.N(Symbol("Fault")),
+                    self.env.context,
+                ):
+                    self._diagnose(
+                        f"try handler type {T.show(handler.typ)} does not implement Fault",
+                        handler,
+                    )
             handler_outputs = self.analyse_scoped_block(
                 BranchSet((branch,)),
                 handler.body,
@@ -3208,7 +3221,12 @@ class Analyser:
 
         joined: AnalysisBranch | None = None
         for output in outputs:
-            joined = _join_try_output(branch, joined, output)
+            joined = _join_try_output(
+                branch,
+                joined,
+                output,
+                self.env.context,
+            )
             if joined is None:
                 self._diagnose("try branches inferred different inputs", node)
                 return BranchSet()
@@ -4280,7 +4298,7 @@ def _if_node(
                         outputs.append(output.emit(TypedNode(node, typ)))
                     continue
 
-                stack = merge_stacks(left.stack, right.stack)
+                stack = merge_stacks(left.stack, right.stack, self.env.context)
                 base = replace(
                     _refine_branch_like(branch, left),
                     inputs=left.inputs,
@@ -4290,6 +4308,7 @@ def _if_node(
                 variables = left.variables.merge_against(
                     right.variables,
                     base.variables,
+                    self.env.context,
                 )
                 typ = _returns_result_type(stack.items)
                 typed_if = TypedIfNode(
@@ -4471,10 +4490,11 @@ def _while_node(
             self._diagnose("while body inferred different inputs", node)
             return BranchSet()
 
-        stack = merge_stacks(joined.stack, output.stack)
+        stack = merge_stacks(joined.stack, output.stack, self.env.context)
         variables = joined.variables.merge_against(
             output.variables,
             loop_input.variables,
+            self.env.context,
         )
         joined = joined.with_stack(stack).with_variables(variables)
         joined = joined.with_element_tags(output.element_tags)
@@ -4486,7 +4506,11 @@ def _while_node(
     variables = (
         joined.variables
         if node.params is None
-        else joined.variables.merge_against(loop_input.variables, branch.variables)
+        else joined.variables.merge_against(
+            loop_input.variables,
+            branch.variables,
+            self.env.context,
+        )
     )
     result = _refine_branch_like(branch, joined).with_variables(variables)
     condition_body = _typed_block(
@@ -4704,6 +4728,7 @@ def _cast_node(
     source = branch.stack[-1]
     if node.checked:
         if T.assignable(source, target, self.env.context):
+            node = replace(node, checked=False)
             if T.same(source, target):
                 self._lint(
                     f"unnecessary checked cast to {T.show(target)}; "
@@ -5184,6 +5209,7 @@ def _list_literal_node(
         item_options,
         node,
         lambda combo: T.C(T.ListExactType, T.U(*(item.typ for item in combo))),
+        self.env.context,
     )
 
 
@@ -5203,6 +5229,7 @@ def _tuple_literal_node(
         item_options,
         node,
         lambda combo: T.Tup(*(item.typ for item in combo)),
+        self.env.context,
     )
 
 
@@ -5229,6 +5256,7 @@ def _record_literal_node(
                 for (name, _), item in zip(node.fields, combo, strict=True)
             ),
         ),
+        self.env.context,
     )
 
 
@@ -5253,6 +5281,7 @@ def _dict_literal_node(
             T.U(*(item.typ for item in combo[::2])),
             T.U(*(item.typ for item in combo[1::2])),
         ),
+        self.env.context,
     )
 
 
@@ -5315,7 +5344,11 @@ def _for_node(
     if not body_outputs:
         return BranchSet()
 
-    refined_item_type = _loop_variable_output_type(node.variable, body_outputs)
+    refined_item_type = _loop_variable_output_type(
+        node.variable,
+        body_outputs,
+        self.env.context,
+    )
     if (
         refined_item_type is not None
         and _contains_type_var(item_type)
@@ -5338,6 +5371,7 @@ def _for_node(
         body_branch.variables,
         body_outputs,
         loop_locals,
+        self.env.context,
     )
     typed_for = TypedForNode(
         node,
@@ -9179,16 +9213,18 @@ def _join_try_output(
     branch: AnalysisBranch,
     joined: AnalysisBranch | None,
     output: AnalysisBranch,
+    ctx: T.Context,
 ) -> AnalysisBranch | None:
     """Join try output during static analysis."""
     if joined is None:
         return output
     if joined.inputs != output.inputs:
         return None
-    stack = merge_stacks(joined.stack, output.stack)
+    stack = merge_stacks(joined.stack, output.stack, ctx)
     variables = joined.variables.merge_against(
         output.variables,
         branch.variables,
+        ctx,
     )
     return (
         _refine_branch_like(branch, joined)
@@ -9241,20 +9277,22 @@ def _join_match_output(
     baseline: AnalysisBranch,
     joined: AnalysisBranch | None,
     candidate: AnalysisBranch,
+    ctx: T.Context,
 ) -> AnalysisBranch | None:
     """Join match output during static analysis."""
     if joined is None:
         return candidate
     if joined.inputs != candidate.inputs:
-        merged_inputs = _merge_branch_inputs(joined.inputs, candidate.inputs)
+        merged_inputs = _merge_branch_inputs(joined.inputs, candidate.inputs, ctx)
         if merged_inputs is None:
             return None
     else:
         merged_inputs = joined.inputs
-    stack = merge_stacks(joined.stack, candidate.stack)
+    stack = merge_stacks(joined.stack, candidate.stack, ctx)
     variables = joined.variables.merge_against(
         candidate.variables,
         baseline.variables,
+        ctx,
     )
     base = (
         _refine_branch_like(original, joined)
@@ -9286,28 +9324,32 @@ def _match_subject_pattern_type(
     branch: AnalysisBranch,
     node: MatchNode,
     index: int,
+    env: T.Environment,
 ) -> T.Type:
     """Determine the type of match subject pattern during static analysis."""
     inferred = tuple(
         typ
         for case in node.cases
         if index < len(case.patterns)
-        if (typ := _pattern_subject_type(case.patterns[index])) is not None
+        if (typ := _pattern_subject_type(case.patterns[index], env.context)) is not None
     )
     if not inferred:
         return _anonymous_type_var(branch, index + 1)
     result = inferred[0]
     for typ in inferred[1:]:
-        result = T.merge_types(result, typ)
+        result = T.merge_types(result, typ, env.context)
     return result
 
 
-def _pattern_subject_type(pattern: MatchPatternNode) -> T.Type | None:
+def _pattern_subject_type(
+    pattern: MatchPatternNode,
+    ctx: T.Context,
+) -> T.Type | None:
     """Determine the type of pattern subject during static analysis."""
     if isinstance(pattern, TypePatternNode):
         return pattern.typ
     if isinstance(pattern, BindingPatternNode):
-        return _pattern_subject_type(pattern.pattern)
+        return _pattern_subject_type(pattern.pattern, ctx)
     if isinstance(pattern, LiteralPatternNode):
         if isinstance(pattern.value, NumberLiteralNode):
             return T.Number
@@ -9319,25 +9361,25 @@ def _pattern_subject_type(pattern: MatchPatternNode) -> T.Type | None:
             item_type
             for item in pattern.items
             if not isinstance(item, RestPatternNode)
-            if (item_type := _pattern_subject_type(item)) is not None
+            if (item_type := _pattern_subject_type(item, ctx)) is not None
         )
         if not item_types:
             return None
         item_result = item_types[0]
         for item_type in item_types[1:]:
-            item_result = T.merge_types(item_result, item_type)
+            item_result = T.merge_types(item_result, item_type, ctx)
         return T.ExactList(item_result)
     if isinstance(pattern, OrPatternNode):
         option_types = tuple(
             typ
             for option in pattern.options
-            if (typ := _pattern_subject_type(option)) is not None
+            if (typ := _pattern_subject_type(option, ctx)) is not None
         )
         if not option_types:
             return None
         result = option_types[0]
         for typ in option_types[1:]:
-            result = T.merge_types(result, typ)
+            result = T.merge_types(result, typ, ctx)
         return result
     return None
 
@@ -9575,7 +9617,7 @@ def _successful_pattern_subject_type(
         )
         result = refinements[0]
         for refinement in refinements[1:]:
-            result = T.merge_types(result, refinement)
+            result = T.merge_types(result, refinement, env.context)
         return result
     # Guards, expression patterns, and structural list patterns can constrain
     # values without proving a narrower type for the entire subject.
@@ -9634,7 +9676,11 @@ def _pattern_binding_types(
     def add(name: Symbol, typ: T.Type) -> None:
         """Merge one guaranteed binding into the pattern-local type map."""
         existing = result.get(name)
-        result[name] = typ if existing is None else T.merge_types(existing, typ)
+        result[name] = (
+            typ
+            if existing is None
+            else T.merge_types(existing, typ, env.context)
+        )
 
     if isinstance(pattern, BindingPatternNode):
         result.update(_pattern_binding_types(pattern.pattern, subject_type, env))
@@ -9684,7 +9730,7 @@ def _pattern_binding_types(
             types = tuple(option[name] for option in option_bindings)
             typ = types[0]
             for other in types[1:]:
-                typ = T.merge_types(typ, other)
+                typ = T.merge_types(typ, other, env.context)
             add(name, typ)
         return result
     return result
@@ -10060,6 +10106,7 @@ def _literal_branch_results(
     item_options: tuple[tuple[ListItemAnalysis, ...], ...],
     node: ASTNode,
     literal_type: Callable[[tuple[ListItemAnalysis, ...]], T.Type],
+    ctx: T.Context,
 ) -> BranchSet:
     """Compute the results for literal branch during static analysis."""
     results: list[AnalysisBranch] = []
@@ -10073,7 +10120,11 @@ def _literal_branch_results(
             if any(_is_never(item.typ) for item in combo)
             else literal_type(combo)
         )
-        variables = _merge_list_item_variables(branch.variables, combo)
+        variables = _merge_list_item_variables(
+            branch.variables,
+            combo,
+                ctx,
+        )
         element_tags = frozenset(
             tag for item in combo for tag in item.branch.element_tags
         )
@@ -10142,6 +10193,7 @@ def _merge_inferred_inputs(
 def _merge_branch_inputs(
     left: tuple[T.Type, ...],
     right: tuple[T.Type, ...],
+    ctx: T.Context,
 ) -> tuple[T.Type, ...] | None:
     """Merge branch inputs during static analysis."""
     if len(left) != len(right):
@@ -10149,7 +10201,7 @@ def _merge_branch_inputs(
     return tuple(
         left_item
         if T.same(left_item, right_item)
-        else T.merge_types(left_item, right_item)
+        else T.merge_types(left_item, right_item, ctx)
         for left_item, right_item in zip(left, right, strict=True)
     )
 
@@ -10157,11 +10209,12 @@ def _merge_branch_inputs(
 def _merge_list_item_variables(
     before: BranchVariables,
     items: tuple[ListItemAnalysis, ...],
+    ctx: T.Context,
 ) -> BranchVariables:
     """Merge list item variables during static analysis."""
     merged = before
     for item in items:
-        merged = merged.merge_against(item.branch.variables, before)
+        merged = merged.merge_against(item.branch.variables, before, ctx)
     return merged
 
 
@@ -10176,6 +10229,7 @@ def _merge_loop_variables(
     before: BranchVariables,
     outputs: BranchSet,
     loop_locals: tuple[Symbol, ...],
+    ctx: T.Context,
 ) -> BranchVariables:
     """Merge loop variables during static analysis."""
     before_loop = _drop_named_block_locals(before, loop_locals)
@@ -10184,6 +10238,7 @@ def _merge_loop_variables(
         merged = merged.merge_against(
             _drop_named_block_locals(output.variables, loop_locals),
             before_loop,
+            ctx,
         )
     return merged
 
@@ -10207,6 +10262,7 @@ def _drop_named_block_locals(
 def _loop_variable_output_type(
     name: Symbol,
     outputs: BranchSet,
+    ctx: T.Context,
 ) -> T.Type | None:
     """Determine the type of loop variable output during static analysis."""
     types = tuple(
@@ -10216,7 +10272,7 @@ def _loop_variable_output_type(
         return None
     merged = types[0]
     for typ in types[1:]:
-        merged = T.merge_types(merged, typ)
+        merged = T.merge_types(merged, typ, ctx)
     return merged
 
 

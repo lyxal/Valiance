@@ -1099,14 +1099,25 @@ class VirtualMachine:
                                 ip = target
                                 continue
                         case OpCode.JUMP:
-                            ip = instruction.arg
+                            ip = _validated_jump_target(
+                                instruction.arg,
+                                len(instructions),
+                            )
                             continue
                         case OpCode.JUMP_IF_FALSE:
+                            target = _validated_jump_target(
+                                instruction.arg,
+                                len(instructions),
+                            )
                             if not _truthy(_pop(frame.stack, "conditional jump")):
-                                ip = instruction.arg
+                                ip = target
                                 continue
                         case OpCode.JUMP_IF_MATCH:
                             patterns, target = instruction.arg
+                            target = _validated_jump_target(
+                                target,
+                                len(instructions),
+                            )
                             match_result = self._match_patterns(frame, patterns)
                             if match_result is not None:
                                 bindings, values = match_result
@@ -1164,8 +1175,11 @@ class VirtualMachine:
                                 tuple(_pop_many(frame.stack, instruction.arg))
                             )
                         case OpCode.TRY_BEGIN:
+                            handlers = tuple(instruction.arg)
+                            for _, target in handlers:
+                                _validated_jump_target(target, len(instructions))
                             frame.panic_handlers.append(
-                                _PanicHandler(tuple(instruction.arg), len(frame.stack))
+                                _PanicHandler(handlers, len(frame.stack))
                             )
                         case OpCode.TRY_END:
                             if frame.panic_handlers:
@@ -4111,11 +4125,54 @@ def _matches_cast_type(value: Any, spec: object) -> bool:
         return False
     kind = spec[0]
     if kind == "none":
-        return value is None
+        return _is_none_result_value(value)
     if kind == "var":
         return not is_list_like(value)
     if kind == "nominal":
-        return isinstance(spec[1], str) and _matches_type_pattern(value, spec[1])
+        if not isinstance(spec[1], str) or not _matches_type_pattern(value, spec[1]):
+            return False
+        expected_args = spec[2] if len(spec) > 2 else ()
+        if not expected_args:
+            return True
+        unwrapped = unwrap_runtime_value(value)
+        if not isinstance(unwrapped, ObjectValue):
+            return False
+        if len(unwrapped.type_args) != len(expected_args):
+            return False
+        return all(
+            _runtime_patterns_same_type(
+                _parse_runtime_type_pattern(actual),
+                _parse_runtime_type_pattern(expected),
+            )
+            for actual, expected in zip(
+                unwrapped.type_args,
+                expected_args,
+                strict=True,
+            )
+        )
+    if kind == "tagged":
+        if len(spec) != 3 or not isinstance(spec[2], tuple):
+            return False
+        actual_tags = runtime_value_tags(value)
+        for item in spec[2]:
+            if (
+                not isinstance(item, tuple)
+                or len(item) != 3
+                or not isinstance(item[0], str)
+                or type(item[1]) is not int
+                or type(item[2]) is not bool
+            ):
+                return False
+            name, depth, absent = item
+            present = any(
+                str(tag.name) == name
+                and tag.depth == depth
+                and not tag.absent
+                for tag in actual_tags
+            )
+            if absent == present:
+                return False
+        return _matches_cast_type(unwrap_runtime_value(value), spec[1])
     if kind == "union":
         return any(_matches_cast_type(value, item) for item in spec[1])
     if kind == "intersection":
@@ -4133,6 +4190,15 @@ def _matches_cast_type(value: Any, spec: object) -> bool:
             return False
         return _matches_collection_cast(value, collection_kind, rank, base)
     return False
+
+
+def _validated_jump_target(target: object, instruction_count: int) -> int:
+    """Return a bytecode jump target after strict bounds validation."""
+    if type(target) is not int or not 0 <= target <= instruction_count:
+        raise RuntimeError(
+            f"invalid jump target {target!r} for {instruction_count} instructions"
+        )
+    return target
 
 
 def _matches_collection_cast(
