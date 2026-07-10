@@ -14,21 +14,39 @@ base seed, and iteration number.
 - `source-mutations` damages slices of checked-in `samples/*.vlnc` programs by
   deleting, inserting, replacing, duplicating, and transposing source text. It
   checks the same diagnostic-only failure contract against near-valid grammar.
+- `parser-depth` generates deeply nested and selectively truncated parentheses,
+  lists, and tuples. Excessive nesting must either parse successfully or fail
+  with a language diagnostic rather than leaking Python recursion failures.
 - `valid-programs` generates grammar-valid arithmetic, variables, conditionals,
   functions, `both`/`correspond` call-site partitions, flat vectors, and nested
   vectors. It compares execution with an
   independent `Decimal` model and requires direct bytecode execution to equal a
   serialize/deserialize execution.
 - `serialization` generates nested bytecode records, functions, function sets,
-  dispatch patterns, vector extensions, object constructors, and every opcode.
-  It requires exact object round trips and canonical re-encoding.
+  dispatch patterns, vector extensions, object constructors, function
+  stack-input flags, parameter ranks, and every opcode. It requires exact object
+  round trips and canonical re-encoding.
+- `numeric-booleans` generates host Boolean constants at the bytecode boundary
+  and requires them to canonicalize to the language's numeric `0`/`1`
+  representation after decoding and execution.
 - `malformed-bytecode` truncates, flips, replaces, appends, and splices bytes in
   valid programs. A payload must either decode successfully and stabilize after
   re-encoding or fail with `BytecodeFormatError`.
+- `bytecode-depth` constructs portable bytecode with deeply nested tuple values.
+  Recursive payloads must decode and stabilize or fail through
+  `BytecodeFormatError`, never through an implementation exception.
+- `runtime-bytecode` executes bounded, straight-line programs containing
+  malformed instruction arguments. They may succeed or raise Valiance's public
+  `RuntimeError`, but Python implementation exceptions must not escape.
 - `type-relations` generates nested concrete types and checks normalization,
-  equality, subtyping, assignability, merging, exact/minimum list and array
-  covariance, one-way array-to-list compatibility, tags, rows, and display
-  invariants. Failure reports include both generated types and the wrapper rank.
+  equality, subtyping, assignability, commutative upper-bound merging,
+  exact/minimum list and array covariance, one-way array-to-list compatibility,
+  tags, rows, and display invariants. Failure reports include both generated
+  types and the wrapper rank.
+- `type-algebra` targets the highest-risk algebraic contracts directly: bottom
+  intersections, numeric-intersection simplification, optional covariance,
+  associative branch and stack joins, permutation-independent generic evidence,
+  and overload declaration-order independence.
 - `structural-types` builds contexts containing nominal subtype facts,
   declaration-site variance, row fields, and structural overloads. It generates
   named and anonymous generics, rows, anonymous traits, functions, collections,

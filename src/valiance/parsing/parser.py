@@ -134,16 +134,22 @@ class _ChainPiece:
 
 def parse(source: str) -> list[ASTNode]:
     """Parse Valiance source into AST nodes."""
-    return Parser(lex(source)).parse_program()
+    try:
+        return Parser(lex(source)).parse_program()
+    except RecursionError as exc:
+        raise ParseError("source nesting is too deep") from exc
 
 
 def parse_type(source: str) -> Type:
     """Parse one Valiance type expression."""
-    parser = Parser(lex(source))
-    typ = parser.parse_type_expression()
-    parser._skip_newlines()
-    parser._expect(TokenKind.EOF)
-    return typ
+    try:
+        parser = Parser(lex(source))
+        typ = parser.parse_type_expression()
+        parser._skip_newlines()
+        parser._expect(TokenKind.EOF)
+        return typ
+    except RecursionError as exc:
+        raise ParseError("type nesting is too deep") from exc
 
 
 class Parser:

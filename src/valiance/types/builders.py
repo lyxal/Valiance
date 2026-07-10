@@ -274,10 +274,13 @@ def normalize(t: Type) -> Type:
         flat: set[Type] = set()
         for item in t.items:
             item = normalize(item)
+            if isinstance(item, NeverType):
+                return Never()
             if isinstance(item, IntersectionType):
                 flat.update(item.items)
             else:
                 flat.add(item)
+        flat = _normalize_numeric_intersection(flat)
         if len(flat) == 1:
             return next(iter(flat))
         return IntersectionType(frozenset(flat))
@@ -343,7 +346,10 @@ def normalize(t: Type) -> Type:
         )
 
     if isinstance(t, NominalType):
-        return N(t.name, *(normalize(a) for a in t.args))
+        args = tuple(normalize(arg) for arg in t.args)
+        if t.name == SOME and len(args) == 1 and isinstance(args[0], NeverType):
+            return Never()
+        return N(t.name, *args)
 
     if isinstance(t, TaggedType):
         inner = normalize(t.inner)
@@ -390,6 +396,31 @@ def _normalize_result_union(items: set[Type]) -> Type | None:
     ok = U(*ok_items) if len(ok_items) > 1 else ok_items[0]
     err = U(*err_items) if len(err_items) > 1 else err_items[0]
     return Result(ok, err)
+
+
+def _normalize_numeric_intersection(items: set[Type]) -> set[Type]:
+    """Remove numeric supertypes made redundant by narrower intersections."""
+    names = {
+        item.name
+        for item in items
+        if isinstance(item, NominalType) and not item.args
+    }
+    remove: set[Type] = set()
+    if INTEGER in names:
+        remove.update(
+            item
+            for item in items
+            if isinstance(item, NominalType)
+            and not item.args
+            and item.name in {REAL, NUMBER}
+        )
+    elif REAL in names:
+        remove.update(
+            item
+            for item in items
+            if isinstance(item, NominalType) and not item.args and item.name == NUMBER
+        )
+    return items - remove
 
 
 def _normalize_numeric_union(items: set[Type]) -> set[Type]:

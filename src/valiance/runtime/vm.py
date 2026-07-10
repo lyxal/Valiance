@@ -411,6 +411,10 @@ class VirtualMachine:
             return self.call(FunctionValue(program.main, self.globals), [])
         except PanicSignal as exc:
             raise RuntimeError(f"uncaught panic: {_format_value(exc.value)}") from exc
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(f"invalid bytecode: {exc}") from exc
 
     def call(
         self,

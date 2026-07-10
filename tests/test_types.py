@@ -1,4 +1,5 @@
 import unittest
+from itertools import permutations
 
 from valiance.symbols import Symbol
 from valiance.types import (
@@ -20,10 +21,12 @@ from valiance.types import (
     Field,
     Fn,
     GenericConstraint,
+    I,
     ListExactType,
     ListMinType,
     ListRuggedType,
     N,
+    Never,
     NoneType,
     OKType,
     Overload,
@@ -85,6 +88,77 @@ ParseError = N(PARSE_ERROR)
 
 
 class TypeLibraryTests(unittest.TestCase):
+    def test_intersection_with_never_normalizes_to_bottom(self):
+        self.assertEqual(I(Integer, Never()), Never())
+        self.assertEqual(I(Never(), String), Never())
+
+    def test_optional_never_normalizes_to_none(self):
+        self.assertEqual(optional(Never()), NoneType())
+
+    def test_optional_types_are_covariant(self):
+        self.assertTrue(subtype(optional(Integer), optional(Number)))
+        self.assertTrue(assignable(optional(Integer), optional(Number)))
+        self.assertTrue(compatible(optional(Integer), optional(Number)))
+        self.assertFalse(assignable(optional(Number), optional(Integer)))
+
+    def test_numeric_intersections_remove_redundant_supertypes(self):
+        self.assertEqual(I(Integer, Real), Integer)
+        self.assertEqual(I(Integer, Number), Integer)
+        self.assertEqual(I(Real, Number), Real)
+
+    def test_bottom_intersections_preserve_subtype_transitivity(self):
+        source = I(Never(), Integer)
+        target = Tagged(String, DataTag("required"))
+
+        self.assertTrue(subtype(source, Never()))
+        self.assertTrue(subtype(Never(), target))
+        self.assertTrue(subtype(source, target))
+
+    def test_merge_is_canonical_for_mutually_assignable_refinements(self):
+        plain = Tup(Integer, Integer)
+        refined = Tup(WithoutTag(Integer, "x"), WithoutTag(Integer, "x"))
+
+        self.assertTrue(assignable(plain, refined))
+        self.assertTrue(assignable(refined, plain))
+        self.assertEqual(merge_types(plain, refined), plain)
+        self.assertEqual(merge_types(refined, plain), plain)
+
+    def test_branch_type_merging_is_commutative_and_associative(self):
+        values = (Integer, String, NoneType())
+        merged = {
+            normalize(merge_types(merge_types(first, second), third))
+            for first, second, third in permutations(values)
+        }
+
+        self.assertEqual(merged, {optional(U(Integer, String))})
+
+    def test_branch_stack_merging_is_independent_of_branch_order(self):
+        branches = (
+            TypeStack((Integer,)),
+            TypeStack((String,)),
+            TypeStack(()),
+        )
+        merged = {
+            merge_stacks(merge_stacks(first, second), third)
+            for first, second, third in permutations(branches)
+        }
+
+        self.assertEqual(merged, {TypeStack((optional(U(Integer, String)),))})
+
+    def test_generic_evidence_combination_is_permutation_invariant(self):
+        evidence = (NoneType(), Integer, optional(Integer))
+        overload = Overload((V("T"), V("T"), V("T")), (V("T"),))
+
+        results = []
+        for arguments in permutations(evidence):
+            applied = apply_overload(overload, arguments)
+            self.assertIsNotNone(applied)
+            results.append(applied.substitution["T"])
+
+        self.assertTrue(
+            all(normalize(result) == optional(Integer) for result in results)
+        )
+
     def test_symbols_have_value_equality_and_hashing(self):
         left = Symbol("Number")
         right = Symbol("Number")

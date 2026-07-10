@@ -1,7 +1,7 @@
 import unittest
 from decimal import Decimal
 
-from valiance.runtime import BytecodeFormatError, dumps, loads
+from valiance.runtime import BytecodeFormatError, RuntimeError, dumps, loads, run
 from valiance.runtime.bytecode import (
     ExtensionRuleReference,
     FunctionCode,
@@ -15,6 +15,26 @@ from valiance.runtime.bytecode import (
 
 
 class BytecodeSerializationTests(unittest.TestCase):
+    def test_boolean_constants_use_the_numeric_wire_representation(self):
+        for value, expected in ((False, 0), (True, 1)):
+            with self.subTest(value=value):
+                program = Program(
+                    FunctionCode(
+                        (
+                            Instruction(OpCode.PUSH_CONST, value),
+                            Instruction(OpCode.RETURN),
+                        ),
+                        name="<main>",
+                    )
+                )
+
+                decoded = loads(dumps(program))
+                decoded_value = decoded.main.instructions[0].arg
+
+                self.assertEqual(decoded_value, expected)
+                self.assertIs(type(decoded_value), int)
+                self.assertEqual(run(decoded), [expected])
+
     def test_invalid_decimal_payload_raises_bytecode_format_error(self):
         program = Program(
             FunctionCode(
@@ -56,6 +76,48 @@ class BytecodeSerializationTests(unittest.TestCase):
 
         with self.assertRaises(BytecodeFormatError):
             loads(data + b"\x00")
+
+    def test_deeply_nested_values_fail_through_bytecode_format_error(self):
+        value = None
+        for _ in range(2_000):
+            value = (value,)
+        program = Program(
+            FunctionCode((Instruction(OpCode.PUSH_CONST, value),), name="<main>")
+        )
+
+        with self.assertRaises(BytecodeFormatError):
+            dumps(program)
+
+    def test_deeply_nested_payloads_fail_through_bytecode_format_error(self):
+        from tools.fuzzing import _nested_tuple_bytecode
+
+        with self.assertRaises(BytecodeFormatError):
+            loads(_nested_tuple_bytecode(2_000))
+
+    def test_malformed_decoded_instructions_raise_language_runtime_errors(self):
+        instructions = (
+            Instruction(OpCode.BUILD_LIST, "not-a-count"),
+            Instruction(OpCode.MAKE_FUNCTION, "not-function-code"),
+            Instruction(OpCode.CALL_RESOLVED_ELEMENT, None),
+            Instruction(OpCode.SOURCE_ARGS, "not-an-arity"),
+        )
+
+        for instruction in instructions:
+            with self.subTest(instruction=instruction):
+                program = Program(
+                    FunctionCode(
+                        (
+                            Instruction(OpCode.PUSH_CONST, 1),
+                            instruction,
+                            Instruction(OpCode.RETURN),
+                        ),
+                        name="<main>",
+                    )
+                )
+                decoded = loads(dumps(program))
+
+                with self.assertRaises(RuntimeError):
+                    run(decoded)
 
     def test_serializes_byte_oriented_format_without_op_names(self):
         program = Program(

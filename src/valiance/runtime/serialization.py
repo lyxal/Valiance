@@ -92,10 +92,15 @@ class BytecodeFormatError(Exception):
 
 def dumps(program: Program) -> bytes:
     """Serialize a bytecode program to portable binary bytes."""
-    writer = _Writer()
-    writer.bytes(MAGIC)
-    writer.function(program.main)
-    return writer.finish()
+    try:
+        writer = _Writer()
+        writer.bytes(MAGIC)
+        writer.function(program.main)
+        return writer.finish()
+    except BytecodeFormatError:
+        raise
+    except (OverflowError, RecursionError, struct.error, UnicodeEncodeError) as exc:
+        raise BytecodeFormatError("invalid Valiance bytecode value") from exc
 
 
 def loads(data: bytes) -> Program:
@@ -106,7 +111,13 @@ def loads(data: bytes) -> Program:
         program = Program(reader.function())
         reader.expect_eof()
         return program
-    except (InvalidOperation, UnicodeDecodeError, struct.error) as exc:
+    except (
+        InvalidOperation,
+        OverflowError,
+        RecursionError,
+        UnicodeDecodeError,
+        struct.error,
+    ) as exc:
         raise BytecodeFormatError("invalid Valiance bytecode payload") from exc
 
 

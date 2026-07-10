@@ -13,6 +13,7 @@ import random
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
+from itertools import permutations
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,14 @@ from valiance.analysis import Analyser
 from valiance.asts import ASTNode, pretty_ast
 from valiance.parsing import LexError, ParseError, lex, parse
 from valiance.parsing.lexer import TokenKind
-from valiance.runtime import BytecodeFormatError, compile_program, dumps, loads, run
+from valiance.runtime import (
+    BytecodeFormatError,
+    RuntimeError as ValianceRuntimeError,
+    compile_program,
+    dumps,
+    loads,
+    run,
+)
 from valiance.runtime.bytecode import (
     ExtensionRuleReference,
     FunctionCode,
@@ -50,6 +58,7 @@ from valiance.types import (
     I,
     Integer,
     N,
+    Never,
     NoneType,
     Number,
     Overload,
@@ -60,6 +69,7 @@ from valiance.types import (
     Tagged,
     Tup,
     Type,
+    TypeStack,
     U,
     UnionDispatchBranch,
     V,
@@ -70,9 +80,11 @@ from valiance.types import (
     apply_overload,
     assignable,
     compatible,
+    merge_stacks,
     merge_types,
     normalize,
     optional,
+    resolve_overload_result,
     same,
     show,
     subtype,
@@ -364,6 +376,27 @@ def _fuzz_source_mutations(
         except (LexError, ParseError):
             return source
         pretty_ast(program)
+        return source
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(source, exc) from exc
+
+
+def _fuzz_parser_depth(
+    rng: random.Random,
+    iteration: int,
+    _config: FuzzConfig,
+) -> object:
+    """Exercise valid and damaged delimiter nesting without leaking recursion errors."""
+    opening, closing = rng.choice((("(", ")"), ("[", "]"), ("{", "}")))
+    depth = 32 + ((iteration * 37 + rng.randrange(97)) % 1_600)
+    source = opening * depth + "0" + closing * depth
+    if rng.random() < 0.35:
+        source = source[:-rng.randint(1, min(depth, 8))]
+    try:
+        try:
+            parse(source)
+        except (LexError, ParseError):
+            return source
         return source
     except BaseException as exc:
         raise _GeneratedCaseFailure(source, exc) from exc
@@ -730,6 +763,7 @@ def _random_function(
         params=tuple(_random_string(rng, 8) or "p" for _ in range(rng.randint(0, 4))),
         name=None if rng.random() < 0.25 else _random_string(rng, 12),
         cycle_params=rng.choice((False, True)),
+        accepts_stack_inputs=rng.choice((False, True)),
         element_tags=tuple(
             _random_string(rng, 8) or "tag" for _ in range(rng.randint(0, 3))
         ),
@@ -744,6 +778,10 @@ def _random_function(
             for _ in range(rng.randint(0, 4))
         ),
         return_collection_ranks=tuple(
+            None if rng.random() < 0.3 else rng.randint(0, 5)
+            for _ in range(rng.randint(0, 4))
+        ),
+        param_collection_ranks=tuple(
             None if rng.random() < 0.3 else rng.randint(0, 5)
             for _ in range(rng.randint(0, 4))
         ),
@@ -768,6 +806,34 @@ def _fuzz_serialization_roundtrip(
     except BaseException as exc:
         raise _GeneratedCaseFailure(program, exc) from exc
 
+
+
+def _fuzz_numeric_boolean_serialization(
+    rng: random.Random,
+    iteration: int,
+    _config: FuzzConfig,
+) -> object:
+    """Require host booleans to use Valiance's numeric bytecode representation."""
+    value = bool((iteration + rng.randrange(2)) % 2)
+    program = Program(
+        FunctionCode(
+            (
+                Instruction(OpCode.PUSH_CONST, value),
+                Instruction(OpCode.RETURN),
+            ),
+            name="<boolean-fuzz>",
+        )
+    )
+    try:
+        decoded = loads(dumps(program))
+        decoded_value = decoded.main.instructions[0].arg
+        if type(decoded_value) is not int or decoded_value != int(value):
+            raise AssertionError("boolean bytecode did not canonicalize to 0 or 1")
+        if run(decoded) != [int(value)]:
+            raise AssertionError("numeric boolean changed at runtime")
+        return program
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(program, exc) from exc
 
 def _mutate_bytes(rng: random.Random, data: bytes) -> bytes:
     mutation = rng.randrange(6)
@@ -814,6 +880,110 @@ def _fuzz_malformed_bytecode(
         return payload
     except BaseException as exc:
         raise _GeneratedCaseFailure(payload, exc) from exc
+
+
+def _nested_tuple_bytecode(depth: int) -> bytes:
+    """Build a minimal bytecode file whose sole constant has nested tuples."""
+    from valiance.runtime.serialization import MAGIC
+
+    empty_tuple = b"\x04\x00\x00\x00\x00"
+    function_header = b"".join(
+        (
+            b"\x00",  # optional name
+            b"\x00",  # cycle params
+            b"\x00",  # accepts stack inputs
+            b"\x00",  # recursive
+            b"\x00\x00\x00\x00",  # params
+            b"\x00\x00\x00\x00",  # element tags
+            b"\x00",  # multi
+            b"\x00\x00\x00\x00",  # dispatch types
+            b"\x00\x00\x00\x00",  # return tags
+            empty_tuple,  # return collection ranks
+            empty_tuple,  # parameter collection ranks
+            b"\x00\x00\x00\x01",  # instruction count
+            b"\x01",  # PUSH_CONST
+        )
+    )
+    nested_value = (b"\x04\x00\x00\x00\x01" * depth) + b"\x00"
+    return MAGIC + function_header + nested_value
+
+
+def _fuzz_bytecode_depth(
+    rng: random.Random,
+    iteration: int,
+    _config: FuzzConfig,
+) -> object:
+    """Require recursive bytecode payloads to decode or fail through the format API."""
+    depth = 32 + ((iteration * 53 + rng.randrange(101)) % 1_600)
+    payload = _nested_tuple_bytecode(depth)
+    try:
+        try:
+            decoded = loads(payload)
+        except BytecodeFormatError:
+            return payload
+        if loads(dumps(decoded)) != decoded:
+            raise AssertionError("deep bytecode changed after canonical round trip")
+        return payload
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(payload, exc) from exc
+
+
+_RUNTIME_BYTECODE_OPS = tuple(
+    op
+    for op in OpCode
+    if op
+    not in {
+        OpCode.JUMP,
+        OpCode.JUMP_IF_FALSE,
+        OpCode.JUMP_IF_MATCH,
+        OpCode.WHILE,
+        OpCode.FOREACH,
+        OpCode.UNFOLD,
+        OpCode.CYCLE_BEGIN,
+        OpCode.CYCLE_END,
+        OpCode.LOOP_BREAK,
+        OpCode.RETURN_SIGNAL,
+        OpCode.TRY_BEGIN,
+        OpCode.TRY_END,
+    }
+)
+
+
+def _runtime_fuzz_value(rng: random.Random, depth: int = 1) -> object:
+    """Return a bounded primitive payload suitable for malformed VM programs."""
+    choices = (None, rng.choice((False, True)), rng.randint(-8, 8), _random_string(rng))
+    if depth <= 0 or rng.random() < 0.6:
+        return rng.choice(choices)
+    return tuple(_runtime_fuzz_value(rng, depth - 1) for _ in range(rng.randint(0, 3)))
+
+
+def _fuzz_runtime_bytecode(
+    rng: random.Random,
+    iteration: int,
+    _config: FuzzConfig,
+) -> object:
+    """Run malformed straight-line bytecode and reject leaked Python exceptions."""
+    op = _RUNTIME_BYTECODE_OPS[iteration % len(_RUNTIME_BYTECODE_OPS)]
+    instructions = [
+        Instruction(OpCode.PUSH_CONST, _runtime_fuzz_value(rng, 0))
+        for _ in range(rng.randint(0, 4))
+    ]
+    instructions.extend(
+        (
+            Instruction(op, _runtime_fuzz_value(rng)),
+            Instruction(OpCode.RETURN),
+        )
+    )
+    program = Program(FunctionCode(tuple(instructions), name="<fuzz>"))
+    try:
+        decoded = loads(dumps(program))
+        try:
+            run(decoded)
+        except ValianceRuntimeError:
+            return program
+        return program
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(program, exc) from exc
 
 
 def _random_concrete_type(rng: random.Random, depth: int):
@@ -886,6 +1056,9 @@ def _fuzz_type_relations(
             raise AssertionError("a duplicate union did not normalize to its member")
 
         merged = merge_types(left, right)
+        reverse_merged = merge_types(right, left)
+        if not same(merged, reverse_merged):
+            raise AssertionError("type merging is not commutative")
         if not assignable(left, merged) or not assignable(right, merged):
             raise AssertionError("merged type does not accept both inputs")
 
@@ -923,6 +1096,101 @@ def _fuzz_type_relations(
     except BaseException as exc:
         raise _GeneratedCaseFailure(case, exc) from exc
 
+
+
+def _fuzz_type_algebra(
+    rng: random.Random,
+    iteration: int,
+    _config: FuzzConfig,
+) -> object:
+    """Check high-risk relation laws, branch joins, and generic order invariance."""
+    unrelated = rng.choice((String, N(Symbol("FuzzUnrelated"))))
+    value = rng.choice((Integer, Real, Number))
+    case = (value, unrelated, iteration)
+    try:
+        # Bottom must remain bottom through intersections, otherwise subtype
+        # transitivity can depend on which relation path is evaluated first.
+        bottom_intersection = I(Never(), value)
+        tagged_target = Tagged(unrelated, DataTag(f"required-{iteration % 5}"))
+        if not same(bottom_intersection, Never()):
+            raise AssertionError("intersection with Never did not normalize to Never")
+        if not (
+            subtype(bottom_intersection, Never())
+            and subtype(Never(), tagged_target)
+            and subtype(bottom_intersection, tagged_target)
+        ):
+            raise AssertionError("subtyping was not transitive through Never")
+
+        if not same(optional(Never()), NoneType()):
+            raise AssertionError("Optional[Never] did not normalize to None")
+
+        if not (
+            subtype(optional(Integer), optional(Number))
+            and assignable(optional(Integer), optional(Number))
+            and compatible(optional(Integer), optional(Number))
+        ):
+            raise AssertionError("optional covariance was rejected")
+        if assignable(optional(Number), optional(Integer)):
+            raise AssertionError("optional covariance was accepted backwards")
+
+        numeric_intersection = rng.choice(
+            ((Integer, Real, Integer), (Integer, Number, Integer), (Real, Number, Real))
+        )
+        if not same(I(*numeric_intersection[:2]), numeric_intersection[2]):
+            raise AssertionError("numeric intersection kept a redundant supertype")
+
+        # Branch joins must not depend on the order in which control-flow
+        # branches happen to be analysed.
+        branch_types = (value, unrelated, NoneType())
+        merged_types = {
+            normalize(merge_types(merge_types(first, second), third))
+            for first, second, third in permutations(branch_types)
+        }
+        expected = optional(U(value, unrelated))
+        if len(merged_types) != 1 or not same(next(iter(merged_types)), expected):
+            raise AssertionError("branch type merge was order-dependent")
+
+        branches = tuple(TypeStack((typ,)) for typ in branch_types[:2]) + (TypeStack(),)
+        merged_stacks = {
+            merge_stacks(merge_stacks(first, second), third)
+            for first, second, third in permutations(branches)
+        }
+        if merged_stacks != {TypeStack((expected,))}:
+            raise AssertionError("branch stack merge was order-dependent")
+
+        # Generic evidence is a set of constraints, not an argument-order fold.
+        evidence = (NoneType(), value, optional(value))
+        overload = Overload((V("T"), V("T"), V("T")), (V("T"),))
+        solutions = []
+        for arguments in permutations(evidence):
+            applied = apply_overload(overload, arguments)
+            if applied is None:
+                raise AssertionError("generic solution depended on evidence order")
+            solutions.append(applied.substitution["T"])
+        if not all(same(solution, optional(value)) for solution in solutions):
+            raise AssertionError("generic evidence produced inconsistent solutions")
+
+        # Overload declaration order must not affect the chosen numeric overload.
+        overloads = (
+            Overload((Integer,), (Integer,)),
+            Overload((Real,), (Real,)),
+            Overload((Number,), (Number,)),
+        )
+        expected_result = resolve_overload_result(overloads, (value,))
+        if expected_result is None:
+            raise AssertionError("numeric overload set had no winner")
+        for ordering in permutations(overloads):
+            result = resolve_overload_result(ordering, (value,))
+            if result is None or not same(
+                result.returns[0],
+                expected_result.returns[0],
+            ):
+                raise AssertionError(
+                    "overload resolution depended on declaration order"
+                )
+        return case
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(case, exc) from exc
 
 _STRUCT_FOO = Symbol("FuzzFoo")
 _STRUCT_ENTITY = Symbol("FuzzEntity")
@@ -1384,10 +1652,15 @@ def _fuzz_structural_types(
 TARGETS: dict[str, Target] = {
     "lexer-parser": _fuzz_lexer_parser,
     "source-mutations": _fuzz_source_mutations,
+    "parser-depth": _fuzz_parser_depth,
     "valid-programs": _fuzz_valid_programs,
     "serialization": _fuzz_serialization_roundtrip,
+    "numeric-booleans": _fuzz_numeric_boolean_serialization,
     "malformed-bytecode": _fuzz_malformed_bytecode,
+    "bytecode-depth": _fuzz_bytecode_depth,
+    "runtime-bytecode": _fuzz_runtime_bytecode,
     "type-relations": _fuzz_type_relations,
+    "type-algebra": _fuzz_type_algebra,
     "structural-types": _fuzz_structural_types,
 }
 

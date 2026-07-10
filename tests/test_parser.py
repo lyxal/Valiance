@@ -116,6 +116,12 @@ class LexerTests(unittest.TestCase):
         with self.assertRaises(LexError):
             lex('"missing')
 
+    def test_deeply_nested_source_fails_with_parse_error_not_recursion_error(self):
+        source = "[" * 2_000 + "0" + "]" * 2_000
+
+        with self.assertRaises(ParseError):
+            parse(source)
+
     def test_newline_token_uses_the_consumed_character_location(self):
         newline = next(token for token in lex("first\nsecond") if token.value == "\n")
 

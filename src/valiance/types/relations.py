@@ -71,6 +71,7 @@ BOOLEAN = Symbol("Boolean")
 INTEGER = Symbol("Integer")
 NUMBER = Symbol("Number")
 REAL = Symbol("Real")
+SOME = Symbol("Some")
 
 
 def _match_variadic_tuple(
@@ -119,6 +120,13 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
 
     if same(source, target) or isinstance(source, NeverType):
         return True
+
+    if _is_optional(source) and _is_optional(target):
+        source_inner = _optional_inner(source)
+        target_inner = _optional_inner(target)
+        if source_inner is None or target_inner is None:
+            return source_inner is target_inner
+        return assignable(source_inner, target_inner, ctx)
 
     if isinstance(source, TaggedType):
         if not _has_unit_tag(source.tags, ctx) and subtype(source.inner, target, ctx):
@@ -548,6 +556,13 @@ def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
     if _is_boolean_number_to_integer(source, target):
         return True
 
+    # A union source must satisfy target-specific assignment rules branch by
+    # branch. In particular, None | T is assignable to Optional[U] when None
+    # and T are each accepted, even though the union node itself is not a
+    # present value that can be implicitly wrapped.
+    if isinstance(source, UnionType):
+        return all(assignable(item, target, ctx) for item in source.items)
+
     if (
         isinstance(source, AnonymousTraitType)
         and source.generics
@@ -572,14 +587,20 @@ def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
 
     if _is_optional(target):
         # Assignment can implicitly wrap a present value into Some[T], and None
-        # can be stored in any optional.
+        # can be stored in any optional. An already wrapped Some[S] checks its
+        # payload against T, which makes Optional covariant in its payload.
         inner = _optional_inner(target)
-        return isinstance(source, NoneTypeNode) or (
-            inner is not None and assignable(source, inner, ctx)
-        )
+        if isinstance(source, NoneTypeNode):
+            return True
+        if (
+            inner is not None
+            and isinstance(source, NominalType)
+            and source.name == SOME
+            and len(source.args) == 1
+        ):
+            return assignable(source.args[0], inner, ctx)
+        return inner is not None and assignable(source, inner, ctx)
 
-    if isinstance(source, UnionType):
-        return all(assignable(s, target, ctx) for s in source.items)
     if isinstance(target, UnionType):
         return any(assignable(source, t, ctx) for t in target.items)
 
@@ -715,7 +736,14 @@ def _solve(
                 # must provide T, otherwise the generic remains underconstrained.
                 return True
             inner = _optional_inner(p)
-            actual_inner = _optional_inner(a) if _is_optional(a) else a
+            if (
+                isinstance(a, NominalType)
+                and a.name == SOME
+                and len(a.args) == 1
+            ):
+                actual_inner = a.args[0]
+            else:
+                actual_inner = _optional_inner(a) if _is_optional(a) else a
             return (
                 inner is not None
                 and actual_inner is not None
@@ -1000,6 +1028,12 @@ def _collection_view(t: Type) -> CollectionType | None:
     return None
 
 
+def _type_join_key(typ: Type) -> tuple[int, str, str]:
+    """Order equivalent join candidates by least-refined stable syntax."""
+    rendered = show(typ)
+    return (len(rendered), rendered, repr(typ))
+
+
 def _combine(
     a: Type,
     b: Type,
@@ -1009,9 +1043,13 @@ def _combine(
     a, b = normalize(a), normalize(b)
     if same(a, b):
         return a
-    if assignable(a, b, ctx):
+    a_to_b = assignable(a, b, ctx)
+    b_to_a = assignable(b, a, ctx)
+    if a_to_b and b_to_a:
+        return min((a, b), key=_type_join_key)
+    if a_to_b:
         return b
-    if assignable(b, a, ctx):
+    if b_to_a:
         return a
     if _is_optional(a) and _is_optional(b):
         ai, bi = _optional_inner(a), _optional_inner(b)
@@ -1063,10 +1101,35 @@ def _combine_all(
     values: Iterable[Type],
     ctx: Context | None = None,
 ) -> Type | None:
-    """Merge a sequence of generic solutions, returning ``None`` on conflict."""
-    vals = list(values)
+    """Merge generic evidence without depending on its collection order."""
+    ctx = ctx or Context()
+    vals = list(dict.fromkeys(normalize(value) for value in values))
     if not vals:
         return None
+
+    # Prefer an evidence type that already accepts every other observation.
+    # This handles chains such as Integer -> Real -> Number and bridge types
+    # such as None, Integer, Optional[Integer] without an order-sensitive fold.
+    common = [
+        candidate
+        for candidate in vals
+        if all(assignable(value, candidate, ctx) for value in vals)
+    ]
+    if common:
+        common.sort(key=_type_join_key)
+        for candidate in common:
+            if not any(
+                not same(other, candidate)
+                and assignable(other, candidate, ctx)
+                and not assignable(candidate, other, ctx)
+                for other in common
+            ):
+                return candidate
+        return common[0]
+
+    # Some collection joins synthesize a rank-widened type that is not already
+    # present in the evidence. A canonical ordering keeps that fold stable.
+    vals.sort(key=_type_join_key)
     out = vals[0]
     for value in vals[1:]:
         out = _combine(out, value, ctx)
@@ -1075,17 +1138,65 @@ def _combine_all(
     return out
 
 
+def _reduced_union(*types: Type) -> Type:
+    """Build a deterministic union with assignable subtype members removed."""
+    members: set[Type] = set()
+    for typ in types:
+        normalized = normalize(typ)
+        if isinstance(normalized, UnionType):
+            members.update(normalized.items)
+        else:
+            members.add(normalized)
+
+    ordered = sorted(members, key=_type_join_key)
+    kept: list[Type] = []
+    for index, member in enumerate(ordered):
+        redundant = False
+        for other_index, other in enumerate(ordered):
+            if index == other_index or same(member, other):
+                continue
+            if not assignable(member, other):
+                continue
+            if not assignable(other, member) or other_index < index:
+                redundant = True
+                break
+        if not redundant:
+            kept.append(member)
+    return U(*kept)
+
+
 def merge_types(a: Type, b: Type) -> Type:
-    """Merge two branch result types using union/optional normalization."""
-    if isinstance(normalize(a), NoneTypeNode):
-        return optional(b)
-    if isinstance(normalize(b), NoneTypeNode):
-        return optional(a)
-    if assignable(a, b):
-        return b
-    if assignable(b, a):
+    """Merge branch result types as a commutative, associative type join."""
+    a, b = normalize(a), normalize(b)
+    if same(a, b):
         return a
-    return U(a, b)
+    if isinstance(a, NeverType):
+        return b
+    if isinstance(b, NeverType):
+        return a
+    if isinstance(a, NoneTypeNode):
+        return b if _is_optional(b) else optional(b)
+    if isinstance(b, NoneTypeNode):
+        return a if _is_optional(a) else optional(a)
+
+    a_optional = _optional_inner(a) if _is_optional(a) else None
+    b_optional = _optional_inner(b) if _is_optional(b) else None
+    if a_optional is not None and b_optional is not None:
+        return optional(merge_types(a_optional, b_optional))
+    if a_optional is not None:
+        return optional(merge_types(a_optional, b))
+    if b_optional is not None:
+        return optional(merge_types(a, b_optional))
+
+    a_to_b = assignable(a, b)
+    b_to_a = assignable(b, a)
+    if a_to_b and b_to_a:
+        return min((a, b), key=_type_join_key)
+    if a_to_b:
+        return b
+    if b_to_a:
+        return a
+    return _reduced_union(a, b)
 
 
 def merge_stacks(
