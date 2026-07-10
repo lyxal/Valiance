@@ -8,6 +8,7 @@ from valiance.analysis import (
     BranchSet,
     BranchVariables,
     InputMode,
+    RewriteKind,
     analyse,
     analyse_function,
     analyse_function_details,
@@ -4103,6 +4104,243 @@ class SmartDiagnosticTests(unittest.TestCase):
             ],
         )
         self.assertEqual(typed[-1].typ, Number)
+
+    def test_lint_findings_expose_structured_rewrite_metadata(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("1 as Integer"))
+
+        [finding] = analyser.lint_findings
+        self.assertEqual(finding.code, "redundant-cast")
+        self.assertEqual(
+            finding.message,
+            "unnecessary cast to Integer; remove `as Integer`",
+        )
+        self.assertIsInstance(finding.node, CastNode)
+        self.assertIsNotNone(finding.rewrite)
+        self.assertEqual(finding.rewrite.kind, RewriteKind.REMOVE_NODE)
+        self.assertTrue(finding.rewrite.semantics_preserving)
+        self.assertEqual(finding.render(), analyser.lints[0])
+
+    def test_nested_function_propagates_structured_lint_findings(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("fn => 1 as Integer end"))
+
+        self.assertEqual(len(analyser.lints), 1)
+        self.assertEqual(len(analyser.lint_findings), 1)
+        self.assertEqual(analyser.lint_findings[0].code, "redundant-cast")
+
+    def test_empty_copy_is_a_lint_and_analysis_continues(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(parse("1 copy(value ->) 2 +"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            analyser.lints,
+            [
+                "1:3: this copy produces no values and has no effect; "
+                "remove `copy(value ->)`"
+            ],
+        )
+        self.assertEqual(analyser.lint_findings[0].code, "no-op-copy")
+        self.assertEqual(
+            analyser.lint_findings[0].rewrite.kind,
+            RewriteKind.REMOVE_NODE,
+        )
+        self.assertEqual(typed[-1].typ, Integer)
+
+    def test_code_after_explicit_return_is_linted_as_unreachable(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+fn -> Number =>
+  return 1
+  2
+end
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            analyser.lints,
+            [
+                "4:3: code after `return` is unreachable; "
+                "remove it or move it before the return"
+            ],
+        )
+        [finding] = analyser.lint_findings
+        self.assertEqual(finding.code, "unreachable-code")
+        self.assertEqual(
+            finding.rewrite.kind,
+            RewriteKind.REMOVE_UNREACHABLE_SUFFIX,
+        )
+
+    def test_match_case_after_default_is_linted_as_unreachable(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                """
+1
+match =>
+  _ => "first"
+  1 => "second"
+end
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            analyser.lints,
+            [
+                "5:3: match case is unreachable because an earlier case "
+                "matches every value; remove this case"
+            ],
+        )
+        self.assertEqual(
+            analyser.lint_findings[0].rewrite.kind,
+            RewriteKind.REMOVE_MATCH_CASE,
+        )
+        self.assertEqual(typed[-1].typ, String)
+
+    def test_duplicate_literal_match_case_is_linted(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+1
+match =>
+  1 => "first"
+  1 => "second"
+  _ => "other"
+end
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            analyser.lints,
+            [
+                "5:3: duplicate match case; remove this case because the "
+                "same literal pattern appears earlier"
+            ],
+        )
+        self.assertEqual(
+            analyser.lint_findings[0].code,
+            "duplicate-match-case",
+        )
+
+    def test_duplicate_literal_match_alternative_is_linted(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+1
+match =>
+  1 || 1 => "one"
+  _ => "other"
+end
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            analyser.lints,
+            [
+                "4:8: duplicate match alternative; remove the repeated "
+                "literal pattern"
+            ],
+        )
+        [finding] = analyser.lint_findings
+        self.assertEqual(finding.code, "duplicate-pattern-alternative")
+        self.assertEqual(
+            finding.rewrite.kind,
+            RewriteKind.REMOVE_PATTERN_ALTERNATIVE,
+        )
+
+    def test_repeated_guard_match_cases_are_not_assumed_redundant(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+1
+match =>
+  if > 0 => "positive"
+  if > 0 => "also"
+  _ => "other"
+end
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(analyser.lints, [])
+        self.assertEqual(analyser.lint_findings, [])
+
+    def test_guarded_named_match_pattern_does_not_hide_later_case(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                '1\nmatch =>\n  as x if > 0 => "positive"\n'
+                '  _ => "other"\nend'
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(analyser.lints, [])
+        self.assertEqual(analyser.lint_findings, [])
+
+    def test_guarded_named_match_pattern_is_not_exhaustive_by_itself(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse('1\nmatch =>\n  as x if > 0 => "positive"\nend')
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["2:1: match without default requires enum or variant value"],
+        )
+        self.assertEqual(analyser.lints, [])
+
+    def test_destructuring_named_match_pattern_does_not_hide_later_case(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                '1\nmatch =>\n  as x(field) => "structured"\n'
+                '  _ => "other"\nend'
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(analyser.lints, [])
+        self.assertEqual(analyser.lint_findings, [])
+
+    def test_destructuring_named_match_pattern_is_not_exhaustive_by_itself(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse('1\nmatch =>\n  as x(field) => "structured"\nend')
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["2:1: match without default requires enum or variant value"],
+        )
+        self.assertEqual(analyser.lints, [])
 
 
 if __name__ == "__main__":

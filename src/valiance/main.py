@@ -765,7 +765,7 @@ class _ReplSession:
         analyser = copy.deepcopy(self.analyser)
         analyser.diagnostics.clear()
         analyser.warnings.clear()
-        analyser.lints.clear()
+        analyser.clear_lints()
         initial = replace(copy.deepcopy(self.branch), typed_body=())
         try:
             final = analyser.analyse_block(BranchSet((initial,)), tuple(program))
@@ -800,7 +800,7 @@ class _ReplSession:
         assert self.runtime_stack is not None
         self.analyser.diagnostics.clear()
         self.analyser.warnings.clear()
-        self.analyser.lints.clear()
+        self.analyser.clear_lints()
         self.output.did_print = False
         try:
             program = Parser(lex(source)).parse_program()

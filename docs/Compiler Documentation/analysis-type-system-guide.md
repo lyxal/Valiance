@@ -1214,6 +1214,13 @@ a concrete replacement such as removing an identity cast or replacing a
 statically safe checked cast with an ordinary cast. A lint must not stop typed
 analysis or code generation.
 
+Each lint is also recorded as a structured `LintFinding` in
+`analyser.lint_findings`. Supply a stable rule code and, when the transformation
+is proven semantics-preserving, a `LintRewrite` with the narrowest
+`RewriteKind`. The legacy `analyser.lints` strings remain the CLI/REPL rendering
+surface. See `docs/maintenance/lints-and-rewrites.md` for the rule-development
+checklist and optimiser boundary.
+
 Unknown-element suggestions are filtered twice: the source name must be close
 enough to the requested spelling, and at least one overload must be applicable
 to the current stack or explicit-call arguments. Do not suggest a similarly

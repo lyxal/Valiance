@@ -1716,7 +1716,7 @@ def _fuzz_smart_diagnostics(
     _config: FuzzConfig,
 ) -> object:
     """Exercise typo suggestions, readable overload lists, and lint recovery."""
-    mode = rng.randrange(5)
+    mode = rng.randrange(10)
     if mode == 0:
         base = rng.choice(("increment", "decrement", "normalize", "flatten"))
         cut = rng.randrange(1, len(base) - 1)
@@ -1830,19 +1830,93 @@ def _fuzz_smart_diagnostics(
         except BaseException as exc:
             raise _GeneratedCaseFailure(case, exc) from exc
 
-    source = rng.choice(
-        ("1 as Integer", "1 as! Number", "1 move(value -> value)")
-    )
-    case = ("lint", source)
+    if mode == 4:
+        source = rng.choice(
+            (
+                "1 as Integer",
+                "1 as! Number",
+                "1 move(value -> value)",
+                "1 copy(value ->)",
+            )
+        )
+        case = ("lint", source)
+        try:
+            analyser = Analyser()
+            analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(
+                    f"lint became an error: {analyser.diagnostics!r}"
+                )
+            if len(analyser.lints) != 1:
+                raise AssertionError(f"expected one lint: {analyser.lints!r}")
+            if len(analyser.lint_findings) != 1:
+                raise AssertionError(
+                    f"missing structured lint: {analyser.lint_findings!r}"
+                )
+            finding = analyser.lint_findings[0]
+            if finding.render() != analyser.lints[0]:
+                raise AssertionError((finding, analyser.lints[0]))
+            if finding.rewrite is None or not finding.rewrite.semantics_preserving:
+                raise AssertionError(f"lint lacks a safe rewrite: {finding!r}")
+            if (
+                "remove" not in analyser.lints[0]
+                and "instead" not in analyser.lints[0]
+            ):
+                raise AssertionError(
+                    f"lint is not actionable: {analyser.lints[0]!r}"
+                )
+            return case
+        except BaseException as exc:
+            raise _GeneratedCaseFailure(case, exc) from exc
+
+    if mode == 5:
+        source = "fn -> Number =>\n  return 1\n  2\nend"
+        expected = "unreachable-code"
+    elif mode == 6:
+        source = '1\nmatch =>\n  _ => "first"\n  1 => "second"\nend'
+        expected = "unreachable-match-case"
+    elif mode == 7:
+        source = (
+            '1\nmatch =>\n  1 => "first"\n  1 => "second"\n'
+            '  _ => "other"\nend'
+        )
+        expected = "duplicate-match-case"
+    elif mode == 8:
+        source = '1\nmatch =>\n  1 || 1 => "one"\n  _ => "other"\nend'
+        expected = "duplicate-pattern-alternative"
+    else:
+        source = rng.choice(
+            (
+                '1\nmatch =>\n  as x if > 0 => "positive"\n'
+                '  _ => "other"\nend',
+                '1\nmatch =>\n  as x(field) => "structured"\n'
+                '  _ => "other"\nend',
+            )
+        )
+        case = ("guarded-or-destructured-catchall", source)
+        try:
+            analyser = Analyser()
+            analyser.analyse(parse(source))
+            if analyser.diagnostics or analyser.lints or analyser.lint_findings:
+                raise AssertionError(
+                    (analyser.diagnostics, analyser.lints, analyser.lint_findings)
+                )
+            return case
+        except BaseException as exc:
+            raise _GeneratedCaseFailure(case, exc) from exc
+
+    case = ("structured-lint", expected)
     try:
         analyser = Analyser()
         analyser.analyse(parse(source))
         if analyser.diagnostics:
-            raise AssertionError(f"lint became an error: {analyser.diagnostics!r}")
-        if len(analyser.lints) != 1:
-            raise AssertionError(f"expected one lint: {analyser.lints!r}")
-        if "remove" not in analyser.lints[0] and "instead" not in analyser.lints[0]:
-            raise AssertionError(f"lint is not actionable: {analyser.lints[0]!r}")
+            raise AssertionError(analyser.diagnostics)
+        codes = tuple(finding.code for finding in analyser.lint_findings)
+        if codes != (expected,):
+            raise AssertionError((expected, codes, analyser.lints))
+        finding = analyser.lint_findings[0]
+        if finding.rewrite is None or not finding.rewrite.semantics_preserving:
+            raise AssertionError(finding)
         return case
     except BaseException as exc:
         raise _GeneratedCaseFailure(case, exc) from exc

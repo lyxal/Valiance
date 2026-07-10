@@ -14,6 +14,7 @@ from typing import cast
 import valiance.analysis.annotations as annotation_hooks
 import valiance.types as T
 from valiance.analysis.builtins import default_environment
+from valiance.analysis.lints import LintFinding, LintRewrite, RewriteKind
 from valiance.asts import (
     AnnotationNode,
     ArrayLiteralNode,
@@ -833,6 +834,7 @@ class Analyser:
         self.diagnostics: list[str] = []
         self.warnings: list[str] = []
         self.lints: list[str] = []
+        self.lint_findings: list[LintFinding] = []
         self._friendly_owners: tuple[Symbol, ...] = ()
         self._reported_data_element_disjoints: set[
             tuple[int, Symbol, Symbol]
@@ -860,6 +862,7 @@ class Analyser:
         nodes: tuple[ASTNode, ...],
     ) -> BranchSet:
         """Analyse a block as a branch-set transformation."""
+        self._lint_unreachable_suffix(nodes)
         current = initial
 
         for node in nodes:
@@ -3039,10 +3042,10 @@ class Analyser:
         if analysis is None:
             self.diagnostics.extend(function_analyser.diagnostics)
             self.warnings.extend(function_analyser.warnings)
-            self.lints.extend(function_analyser.lints)
+            self._extend_lint_findings(function_analyser.lint_findings)
             return None
         self.warnings.extend(function_analyser.warnings)
-        self.lints.extend(function_analyser.lints)
+        self._extend_lint_findings(function_analyser.lint_findings)
         return analysis
 
     @register(MatchNode)
@@ -3083,6 +3086,7 @@ class Analyser:
         subject_types = tuple(reversed(stack_subjects))
         if not self._match_is_exhaustive(subject_types, node):
             return BranchSet()
+        self._lint_match_patterns(node)
 
         joined: AnalysisBranch | None = None
         typed_case_bodies: list[tuple[ASTNode | TypedNode, ...]] = []
@@ -3610,14 +3614,14 @@ class Analyser:
                 and not function_analyser.diagnostics
             ):
                 self.warnings.extend(function_analyser.warnings)
-                self.lints.extend(function_analyser.lints)
+                self._extend_lint_findings(function_analyser.lint_findings)
                 return self._call_site_checked_function(outer, node), outer
             self.diagnostics.extend(function_analyser.diagnostics)
             self.warnings.extend(function_analyser.warnings)
-            self.lints.extend(function_analyser.lints)
+            self._extend_lint_findings(function_analyser.lint_findings)
             return None
         self.warnings.extend(function_analyser.warnings)
-        self.lints.extend(function_analyser.lints)
+        self._extend_lint_findings(function_analyser.lint_findings)
         return analysis, outer
 
     def _call_site_checked_function(
@@ -3819,11 +3823,124 @@ class Analyser:
         """Update warn state during static analysis."""
         self.warnings.append(_diagnostic_message(message, node))
 
-    def _lint(self, message: str, node: ASTNode | None = None) -> None:
-        """Record a non-fatal, actionable source-pattern recommendation."""
-        lint = _diagnostic_message(message, node)
-        if lint not in self.lints:
-            self.lints.append(lint)
+    def _lint(
+        self,
+        message: str,
+        node: ASTNode | None = None,
+        *,
+        code: str,
+        rewrite: LintRewrite | None = None,
+    ) -> None:
+        """Record an actionable lint and its optional structural rewrite."""
+        finding = LintFinding(
+            code=code,
+            message=message,
+            location=None if node is None else node.location,
+            rewrite=rewrite,
+            node=node,
+        )
+        self._record_lint_finding(finding)
+
+    def _record_lint_finding(self, finding: LintFinding) -> None:
+        """Append one structured finding while preserving the string API."""
+        if finding in self.lint_findings:
+            return
+        self.lint_findings.append(finding)
+        self.lints.append(finding.render())
+
+    def _extend_lint_findings(self, findings: Iterable[LintFinding]) -> None:
+        """Merge child-analyser lint findings without duplicating messages."""
+        for finding in findings:
+            self._record_lint_finding(finding)
+
+    def clear_lints(self) -> None:
+        """Clear both the legacy strings and structured lint findings."""
+        self.lints.clear()
+        self.lint_findings.clear()
+
+    def _lint_unreachable_suffix(self, nodes: tuple[ASTNode, ...]) -> None:
+        """Report the first statement after a direct return or break."""
+        for index, node in enumerate(nodes[:-1]):
+            if not isinstance(node, (ReturnNode, BreakNode)):
+                continue
+            keyword = "return" if isinstance(node, ReturnNode) else "break"
+            self._lint(
+                f"code after `{keyword}` is unreachable; "
+                f"remove it or move it before the {keyword}",
+                nodes[index + 1],
+                code="unreachable-code",
+                rewrite=LintRewrite(RewriteKind.REMOVE_UNREACHABLE_SUFFIX),
+            )
+            return
+
+    def _lint_match_patterns(self, node: MatchNode) -> None:
+        """Report unreachable cases and duplicate stable literal patterns."""
+        seen_literal_cases: set[tuple[tuple[str, object], ...]] = set()
+        default_seen = False
+        for case in node.cases:
+            for pattern in case.patterns:
+                self._lint_duplicate_pattern_alternatives(pattern)
+
+            if default_seen:
+                self._lint(
+                    "match case is unreachable because an earlier case "
+                    "matches every value; remove this case",
+                    case,
+                    code="unreachable-match-case",
+                    rewrite=LintRewrite(RewriteKind.REMOVE_MATCH_CASE),
+                )
+                continue
+
+            key = _literal_match_case_key(case.patterns)
+            if key is not None:
+                if key in seen_literal_cases:
+                    self._lint(
+                        "duplicate match case; remove this case because the "
+                        "same literal pattern appears earlier",
+                        case,
+                        code="duplicate-match-case",
+                        rewrite=LintRewrite(RewriteKind.REMOVE_MATCH_CASE),
+                    )
+                else:
+                    seen_literal_cases.add(key)
+
+            if _is_default_match_case(case.patterns):
+                default_seen = True
+
+    def _lint_duplicate_pattern_alternatives(
+        self,
+        pattern: MatchPatternNode,
+    ) -> None:
+        """Report repeated literal alternatives without assuming guards are pure."""
+        if isinstance(pattern, OrPatternNode):
+            seen: set[tuple[str, object]] = set()
+            for option in pattern.options:
+                key = _literal_match_pattern_key(option)
+                if key is not None:
+                    if key in seen:
+                        self._lint(
+                            "duplicate match alternative; remove the repeated "
+                            "literal pattern",
+                            option,
+                            code="duplicate-pattern-alternative",
+                            rewrite=LintRewrite(
+                                RewriteKind.REMOVE_PATTERN_ALTERNATIVE
+                            ),
+                        )
+                    else:
+                        seen.add(key)
+                self._lint_duplicate_pattern_alternatives(option)
+            return
+        if isinstance(pattern, BindingPatternNode):
+            self._lint_duplicate_pattern_alternatives(pattern.pattern)
+            return
+        if isinstance(pattern, ListPatternNode):
+            for item in pattern.items:
+                self._lint_duplicate_pattern_alternatives(item)
+            return
+        if isinstance(pattern, TypePatternNode):
+            for field_pattern in pattern.fields:
+                self._lint_duplicate_pattern_alternatives(field_pattern)
 
 
 @register(NumberLiteralNode)
@@ -4548,6 +4665,8 @@ def _cast_node(
                     f"unnecessary checked cast to {T.show(target)}; "
                     f"remove `as! {T.show(target)}`",
                     node,
+                    code="redundant-checked-cast",
+                    rewrite=LintRewrite(RewriteKind.REMOVE_NODE),
                 )
             else:
                 self._lint(
@@ -4555,6 +4674,11 @@ def _cast_node(
                     f"write `as {T.show(target)}` instead of "
                     f"`as! {T.show(target)}`",
                     node,
+                    code="safe-checked-cast",
+                    rewrite=LintRewrite(
+                        RewriteKind.REPLACE_NODE,
+                        replacement=f"as {T.show(target)}",
+                    ),
                 )
         elif not _types_overlap(source, target, self.env.context):
             if _type_contains_rank_var(target):
@@ -4578,6 +4702,8 @@ def _cast_node(
             f"unnecessary cast to {T.show(target)}; "
             f"remove `as {T.show(target)}`",
             node,
+            code="redundant-cast",
+            rewrite=LintRewrite(RewriteKind.REMOVE_NODE),
         )
 
     stack = T.TypeStack((*branch.stack.items[:-1], target))
@@ -4610,6 +4736,19 @@ def _stack_shuffle_node(
             "this move leaves the stack unchanged; "
             f"remove `move({labels} -> {labels})`",
             node,
+            code="no-op-move",
+            rewrite=LintRewrite(RewriteKind.REMOVE_NODE),
+        )
+    elif node.mode == Symbol("copy") and not node.poststack:
+        labels = ", ".join(
+            "_" if label is None else str(label) for label in node.prestack
+        )
+        self._lint(
+            "this copy produces no values and has no effect; "
+            f"remove `copy({labels} ->)`",
+            node,
+            code="no-op-copy",
+            rewrite=LintRewrite(RewriteKind.REMOVE_NODE),
         )
     labelled = {
         label: typ
@@ -8995,6 +9134,33 @@ def _pattern_subject_type(pattern: MatchPatternNode) -> T.Type | None:
     return None
 
 
+def _literal_match_pattern_key(
+    pattern: MatchPatternNode,
+) -> tuple[str, object] | None:
+    """Return a stable key only for side-effect-free literal patterns."""
+    if not isinstance(pattern, LiteralPatternNode):
+        return None
+    value = pattern.value
+    if isinstance(value, NumberLiteralNode):
+        try:
+            return ("number", Decimal(value.value))
+        except InvalidOperation:
+            return None
+    if isinstance(value, StringLiteralNode):
+        return ("string", value.value)
+    return None
+
+
+def _literal_match_case_key(
+    patterns: tuple[MatchPatternNode, ...],
+) -> tuple[tuple[str, object], ...] | None:
+    """Return a key when every case item is a stable literal pattern."""
+    keys = tuple(_literal_match_pattern_key(pattern) for pattern in patterns)
+    if not keys or any(key is None for key in keys):
+        return None
+    return cast(tuple[tuple[str, object], ...], keys)
+
+
 def _is_default_match_case(patterns: tuple[MatchPatternNode, ...]) -> bool:
     """Return whether the value is default match case."""
     return bool(patterns) and all(
@@ -9003,9 +9169,12 @@ def _is_default_match_case(patterns: tuple[MatchPatternNode, ...]) -> bool:
 
 
 def _is_default_match_pattern(pattern: MatchPatternNode) -> bool:
-    """Return whether the value is default match pattern."""
+    """Return whether a pattern unconditionally accepts every subject value."""
     return isinstance(pattern, (WildcardPatternNode, RestPatternNode)) or (
-        isinstance(pattern, TypePatternNode) and pattern.typ is None
+        isinstance(pattern, TypePatternNode)
+        and pattern.typ is None
+        and not pattern.fields
+        and not pattern.guard
     )
 
 

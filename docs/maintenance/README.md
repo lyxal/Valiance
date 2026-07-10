@@ -38,6 +38,9 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   work such as adding syntax, an element, a runtime value, or a CLI command.
 - [Testing and debugging](testing-and-debugging.md) explains the test layers,
   useful inspection commands, and a practical fault-isolation workflow.
+- [Lints and future rewrite passes](lints-and-rewrites.md) documents the
+  structured lint API, the safety bar for new rules, and the boundary for a
+  possible optimiser.
 - [Docstring policy](docstrings.md) explains what production docstrings should
   contain and how coverage is enforced.
 - [Reference documentation](reference-documentation.md) explains the metadata,

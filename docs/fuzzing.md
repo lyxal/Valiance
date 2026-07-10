@@ -54,7 +54,9 @@ base seed, and iteration number.
 - `smart-diagnostics` checks that typo suggestions are name-similar and
   overload-viable, explicit-call and named-argument mistakes receive focused
   guidance, overload lists stay multiline and omit repeated `Function`
-  wrappers, and actionable lint patterns remain non-fatal.
+  wrappers, and actionable lint patterns remain non-fatal. It also checks that
+  rendered and structured lint views agree, rewrite hints are marked
+  semantics-preserving, and dead/duplicate match patterns retain stable codes.
 - `structural-types` builds contexts containing nominal subtype facts,
   declaration-site variance, row fields, and structural overloads. It generates
   named and anonymous generics, rows, anonymous traits, functions, collections,

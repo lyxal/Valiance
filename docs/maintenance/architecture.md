@@ -78,6 +78,11 @@ set of possible branches to another set. A branch contains:
 Handlers should return new branches rather than mutating existing ones. Branch
 joins should happen only where control flow actually converges.
 
+Non-fatal source-pattern advice is recorded both as rendered lint text and as
+structured rewrite metadata. Detection belongs in analysis; any future
+optimisation remains a separate typed-structure pass. See
+[lints-and-rewrites.md](lints-and-rewrites.md).
+
 ### Environment and context
 
 `src/valiance/types/environment.py` stores global declarations: element
