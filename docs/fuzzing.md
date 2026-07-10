@@ -25,8 +25,9 @@ base seed, and iteration number.
   valid programs. A payload must either decode successfully and stabilize after
   re-encoding or fail with `BytecodeFormatError`.
 - `type-relations` generates nested concrete types and checks normalization,
-  equality, subtyping, assignability, merging, collection covariance, tags, rows,
-  and display invariants.
+  equality, subtyping, assignability, merging, exact/minimum list and array
+  covariance, one-way array-to-list compatibility, tags, rows, and display
+  invariants. Failure reports include both generated types and the wrapper rank.
 
 ## Running a campaign
 

@@ -111,6 +111,9 @@ def _match_variadic_tuple(
 def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
     """Return whether ``source`` can be treated as ``target`` by subsumption."""
     ctx = ctx or Context()
+    if isinstance(source, CollectionType) and isinstance(target, CollectionType):
+        if _collection_subtype(source, target, ctx):
+            return True
     source = normalize(source)
     target = normalize(target)
 
@@ -416,6 +419,21 @@ def _row_subtype(source: Type, target: RowType, ctx: Context) -> bool:
 
 def _collection_subtype(source: Type, target: Type, ctx: Context) -> bool:
     """Return whether one collection type subsumes another by rank rules."""
+    if _direct_collection_subtype(source, target, ctx):
+        return True
+
+    # A nested array can be viewed as the corresponding nested list without
+    # discarding its canonical array boundary.  This matters when the other
+    # side has already collapsed adjacent list ranks during normalization.
+    source_view = _collection_list_view(source)
+    normalized_target = normalize(target)
+    if source_view != source or normalized_target != target:
+        return _direct_collection_subtype(source_view, normalized_target, ctx)
+    return False
+
+
+def _direct_collection_subtype(source: Type, target: Type, ctx: Context) -> bool:
+    """Check collection compatibility without changing explicit item layers."""
     if isinstance(source, (ListMinType, ListRuggedType)) and isinstance(
         target, ListExactType
     ):
@@ -453,6 +471,22 @@ def _collection_subtype(source: Type, target: Type, ctx: Context) -> bool:
     return False
 
 
+def _collection_list_view(collection: CollectionType) -> CollectionType:
+    """Return the list-shaped view available to a source collection value."""
+    base = collection.base
+    if isinstance(base, CollectionType):
+        base = _collection_list_view(base)
+    collection_type = {
+        ArrayExactType: ListExactType,
+        ArrayMinType: ListMinType,
+    }.get(type(collection), type(collection))
+    viewed = collection_type(base, collection.rank)
+    normalized = normalize(viewed)
+    if not isinstance(normalized, CollectionType):
+        raise TypeError("collection list view normalized to a non-collection type")
+    return normalized
+
+
 def _rank_ge(left: object, right: object) -> bool:
     """Return the Boolean result of rank ge during type solving and overload resolution."""
     return isinstance(left, int) and isinstance(right, int) and left >= right
@@ -461,6 +495,9 @@ def _rank_ge(left: object, right: object) -> bool:
 def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
     """Return whether a value of ``source`` can be stored in ``target``."""
     ctx = ctx or Context()
+    if isinstance(source, CollectionType) and isinstance(target, CollectionType):
+        if _collection_subtype(source, target, ctx):
+            return True
     source = normalize(source)
     target = normalize(target)
 

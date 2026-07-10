@@ -1341,6 +1341,12 @@ end
         self.assertTrue(same(parse_type("Number~~~~"), parse_type("Number~4")))
         self.assertTrue(same(parse_type("Number?3"), parse_type("Number???")))
 
+    def test_non_integer_type_depth_reports_parse_error(self):
+        for source in ("String+03i", "String?03i"):
+            with self.subTest(source=source):
+                with self.assertRaises(ParseError):
+                    parse_type(source)
+
     def test_rank_postfix_minimum_widens_exact(self):
         self.assertTrue(same(parse_type("Number+*"), parse_type("Number**")))
         self.assertTrue(same(parse_type("Number+2*"), parse_type("Number*3")))

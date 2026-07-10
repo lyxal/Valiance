@@ -460,15 +460,10 @@ def collapse_nested_collection(
             return C(ArrayMinType, inner.base, total_rank)
         return C(ArrayExactType, inner.base, total_rank)
 
-    if issubclass(inner_type, array_like) and issubclass(outer_type, list_like):
-        # Arrays can be treated as lists, but once a list wrapper is involved
-        # the result is list-shaped rather than array-shaped.
-        if outer_type is ListRuggedType:
-            return C(ListRuggedType, inner.base, total_rank)
-        if outer_type is ListMinType or inner_type is ArrayMinType:
-            return C(ListMinType, inner.base, total_rank)
-        return C(ListExactType, inner.base, total_rank)
-
+    # Do not flatten a list whose item type is an array.  Arrays are usable as
+    # lists at a relation boundary, but an outer list of arrays still carries a
+    # meaningful item boundary.  Erasing it would widen the type and can break
+    # covariance when the target item type specifically requires an array.
     return None
 
 

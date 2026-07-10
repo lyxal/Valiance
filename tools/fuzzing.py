@@ -786,45 +786,61 @@ def _fuzz_type_relations(
 ) -> object:
     left = _random_concrete_type(rng, config.max_depth)
     right = _random_concrete_type(rng, config.max_depth)
-    normalized = normalize(left)
-
-    if normalize(normalized) != normalized:
-        raise AssertionError("type normalization is not idempotent")
-    if not same(left, left) or not same(normalized, normalized):
-        raise AssertionError("type equality is not reflexive")
-    if not assignable(left, left):
-        raise AssertionError("assignability is not reflexive")
-    if not subtype(left, left):
-        raise AssertionError("subtyping is not reflexive")
-    if same(left, right) != same(right, left):
-        raise AssertionError("type equality is not symmetric")
-    if not show(normalized):
-        raise AssertionError("type display produced an empty string")
-
-    duplicate_union = U(left, left)
-    if not same(duplicate_union, normalized):
-        raise AssertionError("a duplicate union did not normalize to its member")
-
-    merged = merge_types(left, right)
-    if not assignable(left, merged) or not assignable(right, merged):
-        raise AssertionError("merged type does not accept both inputs")
-
     rank = rng.randint(1, 4)
-    if assignable(left, right) and not assignable(
-        ExactList(left, rank), ExactList(right, rank)
-    ):
-        raise AssertionError("list covariance did not preserve assignability")
+    case = (left, right, rank)
 
-    tag_name = _random_string(rng, 8) or "tag"
-    tagged = Tagged(left, DataTag(tag_name, rng.randint(0, 2)))
-    if not same(normalize(tagged), normalize(normalize(tagged))):
-        raise AssertionError("tagged normalization is not stable")
+    try:
+        normalized = normalize(left)
 
-    row = Row(left)
-    exact = Exact(left)
-    show(row)
-    show(exact)
-    return left, right
+        if normalize(normalized) != normalized:
+            raise AssertionError("type normalization is not idempotent")
+        if not same(left, left) or not same(normalized, normalized):
+            raise AssertionError("type equality is not reflexive")
+        if not assignable(left, left):
+            raise AssertionError("assignability is not reflexive")
+        if not subtype(left, left):
+            raise AssertionError("subtyping is not reflexive")
+        if same(left, right) != same(right, left):
+            raise AssertionError("type equality is not symmetric")
+        if not show(normalized):
+            raise AssertionError("type display produced an empty string")
+
+        duplicate_union = U(left, left)
+        if not same(duplicate_union, normalized):
+            raise AssertionError("a duplicate union did not normalize to its member")
+
+        merged = merge_types(left, right)
+        if not assignable(left, merged) or not assignable(right, merged):
+            raise AssertionError("merged type does not accept both inputs")
+
+        if assignable(left, right):
+            covariance_cases = (
+                (ExactList(left, rank), ExactList(right, rank), "exact list"),
+                (AtLeastList(left, rank), AtLeastList(right, rank), "minimum list"),
+                (ExactArray(left, rank), ExactArray(right, rank), "exact array"),
+                (AtLeastArray(left, rank), AtLeastArray(right, rank), "minimum array"),
+                (ExactArray(left, rank), ExactList(right, rank), "array-to-list"),
+            )
+            for wrapped_left, wrapped_right, label in covariance_cases:
+                if not assignable(wrapped_left, wrapped_right):
+                    raise AssertionError(
+                        f"{label} covariance did not preserve assignability"
+                    )
+            if assignable(ExactList(left, rank), ExactArray(right, rank)):
+                raise AssertionError("list values became assignable to arrays")
+
+        tag_name = _random_string(rng, 8) or "tag"
+        tagged = Tagged(left, DataTag(tag_name, rng.randint(0, 2)))
+        if not same(normalize(tagged), normalize(normalize(tagged))):
+            raise AssertionError("tagged normalization is not stable")
+
+        row = Row(left)
+        exact = Exact(left)
+        show(row)
+        show(exact)
+        return case
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(case, exc) from exc
 
 
 TARGETS: dict[str, Target] = {

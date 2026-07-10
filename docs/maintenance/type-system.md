@@ -375,6 +375,11 @@ Normalization performs operations such as:
 - recursively normalizing function and nominal arguments; and
 - collapsing compatible nested collection ranks.
 
+Compatible rank collapse preserves collection-family information. Adjacent list
+ranks and adjacent array ranks combine, but a list whose item is an array keeps
+that item boundary. Arrays can still satisfy corresponding list requirements
+through relation checks without widening the canonical type itself.
+
 For example, construction through `T.U(...)` normalizes immediately:
 
 ```python

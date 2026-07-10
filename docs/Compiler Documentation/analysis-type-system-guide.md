@@ -587,8 +587,10 @@ ranked lists and are valid.
 
 `normalize` still collapses nested collection nodes when they are created by
 type builders or generic solving and the rank modes have a clear combined
-meaning. Use `T.normalize(...)` before comparing types structurally. Use
-`T.same(...)` for canonical equality.
+meaning. It combines list-with-list and array-with-array ranks, but preserves a
+list whose item type is an array: that boundary carries useful item-type facts
+and flattening it would incorrectly widen the type. Use `T.normalize(...)`
+before comparing types structurally. Use `T.same(...)` for canonical equality.
 
 ### Collection Item Types
 

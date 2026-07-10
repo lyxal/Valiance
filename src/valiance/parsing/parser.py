@@ -2297,7 +2297,14 @@ class Parser:
     ) -> int | RankVariable:
         """Parse type postfix rank from the current token stream."""
         if self._match(TokenKind.NUMBER):
-            return int(self._previous.value)
+            token = self._previous
+            if not token.value.isdecimal():
+                raise ParseError(
+                    "type rank must be a decimal integer",
+                    line=token.line,
+                    column=token.column,
+                )
+            return int(token.value)
         if op != "?" and self._match(TokenKind.DOLLAR):
             return RankVariable(self._expect(TokenKind.IDENT).value)
 
@@ -2421,7 +2428,14 @@ class Parser:
                     and self._check(TokenKind.NUMBER)
                     and self._adjacent(self._previous, self._current)
                 ):
-                    optional_depth = int(self._advance().value)
+                    token = self._advance()
+                    if not token.value.isdecimal():
+                        raise ParseError(
+                            "optional type depth must be a decimal integer",
+                            line=token.line,
+                            column=token.column,
+                        )
+                    optional_depth = int(token.value)
             if name == "None":
                 typ = NoneType()
                 return _optionalize_type(typ, optional_depth)
