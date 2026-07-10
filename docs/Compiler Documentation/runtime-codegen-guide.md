@@ -608,9 +608,13 @@ ElementNode("name")
 The invariant is: type-level overload resolution belongs to analysis, and
 runtime should not redo it for operations whose selected implementation is known
 at compile time. That metadata must survive structural boundaries too:
-`TypedMatchNode.case_bodies` and `TypedForNode.body` carry analysed descendants
-into nested function code. A stable resolved call inside a match case or
-`foreach` body must not regress to `LOAD_ELEMENT` followed by `CALL`.
+`TypedMatchNode.case_bodies`, `TypedForNode.body`, `TypedWhileNode`,
+`TypedAssertNode`, and `TypedTryNode` carry analysed descendants across their
+structural boundary. A stable resolved call inside a match case, `foreach` or
+`while` body, assertion branch, or panic handler must not regress to
+`LOAD_ELEMENT` followed by `CALL`. Parameterised while-condition/body functions
+must also be compiled from those typed children rather than reconstructed from
+the raw AST.
 
 When control-flow analysis has multiple surviving branches, preserve a typed
 child block only when the branches agree. Falling back to raw lowering is safer
@@ -628,7 +632,9 @@ Implementation checklist:
    reference so runtime does not infer it again.
 7. Keep runtime validation for vectorisation length mismatches and other
    concrete value assumptions inside the selected implementation.
-8. Preserve useful errors if a bytecode file references an unknown element or
+8. Encode absent return-tag and return-rank metadata as empty tuples so the VM
+   can bypass those paths without scanning all return slots.
+9. Preserve useful errors if a bytecode file references an unknown element or
    overload id.
 
 Resolved object and variant constructor calls may include instantiated generic
@@ -871,10 +877,12 @@ not a type-system bug.
 For scalar-heavy execution, keep no-op metadata and ownership paths cheap. The
 VM may bypass release scans when no value can own resources, return unchanged
 results when no return tags or collection ranks were declared, and skip lazy
-owner binding when no result is lazy. `ListValue` caches whether all direct
-items are ownership-trivial; list reconstruction must preserve its rank and a
-still-valid cache, while mutating methods must invalidate the cache. Main-frame
-closures must not retain top-level globals again as lexical local captures.
+owner binding when no result is lazy. `ListValue` and `DictValue` cache whether
+their direct contents are ownership-trivial; reconstruction must preserve a
+still-valid cache, while mutating methods must invalidate it. Built-in overload
+order and return-tag deltas are declaration-time facts and must be cached rather
+than recomputed for every call. Main-frame closures must not retain top-level
+globals again as lexical local captures.
 Nested-function locals still require ordinary capture isolation. Do not extend
 these shortcuts to objects, closures, overloaded functions, tagged payloads, or
 lazy values without preserving their retain/release behavior.

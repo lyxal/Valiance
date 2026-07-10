@@ -593,9 +593,11 @@ Most opcodes fall into a few families.
 - `SOURCE_ARGS`
 
 These move values while applying retain/release rules. Plain immutable scalar
-values take a direct stack path because they cannot own runtime resources;
-containers, closures, objects, tagged payloads, and lazy values still use the
-full ownership helpers.
+values and containers already classified as ownership-trivial take a direct
+stack path because they cannot own runtime resources. Closures, objects, tagged
+payloads, lazy values, and containers with lifecycle-bearing contents still use
+the full ownership helpers. Frame cleanup iterates locals once and clears the
+map after releases rather than snapshotting and deleting every entry.
 
 ### Construction operations
 
@@ -778,6 +780,8 @@ captures, deferred work, or nested values.
   ownership action.
 - `ListValue` is an eager list with optional exact rank evidence and a cached
   classification for lists whose direct items require no ownership traversal.
+- `DictValue` is the corresponding eager mapping/record wrapper; it caches the
+  same direct-value ownership classification and invalidates it on mutation.
 - `LazyList` stores an iterable, retained owners, and a reference count.
 - `TaggedValue` wraps a payload with reified data-tag evidence.
 - `ObjectValue` stores nominal name, fields, generic type arguments, lifecycle
@@ -806,13 +810,14 @@ does not observe destroyed captures.
 Stack operations are therefore not merely Python `append` and `pop`. A semantic
 copy may increase ownership; a consumed stack tail must release its values.
 The VM first checks whether a consumed tail contains any ownership-bearing value
-and skips the recursive release walk for scalar-only tails. `ListValue` caches
-that same direct-item classification, invalidates it after Python-side mutation,
-and preserves it when indexed or slice assignment reconstructs a list with only
-scalar replacements. Large numeric buffers therefore pay one classification
-scan instead of one full scan per closure call. Return-tag and collection-rank
-attachment similarly return immediately when the analysed metadata is empty.
-These are performance fast paths, not changes to ownership or type semantics.
+and skips the recursive release walk for scalar-only tails. `ListValue` and
+`DictValue` cache that same direct-item/value classification, invalidate it after
+Python-side mutation, and preserve it when reconstruction only installs scalar
+replacements. Large numeric buffers and scalar records therefore pay one
+classification scan instead of a recursive walk on every load, call, or frame
+cleanup. Return-tag and collection-rank attachment similarly return immediately
+when the analysed metadata is empty. These are performance fast paths, not
+changes to ownership or type semantics.
 
 ### Object duplication, cleanup, and must-call rules
 
@@ -874,6 +879,17 @@ signature proves it, but `head` must still check non-emptiness.
 
 Built-ins that return one of their input objects interact with ownership helpers;
 they should not manually increment runtime reference counts.
+
+`BuiltinValue` caches its arity-sorted dynamic candidates, and each
+`BuiltinOverload` caches runtime return-tag deltas plus whether its parameter and
+return types are ownership-trivial. Resolved call sites additionally cache the
+validated built-in/overload pair while guarding against local shadowing or a
+replaced global. Do not move these decisions back into the per-call path.
+
+Decimal arithmetic first uses the active context when it is already sufficient
+for an exact result, then expands precision and exponent bounds only when
+needed. Any faster arithmetic path must retain the arbitrary-precision tests; a
+small-number benchmark is not permission to round large integers silently.
 
 ## Serialization is a compatibility boundary
 

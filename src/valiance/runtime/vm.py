@@ -7,6 +7,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
+from functools import lru_cache
 from itertools import islice, zip_longest
 from typing import Any, cast
 
@@ -27,6 +28,7 @@ from valiance.runtime.bytecode import (
 )
 from valiance.runtime_values import (
     DIAGNOSTIC_LIST_PREVIEW_LIMIT,
+    DictValue,
     LazyList,
     ListValue,
     ObjectRuntimeType,
@@ -131,6 +133,8 @@ class FunctionValue:
 _NO_EXTENSION_DEFAULT = object()
 _MISSING_VECTOR_ITEM = object()
 _UNINITIALIZED_OBJECT_FIELD = object()
+_MISSING_NAME = object()
+_SCALAR_RUNTIME_TYPES = (Decimal, str, int, bool, type(None))
 
 
 @dataclass(slots=True)
@@ -184,10 +188,29 @@ _RELEASE_VALUE_TYPES = (LazyList, *_OWNERSHIP_VALUE_TYPES)
 
 @dataclass(frozen=True, slots=True)
 class BuiltinValue:
-    """A built-in element implementation."""
+    """A built-in element implementation with cached dispatch order."""
 
     element: BuiltinElement
     context: RuntimeContext
+    candidates: tuple[BuiltinOverload, ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        """Cache dynamic overload order instead of sorting on every call."""
+        object.__setattr__(
+            self,
+            "candidates",
+            tuple(
+                sorted(
+                    self.element.definitions,
+                    key=lambda overload: len(overload.signature.params),
+                    reverse=True,
+                )
+            ),
+        )
 
     def __repr__(self) -> str:
         """Return a developer-facing representation of this builtin value."""
@@ -241,8 +264,30 @@ class _Frame:
         if arity == 0:
             return (), 0, self.cycle_index, self.cycle_stack_remaining
 
-        stack_count = min(len(self.stack), arity)
-        stack_args = tuple(self.stack[-stack_count:]) if stack_count else ()
+        stack_length = len(self.stack)
+        if stack_length >= arity:
+            if arity == 1:
+                return (
+                    (self.stack[-1],),
+                    1,
+                    self.cycle_index,
+                    self.cycle_stack_remaining,
+                )
+            if arity == 2:
+                return (
+                    (self.stack[-2], self.stack[-1]),
+                    2,
+                    self.cycle_index,
+                    self.cycle_stack_remaining,
+                )
+            return (
+                tuple(self.stack[-arity:]),
+                arity,
+                self.cycle_index,
+                self.cycle_stack_remaining,
+            )
+        stack_count = stack_length
+        stack_args = tuple(self.stack) if stack_count else ()
         if arity == 1 and stack_count == 0 and self.cycle_values:
             value = self.cycle_values[self.cycle_index % len(self.cycle_values)]
             return (
@@ -308,6 +353,10 @@ class VirtualMachine:
             value,
             lazy_preview_limit=list_preview_limit,
         )
+        self._resolved_builtin_cache: dict[
+            int,
+            tuple[ResolvedElementReference, BuiltinValue, BuiltinOverload],
+        ] = {}
         self.globals = {
             name: BuiltinValue(
                 element,
@@ -333,7 +382,7 @@ class VirtualMachine:
     def call(
         self,
         function: FunctionValue,
-        args: list[Any],
+        args: list[Any] | tuple[Any, ...],
         *,
         isolate_captures: bool = True,
     ) -> list[Any]:
@@ -372,11 +421,20 @@ class VirtualMachine:
             initial_stack,
             retained_locals,
         )
-        ranked = _apply_runtime_collection_ranks(
-            result,
-            function.code.return_collection_ranks,
+        ranked = (
+            _apply_runtime_collection_ranks(
+                result,
+                function.code.return_collection_ranks,
+            )
+            if function.code.return_collection_ranks
+            else result
         )
-        return list(_apply_runtime_return_tags(ranked, function.code.return_tags))
+        tagged = (
+            _apply_runtime_return_tags(ranked, function.code.return_tags)
+            if function.code.return_tags
+            else ranked
+        )
+        return list(tagged)
 
     def call_value(self, value: Any, args: list[Any]) -> list[Any]:
         """Invoke a runtime callable, resolving overload and vectorisation behaviour."""
@@ -484,14 +542,16 @@ class VirtualMachine:
                         case OpCode.PUSH_CONST:
                             frame.stack.append(_constant(instruction.arg))
                         case OpCode.LOAD_VAR:
+                            value = _load_name(
+                                instruction.arg,
+                                frame.locals,
+                                frame.globals,
+                            )
                             frame.stack.append(
-                                _retain_value(
-                                    _load_name(
-                                        instruction.arg,
-                                        frame.locals,
-                                        frame.globals,
-                                    )
-                                )
+                                value
+                                if isinstance(value, _SCALAR_RUNTIME_TYPES)
+                                or not _needs_release(value)
+                                else _retain_value(value)
                             )
                         case OpCode.STORE_VAR:
                             value = _pop(frame.stack, "store variable")
@@ -502,22 +562,37 @@ class VirtualMachine:
                                 else frame.locals
                             )
                             existing = target.get(instruction.arg)
-                            stored = _store_value(existing, value)
-                            if existing is not None:
+                            if isinstance(
+                                existing,
+                                (FunctionValue, OverloadedFunctionValue),
+                            ) and isinstance(
+                                value,
+                                (FunctionValue, OverloadedFunctionValue),
+                            ):
+                                stored = _store_value(existing, value)
+                            else:
+                                stored = value
+                            if existing is not None and _needs_release(existing):
                                 _release_value(existing, self)
                             target[instruction.arg] = stored
                             if code.name == "<main>":
                                 frame.globals[instruction.arg] = stored
-                            _bind_recursive_value(stored, instruction.arg)
+                            if isinstance(
+                                stored,
+                                (FunctionValue, OverloadedFunctionValue),
+                            ):
+                                _bind_recursive_value(stored, instruction.arg)
                         case OpCode.LOAD_ELEMENT:
+                            value = _load_element_name(
+                                instruction.arg,
+                                frame.locals,
+                                frame.globals,
+                            )
                             frame.stack.append(
-                                _retain_value(
-                                    _load_element_name(
-                                        instruction.arg,
-                                        frame.locals,
-                                        frame.globals,
-                                    )
-                                )
+                                value
+                                if isinstance(value, _SCALAR_RUNTIME_TYPES)
+                                or not _needs_release(value)
+                                else _retain_value(value)
                             )
                         case OpCode.MAKE_FUNCTION:
                             frame.stack.append(
@@ -576,12 +651,16 @@ class VirtualMachine:
                         case OpCode.BUILD_RECORD:
                             values = _pop_many(frame.stack, len(instruction.arg))
                             frame.stack.append(
-                                dict(zip(instruction.arg, values, strict=True))
+                                DictValue(
+                                    zip(instruction.arg, values, strict=True)
+                                )
                             )
                         case OpCode.BUILD_DICT:
                             values = _pop_many(frame.stack, instruction.arg * 2)
                             frame.stack.append(
-                                dict(zip(values[::2], values[1::2], strict=True))
+                                DictValue(
+                                    zip(values[::2], values[1::2], strict=True)
+                                )
                             )
                         case OpCode.MAKE_OBJECT_CONSTRUCTOR:
                             constructor = _object_constructor_reference(
@@ -850,10 +929,13 @@ class VirtualMachine:
 
     def _release_frame_locals(self, frame: _Frame) -> None:
         """Release frame locals during VM execution."""
-        for name, value in tuple(frame.locals.items()):
-            if name in frame.retained_locals or frame.globals.get(name) is not value:
+        for name, value in frame.locals.items():
+            if (
+                (name in frame.retained_locals or frame.globals.get(name) is not value)
+                and _needs_release(value)
+            ):
                 _release_value(value, self)
-            del frame.locals[name]
+        frame.locals.clear()
 
     def _handle_panic(self, frame: _Frame, panic: PanicSignal) -> int | None:
         """Handle panic during VM execution."""
@@ -902,9 +984,58 @@ class VirtualMachine:
         """Invoke resolved element during VM execution."""
         if not isinstance(reference, ResolvedElementReference):
             raise RuntimeError(f"invalid resolved element reference {reference!r}")
+        cache_key = id(reference)
+        cached_builtin = self._resolved_builtin_cache.get(cache_key)
+        if (
+            cached_builtin is not None
+            and cached_builtin[0] is reference
+            and reference.name not in frame.locals
+            and frame.globals.get(reference.name) is cached_builtin[1]
+        ):
+            _call_resolved_builtin(
+                cached_builtin[1],
+                cached_builtin[2],
+                frame,
+                self,
+                reference.vectorised,
+                reference.vectorised_depths,
+                reference.vectorised_target_ranks,
+                reference.return_collection_ranks,
+                reference.arity_override,
+                reference.consumed_override,
+                reference.static_values,
+                reference.extension,
+            )
+            return
         value = _load_name(reference.name, frame.locals, frame.globals)
         if isinstance(value, BuiltinValue):
-            self._call_resolved_builtin_value(value, frame, reference)
+            try:
+                overload = value.element.definitions[reference.overload_index]
+            except IndexError as exc:
+                raise RuntimeError(
+                    f"resolved element '{reference.name}' has no overload "
+                    f"{reference.overload_index}"
+                ) from exc
+            if reference.name not in frame.locals:
+                self._resolved_builtin_cache[cache_key] = (
+                    reference,
+                    value,
+                    overload,
+                )
+            _call_resolved_builtin(
+                value,
+                overload,
+                frame,
+                self,
+                reference.vectorised,
+                reference.vectorised_depths,
+                reference.vectorised_target_ranks,
+                reference.return_collection_ranks,
+                reference.arity_override,
+                reference.consumed_override,
+                reference.static_values,
+                reference.extension,
+            )
             return
         if isinstance(value, FunctionValue):
             self._call_resolved_function_value(value, frame, reference)
@@ -1176,7 +1307,7 @@ class VirtualMachine:
             frame.stack.extend(result)
         else:
             try:
-                result = self.call(callee, list(args))
+                result = self.call(callee, args)
             except _py_builtins.RuntimeError as exc:
                 raise _with_call_detail(
                     exc,
@@ -1194,6 +1325,16 @@ class VirtualMachine:
         """Match patterns during VM execution."""
         if len(frame.stack) < len(patterns):
             return None
+        if len(patterns) == 1:
+            pattern = patterns[0]
+            value = frame.stack[-1]
+            if isinstance(pattern, tuple) and pattern:
+                if pattern[0] == "literal":
+                    if value != pattern[1]:
+                        return None
+                    return {"top": value}, (value,)
+                if pattern[0] == "wildcard":
+                    return {"top": value}, (value,)
         bindings: dict[str, Any] = {}
         values = tuple(reversed(frame.stack[-len(patterns) :]))
         if values:
@@ -1505,13 +1646,21 @@ def _release_runtime_vector_extension(
 
 def _function_call_locals(
     function: FunctionValue,
-    args: list[Any],
+    args: list[Any] | tuple[Any, ...],
     *,
     isolate_captures: bool = True,
 ) -> tuple[dict[str, Any], frozenset[str]]:
     """Compute function call locals during VM execution."""
-    locals_: dict[str, Any] = dict(zip(function.code.params, args, strict=True))
-    if not isolate_captures:
+    params = function.code.params
+    if not params:
+        locals_: dict[str, Any] = {}
+    elif len(params) == 1:
+        locals_ = {params[0]: args[0]}
+    elif len(params) == 2:
+        locals_ = {params[0]: args[0], params[1]: args[1]}
+    else:
+        locals_ = dict(zip(params, args, strict=True))
+    if not isolate_captures or not function.owned_names:
         return locals_, frozenset()
     retained: set[str] = set()
     for name in function.owned_names:
@@ -1766,8 +1915,16 @@ def _release_stack_tail(stack: list[Any], count: int, vm: VirtualMachine) -> Non
 
 def _needs_release(value: Any) -> bool:
     """Return whether dropping a value requires ownership bookkeeping."""
+    if isinstance(value, _SCALAR_RUNTIME_TYPES):
+        return False
     if isinstance(value, TaggedValue):
         value = value.value
+        if isinstance(value, _SCALAR_RUNTIME_TYPES):
+            return False
+    if isinstance(value, list):
+        return not _list_ownership_is_trivial(value)
+    if isinstance(value, dict):
+        return not _dict_ownership_is_trivial(value)
     return isinstance(value, _RELEASE_VALUE_TYPES)
 
 
@@ -1779,6 +1936,18 @@ def _list_ownership_is_trivial(value: list[Any]) -> bool:
             return cached
     trivial = not any(_needs_release(item) for item in value)
     if isinstance(value, ListValue):
+        value._ownership_trivial = trivial
+    return trivial
+
+
+def _dict_ownership_is_trivial(value: dict[Any, Any]) -> bool:
+    """Return whether a mapping has no values needing ownership traversal."""
+    if isinstance(value, DictValue):
+        cached = value._ownership_trivial
+        if cached is not None:
+            return cached
+    trivial = not any(_needs_release(item) for item in value.values())
+    if isinstance(value, DictValue):
         value._ownership_trivial = trivial
     return trivial
 
@@ -1822,6 +1991,8 @@ def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
             _retain_value(item, check_duplication=check_duplication)
         return value
     if isinstance(value, dict):
+        if _dict_ownership_is_trivial(value):
+            return value
         for item in value.values():
             _retain_value(item, check_duplication=check_duplication)
         return value
@@ -1875,6 +2046,8 @@ def _release_value(value: Any, vm: VirtualMachine) -> None:
             _release_value(item, vm)
         return
     if isinstance(value, dict):
+        if _dict_ownership_is_trivial(value):
+            return
         for item in value.values():
             _release_value(item, vm)
 
@@ -2006,7 +2179,17 @@ def _finalize_builtin_result_ownership(
 def _contains_owned_value(values: tuple[Any, ...]) -> bool:
     """Return whether values include a result requiring ownership finalization."""
     for value in values:
-        if isinstance(value, _OWNERSHIP_VALUE_TYPES):
+        if isinstance(value, TaggedValue):
+            value = value.value
+        if isinstance(value, list):
+            if not _list_ownership_is_trivial(value):
+                return True
+            continue
+        if isinstance(value, dict):
+            if not _dict_ownership_is_trivial(value):
+                return True
+            continue
+        if isinstance(value, (ObjectValue, FunctionValue, OverloadedFunctionValue, tuple)):
             return True
     return False
 
@@ -2440,12 +2623,7 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
                 frame.cycle_stack_remaining = next_cycle_stack_remaining
                 frame.stack.extend(result)
                 return
-    candidates = sorted(
-        callee.element.definitions,
-        key=lambda overload: len(overload.signature.params),
-        reverse=True,
-    )
-    for overload in candidates:
+    for overload in callee.candidates:
         arity = len(overload.signature.params)
         try:
             (
@@ -2476,20 +2654,30 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
         if implementation is None:
             continue
         try:
-            result = _apply_declared_return_tags(
-                implementation(_unwrapped_args(args), callee.context),
-                overload.signature.returns,
-            )
+            result = implementation(_unwrapped_args(args), callee.context)
+            if overload.runtime_return_tags:
+                result = _apply_cached_runtime_return_tags(
+                    result,
+                    overload.runtime_return_tag_deltas,
+                )
         except _py_builtins.RuntimeError as exc:
             raise _with_call_detail(
                 exc,
                 f"element '{callee.element.name}'",
                 args,
             ) from exc
-        result = _bind_lazy_result_owners(args, result)
-        _finalize_builtin_result_ownership(args, result)
-        if stack_count:
-            _release_stack_tail(frame.stack, stack_count, callee.context.call.__self__)
+        if overload.ownership_trivial:
+            if stack_count:
+                del frame.stack[-stack_count:]
+        else:
+            result = _bind_lazy_result_owners(args, result)
+            _finalize_builtin_result_ownership(args, result)
+            if stack_count:
+                _release_stack_tail(
+                    frame.stack,
+                    stack_count,
+                    callee.context.call.__self__,
+                )
         frame.cycle_index = next_cycle_index
         frame.cycle_stack_remaining = next_cycle_stack_remaining
         frame.stack.extend(result)
@@ -2704,21 +2892,31 @@ def _call_resolved_builtin(
     implementation = overload.implementation
     assert implementation is not None
     try:
-        result = _apply_declared_return_tags(
-            implementation(_unwrapped_args(args), context),
-            overload.signature.returns,
-        )
-        result = _apply_runtime_collection_ranks(result, return_collection_ranks)
+        result = implementation(_unwrapped_args(args), context)
+        if overload.runtime_return_tags:
+            result = _apply_cached_runtime_return_tags(
+                result,
+                overload.runtime_return_tag_deltas,
+            )
+        if return_collection_ranks:
+            result = _apply_runtime_collection_ranks(
+                result,
+                return_collection_ranks,
+            )
     except _py_builtins.RuntimeError as exc:
         raise _with_call_detail(
             exc,
             f"element '{callee.element.name}'",
             args,
         ) from exc
-    result = _bind_lazy_result_owners(args, result)
-    _finalize_builtin_result_ownership(args, result)
-    if consumed_count:
-        _release_stack_tail(frame.stack, consumed_count, context.call.__self__)
+    if overload.ownership_trivial:
+        if consumed_count:
+            del frame.stack[-consumed_count:]
+    else:
+        result = _bind_lazy_result_owners(args, result)
+        _finalize_builtin_result_ownership(args, result)
+        if consumed_count:
+            _release_stack_tail(frame.stack, consumed_count, context.call.__self__)
     frame.cycle_index = next_cycle_index
     frame.cycle_stack_remaining = next_cycle_stack_remaining
     frame.stack.extend(result)
@@ -2726,8 +2924,15 @@ def _call_resolved_builtin(
 
 def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
     """Update stack shuffle state during VM execution."""
-    mode, prestack, poststack = _stack_shuffle_spec(spec)
+    mode, prestack, poststack, permutation = _stack_shuffle_spec(spec)
     arity = len(prestack)
+    if permutation is not None and len(frame.stack) >= arity:
+        if permutation == (1, 0) and arity == 2:
+            frame.stack[-2], frame.stack[-1] = frame.stack[-1], frame.stack[-2]
+            return
+        values = frame.stack[-arity:]
+        frame.stack[-arity:] = [values[index] for index in permutation]
+        return
     try:
         (
             args,
@@ -2779,10 +2984,16 @@ def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
     frame.stack.extend(outputs)
 
 
+@lru_cache(maxsize=None)
 def _stack_shuffle_spec(
     spec: object,
-) -> tuple[str, tuple[str | None, ...], tuple[str, ...]]:
-    """Compute stack shuffle spec during VM execution."""
+) -> tuple[
+    str,
+    tuple[str | None, ...],
+    tuple[str, ...],
+    tuple[int, ...] | None,
+]:
+    """Validate and cache one compiled stack-shuffle plan."""
     if not isinstance(spec, tuple) or len(spec) != 3:
         raise RuntimeError(f"invalid stack shuffle spec {spec!r}")
     mode, prestack, poststack = spec
@@ -2802,7 +3013,17 @@ def _stack_shuffle_spec(
             raise RuntimeError(
                 f"stack shuffle poststack label {label!r} is not in prestack"
             )
-    return mode, prestack, poststack
+    permutation: tuple[int, ...] | None = None
+    if (
+        mode == "move"
+        and len(prestack) == len(poststack)
+        and all(label is not None for label in prestack)
+        and len(set(prestack)) == len(prestack)
+        and set(prestack) == set(poststack)
+    ):
+        positions = {label: index for index, label in enumerate(prestack)}
+        permutation = tuple(positions[label] for label in poststack)
+    return mode, prestack, poststack, permutation
 
 
 def _extract_object_field(receiver: ObjectValue, field: str, vm: VirtualMachine) -> Any:
@@ -2893,9 +3114,14 @@ def _call_vectorized_resolved_builtin(
         item_context: RuntimeContext,
     ) -> tuple[Any, ...]:
         """Compute typed implementation during VM execution."""
-        return _apply_declared_return_tags(
-            implementation(_unwrapped_args(item_args), item_context),
-            overload.signature.returns,
+        result = implementation(_unwrapped_args(item_args), item_context)
+        return (
+            _apply_cached_runtime_return_tags(
+                result,
+                overload.runtime_return_tag_deltas,
+            )
+            if overload.runtime_return_tags
+            else result
         )
     try:
         if vectorised_depths or vectorised_target_ranks:
@@ -2936,9 +3162,14 @@ def _vectorize(
         implementation = overload.implementation
         if implementation is None:
             raise _CannotVectorize
-        return _apply_declared_return_tags(
-            implementation(_unwrapped_args(args), context),
-            overload.signature.returns,
+        result = implementation(_unwrapped_args(args), context)
+        return (
+            _apply_cached_runtime_return_tags(
+                result,
+                overload.runtime_return_tag_deltas,
+            )
+            if overload.runtime_return_tags
+            else result
         )
     if all(is_eager_sequence(arg) for arg in vector_args):
         return _vectorize_eager(overload, args, context)
@@ -3387,11 +3618,13 @@ def _build_string(stack: list[Any], template: tuple[object, ...]) -> str:
 
 
 def _load_name(name: str, locals_: dict[str, Any], globals_: dict[str, Any]) -> Any:
-    """Load name during VM execution."""
-    if name in locals_:
-        return locals_[name]
-    if name in globals_:
-        return globals_[name]
+    """Load a lexical name with one dictionary probe per scope."""
+    value = locals_.get(name, _MISSING_NAME)
+    if value is not _MISSING_NAME:
+        return value
+    value = globals_.get(name, _MISSING_NAME)
+    if value is not _MISSING_NAME:
+        return value
     raise RuntimeError(f"undefined name '{name}'")
 
 
@@ -3400,11 +3633,13 @@ def _load_element_name(
     locals_: dict[str, Any],
     globals_: dict[str, Any],
 ) -> Any:
-    """Load element name during VM execution."""
-    if name in globals_:
-        return globals_[name]
-    if name in locals_:
-        return locals_[name]
+    """Load an element name with global precedence and one probe per scope."""
+    value = globals_.get(name, _MISSING_NAME)
+    if value is not _MISSING_NAME:
+        return value
+    value = locals_.get(name, _MISSING_NAME)
+    if value is not _MISSING_NAME:
+        return value
     raise RuntimeError(f"undefined name '{name}'")
 
 
@@ -3415,8 +3650,9 @@ def _constant(value: Any) -> Any:
 
 def _truthy(value: Any) -> bool:
     """Return the Boolean result of truthy during virtual-machine execution."""
-    value = unwrap_runtime_value(value)
-    return value != 0 and value is not None
+    if isinstance(value, TaggedValue):
+        value = value.value
+    return value is not None and value != 0
 
 
 def _matches_type_pattern(value: Any, pattern: str) -> bool:
@@ -3523,6 +3759,8 @@ def _pop_index_values(
     spec: tuple[tuple[tuple[int, int, int, int], ...], int],
 ) -> list[tuple[bool, Any, Any, Any]]:
     """Pop index values during VM execution."""
+    if spec[0] == ((0, 1, 0, 0),):
+        return [(False, _pop(stack, "index"), None, None)]
     values = iter(_pop_many(stack, _index_value_count(spec)))
     selectors = []
     for is_slice, has_start, has_stop, has_step in spec[0]:
@@ -3533,6 +3771,7 @@ def _pop_index_values(
     return selectors
 
 
+@lru_cache(maxsize=None)
 def _index_value_count(
     spec: tuple[tuple[tuple[int, int, int, int], ...], int],
 ) -> int:
@@ -3666,9 +3905,7 @@ def _index_one(receiver: Any, index: Any) -> Any:
                     f"dictionary has no key {_format_value(index)}",
                 )
             ) from exc
-    if isinstance(receiver, tuple) or isinstance(receiver, str) or is_eager_sequence(
-        receiver
-    ):
+    if isinstance(receiver, (tuple, str, list)) or is_eager_sequence(receiver):
         target = _int_index(index)
         try:
             return receiver[target]
@@ -3870,7 +4107,7 @@ def _eager_slice_indexes(
     start_int = 0 if start is None else _normal_index(_int_index(start), length)
     stop_int = length - 1 if stop is None else _normal_index(_int_index(stop), length)
     python_stop = stop_int + (1 if step_int > 0 else -1)
-    return list(range(length))[start_int:python_stop:step_int]
+    return list(range(length)[start_int:python_stop:step_int])
 
 
 def _slice_replacements(value: Any, count: int) -> list[Any]:
@@ -3880,7 +4117,7 @@ def _slice_replacements(value: Any, count: int) -> list[Any]:
         if len(replacements) != count:
             raise RuntimeError("slice assignment replacement length mismatch")
         return replacements
-    return [value for _ in range(count)]
+    return [value] * count
 
 
 def _copy_eager_list(
@@ -3910,8 +4147,14 @@ def _update_list_ownership_after_replacements(
 def _set_index_one(receiver: Any, index: Any, value: Any) -> Any:
     """Update index one during VM execution."""
     if isinstance(receiver, dict):
-        updated = dict(receiver)
-        updated[index] = value
+        updated = DictValue(receiver) if isinstance(receiver, DictValue) else dict(receiver)
+        if isinstance(updated, DictValue):
+            updated._ownership_trivial = receiver._ownership_trivial
+            dict.__setitem__(updated, index, value)
+            if updated._ownership_trivial is True and _needs_release(value):
+                updated._ownership_trivial = False
+        else:
+            updated[index] = value
         return updated
     if isinstance(receiver, tuple):
         target = _int_index(index)
@@ -4071,10 +4314,6 @@ def _optional_safe_set_field(
 def _get_field(receiver: Any, field: str) -> Any:
     """Compute get field during VM execution."""
     receiver = unwrap_runtime_value(receiver)
-    if is_list_like(receiver):
-        if is_eager_sequence(receiver):
-            return [_get_field(item, field) for item in receiver]
-        return LazyList(_get_field(item, field) for item in receiver)
     if isinstance(receiver, ObjectValue):
         try:
             return receiver.fields[field]
@@ -4087,6 +4326,10 @@ def _get_field(receiver: Any, field: str) -> Any:
             return receiver[field]
         except KeyError as exc:
             raise RuntimeError(f"record has no field '{field}'") from exc
+    if is_list_like(receiver):
+        if is_eager_sequence(receiver):
+            return [_get_field(item, field) for item in receiver]
+        return LazyList(_get_field(item, field) for item in receiver)
     try:
         return getattr(receiver, field)
     except AttributeError as exc:
@@ -4111,8 +4354,14 @@ def _set_field(receiver: Any, field: str, value: Any) -> Any:
     if isinstance(receiver, dict):
         if field not in receiver:
             raise RuntimeError(f"record has no field '{field}'")
-        fields = dict(receiver)
-        fields[field] = value
+        fields = DictValue(receiver) if isinstance(receiver, DictValue) else dict(receiver)
+        if isinstance(fields, DictValue):
+            fields._ownership_trivial = receiver._ownership_trivial
+            dict.__setitem__(fields, field, value)
+            if fields._ownership_trivial is True and _needs_release(value):
+                fields._ownership_trivial = False
+        else:
+            fields[field] = value
         return fields
     raise RuntimeError(f"value has no field '{field}'")
 
@@ -4307,7 +4556,17 @@ def _runtime_type_name(value: Any) -> str:
 
 
 def _unwrapped_args(args: tuple[Any, ...]) -> tuple[Any, ...]:
-    """Compute unwrapped args during VM execution."""
+    """Return arguments directly unless one carries a runtime tag wrapper."""
+    if len(args) == 1:
+        value = args[0]
+        return (value.value,) if isinstance(value, TaggedValue) else args
+    if len(args) == 2:
+        left, right = args
+        if not isinstance(left, TaggedValue) and not isinstance(right, TaggedValue):
+            return args
+        return unwrap_runtime_value(left), unwrap_runtime_value(right)
+    if not any(isinstance(arg, TaggedValue) for arg in args):
+        return args
     return tuple(unwrap_runtime_value(arg) for arg in args)
 
 
@@ -4335,6 +4594,41 @@ def _declared_runtime_tags(typ: Any) -> tuple[DataTag, ...]:
     return ()
 
 
+def _apply_cached_runtime_return_tags(
+    values: tuple[Any, ...] | list[Any],
+    deltas: tuple[
+        tuple[tuple[DataTag, ...], tuple[DataTag, ...]], ...
+    ],
+) -> tuple[Any, ...]:
+    """Apply pre-split built-in return tags without hashing metadata per call."""
+    if len(values) != len(deltas):
+        return tuple(values)
+    if len(values) == 1:
+        additions, removals = deltas[0]
+        return (
+            update_runtime_tags(
+                values[0],
+                add=additions,
+                remove=removals,
+            ),
+        )
+    return tuple(
+        update_runtime_tags(value, add=additions, remove=removals)
+        for value, (additions, removals) in zip(values, deltas, strict=True)
+    )
+
+
+@lru_cache(maxsize=256)
+def _runtime_tag_delta(
+    tags: tuple[DataTag, ...],
+) -> tuple[tuple[DataTag, ...], tuple[DataTag, ...]]:
+    """Split one immutable return-tag set once for repeated call sites."""
+    return (
+        tuple(tag for tag in tags if not tag.absent),
+        tuple(tag for tag in tags if tag.absent),
+    )
+
+
 def _apply_runtime_return_tags(
     values: tuple[Any, ...] | list[Any],
     tag_sets: tuple[tuple[DataTag, ...], ...],
@@ -4347,14 +4641,27 @@ def _apply_runtime_return_tags(
             break
     else:
         return values if isinstance(values, tuple) else tuple(values)
-    return tuple(
-        update_runtime_tags(
-            value,
-            add=tuple(tag for tag in tags if not tag.absent),
-            remove=tuple(tag for tag in tags if tag.absent),
+    if len(values) == 1:
+        tags = tag_sets[0]
+        additions, removals = _runtime_tag_delta(tags)
+        return (
+            update_runtime_tags(
+                values[0],
+                add=additions,
+                remove=removals,
+            ),
         )
-        for value, tags in zip(values, tag_sets, strict=True)
-    )
+    outputs: list[Any] = []
+    for value, tags in zip(values, tag_sets, strict=True):
+        additions, removals = _runtime_tag_delta(tags)
+        outputs.append(
+            update_runtime_tags(
+                value,
+                add=additions,
+                remove=removals,
+            )
+        )
+    return tuple(outputs)
 
 
 def _apply_runtime_collection_ranks(

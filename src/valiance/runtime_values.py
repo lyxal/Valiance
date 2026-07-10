@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence, Sized
 from dataclasses import dataclass, field
+from functools import lru_cache
 from decimal import Decimal
 from itertools import islice
 import json
@@ -112,6 +113,65 @@ class ListValue(list[Any]):
         return super().__imul__(count)
 
 
+class DictValue(dict[Any, Any]):
+    """A Valiance mapping carrying cached ownership-scan metadata."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize this mapping value."""
+        super().__init__(*args, **kwargs)
+        self._ownership_trivial: bool | None = None
+
+    def _invalidate_ownership_cache(self) -> None:
+        """Forget whether every direct value is ownership-trivial."""
+        self._ownership_trivial = None
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        """Set one item and invalidate cached ownership metadata."""
+        super().__setitem__(key, value)
+        self._invalidate_ownership_cache()
+
+    def __delitem__(self, key: Any) -> None:
+        """Delete one item and invalidate cached ownership metadata."""
+        super().__delitem__(key)
+        self._invalidate_ownership_cache()
+
+    def clear(self) -> None:
+        """Remove all items and record that the mapping is ownership-trivial."""
+        super().clear()
+        self._ownership_trivial = True
+
+    def pop(self, key: Any, *default: Any) -> Any:
+        """Remove one item and invalidate cached ownership metadata."""
+        value = super().pop(key, *default)
+        self._invalidate_ownership_cache()
+        return value
+
+    def popitem(self) -> tuple[Any, Any]:
+        """Remove one item and invalidate cached ownership metadata."""
+        value = super().popitem()
+        self._invalidate_ownership_cache()
+        return value
+
+    def setdefault(self, key: Any, default: Any = None) -> Any:
+        """Set a default and invalidate metadata only when insertion occurs."""
+        if key in self:
+            return self[key]
+        value = super().setdefault(key, default)
+        self._invalidate_ownership_cache()
+        return value
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        """Update items and invalidate cached ownership metadata."""
+        super().update(*args, **kwargs)
+        self._invalidate_ownership_cache()
+
+    def __ior__(self, other: Any):
+        """Merge values and invalidate cached ownership metadata."""
+        result = super().__ior__(other)
+        self._invalidate_ownership_cache()
+        return result
+
+
 @dataclass(frozen=True, eq=False)
 class TaggedValue:
     """A runtime value carrying reified data-tag evidence."""
@@ -146,6 +206,23 @@ def runtime_value_tags(value: Any) -> frozenset[DataTag]:
     return value.tags if isinstance(value, TaggedValue) else frozenset()
 
 
+@lru_cache(maxsize=256)
+def _cached_runtime_tag_additions(
+    tags: tuple[DataTag, ...],
+) -> frozenset[DataTag]:
+    """Cache normalized positive tag additions for hot return paths."""
+    return frozenset(tag for tag in tags if not tag.absent)
+
+
+@lru_cache(maxsize=256)
+def _cached_tagged_scalar(
+    payload: Decimal | str | int | bool | None,
+    tags: frozenset[DataTag],
+) -> TaggedValue:
+    """Intern frequently repeated immutable tagged scalar values."""
+    return TaggedValue(payload, tags)
+
+
 def update_runtime_tags(
     value: Any,
     *,
@@ -153,12 +230,30 @@ def update_runtime_tags(
     remove: tuple[DataTag, ...] = (),
 ) -> Any:
     """Apply a tag-evidence delta without nesting wrappers."""
-    payload = unwrap_runtime_value(value)
-    tags = set(runtime_value_tags(value))
-    removed = {(tag.name, tag.depth) for tag in remove}
-    tags = {tag for tag in tags if (tag.name, tag.depth) not in removed}
-    tags.update(tag for tag in add if not tag.absent)
-    return TaggedValue(payload, frozenset(tags)) if tags else payload
+    if isinstance(value, TaggedValue):
+        payload = value.value
+        current = value.tags
+    else:
+        payload = value
+        current = frozenset()
+
+    if not remove:
+        additions = _cached_runtime_tag_additions(add)
+        tags = additions if not current else current | additions
+        if tags == current:
+            return value
+    else:
+        removed = {(tag.name, tag.depth) for tag in remove}
+        tags = frozenset(
+            tag for tag in current if (tag.name, tag.depth) not in removed
+        )
+        tags = tags.union(tag for tag in add if not tag.absent)
+
+    if not tags:
+        return payload
+    if isinstance(payload, (Decimal, str, int, bool, type(None))):
+        return _cached_tagged_scalar(payload, tags)
+    return TaggedValue(payload, tags)
 
 
 @dataclass(frozen=True, slots=True)

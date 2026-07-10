@@ -9,9 +9,10 @@
 from __future__ import annotations
 
 import builtins as python_builtins
+import operator
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
-from decimal import MAX_EMAX, MIN_EMIN, Decimal, localcontext
+from dataclasses import dataclass, field
+from decimal import MAX_EMAX, MIN_EMIN, Decimal, getcontext, localcontext
 from itertools import chain, cycle, groupby, islice
 from typing import Any
 
@@ -528,6 +529,36 @@ class RuntimeContext:
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
 
 
+def _runtime_return_tags(typ: T.Type) -> tuple[T.DataTag, ...]:
+    """Return top-level reified tags once for a built-in return type."""
+    typ = T.normalize(typ)
+    if not isinstance(typ, T.TaggedType):
+        return ()
+    return tuple(sorted(tag for tag in typ.tags if tag.depth == 0))
+
+
+def _runtime_type_is_ownership_trivial(typ: T.Type) -> bool:
+    """Conservatively identify values that never need retain/release work."""
+    typ = T.normalize(typ)
+    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _runtime_type_is_ownership_trivial(typ.inner)
+    if isinstance(typ, T.NominalType):
+        return not typ.args and typ.name.text in {
+            "Boolean",
+            "Integer",
+            "Number",
+            "Real",
+            "String",
+        }
+    if isinstance(typ, T.NoneTypeNode):
+        return True
+    if isinstance(typ, T.TupleType):
+        return all(_runtime_type_is_ownership_trivial(item) for item in typ.params)
+    if isinstance(typ, T.UnionType):
+        return all(_runtime_type_is_ownership_trivial(item) for item in typ.items)
+    return False
+
+
 @dataclass(frozen=True)
 class BuiltinOverload:
     """A built-in overload with static type and optional runtime behaviour."""
@@ -535,6 +566,45 @@ class BuiltinOverload:
     signature: T.Overload
     implementation: RuntimeImpl | None = None
     vectorisable: bool = True
+    runtime_return_tags: tuple[tuple[T.DataTag, ...], ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    runtime_return_tag_deltas: tuple[
+        tuple[tuple[T.DataTag, ...], tuple[T.DataTag, ...]], ...
+    ] = field(init=False, repr=False, compare=False)
+    ownership_trivial: bool = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Cache runtime-only signature facts used on every invocation."""
+        tags = tuple(_runtime_return_tags(typ) for typ in self.signature.returns)
+        object.__setattr__(
+            self,
+            "runtime_return_tags",
+            tags if any(tags) else (),
+        )
+        object.__setattr__(
+            self,
+            "runtime_return_tag_deltas",
+            tuple(
+                (
+                    tuple(tag for tag in return_tags if not tag.absent),
+                    tuple(tag for tag in return_tags if tag.absent),
+                )
+                for return_tags in tags
+            )
+            if any(tags)
+            else (),
+        )
+        object.__setattr__(
+            self,
+            "ownership_trivial",
+            all(
+                _runtime_type_is_ownership_trivial(typ)
+                for typ in (*self.signature.params, *self.signature.returns)
+            ),
+        )
 
     def runtime_matches(self, args: tuple[Any, ...]) -> bool:
         """Return whether these runtime arguments match the nominal signature."""
@@ -1057,20 +1127,33 @@ def _runtime_callable_value(value: Any) -> bool:
 # --------------------------------------------------------------------------
 
 
+_INTEGER_QUANTUM = Decimal(1)
+
+
 def _decimal_addition_precision(left: Decimal, right: Decimal) -> int:
-    """Compute decimal addition precision for the built-in catalogue and runtime."""
-    highest_place = max(left.adjusted(), right.adjusted())
-    lowest_place = min(left.as_tuple().exponent, right.as_tuple().exponent)
+    """Compute exact addition precision, fast-pathing ordinary integers."""
+    if left.same_quantum(_INTEGER_QUANTUM) and right.same_quantum(_INTEGER_QUANTUM):
+        return max(1, max(left.adjusted(), right.adjusted()) + 2)
+    left_tuple = left.as_tuple()
+    right_tuple = right.as_tuple()
+    left_high = len(left_tuple.digits) + left_tuple.exponent - 1
+    right_high = len(right_tuple.digits) + right_tuple.exponent - 1
+    highest_place = max(left_high, right_high)
+    lowest_place = min(left_tuple.exponent, right_tuple.exponent)
     return max(1, highest_place - lowest_place + 2)
 
 
 def _decimal_multiplication_precision(left: Decimal, right: Decimal) -> int:
-    """Compute decimal multiplication precision for the built-in catalogue and runtime."""
+    """Compute multiplication precision, fast-pathing ordinary integers."""
+    if left.same_quantum(_INTEGER_QUANTUM) and right.same_quantum(_INTEGER_QUANTUM):
+        return max(1, left.adjusted() + right.adjusted() + 2)
     return max(1, len(left.as_tuple().digits) + len(right.as_tuple().digits))
 
 
 def _decimal_division_precision(left: Decimal, right: Decimal) -> int:
-    """Compute decimal division precision for the built-in catalogue and runtime."""
+    """Compute division precision, fast-pathing ordinary integers."""
+    if left.same_quantum(_INTEGER_QUANTUM) and right.same_quantum(_INTEGER_QUANTUM):
+        return max(1, left.adjusted() + right.adjusted() + 2)
     return max(1, len(left.as_tuple().digits) + len(right.as_tuple().digits))
 
 
@@ -1080,11 +1163,20 @@ def _decimal_binary(
     operation: Callable[[Decimal, Decimal], Decimal],
     precision: int,
 ) -> Decimal:
-    """Compute decimal binary for the built-in catalogue and runtime."""
-    with localcontext() as context:
-        context.prec = max(context.prec, precision)
-        context.Emax = MAX_EMAX
-        context.Emin = MIN_EMIN
+    """Run directly when the active context already satisfies exactness needs."""
+    context = getcontext()
+    if precision <= context.prec:
+        left_adjusted = left.adjusted()
+        right_adjusted = right.adjusted()
+        if (
+            context.Emin <= left_adjusted <= context.Emax
+            and context.Emin <= right_adjusted <= context.Emax
+        ):
+            return operation(left, right)
+    with localcontext() as expanded:
+        expanded.prec = max(expanded.prec, precision)
+        expanded.Emax = MAX_EMAX
+        expanded.Emin = MIN_EMIN
         return operation(left, right)
 
 
@@ -1093,7 +1185,7 @@ def _decimal_add(left: Decimal, right: Decimal) -> Decimal:
     return _decimal_binary(
         left,
         right,
-        lambda a, b: a + b,
+        operator.add,
         _decimal_addition_precision(left, right),
     )
 
@@ -1103,7 +1195,7 @@ def _decimal_subtract(left: Decimal, right: Decimal) -> Decimal:
     return _decimal_binary(
         left,
         right,
-        lambda a, b: a - b,
+        operator.sub,
         _decimal_addition_precision(left, right),
     )
 
@@ -1113,21 +1205,21 @@ def _decimal_multiply(left: Decimal, right: Decimal) -> Decimal:
     return _decimal_binary(
         left,
         right,
-        lambda a, b: a * b,
+        operator.mul,
         _decimal_multiplication_precision(left, right),
     )
 
 
+def _wrapping_mod(a: Decimal, b: Decimal) -> Decimal:
+    """Return modulo wrapped to the divisor's sign."""
+    remainder = a % b
+    if remainder and (remainder < 0) != (b < 0):
+        remainder += b
+    return remainder
+
+
 def _decimal_remainder(left: Decimal, right: Decimal) -> Decimal:
     """Compute decimal remainder for the built-in catalogue and runtime."""
-
-    def _wrapping_mod(a: Decimal, b: Decimal) -> Decimal:
-        """Return modulo wrapped to the divisor's sign."""
-        r = a % b
-        if r and (r < 0) != (b < 0):
-            r += b
-        return r
-
     return _decimal_binary(
         left,
         right,
@@ -1141,7 +1233,7 @@ def _decimal_divide(left: Decimal, right: Decimal) -> Decimal:
     return _decimal_binary(
         left,
         right,
-        lambda a, b: a / b,
+        operator.truediv,
         _decimal_division_precision(left, right),
     )
 

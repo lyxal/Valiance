@@ -57,6 +57,7 @@ from valiance.asts import (
     TryHandlerNode,
     TryNode,
     TupleLiteralNode,
+    TypedAssertNode,
     TypedAtNode,
     TypedElementExtension,
     TypedElementNode,
@@ -69,7 +70,9 @@ from valiance.asts import (
     TypedMatchNode,
     TypedNode,
     TypedTagApplicationNode,
+    TypedTryNode,
     TypedUnfoldNode,
+    TypedWhileNode,
     TypePatternNode,
     UnfoldNode,
     WhileNode,
@@ -420,13 +423,13 @@ class _Compiler:
             case IfNode():
                 self.if_node(node, typed_node)
             case AssertNode():
-                self.assert_node(node)
+                self.assert_node(node, typed_node)
             case MatchNode():
                 self.match_node(node, typed_node)
             case TryNode():
-                self.try_node(node)
+                self.try_node(node, typed_node)
             case WhileNode():
-                self.while_node(node)
+                self.while_node(node, typed_node)
             case UnfoldNode():
                 self.unfold_node(node, typed_node)
             case AtNode():
@@ -707,18 +710,23 @@ class _Compiler:
             self.node(branch_node)
         self.patch(jump_to_end, len(self.instructions))
 
-    def assert_node(self, node: AssertNode) -> None:
+    def assert_node(self, node: AssertNode, typed_node: TypedNode | None) -> None:
         """Lower an assertion and its optional failure branch."""
-        for condition_node in node.condition:
+        condition: tuple[ASTNode | TypedNode, ...] = node.condition
+        else_branch: tuple[ASTNode | TypedNode, ...] = node.else_branch
+        if isinstance(typed_node, TypedAssertNode):
+            condition = typed_node.condition
+            else_branch = typed_node.else_branch
+        for condition_node in condition:
             self.node(condition_node)
-        if not node.else_branch:
+        if not else_branch:
             self.emit(OpCode.ASSERT_TRUE)
             return
         jump_to_else = self.emit(OpCode.JUMP_IF_FALSE, None)
         jump_to_end = self.emit(OpCode.JUMP, None)
         else_start = len(self.instructions)
         self.patch(jump_to_else, else_start)
-        for branch_node in node.else_branch:
+        for branch_node in else_branch:
             self.node(branch_node)
         self.emit(OpCode.WRAP_ASSERT_ERROR)
         self.patch(jump_to_end, len(self.instructions))
@@ -876,19 +884,27 @@ class _Compiler:
         for jump in end_jumps:
             self.patch(jump, end)
 
-    def try_node(self, node: TryNode) -> None:
+    def try_node(self, node: TryNode, typed_node: TypedNode | None) -> None:
         """Lower panic handlers and their protected instruction range."""
+        body: tuple[ASTNode | TypedNode, ...] = node.body
+        handler_bodies: tuple[tuple[ASTNode | TypedNode, ...], ...] = ()
+        if isinstance(typed_node, TypedTryNode):
+            body = typed_node.body
+            handler_bodies = typed_node.handler_bodies
         begin = self.emit(OpCode.TRY_BEGIN, ())
-        for body_node in node.body:
+        for body_node in body:
             self.node(body_node)
         self.emit(OpCode.TRY_END)
         success_jump = self.emit(OpCode.JUMP, None)
 
         handlers: list[tuple[str | None, int]] = []
         end_jumps: list[int] = []
-        for handler in node.handlers:
+        for index, handler in enumerate(node.handlers):
             handlers.append((_handler_type_name(handler), len(self.instructions)))
-            for handler_node in handler.body:
+            handler_body: tuple[ASTNode | TypedNode, ...] = handler.body
+            if index < len(handler_bodies):
+                handler_body = handler_bodies[index]
+            for handler_node in handler_body:
                 self.node(handler_node)
             end_jumps.append(self.emit(OpCode.JUMP, None))
 
@@ -898,33 +914,59 @@ class _Compiler:
             self.patch(jump, end)
         self.instructions[begin] = Instruction(OpCode.TRY_BEGIN, tuple(handlers))
 
-    def while_node(self, node: WhileNode) -> None:
+    def while_node(self, node: WhileNode, typed_node: TypedNode | None) -> None:
         """Lower a while loop with condition and exit jumps."""
+        condition: tuple[ASTNode | TypedNode, ...] = node.condition
+        body: tuple[ASTNode | TypedNode, ...] = node.body
+        if isinstance(typed_node, TypedWhileNode):
+            condition = typed_node.condition
+            body = typed_node.body
         if node.params is not None:
-            condition = FunctionNode(
-                params=node.params,
-                body=node.condition,
-                location=node.location,
+            params = tuple(
+                f"_{index}" if param.name is None else param.name.text
+                for index, param in enumerate(node.params)
             )
-            body = FunctionNode(
-                params=node.params,
-                body=node.body,
-                location=node.location,
-            )
-            condition_code = _compile_function_node(condition, "while.condition")
-            body_code = _compile_function_node(
-                body,
-                "while.body",
-                break_as_signal=True,
-            )
+            if isinstance(typed_node, TypedWhileNode):
+                condition_code = _Compiler().compile_function(
+                    condition,
+                    params=params,
+                    name="while.condition",
+                    cycle_params=True,
+                )
+                body_code = _Compiler(break_as_signal=True).compile_function(
+                    body,
+                    params=params,
+                    name="while.body",
+                    cycle_params=True,
+                )
+            else:
+                condition_function = FunctionNode(
+                    params=node.params,
+                    body=node.condition,
+                    location=node.location,
+                )
+                body_function = FunctionNode(
+                    params=node.params,
+                    body=node.body,
+                    location=node.location,
+                )
+                condition_code = _compile_function_node(
+                    condition_function,
+                    "while.condition",
+                )
+                body_code = _compile_function_node(
+                    body_function,
+                    "while.body",
+                    break_as_signal=True,
+                )
             self.emit(OpCode.WHILE, (condition_code, body_code, len(node.params)))
             return
         loop_start = len(self.instructions)
         self.loops.append(_LoopPatch([]))
-        for condition_node in node.condition:
+        for condition_node in condition:
             self.node(condition_node)
         jump_to_end = self.emit(OpCode.JUMP_IF_FALSE, None)
-        for body_node in node.body:
+        for body_node in body:
             self.node(body_node)
         self.emit(OpCode.JUMP, loop_start)
         loop_end = len(self.instructions)
@@ -1187,7 +1229,8 @@ def _function_return_tags(
     """Compute function return tags during typed-AST bytecode lowering."""
     if typ.returns is None:
         return ()
-    return tuple(_top_level_runtime_tags(ret) for ret in typ.returns)
+    tags = tuple(_top_level_runtime_tags(ret) for ret in typ.returns)
+    return tags if any(tags) else ()
 
 
 def _function_return_collection_ranks(
@@ -1196,7 +1239,8 @@ def _function_return_collection_ranks(
     """Compute function return collection ranks during typed-AST bytecode lowering."""
     if typ.returns is None:
         return ()
-    return tuple(_runtime_collection_rank(ret) for ret in typ.returns)
+    ranks = tuple(_runtime_collection_rank(ret) for ret in typ.returns)
+    return ranks if any(rank is not None for rank in ranks) else ()
 
 
 def _function_param_collection_ranks(
@@ -1526,6 +1570,8 @@ def _resolved_element_reference(
         if node.overload is not None
         else ()
     )
+    if not any(rank is not None for rank in return_collection_ranks):
+        return_collection_ranks = ()
     arity_override = None
     consumed_override = None
     if (

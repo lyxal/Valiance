@@ -29,7 +29,7 @@ from valiance.runtime.bytecode import (
     Program,
     ResolvedElementReference,
 )
-from valiance.runtime_values import LazyList, ListValue, ObjectValue
+from valiance.runtime_values import DictValue, LazyList, ListValue, ObjectValue
 
 
 def execute(source: str, source_file: Path | None = None):
@@ -145,6 +145,27 @@ end
         self.assertIs(tape._ownership_trivial, True)
         self.assertEqual(tape[0], Decimal("2"))
         self.assertEqual(vm.globals["identity"].owned_names, frozenset())
+
+    def test_scalar_record_updates_preserve_fast_ownership_metadata(self):
+        """Keep scalar records out of recursive retain and release walks."""
+        source = """
+$point = record{x: 0, y: 1}
+$i: Integer = 0
+while ($i < 2) =>
+  $point.x := + 1
+  $i := + 1
+end
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+
+        self.assertEqual(vm.run(compile_program(typed)), [])
+        point = vm.globals["point"]
+        self.assertIsInstance(point, DictValue)
+        self.assertIs(point._ownership_trivial, True)
+        self.assertEqual(point["x"], Decimal("2"))
 
     def test_executes_stack_arithmetic(self):
         self.assertEqual(execute("*(+(1, 2), 3)"), [Decimal("9")])
@@ -1101,6 +1122,46 @@ $total
         self.assertIn(OpCode.CALL_RESOLVED_ELEMENT, foreach_ops)
         self.assertNotIn(OpCode.LOAD_ELEMENT, foreach_ops)
         self.assertEqual(run(program), [Decimal("12")])
+
+    def test_inline_control_flow_keeps_resolved_element_calls(self):
+        """Do not redo overload search inside while, assert, or try bodies."""
+        source = """
+define add1(n: Integer) => $n + 1
+$i: Integer = 0
+while ($i < 1) =>
+  $i := add1 $i
+end
+assert => $i == 1 else => add1 $i end
+try =>
+  add1 $i
+handle =>
+  add1 $i
+end
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+
+        program = compile_program(typed)
+        ops = tuple(instruction.op for instruction in program.main.instructions)
+
+        self.assertGreaterEqual(ops.count(OpCode.CALL_RESOLVED_ELEMENT), 6)
+        self.assertNotIn(OpCode.LOAD_ELEMENT, ops)
+        self.assertEqual(run(program), [Decimal("0"), Decimal("2")])
+
+        parameterised = Analyser().analyse(
+            parse("0 while (< 3) -> (n: Number) => 1 + end")
+        )
+        while_instruction = next(
+            instruction
+            for instruction in compile_program(parameterised).main.instructions
+            if instruction.op is OpCode.WHILE
+        )
+        condition_code, body_code, _arity = while_instruction.arg
+        for code in (condition_code, body_code):
+            nested_ops = tuple(instruction.op for instruction in code.instructions)
+            self.assertIn(OpCode.CALL_RESOLVED_ELEMENT, nested_ops)
+            self.assertNotIn(OpCode.LOAD_ELEMENT, nested_ops)
 
     def test_compiler_emits_every_user_defined_overload_body(self):
         source = """

@@ -63,6 +63,7 @@ from valiance.asts import (
     TryHandlerNode,
     TryNode,
     TupleLiteralNode,
+    TypedAssertNode,
     TypedAtNode,
     TypedCallNode,
     TypedElementExtension,
@@ -77,7 +78,9 @@ from valiance.asts import (
     TypedMatchNode,
     TypedNode,
     TypedTagApplicationNode,
+    TypedTryNode,
     TypedUnfoldNode,
+    TypedWhileNode,
     TypePatternNode,
     UnfoldNode,
     VariantMemberNode,
@@ -2993,7 +2996,13 @@ class Analyser:
             return BranchSet()
 
         body_outputs = self.analyse_scoped_block(BranchSet((branch,)), node.body)
+        typed_body = _typed_block(
+            body_outputs,
+            len(branch.typed_body),
+            node.body,
+        )
         outputs: list[AnalysisBranch] = list(body_outputs.branches)
+        typed_handler_bodies: list[tuple[ASTNode | TypedNode, ...]] = []
         for handler in node.handlers:
             if handler.typ is not None and not T.assignable(
                 handler.typ,
@@ -3007,6 +3016,13 @@ class Analyser:
             handler_outputs = self.analyse_scoped_block(
                 BranchSet((branch,)),
                 handler.body,
+            )
+            typed_handler_bodies.append(
+                _typed_block(
+                    handler_outputs,
+                    len(branch.typed_body),
+                    handler.body,
+                )
             )
             for output in handler_outputs:
                 if output.inputs != branch.inputs:
@@ -3028,7 +3044,12 @@ class Analyser:
         return BranchSet(
             (
                 joined.emit(
-                    TypedNode(node, _returns_result_type(joined.stack.items))
+                    TypedTryNode(
+                        node,
+                        _returns_result_type(joined.stack.items),
+                        body=typed_body,
+                        handler_bodies=tuple(typed_handler_bodies),
+                    )
                 ),
             )
         )
@@ -3959,16 +3980,39 @@ def _assert_node(
     condition_uses = frozenset(
         use for output in condition for use in output.data_element_uses
     )
+    typed_condition = _typed_block(
+        condition,
+        len(branch.typed_body),
+        node.condition,
+    )
+    typed_assert = TypedAssertNode(
+        node,
+        None,
+        condition=typed_condition,
+    )
     success = (
         branch.with_element_tags(condition_tags)
         .with_data_element_uses(condition_uses)
-        .emit(TypedNode(node, None))
+        .emit(typed_assert)
     )
     if not node.else_branch:
         return BranchSet((success,))
 
     else_outputs = self.analyse_from(branch, node.else_branch)
-    success = success.with_element_tags(
+    typed_assert = TypedAssertNode(
+        node,
+        None,
+        condition=typed_condition,
+        else_branch=_typed_block(
+            else_outputs,
+            len(branch.typed_body),
+            node.else_branch,
+        ),
+    )
+    success = replace(
+        success,
+        typed_body=(*success.typed_body[:-1], typed_assert),
+    ).with_element_tags(
         tag for output in else_outputs for tag in output.element_tags
     ).with_data_element_uses(
         use for output in else_outputs for use in output.data_element_uses
@@ -4074,10 +4118,26 @@ def _while_node(
         else joined.variables.merge_against(loop_input.variables, branch.variables)
     )
     result = _refine_branch_like(branch, joined).with_variables(variables)
+    condition_body = _typed_block(
+        condition,
+        len(loop_input.typed_body),
+        node.condition,
+    )
+    body_start = (
+        len(body_inputs.branches[0].typed_body)
+        if body_inputs.branches
+        else len(loop_input.typed_body)
+    )
+    body = _typed_block(body_outputs, body_start, node.body)
     return BranchSet(
         (
             result.emit(
-                TypedNode(node, _returns_result_type(result.stack.items))
+                TypedWhileNode(
+                    node,
+                    _returns_result_type(result.stack.items),
+                    condition=condition_body,
+                    body=body,
+                )
             ),
         )
     )

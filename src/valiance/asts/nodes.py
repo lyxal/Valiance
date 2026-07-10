@@ -88,6 +88,30 @@ class TypedIfNode(TypedNode):
 
 
 @dataclass(frozen=True, slots=True)
+class TypedAssertNode(TypedNode):
+    """A typed assertion retaining its condition and optional failure body."""
+
+    condition: tuple[ASTNode | TypedNode, ...] = ()
+    else_branch: tuple[ASTNode | TypedNode, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TypedWhileNode(TypedNode):
+    """A typed while loop retaining its analysed condition and body."""
+
+    condition: tuple[ASTNode | TypedNode, ...] = ()
+    body: tuple[ASTNode | TypedNode, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TypedTryNode(TypedNode):
+    """A typed try expression retaining its body and handler bodies."""
+
+    body: tuple[ASTNode | TypedNode, ...] = ()
+    handler_bodies: tuple[tuple[ASTNode | TypedNode, ...], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class TypedMatchNode(TypedNode):
     """A typed match retaining the analysed body for every source case."""
 
