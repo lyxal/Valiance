@@ -34,6 +34,10 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [ ] Implement argument cycling for loop inputs where specified.
 - [x] Compile typed AST nodes to bytecode.
 - [x] Run an extensible bytecode optimisation pipeline by default.
+- [x] Fold pure constants and literal tuple/string builders.
+- [x] Inline small constant functions using a configurable bytecode-size limit.
+- [x] Materialise proven scalar cycle inputs as explicit parameter loads.
+- [x] Simplify bytecode branches and redundant physical stack shuffles.
 - [x] Allow optimisation to be disabled for a compilation.
 - [x] Execute bytecode with a stack-based virtual machine.
 

@@ -798,6 +798,135 @@ def _random_function(
     )
 
 
+
+def _fuzz_optimizer(
+    rng: random.Random,
+    iteration: int,
+    _config: FuzzConfig,
+) -> object:
+    """Differentially exercise every default optimisation family."""
+    mode = iteration % 5
+    left = rng.randint(-50, 50)
+    right = rng.randint(1, 50)
+    factor = rng.randint(1, 12)
+
+    if mode == 4:
+        condition = Decimal(rng.randrange(2))
+        expected = "enabled" if condition else "disabled"
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.PUSH_CONST, Decimal("999")),
+                    Instruction(OpCode.POP),
+                    Instruction(OpCode.PUSH_CONST, condition),
+                    Instruction(OpCode.JUMP_IF_FALSE, 6),
+                    Instruction(OpCode.PUSH_CONST, "enabled"),
+                    Instruction(OpCode.JUMP, 7),
+                    Instruction(OpCode.PUSH_CONST, "disabled"),
+                    Instruction(OpCode.RETURN),
+                ),
+                name="<optimizer-peephole-fuzz>",
+            )
+        )
+        case: object = program
+        try:
+            optimized = _compile_optimizer_program(program)
+            if run(program) != [expected] or run(optimized) != [expected]:
+                raise AssertionError("peephole optimisation changed branch behaviour")
+            if run(loads(dumps(optimized))) != [expected]:
+                raise AssertionError(
+                    "optimised peephole bytecode changed after round trip"
+                )
+            if any(
+                instruction == Instruction(OpCode.PUSH_CONST, Decimal("999"))
+                for instruction in optimized.main.instructions
+            ):
+                raise AssertionError("dead scalar push survived peephole optimisation")
+            if any(
+                instruction.op is OpCode.JUMP_IF_FALSE
+                for instruction in optimized.main.instructions
+            ):
+                raise AssertionError("literal conditional branch was not folded")
+            return case
+        except BaseException as exc:
+            raise _GeneratedCaseFailure(case, exc) from exc
+
+    if mode == 0:
+        source = f"{left} {right} + {factor} *"
+    elif mode == 1:
+        source = (
+            "define combine(left: Number, right: Number) -> Number => + end\n"
+            f"{left} {right} combine"
+        )
+    elif mode == 2:
+        rate = Decimal(rng.randint(1, 25)) / Decimal(10)
+        source = (
+            f"define \\rate -> Number => {rate} end\n"
+            f"{factor} \\rate *"
+        )
+    else:
+        arity = rng.randint(2, 5)
+        values = [rng.randint(-50, 50) for _ in range(arity)]
+        labels = [f"value{index}" for index in range(arity)]
+        permutation = list(range(arity))
+        rng.shuffle(permutation)
+        inverse = [permutation.index(index) for index in range(arity)]
+        source = " ".join(str(value) for value in values)
+        source += " move(" + ", ".join(labels) + " -> "
+        source += ", ".join(labels[index] for index in permutation) + ")"
+        source += " move(" + ", ".join(labels) + " -> "
+        source += ", ".join(labels[index] for index in inverse) + ")"
+    case = source
+    try:
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        if analyser.diagnostics:
+            raise AssertionError(
+                "generated optimizer source did not analyse: "
+                f"{analyser.diagnostics}"
+            )
+        unoptimized = compile_program(typed, optimize=False)
+        optimized = compile_program(typed)
+        expected = run(unoptimized)
+        if run(optimized) != expected:
+            raise AssertionError("optimized and unoptimized programs diverged")
+        if run(loads(dumps(optimized))) != expected:
+            raise AssertionError("optimized program diverged after serialization")
+
+        if mode == 0 and len(optimized.main.instructions) >= len(
+            unoptimized.main.instructions
+        ):
+            raise AssertionError("constant folding did not reduce bytecode")
+        if mode == 1:
+            nested = optimized.main.instructions[0].arg
+            if not isinstance(nested, FunctionCode) or not any(
+                instruction.op is OpCode.LOAD_VAR for instruction in nested.instructions
+            ):
+                raise AssertionError("explicit argument materialisation did not run")
+        if mode == 2 and any(
+            instruction.op is OpCode.CALL_RESOLVED_ELEMENT
+            and isinstance(instruction.arg, ResolvedElementReference)
+            and instruction.arg.name == "\\rate"
+            for instruction in optimized.main.instructions
+        ):
+            raise AssertionError("small constant function was not inlined")
+        if mode == 3 and any(
+            instruction.op is OpCode.STACK_SHUFFLE
+            for instruction in optimized.main.instructions
+        ):
+            raise AssertionError("inverse stack shuffles were not eliminated")
+        return case
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(case, exc) from exc
+
+
+def _compile_optimizer_program(program: Program) -> Program:
+    """Run the public default optimiser over a hand-built fuzz program."""
+    from valiance.runtime import optimize_program
+
+    return optimize_program(program)
+
+
 def _fuzz_serialization_roundtrip(
     rng: random.Random,
     iteration: int,
@@ -2568,6 +2697,7 @@ TARGETS: dict[str, Target] = {
     "parser-depth": _fuzz_parser_depth,
     "valid-programs": _fuzz_valid_programs,
     "serialization": _fuzz_serialization_roundtrip,
+    "optimizer": _fuzz_optimizer,
     "numeric-booleans": _fuzz_numeric_boolean_serialization,
     "malformed-bytecode": _fuzz_malformed_bytecode,
     "bytecode-depth": _fuzz_bytecode_depth,

@@ -1,0 +1,9 @@
+#? Reorder ledger values for presentation, undo the reorder, then total them.
+$net = 1250
+$tax = 250
+$shipping = 40
+$net $tax
+move(net, tax -> tax, net)
+move(tax, net -> net, tax)
++
+$shipping +

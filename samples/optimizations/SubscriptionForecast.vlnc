@@ -1,0 +1,5 @@
+#? Forecast five years of subscription revenue from constant business settings.
+define \monthlyRate -> Number => 29.95 end
+define \monthsPerYear -> Number => 12 end
+\monthlyRate \monthsPerYear *
+5 *

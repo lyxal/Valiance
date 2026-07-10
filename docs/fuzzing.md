@@ -26,6 +26,11 @@ base seed, and iteration number.
   dispatch patterns, vector extensions, object constructors, function
   stack-input flags, parameter ranks, and every opcode. It requires exact object
   round trips and canonical re-encoding.
+- `optimizer` differentially compiles generated constant expressions, cycling
+  functions, constant nilads, randomized inverse stack permutations, and
+  hand-built branch peepholes. It requires optimised execution and serialized
+  execution to match direct codegen, then checks that the selected optimisation
+  family actually changed the expected bytecode shape.
 - `numeric-booleans` generates host Boolean constants at the bytecode boundary
   and requires them to canonicalize to the language's numeric `0`/`1`
   representation after decoding and execution.

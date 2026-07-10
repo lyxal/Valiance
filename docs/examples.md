@@ -17,6 +17,13 @@ Interactive or intentionally unbounded programs, such as the number guessing
 game, Conway's Game of Life, and the Brainfuck interpreter, should be stopped by
 the user. Their tests execute finite deterministic variants instead.
 
+The programs under `samples/optimizations/` are medium-sized deterministic
+workloads for the bytecode optimiser. They cover project estimation, shipment
+pricing, subscription forecasting, ledger reordering, and a payroll feature
+flag. `tests/test_optimizer_programs.py` runs each through direct codegen,
+default optimisation, and bytecode serialization while checking the intended
+rewrite family.
+
 ## Example index
 
 | Example | Main features exercised |

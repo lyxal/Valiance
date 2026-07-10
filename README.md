@@ -108,9 +108,12 @@ vln compile --file samples/strings.vlnc
 vln compile --code '"hello" println' --output C:\tmp\hello.vbc
 ```
 
-Bytecode optimisation is enabled by default for both `compile` and `run`. Use
-`--no-optimize` on either command when inspecting or comparing the direct
-code-generator output.
+Bytecode optimisation is enabled by default for both `compile` and `run`. The
+default pipeline folds constants, inlines small constant functions, materialises
+proven scalar cycle inputs, simplifies bytecode and stack shuffles, and cleans up
+control flow. Use `--no-optimize` on either command when inspecting or comparing
+the direct code-generator output. Checked-in differential workloads live under
+`samples/optimizations/`.
 
 Run Valiance tests declared under a project's `tests/` directory:
 

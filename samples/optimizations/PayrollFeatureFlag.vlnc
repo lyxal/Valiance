@@ -1,0 +1,8 @@
+#? Select a payroll formula behind a compile-time feature flag.
+$standardHours = 40
+$workedHours = 38
+if (2 2 ==) =>
+  $workedHours 25 *
+else =>
+  $standardHours 25 *
+end

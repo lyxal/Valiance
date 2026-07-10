@@ -1,0 +1,5 @@
+#? Estimate a small fixed-price project and apply a 10% contingency.
+$labor = 6 85 *
+$materials = 240
+$subtotal = $labor $materials +
+$subtotal 1.10 *

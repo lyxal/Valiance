@@ -147,10 +147,12 @@ dispatch, and tag validators.
 
 `src/valiance/runtime/bytecode.py` defines instruction and function records.
 `runtime/optimizer.py` owns the extensible post-codegen pass pipeline. Its
-default control-flow pass recursively optimises nested function payloads,
-removes unreachable instructions and redundant jumps, and retargets absolute
-control-flow addresses. Add independent passes through `OptimizationPipeline`
-rather than hiding rewrites in code generation or VM execution.
+independent default passes recursively optimise nested function payloads,
+materialise proven cycle inputs, fold constants, inline small constant functions,
+simplify bytecode and stack shuffles, remove unreachable instructions and
+redundant jumps, and retarget absolute control-flow addresses. Add independent
+passes through `OptimizationPipeline` rather than hiding rewrites in code
+generation or VM execution.
 
 `runtime/serialization.py` defines the portable representation. These files
 form a compatibility boundary: changing a record without updating serialization

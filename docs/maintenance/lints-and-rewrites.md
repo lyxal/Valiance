@@ -238,19 +238,42 @@ elimination. Most passes should subclass `FunctionOptimizationPass` and implemen
 code, overload sets, object initializers, loop and unfold payloads, and
 vector-extension callbacks.
 
-The default `ControlFlowOptimizationPass` conservatively:
+The default pipeline is deliberately a sequence of small passes:
 
-- removes instructions unreachable through ordinary branches or panic-handler
-  entries;
-- removes unconditional jumps to the immediately following instruction; and
-- rewrites `JUMP`, conditional/match jumps, and `TRY_BEGIN` handler targets after
-  instruction removal.
+- `ExplicitArgumentOptimizationPass` replaces deterministic, empty-stack
+  parameter cycling with direct scalar parameter loads for ownership-trivial
+  scalar built-ins. It leaves mixed stack/cycle sourcing, nested cycle scopes,
+  control-flow joins, and lifecycle-bearing values unchanged.
+- `ConstantFoldingOptimizationPass` evaluates serialisable literal tuples,
+  interpolated strings, and a whitelist of pure resolved built-ins. It does not
+  fold names rebound anywhere in the program, vectorised calls, or calls that
+  require runtime services.
+- `SmallFunctionInliningPass` inlines zero-argument constant functions below a
+  configurable bytecode-size threshold. The deliberately narrow initial policy
+  avoids changing captures, locals, tags, ownership, recursion, or stack-input
+  behaviour.
+- `BytecodePeepholeOptimizationPass` removes dead scalar `PUSH_CONST`/`POP`
+  pairs and resolves literal conditional branches, including statically tagged
+  Boolean results.
+- `StackShuffleOptimizationPass` canonicalises shuffle labels, removes proven
+  identity/empty shuffles, removes copied values immediately popped, and
+  composes adjacent physical-stack permutations. It retains shuffles that could
+  source values from the conceptual cycling stack.
+- `ControlFlowOptimizationPass` threads unconditional jump chains, removes
+  unreachable instructions and next-instruction jumps, and retargets `JUMP`,
+  conditional/match jumps, and `TRY_BEGIN` handlers after instruction removal.
 
-A pass must preserve stack effects, selected overloads, element/data tags,
-panics, ownership, source-visible evaluation order, and serialization. It must
-not parse lint messages or rediscover facts that belong to analysis. Add focused
-bytecode tests, differential runtime tests for optimized and unoptimized output,
-and a serialization round trip for every new pass.
+Constant folding runs again after inlining so newly exposed literals can be
+collapsed. A pass must preserve stack effects, selected overloads, element/data
+tags, panics, ownership, source-visible evaluation order, and serialization. It
+must not parse lint messages or rediscover facts that belong to analysis.
+
+Every optimisation family has three test layers: focused bytecode/unit tests in
+`tests/test_optimizer.py`, differential generated cases in the `optimizer` fuzz
+target, and checked-in workload examples under `samples/optimizations/` tested
+by `tests/test_optimizer_programs.py`. Each layer compares unoptimised,
+optimised, and serialized execution and also asserts that the intended rewrite
+actually happened.
 
 ## Future typed rewrites
 

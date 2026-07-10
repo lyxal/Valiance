@@ -158,17 +158,23 @@ answered, first check whether a typed-node field is missing.
 ### `runtime/optimizer.py`: extensible bytecode rewrites
 
 `compile_program(...)` runs `DEFAULT_OPTIMIZATION_PIPELINE` after lowering unless
-`optimize=False` is supplied. `OptimizationPipeline` applies ordered whole-program passes.
-`FunctionOptimizationPass` supplies recursive traversal for function-local passes
-across every nested code payload. The default
-control-flow pass removes unreachable instructions and jumps to the next
-instruction, then retargets all absolute branch and panic-handler addresses.
+`optimize=False` is supplied. `OptimizationPipeline` applies ordered whole-program
+passes. `FunctionOptimizationPass` supplies recursive traversal for function-local
+passes across every nested code payload.
+
+The default sequence materialises safe scalar cycle inputs, folds pure constants,
+inlines small constant nilads, folds again, applies bytecode peepholes, simplifies
+physical stack shuffles, and finally cleans up control flow. Rewrites share one
+range replacement utility that refuses to delete the interior of a branch target
+and retargets every absolute branch and panic-handler address.
 
 Keep optimisation separate from lowering and execution. A pass may simplify an
 already explicit bytecode plan, but it must not redo overload selection, type
-inference, argument sourcing, or other analyser work. Add a new pass by
-implementing `OptimizationPass` and placing it in a pipeline; do not grow one
-monolithic optimiser switch.
+inference, or other analyser work. Argument materialisation is limited to cases
+where the bytecode and selected built-in metadata prove exactly which parameters
+would be cycled; ambiguous or lifecycle-bearing cases stay implicit. Add a new
+pass by implementing `OptimizationPass` and placing it in a pipeline; do not grow
+one monolithic optimiser switch.
 
 ### `runtime/vm.py`: bytecode execution
 

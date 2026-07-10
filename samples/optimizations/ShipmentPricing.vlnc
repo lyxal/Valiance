@@ -1,0 +1,5 @@
+#? Price a shipment from line-item quantities, unit cost, and a surcharge.
+define lineCost(units: Number, unitPrice: Number) -> Number => * end
+define addSurcharge(amount: Number, surcharge: Number) -> Number => + end
+12 4.25 lineCost
+8.50 addSurcharge

@@ -111,8 +111,13 @@ collection-valued stopped parameter is not automatically vectorised again.
 - Provides `FunctionOptimizationPass` for recursive function-local rewrites of
   nested `FunctionCode`, overload sets, constructors, structured loop payloads,
   and vector-extension callbacks.
-- Provides the default `ControlFlowOptimizationPass`, which removes unreachable
-  instructions and next-instruction jumps while retargeting absolute addresses.
+- Provides independent default passes for safe explicit argument materialisation,
+  constant folding, size-bounded constant-function inlining, local bytecode
+  peepholes, stack-shuffle simplification, and control-flow cleanup.
+- Runs constant folding both before and after inlining so exposed literals are
+  reduced without coupling either pass to the other.
+- Uses shared target-aware rewrite helpers so instruction removal and replacement
+  preserve absolute branches and panic-handler addresses.
 - Exposes `optimize_program(...)` for custom pipelines and differential tests.
 
 `src/valiance/runtime/vm.py`
