@@ -33,10 +33,16 @@ from valiance.runtime.bytecode import (
 )
 from valiance.symbols import Symbol
 from valiance.types import (
+    AnonymousTrait,
+    AnonymousTraitRequirement,
     AtLeastArray,
     AtLeastList,
     Boolean,
+    Context,
     DataTag,
+    Field,
+    Overload,
+    V,
     Exact,
     ExactArray,
     ExactList,
@@ -53,7 +59,9 @@ from valiance.types import (
     U,
     UnionDispatchBranch,
     Variance,
+    _solve,
     assignable,
+    compatible,
     merge_types,
     normalize,
     same,
@@ -843,6 +851,115 @@ def _fuzz_type_relations(
         raise _GeneratedCaseFailure(case, exc) from exc
 
 
+def _fuzz_structural_types(
+    rng: random.Random,
+    _iteration: int,
+    config: FuzzConfig,
+) -> object:
+    """Exercise rows, anonymous variables, and anonymous structural traits."""
+    atoms = (Integer, Real, Number, String)
+    base = N(Symbol(rng.choice(("Record", "Entity", "Value"))))
+    field_names = tuple(Symbol(name) for name in ("left", "right", "value", "meta"))
+    count = rng.randint(1, min(4, max(1, config.max_depth + 1)))
+    selected = rng.sample(field_names, count)
+    narrow_fields = []
+    wide_fields = []
+    for name in selected:
+        narrow = rng.choice(atoms)
+        wide = Number if narrow in (Integer, Real) else narrow
+        narrow_fields.append(Field(name, narrow))
+        wide_fields.append(Field(name, wide))
+    extra = Field(Symbol("extra"), rng.choice(atoms))
+    source = Row(base, *narrow_fields, extra)
+    target = Row(base, *wide_fields)
+
+    subject_name = rng.choice(("T", "@1", "@17"))
+    actual_subject = rng.choice((Integer, Real, String))
+    incompatible = String if actual_subject in (Integer, Real) else Integer
+    first = Symbol(f"op{rng.randint(0, 4)}")
+    second = Symbol(f"check{rng.randint(0, 4)}")
+    ctx = Context()
+    ctx.define_structural_overload(
+        first, Overload((actual_subject, actual_subject), (actual_subject,))
+    )
+    ctx.define_structural_overload(
+        second, Overload((actual_subject,), (actual_subject,))
+    )
+    positive = AnonymousTrait(
+        (Symbol(subject_name),),
+        (
+            AnonymousTraitRequirement(
+                first,
+                Overload((V(subject_name), V(subject_name)), (V(subject_name),)),
+            ),
+            AnonymousTraitRequirement(
+                second,
+                Overload((V(subject_name),), (V(subject_name),)),
+            ),
+        ),
+    )
+    negative = AnonymousTrait(
+        (Symbol(subject_name),),
+        (
+            AnonymousTraitRequirement(
+                first,
+                Overload((V(subject_name), V(subject_name)), (V(subject_name),)),
+            ),
+            AnonymousTraitRequirement(
+                second,
+                Overload((V(subject_name),), (incompatible,)),
+            ),
+        ),
+    )
+    case = (source, target, positive, negative, actual_subject)
+
+    try:
+        if not subtype(source, target):
+            raise AssertionError("row width/depth subtyping rejected a constructed case")
+        if not assignable(source, target) or not compatible(source, target):
+            raise AssertionError("row subtype did not imply assignability/compatibility")
+        if assignable(target, source):
+            raise AssertionError("row width subtyping became symmetric")
+
+        pattern = Row(
+            V("Base"),
+            *(Field(field.name, V(f"@{index + 1}")) for index, field in enumerate(target.fields)),
+        )
+        solved = _solve(pattern, target)
+        if solved is None or "Base" not in solved:
+            raise AssertionError("row base variable was not solved")
+        for index in range(len(target.fields)):
+            if f"@{index + 1}" not in solved:
+                raise AssertionError("anonymous row field variable was not solved")
+
+        if not assignable(actual_subject, positive, ctx):
+            raise AssertionError("coherent structural requirements were rejected")
+        if not compatible(actual_subject, positive, ctx):
+            raise AssertionError("assignable structural trait was not compatible")
+        if assignable(actual_subject, negative, ctx):
+            raise AssertionError("contradictory structural requirements were accepted")
+
+        renamed = "@99" if subject_name != "@99" else "T2"
+        alpha = AnonymousTrait(
+            (Symbol(renamed),),
+            (
+                AnonymousTraitRequirement(
+                    first,
+                    Overload((V(renamed), V(renamed)), (V(renamed),)),
+                ),
+                AnonymousTraitRequirement(
+                    second,
+                    Overload((V(renamed),), (V(renamed),)),
+                ),
+            ),
+        )
+        if assignable(actual_subject, positive, ctx) != assignable(actual_subject, alpha, ctx):
+            raise AssertionError("anonymous-trait alpha renaming changed semantics")
+        return case
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(case, exc) from exc
+
+
 TARGETS: dict[str, Target] = {
     "lexer-parser": _fuzz_lexer_parser,
     "source-mutations": _fuzz_source_mutations,
@@ -850,6 +967,7 @@ TARGETS: dict[str, Target] = {
     "serialization": _fuzz_serialization_roundtrip,
     "malformed-bytecode": _fuzz_malformed_bytecode,
     "type-relations": _fuzz_type_relations,
+    "structural-types": _fuzz_structural_types,
 }
 
 

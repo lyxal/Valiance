@@ -2,6 +2,8 @@ import unittest
 
 from valiance.symbols import Symbol
 from valiance.types import (
+    AnonymousTrait,
+    AnonymousTraitRequirement,
     AtLeastArray,
     AtLeastList,
     C,
@@ -642,6 +644,84 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(applied.substitution["U"], Number)
         self.assertEqual(applied.params, (Row(Foo, Field(BAR, Number)),))
         self.assertEqual(applied.returns, (Number,))
+
+
+    def test_row_width_depth_and_compatibility_laws(self):
+        source = Row(Foo, Field(BAR, Integer), Field(BAZ, String))
+        wider = Row(Foo, Field(BAR, Number))
+        wrong_depth = Row(Foo, Field(BAR, String))
+
+        self.assertTrue(subtype(source, wider))
+        self.assertTrue(assignable(source, wider))
+        self.assertTrue(compatible(source, wider))
+        self.assertFalse(assignable(wider, source))
+        self.assertFalse(compatible(source, wrong_depth))
+
+    def test_row_generic_requires_one_coherent_solution_across_fields(self):
+        pattern = Row(V("Base"), Field(BAR, V("T")), Field(BAZ, V("T")))
+        coherent = Row(Foo, Field(BAR, Integer), Field(BAZ, Integer))
+        widenable = Row(Foo, Field(BAR, Integer), Field(BAZ, Real))
+        conflicting = Row(Foo, Field(BAR, String), Field(BAZ, Integer))
+
+        self.assertIsNotNone(_solve(pattern, coherent))
+        solved = _solve(pattern, widenable)
+        self.assertIsNotNone(solved)
+        self.assertEqual(_combine_all(solved["T"]), Real)
+        self.assertIsNone(_combine_all(_solve(pattern, conflicting)["T"]))
+        self.assertFalse(compatible(conflicting, pattern))
+
+    def test_row_nested_in_covariant_generic_preserves_field_rules(self):
+        ctx = Context()
+        box = Symbol("Box")
+        ctx.set_generic_variance(box, (Variance.COVARIANT,))
+        source = N(box, Row(Foo, Field(BAR, Integer), Field(BAZ, String)))
+        target = N(box, Row(Foo, Field(BAR, Number)))
+
+        self.assertTrue(assignable(source, target, ctx))
+        self.assertTrue(compatible(source, target, ctx))
+        self.assertFalse(assignable(target, source, ctx))
+
+    def test_anonymous_trait_requirements_share_one_generic_solution(self):
+        ctx = Context()
+        plus = Symbol("plus")
+        times = Symbol("times")
+        ctx.define_structural_overload(plus, Overload((Integer, Integer), (Integer,)))
+        ctx.define_structural_overload(times, Overload((Integer, Integer), (String,)))
+        trait = AnonymousTrait(
+            (Symbol("T"),),
+            (
+                AnonymousTraitRequirement(plus, Overload((V("T"), V("T")), (V("T"),))),
+                AnonymousTraitRequirement(times, Overload((V("T"), V("T")), (V("T"),))),
+            ),
+        )
+
+        self.assertFalse(assignable(Integer, trait, ctx))
+        self.assertFalse(compatible(Integer, trait, ctx))
+
+    def test_anonymous_trait_alpha_renaming_is_semantics_preserving(self):
+        ctx = Context()
+        combine = Symbol("combine")
+        ctx.define_structural_overload(combine, Overload((Integer, Integer), (Integer,)))
+        left = AnonymousTrait(
+            (Symbol("T"),),
+            (AnonymousTraitRequirement(combine, Overload((V("T"), V("T")), (V("T"),))),),
+        )
+        right = AnonymousTrait(
+            (Symbol("@17"),),
+            (AnonymousTraitRequirement(combine, Overload((V("@17"), V("@17")), (V("@17"),))),),
+        )
+
+        self.assertEqual(assignable(Integer, left, ctx), assignable(Integer, right, ctx))
+        self.assertEqual(compatible(Integer, left, ctx), compatible(Integer, right, ctx))
+
+    def test_anonymous_generic_scopes_do_not_capture_named_generic(self):
+        pattern = Tup(Row(V("T"), Field(BAR, V("@1"))), V("T"))
+        actual = Tup(Row(Foo, Field(BAR, Integer)), Foo)
+        solved = _solve(pattern, actual)
+
+        self.assertIsNotNone(solved)
+        self.assertEqual(_combine_all(solved["T"]), Foo)
+        self.assertEqual(_combine_all(solved["@1"]), Integer)
 
     def test_optional_none_does_not_solve_type_var(self):
         constraints = _solve(optional(V("T")), NoneType())

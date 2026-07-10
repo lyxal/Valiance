@@ -28,6 +28,11 @@ base seed, and iteration number.
   equality, subtyping, assignability, merging, exact/minimum list and array
   covariance, one-way array-to-list compatibility, tags, rows, and display
   invariants. Failure reports include both generated types and the wrapper rank.
+- `structural-types` generates row constraints, named and anonymous type
+  variables, and anonymous structural traits. It checks row width/depth laws,
+  assignability-to-compatibility implications, generic field solving, coherent
+  substitutions across multiple trait requirements, contradictory negative
+  requirements, and alpha-renaming invariance.
 
 ## Running a campaign
 
