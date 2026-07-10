@@ -14,8 +14,28 @@ For an approachable explanation before this exhaustive reference, read
 ## Main Files
 
 - `src/valiance/analysis/analyser.py`
-  Owns branch analysis, AST node dispatch, function inference, variable facts,
-  control-flow joins, literal inference, tag propagation, and diagnostics.
+  Public façade for analysis. It owns branch state, diagnostics, the handler
+  registry, the `Analyser` orchestration class, and compatibility access to
+  private helpers.
+
+- `src/valiance/analysis/_analyser_handlers.py`
+  Contains the concrete raw-AST node handlers registered with the façade.
+
+- `src/valiance/analysis/_analyser_functions.py`
+  Contains function typing, capture discovery, callable-shape helpers,
+  genericisation, and generic variance inference.
+
+- `src/valiance/analysis/_analyser_calls.py`
+  Contains element-call planning, overload application, modifier handling,
+  static evaluation, rank substitution, and tag-flow logic.
+
+- `src/valiance/analysis/_analyser_patterns.py`
+  Contains indexing, optional access, match/try joins, pattern validation,
+  destructuring, narrowing, and exhaustiveness helpers.
+
+- `src/valiance/analysis/_analyser_utils.py`
+  Contains shared diagnostics, branch merging, literal helpers, copy checks,
+  and typed/type refinement utilities.
 
 - `src/valiance/analysis/builtins.py`
   Declares the default element environment and runtime implementations for
@@ -109,7 +129,8 @@ will use them. Node-specific checks belong in the node handler.
 
 ## Current Analyser Structure
 
-The analyser uses concrete handler registration:
+The public façade keeps the registry and dispatch loop, while
+`_analyser_handlers.py` supplies concrete handler registrations:
 
 ```python
 @register(SomeNode)
@@ -123,27 +144,29 @@ try handlers, match cases, and match patterns are classified by
 `_INTERNAL_NODE_TYPES`. If one reaches normal expression analysis, it produces
 an `internal-node` diagnostic.
 
-Important helpers in `analyser.py`:
+Important helpers are grouped by responsibility:
 
-- `_function_overload(...)`
-  Builds function overloads with parameter names, defaults, and annotation
-  diagnostics in one place.
+- `_analyser_functions.py`: `_function_overload(...)`,
+  `_transform_overload_types(...)`, and `_transform_type_children(...)` build
+  function overloads and rebuild type trees without hand-copying every
+  dataclass field.
 
-- `_transform_overload_types(...)` and `_transform_type_children(...)`
-  Rebuild overloads and type children without hand-copying every dataclass
-  field. Use these when genericizing, substituting, or refining types.
+- `analyser.py`: `_define_object_shape(...)`, `_define_trait_shape(...)`, and
+  `_object_attributes(...)` keep declaration registration close to the
+  environment-mutating orchestration methods.
 
-- `_define_object_shape(...)`, `_define_trait_shape(...)`,
-  `_object_attributes(...)`, and `_trait_requirements(...)`
-  Keep local and imported object/trait registration on the same path.
+- `_analyser_patterns.py`: `_match_case_output(...)`,
+  `_join_match_output(...)`, `_try_handler_output(...)`, and
+  `_join_try_output(...)` keep control-flow normalization out of handlers.
 
-- `_match_case_output(...)`, `_join_match_output(...)`, `_try_handler_output(...)`,
-  and `_join_try_output(...)`
-  Keep control-flow branch normalization/joins out of the node handlers.
+- `_analyser_utils.py`: `_trait_requirements(...)` and
+  `_literal_branch_results(...)` provide shared declaration and literal/branch
+  utilities.
 
-- `_literal_branch_results(...)`
-  Shared branch/result construction for list, tuple, record, and dictionary
-  literals.
+The underscored modules are implementation details. Import public analyser
+state and entry points from `valiance.analysis` or
+`valiance.analysis.analyser`; add new private helpers to the module matching
+their responsibility.
 
 ## Input Modes
 

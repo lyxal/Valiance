@@ -193,19 +193,23 @@ This is the policy-heavy core. It owns:
 `TypeStack` is an immutable tuple wrapper with `push`, `pop`, and overload
 application helpers. It does not perform analyser branch management.
 
-### `analysis/analyser.py`: applying the type system to programs
+### `analysis/analyser.py` and `_analyser_*`: applying types to programs
 
-The analyser owns:
+The public façade owns `AnalysisBranch`, `BranchSet`, diagnostics, handler
+dispatch, and the `Analyser` orchestration class. Focused private modules own:
 
-- `AnalysisBranch` and `BranchSet`;
-- AST handler dispatch;
-- input sourcing and function inference;
-- element lookup and candidate selection;
-- variable scopes;
-- control-flow joins;
-- field access and row refinement;
-- diagnostics; and
-- typed AST emission.
+- `_analyser_handlers.py`: concrete AST handlers;
+- `_analyser_functions.py`: input sourcing support, function inference, and
+  genericisation;
+- `_analyser_calls.py`: element lookup, candidate selection, and overload
+  application;
+- `_analyser_patterns.py`: control-flow joins, indexing, patterns, and row
+  narrowing; and
+- `_analyser_utils.py`: shared branch, diagnostic, literal, and refinement
+  helpers.
+
+Together these modules own variable scopes, field access, diagnostics, and
+typed AST emission.
 
 The type library knows how types relate. The analyser knows when and why to ask.
 
@@ -1761,9 +1765,13 @@ A productive first pass is:
 4. `types/relations.py`: `subtype`, `assignable`, `_solve`, `_combine`,
    `compatible`, `_match_specificity`, `try_apply_overload`.
 5. `analysis/analyser.py`: `AnalysisBranch`, `BranchSet`, `analyse_block`,
-   `source_arguments`, element candidate methods, and function inference.
-6. `types/environment.py` — connect names/declarations to the relation context.
-7. Focused tests in `tests/test_types.py` and `tests/test_analyser.py`.
+   `source_arguments`, and the orchestration methods.
+6. `analysis/_analyser_handlers.py`, `_analyser_functions.py`, and
+   `_analyser_calls.py` — follow one node from dispatch through candidate
+   selection and overload application; consult `_analyser_patterns.py` or
+   `_analyser_utils.py` for the corresponding helper family.
+7. `types/environment.py` — connect names/declarations to the relation context.
+8. Focused tests in `tests/test_types.py` and `tests/test_analyser.py`.
 
 Read one end-to-end example with a debugger or temporary assertions. Do not try
 to memorize all of `relations.py` at once.

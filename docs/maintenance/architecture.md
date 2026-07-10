@@ -64,8 +64,11 @@ When a node gains a field, check all of these places:
 
 ### Branch-based analysis
 
-`src/valiance/analysis/analyser.py` models analysis as a transformation from a
-set of possible branches to another set. A branch contains:
+The `src/valiance/analysis/analyser.py` façade and its private
+`_analyser_*` implementation modules model analysis as a transformation from a
+set of possible branches to another set. The façade owns branch state, public
+entry points, and the `Analyser` orchestration class; handlers and focused helper
+families live in sibling modules. A branch contains:
 
 - the type stack;
 - inferred or explicit function inputs;
@@ -75,8 +78,12 @@ set of possible branches to another set. A branch contains:
 - break information; and
 - diagnostics.
 
-Handlers should return new branches rather than mutating existing ones. Branch
-joins should happen only where control flow actually converges.
+Concrete AST handlers live in `analysis/_analyser_handlers.py`. They should
+return new branches rather than mutating existing ones. Branch joins should
+happen only where control flow actually converges. Function typing, call
+resolution, pattern/control-flow logic, and shared refinement helpers live in
+the corresponding `_analyser_functions.py`, `_analyser_calls.py`,
+`_analyser_patterns.py`, and `_analyser_utils.py` modules.
 
 Non-fatal source-pattern advice is recorded both as rendered lint text and as
 structured rewrite metadata. Detection belongs in analysis; any future
