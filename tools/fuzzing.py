@@ -67,10 +67,13 @@ from valiance.types import (
     Never,
     NoneType,
     Number,
+    OKType,
     Overload,
     Real,
+    Result,
     Row,
     RuntimeTypePattern,
+    Some,
     String,
     TagKind,
     Tagged,
@@ -2218,6 +2221,347 @@ end
         raise _GeneratedCaseFailure(case, exc) from exc
 
 
+def _fuzz_correctness_workloads(
+    rng: random.Random,
+    iteration: int,
+    _config: FuzzConfig,
+) -> object:
+    """Exercise type algebra and realistic runtime representation boundaries."""
+    mode = iteration % 20
+    case: object = ("uninitialized", mode)
+    try:
+        if mode == 0:
+            wrapped = rng.choice((False, True))
+            argument = (
+                f"Some({rng.randint(-20, 20)})"
+                if wrapped
+                else str(rng.randint(-20, 20))
+            )
+            source = f"""
+define retryStatus(value: Integer?) -> String =>
+  $value |
+  match =>
+    as :Some[Integer] => \"scheduled\"
+    as :None => \"disabled\"
+    _ => \"invalid\"
+  end
+end |
+retryStatus({argument})
+"""
+            case = ("optional-workload", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            program = compile_program(typed)
+            if run(program) != ["scheduled"] or run(loads(dumps(program))) != ["scheduled"]:
+                raise AssertionError("present optional missed its Some branch")
+        elif mode == 1:
+            value = rng.randint(-20, 20)
+            argument = rng.choice((str(value), f"OK({value})"))
+            source = f"""
+define status(value: Result[Number, ValueError]) -> String =>
+  $value |
+  match =>
+    as :OK[Number] => \"accepted\"
+    as :ValueError => \"rejected\"
+    _ => \"invalid\"
+  end
+end |
+status({argument})
+"""
+            case = ("result-workload", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            program = compile_program(typed)
+            if run(program) != ["accepted"] or run(loads(dumps(program))) != ["accepted"]:
+                raise AssertionError("successful Result missed its OK branch")
+        elif mode == 2:
+            source = """
+define kind(value: Dict[String, Integer] | String) -> String =>
+  $value |
+  match =>
+    as :Dict[String, Integer] => \"mapping\"
+    _ => \"preset\"
+  end
+end |
+kind(dict{\"retries\": 3})
+"""
+            case = ("dict-workload", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or run(compile_program(typed)) != ["mapping"]:
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 3:
+            source = """
+define requireMatrix(values: Number+ | Number+2) -> Number+2 =>
+  $values as! Number+2
+end |
+requireMatrix([] as Number+)
+"""
+            case = ("empty-rank-cast", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            try:
+                run(compile_program(typed))
+            except ValianceRuntimeError:
+                pass
+            else:
+                raise AssertionError("flat empty list passed a matrix cast")
+        elif mode == 4:
+            left = U(Integer, Some(String))
+            right = Some(U(Integer, String))
+            case = ("some-normalization", left, right)
+            if not same(left, right):
+                raise AssertionError("raw and explicit Some branches did not normalize")
+        elif mode == 5:
+            value_error = N(Symbol("ValueError"))
+            err = N(Symbol("Err"))
+            narrow = Result(Integer, value_error)
+            broad = Result(Number, err)
+            case = ("result-covariance", narrow, broad)
+            if not subtype(narrow, broad) or not assignable(narrow, broad):
+                raise AssertionError("Result covariance failed")
+        elif mode == 6:
+            value_error = N(Symbol("ValueError"))
+            left = rng.choice((Integer, OKType(Integer)))
+            right = Result(String, value_error)
+            merged = merge_types(left, right)
+            case = ("result-join", left, right, merged)
+            if not assignable(left, merged) or not assignable(right, merged):
+                raise AssertionError("Result join was not an upper bound")
+        elif mode == 7:
+            source = """
+define kind(value: Function[Number -> Number] | String) -> String =>
+  $value |
+  match =>
+    as :Function[Number -> Number] => \"function\"
+    _ => \"other\"
+  end
+end
+"""
+            case = ("non-reified-function-pattern", source)
+            analyser = Analyser()
+            analyser.analyse(parse(source))
+            if not any(
+                "cannot be checked at runtime" in item
+                for item in analyser.diagnostics
+            ):
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 8:
+            value = rng.randint(-20, 20)
+            source = f"""
+define delay(value: Integer?) -> Integer =>
+  $value |
+  match =>
+    as :Some[Integer](seconds) => +($seconds, 1)
+    _ => 0
+  end
+end |
+delay({value})
+"""
+            case = ("raw-some-destructure", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            if run(compile_program(typed)) != [Decimal(value + 1)]:
+                raise AssertionError("raw Some payload was not destructured")
+        elif mode == 9:
+            argument = rng.choice(
+                (str(rng.randint(-20, 20)), 'ValueError(\"bad\")')
+            )
+            expected = "rejected" if argument.startswith("ValueError") else "accepted"
+            source = f"""
+define requireResult(value: Number | String | ValueError) -> Result[Number, ValueError] =>
+  $value as! Result[Number, ValueError]
+end |
+requireResult({argument}) |
+match =>
+  as :OK[Number] => \"accepted\"
+  as :Err => \"rejected\"
+  _ => \"invalid\"
+end
+"""
+            case = ("checked-result-workload", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            if run(compile_program(typed)) != [expected]:
+                raise AssertionError("Result runtime discrimination disagreed")
+        elif mode == 10:
+            source = """
+define force(value: Function[Number -> Number] | String) -> Function[Number -> Number] =>
+  $value as! Function[Number -> Number]
+end
+"""
+            case = ("non-reified-function-cast", source)
+            analyser = Analyser()
+            analyser.analyse(parse(source))
+            if not any(
+                "cannot be checked at runtime" in item
+                for item in analyser.diagnostics
+            ):
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 11:
+            source = """
+trait Vehicle => end |
+object Car => $model: String end |
+object Car as Vehicle => end |
+Car("sedan") |
+match =>
+  as :Vehicle => "vehicle"
+  _ => "other"
+end
+"""
+            case = ("user-trait-pattern", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or run(compile_program(typed)) != ["vehicle"]:
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 12:
+            source = """
+trait Vehicle => end |
+object Car => $model: String end |
+object Car as Vehicle => end |
+object[T] Box => $value: T end |
+Box(Car("sedan")) |
+match =>
+  as :Box[Vehicle] => "vehicle box"
+  _ => "other"
+end
+"""
+            case = ("covariant-generic-pattern", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or run(compile_program(typed)) != ["vehicle box"]:
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 13:
+            source = """
+define state(value: Integer?) -> String =>
+  $value |
+  match =>
+    as :Some[Integer] => "some"
+    as :None => "none"
+  end
+end |
+state(1)
+"""
+            case = ("exhaustive-optional", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or run(compile_program(typed)) != ["some"]:
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 14:
+            source = """
+object Problem => $message: String end |
+object Problem as Err => end |
+Problem("bad") |
+match =>
+  as :Err => "error"
+  _ => "success"
+end
+"""
+            case = ("user-error-trait", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or run(compile_program(typed)) != ["error"]:
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 15:
+            source = """
+object Abort => $message: String end |
+object Abort as Fault => end |
+Abort("stop") |
+match =>
+  as :Fault => "fault"
+  _ => "ordinary"
+end
+"""
+            case = ("user-fault-trait", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or run(compile_program(typed)) != ["fault"]:
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 16:
+            source = """
+trait Vehicle => end |
+trait Electric as Vehicle => end |
+object Car => $model: String end |
+object Car as Electric => end |
+Car("sedan") |
+match =>
+  as :Vehicle => "vehicle"
+  _ => "other"
+end
+"""
+            case = ("transitive-trait-runtime", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or run(compile_program(typed)) != ["vehicle"]:
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 17:
+            source = """
+object Problem => $message: String end |
+object Problem as Err => end |
+define state(value: Result[Integer, Problem]) -> String =>
+  $value |
+  match =>
+    as :OK[Integer] => "success"
+    as :Problem => "error"
+  end
+end |
+state(1)
+"""
+            case = ("exhaustive-result", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or run(compile_program(typed)) != ["success"]:
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 18:
+            source = """
+trait[T] Producer => end |
+object[T] Box => $value: T end |
+object[T] Box as Producer[T] => end |
+Box(1) |
+match =>
+  as :Producer[String] => "wrong"
+  as :Producer[Integer] => "right"
+  _ => "other"
+end
+"""
+            case = ("generic-trait-projection", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or run(compile_program(typed)) != ["right"]:
+                raise AssertionError(analyser.diagnostics)
+        else:
+            source = """
+trait[T] Source => end |
+trait[T] Producer as Source[T] => end |
+object[T] Box => $value: T end |
+object[T] Box as Producer[T] => end |
+Box(1) |
+match =>
+  as :Source[String] => "wrong"
+  as :Source[Integer] => "right"
+  _ => "other"
+end
+"""
+            case = ("transitive-generic-trait-projection", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or run(compile_program(typed)) != ["right"]:
+                raise AssertionError(analyser.diagnostics)
+        return case
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(case, exc) from exc
+
+
 TARGETS: dict[str, Target] = {
     "lexer-parser": _fuzz_lexer_parser,
     "source-mutations": _fuzz_source_mutations,
@@ -2235,6 +2579,7 @@ TARGETS: dict[str, Target] = {
     "smart-diagnostics": _fuzz_smart_diagnostics,
     "match-safety": _fuzz_match_safety,
     "soundness-boundaries": _fuzz_soundness_boundaries,
+    "correctness-workloads": _fuzz_correctness_workloads,
 }
 
 

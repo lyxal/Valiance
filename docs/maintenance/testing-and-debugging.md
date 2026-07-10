@@ -21,6 +21,9 @@ The repository uses `unittest`. Important suites include:
   behaviour.
 - `tests/test_source_tools.py`: tidy and documentation generation.
 - `tests/test_docstring_coverage.py`: production module and function docstrings.
+- `tests/test_correctness_rescan.py`: cross-layer soundness regressions and
+  medium-sized realistic workloads that execute both directly and after a
+  bytecode round trip.
 
 ## Useful commands
 
@@ -121,6 +124,32 @@ Only after the earlier stages agree should the VM be inspected. Record the
 instruction pointer, instruction, frame stack, locals, globals, cycle state,
 and selected runtime overload. Runtime errors already collect call and
 execution context; preserve that detail when adding new failure paths.
+
+## Realistic workload programs
+
+Focused regressions and fuzzers are necessary but can miss disagreements that
+only appear when several valid features are composed. Add a medium-sized
+Valiance workload when a change crosses two or more of these boundaries:
+analysis, generic solving, pattern matching, control flow, constructor metadata,
+serialization, and runtime discrimination.
+
+Keep workload programs readable enough that a failure still identifies the
+contract under test. Prefer:
+
+- a small domain such as configuration, retry policy, validation, settlement,
+  or classification;
+- several declarations and calls rather than one isolated expression;
+- `|` between top-level operations and explicit call syntax, so incidental
+  chaining does not obscure argument sourcing;
+- one nearby competing branch, such as the wrong generic instantiation, to
+  protect against over-broad runtime matching; and
+- execution of both `compile_program(typed)` and
+  `loads(dumps(compile_program(typed)))`.
+
+A workload is not a replacement for a focused regression. The focused test
+documents the smallest broken invariant, the workload proves that the repaired
+stages agree in a plausible program, and the deterministic fuzzer explores
+variations around the same boundary.
 
 ## Regression-test shape
 

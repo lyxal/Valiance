@@ -268,6 +268,10 @@ class ObjectRuntimeType:
     dup_error: str | None = None
     mustcall_mode: str | None = None
     mustcall_methods: tuple[str, ...] = ()
+    accepted_names: tuple[str, ...] = ()
+    generic_variances: tuple[str, ...] = ()
+    type_facts: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = ()
+    generic_supertypes: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass

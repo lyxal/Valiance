@@ -1340,6 +1340,7 @@ class VirtualMachine:
                 reference.arity_override,
                 reference.consumed_override,
                 reference.static_values,
+                reference.type_args,
                 reference.extension,
             )
             return None
@@ -1370,6 +1371,7 @@ class VirtualMachine:
                 reference.arity_override,
                 reference.consumed_override,
                 reference.static_values,
+                reference.type_args,
                 reference.extension,
             )
             return None
@@ -1421,6 +1423,7 @@ class VirtualMachine:
             reference.arity_override,
             reference.consumed_override,
             reference.static_values,
+            reference.type_args,
             reference.extension,
         )
 
@@ -1896,9 +1899,25 @@ class VirtualMachine:
         ):
             return False
         if fields:
-            if not isinstance(value, ObjectValue):
+            unwrapped = unwrap_runtime_value(value)
+            raw_wrapper = (
+                isinstance(type_spec, tuple)
+                and len(type_spec) >= 3
+                and type_spec[0] == "nominal"
+                and type_spec[1] in {"Some", "OK"}
+                and isinstance(type_spec[2], tuple)
+                and len(type_spec[2]) == 1
+                and not (
+                    isinstance(unwrapped, ObjectValue)
+                    and unwrapped.type_name == type_spec[1]
+                )
+            )
+            if raw_wrapper:
+                values = (unwrapped,)
+            elif isinstance(unwrapped, ObjectValue):
+                values = tuple(unwrapped.fields.values())
+            else:
                 return False
-            values = tuple(value.fields.values())
             if len(values) != len(fields):
                 return False
             if not self._match_pattern_sequence(values, fields, bindings):
@@ -2254,8 +2273,51 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
     """Determine the type of object runtime during VM execution."""
     if value is None:
         return None
-    if not isinstance(value, tuple) or len(value) != 6:
+    if not isinstance(value, tuple) or len(value) not in {6, 9, 10}:
         raise RuntimeError(f"invalid object runtime metadata {value!r}")
+    accepted_names: tuple[str, ...] = ()
+    generic_variances: tuple[str, ...] = ()
+    type_facts: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = ()
+    generic_supertypes: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    if len(value) in {9, 10}:
+        accepted_names = _runtime_string_tuple(value[6], "accepted type names")
+        generic_variances = _runtime_string_tuple(value[7], "generic variances")
+        if not isinstance(value[8], tuple):
+            raise RuntimeError(f"invalid runtime type facts {value[8]!r}")
+        facts: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
+        for fact in value[8]:
+            if not isinstance(fact, tuple) or len(fact) != 3 or not isinstance(
+                fact[0], str
+            ):
+                raise RuntimeError(f"invalid runtime type fact {fact!r}")
+            facts.append(
+                (
+                    fact[0],
+                    _runtime_string_tuple(fact[1], "accepted type names"),
+                    _runtime_string_tuple(fact[2], "generic variances"),
+                )
+            )
+        type_facts = tuple(facts)
+    if len(value) == 10:
+        if not isinstance(value[9], tuple):
+            raise RuntimeError(f"invalid generic supertype metadata {value[9]!r}")
+        supertypes: list[tuple[str, tuple[str, ...]]] = []
+        for supertype in value[9]:
+            if (
+                not isinstance(supertype, tuple)
+                or len(supertype) != 2
+                or not isinstance(supertype[0], str)
+            ):
+                raise RuntimeError(
+                    f"invalid generic supertype metadata {supertype!r}"
+                )
+            supertypes.append(
+                (
+                    supertype[0],
+                    _runtime_string_tuple(supertype[1], "supertype arguments"),
+                )
+            )
+        generic_supertypes = tuple(supertypes)
     return ObjectRuntimeType(
         destructor_name=cast(str | None, value[0]),
         pop_name=cast(str | None, value[1]),
@@ -2263,7 +2325,18 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
         dup_error=cast(str | None, value[3]),
         mustcall_mode=cast(str | None, value[4]),
         mustcall_methods=cast(tuple[str, ...], value[5]),
+        accepted_names=accepted_names,
+        generic_variances=generic_variances,
+        type_facts=type_facts,
+        generic_supertypes=generic_supertypes,
     )
+
+
+def _runtime_string_tuple(value: object, description: str) -> tuple[str, ...]:
+    """Validate one tuple of serializable runtime type metadata."""
+    if not isinstance(value, tuple) or not all(isinstance(item, str) for item in value):
+        raise RuntimeError(f"invalid {description} {value!r}")
+    return value
 
 
 def _object_constructor_reference(value: object) -> ObjectConstructorReference:
@@ -2789,6 +2862,18 @@ def _runtime_pattern_matches(value: Any, pattern: RuntimeTypePattern) -> bool:
         return _runtime_collection_pattern_matches(value, pattern)
     if pattern.kind != "nominal":
         return False
+    unwrapped = unwrap_runtime_value(value)
+    if pattern.name == "Err":
+        return _is_error_result_value(unwrapped)
+    if pattern.name == "Fault":
+        return _runtime_object_implements(unwrapped, "Fault") or (
+            isinstance(unwrapped, ObjectValue)
+            and (
+                unwrapped.type_name == "Fault"
+                or unwrapped.type_name.endswith("Fault")
+                or unwrapped.type_name.rsplit(".", 1)[-1].endswith("Fault")
+            )
+        )
     actual = _runtime_value_pattern(value)
     return actual is not None and _runtime_pattern_subtype(actual, pattern)
 
@@ -2816,11 +2901,29 @@ def _runtime_value_pattern(value: Any) -> RuntimeTypePattern | None:
     """Compute runtime value pattern during VM execution."""
     value = unwrap_runtime_value(value)
     if isinstance(value, ObjectValue):
+        runtime_type = value.runtime_type
+        facts = () if runtime_type is None else runtime_type.type_facts
+        accepted_names = (
+            (value.type_name,)
+            if runtime_type is None or not runtime_type.accepted_names
+            else runtime_type.accepted_names
+        )
+        variances = (
+            ()
+            if runtime_type is None
+            else tuple(
+                _runtime_variance(marker)
+                for marker in runtime_type.generic_variances
+            )
+        )
         return RuntimeTypePattern(
             "nominal",
             name=value.type_name,
-            children=tuple(_parse_runtime_type_pattern(arg) for arg in value.type_args),
-            accepted_names=(value.type_name,),
+            children=tuple(
+                _parse_runtime_type_pattern(arg, facts) for arg in value.type_args
+            ),
+            accepted_names=accepted_names,
+            variances=variances,
         )
     if isinstance(value, Decimal):
         name = "Integer" if value == value.to_integral_value() else "Real"
@@ -2841,9 +2944,14 @@ def _runtime_pattern_subtype(
         return False
     if target.kind != "nominal":
         return actual == target
-    if actual.name not in target.accepted_names:
+    if (
+        actual.name not in target.accepted_names
+        and target.name not in actual.accepted_names
+    ):
         return False
-    if actual.name != target.name or not target.children:
+    if actual.name != target.name:
+        return not target.children
+    if not target.children:
         return True
     if len(actual.children) != len(target.children):
         return False
@@ -2884,29 +2992,72 @@ def _runtime_patterns_same_type(
     )
 
 
-def _parse_runtime_type_pattern(text: str) -> RuntimeTypePattern:
+def _parse_runtime_type_pattern(
+    text: str,
+    type_facts: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (),
+) -> RuntimeTypePattern:
     """Compute parse runtime type pattern during VM execution."""
     text = text.strip()
     union_parts = _split_runtime_type_args(text, "|")
     if len(union_parts) > 1:
         return RuntimeTypePattern(
             "union",
-            children=tuple(_parse_runtime_type_pattern(part) for part in union_parts),
+            children=tuple(
+                _parse_runtime_type_pattern(part, type_facts)
+                for part in union_parts
+            ),
         )
     bracket = text.find("[")
     if bracket < 0 or not text.endswith("]"):
-        return RuntimeTypePattern("nominal", text, accepted_names=(text,))
+        accepted, variance_markers = _runtime_type_fact(text, type_facts)
+        if not accepted:
+            accepted = {
+                "Number": ("Integer", "Real", "Number"),
+                "Real": ("Integer", "Real"),
+            }.get(text, (text,))
+        return RuntimeTypePattern(
+            "nominal",
+            text,
+            accepted_names=accepted,
+            variances=tuple(_runtime_variance(item) for item in variance_markers),
+        )
     name = text[:bracket].strip()
     inner = text[bracket + 1 : -1]
+    children = tuple(
+        _parse_runtime_type_pattern(part, type_facts)
+        for part in _split_runtime_type_args(inner, ",")
+    )
+    accepted, variance_markers = _runtime_type_fact(name, type_facts)
+    variances = tuple(_runtime_variance(item) for item in variance_markers)
+    if not variances and name in {"Some", "OK"}:
+        variances = (Variance.COVARIANT,) * len(children)
     return RuntimeTypePattern(
         "nominal",
         name,
-        tuple(
-            _parse_runtime_type_pattern(part)
-            for part in _split_runtime_type_args(inner, ",")
-        ),
-        (name,),
+        children,
+        accepted or (name,),
+        variances,
     )
+
+
+def _runtime_type_fact(
+    name: str,
+    type_facts: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Look up closed-world nominal facts embedded in object metadata."""
+    for fact_name, accepted, variances in type_facts:
+        if fact_name == name:
+            return accepted, variances
+    return (), ()
+
+
+def _runtime_variance(marker: str) -> Variance:
+    """Decode a serialized generic variance marker."""
+    if marker == "covariant":
+        return Variance.COVARIANT
+    if marker == "contravariant":
+        return Variance.CONTRAVARIANT
+    return Variance.INVARIANT
 
 
 def _split_runtime_type_args(text: str, separator: str) -> tuple[str, ...]:
@@ -3257,6 +3408,7 @@ def _call_resolved_builtin(
     arity_override: int | None = None,
     consumed_override: int | None = None,
     static_values: tuple[Any, ...] = (),
+    type_args: tuple[str, ...] = (),
     extension_reference: VectorExtensionReference | None = None,
 ) -> None:
     """Invoke resolved builtin during VM execution."""
@@ -3286,8 +3438,12 @@ def _call_resolved_builtin(
         else stack_count
     )
     context = (
-        replace(callee.context, static_values=static_values)
-        if static_values
+        replace(
+            callee.context,
+            static_values=static_values,
+            type_args=type_args,
+        )
+        if static_values or type_args
         else callee.context
     )
     if vectorised:
@@ -3510,9 +3666,19 @@ def _is_none_result_value(value: Any) -> bool:
 def _is_error_result_value(value: Any) -> bool:
     """Return whether the value is error result value."""
     return isinstance(value, ObjectValue) and (
-        value.type_name == "Err"
+        _runtime_object_implements(value, "Err")
+        or value.type_name == "Err"
         or value.type_name.endswith("Error")
         or value.type_name.rsplit(".", 1)[-1].endswith("Error")
+    )
+
+
+def _runtime_object_implements(value: Any, name: str) -> bool:
+    """Return whether object metadata proves a nominal implementation."""
+    return (
+        isinstance(value, ObjectValue)
+        and value.runtime_type is not None
+        and name in value.runtime_type.accepted_names
     )
 
 
@@ -4107,11 +4273,29 @@ def _matches_type_pattern(value: Any, pattern: str) -> bool:
         return isinstance(value, Decimal)
     if pattern == "String":
         return isinstance(value, str)
+    if pattern == "Err":
+        return _is_error_result_value(value)
+    if pattern == "Fault":
+        return _runtime_object_implements(value, "Fault") or (
+            isinstance(value, ObjectValue)
+            and (
+                value.type_name == "Fault"
+                or value.type_name.endswith("Fault")
+                or value.type_name.rsplit(".", 1)[-1].endswith("Fault")
+            )
+        )
+    if pattern == "Dict":
+        return isinstance(value, DictValue)
     if not isinstance(value, ObjectValue):
         return False
-    if value.type_name == pattern:
+    accepted_names = (
+        () if value.runtime_type is None else value.runtime_type.accepted_names
+    )
+    if value.type_name == pattern or pattern in accepted_names:
         return True
-    if value.type_name.rsplit(".", 1)[-1] == pattern:
+    if value.type_name.rsplit(".", 1)[-1] == pattern or any(
+        name.rsplit(".", 1)[-1] == pattern for name in accepted_names
+    ):
         return True
     member_name = value.fields.get("name")
     return isinstance(member_name, str) and (
@@ -4129,26 +4313,101 @@ def _matches_cast_type(value: Any, spec: object) -> bool:
     if kind == "var":
         return not is_list_like(value)
     if kind == "nominal":
-        if not isinstance(spec[1], str) or not _matches_type_pattern(value, spec[1]):
+        if not isinstance(spec[1], str):
             return False
+        name = spec[1]
         expected_args = spec[2] if len(spec) > 2 else ()
+        unwrapped = unwrap_runtime_value(value)
+        type_facts = (
+            unwrapped.runtime_type.type_facts
+            if isinstance(unwrapped, ObjectValue)
+            and unwrapped.runtime_type is not None
+            else ()
+        )
+
+        # Results are represented by raw successful values, explicit OK values,
+        # or concrete Err implementations.  Check the corresponding branch
+        # rather than requiring a nonexistent Result wrapper object.
+        if name == "Result":
+            if len(expected_args) != 2:
+                return False
+            ok_pattern = _parse_runtime_type_pattern(expected_args[0], type_facts)
+            err_pattern = _parse_runtime_type_pattern(expected_args[1], type_facts)
+            if isinstance(unwrapped, ObjectValue) and unwrapped.type_name == "OK":
+                return _matches_cast_type(
+                    unwrapped,
+                    ("nominal", "OK", (expected_args[0],)),
+                )
+            if _is_error_result_value(unwrapped):
+                return _runtime_pattern_matches(unwrapped, err_pattern)
+            return _runtime_pattern_matches(unwrapped, ok_pattern)
+
+        # Optional and Result success values may use their documented raw
+        # representation.  Explicit wrappers retain their inferred type args;
+        # raw values are checked directly against the success payload.
+        if name == "Some" and len(expected_args) == 1 and not (
+            isinstance(unwrapped, ObjectValue) and unwrapped.type_name == "Some"
+        ):
+            return (
+                not _is_none_result_value(unwrapped)
+                and len(expected_args) == 1
+                and _runtime_pattern_matches(
+                    unwrapped,
+                    _parse_runtime_type_pattern(expected_args[0], type_facts),
+                )
+            )
+        if name == "OK" and len(expected_args) == 1 and not (
+            isinstance(unwrapped, ObjectValue) and unwrapped.type_name == "OK"
+        ):
+            return (
+                not _is_error_result_value(unwrapped)
+                and len(expected_args) == 1
+                and _runtime_pattern_matches(
+                    unwrapped,
+                    _parse_runtime_type_pattern(expected_args[0], type_facts),
+                )
+            )
+
+        if name == "Dict":
+            if not isinstance(unwrapped, DictValue):
+                return False
+            if not expected_args:
+                return True
+            if len(expected_args) != 2:
+                return False
+            key_pattern = _parse_runtime_type_pattern(expected_args[0], type_facts)
+            value_pattern = _parse_runtime_type_pattern(expected_args[1], type_facts)
+            return all(
+                _runtime_pattern_matches(key, key_pattern)
+                and _runtime_pattern_matches(item, value_pattern)
+                for key, item in unwrapped.items()
+            )
+
+        if not _matches_type_pattern(unwrapped, name):
+            return False
         if not expected_args:
             return True
-        unwrapped = unwrap_runtime_value(value)
         if not isinstance(unwrapped, ObjectValue):
             return False
-        if len(unwrapped.type_args) != len(expected_args):
+        target_pattern = _parse_runtime_type_pattern(
+            f"{name}[{', '.join(expected_args)}]",
+            type_facts,
+        )
+        if unwrapped.type_name == name:
+            actual_pattern = _runtime_value_pattern(unwrapped)
+            return (
+                actual_pattern is not None
+                and _runtime_pattern_subtype(actual_pattern, target_pattern)
+            )
+        projection = _runtime_generic_supertype(unwrapped, name)
+        if projection is None:
             return False
-        return all(
-            _runtime_patterns_same_type(
-                _parse_runtime_type_pattern(actual),
-                _parse_runtime_type_pattern(expected),
-            )
-            for actual, expected in zip(
-                unwrapped.type_args,
-                expected_args,
-                strict=True,
-            )
+        return _runtime_pattern_subtype(
+            _parse_runtime_type_pattern(
+                f"{name}[{', '.join(projection)}]",
+                type_facts,
+            ),
+            target_pattern,
         )
     if kind == "tagged":
         if len(spec) != 3 or not isinstance(spec[2], tuple):
@@ -4192,6 +4451,29 @@ def _matches_cast_type(value: Any, spec: object) -> bool:
     return False
 
 
+def _runtime_generic_supertype(
+    value: ObjectValue,
+    target_name: str,
+) -> tuple[str, ...] | None:
+    """Instantiate a constructor's generic supertype projection."""
+    runtime_type = value.runtime_type
+    if runtime_type is None:
+        return None
+    for name, templates in runtime_type.generic_supertypes:
+        if name != target_name:
+            continue
+        instantiated: list[str] = []
+        for template in templates:
+            rendered = template
+            for index in range(len(value.type_args) - 1, -1, -1):
+                rendered = rendered.replace(f"${index}", value.type_args[index])
+            if "$" in rendered:
+                return None
+            instantiated.append(rendered)
+        return tuple(instantiated)
+    return None
+
+
 def _validated_jump_target(target: object, instruction_count: int) -> int:
     """Return a bytecode jump target after strict bounds validation."""
     if type(target) is not int or not 0 <= target <= instruction_count:
@@ -4207,12 +4489,23 @@ def _matches_collection_cast(
     rank: int,
     base: object,
 ) -> bool:
-    """Return whether the value matches collection cast."""
-    if kind in {"array_exact", "array_min"} and not is_eager_sequence(value):
-        return False
+    """Return whether the value matches collection cast.
+
+    Runtime casts must be bounded and non-consuming.  Lazy collections cannot
+    be exhaustively validated without changing program behaviour (or hanging
+    on an infinite input), so they conservatively fail checked casts.
+    """
+    value = unwrap_runtime_value(value)
     if rank <= 0:
         return _matches_cast_type(value, base)
-    if not is_list_like(value):
+    if not is_eager_sequence(value):
+        return False
+    actual_rank = runtime_collection_rank(value)
+    if kind in {"list_exact", "array_exact"} and actual_rank != rank:
+        return False
+    if kind in {"list_min", "array_min"} and (
+        actual_rank is None or actual_rank < rank
+    ):
         return False
     if kind in {"list_exact", "array_exact"}:
         return all(

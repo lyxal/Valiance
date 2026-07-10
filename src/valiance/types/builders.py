@@ -262,6 +262,9 @@ def normalize(t: Type) -> Type:
                 flat.add(item)
         if not flat:
             return Never()
+        optional_result = _normalize_optional_union(flat)
+        if optional_result is not None:
+            return optional_result
         result = _normalize_result_union(flat)
         if result is not None:
             return result
@@ -364,6 +367,35 @@ def normalize(t: Type) -> Type:
         return inner if isinstance(inner, ExactType) else ExactType(inner)
 
     return t
+
+
+def _normalize_optional_union(items: set[Type]) -> Type | None:
+    """Normalize raw and explicitly wrapped present optional branches.
+
+    A present value may be written either as ``T`` or ``Some[T]``.  Once an
+    explicit ``Some`` branch appears, all non-``None`` branches describe the
+    same present payload and must be merged inside one wrapper.  Construct the
+    final union directly to avoid recursively re-entering this normalization.
+    """
+    payloads: list[Type] = []
+    saw_some = False
+    saw_none = False
+    for item in items:
+        if isinstance(item, NoneTypeNode):
+            saw_none = True
+        elif isinstance(item, NominalType) and item.name == SOME and len(item.args) == 1:
+            payloads.append(item.args[0])
+            saw_some = True
+        else:
+            payloads.append(item)
+
+    if not saw_some or not payloads:
+        return None
+    payload = U(*payloads) if len(payloads) > 1 else payloads[0]
+    present = Some(payload)
+    if not saw_none:
+        return present
+    return UnionType(frozenset((present, NoneType())))
 
 
 def _normalize_result_union(items: set[Type]) -> Type | None:

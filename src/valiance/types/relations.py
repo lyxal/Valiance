@@ -585,6 +585,19 @@ def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
 
     if (
         isinstance(target, NominalType)
+        and target.name == OK
+        and len(target.args) == 1
+    ):
+        if (
+            isinstance(source, NominalType)
+            and source.name == OK
+            and len(source.args) == 1
+        ):
+            return assignable(source.args[0], target.args[0], ctx)
+        return assignable(source, target.args[0], ctx)
+
+    if (
+        isinstance(target, NominalType)
         and target.name == RESULT
         and len(target.args) == 2
     ):
@@ -637,6 +650,9 @@ def _source_subtypes_result(
 ) -> bool:
     """Return the Boolean result of source subtypes result during type solving and overload resolution."""
     ok, err = target.args
+    if source.name == RESULT and len(source.args) == 2:
+        source_ok, source_err = source.args
+        return assignable(source_ok, ok, ctx) and assignable(source_err, err, ctx)
     if source.name == OK and len(source.args) == 1:
         return assignable(source.args[0], ok, ctx)
     return assignable(source, ok, ctx) or assignable(source, err, ctx)

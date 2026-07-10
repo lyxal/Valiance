@@ -57,6 +57,18 @@ base seed, and iteration number.
   wrappers, and actionable lint patterns remain non-fatal. It also checks that
   rendered and structured lint views agree, rewrite hints are marked
   semantics-preserving, and dead/duplicate match patterns retain stable codes.
+- `match-safety` exercises exhaustiveness, guards, destructuring, alternative
+  bindings, equality bindings, source-order lowering, correlated multi-subject
+  narrowing, and analyser/compiler/runtime agreement for generated matches.
+- `soundness-boundaries` targets optional/result covariance and joins, runtime
+  tags and generic patterns, checked casts, panic handlers, and malformed
+  control-flow targets. It checks that static acceptance is reflected by the
+  runtime representation rather than by naming heuristics.
+- `correctness-workloads` runs medium-sized valid programs through analysis,
+  compilation, execution, serialization, and restored execution. Its cases use
+  explicit calls and `|` separators and cover optional/result workflows,
+  dictionaries and collection ranks, user traits and faults, direct and
+  transitive generic trait projections, and closed match exhaustiveness.
 - `structural-types` builds contexts containing nominal subtype facts,
   declaration-site variance, row fields, and structural overloads. It generates
   named and anonymous generics, rows, anonymous traits, functions, collections,

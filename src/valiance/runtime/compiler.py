@@ -115,6 +115,9 @@ from valiance.types import (
     Type,
     UnionType,
     VariadicTupleType,
+    VarType,
+    RowType,
+    AnonymousTraitType,
     normalize,
     show,
 )
@@ -141,21 +144,147 @@ class _Compiler:
         self.loops: list[_LoopPatch] = []
         self.break_as_signal = break_as_signal
         self.return_as_signal = return_as_signal
-        self.object_runtime_metadata: dict[
-            str,
-            tuple[
-                str | None,
-                str | None,
-                str | None,
-                str | None,
-                str | None,
-                tuple[str, ...],
-            ],
+        self.object_runtime_metadata: dict[str, tuple[object, ...]] = {}
+        self.runtime_type_facts: dict[
+            str, tuple[tuple[str, ...], tuple[str, ...]]
+        ] = {}
+        self.runtime_supertype_templates: dict[
+            str, tuple[tuple[str, tuple[str, ...]], ...]
         ] = {}
         self.tag_disjoints: dict[str, set[str]] = {}
         self.tag_parents: dict[str, str] = {}
         self._temporary_index = 0
         self._borrowed_assignment_nodes: set[int] = set()
+
+    def prepare_runtime_type_facts(
+        self,
+        body: tuple[ASTNode | TypedNode, ...],
+    ) -> None:
+        """Collect nominal runtime subtype and variance facts before lowering.
+
+        These facts are attached to constructors rather than inferred from
+        diagnostic strings at runtime.  A future optimiser can therefore use
+        the same closed-world facts without changing bytecode semantics.
+        """
+        declarations: dict[str, tuple[str, ...]] = {}
+        implementations: dict[str, set[str]] = {}
+        projections: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
+        for typed in body:
+            node = _unwrap(typed)
+            if not isinstance(node, ObjectNode):
+                continue
+            name = _symbol_runtime_name(node.name)
+            if node.kind.text == "trait":
+                declarations.setdefault(name, _runtime_generic_variances(node))
+                if node.target is not None:
+                    projection = _runtime_supertype_template(
+                        node.target,
+                        node.generics,
+                    )
+                    if projection is not None:
+                        target, _ = projection
+                        implementations.setdefault(name, set()).add(target)
+                        projections.setdefault(name, []).append(projection)
+                continue
+            if node.kind.text == "object":
+                if node.target is None:
+                    declarations[name] = _runtime_generic_variances(node)
+                else:
+                    projection = _runtime_supertype_template(
+                        node.target,
+                        node.generics,
+                    )
+                    if projection is not None:
+                        target, _ = projection
+                        implementations.setdefault(name, set()).add(target)
+                        projections.setdefault(name, []).append(projection)
+                continue
+            if node.kind.text == "variant":
+                declarations.setdefault(name, _runtime_generic_variances(node))
+                for member in node.variants:
+                    member_name = (
+                        f"{name}.{_symbol_runtime_name(member.name)}"
+                    )
+                    declarations[member_name] = _runtime_generic_variances(node)
+                    implementations.setdefault(member_name, set()).add(name)
+
+        names = set(declarations) | set(implementations)
+        for targets in implementations.values():
+            names.update(targets)
+        facts: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
+        for name in names:
+            accepted = {name}
+            pending = list(implementations.get(name, ()))
+            while pending:
+                target = pending.pop()
+                if target in accepted:
+                    continue
+                accepted.add(target)
+                pending.extend(implementations.get(target, ()))
+            facts[name] = (
+                tuple(sorted(accepted)),
+                declarations.get(name, ()),
+            )
+        self.runtime_type_facts = facts
+
+        expanded: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {}
+
+        def expand(
+            name: str,
+            visiting: frozenset[str] = frozenset(),
+        ) -> tuple[tuple[str, tuple[str, ...]], ...]:
+            """Compose direct generic supertype projections transitively."""
+            if name in expanded:
+                return expanded[name]
+            if name in visiting:
+                return ()
+            items: list[tuple[str, tuple[str, ...]]] = []
+            for target, arguments in projections.get(name, ()):
+                candidate = (target, arguments)
+                if candidate not in items:
+                    items.append(candidate)
+                for ancestor, ancestor_arguments in expand(
+                    target,
+                    visiting | {name},
+                ):
+                    composed = (
+                        ancestor,
+                        tuple(
+                            _substitute_runtime_type_template(
+                                template,
+                                arguments,
+                            )
+                            for template in ancestor_arguments
+                        ),
+                    )
+                    if composed not in items:
+                        items.append(composed)
+            result = tuple(items)
+            expanded[name] = result
+            return result
+
+        self.runtime_supertype_templates = {
+            name: expand(name) for name in names
+        }
+
+    def _runtime_metadata(
+        self,
+        name: str,
+        lifecycle: tuple[object, ...],
+    ) -> tuple[object, ...]:
+        """Attach closed-world nominal facts to one constructor."""
+        accepted, variances = self.runtime_type_facts.get(name, ((name,), ()))
+        registry = tuple(
+            (fact_name, fact[0], fact[1])
+            for fact_name, fact in sorted(self.runtime_type_facts.items())
+        )
+        return (
+            *lifecycle,
+            accepted,
+            variances,
+            registry,
+            self.runtime_supertype_templates.get(name, ()),
+        )
 
     def compile_function(
         self,
@@ -529,12 +658,13 @@ class _Compiler:
                 )
                 constructors = constructor_definitions(node.name, node.definitions)
                 if node.target is None:
-                    self.object_runtime_metadata[type_name] = (
+                    self.object_runtime_metadata[type_name] = self._runtime_metadata(
+                        type_name,
                         _object_runtime_metadata(
                             type_name,
                             node.annotations,
                             node.definitions,
-                        )
+                        ),
                     )
                     self.object_constructor(
                         type_name,
@@ -561,12 +691,13 @@ class _Compiler:
                         f"{_symbol_runtime_name(node.name)}."
                         f"{_symbol_runtime_name(member.name)}"
                     )
-                    self.object_runtime_metadata[runtime_name] = (
+                    self.object_runtime_metadata[runtime_name] = self._runtime_metadata(
+                        runtime_name,
                         _object_runtime_metadata(
                             runtime_name,
                             node.annotations,
                             member.definitions,
-                        )
+                        ),
                     )
                     self.object_constructor(
                         runtime_name,
@@ -642,7 +773,10 @@ class _Compiler:
                 defaults=tuple(default_values),
                 runtime_metadata=self.object_runtime_metadata.get(
                     name,
-                    (None, None, None, None, None, ()),
+                    self._runtime_metadata(
+                        name,
+                        (None, None, None, None, None, ()),
+                    ),
                 ),
                 initializer=initializer_code,
             ),
@@ -1007,6 +1141,7 @@ def compile_program(nodes: list[TypedNode]) -> Program:
     if not all(isinstance(node, TypedNode) for node in nodes):
         raise CompileError("compile_program expects analysed TypedNode values")
     compiler = _Compiler()
+    compiler.prepare_runtime_type_facts(tuple(nodes))
     return Program(compiler.compile_function(tuple(nodes), name="<main>"))
 
 
@@ -1416,6 +1551,162 @@ def _function_is_recursive(ast: FunctionNode) -> bool:
         and annotation.name.text == "recursive"
         for annotation in ast.annotations
     )
+
+
+def _runtime_nominal_name(typ: Type) -> str | None:
+    """Return the runtime nominal name represented by a static type."""
+    typ = normalize(typ)
+    while isinstance(typ, (TaggedType, ExactType, AtomicType)):
+        typ = normalize(typ.inner)
+    if isinstance(typ, NominalType):
+        return _symbol_runtime_name(typ.name)
+    return None
+
+
+def _substitute_runtime_type_template(
+    template: str,
+    arguments: tuple[str, ...],
+) -> str:
+    """Compose one generic projection template with another."""
+    rendered = template
+    for index in range(len(arguments) - 1, -1, -1):
+        rendered = rendered.replace(f"${index}", arguments[index])
+    return rendered
+
+
+def _runtime_supertype_template(
+    typ: Type,
+    generics: tuple[Symbol, ...],
+) -> tuple[str, tuple[str, ...]] | None:
+    """Encode one generic supertype projection using positional placeholders."""
+    typ = normalize(typ)
+    if not isinstance(typ, NominalType):
+        return None
+    indexes = {generic.text: index for index, generic in enumerate(generics)}
+    return (
+        _symbol_runtime_name(typ.name),
+        tuple(_runtime_type_template(arg, indexes) for arg in typ.args),
+    )
+
+
+def _runtime_type_template(typ: Type, indexes: dict[str, int]) -> str:
+    """Render a static type with declaration generics as ``$N`` slots."""
+    typ = normalize(typ)
+    if isinstance(typ, NominalType):
+        if not typ.args and typ.name.text in indexes:
+            return f"${indexes[typ.name.text]}"
+        name = _symbol_runtime_name(typ.name)
+        if not typ.args:
+            return name
+        return f"{name}[{', '.join(_runtime_type_template(arg, indexes) for arg in typ.args)}]"
+    if isinstance(typ, VarType) and typ.name in indexes:
+        return f"${indexes[typ.name]}"
+    if isinstance(typ, UnionType):
+        return " | ".join(
+            sorted(_runtime_type_template(item, indexes) for item in typ.items)
+        )
+    return show(typ)
+
+
+def _runtime_generic_variances(node: ObjectNode) -> tuple[str, ...]:
+    """Infer serializable generic variance facts for a declaration."""
+    if not node.generics:
+        return ()
+    usage = {generic.text: [False, False] for generic in node.generics}
+    for field in node.fields:
+        if field.typ is None:
+            continue
+        _record_runtime_variance_use(field.typ, +1, usage)
+        if field.access.text == "public":
+            _record_runtime_variance_use(field.typ, -1, usage)
+    for requirement in node.requirements:
+        for param in requirement.params or ():
+            if param.typ is not None:
+                _record_runtime_variance_use(param.typ, -1, usage)
+        for ret in requirement.returns or ():
+            _record_runtime_variance_use(ret, +1, usage)
+    inferred: list[str] = []
+    for generic in node.generics:
+        positive, negative = usage[generic.text]
+        if positive and not negative:
+            inferred.append("covariant")
+        elif negative and not positive:
+            inferred.append("contravariant")
+        else:
+            inferred.append("invariant")
+    if len(node.generic_variances) != len(node.generics):
+        return tuple(inferred)
+    result: list[str] = []
+    for index, marker in enumerate(node.generic_variances):
+        if marker is None:
+            result.append(inferred[index])
+        elif marker.text in {"any", "covariant"}:
+            result.append("covariant")
+        elif marker.text in {"above", "contravariant"}:
+            result.append("contravariant")
+        else:
+            result.append("invariant")
+    return tuple(result)
+
+
+def _record_runtime_variance_use(
+    typ: Type,
+    polarity: int,
+    usage: dict[str, list[bool]],
+) -> None:
+    """Record positive and negative generic uses for runtime metadata."""
+    typ = normalize(typ)
+    if isinstance(typ, VarType):
+        if typ.name in usage:
+            usage[typ.name][0 if polarity > 0 else 1] = True
+        return
+    if isinstance(typ, NominalType):
+        if not typ.args and typ.name.text in usage:
+            usage[typ.name.text][0 if polarity > 0 else 1] = True
+            return
+        for arg in typ.args:
+            _record_runtime_variance_use(arg, polarity, usage)
+        return
+    if isinstance(typ, (UnionType, IntersectionType)):
+        for item in typ.items:
+            _record_runtime_variance_use(item, polarity, usage)
+        return
+    if isinstance(typ, TupleType):
+        for item in typ.params:
+            _record_runtime_variance_use(item, polarity, usage)
+        return
+    if isinstance(typ, VariadicTupleType):
+        for item in typ.items:
+            _record_runtime_variance_use(item.typ, polarity, usage)
+        return
+    if isinstance(typ, RowType):
+        _record_runtime_variance_use(typ.base, polarity, usage)
+        for field in typ.fields:
+            _record_runtime_variance_use(field.typ, polarity, usage)
+        return
+    if isinstance(typ, CollectionType):
+        _record_runtime_variance_use(typ.base, polarity, usage)
+        return
+    if isinstance(typ, FunctionType):
+        if typ.params is not None:
+            for param in typ.params:
+                _record_runtime_variance_use(param, -polarity, usage)
+        if typ.returns is not None:
+            for ret in typ.returns:
+                _record_runtime_variance_use(ret, polarity, usage)
+        for tag in typ.element_tags:
+            for arg in tag.args:
+                _record_runtime_variance_use(arg, polarity, usage)
+        return
+    if isinstance(typ, AnonymousTraitType):
+        for requirement in typ.requirements:
+            for param in requirement.overload.params:
+                _record_runtime_variance_use(param, -polarity, usage)
+            for ret in requirement.overload.returns:
+                _record_runtime_variance_use(ret, polarity, usage)
+        return
+    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
+        _record_runtime_variance_use(typ.inner, polarity, usage)
 
 
 def _definition_has_annotation(definition: DefineNode, name: str) -> bool:

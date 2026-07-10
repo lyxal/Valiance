@@ -3292,6 +3292,14 @@ class Analyser:
                 subject_types,
                 strict=True,
             ):
+                uncheckable = _uncheckable_runtime_pattern_type(pattern)
+                if uncheckable is not None:
+                    invalid_pattern, invalid_type = uncheckable
+                    self._diagnose(
+                        f"{T.show(invalid_type)} cannot be checked at runtime",
+                        invalid_pattern,
+                    )
+                    return False
                 mismatch = _or_pattern_binding_mismatch(pattern)
                 if mismatch:
                     names = ", ".join(str(name) for name in mismatch)
@@ -3333,7 +3341,56 @@ class Analyser:
                 node,
             )
             return False
-        subject_type = subject_types[0]
+        subject_type = T.normalize(subject_types[0])
+        if isinstance(subject_type, T.UnionType):
+            missing = tuple(
+                item
+                for item in sorted(subject_type.items, key=T.show)
+                if not any(
+                    len(case.patterns) == 1
+                    and _pattern_is_irrefutable(
+                        case.patterns[0],
+                        item,
+                        self.env,
+                    )
+                    for case in node.cases
+                )
+            )
+            if not missing:
+                return True
+            self._diagnose(
+                "non-exhaustive match; missing cases for: "
+                + ", ".join(T.show(item) for item in missing),
+                node,
+            )
+            return False
+        if (
+            isinstance(subject_type, T.NominalType)
+            and subject_type.name.text == "Result"
+            and len(subject_type.args) == 2
+        ):
+            result_branches = (T.OKType(subject_type.args[0]), subject_type.args[1])
+            missing = tuple(
+                item
+                for item in result_branches
+                if not any(
+                    len(case.patterns) == 1
+                    and _pattern_is_irrefutable(
+                        case.patterns[0],
+                        item,
+                        self.env,
+                    )
+                    for case in node.cases
+                )
+            )
+            if not missing:
+                return True
+            self._diagnose(
+                "non-exhaustive Result match; missing cases for: "
+                + ", ".join(T.show(item) for item in missing),
+                node,
+            )
+            return False
         closed_name = _nominal_name(subject_type)
         if closed_name is None:
             self._diagnose("match without default requires enum or variant value", node)
@@ -4749,6 +4806,12 @@ def _cast_node(
                         replacement=f"as {T.show(target)}",
                     ),
                 )
+        elif (invalid_runtime_type := _uncheckable_runtime_type(target)) is not None:
+            self._diagnose(
+                f"{T.show(invalid_runtime_type)} cannot be checked at runtime",
+                node,
+            )
+            return BranchSet()
         elif not _types_overlap(source, target, self.env.context):
             if _type_contains_rank_var(target):
                 stack = T.TypeStack((*branch.stack.items[:-1], target))
@@ -9096,6 +9159,12 @@ def _invalid_destructure_arity(
         if actual != expected:
             return pattern, definition.name, actual, expected
     field_types = _destructure_field_types(pattern, subject_type, env)
+    if pattern.fields and definition is None and field_types:
+        actual = len(pattern.fields)
+        expected = len(field_types)
+        if actual != expected:
+            pattern_name = _nominal_name(pattern.typ) or Symbol("value")
+            return pattern, pattern_name, actual, expected
     for index, field in enumerate(pattern.fields):
         field_type = (
             field_types[index]
@@ -9180,14 +9249,14 @@ def _pattern_is_irrefutable(
         return False
     if not pattern.fields:
         return True
-    definition = _pattern_object_definition(pattern.typ, subject_type, env)
-    if definition is None or len(pattern.fields) != len(definition.attributes):
+    field_types = _destructure_field_types(pattern, subject_type, env)
+    if len(pattern.fields) != len(field_types):
         return False
     return all(
-        _pattern_is_irrefutable(field, attribute.typ, env)
-        for field, attribute in zip(
+        _pattern_is_irrefutable(field, field_type, env)
+        for field, field_type in zip(
             pattern.fields,
-            definition.attributes,
+            field_types,
             strict=True,
         )
     )
@@ -9828,6 +9897,74 @@ def _pattern_bound_names(pattern: MatchPatternNode) -> frozenset[Symbol]:
     return frozenset(names)
 
 
+def _uncheckable_runtime_pattern_type(
+    pattern: MatchPatternNode,
+) -> tuple[MatchPatternNode, T.Type] | None:
+    """Return the first pattern type the runtime cannot discriminate."""
+    if isinstance(pattern, TypePatternNode):
+        if pattern.typ is not None:
+            invalid = _uncheckable_runtime_type(pattern.typ)
+            if invalid is not None:
+                return pattern, invalid
+        for field_pattern in pattern.fields:
+            nested = _uncheckable_runtime_pattern_type(field_pattern)
+            if nested is not None:
+                return nested
+        return None
+    if isinstance(pattern, BindingPatternNode):
+        return _uncheckable_runtime_pattern_type(pattern.pattern)
+    if isinstance(pattern, GuardPatternNode):
+        return None
+    if isinstance(pattern, OrPatternNode):
+        for option in pattern.options:
+            nested = _uncheckable_runtime_pattern_type(option)
+            if nested is not None:
+                return nested
+        return None
+    if isinstance(pattern, ListPatternNode):
+        for item in pattern.items:
+            nested = _uncheckable_runtime_pattern_type(item)
+            if nested is not None:
+                return nested
+    return None
+
+
+def _uncheckable_runtime_type(typ: T.Type) -> T.Type | None:
+    """Return a type whose values carry no usable runtime discriminator."""
+    typ = T.normalize(typ)
+    if isinstance(
+        typ,
+        (
+            T.FunctionType,
+            T.OverloadSetType,
+            T.AnonymousTraitType,
+            T.RowType,
+            T.VariadicTupleType,
+        ),
+    ):
+        return typ
+    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _uncheckable_runtime_type(typ.inner)
+    if isinstance(typ, T.UnionType):
+        for item in typ.items:
+            invalid = _uncheckable_runtime_type(item)
+            if invalid is not None:
+                return invalid
+    if isinstance(typ, T.IntersectionType):
+        for item in typ.items:
+            invalid = _uncheckable_runtime_type(item)
+            if invalid is not None:
+                return invalid
+    if isinstance(typ, T.TupleType):
+        for item in typ.params:
+            invalid = _uncheckable_runtime_type(item)
+            if invalid is not None:
+                return invalid
+    if isinstance(typ, T.CollectionType):
+        return _uncheckable_runtime_type(typ.base)
+    return None
+
+
 def _or_pattern_binding_mismatch(
     pattern: MatchPatternNode,
 ) -> tuple[Symbol, ...]:
@@ -9863,6 +10000,13 @@ def _destructure_field_types(
     env: T.Environment,
 ) -> tuple[T.Type, ...]:
     """Return declared field types for a type pattern when they are known."""
+    pattern_type = None if pattern.typ is None else T.normalize(pattern.typ)
+    if (
+        isinstance(pattern_type, T.NominalType)
+        and pattern_type.name in {Symbol("Some"), Symbol("OK")}
+        and len(pattern_type.args) == 1
+    ):
+        return pattern_type.args
     definition = _pattern_object_definition(pattern.typ, subject_type, env)
     if definition is None:
         return ()

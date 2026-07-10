@@ -551,6 +551,7 @@ class RuntimeContext:
     format_value: Callable[[Any], str] = format_runtime_value
     call_overload: Callable[[Any, list[Any], int], list[Any]] | None = None
     static_values: tuple[Any, ...] = ()
+    type_args: tuple[str, ...] = ()
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
@@ -2158,13 +2159,13 @@ def _failure_message(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, .
 @builtin("OK", (T.V("T"),), (T.OKType(T.V("T")),))
 def _ok(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `OK` built-in runtime overload."""
-    return (ObjectValue("OK", {"value": args[0]}),)
+    return (ObjectValue("OK", {"value": args[0]}, type_args=ctx.type_args),)
 
 
 @builtin("Some", (T.V("T"),), (T.Some(T.V("T")),))
 def _some(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `Some` built-in runtime overload."""
-    return (ObjectValue("Some", {"value": args[0]}),)
+    return (ObjectValue("Some", {"value": args[0]}, type_args=ctx.type_args),)
 
 
 @builtin("None", (), (T.NoneType(),))
