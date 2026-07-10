@@ -376,9 +376,11 @@ class _Compiler:
             case ObjectNode():
                 self.object_declaration(node)
             case FieldAccessNode(name):
-                self.emit(OpCode.GET_FIELD, name.text)
+                argument = (name.text, "optional") if node.optional_safe else name.text
+                self.emit(OpCode.GET_FIELD, argument)
             case FieldSetNode(name):
-                self.emit(OpCode.SET_FIELD, name.text)
+                argument = (name.text, "optional") if node.optional_safe else name.text
+                self.emit(OpCode.SET_FIELD, argument)
             case IndexAccessNode(selectors, spread):
                 self.emit(OpCode.GET_INDEX, _index_spec(selectors, spread))
             case IndexSetNode(selectors):

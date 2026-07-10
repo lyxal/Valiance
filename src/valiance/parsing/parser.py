@@ -1794,26 +1794,67 @@ class Parser:
                 ),
                 True,
             )
-        if self._match(TokenKind.DOT):
-            field = self._symbol("expected field name")
+        if self._match(TokenKind.ARROW, TokenKind.DOT):
+            first_kind = (
+                "safe_field"
+                if self._previous.kind is TokenKind.ARROW
+                else "field"
+            )
+            path: list[tuple[str, Symbol]] = [
+                (first_kind, self._symbol("expected field name"))
+            ]
+            while True:
+                if self._match(TokenKind.DOT):
+                    path.append(("field", self._symbol("expected field name")))
+                    continue
+                if self._match(TokenKind.ARROW):
+                    path.append(
+                        ("safe_field", self._symbol("expected field name"))
+                    )
+                    continue
+                break
+
             if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
+                if len(path) != 1:
+                    self._error(
+                        "assignment through a stack member chain is not supported"
+                    )
+                kind, field = path[0]
+                optional_safe = kind == "safe_field"
                 op = self._previous.kind
                 rhs = self._chain_until(_LINE_TERMINATORS)
                 prefix = (
-                    (FieldAccessNode(field, location=_loc(start)),)
+                    (
+                        FieldAccessNode(
+                            field,
+                            optional_safe=optional_safe,
+                            location=_loc(start),
+                        ),
+                    )
                     if op is TokenKind.AUG_ASSIGN
                     else ()
                 )
                 return _ChainPiece(
-                    (*prefix, *rhs, FieldSetNode(field, location=_loc(start))),
+                    (
+                        *prefix,
+                        *rhs,
+                        FieldSetNode(
+                            field,
+                            optional_safe=optional_safe,
+                            location=_loc(start),
+                        ),
+                    ),
                     True,
                 )
+
             return _ChainPiece(
-                (
+                tuple(
                     FieldAccessNode(
                         field,
+                        optional_safe=kind == "safe_field",
                         location=_loc(start),
-                    ),
+                    )
+                    for kind, field in path
                 ),
                 breaks_chain=True,
             )
@@ -1825,6 +1866,9 @@ class Parser:
                 continue
             if self._match(TokenKind.DOT):
                 path.append(("field", self._symbol("expected field name")))
+                continue
+            if self._match(TokenKind.ARROW):
+                path.append(("safe_field", self._symbol("expected field name")))
                 continue
             break
 
@@ -1896,8 +1940,14 @@ class Parser:
         """Lower a variable access path into ordinary field/index reads."""
         nodes: list[ASTNode] = [GetVariableNode(name, location=_loc(start))]
         for kind, payload in path:
-            if kind == "field":
-                nodes.append(FieldAccessNode(payload, location=_loc(start)))
+            if kind in {"field", "safe_field"}:
+                nodes.append(
+                    FieldAccessNode(
+                        payload,
+                        optional_safe=kind == "safe_field",
+                        location=_loc(start),
+                    )
+                )
                 continue
             selectors = payload
             nodes.extend(self._selector_expressions(selectors))
@@ -1916,7 +1966,7 @@ class Parser:
             kind, payload = path[depth]
             parent_path = path[:depth]
             nodes.extend(self._variable_path_read(name, parent_path, start))
-            if kind == "field":
+            if kind in {"field", "safe_field"}:
                 nodes.append(
                     StackShuffleNode(
                         Symbol("move"),
@@ -1925,7 +1975,13 @@ class Parser:
                         location=_loc(start),
                     )
                 )
-                nodes.append(FieldSetNode(payload, location=_loc(start)))
+                nodes.append(
+                    FieldSetNode(
+                        payload,
+                        optional_safe=kind == "safe_field",
+                        location=_loc(start),
+                    )
+                )
                 continue
             selectors = payload
             nodes.extend(self._selector_expressions(selectors))

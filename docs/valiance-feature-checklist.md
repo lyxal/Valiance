@@ -504,7 +504,7 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Support object member reads.
 - [x] Support permitted object member writes.
 - [x] Reconstruct immutable object values after writes.
-- [ ] Support optional-member access behavior.
+- [x] Support optional-member access behavior.
 - [ ] Provide `$self` in object-associated definitions.
 - [x] Parse destructors named with the object’s destructor form.
 - [x] Run destructors according to object lifetime rules.

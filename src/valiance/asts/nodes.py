@@ -290,6 +290,7 @@ class FieldAccessNode(ASTNode):
     """Read an attribute from the top stack value."""
 
     name: Symbol
+    optional_safe: bool = False
 
 
 @dataclass(frozen=True)
@@ -297,6 +298,7 @@ class FieldSetNode(ASTNode):
     """Set an attribute on the top stack value."""
 
     name: Symbol
+    optional_safe: bool = False
 
 
 @dataclass(frozen=True)

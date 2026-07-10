@@ -2993,12 +2993,15 @@ class Analyser:
         self,
         branch: AnalysisBranch,
         name: Symbol,
+        *,
+        optional_safe: bool = False,
     ) -> tuple[T.Type, T.Type | None, AnalysisBranch] | None:
         """Source field receiver during static analysis."""
         if branch.stack:
             receiver_type = branch.stack[-1]
             popped = branch.with_stack(branch.stack.pop())
-            field_type, refined_receiver = self._field_type(receiver_type, name, popped)
+            resolver = self._safe_field_type if optional_safe else self._field_type
+            field_type, refined_receiver = resolver(receiver_type, name, popped)
             if refined_receiver is not None:
                 popped = popped.refine_type(receiver_type, refined_receiver)
                 receiver_type = refined_receiver
@@ -3015,7 +3018,8 @@ class Analyser:
                 branch,
                 cycle_index=(branch.cycle_index + 1) % len(branch.cycle_params),
             )
-            field_type, refined_receiver = self._field_type(
+            resolver = self._safe_field_type if optional_safe else self._field_type
+            field_type, refined_receiver = resolver(
                 receiver_type,
                 name,
                 popped,
@@ -3030,12 +3034,57 @@ class Analyser:
 
         base = _anonymous_type_var(branch, 1)
         field_type = _anonymous_type_var(branch, 2)
-        receiver_type = T.Row(base, T.Field(name, field_type))
+        present_type = T.Row(base, T.Field(name, field_type))
+        receiver_type = T.optional(present_type) if optional_safe else present_type
+        result_type = _optional_access_result_type(field_type) if optional_safe else field_type
         return (
             receiver_type,
-            field_type,
+            result_type,
             replace(branch, inputs=branch.inputs + (receiver_type,)),
         )
+
+    def _safe_field_type(
+        self,
+        receiver_type: T.Type,
+        name: Symbol,
+        branch: AnalysisBranch,
+        *,
+        write: bool = False,
+    ) -> tuple[T.Type | None, T.Type | None]:
+        """Determine a field type through an optional present value."""
+        receiver_type = T.normalize(receiver_type)
+        if not write and isinstance(receiver_type, T.CollectionType):
+            field_type, refined_base = self._safe_field_type(
+                receiver_type.base,
+                name,
+                branch,
+            )
+            if field_type is None:
+                return None, None
+            refined = (
+                receiver_type
+                if refined_base is None
+                else T.C(type(receiver_type), refined_base, receiver_type.rank)
+            )
+            return T.C(type(receiver_type), field_type, receiver_type.rank), refined
+
+        payload_type = _strict_optional_payload_type(receiver_type)
+        if payload_type is None:
+            return None, None
+        field_type, refined_payload = self._field_type(
+            payload_type,
+            name,
+            branch,
+            write=write,
+        )
+        if field_type is None:
+            return None, None
+        refined_receiver = (
+            None if refined_payload is None else T.optional(refined_payload)
+        )
+        if write:
+            return field_type, refined_receiver
+        return _optional_access_result_type(field_type), refined_receiver
 
     def _field_type(
         self,
@@ -4210,20 +4259,32 @@ def _field_access_node(
     branch: AnalysisBranch,
 ) -> BranchSet:
     """Analyse a `FieldAccessNode` node and return the surviving branches."""
-    sourced = self._source_field_receiver(branch, node.name)
+    sourced = self._source_field_receiver(
+        branch,
+        node.name,
+        optional_safe=node.optional_safe,
+    )
     if sourced is None:
+        action = "safely access" if node.optional_safe else "access"
         self._diagnose(
-            f"empty stack when trying to access field '{node.name}'",
+            f"empty stack when trying to {action} field '{node.name}'",
             node,
         )
         return BranchSet()
 
     receiver_type, field_type, branch = sourced
     if field_type is None:
-        self._diagnose(
-            f"type {T.show(receiver_type)} has no known field '{node.name}'",
-            node,
-        )
+        if node.optional_safe:
+            self._diagnose(
+                f"optional type {T.show(receiver_type)} has no known field "
+                f"'{node.name}' on its present value",
+                node,
+            )
+        else:
+            self._diagnose(
+                f"type {T.show(receiver_type)} has no known field '{node.name}'",
+                node,
+            )
         return BranchSet()
 
     return BranchSet((branch.push(field_type).emit(TypedNode(node, field_type)),))
@@ -4245,17 +4306,32 @@ def _field_set_node(
 
     receiver_type = branch.stack[-2]
     value_type = branch.stack[-1]
-    field_type, refined_receiver = self._field_type(
-        receiver_type,
-        node.name,
-        branch,
-        write=True,
-    )
-    if field_type is None:
-        self._diagnose(
-            f"type {T.show(receiver_type)} has no writable field '{node.name}'",
-            node,
+    if node.optional_safe:
+        field_type, refined_receiver = self._safe_field_type(
+            receiver_type,
+            node.name,
+            branch,
+            write=True,
         )
+    else:
+        field_type, refined_receiver = self._field_type(
+            receiver_type,
+            node.name,
+            branch,
+            write=True,
+        )
+    if field_type is None:
+        if node.optional_safe:
+            self._diagnose(
+                f"optional type {T.show(receiver_type)} has no writable field "
+                f"'{node.name}' on its present value",
+                node,
+            )
+        else:
+            self._diagnose(
+                f"type {T.show(receiver_type)} has no writable field '{node.name}'",
+                node,
+            )
         return BranchSet()
 
     if not T.assignable(value_type, field_type, self.env.context):
@@ -8011,6 +8087,40 @@ def _unfold_emitted_type(
         next_state = state_types[-missing:] + returns if missing else returns
         return next_state[-1]
     return _optional_present_type(returns[-1])
+
+
+def _strict_optional_payload_type(typ: T.Type) -> T.Type | None:
+    """Return the payload of exactly ``Some[T] | None`` optional types."""
+    typ = T.normalize(typ)
+    if not isinstance(typ, T.UnionType):
+        return None
+    found_none = False
+    payloads: list[T.Type] = []
+    for item in typ.items:
+        item = T.normalize(item)
+        if isinstance(item, T.NoneTypeNode):
+            found_none = True
+            continue
+        if (
+            isinstance(item, T.NominalType)
+            and item.name == Symbol("Some")
+            and len(item.args) == 1
+        ):
+            payloads.append(item.args[0])
+            continue
+        return None
+    if not found_none or not payloads:
+        return None
+    return payloads[0] if len(payloads) == 1 else T.U(*payloads)
+
+
+def _optional_access_result_type(field_type: T.Type) -> T.Type:
+    """Lift a member result into an optional, flattening optional members."""
+    return (
+        field_type
+        if _strict_optional_payload_type(field_type) is not None
+        else T.optional(field_type)
+    )
 
 
 def _optional_present_type(typ: T.Type) -> T.Type:

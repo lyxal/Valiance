@@ -602,6 +602,9 @@ class VirtualMachine:
                                 fields["value"] = value
                             frame.stack.append(ObjectValue(enum_name, fields))
                         case OpCode.GET_FIELD:
+                            field, optional_safe = _field_instruction_arg(
+                                instruction.arg
+                            )
                             try:
                                 (
                                     args,
@@ -620,26 +623,42 @@ class VirtualMachine:
                                 next_cycle_stack_remaining
                             )
                             receiver = args[0]
-                            if isinstance(receiver, ObjectValue):
+                            if optional_safe:
+                                frame.stack.append(
+                                    _optional_safe_get_field(
+                                        receiver,
+                                        field,
+                                        self,
+                                    )
+                                )
+                            elif isinstance(receiver, ObjectValue):
                                 frame.stack.append(
                                     _extract_object_field(
                                         receiver,
-                                        instruction.arg,
+                                        field,
                                         self,
                                     )
                                 )
                             else:
-                                frame.stack.append(
-                                    _get_field(receiver, instruction.arg)
-                                )
+                                frame.stack.append(_get_field(receiver, field))
                         case OpCode.SET_FIELD:
+                            field, optional_safe = _field_instruction_arg(
+                                instruction.arg
+                            )
                             receiver, value = _source_args(
                                 frame,
                                 2,
                                 "field assignment",
                             )
                             frame.stack.append(
-                                _set_field(receiver, instruction.arg, value)
+                                _optional_safe_set_field(
+                                    receiver,
+                                    field,
+                                    value,
+                                    self,
+                                )
+                                if optional_safe
+                                else _set_field(receiver, field, value)
                             )
                         case OpCode.GET_INDEX:
                             try:
@@ -1914,6 +1933,43 @@ def _finalize_builtin_result_ownership(
         retains = count if ident in arg_ids else count - 1
         for _ in range(max(retains, 0)):
             _retain_value(values[ident])
+
+    visited: set[int] = set()
+    for value in result:
+        if id(value) in arg_ids:
+            continue
+        _retain_embedded_builtin_args(value, arg_ids, visited)
+
+
+def _retain_embedded_builtin_args(
+    value: Any,
+    arg_ids: set[int],
+    visited: set[int],
+) -> None:
+    """Retain input values newly owned by a builtin result container."""
+    if not isinstance(
+        value,
+        (ObjectValue, FunctionValue, OverloadedFunctionValue, list, tuple, dict),
+    ):
+        return
+    ident = id(value)
+    if ident in arg_ids:
+        _retain_value(value)
+        return
+    if ident in visited:
+        return
+    visited.add(ident)
+
+    if isinstance(value, ObjectValue):
+        children = value.fields.values()
+    elif isinstance(value, dict):
+        children = value.values()
+    elif isinstance(value, (list, tuple)):
+        children = value
+    else:
+        return
+    for child in children:
+        _retain_embedded_builtin_args(child, arg_ids, visited)
 
 
 def _bind_lazy_result_owners(
@@ -3826,6 +3882,87 @@ def _index_fault_message(index: int, length: int | None = None) -> str:
     if length is None:
         return f"index {index} is out of range"
     return f"index {index} is out of range for length {length}"
+
+
+def _field_instruction_arg(argument: object) -> tuple[str, bool]:
+    """Normalize ordinary and optional-safe field bytecode arguments."""
+    if isinstance(argument, str):
+        return argument, False
+    if (
+        isinstance(argument, tuple)
+        and len(argument) == 2
+        and isinstance(argument[0], str)
+        and argument[1] in {True, 1, "optional"}
+    ):
+        return argument[0], True
+    raise RuntimeError(f"invalid field instruction argument {argument!r}")
+
+
+def _optional_runtime_kind(value: Any) -> str | None:
+    """Return ``some``/``none`` for runtime optional wrappers."""
+    if value is None:
+        return "none"
+    if not isinstance(value, ObjectValue):
+        return None
+    short_name = value.type_name.rsplit(".", 1)[-1]
+    if short_name == "None":
+        return "none"
+    if short_name == "Some" and "value" in value.fields:
+        return "some"
+    return None
+
+
+def _optional_safe_get_field(
+    receiver: Any,
+    field: str,
+    vm: VirtualMachine,
+) -> Any:
+    """Read a member through ``Some`` and propagate ``None``."""
+    if is_list_like(receiver):
+        if is_eager_sequence(receiver):
+            return [
+                _optional_safe_get_field(item, field, vm)
+                for item in receiver
+            ]
+        return LazyList(
+            _optional_safe_get_field(item, field, vm)
+            for item in receiver
+        )
+
+    kind = _optional_runtime_kind(receiver)
+    if kind == "none":
+        return receiver
+    if kind != "some" or not isinstance(receiver, ObjectValue):
+        raise RuntimeError("optional-safe field access requires Some or None")
+
+    payload = _retain_value(receiver.fields["value"])
+    _release_value(receiver, vm)
+    if isinstance(payload, ObjectValue):
+        result = _extract_object_field(payload, field, vm)
+    else:
+        result = _get_field(payload, field)
+    if _optional_runtime_kind(result) is not None:
+        return result
+    return ObjectValue("Some", {"value": result})
+
+
+def _optional_safe_set_field(
+    receiver: Any,
+    field: str,
+    value: Any,
+    vm: VirtualMachine,
+) -> Any:
+    """Write a member through ``Some`` or cancel the write for ``None``."""
+    kind = _optional_runtime_kind(receiver)
+    if kind == "none":
+        _release_value(value, vm)
+        return receiver
+    if kind != "some" or not isinstance(receiver, ObjectValue):
+        raise RuntimeError("optional-safe field assignment requires Some or None")
+
+    payload = receiver.fields["value"]
+    updated = _set_field(payload, field, value)
+    return ObjectValue("Some", {"value": updated})
 
 
 def _get_field(receiver: Any, field: str) -> Any:
