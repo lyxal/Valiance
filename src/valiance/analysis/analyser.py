@@ -422,6 +422,11 @@ class AnalysisBranch:
         """Return whether this analysis path contains an error diagnostic."""
         return bool(self.errors)
 
+    @property
+    def terminal(self) -> bool:
+        """Return whether this path cannot continue because it contains ``Never``."""
+        return any(_is_never(typ) for typ in self.stack)
+
     def with_stack(self, stack: T.TypeStack) -> AnalysisBranch:
         """Return a branch with its type stack replaced."""
         return replace(self, stack=stack)
@@ -854,7 +859,7 @@ class Analyser:
         """Analyse one node from a branch set."""
         next_branches: list[AnalysisBranch] = []
         for branch in branches:
-            if branch.failed or branch.break_type is not None:
+            if branch.failed or branch.break_type is not None or branch.terminal:
                 next_branches.append(branch)
                 continue
             next_branches.extend(self._analyse_node_from_branch(branch, node))
@@ -1817,16 +1822,18 @@ class Analyser:
         if field.typ is not None:
             typ = field.typ
         elif field.default:
+            diagnostics_before = len(self.diagnostics)
             outputs = self.analyse_scoped_block(
                 BranchSet((AnalysisBranch(input_mode=InputMode.TOP_LEVEL),)),
                 field.default,
             )
             types = tuple(output.stack[-1] for output in outputs if output.stack)
             if not types:
-                self._diagnose(
-                    f"default for field '{field.name}' must leave a value",
-                    field,
-                )
+                if outputs or len(self.diagnostics) == diagnostics_before:
+                    self._diagnose(
+                        f"default for field '{field.name}' must leave a value",
+                        field,
+                    )
                 return None
             typ = T.U(*types)
         else:
@@ -2269,12 +2276,17 @@ class Analyser:
         if node.call_args and node.name == Symbol("call"):
             return self._call_element_call(branch, node, overloads)
 
-        sources, _rejected = self.element_argument_sources(
+        diagnostics_before = len(self.diagnostics)
+        sources, terminal = self.element_argument_sources(
             node,
             branch,
             overloads,
             modifier_args,
         )
+        if not sources and terminal:
+            return BranchSet.collect(terminal)
+        if not sources and len(self.diagnostics) > diagnostics_before:
+            return BranchSet()
         candidates = self.element_call_candidates(node, overloads, sources)
 
         stack_before = branch.stack
@@ -2304,9 +2316,9 @@ class Analyser:
             ambiguous_message=ambiguous_message,
         )
         if winners is None:
-            return BranchSet()
+            return BranchSet.collect(terminal)
 
-        results: list[AnalysisBranch] = []
+        results: list[AnalysisBranch] = list(terminal)
         for candidate in winners:
             committed = self.commit_element_candidate(node, overloads, candidate)
             if committed is not None:
@@ -2401,6 +2413,7 @@ class Analyser:
     ) -> tuple[list[ElementArguments], list[AnalysisBranch]]:
         """Merge explicit call arguments with stack inputs in parameter order."""
         sources: list[ElementArguments] = []
+        terminal: list[AnalysisBranch] = []
         for overload_index, overload in enumerate(overloads):
             prepared = _prepare_element_call_branches(
                 branch,
@@ -2410,6 +2423,9 @@ class Analyser:
                 self,
             )
             for preparation in prepared:
+                if preparation.branch.terminal:
+                    terminal.append(preparation.branch)
+                    continue
                 for args, popped, ordered_modifiers in _source_element_arguments(
                     preparation.branch,
                     overload,
@@ -2428,7 +2444,7 @@ class Analyser:
                             call_arg_order=preparation.call_arg_order,
                         )
                     )
-        return sources, []
+        return sources, terminal
 
     def element_call_candidates(
         self,
@@ -2701,6 +2717,10 @@ class Analyser:
             if not current:
                 return BranchSet()
 
+        terminal, current = _split_terminal_branches(current)
+        if not current:
+            return terminal
+
         call_arg_count = len(node.call_args)
         candidates: list[CallCandidate] = []
         for arg_branch in current:
@@ -2725,9 +2745,9 @@ class Analyser:
             ),
         )
         if winners is None:
-            return BranchSet()
+            return terminal
 
-        results: list[AnalysisBranch] = []
+        results: list[AnalysisBranch] = list(terminal.branches)
         for candidate in winners:
             extension = self._analyse_element_extension(
                 node.extension,
@@ -2823,6 +2843,7 @@ class Analyser:
         """Compute literal item options during static analysis."""
         item_options: list[tuple[ListItemAnalysis, ...]] = []
         for expression in expressions:
+            diagnostics_before = len(self.diagnostics)
             item_outputs = self.analyse_scoped_block(
                 BranchSet((branch,)),
                 expression,
@@ -2833,7 +2854,8 @@ class Analyser:
                 if (item_result := _list_item_analysis(branch, output)) is not None
             )
             if not options:
-                self._diagnose(message, node)
+                if item_outputs or len(self.diagnostics) == diagnostics_before:
+                    self._diagnose(message, node)
                 return None
             item_options.append(options)
         return tuple(item_options)
@@ -3063,12 +3085,20 @@ class Analyser:
         """Return the Boolean result of match guards are valid during static analysis."""
         guards = tuple(_match_pattern_guards(patterns, subject_types))
         for guard, subject_type in guards:
+            diagnostics_before = len(self.diagnostics)
             guard_input = AnalysisBranch(
                 stack=T.TypeStack((subject_type,)),
                 variables=BranchVariables(),
                 input_mode=InputMode.TOP_LEVEL,
             )
             outputs = self.analyse_scoped_block(BranchSet((guard_input,)), guard)
+            terminal, outputs = _split_terminal_branches(outputs)
+            if not outputs:
+                if terminal:
+                    continue
+                if len(self.diagnostics) == diagnostics_before:
+                    self._diagnose("match guard must be a boolean value", node)
+                return False
             outputs = self.require_stack_top_assignable(
                 outputs,
                 expected=Boolean,
@@ -3891,7 +3921,15 @@ def _if_node(
     branch: AnalysisBranch,
 ) -> BranchSet:
     """Analyse a conditional and retain typed nodes for both runtime branches."""
+    diagnostics_before = len(self.diagnostics)
     condition = self.analyse_from(branch, node.condition)
+    terminal, condition = _split_terminal_branches(condition)
+    if not condition:
+        if terminal:
+            return terminal
+        if len(self.diagnostics) == diagnostics_before:
+            self._diagnose("if condition must be a boolean value", node)
+        return BranchSet()
     body_inputs = self.require_stack_top_assignable(
         condition,
         expected=Boolean,
@@ -3902,9 +3940,9 @@ def _if_node(
 
     if not body_inputs or any(output.failed for output in body_inputs):
         self._diagnose("if condition must be a boolean value", node)
-        return BranchSet()
+        return terminal
 
-    outputs: list[AnalysisBranch] = []
+    outputs: list[AnalysisBranch] = list(terminal.branches)
     saw_mismatched_inputs = False
     for body_input in body_inputs:
         condition_body = body_input.typed_body[len(branch.typed_body) :]
@@ -3961,7 +3999,15 @@ def _assert_node(
     branch: AnalysisBranch,
 ) -> BranchSet:
     """Analyse a `AssertNode` node and return the surviving branches."""
+    diagnostics_before = len(self.diagnostics)
     condition = self.analyse_from(branch, node.condition)
+    terminal, condition = _split_terminal_branches(condition)
+    if not condition:
+        if terminal:
+            return terminal
+        if len(self.diagnostics) == diagnostics_before:
+            self._diagnose("assert condition must be a boolean value", node)
+        return BranchSet()
     condition = self.require_stack_top_assignable(
         condition,
         expected=Boolean,
@@ -3972,7 +4018,7 @@ def _assert_node(
 
     if not condition or any(output.failed for output in condition):
         self._diagnose("assert condition must be a boolean value", node)
-        return BranchSet()
+        return terminal
 
     condition_tags = frozenset(
         tag for output in condition for tag in output.element_tags
@@ -3996,7 +4042,7 @@ def _assert_node(
         .emit(typed_assert)
     )
     if not node.else_branch:
-        return BranchSet((success,))
+        return BranchSet.collect((*terminal.branches, success))
 
     else_outputs = self.analyse_from(branch, node.else_branch)
     typed_assert = TypedAssertNode(
@@ -4020,7 +4066,7 @@ def _assert_node(
     error_types = tuple(_top_or_none(output.stack) for output in else_outputs)
     error_type = T.U(*error_types) if error_types else T.NoneType()
     assert_error = T.N(Symbol("AssertError"), error_type)
-    return BranchSet((success.push(assert_error),))
+    return BranchSet.collect((*terminal.branches, success.push(assert_error)))
 
 
 @register(BreakNode)
@@ -4074,7 +4120,15 @@ def _while_node(
             cycle_params=params,
         )
 
+    diagnostics_before = len(self.diagnostics)
     condition = self.analyse_from(loop_input, node.condition)
+    terminal, condition = _split_terminal_branches(condition)
+    if not condition:
+        if terminal:
+            return terminal
+        if len(self.diagnostics) == diagnostics_before:
+            self._diagnose("while condition must be a boolean value", node)
+        return BranchSet()
     body_inputs = self.require_stack_top_assignable(
         condition,
         expected=Boolean,
@@ -4084,7 +4138,7 @@ def _while_node(
     )
     if not body_inputs or any(output.failed for output in body_inputs):
         self._diagnose("while condition must be a boolean value", node)
-        return BranchSet()
+        return terminal
 
     body_outputs = self.analyse_scoped_block(body_inputs, node.body)
     if not body_outputs:
@@ -4129,8 +4183,9 @@ def _while_node(
         else len(loop_input.typed_body)
     )
     body = _typed_block(body_outputs, body_start, node.body)
-    return BranchSet(
+    return BranchSet.collect(
         (
+            *terminal.branches,
             result.emit(
                 TypedWhileNode(
                     node,
@@ -4628,7 +4683,14 @@ def _call_node(
         return BranchSet()
 
     callable_popped = branch.pop()
+    diagnostics_before = len(self.diagnostics)
     arg_branches = self.analyse_from(callable_popped, node.args)
+    terminal, arg_branches = _split_terminal_branches(arg_branches)
+    if not arg_branches:
+        if terminal:
+            return terminal
+        if len(self.diagnostics) > diagnostics_before:
+            return BranchSet()
 
     candidates: list[CallCandidate] = []
     for arg_branch in arg_branches:
@@ -4664,17 +4726,22 @@ def _call_node(
         ),
     )
     if winners is None:
-        return BranchSet()
+        return terminal
 
     return BranchSet.collect(
-        candidate.branch.push(*candidate.applied.actual_returns).emit(
-            TypedCallNode(
-                node,
-                _returns_result_type(candidate.applied.actual_returns),
-                candidate.applied,
-            )
+        (
+            *terminal.branches,
+            *(
+                candidate.branch.push(*candidate.applied.actual_returns).emit(
+                    TypedCallNode(
+                        node,
+                        _returns_result_type(candidate.applied.actual_returns),
+                        candidate.applied,
+                    )
+                )
+                for candidate in winners
+            ),
         )
-        for candidate in winners
     )
 
 
@@ -4702,14 +4769,20 @@ def _string_interpolation_node(
             )
             return BranchSet()
 
+    terminal, current = _split_terminal_branches(current)
     return BranchSet.collect(
-        replace(
-            output,
-            stack=_pop_stack(output.stack, expression_count).push(T.String),
-            typed_body=branch.typed_body,
-        ).emit(TypedNode(node, T.String))
-        for output in current
-        if len(output.stack) >= expression_count
+        (
+            *terminal.branches,
+            *(
+                replace(
+                    output,
+                    stack=_pop_stack(output.stack, expression_count).push(T.String),
+                    typed_body=branch.typed_body,
+                ).emit(TypedNode(node, T.String))
+                for output in current
+                if len(output.stack) >= expression_count
+            ),
+        )
     )
 
 
@@ -9081,7 +9154,11 @@ def _literal_branch_results(
         if inputs is None:
             continue
         consumed = max((item.consumed for item in combo), default=0)
-        typ = literal_type(combo)
+        typ = (
+            T.Never()
+            if any(_is_never(item.typ) for item in combo)
+            else literal_type(combo)
+        )
         variables = _merge_list_item_variables(branch.variables, combo)
         element_tags = frozenset(
             tag for item in combo for tag in item.branch.element_tags
@@ -9237,6 +9314,15 @@ def _has_never_return(overload: T.Overload) -> bool:
 def _is_never(t: T.Type) -> bool:
     """Return whether the value is never."""
     return isinstance(T.normalize(t), T.NeverType)
+
+
+def _split_terminal_branches(branches: BranchSet) -> tuple[BranchSet, BranchSet]:
+    """Partition non-returning ``Never`` paths from normally continuing paths."""
+    terminal: list[AnalysisBranch] = []
+    live: list[AnalysisBranch] = []
+    for branch in branches:
+        (terminal if branch.terminal else live).append(branch)
+    return BranchSet.collect(terminal), BranchSet.collect(live)
 
 
 def _param_type(param: FunctionParam, index: int) -> T.Type:

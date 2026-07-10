@@ -17,7 +17,7 @@ from itertools import permutations
 from pathlib import Path
 from typing import Any
 
-from valiance.analysis import Analyser
+from valiance.analysis import Analyser, default_environment
 from valiance.asts import ASTNode, pretty_ast
 from valiance.parsing import LexError, ParseError, lex, parse
 from valiance.parsing.lexer import TokenKind
@@ -1649,6 +1649,61 @@ def _fuzz_structural_types(
         raise _GeneratedCaseFailure(case, exc) from exc
 
 
+def _fuzz_analyser_never_recovery(
+    rng: random.Random,
+    _iteration: int,
+    _config: FuzzConfig,
+) -> object:
+    """Exercise primary-diagnostic suppression and terminal ``Never`` paths."""
+    primary_cases = (
+        ("1 +(missing)", "unknown element 'missing'"),
+        ("if missing => 1 else => 2 end", "unknown element 'missing'"),
+        ("while missing => 1 end", "unknown element 'missing'"),
+        ("[missing]", "unknown element 'missing'"),
+    )
+    never_cases = (
+        "missing halt",
+        "if halt => 1 else => 2 end missing",
+        "1 +(halt) missing",
+        "[halt] missing",
+    )
+
+    if rng.randrange(2) == 0:
+        source, expected = rng.choice(primary_cases)
+        case = ("primary", source)
+        try:
+            analyser = Analyser()
+            analyser.analyse(parse(source))
+            if len(analyser.diagnostics) != 1:
+                raise AssertionError(
+                    f"expected one primary diagnostic, got {analyser.diagnostics!r}"
+                )
+            if expected not in analyser.diagnostics[0]:
+                raise AssertionError(
+                    f"unexpected primary diagnostic {analyser.diagnostics[0]!r}"
+                )
+            return case
+        except BaseException as exc:
+            raise _GeneratedCaseFailure(case, exc) from exc
+
+    source = rng.choice(never_cases)
+    case = ("never", source)
+    try:
+        env = default_environment().child_scope()
+        env.define_overload(Symbol("halt"), Overload((), (Never(),)))
+        analyser = Analyser(env)
+        typed = analyser.analyse(parse(source))
+        if analyser.diagnostics:
+            raise AssertionError(
+                f"terminal Never produced diagnostics {analyser.diagnostics!r}"
+            )
+        if not typed:
+            raise AssertionError("terminal Never discarded the typed prefix")
+        return case
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(case, exc) from exc
+
+
 TARGETS: dict[str, Target] = {
     "lexer-parser": _fuzz_lexer_parser,
     "source-mutations": _fuzz_source_mutations,
@@ -1662,6 +1717,7 @@ TARGETS: dict[str, Target] = {
     "type-relations": _fuzz_type_relations,
     "type-algebra": _fuzz_type_algebra,
     "structural-types": _fuzz_structural_types,
+    "analyser-never": _fuzz_analyser_never_recovery,
 }
 
 

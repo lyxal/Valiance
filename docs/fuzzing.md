@@ -47,6 +47,10 @@ base seed, and iteration number.
   intersections, numeric-intersection simplification, optional covariance,
   associative branch and stack joins, permutation-independent generic evidence,
   and overload declaration-order independence.
+- `analyser-never` checks analyser recovery around bottom-typed paths. It
+  verifies that nested primary errors do not produce generic wrapper
+  diagnostics, and that a direct `Never` result terminates subsequent analysis
+  while preserving the typed prefix.
 - `structural-types` builds contexts containing nominal subtype facts,
   declaration-site variance, row fields, and structural overloads. It generates
   named and anonymous generics, rows, anonymous traits, functions, collections,

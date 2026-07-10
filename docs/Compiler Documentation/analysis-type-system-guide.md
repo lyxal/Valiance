@@ -82,6 +82,17 @@ should naturally produce one branch.
   Handlers and helpers iterate through possible branches directly. An empty
   branch set means the analysed path is impossible or already diagnosed.
 
+A branch whose stack contains a direct `Never` value is terminal. Its typed
+prefix is retained, but later nodes are not analysed because that path cannot
+return normally. Handlers that analyse nested expressions split terminal paths
+from continuing paths before validating conditions, explicit call arguments,
+or literal results.
+
+When nested analysis has already emitted a primary diagnostic and yields no
+branch, the parent construct must not add a generic wrapper diagnostic. A live
+nested branch with the wrong type or stack shape still receives the relevant
+wrapper diagnostic.
+
 Most branch operations now live on `AnalysisBranch` and `Analyser`:
 
 - `AnalysisBranch.emit(...)`

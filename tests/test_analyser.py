@@ -114,6 +114,7 @@ X = Symbol("x")
 Y = Symbol("y")
 LEFT = Symbol("Left")
 RIGHT = Symbol("Right")
+HALT = Symbol("halt")
 
 
 class AnalyserTests(unittest.TestCase):
@@ -3842,6 +3843,66 @@ end
             analyser.diagnostics,
             ["1:1: local imports require a source file"],
         )
+
+
+class NeverDiagnosticRecoveryTests(unittest.TestCase):
+    def _analyser_with_halt(self) -> Analyser:
+        env = default_environment().child_scope()
+        env.define_overload(HALT, Overload((), (Never(),)))
+        return Analyser(env)
+
+    def test_nested_primary_errors_do_not_emit_wrapper_diagnostics(self):
+        cases = (
+            ("1 +(missing)", "1:5: unknown element 'missing'"),
+            ("if missing => 1 else => 2 end", "1:4: unknown element 'missing'"),
+            ("while missing => 1 end", "1:7: unknown element 'missing'"),
+            ("[missing]", "1:2: unknown element 'missing'"),
+        )
+
+        for source, expected in cases:
+            with self.subTest(source=source):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [expected])
+
+    def test_never_result_stops_following_top_level_analysis(self):
+        analyser = self._analyser_with_halt()
+
+        typed = analyser.analyse([ElementNode(HALT), ElementNode(MISSING)])
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(len(typed), 1)
+        self.assertIsInstance(typed[0], TypedElementNode)
+        self.assertEqual(typed[0].node.name, HALT)
+        self.assertEqual(typed[0].typ, Never())
+
+    def test_never_condition_is_terminal_not_a_boolean_mismatch(self):
+        analyser = self._analyser_with_halt()
+
+        typed = analyser.analyse(
+            parse("if halt => 1 else => 2 end missing")
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(len(typed), 1)
+        self.assertIsInstance(typed[0], TypedElementNode)
+        self.assertEqual(typed[0].node.name, HALT)
+
+    def test_never_explicit_argument_terminates_the_enclosing_call(self):
+        analyser = self._analyser_with_halt()
+
+        typed = analyser.analyse(parse("1 +(halt) missing"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Never())
+
+    def test_never_literal_item_makes_the_literal_terminal(self):
+        analyser = self._analyser_with_halt()
+
+        typed = analyser.analyse(parse("[halt] missing"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Never())
 
 
 if __name__ == "__main__":

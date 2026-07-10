@@ -943,7 +943,8 @@ fields are:
 - `input_mode`: how missing stack arguments may be sourced;
 - `cycle_params` and `cycle_index`;
 - element/data-tag effects;
-- loop break type; and
+- loop break type;
+- whether a direct `Never` stack value makes the path terminal; and
 - branch diagnostics.
 
 The record is immutable. Handlers return replacements rather than mutating
@@ -985,6 +986,20 @@ Branches represent genuinely different static possibilities, for example:
 A branch is not merely a speculative error-recovery attempt. If a source path
 is possible, its facts must be preserved until a language rule joins or rejects
 it.
+
+A direct `Never` value is different from an ordinary branch result. It means
+that the path cannot return normally, so `analyse_node(...)` preserves the typed
+prefix but does not analyse later nodes on that path. Nested constructs split
+terminal paths from continuing paths before checking conditions or call
+arguments. This prevents unreachable code from producing follow-on diagnostics
+or turning `Never` back into an ordinary result type.
+
+When nested analysis has already emitted a primary diagnostic and yields no
+branch, the enclosing construct must not add a generic wrapper diagnostic such
+as “condition must be boolean” or “literal item must leave a value”. Wrapper
+diagnostics still apply when a live nested branch exists but has the wrong
+shape or type.
+
 
 ## Input modes explain function inference
 
