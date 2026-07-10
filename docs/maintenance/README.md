@@ -116,5 +116,6 @@ A maintenance change is complete when:
 - typed and runtime behaviour agree;
 - bytecode round trips still work when relevant;
 - production functions introduced or changed have useful docstrings;
-- the complete test suite passes; and
+- the complete test suite passes;
+- the fuzzing harness passes; and
 - the maintenance guides are updated when an architectural boundary changes.

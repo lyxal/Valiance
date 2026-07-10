@@ -262,13 +262,21 @@ example, `ResolvedElementReference` carries:
 - `vectorised_target_ranks`: exact runtime rank boundaries;
 - `return_collection_ranks`: rank evidence to reattach;
 - `type_args`: concrete generic object/variant arguments;
-- `static_values`: hidden values such as solved rank variables;
+- `static_values`: hidden values such as solved rank variables or
+  call-site-selected callable group arities;
 - `arity_override` and `consumed_override`: call-site checked stack contracts;
 - `multidispatch`: permission to select a `multi` specialisation; and
 - `extension`: compiled unequal-length vector extension behaviour.
 
 Named fields matter because this record crosses compiler, serializer, and VM
 boundaries. A positional tuple would be easy to misread and hard to evolve.
+
+Call-site checked built-ins can attach `runtime_static_values` to their concrete
+applied overload. Codegen copies those values into `ResolvedElementReference`,
+and the VM exposes them through `RuntimeContext.static_values`. This is the
+correct way to preserve an analysis-only partition decision such as
+`correspond` choosing an `n`-argument lower group and an `m`-argument upper
+group; the runtime must not rediscover that split from an overloaded callable.
 
 ## How code generation lowers typed nodes
 

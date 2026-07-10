@@ -789,6 +789,52 @@ end
 #? Note that future usages of dip may use function values that aren't `Function[Number, Number -> Number]`
 ```
 
+### 6.6.1. Call-Site Checked Stack Combinators
+
+`both` and `correspond` are built-in call-site checked elements. Their stack
+effects are derived from the concrete callable types at each use, so they work
+with any fixed callable arity and multiplicity.
+
+`both` applies one callable to two consecutive groups of the same size. If the
+callable takes `n` inputs, `both` consumes `2 * n` stack values. The lower group
+is called first and the upper group second; the first call's results are placed
+below the second call's results.
+
+```valiance
+1 2 both: double                    #? 2 4
+1 2 3 4 both: +                    #? 3 7
+1 2 3 4 5 6 both: fn (a, b, c) =>
+  $a $b + $c +
+end                                    #? 6 15
+```
+
+A niladic callable is invoked twice and consumes no stack values. A callable
+that returns multiple values contributes all of its results for each group.
+Each group must independently satisfy the callable's parameter types.
+
+`correspond` applies two callables to two distinct consecutive groups. If the
+first callable takes `n` inputs and the second takes `m`, the first callable
+receives the lower `n` values and the second callable receives the upper `m`
+values. Their arities and multiplicities do not need to match. Results from the
+first callable are placed below results from the second callable.
+
+```valiance
+1 2 correspond: (double, squared)  #? 2 4
+1 2 3 correspond: (double, +)      #? 2 5
+1 2 3 4 5 correspond: (
+  +,
+  fn (a, b, c) => $a $b + $c + end
+)                                      #? 3 12
+```
+
+Because both elements are call-site checked, they can also participate in input
+inference for an enclosing function:
+
+```valiance
+$pairSums = fn => both: + end
+1 2 3 4 $pairSums()                 #? 3 7
+```
+
 ## 6.7. Inline Parameter/Return Type-Casting
 
 _Note: Normal code will not need to make use of this feature. It exists primarily for ergonomic FFI_

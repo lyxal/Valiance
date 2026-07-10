@@ -330,6 +330,7 @@ def normalize(t: Type) -> Type:
                         requirement.overload.annotation_warning,
                         requirement.overload.param_defaults,
                         requirement.overload.is_multi,
+                        requirement.overload.runtime_static_values,
                     ),
                 )
                 for requirement in t.requirements
@@ -620,6 +621,7 @@ def _alpha_canonicalize_overload(
         overload.annotation_warning,
         overload.param_defaults,
         overload.is_multi,
+        overload.runtime_static_values,
     )
 
 

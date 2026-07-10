@@ -1034,6 +1034,89 @@ define choose(i: Integer) -> String => "int"
             [Decimal("7")],
         )
 
+    def test_executes_both_for_zero_through_three_input_callables(self):
+        self.assertEqual(
+            execute("both: fn => 7 end"),
+            [Decimal("7"), Decimal("7")],
+        )
+        self.assertEqual(
+            execute("1 2 both: double"),
+            [Decimal("2"), Decimal("4")],
+        )
+        self.assertEqual(
+            execute("1 2 3 4 both: +"),
+            [Decimal("3"), Decimal("7")],
+        )
+        self.assertEqual(
+            execute(
+                "1 2 3 4 5 6 "
+                "both: fn (:Number, :Number, :Number) => + + end"
+            ),
+            [Decimal("6"), Decimal("15")],
+        )
+
+    def test_executes_correspond_with_distinct_callable_arities(self):
+        self.assertEqual(
+            execute("1 2 correspond: (double, squared)"),
+            [Decimal("2"), Decimal("4")],
+        )
+        self.assertEqual(
+            execute("1 2 3 correspond: (double, +)"),
+            [Decimal("2"), Decimal("5")],
+        )
+        self.assertEqual(
+            execute(
+                "1 2 3 4 5 correspond: "
+                "(+, fn (:Number, :Number, :Number) => + + end)"
+            ),
+            [Decimal("3"), Decimal("12")],
+        )
+        self.assertEqual(
+            execute("1 correspond: (fn => 9 end, double)"),
+            [Decimal("9"), Decimal("2")],
+        )
+
+    def test_both_and_correspond_can_infer_enclosing_function_inputs(self):
+        self.assertEqual(
+            execute(
+                """
+$f = fn => both: + end
+1 2 3 4 $f()
+"""
+            ),
+            [Decimal("3"), Decimal("7")],
+        )
+        self.assertEqual(
+            execute(
+                """
+$f = fn => correspond: (double, +) end
+1 2 3 $f()
+"""
+            ),
+            [Decimal("2"), Decimal("5")],
+        )
+
+    def test_correspond_serializes_its_call_site_arity_metadata(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse("1 2 3 correspond: (double, +)"))
+        self.assertEqual(analyser.diagnostics, [])
+
+        program = compile_program(typed)
+        references = tuple(
+            instruction.arg
+            for instruction in program.main.instructions
+            if instruction.op is OpCode.CALL_RESOLVED_ELEMENT
+            and isinstance(instruction.arg, ResolvedElementReference)
+            and instruction.arg.name == "correspond"
+        )
+
+        self.assertEqual(len(references), 1)
+        self.assertEqual(references[0].static_values, (1, 2))
+        self.assertEqual(
+            run(loads(dumps(program))),
+            [Decimal("2"), Decimal("5")],
+        )
+
     def test_executes_reduce_slash_overload(self):
         self.assertEqual(execute("[1, 2, 3, 4] /: +"), [Decimal("10")])
 

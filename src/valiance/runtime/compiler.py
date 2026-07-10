@@ -1590,6 +1590,8 @@ def _resolved_element_reference(
         and node.call_overload_index is not None
     ):
         static_values = (node.call_overload_index,)
+    elif node.overload is not None and node.overload.runtime_static_values:
+        static_values = node.overload.runtime_static_values
     else:
         static_values = _runtime_rank_values(node)
     multidispatch = bool(node.overload is not None and node.overload.multidispatch)

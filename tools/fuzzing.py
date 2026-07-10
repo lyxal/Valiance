@@ -389,8 +389,20 @@ def _nested_numbers(values: list[int], width: int) -> list[list[int]]:
     return [values[index : index + width] for index in range(0, len(values), width)]
 
 
+def _sum_callable_source(arity: int, niladic_value: int = 0) -> str:
+    """Build a fixed-arity callable that returns the sum of its inputs."""
+    if arity == 0:
+        return f"fn => {niladic_value} end"
+    names = tuple(f"x{index}" for index in range(arity))
+    params = ", ".join(f"{name}: Number" for name in names)
+    body = f"${names[0]}"
+    for name in names[1:]:
+        body += f" ${name} +"
+    return f"fn ({params}) -> Number => {body} end"
+
+
 def _program_case(rng: random.Random, max_depth: int) -> _ProgramCase:
-    mode = rng.randrange(7)
+    mode = rng.randrange(9)
     expression, value = _arith_tree(rng, max_depth)
 
     if mode == 0:
@@ -448,6 +460,49 @@ def _program_case(rng: random.Random, max_depth: int) -> _ProgramCase:
                 )
             )
         return _ProgramCase(source, [expected_values])
+
+    if mode == 7:
+        arity = rng.randint(0, 3)
+        values = [rng.randint(-20, 20) for _ in range(arity * 2)]
+        niladic = rng.randint(-20, 20)
+        callable_source = _sum_callable_source(arity, niladic)
+        prefix = " ".join(map(str, values))
+        source = f"{prefix} both: {callable_source}".strip()
+        if arity == 0:
+            expected = [Decimal(niladic), Decimal(niladic)]
+        else:
+            expected = [
+                Decimal(sum(values[:arity])),
+                Decimal(sum(values[arity:])),
+            ]
+        return _ProgramCase(source, expected)
+
+    if mode == 8:
+        lower_arity = rng.randint(0, 3)
+        upper_arity = rng.randint(0, 3)
+        values = [
+            rng.randint(-20, 20)
+            for _ in range(lower_arity + upper_arity)
+        ]
+        lower_niladic = rng.randint(-20, 20)
+        upper_niladic = rng.randint(-20, 20)
+        lower_source = _sum_callable_source(lower_arity, lower_niladic)
+        upper_source = _sum_callable_source(upper_arity, upper_niladic)
+        prefix = " ".join(map(str, values))
+        source = (
+            f"{prefix} correspond: ({lower_source}, {upper_source})".strip()
+        )
+        lower_values = values[:lower_arity]
+        upper_values = values[lower_arity:]
+        expected = [
+            Decimal(sum(lower_values))
+            if lower_arity
+            else Decimal(lower_niladic),
+            Decimal(sum(upper_values))
+            if upper_arity
+            else Decimal(upper_niladic),
+        ]
+        return _ProgramCase(source, expected)
 
     width = rng.randint(1, 3)
     values = [rng.randint(-10, 10) for _ in range(width * rng.randint(1, 3))]

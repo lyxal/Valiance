@@ -495,7 +495,8 @@ a concrete `T.Overload` or `None`. The returned overload must:
 4. Return `None` when the concrete function(s) cannot apply to the proposed
    stack types.
 
-`peek`, `dip`, and `fork` show the three common consumption patterns:
+`peek`, `dip`, `fork`, `both`, and `correspond` demonstrate the common
+consumption patterns:
 
 - `peek` passes the inspected stack values and function to runtime, but consumes
   no outer-stack values, so its concrete overload uses `call_site_body=0`.
@@ -503,43 +504,63 @@ a concrete `T.Overload` or `None`. The returned overload must:
   `call_site_body=arity + 1`.
 - `fork` passes one shared argument slice to two functions and consumes that
   slice once, so it uses `call_site_body=arity`.
+- `both` consumes two adjacent groups of one callable's arity and records that
+  arity as `runtime_static_values=(arity,)`.
+- `correspond` consumes one group for each callable and records
+  `runtime_static_values=(lower_arity, upper_arity)`.
 
 Use the shared helpers in `builtins.py` when writing the call-site helper:
 
 - `_callable_overloads(type)` opens a concrete `Function[...]` or overload set.
 - `_apply_callable(overload, args)` checks one candidate and returns the applied
-  overload plus the concrete `Function[...]` type to put back in the signature.
+  overload plus its concrete result shape.
 - `_callable_applications(type, args)` iterates all successful applications.
+- `_completed_call_site_stack(stack, expected)` aligns an available stack suffix
+  with declared callable parameters so an enclosing inferred function can source
+  missing lower inputs through `AnalysisBranch.source_arguments(...)`.
 
-A future `correspond` built-in that applies two functions to corresponding
-argument groups could follow the same pattern. For example, if
-`3 4 5 6 | correspond: (+, -)` should return `7, -1`, the call-site helper
-would split the candidate stack suffix into the argument tuple for `+` and the
-argument tuple for `-`, call `_apply_callable(...)` for each modifier, then
-return a concrete overload like:
+For unequal group sizes, the analyser's partition must be preserved rather than
+recomputed from runtime function values. `correspond` returns a concrete overload
+with the selected arities attached:
 
 ```python
 T.Overload(
-    (*left_args, *right_args, left_application.concrete_type, right_application.concrete_type),
-    (*left_application.applied.actual_returns, *right_application.applied.actual_returns),
-    call_site_body=len(left_args) + len(right_args),
+    (
+        *lower_args,
+        *upper_args,
+        lower_application.concrete_type,
+        upper_application.concrete_type,
+    ),
+    (
+        *lower_application.applied.actual_returns,
+        *upper_application.applied.actual_returns,
+    ),
+    call_site_body=lower_arity + upper_arity,
+    runtime_static_values=(lower_arity, upper_arity),
 )
 ```
 
-The runtime implementation should mirror the same concrete stack contract:
+`_apply_call_site_checked_overload(...)` copies those values to the resulting
+`AppliedOverload`. Codegen then places them in
+`ResolvedElementReference.static_values`, and the VM exposes them through
+`RuntimeContext.static_values`:
 
 ```python
 @builtin("correspond", (T.Fn(), T.Fn()), call_site=_correspond_call_site)
 def _correspond(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    *call_args, left, right = args
-    left_args = call_args[: len(call_args) // 2]
-    right_args = call_args[len(call_args) // 2 :]
-    return (*ctx.call(left, list(left_args)), *ctx.call(right, list(right_args)))
+    *values, lower, upper = args
+    lower_arity, upper_arity = map(int, ctx.static_values[:2])
+    return (
+        *ctx.call(lower, list(values[:lower_arity])),
+        *ctx.call(upper, list(values[lower_arity:])),
+    )
 ```
 
-If the split is not always half-and-half, encode that rule in both the call-site
-helper and runtime implementation. Do not put element-name special cases in the
-analyser; the `@builtin(..., call_site=...)` registration is the extension point.
+This metadata is deliberately excluded from semantic overload equality: it is a
+per-call execution plan, not part of the source function type. Preserve it in
+overload normalization/substitution and applied-overload copies. Do not put
+element-name special cases in the analyser; the
+`@builtin(..., call_site=...)` registration is the extension point.
 
 ## Adding an Opcode
 
@@ -644,8 +665,10 @@ Resolved object and variant constructor calls may include instantiated generic
 arguments in `ResolvedElementReference.type_args`. The VM passes `type_args` to
 `ObjectValue`, and object field reconstruction must preserve them.
 
-Resolved user-defined element calls may also include static rank values produced
-by a `where` clause in `ResolvedElementReference.static_values`.
+Resolved calls may also include hidden analysis results in
+`ResolvedElementReference.static_values`. User-defined elements use this for
+static rank values produced by a `where` clause; call-site checked built-ins use
+it for execution-plan constants such as `both`/`correspond` group arities.
 
 If a resolved user-defined fallback call needs runtime multimethod selection,
 set `ResolvedElementReference.multidispatch`. Call-site checked built-ins can

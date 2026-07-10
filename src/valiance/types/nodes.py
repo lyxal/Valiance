@@ -299,6 +299,11 @@ class Overload:
         hash=False,
     )
     is_multi: bool = field(default=False, compare=False, hash=False)
+    runtime_static_values: tuple[object, ...] = field(
+        default=(),
+        compare=False,
+        hash=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -341,6 +346,11 @@ class AppliedOverload:
     element_tags: frozenset[ElementTag] = field(default_factory=frozenset[ElementTag])
     multidispatch: bool = field(default=False, compare=False, hash=False)
     vectorised_target_ranks: tuple[int | None, ...] = ()
+    runtime_static_values: tuple[object, ...] = field(
+        default=(),
+        compare=False,
+        hash=False,
+    )
 
     def __hash__(self) -> int:
         """Return a stable hash for this applied overload."""

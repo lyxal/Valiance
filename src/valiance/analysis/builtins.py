@@ -148,6 +148,33 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The results of the left callable followed by the results of the right callable.",
         category="Functions",
     ),
+    "both": element_documentation(
+        "Apply one callable to two consecutive groups of stack values.",
+        description=(
+            "If the callable takes n inputs, both consumes two groups of n values.",
+            "The lower group is called first, followed by the upper group.",
+        ),
+        parameters=(("operation", "Callable applied to each input group."),),
+        returns="The first call's results followed by the second call's results.",
+        category="Functions",
+    ),
+    "correspond": element_documentation(
+        "Apply two callables to two distinct consecutive groups of stack values.",
+        description=(
+            "The first callable consumes the lower group and the second "
+            "callable consumes the upper group.",
+            "The callables may have different input and output arities.",
+        ),
+        parameters=(
+            ("lower", "Callable applied to the lower input group."),
+            ("upper", "Callable applied to the upper input group."),
+        ),
+        returns=(
+            "The lower callable's results followed by the upper callable's "
+            "results."
+        ),
+        category="Functions",
+    ),
     "call": element_documentation(
         "Invoke a callable value.",
         parameters=(("operation", "Callable to invoke."),),
@@ -1000,6 +1027,90 @@ def _fork_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     return None
 
 
+def _completed_call_site_stack(
+    stack: tuple[T.Type, ...],
+    expected: tuple[T.Type, ...],
+) -> tuple[T.Type, ...]:
+    """Complete missing lower stack inputs from a callable's declared parameters."""
+    required = len(expected)
+    if required == 0:
+        return ()
+    if len(stack) >= required:
+        return stack[-required:]
+    missing = required - len(stack)
+    return (*expected[:missing], *stack)
+
+
+def _both_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+    """Type-check one callable against two consecutive input groups."""
+    if not call_params:
+        return None
+    function_type = call_params[-1]
+    stack = call_params[:-1]
+    for candidate in _callable_overloads(function_type):
+        arity = len(candidate.params)
+        expected = (*candidate.params, *candidate.params)
+        args = _completed_call_site_stack(stack, expected)
+        first_args = args[:arity]
+        second_args = args[arity:]
+        first_application = _apply_callable(candidate, first_args)
+        second_application = _apply_callable(candidate, second_args)
+        if first_application is None or second_application is None:
+            continue
+        concrete_function_type = (
+            first_application.concrete_type
+            if T.same(
+                first_application.concrete_type,
+                second_application.concrete_type,
+            )
+            else function_type
+        )
+        return T.Overload(
+            (*args, concrete_function_type),
+            (
+                *first_application.applied.actual_returns,
+                *second_application.applied.actual_returns,
+            ),
+            call_site_body=arity * 2,
+            runtime_static_values=(arity,),
+        )
+    return None
+
+
+def _correspond_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+    """Type-check two callables against distinct consecutive input groups."""
+    if len(call_params) < 2:
+        return None
+    lower_type, upper_type = call_params[-2:]
+    stack = call_params[:-2]
+    for lower in _callable_overloads(lower_type):
+        for upper in _callable_overloads(upper_type):
+            lower_arity = len(lower.params)
+            upper_arity = len(upper.params)
+            expected = (*lower.params, *upper.params)
+            args = _completed_call_site_stack(stack, expected)
+            lower_args = args[:lower_arity]
+            upper_args = args[lower_arity:]
+            lower_application = _apply_callable(lower, lower_args)
+            upper_application = _apply_callable(upper, upper_args)
+            if lower_application is None or upper_application is None:
+                continue
+            return T.Overload(
+                (
+                    *args,
+                    lower_application.concrete_type,
+                    upper_application.concrete_type,
+                ),
+                (
+                    *lower_application.applied.actual_returns,
+                    *upper_application.applied.actual_returns,
+                ),
+                call_site_body=lower_arity + upper_arity,
+                runtime_static_values=(lower_arity, upper_arity),
+            )
+    return None
+
+
 def _call_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     """Invoke call site for the built-in catalogue and runtime."""
     if not call_params:
@@ -1087,6 +1198,51 @@ def _fork(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     left_args = call_args[-left_arity:] if left_arity else []
     right_args = call_args[-right_arity:] if right_arity else []
     return (*ctx.call(left, list(left_args)), *ctx.call(right, list(right_args)))
+
+
+@builtin("both", (T.Fn(),), call_site=_both_call_site)
+def _both(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Apply one callable to two statically sized argument groups."""
+    if not args:
+        raise RuntimeError("both requires a callable")
+    callable_value = args[-1]
+    values = args[:-1]
+    arity = int(ctx.static_values[0]) if ctx.static_values else len(values) // 2
+    if arity < 0 or len(values) != arity * 2:
+        raise RuntimeError("invalid both call-site arity metadata")
+    return (
+        *ctx.call(callable_value, list(values[:arity])),
+        *ctx.call(callable_value, list(values[arity:])),
+    )
+
+
+@builtin(
+    "correspond",
+    (T.Fn(), T.Fn()),
+    call_site=_correspond_call_site,
+)
+def _correspond(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Apply two callables to their statically sized argument groups."""
+    if len(args) < 2:
+        raise RuntimeError("correspond requires two callables")
+    *values, lower, upper = args
+    if len(ctx.static_values) >= 2:
+        lower_arity = int(ctx.static_values[0])
+        upper_arity = int(ctx.static_values[1])
+    else:
+        lower_arity = _runtime_callable_arity(lower)
+        upper_arity = _runtime_callable_arity(upper)
+    if (
+        lower_arity < 0
+        or upper_arity < 0
+        or len(values) != lower_arity + upper_arity
+    ):
+        raise RuntimeError("invalid correspond call-site arity metadata")
+    split = lower_arity
+    return (
+        *ctx.call(lower, list(values[:split])),
+        *ctx.call(upper, list(values[split:])),
+    )
 
 
 @builtin("call", (T.Fn(),), call_site=_call_call_site)

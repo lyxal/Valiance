@@ -2633,6 +2633,66 @@ pick(_, 4)
         )
         self.assertEqual(next(iter(fork)).stack, TypeStack((Number, Boolean)))
 
+    def test_both_and_correspond_type_check_callable_arity_at_each_call_site(self):
+        analyser = Analyser()
+
+        both = analyser.analyse_block(
+            BranchSet(
+                (
+                    AnalysisBranch(
+                        stack=TypeStack(
+                            (Number, Number, Number, Number, Number, Number)
+                        )
+                    ),
+                )
+            ),
+            tuple(
+                parse(
+                    "both: fn (:Number, :Number, :Number) => + + end"
+                )
+            ),
+        )
+        both_branch = next(iter(both))
+        self.assertEqual(both_branch.stack, TypeStack((Number, Number)))
+        both_node = both_branch.typed_body[-1]
+        self.assertIsInstance(both_node, TypedElementNode)
+        self.assertEqual(both_node.overload.runtime_static_values, (3,))
+
+        correspond = analyser.analyse_block(
+            BranchSet(
+                (
+                    AnalysisBranch(
+                        stack=TypeStack((Number, String, String))
+                    ),
+                )
+            ),
+            tuple(parse("correspond: (double, +)")),
+        )
+        correspond_branch = next(iter(correspond))
+        self.assertEqual(
+            correspond_branch.stack,
+            TypeStack((Number, String)),
+        )
+        correspond_node = correspond_branch.typed_body[-1]
+        self.assertIsInstance(correspond_node, TypedElementNode)
+        self.assertEqual(
+            correspond_node.overload.runtime_static_values,
+            (1, 2),
+        )
+
+    def test_both_rejects_a_group_that_does_not_match_the_callable(self):
+        analyser = Analyser()
+
+        branches = analyser.analyse_block(
+            BranchSet(
+                (AnalysisBranch(stack=TypeStack((Number, String))),)
+            ),
+            tuple(parse("both: double")),
+        )
+
+        self.assertFalse(branches)
+        self.assertIn("no overloads for element 'both'", analyser.diagnostics[-1])
+
     def test_fork_pops_maximum_modifier_parameter_count(self):
         analyser = Analyser()
 

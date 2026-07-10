@@ -1197,6 +1197,7 @@ def _substitute_overload(overload: Overload, subst: dict[str, Type]) -> Overload
         overload.annotation_warning,
         overload.param_defaults,
         overload.is_multi,
+        overload.runtime_static_values,
     )
 
 
@@ -2074,6 +2075,7 @@ def try_apply_overload(
                 _substitute_element_tags(overload.element_tags, substitution)
             ),
             vectorised_target_ranks=vectorised_target_ranks,
+            runtime_static_values=overload.runtime_static_values,
         )
     )
 

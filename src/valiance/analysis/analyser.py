@@ -7055,6 +7055,7 @@ def _apply_overload_to_branch(
             applied.substitution,
         ),
         vectorised_target_ranks=applied.vectorised_target_ranks,
+        runtime_static_values=applied.runtime_static_values,
     )
     return OverloadApplication(applied, specialized_branch)
 
@@ -7092,6 +7093,7 @@ def _apply_tag_overlay(
                 applied.runtime_consumed_count,
                 applied.element_tags,
                 vectorised_target_ranks=applied.vectorised_target_ranks,
+                runtime_static_values=applied.runtime_static_values,
             )
         )
     if not matches:
@@ -7130,7 +7132,7 @@ def _apply_call_site_checked_overload(
         if concrete is None or len(concrete.params) < len(args):
             continue
         consumed_count = _call_site_consumed_count(overload, concrete, extra_count)
-        if consumed_count is None or consumed_count > len(branch.stack):
+        if consumed_count is None:
             continue
         concrete_stack_count = len(concrete.params) - len(args)
         if concrete_stack_count < 0:
@@ -7184,6 +7186,7 @@ def _apply_call_site_checked_overload(
                 candidate.substitution,
             ),
             vectorised_target_ranks=candidate.vectorised_target_ranks,
+            runtime_static_values=concrete.runtime_static_values,
         )
         return OverloadApplication(applied, result_branch)
     return None
@@ -7290,7 +7293,7 @@ def _call_site_consumed_count(
         if isinstance(concrete.call_site_body, int)
         else len(concrete.params) - len(overload.params)
     )
-    if consumed < 0 or consumed > extra_count:
+    if consumed < 0:
         return None
     return consumed
 

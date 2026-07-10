@@ -396,9 +396,11 @@ class MainTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             rendered = output_file.read_text(encoding="utf-8")
             self.assertIn('"qualified_name": "println"', rendered)
+            self.assertIn('"qualified_name": "both"', rendered)
+            self.assertIn('"qualified_name": "correspond"', rendered)
             self.assertIn('"qualified_name": "std.regex.matches"', rendered)
             self.assertIn(
-                "126 built-in and standard-library entries",
+                "128 built-in and standard-library entries",
                 output.getvalue(),
             )
 

@@ -15,7 +15,8 @@ base seed, and iteration number.
   deleting, inserting, replacing, duplicating, and transposing source text. It
   checks the same diagnostic-only failure contract against near-valid grammar.
 - `valid-programs` generates grammar-valid arithmetic, variables, conditionals,
-  functions, flat vectors, and nested vectors. It compares execution with an
+  functions, `both`/`correspond` call-site partitions, flat vectors, and nested
+  vectors. It compares execution with an
   independent `Decimal` model and requires direct bytecode execution to equal a
   serialize/deserialize execution.
 - `serialization` generates nested bytecode records, functions, function sets,

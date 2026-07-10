@@ -314,6 +314,10 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Validate each call independently using the concrete function argument type.
 - [x] Allow call-site-checked functions to consume additional outer-stack arguments.
 - [x] Trigger call-site checking for variadic tuple parameters.
+- [x] Type-check `both` against two same-arity stack groups at each call site.
+- [x] Type-check `correspond` against independently sized stack groups at each
+  call site.
+- [x] Preserve call-site-selected group arities in resolved bytecode metadata.
 
 ## 20. Vectorisation
 

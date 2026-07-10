@@ -915,7 +915,8 @@ from the caller's stack and the held value sourced according to the concrete
 Important invariants:
 
 - The analyser detects CSTC structurally from overload parameter types. Do not
-  add element-name checks for built-ins such as `peek`, `dip`, or `fork`.
+  add element-name checks for built-ins such as `peek`, `dip`, `fork`, `both`,
+  or `correspond`.
 - A single element can have both ordinary overloads and CSTC overloads.
 - User-defined functions and built-ins use the same CSTC path. Built-ins provide
   a small static helper through `@builtin(..., call_site=...)`; user functions
@@ -925,8 +926,13 @@ Important invariants:
 - Modifier argument order matters for CSTC overloads. The analyser does not
   permute modifier arguments when applying a call-site checked overload.
 - The concrete applied overload records the runtime arity and consumed-count
-  details that codegen needs. This lets `peek` pass stack values to its runtime
-  implementation without consuming those stack values.
+  details that codegen needs. It may also carry hidden runtime constants such
+  as the group arities selected for `both` and `correspond`. This lets `peek`
+  pass stack values without consuming them and lets unequal-arity combinators
+  reproduce the analyser's exact stack partition at runtime.
+- A CSTC call may source missing values through ordinary input inference or
+  explicit-parameter cycling. Do not require every consumed value to already
+  exist on the physical analysis stack before calling `source_arguments(...)`.
 
 Variadic tuple parameters trigger the same deferral because their concrete
 length is known only once the argument tuple type is known. At the call site,
