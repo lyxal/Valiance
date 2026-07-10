@@ -1,0 +1,12 @@
+trait Logger => extend log(:String)
+trait ErrorReporter as Logger =>
+  define reportError(:String) => $self log
+end
+
+object ConsoleLogger => end
+object ConsoleLogger as Logger =>
+  define log(:String) => println
+end
+
+#? The inherited default reportError implementation needs no extra body.
+object ConsoleLogger as ErrorReporter => end

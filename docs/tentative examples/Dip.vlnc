@@ -1,0 +1,7 @@
+$dip = fn (function: Function) =>
+  $temp = top
+  $function()
+  $temp
+end
+
+1 2 3 $dip(fn => +) #? Leaves 3 3.

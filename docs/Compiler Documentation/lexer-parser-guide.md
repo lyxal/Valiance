@@ -278,6 +278,59 @@ Keep `_term()` focused on choosing a syntactic form. Put nested parsing in
 helper methods such as `_record_fields`, `_dict_entries`, or
 `_modifier_arguments`.
 
+### Variable, index, and member paths
+
+Variable paths are parsed as one source-level path and then lowered into ordinary
+read/update nodes. A path may mix indexing, ordinary fields, and optional-safe
+fields:
+
+```text
+$value[0].child->leaf->name
+$->child->leaf
+```
+
+`FieldAccessNode` and `FieldSetNode` carry `optional_safe=True` for `->`; the
+same nodes with the flag unset represent `.`. Chaining is not represented by a
+special AST node. The parser emits the accesses in source order.
+
+For assignment, `_variable_path_read` emits the reads needed to reach the leaf,
+and `_variable_path_rebuild` emits the inverse updates from the leaf back to the
+root variable. This is how a source assignment such as:
+
+```text
+$instructions[$i].jump = $open
+```
+
+becomes an immutable nested update. Keep safe and ordinary field kinds distinct
+through both halves of that lowering. Safe assignment is currently supported
+for a named optional root such as `$person->age = 37`; a `None` receiver cancels
+the write at runtime.
+
+The stack spelling `$->field` has no leading variable node. It still supports a
+full member chain, for example `$->a->b->c`.
+
+### Record extension syntax and record types
+
+`record{...}` is a record literal. `record.extend{...}` is parsed as a qualified
+element call whose second argument is another record literal; it is not a new
+record-literal form. Anonymous record types use square brackets:
+
+```text
+record[cmd: String, jump: Integer]
+```
+
+Do not route `record[...]` through ordinary nominal generic parsing. Its entries
+are named row fields, not positional generic arguments.
+
+### Control-chain ordering
+
+A control-flow node at the right edge of a chain must receive values computed by
+the elements to its left. For example, `parseInt match => ...` lowers as
+`parseInt` followed by `match`, not the normal all-element reversal. The special
+case in `_lower_chain_segment` preserves that data-flow boundary. Add parser and
+runtime tests whenever changing this rule; a parse-only snapshot can look valid
+while matching the wrong stack value.
+
 ### Adjacency-sensitive syntax
 
 Because ordinary cursor movement skips whitespace, syntax that requires touching
@@ -387,6 +440,14 @@ functions in `ElementNode.modifier_args`. A modifier may follow an ECS call, so
 instead of wrapping it in a second function. Do not emit modifier functions as
 ordinary preceding stack values; the analyser matches bound modifier functions
 to function-typed parameters by overload.
+
+### Negative operator shorthand
+
+The modifier parser treats an adjacent signed number after `:` as a stack
+operation when the operator has a compatible scalar overload. Therefore
+`apply: -1` means a function that subtracts one from its input. A constant
+negative function must be explicit: `apply(fn => -1)`. This distinction belongs
+in modifier parsing rather than in the `apply` element.
 
 ## ECS Call Arguments And Optional Defaults
 

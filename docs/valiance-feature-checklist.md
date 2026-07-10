@@ -1,6 +1,6 @@
 # Valiance feature checklist
 
-Current audit total: 430 / 738 items complete (58.3%).
+Current audit total: 546 / 779 items complete (70.1%).
 
 ## 1. Lexer, parser, and general syntax
 
@@ -87,10 +87,10 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Parse `record{...}` literals.
 - [x] Represent record types as named key/type mappings.
 - [x] Support record member access.
-- [ ] Support record member replacement using assignment syntax.
-- [ ] Implement `record.extend{...}`.
-- [ ] Reject `record.extend` when a supplied key already exists.
-- [ ] Implement record merging with overwrite behavior.
+- [x] Support record member replacement using assignment syntax.
+- [x] Implement `record.extend{...}`.
+- [x] Reject `record.extend` when a supplied key already exists.
+- [x] Implement record merging with overwrite behavior.
 - [x] Implement dictionaries with runtime-computed keys.
 - [x] Parse `dict{...}` literals.
 - [x] Represent dictionary types as `Dict[key, value]`.
@@ -249,8 +249,8 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Fill unspecified arguments from the existing stack.
 - [ ] Support `_` placeholders in any argument position.
 - [ ] Preserve normal left-to-right evaluation despite placeholders.
-- [ ] Support named arguments.
-- [ ] Validate named arguments against declared parameter names.
+- [x] Support named arguments.
+- [x] Validate named arguments against declared parameter names.
 - [ ] Allow named placeholders that consume values from the stack.
 - [ ] Partition stack consumption right-to-left among call-syntax expressions.
 - [ ] Use only the top result of a multi-result argument expression.
@@ -312,8 +312,8 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [ ] Support generic `Function` parameters with unknown arity and multiplicity.
 - [x] Defer stack-polymorphic function validation to call sites.
 - [x] Validate each call independently using the concrete function argument type.
-- [ ] Allow call-site-checked functions to consume additional outer-stack arguments.
-- [ ] Trigger call-site checking for variadic tuple parameters.
+- [x] Allow call-site-checked functions to consume additional outer-stack arguments.
+- [x] Trigger call-site checking for variadic tuple parameters.
 
 ## 20. Vectorisation
 
@@ -434,10 +434,10 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Infer the intersection of branch overload sets.
 - [x] Union branch result stacks.
 - [x] Pad missing branch results with `None`.
-- [ ] Parse `else if` chains.
-- [ ] Require every condition in an `else if` chain to accept the same input signature.
-- [ ] Evaluate every chained condition against the same values.
-- [ ] Require `else` to appear last.
+- [x] Parse `else if` chains.
+- [x] Require every condition in an `else if` chain to accept the same input signature.
+- [x] Evaluate every chained condition against the same values.
+- [x] Require `else` to appear last.
 
 ## 26. Loops and generators
 
@@ -461,15 +461,15 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [ ] Return the values that caused loop termination.
 - [ ] Support explicitly declared `while` input parameters.
 - [ ] Cycle named and unnamed `while` inputs.
-- [ ] Parse `unfold`.
-- [ ] Maintain unfold state between iterations.
-- [ ] Support optional unfold conditions.
-- [ ] Support infinite unfolding when no condition is provided.
-- [ ] Infer state and generated values from body arity and multiplicity.
-- [ ] Support explicit unfold state parameters.
+- [x] Parse `unfold`.
+- [x] Maintain unfold state between iterations.
+- [x] Support optional unfold conditions.
+- [x] Support infinite unfolding when no condition is provided.
+- [x] Infer state and generated values from body arity and multiplicity.
+- [x] Support explicit unfold state parameters.
 - [ ] Skip generated `None` values.
 - [ ] Preserve explicitly generated `Some[None]`.
-- [ ] Tag unfold results as `#infinite`.
+- [x] Tag unfold results as `#infinite`.
 
 ## 27. Custom element definitions
 
@@ -505,7 +505,11 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Support permitted object member writes.
 - [x] Reconstruct immutable object values after writes.
 - [x] Support optional-member access behavior.
-- [ ] Provide `$self` in object-associated definitions.
+- [x] Support deep and mixed optional-member chains.
+- [x] Flatten optional-valued fields during safe access.
+- [x] Cancel optional-member writes through `None`.
+- [x] Preserve optional-safe field operations through bytecode serialization.
+- [x] Provide `$self` in object-associated definitions.
 - [x] Parse destructors named with the object’s destructor form.
 - [x] Run destructors according to object lifetime rules.
 - [x] Enforce destructor constraints.
@@ -518,9 +522,9 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Parse trait declarations.
 - [ ] Support required object members in traits.
 - [x] Support required element signatures in traits.
-- [ ] Support default trait behavior where specified.
+- [x] Support default trait behavior where specified.
 - [x] Parse object-to-trait implementations.
-- [ ] Validate that implementations satisfy all required members and elements.
+- [x] Validate that implementations satisfy all required members and elements.
 - [ ] Support generic traits and implementations.
 - [x] Support trait inheritance or trait composition.
 - [ ] Support trait types in parameters and casts.
@@ -893,15 +897,15 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Provide core arithmetic elements and overloads.
 - [x] Provide string concatenation.
 - [x] Provide comparison and equality operations.
-- [ ] Provide list and array operations used by the design examples.
+- [x] Provide list operations used by the implemented design examples.
 - [x] Provide `length`.
-- [ ] Provide `sum`.
+- [x] Provide `sum`.
 - [x] Provide reduction.
 - [ ] Provide `wrap`.
-- [ ] Provide `top`.
-- [ ] Provide `call`.
-- [ ] Provide indexing and immutable-update elements.
-- [ ] Provide optional and result helper elements.
+- [x] Provide `top`.
+- [x] Provide `call`.
+- [x] Provide indexing and immutable-update elements.
+- [x] Provide optional and result helper elements.
 - [ ] Provide `or` for extension selection.
 - [x] Provide tag application and removal operations.
 - [ ] Provide type inspection required by matching and multimethods.
@@ -913,3 +917,10 @@ Current audit total: 430 / 738 items complete (58.3%).
 - [x] Support mixed Python and Valiance standard-library modules.
 - [x] Provide initial `std.regex` helpers.
 - [x] Provide initial `std.trig` helpers.
+- [x] Provide `std.grids.allNeighbors` with edge omission and optional wrapping.
+- [x] Provide `std.random.randbit` and inclusive `std.random.between`.
+- [x] Provide `std.string.\Alphabet` and `std.string.transliterate`.
+- [x] Provide string mapping, splitting, integer parsing, and Unicode code-point conversion.
+- [x] Provide finite-sequence helpers used by the worked examples (`first`, `last`, `drop`, `dropLast`, `overtake`, `groupConsecutive`, `removeAt`, `reshape`, and `rotate`).
+- [x] Return `Integer` from `length` for finite lists and strings.
+- [x] Provide numeric exponentiation, `square`, `inc`, membership, structural equality, and half-open range checks.

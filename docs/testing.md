@@ -115,3 +115,28 @@ also displays output from passing tests.
 
 The command exits with status `0` when every selected test passes and status `1`
 when discovery fails or any selected test fails or errors.
+
+
+## End-to-end language example regressions
+
+The compiler's Python suite also contains end-to-end tests for programs that are
+not practical as ordinary `@test` definitions:
+
+- `tests/test_runtime.py` covers both Conway's Game of Life spellings and direct
+  `std.grids.allNeighbors` edge/wrapping behavior.
+- `tests/test_tentative_examples.py` covers the guessing game, Caesar cipher,
+  run-length encoding, stack calculator, numeric examples, Fibonacci variants,
+  records, argument cycling, user-defined `dip`, trait inheritance, and generic
+  `find`.
+- `tests/test_brainfuck_example.py` compiles and serializes the complete
+  interpreter, replaces `input` deterministically, and checks successful and
+  failing programs.
+- `tests/test_optional_member_access.py` covers named and stack safe access,
+  assignment, flattening, vectorisation, deep/mixed chains, diagnostics, and
+  bytecode round trips.
+
+Interactive input and randomness should be patched at their Python boundary so
+regressions are deterministic. Infinite examples should be tested by extracting
+a finite step or by supplying input that reaches a terminating branch. A useful
+program regression asserts the computed value or output, not merely that parsing
+and compilation complete.

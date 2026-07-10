@@ -1,15 +1,16 @@
-define evaluate(expr: String)<Panic[UnwrappedNoneFault]> 
+define evaluate(expr: String)<Panic[UnwrappedNoneFault]>
 -> Result[Number, ValueError] =>
   $stack: Number+ = []
   $expr split(" ") foreach (token) =>
     $token match =>
-      "+" =>
-        fold: (+) $stack[-1, -2]
+      if in "+-*/" =>
+        $token match =>
+          "+" => fn => +
+          "-" => fn => -
+          "*" => fn => *
+          "/" => fn => /
+        fold($stack[-1, -2])
         $stack := drop(2) | append
-      "-" =>
-        fold: (-) $stack[-1, -2]
-        $stack := drop(2) | append
-      #? Pretend there's an impl for `*` and `/`
       if numeric? => $stack := append (parseInt $token ?!)
       _ => return ValueError("Unexpected Token")
     end

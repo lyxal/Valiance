@@ -665,6 +665,30 @@ overload indices, so changing built-in overload order is a compatibility
 concern. Prefer explicit stable overload ids before bytecode is treated as
 durable.
 
+## Optional-safe field bytecode
+
+Ordinary and optional-safe field operations share the existing field opcodes.
+The instruction payload is either the legacy field-name string or a
+`(field_name, optional_safe)` tuple. `_field_instruction_arg` accepts both so old
+in-memory instruction construction remains readable while serialized bytecode
+uses the current structured form.
+
+For a safe read, the VM:
+
+1. recognizes `None` and returns it unchanged;
+2. unwraps `Some[value]`;
+3. reads the requested field from the payload;
+4. returns an already-optional field unchanged, otherwise wraps it in `Some`.
+
+The helper recurses over eager and lazy list-shaped receivers, matching member
+vectorisation. Safe writes reconstruct `Some[updated_payload]`; a `None` receiver
+is returned unchanged. A non-optional runtime value reaching either helper is a
+runtime integrity error because analysis should have rejected it.
+
+Deep chains need no special opcode. They compile to consecutive field
+instructions, each with its own safe flag. Serialization tests must cover mixed
+and repeated safe segments.
+
 ## Function Calls and Parameter Cycling
 
 Valiance functions are stack functions. Calling a user function does not create
@@ -694,6 +718,16 @@ over the list and returns `[3, 6, 9, 12, 15]`.
 Be careful when changing this area. Seeding function frames with arguments or
 changing when parameter cycling happens can easily break stack-style function
 bodies.
+
+`FunctionCode` now also records whether a function accepts additional stack
+inputs and the exact collection rank of each parameter when known. The VM uses
+that metadata for call-site checked functions and for correct scalar/list
+argument sourcing. Any change to these fields requires a bytecode magic/version
+change and round-trip tests.
+
+A function call normally owns an isolated stack. The `accepts_stack_inputs` path
+is narrowly used for analysed stack-polymorphic bodies such as user-defined
+`dip`; it lets the caller supply the exact extra suffix proven by analysis.
 
 ## Static Union Dispatch Plans
 
@@ -778,6 +812,11 @@ uses the scalar `Number Number -> Number` overload of `+` and returns:
 Do not hardcode arithmetic vectorisation in `+`, `*`, or the compiler. Keep it
 generic so future scalar built-ins get the same behaviour.
 
+A built-in overload can set `vectorisable=False`. Use this for operations whose
+list argument is the value being inspected rather than a container to map over.
+`length` is the canonical example: the length of a rank-2 list is its outer
+length, not a vector of row lengths.
+
 List-consuming built-ins should preserve laziness when possible. For example,
 `map` always returns a `LazyList`, regardless of whether the input was finite
 or lazy -- it does not eagerly materialise finite inputs, and callers that
@@ -802,6 +841,20 @@ runtime output was printed. If the program printed nothing and
 runtime-style value formatter.
 
 This means library callers can still use `run()` without surprise printing.
+
+### Ownership of wrapper results
+
+Built-ins and constructors may return a newly allocated wrapper that embeds one
+of their arguments, for example `Some(Person(...))`. Returning the wrapper must
+retain embedded object arguments before the call frame releases its argument
+references. `_finalize_builtin_result_ownership` and
+`_retain_embedded_builtin_args` recursively inspect object fields, dictionaries,
+lists, and tuples to preserve those references.
+
+When adding a wrapper-producing runtime helper, include a test that reads the
+embedded object after the call and another test through bytecode serialization.
+A correct-looking wrapper with an already-destroyed payload is an ownership bug,
+not a type-system bug.
 
 ## Bytecode Files
 

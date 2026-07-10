@@ -1,1 +1,2 @@
 define sumOfSquares(:Number+) -> Number => sum square
+define otherSquares(:Number+) -> Number => sum ** 2

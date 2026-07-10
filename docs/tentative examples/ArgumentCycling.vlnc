@@ -1,0 +1,5 @@
+$singleArg = fn (:Number) => println | println
+$singleArg(5) #? Prints 5 twice.
+
+$doubleArg = fn (:Number, :Number) => println | println | println
+$doubleArg(6, 7) #? Prints 6, 7, 6.

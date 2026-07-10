@@ -1,0 +1,20 @@
+object Leaf =>
+  public $value: String
+end
+
+object Branch =>
+  public $leaf: Leaf?
+end
+
+object Root =>
+  public $branch: Branch
+end
+
+$root: Root? = Some(Root(Branch(Some(Leaf("deep")))))
+$root->branch->leaf->value #? Some("deep")
+
+$missing: Root? = Some(Root(Branch(None)))
+$missing->branch->leaf->value #? None
+
+$plain = Root(Branch(Some(Leaf("mixed"))))
+$plain.branch.leaf->value #? Some("mixed")

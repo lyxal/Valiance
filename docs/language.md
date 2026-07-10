@@ -53,6 +53,11 @@ Which equals
 - Numeric types form an explicit hierarchy: `Integer <: Real <: Number`. An
   `Integer` represents a whole number, `Real` represents a number with no
   complex part, and `Number` is the overarching type for all numbers.
+- Implemented numeric helpers include:
+  - `**` for exponentiation.
+  - `square` as an alias of `squared`.
+  - `inc` to add one.
+  - `inRange(start, stop)` to test a half-open interval: `start <= value < stop`.
 - Some example numbers:
 
 ```
@@ -89,6 +94,14 @@ $brainrot = "6 7"
 - Can contain literal newlines = no need for `\n`. Only quotes, backslashes, and `$` can be escaped. ``\"``, ``\\``, and ``\$`` respectively.
 - Unterminated string = lexer error.
 - Type = `String`
+- Strings can be mapped directly. Each function call receives a one-character `String`, and `map` returns a list of mapped values.
+- Common string helpers include:
+  - `split(separator)`; an empty separator splits into individual characters.
+  - `rotate(amount)`; positive amounts rotate left and negative amounts rotate right.
+  - `numeric?`; tests whether the complete string is a base-ten integer.
+  - `parseInt`; returns `Integer?`, using `None` when parsing fails.
+  - `fromCharcode` / `fromCharCode`; converts an `Integer` Unicode code point to a one-character string.
+- `input(prompt)` prints the prompt and returns one line from standard input without its trailing newline. It carries the normal eager I/O effects.
 
 ## 1.3. Tuples
 
@@ -131,7 +144,7 @@ $brainrot = "6 7"
   - Items can be retrieved, if they are in the dictionary, by indexing by key.
   - Effectively anonymous objects
   - Basically hashmaps with bareword keys.
- - Type = `record[<name>: <ValueType>...]`
+- Type = `record[<name>: <ValueType>...]`. For example, `record[cmd: String, jump: Integer]` describes a record with exactly those statically known fields.
 - Example:
 
 ```
@@ -152,11 +165,9 @@ dict{"a": 1, "b": 2, "c": 3}
 #? dict[String -> Number]
 ```
 
-### 1.4.2. Merging Records
+### 1.4.2. Extending, Merging, and Updating Records
 
-- `dict`s can be merged using elements. This is because keys are determined at runtime.
-- `record`s need special syntax:
-- `record.extend{...}` will add the keys in `{}` to a `record` on the top of the stack.
+- `record.extend{...}` adds statically written fields to the record on the top of the stack.
 
 ```
 record{x: 3} record.extend{y: 4}
@@ -164,19 +175,24 @@ record{x: 3} record.extend{y: 4}
 record{x: 3, y: 4}
 ```
 
-- `dict.merge` will merge two dictionaries together
+- `record.merge` combines two record values. Fields from the right record overwrite fields with the same name in the left record.
 
 ```
-record{x: 3} record.merge record{y: 4} 
-#? Roughly the same as
-record{x: 3} record.extend{y: 4}
-#? Same as
-record{x: 3, y: 4}
+record{x: 3} record.merge record{y: 4}
+#? record{x: 3, y: 4}
+
+record{x: 3} record.merge record{x: 4}
+#? record{x: 4}
 ```
 
-- `record.extend` will compile error if any key already exists.
-- `record.merge` will overwrite existing keys in the left hand dictionary.
-- Keys in a record can be updated using `$.key = value`
+- `record.extend` is rejected if a supplied field already exists.
+- Record fields can be updated with ordinary member assignment. Nested index/member paths are rebuilt from the inside out:
+
+```
+$instructions[$i].jump = $open
+```
+
+  This does not expose mutation. The containing record and list values are reconstructed and written back to `$instructions`.
 
 ## 1.5. None
 - A value representing the absence of any other values.
@@ -196,6 +212,26 @@ record{x: 3, y: 4}
 - An empty list must be accompanied by a type cast to specify what type of list it is.
   - No `Any` type, so list base type must be specified. Compile error to not do so.
   - `$name: Type = []`, use the `list[T]` element, or `[] as Type`
+
+### 1.6.1. Common Finite-Sequence Elements
+
+- `length` returns an `Integer` for finite lists and strings. It is deliberately non-vectorising: `[[1, 2], [3]] length` returns `2`, not `[2, 1]`.
+- `first` and `last` return the first or final item. Their inputs must be non-empty.
+- `drop(count)` removes a non-negative prefix; `dropLast` removes the final item of a non-empty finite list.
+- `overtake(count)` cycles a non-empty finite list until exactly `count` items have been produced.
+- `groupConsecutive` groups adjacent equal items. A string produces a list of strings; a list produces a list of sublists.
+- `removeAt(index)` returns a copy without the indexed item. Negative indices count from the end.
+- `rotate(amount)` rotates a finite list or string.
+- `sum` adds a numeric list and returns zero for an empty list.
+- `reshape(rows, columns)` turns a flat finite list into a rectangular rank-2 list and requires exactly `rows * columns` items.
+- `map` accepts strings as character sequences. It also accepts a niladic callable; in that overload the callable is invoked once per input item and the item itself is ignored. This supports constructions such as `range(1, 100) | map: randbit`.
+
+```
+[0] overtake 5                 #? [0, 0, 0, 0, 0]
+"aaabbc" groupConsecutive     #? ["aaa", "bb", "c"]
+[1, 2, 3, 4] removeAt(1)      #? [1, 3, 4]
+range(1, 6) reshape(2, 3)     #? [[1, 2, 3], [4, 5, 6]]
+```
  
 ## 1.7. Arrays
 
@@ -356,6 +392,12 @@ $b = 2
 $c = 3
 ```
 
+Grouped constant declarations use the same target syntax:
+
+```
+const ($WIDTH, $HEIGHT) = 10 | 20
+```
+
 ## 3.4. Variable Shadowing
 
 - Attempting to write to a variable in an outer scope will not update that variable.
@@ -388,8 +430,11 @@ println("main: x = $x")
 + (Number, Number) -> Number   | Addition
 + (String, String) -> String   | Concatenation
 - (Number, Number) -> Number   | Subtraction
-length [T](T+) -> Number       | Length
+length [T](T+) -> Integer      | Length
 sum (Number+) -> Number        | Summate numeric list
+** (Number, Number) -> Number  | Exponentiation
+=== [T](T, T) -> #boolean Number | Structural equality
+in [T](T, T+) -> #boolean Number | Membership
 / (Number, Number) -> Number   | Division
 / [T](T+, Function[T, T -> T]) | Reduce list by function
 wrap [T] (T) -> T+             | Put item in a list (like wrap in [])
@@ -591,6 +636,7 @@ end
 - `-> <returns>` is also optional. If omitted, the function returns the single value at the top of its stack when execution completes (nothing [literally, nothing is pushed] if 0 values are on the stack, else the type of the top of the stack). All other values on the stack are discarded. If `<returns>` is empty, then that function returns no values. `<returns>` can specify more than one return type to push multiple things back upon completion.
 - `=> <code>` will either run to the end of the line (if the first non-space token after the `=>` is not a newline), or until a corresponding `end` is found.
 - The body can contain any expression (i.e. things that aren't `define`s, `object`s, or control-flow structures, etc.)
+- Explicit parameters establish the function's cycling inputs. Named parameters are also available through `$name`; unnamed `:Type` parameters are stack-only.
 - Named function parameters cannot be written to as variables. They can only be referred to as variables.
 - Named function parameters cannot be shadowed. That is, the following is an error
 
@@ -625,6 +671,8 @@ $singleArg(5) #? Prints "5" twice
 $doubleArg = fn (:Number, :Number) => println | println | println
 $doubleArg(6, 7) #? prints "6", "7", "6"
 ```
+
+Cycling is conceptual rather than eager duplication. Values are reused only when the function's physical stack would otherwise underflow. Inferred-parameter functions and explicit `fn ()` functions do not cycle.
 
 ## 6.3. Variable Capturing
 - If a function refers to a variable from an outside scope, that function will "capture" that variable's value. If the function is returned from another function, that value will still be available
@@ -1020,13 +1068,15 @@ fork: (sum, length) /
 ```
 
 - If `:` is used, then _all_ function arguments must be specified. This ensures 0 ambiguity as to which function-typed parameters are being filled.
+- Modifier shorthand is stack-oriented. `apply: -1` wraps subtraction by one, not a constant function returning negative one. Write `apply(fn => -1)` when a constant function is intended.
 
 
 # 9. Indexing
 - `$[<index>]` will get the `index`th item from the top of the stack. 0-indexed.
 	- Valid if a type has an overload of `index`. Built-in types that support this include list types, tuple types, and `String`
 - `[1, 2, 3] $[1]` == `2`.
-- Negative index goes from end (`-1` == last)
+- Negative index goes from end (`-1` == last).
+- Numeric indices must be integral at runtime. Tagged numeric values can be used as indices; their tags remain part of the source value but do not change the numeric index operation.
 - Can also be multiple indices
 - `$data $[2, 4, 1]` == `[$data $[2], $data $[4], $data $[1]]`
 - Variables can be indexed directly
@@ -1703,10 +1753,39 @@ Foo(10) Foo::get #? 10
 - This is consistent with the fact that writing to a variable only updates what is inside the variable box.
 
 ### 12.3.1. Member Access on Optional Values
-- If an object is an optional type (ie `Some[T] | None`), then `.` access is not safe.
-- `->`s can be used instead of `.`s to either access the member if the object is `Some` or otherwise push `None`
-- `$name->member`, `$->member`
-- For assignment, `$name->member = value` will write if `name` is `Some`. Otherwise, the assignment will be cancelled.
+
+- If an object has an optional type (`Some[T] | None`), ordinary `.` access is unsafe and is rejected.
+- Use `->` to access a field through an optional receiver:
+
+```
+$name->member
+$->member          #? Receiver is on the stack.
+```
+
+- A present receiver is unwrapped, the field is read, and a non-optional field is wrapped back in `Some`. An absent receiver propagates `None`.
+- If the selected field is already optional, the result is flattened rather than becoming `Some[Some[U] | None]`.
+- Safe access vectorises over collections of optional receivers.
+- Safe accesses can be chained:
+
+```
+$root->branch->leaf->value
+```
+
+  Any `None` encountered in the chain propagates to the final result.
+- `.` and `->` may be mixed when each receiver type permits it. Ordinary access can precede the safe boundary:
+
+```
+$root.branch.leaf->value
+```
+
+  However, `$root->branch.leaf` is rejected because `$root->branch` is still optional. Continue with `$root->branch->leaf` instead.
+- Safe assignment writes through a present receiver and cancels the write for `None`:
+
+```
+$person->age = 37
+```
+
+  The variable remains optional in both cases. As with ordinary member assignment, the visible semantics reconstruct the object rather than mutating it in place.
 
 ## 12.4. `$self`
 
@@ -1926,7 +2005,7 @@ end
 - Trait impl has same member access as the main object block.
 - Traits can also implement other traits using `trait <trait1> as <trait2>`
 	- Traits do not need to have a base version to implement another trait.
-	- Objects implementing a trait implementing other traits must implement every trait in the chain
+	- An implementing object must satisfy inherited requirements somewhere in the implementation chain. Inherited default bodies are reused automatically and do not need to be repeated.
 
 ```
 trait Logger => extend log(:String)
@@ -1969,6 +2048,18 @@ define[T] sum(
 - This accepts any type that has a visible `+` overload taking two `T` values and returning `T`; the type does not need to explicitly implement a named `Addable` trait.
 - The requirements of an anonymous trait are available inside the element body, so calls like `fold: +` can type-check against the inline requirement.
 - Anonymous traits can have generic parameters just like named traits, but they do not have a name and cannot be implemented directly with an `object ... as ...` block.
+- Structural requirements can refer to the constrained type directly. For example, a generic find operation can require structural equality without requiring a named equality trait:
+
+```
+define[T: trait => extend ===(T, T) -> #boolean Number] find(
+  haystack: T+,
+  needle: T
+) =>
+  $haystack foreach (item, ind) =>
+    if ($item === $needle) => return $ind
+  end
+end
+```
 
 # 14. Variants
 
@@ -2418,6 +2509,7 @@ end
 ["list", "of", "strings"] #Vector3 #? Compiler error.
 ```
 
+- Applying a tag as part of a typed variable declaration also runs the validator. Validators may refer to top-level `const` values, which is useful for bounded unit tags such as tape pointers.
 - Note that the compiler will optimise tag validators that always return `true` or `false` to ignore runtime checks. This is helpful if you just want to validate only on type. 
 
 ## 17.9. Importing Tags
@@ -3326,7 +3418,13 @@ import {
 }
 ```
 
-The standard library ships with the compiler and is always available.
+The standard library ships with the compiler and is always available. Current Python-backed modules include `std.grids`, `std.random`, and `std.string` in addition to the existing modules. Their notable exports include:
+
+- `std.grids.allNeighbors(board, wrapping)`
+- `std.random.randbit` and `std.random.between(minimum, maximum)`
+- `std.string.\Alphabet` and `std.string.transliterate(value, source, target)`
+
+For compatibility with small scripts, a single unqualified native standard-library module name such as `import {random}` or `import {string}` resolves to the same packaged module. The canonical path remains `std.random` or `std.string`.
 
 The `std` component is part of the standard library's canonical module path, but a whole-module import still introduces only the final component as the local namespace:
 
@@ -3334,6 +3432,8 @@ The `std` component is part of the standard library's canonical module path, but
 import {std.lists}
 lists.map(values, transform)
 ```
+
+`std.grids.allNeighbors` accepts a rectangular rank-2 list. Each output cell is a list in top-left, top, top-right, left, cell, right, bottom-left, bottom, bottom-right order. With `wrapping = false`, out-of-bounds entries are omitted; with wrapping enabled every output neighborhood has nine entries.
 
 ### 23.5.4. Dependency Modules
 

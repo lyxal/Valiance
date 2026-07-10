@@ -18,6 +18,8 @@ updating one stage and forgetting another.
 9. Add runtime tests for successful behaviour and analyser tests for invalid
    forms.
 10. Add a bytecode round-trip test when new instruction data is introduced.
+11. For chained read/write syntax, test named-root and stack-root forms, mixed path segments, and reconstruction of the outer variable.
+12. When one opcode carries multiple source spellings, preserve the distinction in typed metadata instead of reconstructing it from source text in the VM.
 
 A syntax feature is not complete when it merely parses. It must have defined
 analysis, diagnostics, lowering, runtime behaviour, and inspection output.
@@ -31,11 +33,12 @@ analysis, diagnostics, lowering, runtime behaviour, and inspection output.
    pass `documentation=` when the metadata is generated beside the declaration.
 4. Implement the runtime function with the standard `(args, ctx)` signature.
 5. Decide whether the operation can panic and attach the correct element tags.
-6. Add analyser tests for overload selection, including vectorised use where
+6. Decide whether the overload is scalar-vectorisable. Set `vectorisable=False` for whole-collection inspectors such as `length`.
+7. Add analyser tests for overload selection, including vectorised use where
    relevant.
-7. Add runtime tests for values, faults, formatting, and bytecode round trips.
-8. Test mixed numeric or generic overloads for ambiguity and specificity.
-9. Run the reference-documentation tests and inspect generated output when the
+8. Add runtime tests for values, faults, formatting, and bytecode round trips.
+9. Test mixed numeric or generic overloads for ambiguity and specificity.
+10. Run the reference-documentation tests and inspect generated output when the
    metadata shape changes.
 
 Do not add importable library functionality here. Use the standard-library
@@ -54,7 +57,11 @@ Choose one implementation style:
 Then add import and runtime tests. Verify that private native names are visible
 while analysing the module itself but are not globally available to user code.
 Python-backed exports must pass `documentation=` to `@stdlib_element(...)`.
-Valiance-defined public exports must have a contiguous `#??` block.
+Valiance-defined public exports must have a contiguous `#??` block. Qualified
+module element names are registry keys, so test both canonical imports such as
+`std.random.between` and any supported short module import such as `random`.
+Named parameters must be present in metadata when calls like
+`allNeighbors(wrapping = true)` are intended.
 
 ## Add an AST analyser handler
 
@@ -81,7 +88,8 @@ Review both declaration-time and use-time behaviour:
 - object-friendly element registration;
 - external-overload priority;
 - qualified friendly dispatch;
-- trait or variant conformance;
+- trait or variant conformance, including inherited requirements and inherited default bodies;
+- ordinary and optional-safe field access, including mixed chains and cancelled writes through `None`;
 - widened static types versus concrete runtime members;
 - import and renaming behaviour; and
 - bytecode representation of constructors or dispatch plans.
@@ -108,7 +116,8 @@ resolved references, then make code-generation and the VM consume it. Avoid VM
 input cycling for information that is statically determined.
 
 Tests should include explicit variables, implicit stack use, scalar broadcast,
-rugged lists, unrelated lower stack values, and bytecode serialization.
+rugged lists, unrelated lower stack values, niladic callables, contextual function
+literals, call-site checked caller-stack use, and bytecode serialization.
 
 ## Add or change bytecode
 

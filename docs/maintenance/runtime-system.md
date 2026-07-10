@@ -470,6 +470,18 @@ A call does not hand the caller's list object to the callee as a shared stack.
 The callee executes independently and returns its final stack as a list of
 results.
 
+### Functions that accept proved caller-stack inputs
+
+Most function calls remain isolated. A call-site checked body can be compiled
+with `FunctionCode.accepts_stack_inputs` when analysis has proved that its
+concrete callable argument requires an additional suffix from the caller stack.
+User-defined `dip` is the canonical case. The VM transfers only the statically
+calculated number of values; this is not an open-ended shared-stack mode.
+
+`FunctionCode.param_collection_ranks` records exact parameter ranks when known.
+Together with `accepts_stack_inputs`, this metadata affects argument sourcing and
+therefore belongs to the serialized bytecode compatibility boundary.
+
 ### Parameters have two runtime views
 
 Explicit parameters are available as named locals:
@@ -593,6 +605,12 @@ also attach an analysed exact runtime rank.
 
 Checked casts, tag validation, missing keys, invalid indexes, and other concrete
 value failures happen here or in shared helpers.
+
+Field opcode payloads retain whether the source used ordinary `.` or optional-safe
+`->`. Safe reads unwrap `Some`, propagate `None`, flatten already-optional fields,
+and vectorise over list-shaped receivers. Safe writes reconstruct the wrapped
+payload and return `None` unchanged when the write is cancelled. Deep or mixed
+chains are just consecutive field operations; each operation keeps its own flag.
 
 ### Calls
 
@@ -751,6 +769,14 @@ captures, deferred work, or nested values.
 - `FunctionValue` stores code, captures, owned capture names, and a reference
   count.
 - `OverloadedFunctionValue` owns its component closures.
+
+### Wrappers that embed arguments
+
+A fresh result can own references that were previously call arguments. `Some` and
+`OK` wrappers, records, lists, tuples, and dictionaries may all embed object
+values. Before releasing call arguments, result finalization recursively retains
+embedded arguments that survive inside a new result. Missing this step produces a
+wrapper whose payload has already been destroyed.
 
 ### Retain and release
 

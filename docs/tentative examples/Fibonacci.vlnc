@@ -1,6 +1,10 @@
 define fibonacci1(n: Number) =>
-  0 1 unfold => peek: +
-  $[$n]
+  if ($n == 0) => 0
+  else if ($n == 1) => 1
+  else =>
+    0 1 unfold => peek: +
+    $[$n - 2]
+  end
 end
 
 @recursive
@@ -13,10 +17,11 @@ end
 define fibonacci3(n: Number) =>
   $(prev, next) = 0, 1
   $iterations = 0
-  
+
   while ($iterations < $n) =>
     $(prev, next) = $next, $prev + $next
+    $iterations := + 1
   end
-  
-  $next
+
+  $prev
 end

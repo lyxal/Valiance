@@ -12,7 +12,10 @@ The defining features of Valiance are that it:
 
 Ultimately, Valiance acts to elevate array languages beyond rough sketches and algorithmatic prototypes. Valiance brings array languages to the software development table.
 
-For more information, check out the [working docs](docs/language.md).
+For more information, check out the [working language guide](docs/language.md).
+The [worked examples](docs/examples.md) index the currently exercised sample
+programs, including Conway's Game of Life, a Brainfuck interpreter, optional-safe
+member chains, records, traits, and generic functions.
 
 ## Maintenance
 

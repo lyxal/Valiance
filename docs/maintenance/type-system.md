@@ -1222,6 +1222,30 @@ There is no separate mini type checker for functions.
 One signature becomes `FunctionType`; multiple signatures become
 `OverloadSetType` with corresponding typed bodies.
 
+## Optional-safe field access
+
+Optional-safe access is a field operation plus a strict optional boundary. The
+analyser does not make ordinary row lookup understand `Some[T] | None`. Instead,
+it first proves that the receiver has the canonical optional structure, extracts
+the present payload, and performs normal field lookup on that payload.
+
+The result rule is:
+
+```text
+(Some[T] | None)->field: U   = Some[U] | None
+(Some[T] | None)->field: U?  = U?
+```
+
+The second line is flattening. It prevents every safe segment from adding
+another optional layer when the field is already optional. This rule is also why
+`$x->a.b` is rejected: after the safe segment the receiver of `.b` is optional.
+
+For collections, safe reads preserve the collection shape and apply the rule to
+each item. Safe writes preserve the receiver's optional type and reconstruct the
+present payload; the absent branch remains `None`. Keep this behavior in the
+analyser rather than treating `->` as syntactic sugar for `?`, because `?` has
+function-return control flow and different effects.
+
 ## Row polymorphism and field access
 
 Row types let field use contribute type information without requiring a known
@@ -1332,6 +1356,18 @@ trait parents. `subtype(...)` uses this relationship for nominal values.
 
 `Context.variant_members` maps a member nominal type to its variant parent. This
 makes a member a subtype of the variant.
+
+### Trait inheritance
+
+A child trait accumulates the parent's structural requirements. Default methods
+are checked with receiver-specialized views of those requirements, then reused by
+concrete child implementations. Do not permanently register the temporary
+receiver-specialized overloads: environment overload ordering is also the basis
+for compiled runtime indexes.
+
+Conformance checks distinguish abstract requirements from inherited defaults. An
+object must provide every abstract operation somewhere in its implementation
+chain, but it need not repeat a default body supplied by the trait hierarchy.
 
 ### Anonymous structural traits
 

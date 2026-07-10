@@ -705,6 +705,33 @@ recognises normalized unions containing `None`. Do not introduce a separate
 When merging optional generic solutions, `_combine` merges their inner payloads
 and then re-wraps with `optional(...)`.
 
+### Optional-safe member access
+
+`FieldAccessNode.optional_safe` selects a separate typing path from ordinary
+field access. `_safe_field_type` requires the receiver to be structurally
+optional (`Some[T] | None`), extracts `T`, resolves the field on `T`, and returns
+an optional field result. If the field is already optional, the result is
+flattened. Ordinary `.` deliberately does not perform this refinement.
+
+Reads vectorise over collections of optional receivers by preserving the
+collection constructor/rank and optionalising each selected field. Writes return
+the original optional receiver shape: a present payload is reconstructed with
+the new field, while `None` remains `None`.
+
+A chain is checked one segment at a time. After `$x->a`, the type is still
+optional, so `.b` is invalid and another safe segment is required. This makes
+mixed chains predictable:
+
+```text
+$x.a->b     # ordinary access before the optional boundary
+$x->a->b    # safe at both optional boundaries
+$x->a.b     # rejected
+```
+
+`_strict_optional_payload_type` is intentionally stricter than general
+assignability. Safe access must not silently accept a broad union that merely
+contains an optional-like branch.
+
 ### Optional Caveats
 
 The design document describes richer simplification rules such as
@@ -827,6 +854,28 @@ diagnosed, and companion tags are still inferred from compiler-controlled
 features. Declared absent tags are checked against the complete surviving body
 effect set.
 
+### Contextual higher-order function literals
+
+An untyped function literal passed to a higher-order element may be impossible
+to infer in isolation. The analyser first tries ordinary inference. When that
+fails, `_contextual_stack_argument_variants` uses each candidate function-typed
+parameter as an expected signature and re-analyses the literal against it.
+
+This is what permits examples such as:
+
+```valiance
+$board allNeighbors(wrapping = true) | map fn (cells) => ... end
+[1, 2, 3] sum ** 2
+```
+
+The contextual path must remain a fallback. Applying it before ordinary
+inference can create duplicate winners or change established stack syntax.
+Candidate collapsing prefers the variant with the strongest contextual evidence
+when two applications otherwise have the same substituted signature.
+
+Niladic mapping is a distinct overload: `map: randbit` invokes the zero-argument
+callable once per input item and does not pass the item to it.
+
 ## Call-Site Type Checking
 
 Call-site type checking is not a separate function type. It is triggered by the
@@ -902,6 +951,20 @@ terminal `if`, `match`, and `try` branches.
 Tuple, record, and dict literals reuse the same literal item machinery but build
 different result types.
 
+### Explicit parameter cycling and caller-stack functions
+
+Explicitly declared parameters use `InputMode.CYCLE_EXPLICIT_PARAMS`. Named
+parameters are installed as read-only variables, while unnamed parameters remain
+stack-only. Their values also form the conceptual cycle used when the physical
+function stack underflows. Inferred functions and explicit zero-parameter
+functions do not cycle.
+
+A call-site checked function such as user-defined `dip` may need additional
+values from the caller once its concrete function argument is known. The applied
+overload records that stack consumption; code generation marks the resulting
+function as accepting stack inputs. This is not ordinary closure capture and
+must not make every function share the caller's stack.
+
 ## Control Flow
 
 `IfNode`:
@@ -928,6 +991,20 @@ unsound: all possible condition branches must be valid.
 
 `WhileNode` exists in the AST/runtime direction, but static-analysis support is
 not yet as complete as `IfNode` and `ForNode`. Be careful before marking it done.
+
+## Trait inheritance and structural requirements
+
+A declaration `trait Child as Parent` imports the parent's requirements into the
+child trait and makes parent default bodies available while checking child
+defaults. Requirements are exposed temporarily with the receiver specialized to
+the child trait; they are not left in the persistent overload table, because
+that would disturb runtime overload indexes for concrete implementations.
+
+An object implementing the child must satisfy inherited abstract requirements,
+but inherited default methods need no repeated implementation. Anonymous trait
+constraints use the same structural requirement machinery. The generic `find`
+example relies on a requirement for `===(T, T) -> #boolean Number`; the selected
+built-in equality overload is then available inside the generic body.
 
 ## Data Tags
 
