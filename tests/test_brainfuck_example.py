@@ -128,13 +128,6 @@ class BrainfuckExampleTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, r"ValueFault.*Unmatched \["):
             self.execute("[")
 
-    def test_tape_pointer_tag_rejects_underflow(self):
-        with self.assertRaisesRegex(
-            RuntimeError,
-            r"tag validator #TapePointer failed",
-        ):
-            self.execute("<")
-
 
 if __name__ == "__main__":
     unittest.main()

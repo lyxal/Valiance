@@ -35,7 +35,7 @@ class LazyList:
 
 
 class ListValue(list[Any]):
-    """An eager Valiance list carrying its known uniform runtime rank."""
+    """An eager Valiance list carrying rank and ownership-scan metadata."""
 
     def __init__(
         self,
@@ -46,6 +46,70 @@ class ListValue(list[Any]):
         """Initialize this list value."""
         super().__init__(iterable)
         self.runtime_rank = runtime_rank
+        self._ownership_trivial: bool | None = None
+
+    def _invalidate_ownership_cache(self) -> None:
+        """Forget whether every direct item is ownership-trivial."""
+        self._ownership_trivial = None
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        """Set one item and invalidate cached ownership metadata."""
+        super().__setitem__(key, value)
+        self._invalidate_ownership_cache()
+
+    def __delitem__(self, key: Any) -> None:
+        """Delete one item and invalidate cached ownership metadata."""
+        super().__delitem__(key)
+        self._invalidate_ownership_cache()
+
+    def append(self, value: Any) -> None:
+        """Append one item and invalidate cached ownership metadata."""
+        super().append(value)
+        self._invalidate_ownership_cache()
+
+    def extend(self, values: Iterable[Any]) -> None:
+        """Append several items and invalidate cached ownership metadata."""
+        super().extend(values)
+        self._invalidate_ownership_cache()
+
+    def insert(self, index: int, value: Any) -> None:
+        """Insert one item and invalidate cached ownership metadata."""
+        super().insert(index, value)
+        self._invalidate_ownership_cache()
+
+    def pop(self, index: int = -1) -> Any:
+        """Remove one item and invalidate cached ownership metadata."""
+        value = super().pop(index)
+        self._invalidate_ownership_cache()
+        return value
+
+    def remove(self, value: Any) -> None:
+        """Remove one matching item and invalidate cached ownership metadata."""
+        super().remove(value)
+        self._invalidate_ownership_cache()
+
+    def clear(self) -> None:
+        """Remove all items and record that the empty list is ownership-trivial."""
+        super().clear()
+        self._ownership_trivial = True
+
+    def reverse(self) -> None:
+        """Reverse this list without changing its ownership classification."""
+        super().reverse()
+
+    def sort(self, *args: Any, **kwargs: Any) -> None:
+        """Sort this list without changing its ownership classification."""
+        super().sort(*args, **kwargs)
+
+    def __iadd__(self, values: Iterable[Any]):
+        """Append several items and invalidate cached ownership metadata."""
+        result = super().__iadd__(values)
+        self._invalidate_ownership_cache()
+        return result
+
+    def __imul__(self, count: int):
+        """Repeat this list without changing direct item ownership kinds."""
+        return super().__imul__(count)
 
 
 @dataclass(frozen=True, eq=False)

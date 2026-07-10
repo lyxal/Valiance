@@ -15,6 +15,7 @@ from valiance.runtime import (
     AssertionFailure,
     CompileError,
     RuntimeError,
+    VirtualMachine,
     compile_program,
     dumps,
     loads,
@@ -28,7 +29,7 @@ from valiance.runtime.bytecode import (
     Program,
     ResolvedElementReference,
 )
-from valiance.runtime_values import LazyList, ObjectValue
+from valiance.runtime_values import LazyList, ListValue, ObjectValue
 
 
 def execute(source: str, source_file: Path | None = None):
@@ -120,6 +121,30 @@ class RuntimeTests(unittest.TestCase):
                 "import { std.testing }\n"
                 "testing.assertEqual(20 + 22, 43)"
             )
+
+    def test_scalar_list_updates_preserve_fast_ownership_metadata(self):
+        """Keep large scalar lists cheap across closures and indexed updates."""
+        source = """
+$tape = [0] overtake 30000
+$i: Integer = 0
+define identity(n: Integer) => $n
+while ($i < 2) =>
+  $tape[0] := + 1
+  $i := + 1
+end
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+
+        self.assertEqual(vm.run(compile_program(typed)), [])
+        tape = vm.globals["tape"]
+        self.assertIsInstance(tape, ListValue)
+        self.assertEqual(tape.runtime_rank, 1)
+        self.assertIs(tape._ownership_trivial, True)
+        self.assertEqual(tape[0], Decimal("2"))
+        self.assertEqual(vm.globals["identity"].owned_names, frozenset())
 
     def test_executes_stack_arithmetic(self):
         self.assertEqual(execute("*(+(1, 2), 3)"), [Decimal("9")])

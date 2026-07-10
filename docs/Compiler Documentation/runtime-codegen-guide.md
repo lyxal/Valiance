@@ -871,9 +871,13 @@ not a type-system bug.
 For scalar-heavy execution, keep no-op metadata and ownership paths cheap. The
 VM may bypass release scans when no value can own resources, return unchanged
 results when no return tags or collection ranks were declared, and skip lazy
-owner binding when no result is lazy. Do not extend these shortcuts to objects,
-closures, overloaded functions, containers, tagged payloads, or lazy values
-without preserving their retain/release behavior.
+owner binding when no result is lazy. `ListValue` caches whether all direct
+items are ownership-trivial; list reconstruction must preserve its rank and a
+still-valid cache, while mutating methods must invalidate the cache. Main-frame
+closures must not retain top-level globals again as lexical local captures.
+Nested-function locals still require ordinary capture isolation. Do not extend
+these shortcuts to objects, closures, overloaded functions, tagged payloads, or
+lazy values without preserving their retain/release behavior.
 
 ## Bytecode Files
 

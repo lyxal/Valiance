@@ -569,7 +569,11 @@ Recursive code binds `this` to the closure. Named definitions are also rebound
 when stored so self-reference works after assignment.
 
 At top level, `STORE_VAR` publishes definitions into VM globals so later
-instructions and retained REPL state can find them.
+instructions and retained REPL state can find them. Closures created directly in
+the main frame read those bindings as globals rather than retaining a second
+lexical-local ownership copy. Nested functions still isolate genuine enclosing
+function locals on every call, so assignments to captured locals preserve their
+existing non-persistent call semantics.
 
 ## The interpreter loop is a small state machine
 
@@ -772,7 +776,8 @@ captures, deferred work, or nested values.
 
 - Python immutable primitives such as `Decimal` and `str` need no explicit
   ownership action.
-- `ListValue` is an eager list with optional exact rank evidence.
+- `ListValue` is an eager list with optional exact rank evidence and a cached
+  classification for lists whose direct items require no ownership traversal.
 - `LazyList` stores an iterable, retained owners, and a reference count.
 - `TaggedValue` wraps a payload with reified data-tag evidence.
 - `ObjectValue` stores nominal name, fields, generic type arguments, lifecycle
@@ -801,10 +806,13 @@ does not observe destroyed captures.
 Stack operations are therefore not merely Python `append` and `pop`. A semantic
 copy may increase ownership; a consumed stack tail must release its values.
 The VM first checks whether a consumed tail contains any ownership-bearing value
-and skips the recursive release walk for scalar-only tails. Return-tag and
-collection-rank attachment similarly return immediately when the analysed
-metadata is empty. These are performance fast paths, not changes to ownership or
-type semantics.
+and skips the recursive release walk for scalar-only tails. `ListValue` caches
+that same direct-item classification, invalidates it after Python-side mutation,
+and preserves it when indexed or slice assignment reconstructs a list with only
+scalar replacements. Large numeric buffers therefore pay one classification
+scan instead of one full scan per closure call. Return-tag and collection-rank
+attachment similarly return immediately when the analysed metadata is empty.
+These are performance fast paths, not changes to ownership or type semantics.
 
 ### Object duplication, cleanup, and must-call rules
 

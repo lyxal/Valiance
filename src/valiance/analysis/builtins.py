@@ -1122,6 +1122,7 @@ def _decimal_remainder(left: Decimal, right: Decimal) -> Decimal:
     """Compute decimal remainder for the built-in catalogue and runtime."""
 
     def _wrapping_mod(a: Decimal, b: Decimal) -> Decimal:
+        """Return modulo wrapped to the divisor's sign."""
         r = a % b
         if r and (r < 0) != (b < 0):
             r += b

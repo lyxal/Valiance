@@ -229,6 +229,7 @@ class _Frame:
     cycle_index: int = 0
     cycle_stack_remaining: int = 0
     retained_locals: frozenset[str] = frozenset()
+    is_global_scope: bool = False
     panic_handlers: list[_PanicHandler] = field(default_factory=list)
     cycle_scopes: list[tuple[tuple[Any, ...], int, int]] = field(default_factory=list)
 
@@ -471,6 +472,7 @@ class VirtualMachine:
             cycle_values=cycle_values,
             cycle_stack_remaining=(len(cycle_values) if code.cycle_params else 0),
             retained_locals=retained_locals,
+            is_global_scope=code.name == "<main>",
         )
         ip = 0
         instructions = code.instructions
@@ -522,7 +524,7 @@ class VirtualMachine:
                                 _make_function_value(
                                     instruction.arg,
                                     frame.globals,
-                                    frame.locals,
+                                    _closure_locals(frame),
                                 )
                             )
                         case OpCode.CALL:
@@ -591,7 +593,7 @@ class VirtualMachine:
                                 else _make_function_value(
                                     constructor.initializer,
                                     frame.globals,
-                                    frame.locals,
+                                    _closure_locals(frame),
                                 )
                             )
                             frame.stack.append(
@@ -1030,11 +1032,15 @@ class VirtualMachine:
         """Compute unfold during VM execution."""
         condition_code, body_code, arity = config
         state = list(_source_args(frame, arity, "unfold"))
-        body = _make_function_value(body_code, frame.globals, frame.locals)
+        body = _make_function_value(body_code, frame.globals, _closure_locals(frame))
         condition = (
             None
             if condition_code is None
-            else _make_function_value(condition_code, frame.globals, frame.locals)
+            else _make_function_value(
+                condition_code,
+                frame.globals,
+                _closure_locals(frame),
+            )
         )
 
         def generated():
@@ -1067,8 +1073,16 @@ class VirtualMachine:
         """Update while state during VM execution."""
         condition_code, body_code, arity = config
         state = list(_source_args(frame, arity, "while"))
-        condition = _make_function_value(condition_code, frame.globals, frame.locals)
-        body = _make_function_value(body_code, frame.globals, frame.locals)
+        condition = _make_function_value(
+            condition_code,
+            frame.globals,
+            _closure_locals(frame),
+        )
+        body = _make_function_value(
+            body_code,
+            frame.globals,
+            _closure_locals(frame),
+        )
         while True:
             keep_going = self.call(condition, list(state), isolate_captures=False)
             if not keep_going or not _truthy(keep_going[-1]):
@@ -1087,7 +1101,7 @@ class VirtualMachine:
         iterable = _source_args(frame, 1, "foreach")[0]
         if not is_list_like(iterable):
             raise RuntimeError("foreach requires a list value")
-        body = _make_function_value(body_code, frame.globals, frame.locals)
+        body = _make_function_value(body_code, frame.globals, _closure_locals(frame))
         for index, item in enumerate(iterable):
             args = [item]
             if has_index:
@@ -1362,6 +1376,11 @@ def _require_single_resolved_slot(
     )
 
 
+def _closure_locals(frame: _Frame) -> dict[str, Any] | None:
+    """Return lexical locals that a newly created closure must own."""
+    return None if frame.is_global_scope else frame.locals
+
+
 def _make_function_value(
     code: object,
     globals_: dict[str, Any],
@@ -1410,7 +1429,7 @@ def _materialize_vector_extension(
             function = _make_function_value(
                 reference.default,
                 frame.globals,
-                frame.locals,
+                _closure_locals(frame),
             )
             try:
                 result = _call_extension_function(vm, function, ())
@@ -1425,7 +1444,7 @@ def _materialize_vector_extension(
             function = _make_function_value(
                 rule.function,
                 frame.globals,
-                frame.locals,
+                _closure_locals(frame),
             )
             created.append(function)
             rules.append((rule.presence, function))
@@ -1435,7 +1454,7 @@ def _materialize_vector_extension(
             selector = _make_function_value(
                 reference.selector,
                 frame.globals,
-                frame.locals,
+                _closure_locals(frame),
             )
             created.append(selector)
 
@@ -1752,6 +1771,18 @@ def _needs_release(value: Any) -> bool:
     return isinstance(value, _RELEASE_VALUE_TYPES)
 
 
+def _list_ownership_is_trivial(value: list[Any]) -> bool:
+    """Return whether a list has no direct values needing ownership traversal."""
+    if isinstance(value, ListValue):
+        cached = value._ownership_trivial
+        if cached is not None:
+            return cached
+    trivial = not any(_needs_release(item) for item in value)
+    if isinstance(value, ListValue):
+        value._ownership_trivial = trivial
+    return trivial
+
+
 def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
     """Retain value during VM execution."""
     if isinstance(value, TaggedValue):
@@ -1781,6 +1812,8 @@ def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
         value.refcount += 1
         return value
     if isinstance(value, list):
+        if _list_ownership_is_trivial(value):
+            return value
         for item in value:
             _retain_value(item, check_duplication=check_duplication)
         return value
@@ -1832,6 +1865,8 @@ def _release_value(value: Any, vm: VirtualMachine) -> None:
             _release_value(overload, vm)
         return
     if isinstance(value, list):
+        if _list_ownership_is_trivial(value):
+            return
         for item in value:
             _release_value(item, vm)
         return
@@ -3675,7 +3710,9 @@ def _slice_value(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
     stop_int = length - 1 if stop is None else _normal_index(_int_index(stop), length)
     python_stop = stop_int + (1 if step_int > 0 else -1)
     sliced = receiver[start_int:python_stop:step_int]
-    return "".join(sliced) if isinstance(receiver, str) else list(sliced)
+    if isinstance(receiver, str):
+        return "".join(sliced)
+    return _copy_eager_list(receiver, sliced)
 
 
 def _slice_lazy(receiver: Any, start: Any, stop: Any, step: Any) -> LazyList:
@@ -3748,9 +3785,10 @@ def _set_eager_slice(
     """Update eager slice during VM execution."""
     indexes = _eager_slice_indexes(len(receiver), start, stop, step)
     replacements = _slice_replacements(value, len(indexes))
-    updated = list(receiver)
+    updated = _copy_eager_list(receiver)
     for index, replacement in zip(indexes, replacements, strict=True):
-        updated[index] = replacement
+        list.__setitem__(updated, index, replacement)
+    _update_list_ownership_after_replacements(updated, replacements)
     return updated
 
 
@@ -3845,6 +3883,30 @@ def _slice_replacements(value: Any, count: int) -> list[Any]:
     return [value for _ in range(count)]
 
 
+def _copy_eager_list(
+    receiver: Any,
+    values: Iterable[Any] | None = None,
+) -> list[Any]:
+    """Copy an eager list while preserving Valiance runtime metadata."""
+    source = receiver if values is None else values
+    if not isinstance(receiver, ListValue):
+        return list(source)
+    copied = ListValue(source, runtime_rank=receiver.runtime_rank)
+    copied._ownership_trivial = receiver._ownership_trivial
+    return copied
+
+
+def _update_list_ownership_after_replacements(
+    value: list[Any],
+    replacements: Iterable[Any],
+) -> None:
+    """Keep a known-trivial list cache valid after scalar replacements."""
+    if not isinstance(value, ListValue) or value._ownership_trivial is not True:
+        return
+    if any(_needs_release(item) for item in replacements):
+        value._ownership_trivial = False
+
+
 def _set_index_one(receiver: Any, index: Any, value: Any) -> Any:
     """Update index one during VM execution."""
     if isinstance(receiver, dict):
@@ -3883,9 +3945,9 @@ def _set_index_one(receiver: Any, index: Any, value: Any) -> Any:
         )
     if is_eager_sequence(receiver):
         target = _int_index(index)
-        updated = list(receiver)
+        updated = _copy_eager_list(receiver)
         try:
-            updated[target] = value
+            list.__setitem__(updated, target, value)
         except IndexError as exc:
             raise PanicSignal(
                 _fault_object(
@@ -3893,6 +3955,7 @@ def _set_index_one(receiver: Any, index: Any, value: Any) -> Any:
                     _index_fault_message(target, len(receiver)),
                 )
             ) from exc
+        _update_list_ownership_after_replacements(updated, (value,))
         return updated
     raise RuntimeError("value is not index-assignable")
 
