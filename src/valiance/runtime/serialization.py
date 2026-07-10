@@ -25,7 +25,7 @@ from valiance.types import (
     Variance,
 )
 
-MAGIC = b"VLNCBC\x0f"
+MAGIC = b"VLNCBC\x10"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -310,6 +310,7 @@ class _Writer:
                 self.i64(tag.depth)
                 self.bool(tag.absent)
         self.value(function.return_collection_ranks)
+        self.value(function.param_collection_ranks)
         self.u32(len(function.instructions))
         for instruction in function.instructions:
             try:
@@ -616,6 +617,12 @@ class _Reader:
             for rank in return_collection_ranks
         ):
             raise BytecodeFormatError("invalid function return collection ranks")
+        param_collection_ranks = self.value()
+        if not isinstance(param_collection_ranks, tuple) or not all(
+            rank is None or isinstance(rank, int)
+            for rank in param_collection_ranks
+        ):
+            raise BytecodeFormatError("invalid function parameter collection ranks")
         instructions = []
         for _ in range(self.u32()):
             op_byte = self.u8()
@@ -625,14 +632,15 @@ class _Reader:
                 raise BytecodeFormatError(f"unknown bytecode op {op_byte}") from exc
             instructions.append(Instruction(op, self.value()))
         return FunctionCode(
-            tuple(instructions),
-            params,
-            name,
-            bool(cycle_params),
-            element_tags,
-            bool(recursive),
-            bool(multi),
-            dispatch_types,
-            return_tags,
-            return_collection_ranks,
+            instructions=tuple(instructions),
+            params=params,
+            name=name,
+            cycle_params=bool(cycle_params),
+            element_tags=element_tags,
+            recursive=bool(recursive),
+            multi=bool(multi),
+            dispatch_types=dispatch_types,
+            return_tags=return_tags,
+            return_collection_ranks=return_collection_ranks,
+            param_collection_ranks=param_collection_ranks,
         )

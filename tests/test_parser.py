@@ -240,6 +240,24 @@ end
             ],
         )
 
+
+    def test_parses_parenthesized_constant_multiple_assignment(self):
+        program = parse("const ($width, $height) = 10 | 20")
+
+        self.assertEqual(
+            program,
+            [
+                NumberLiteralNode("10"),
+                NumberLiteralNode("20"),
+                SetVariablesNode(
+                    (
+                        SetVariableNode(Symbol("width"), constant=True),
+                        SetVariableNode(Symbol("height"), constant=True),
+                    )
+                ),
+            ],
+        )
+
     def test_parses_multiple_assignment(self):
         program = parse("$(a, b: Number) = 1 2")
 
@@ -498,6 +516,19 @@ end
         self.assertEqual(program[5], GetVariableNode(Symbol("data")))
         self.assertIsInstance(program[7], IndexSetNode)
         self.assertEqual(program[8], SetVariableNode(Symbol("data")))
+
+
+    def test_parses_spaced_element_call_arguments(self):
+        program = parse("[1, 2, 3, 4] reshape (2, 2)")
+
+        self.assertEqual(program[1].name, Symbol("reshape"))
+        self.assertEqual(
+            program[1].call_args,
+            (
+                CallArgument(value=(NumberLiteralNode("2"),)),
+                CallArgument(value=(NumberLiteralNode("2"),)),
+            ),
+        )
 
     def test_parses_colon_modifier_as_function_argument(self):
         program = parse("[1, 2, 3, 4] map: double")

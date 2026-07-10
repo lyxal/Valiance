@@ -83,7 +83,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x0f"))
+        self.assertTrue(data.startswith(b"VLNCBC\x10"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)
@@ -122,6 +122,16 @@ class BytecodeSerializationTests(unittest.TestCase):
         )
 
         self.assertEqual(loads(dumps(program)), program)
+
+
+    def test_serializes_function_parameter_collection_ranks(self):
+        function = FunctionCode(
+            (Instruction(OpCode.RETURN),),
+            params=("cells", "count"),
+            param_collection_ranks=(1, 0),
+        )
+
+        self.assertEqual(loads(dumps(Program(function))), Program(function))
 
     def test_serializes_recursive_function_flag(self):
         program = Program(

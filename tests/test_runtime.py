@@ -1,6 +1,7 @@
 import contextlib
 import io
 import unittest
+from unittest.mock import patch
 from builtins import RuntimeError as PythonRuntimeError
 from decimal import Decimal
 from itertools import count, islice
@@ -37,6 +38,61 @@ def execute(source: str, source_file: Path | None = None):
     if analyser.diagnostics:
         raise AssertionError(analyser.diagnostics)
     return run(compile_program(typed))
+
+
+def _materialize_lists(value):
+    """Recursively materialize lazy Valiance list results for assertions."""
+    if isinstance(value, LazyList):
+        value = list(value)
+    if isinstance(value, list):
+        return [_materialize_lists(item) for item in value]
+    return value
+
+
+CONWAY_ASSIGNMENT_VARIANT = r"""
+import {
+  std.grids.allNeighbors,
+  std.random.randbit
+}
+
+define step(board: Number++) -> Number++ =>
+  $neighbors = $board allNeighbors(wrapping = true)
+  $neighbors map fn (cells) =>
+    [$cells[4], sum removeAt($cells, 4)] match =>
+      [_, 3]  => 1
+      [1, 2]  => 1
+      default => 0
+    end
+  end
+end
+
+const $BOARD_WIDTH = 10
+const $BOARD_HEIGHT = 10
+
+$board = range(1, $BOARD_WIDTH * $BOARD_HEIGHT) | map: randbit | reshape ($BOARD_WIDTH, $BOARD_HEIGHT)
+$board := step
+$board
+"""
+
+
+CONWAY_PIPELINE_VARIANT = r"""
+import {std.grids.allNeighbors, std.random.randbit}
+
+define step(board: Number++) -> Number++ =>
+  $board allNeighbors(wrapping = true) | map fn (cells) =>
+    [$cells[4], sum removeAt($cells, 4)] match =>
+      [_, 3]  => 1
+      [1, 2]  => 1
+      default => 0
+    end
+  end
+end
+
+const ($BOARD_WIDTH, $BOARD_HEIGHT) = 10 | 10
+$board = range(1, $BOARD_WIDTH * $BOARD_HEIGHT) | map: randbit | reshape ($BOARD_WIDTH, $BOARD_HEIGHT)
+$board := step
+$board
+"""
 
 
 class RuntimeTests(unittest.TestCase):
@@ -527,6 +583,98 @@ ParseError
         self.assertIn("100, ...]]", message)
         self.assertIn("stack types: [Unknown+]", message)
         self.assertIn("<main> ip 2: call", message)
+
+
+
+    def test_randbit_supports_niladic_and_mapping_calls(self):
+        with patch(
+            "valiance.std.random.random.getrandbits",
+            return_value=1,
+        ):
+            self.assertEqual(
+                execute("import {std.random.randbit}\nrandbit"),
+                [Decimal("1")],
+            )
+
+        with patch(
+            "valiance.std.random.random.getrandbits",
+            side_effect=(0, 1, 0),
+        ):
+            [mapped] = execute(
+                "import {std.random.randbit}\n"
+                "range(1, 3) map: randbit"
+            )
+            self.assertEqual(
+                list(mapped),
+                [Decimal("0"), Decimal("1"), Decimal("0")],
+            )
+
+    def test_all_neighbors_preserves_documented_order_and_edge_behavior(self):
+        [without_wrapping] = execute(
+            "import {std.grids.allNeighbors}\n"
+            "[[1, 2, 3], [4, 5, 6], [7, 8, 9]] "
+            "allNeighbors(wrapping = false)"
+        )
+        [with_wrapping] = execute(
+            "import {std.grids.allNeighbors}\n"
+            "[[1, 2, 3], [4, 5, 6], [7, 8, 9]] "
+            "allNeighbors(wrapping = true)"
+        )
+
+        self.assertEqual(
+            without_wrapping[0][0],
+            [Decimal("1"), Decimal("2"), Decimal("4"), Decimal("5")],
+        )
+        self.assertEqual(
+            without_wrapping[1][1],
+            [Decimal(str(value)) for value in range(1, 10)],
+        )
+        self.assertEqual(
+            with_wrapping[0][0],
+            [
+                Decimal("9"),
+                Decimal("7"),
+                Decimal("8"),
+                Decimal("3"),
+                Decimal("1"),
+                Decimal("2"),
+                Decimal("6"),
+                Decimal("4"),
+                Decimal("5"),
+            ],
+        )
+        self.assertTrue(
+            all(len(neighborhood) == 9 for row in with_wrapping for neighborhood in row)
+        )
+
+    def test_conway_assignment_variant_executes_one_generation(self):
+        self._assert_conway_blinker(CONWAY_ASSIGNMENT_VARIANT)
+
+    def test_conway_pipeline_variant_executes_one_generation(self):
+        self._assert_conway_blinker(CONWAY_PIPELINE_VARIANT)
+
+    def _assert_conway_blinker(self, source: str):
+        bits = [
+            int(row == 4 and column in {3, 4, 5})
+            for row in range(10)
+            for column in range(10)
+        ]
+        with patch(
+            "valiance.std.random.random.getrandbits",
+            side_effect=bits,
+        ):
+            [board] = execute(source)
+            board = _materialize_lists(board)
+
+        live_cells = {
+            (row, column)
+            for row, values in enumerate(board)
+            for column, value in enumerate(values)
+            if value == Decimal("1")
+        }
+        self.assertEqual(live_cells, {(3, 4), (4, 4), (5, 4)})
+        self.assertEqual(len(board), 10)
+        self.assertTrue(all(len(row) == 10 for row in board))
 
     def test_executes_element_with_colon_function_argument(self):
         stack = execute("[1, 2, 3] map: double")

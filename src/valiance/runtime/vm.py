@@ -349,6 +349,16 @@ class VirtualMachine:
         if isinstance(value, FunctionValue):
             if any(is_list_like(arg) for arg in args):
                 try:
+                    ranks = value.code.param_collection_ranks
+                    if ranks and all(rank is not None for rank in ranks):
+                        return list(
+                            _vectorize_function(
+                                self,
+                                value,
+                                tuple(args),
+                                target_ranks=ranks,
+                            )
+                        )
                     return list(_vectorize_function(self, value, tuple(args)))
                 except PanicSignal:
                     raise
@@ -2795,6 +2805,9 @@ def _resolve_vectorisation_depths(
     for value, depth, target in zip(args, fixed, targets, strict=True):
         if target is None:
             resolved.append(depth)
+            continue
+        if target == 0 and not is_list_like(value):
+            resolved.append(0)
             continue
         actual_rank = runtime_collection_rank(value)
         if actual_rank is None:

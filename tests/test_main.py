@@ -397,7 +397,7 @@ class MainTests(unittest.TestCase):
             rendered = output_file.read_text(encoding="utf-8")
             self.assertIn('"qualified_name": "println"', rendered)
             self.assertIn('"qualified_name": "std.regex.matches"', rendered)
-            self.assertIn("98 built-in and standard-library entries", output.getvalue())
+            self.assertIn("103 built-in and standard-library entries", output.getvalue())
 
     def test_main_runs_inline_code(self):
         output = io.StringIO()

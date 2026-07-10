@@ -245,9 +245,11 @@ class Parser:
 
     def _constant(self, start: Token) -> tuple[ASTNode, ...]:
         """Parse constant from the current token stream."""
-        self._expect(TokenKind.DOLLAR)
+        has_leading_dollar = self._match(TokenKind.DOLLAR)
         if self._check(TokenKind.LPAREN):
             return self._multiple_assignment(start, constant=True)
+        if not has_leading_dollar:
+            self._error("expected $ or '(' after const")
         name = self._symbol("expected constant name")
         declared_type = None
         if self._match(TokenKind.COLON):
@@ -1435,9 +1437,9 @@ class Parser:
             call_args: tuple[CallArgument, ...] = ()
             modifier_args: tuple[FunctionNode, ...] = ()
             breaks_chain = name.text.startswith("\\")
-            if self._check(TokenKind.LPAREN) and self._adjacent(
-                call_anchor,
-                self._current,
+            if self._check(TokenKind.LPAREN) and (
+                token.kind is TokenKind.IDENT
+                or self._adjacent(call_anchor, self._current)
             ):
                 self._advance()
                 call_args = self._call_arguments()
@@ -1872,6 +1874,7 @@ class Parser:
         if self._match(TokenKind.RPAREN):
             self._error("multiple assignment requires at least one target")
         while True:
+            self._match(TokenKind.DOLLAR)
             target_start = self._current
             name = self._symbol("expected assignment target")
             declared_type = None

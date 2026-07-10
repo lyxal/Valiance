@@ -160,6 +160,7 @@ class _Compiler:
         dispatch_types: tuple[str | None, ...] = (),
         return_tags: tuple[tuple[DataTag, ...], ...] = (),
         return_collection_ranks: tuple[int | None, ...] = (),
+        param_collection_ranks: tuple[int | None, ...] = (),
     ) -> FunctionCode:
         """Compile a typed function body and its captured runtime metadata."""
         for index, node in enumerate(body):
@@ -168,16 +169,17 @@ class _Compiler:
                 self.emit(OpCode.POP)
         self.emit(OpCode.RETURN)
         return FunctionCode(
-            tuple(self.instructions),
-            params,
-            name,
-            cycle_params,
-            element_tags,
-            recursive,
-            multi,
-            dispatch_types,
-            return_tags,
-            return_collection_ranks,
+            instructions=tuple(self.instructions),
+            params=params,
+            name=name,
+            cycle_params=cycle_params,
+            element_tags=element_tags,
+            recursive=recursive,
+            multi=multi,
+            dispatch_types=dispatch_types,
+            return_tags=return_tags,
+            return_collection_ranks=return_collection_ranks,
+            param_collection_ranks=param_collection_ranks,
         )
 
     def node(self, node: ASTNode | TypedNode) -> None:
@@ -981,6 +983,10 @@ def _compile_function_overload(
         dispatch_types=_overload_dispatch_types(overload),
         return_tags=_function_return_tags(typ),
         return_collection_ranks=_function_return_collection_ranks(typ),
+        param_collection_ranks=(
+            *_function_param_collection_ranks(typ),
+            *(None for _ in _static_param_names(overload)),
+        ),
     )
 
 
@@ -1060,6 +1066,27 @@ def _function_return_collection_ranks(
     if typ.returns is None:
         return ()
     return tuple(_runtime_collection_rank(ret) for ret in typ.returns)
+
+
+def _function_param_collection_ranks(
+    typ: FunctionType,
+) -> tuple[int | None, ...]:
+    """Compute natural runtime ranks for function parameters."""
+    if typ.params is None:
+        return ()
+    return tuple(_runtime_parameter_rank(param) for param in typ.params)
+
+
+def _runtime_parameter_rank(typ: Type) -> int | None:
+    """Return the collection rank a dynamic function parameter accepts."""
+    typ = normalize(typ)
+    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
+        return _runtime_parameter_rank(typ.inner)
+    if isinstance(typ, CollectionType):
+        return typ.rank if isinstance(typ.rank, int) else None
+    if isinstance(typ, RankVariable):
+        return None
+    return 0
 
 
 def _top_level_runtime_tags(typ: Type) -> tuple[DataTag, ...]:

@@ -99,6 +99,7 @@ class FunctionCode:
     dispatch_types: tuple[str | None, ...] = ()
     return_tags: tuple[tuple[DataTag, ...], ...] = ()
     return_collection_ranks: tuple[int | None, ...] = ()
+    param_collection_ranks: tuple[int | None, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

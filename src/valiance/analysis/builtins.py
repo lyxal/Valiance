@@ -287,6 +287,32 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         examples=(("1 4 range", "[1, 2, 3, 4]"),),
         category="Collections",
     ),
+    "sum": element_documentation(
+        "Add every number in a list.",
+        parameters=(("values", "Numbers to add."),),
+        returns="The total, or zero for an empty list.",
+        examples=(("[1, 2, 3] sum", "6"),),
+        category="Collections",
+    ),
+    "removeAt": element_documentation(
+        "Return a list without the item at one index.",
+        parameters=(
+            ("values", "Input list."),
+            ("index", "Zero-based index to remove; negative indices count from the end."),
+        ),
+        returns="A new list containing every other item.",
+        category="Collections",
+    ),
+    "reshape": element_documentation(
+        "Reshape a flat list into a rectangular two-dimensional list.",
+        parameters=(
+            ("values", "Flat input list."),
+            ("rows", "Number of output rows."),
+            ("columns", "Number of items in each row."),
+        ),
+        returns="A two-dimensional list with the requested shape.",
+        category="Collections",
+    ),
     "append": element_documentation(
         "Return a list with one item appended.",
         description="The item and list may appear in either supported stack order.",
@@ -1180,6 +1206,25 @@ def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "map",
     (
         T.ExactList(T.TypeVariable("Item")),
+        T.Fn((), (T.TypeVariable("Mapped"),)),
+    ),
+    (T.ExactList(T.TypeVariable("Mapped")),),
+)
+def _map_niladic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Call a niladic mapping function once for every input-list item."""
+    def mapped_items():
+        """Yield one niladic callable result for each input item."""
+        for _item in args[0]:
+            mapped = ctx.call(args[1], [])
+            yield mapped[0]
+
+    return (LazyList(mapped_items()),)
+
+
+@builtin(
+    "map",
+    (
+        T.ExactList(T.TypeVariable("Item")),
         T.Fn(),
     ),
     (),
@@ -1232,6 +1277,68 @@ def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `range` built-in runtime overload."""
     start, stop = args
     return (LazyList(Decimal(item) for item in range(int(start), int(stop) + 1)),)
+
+
+@builtin("sum", (T.ExactList(T.Number),), (T.Number,))
+def _sum(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Add every numeric item in a list, using zero for an empty list."""
+    return (sum(args[0], Decimal(0)),)
+
+
+@builtin(
+    "removeAt",
+    (T.ExactList(T.V("Item")), T.Integer),
+    (T.ExactList(T.V("Item")),),
+    param_names=("values", "index"),
+)
+def _remove_at(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return a materialized copy of a list without the indexed item."""
+    values, raw_index = args
+    result = list(values)
+    index = int(raw_index)
+    try:
+        del result[index]
+    except IndexError as exc:
+        raise RuntimeError(f"removeAt index {index} is out of range") from exc
+    return (result,)
+
+
+@builtin(
+    "reshape",
+    (T.ExactList(T.V("Item")), T.Integer, T.Integer),
+    (T.ExactList(T.V("Item"), 2),),
+    param_names=("values", "rows", "columns"),
+)
+@builtin(
+    "reshape",
+    (T.Integer, T.Integer, T.ExactList(T.V("Item"))),
+    (T.ExactList(T.V("Item"), 2),),
+    param_names=("rows", "columns", "values"),
+)
+def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Reshape a flat finite list into a rectangular two-dimensional list."""
+    if isinstance(args[0], Decimal):
+        raw_rows, raw_columns, values = args
+    else:
+        values, raw_rows, raw_columns = args
+    rows = int(raw_rows)
+    columns = int(raw_columns)
+    if rows < 0 or columns < 0:
+        raise RuntimeError("reshape dimensions must be non-negative")
+
+    expected = rows * columns
+    items = list(islice(iter(values), expected + 1))
+    if len(items) != expected:
+        raise RuntimeError(
+            f"reshape needs exactly {expected} items for shape ({rows}, {columns}); "
+            f"received {'more than ' if len(items) > expected else ''}{len(items)}"
+        )
+    return (
+        [
+            items[row * columns : (row + 1) * columns]
+            for row in range(rows)
+        ],
+    )
 
 
 @builtin(

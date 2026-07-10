@@ -34,6 +34,8 @@ class ReferenceDocumentationTests(unittest.TestCase):
         self.assertIn("std.text.exclaim", qualified_names)
         self.assertIn("std.arithmetic.square", qualified_names)
         self.assertIn("std.trig.sin", qualified_names)
+        self.assertIn("std.grids.allNeighbors", qualified_names)
+        self.assertIn("std.random.randbit", qualified_names)
         self.assertTrue(all(reference.summary for reference in references))
 
     def test_language_reference_renders_html_markdown_and_json(self):

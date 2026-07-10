@@ -1992,7 +1992,21 @@ class Analyser:
         typed_node: TypedFunctionNode,
     ) -> None:
         """Register imported definition during static analysis."""
-        for overload in _callable_overloads(typed_node.typ):
+        declared = tuple(
+            typing.overload
+            for typing in typed_node.overloads
+            if isinstance(typing.overload, T.Overload)
+        )
+        for selected in _callable_overloads(typed_node.typ):
+            overload = next(
+                (
+                    candidate
+                    for candidate in declared
+                    if candidate.params == selected.params
+                    and candidate.returns == selected.returns
+                ),
+                selected,
+            )
             self.env.define_overload(name, overload)
 
     def _register_imported_object(
@@ -2196,6 +2210,7 @@ class Analyser:
                 overload,
                 modifiers,
                 self.env.context,
+                analyser=self,
             ):
                 sources.append(
                     ElementArguments(
@@ -2232,6 +2247,7 @@ class Analyser:
                     modifiers,
                     self.env.context,
                     preparation.call_arg_order,
+                    analyser=self,
                 ):
                     sources.append(
                         ElementArguments(
@@ -3136,6 +3152,13 @@ class Analyser:
         signatures = self._function_signatures(node, final)
         analysis = _function_analysis_from_signatures(signatures)
         if analysis is None:
+            if (
+                node.params is not None
+                and any(param.typ is None for param in node.params)
+                and not function_analyser.diagnostics
+            ):
+                self.warnings.extend(function_analyser.warnings)
+                return self._call_site_checked_function(outer, node), outer
             self.diagnostics.extend(function_analyser.diagnostics)
             self.warnings.extend(function_analyser.warnings)
             return None
@@ -5735,6 +5758,7 @@ def _source_element_arguments(
     modifier_args: tuple[ModifierArgumentAnalysis, ...],
     ctx: T.Context,
     call_arg_order: tuple[int, ...] = (),
+    analyser: Analyser | None = None,
 ) -> Iterator[
     tuple[
         tuple[T.Type, ...],
@@ -5749,7 +5773,16 @@ def _source_element_arguments(
         if sourced is not None:
             current_args, popped = sourced
             args = _call_args_in_parameter_order(current_args, call_arg_order)
-            yield args, popped, ()
+            for specialized_args, specialized_popped in (
+                _contextual_stack_argument_variants(
+                    args,
+                    overload.params,
+                    popped,
+                    ctx,
+                    analyser,
+                )
+            ):
+                yield specialized_args, specialized_popped, ()
         return
 
     modifier_indexes = _modifier_param_indexes(overload.params)
@@ -5783,6 +5816,7 @@ def _source_element_arguments(
             ordered_modifiers,
             stack_substitution,
             ctx,
+            analyser,
         ):
             specialized_stack_args = tuple(
                 _substitute_branch_type(arg, substitution) for arg in stack_args
@@ -5798,6 +5832,142 @@ def _source_element_arguments(
                 specialized_popped,
                 specialized_modifiers,
             )
+
+
+def _contextual_stack_argument_variants(
+    args: tuple[T.Type, ...],
+    params: tuple[T.Type, ...],
+    branch: AnalysisBranch,
+    ctx: T.Context,
+    analyser: Analyser | None,
+) -> Iterator[tuple[tuple[T.Type, ...], AnalysisBranch]]:
+    """Contextualize deferred function literals passed on the value stack."""
+    deferred: list[tuple[int, ModifierArgumentAnalysis]] = []
+    for index, (arg, param) in enumerate(zip(args, params, strict=True)):
+        if not isinstance(T.normalize(param), T.FunctionType):
+            continue
+        modifier = _deferred_stack_function_argument(arg, branch)
+        if modifier is not None:
+            deferred.append((index, modifier))
+
+    if not deferred:
+        yield args, branch
+        return
+
+    deferred_indexes = {index for index, _ in deferred}
+    ordinary_args = tuple(
+        arg for index, arg in enumerate(args) if index not in deferred_indexes
+    )
+    ordinary_params = tuple(
+        param for index, param in enumerate(params) if index not in deferred_indexes
+    )
+    substitution = _branch_argument_substitution(ordinary_args, ordinary_params, ctx)
+    if substitution is None:
+        return
+
+    def rec(
+        position: int,
+        current_substitution: dict[str, T.Type],
+        replacements: tuple[TypedFunctionNode, ...],
+    ) -> Iterator[tuple[tuple[T.Type, ...], AnalysisBranch]]:
+        """Recursively specialize each deferred stack function argument."""
+        if position == len(deferred):
+            specialized_args = list(
+                _substitute_branch_type(arg, current_substitution) for arg in args
+            )
+            specialized_branch = _specialize_branch_arguments(
+                branch,
+                current_substitution,
+            )
+            for (argument_index, _), replacement in zip(
+                deferred,
+                replacements,
+                strict=True,
+            ):
+                concrete_type = _substitute_branch_type(
+                    replacement.typ,
+                    current_substitution,
+                )
+                concrete_node = replace(replacement, typ=concrete_type)
+                specialized_args[argument_index] = concrete_type
+                specialized_branch = _replace_contextual_function_node(
+                    specialized_branch,
+                    concrete_node,
+                )
+            yield tuple(specialized_args), specialized_branch
+            return
+
+        argument_index, modifier = deferred[position]
+        expected = _substitute_branch_type(
+            params[argument_index],
+            current_substitution,
+        )
+        for specialized, modifier_substitution in _modifier_variants_for_expected(
+            modifier,
+            expected,
+            ctx,
+            analyser,
+        ):
+            merged = _merge_substitutions(
+                current_substitution,
+                modifier_substitution,
+            )
+            if merged is None:
+                continue
+            yield from rec(
+                position + 1,
+                merged,
+                (*replacements, specialized.typed_node),
+            )
+
+    yield from rec(0, substitution, ())
+
+
+def _deferred_stack_function_argument(
+    typ: T.Type,
+    branch: AnalysisBranch,
+) -> ModifierArgumentAnalysis | None:
+    """Find the typed literal backing a deferred stack function type."""
+    normalized = T.normalize(typ)
+    overloads = (
+        normalized.overloads
+        if isinstance(normalized, T.OverloadSetType)
+        else ()
+    )
+    source_nodes = tuple(
+        overload.call_site_body[1]
+        for overload in overloads
+        if isinstance(overload.call_site_body, tuple)
+        and len(overload.call_site_body) == 2
+        and isinstance(overload.call_site_body[1], FunctionNode)
+    )
+    if not source_nodes:
+        return None
+    for typed_node in reversed(branch.typed_body):
+        if not isinstance(typed_node, TypedFunctionNode):
+            continue
+        if any(
+            typed_node.node is source or typed_node.node == source
+            for source in source_nodes
+        ):
+            return ModifierArgumentAnalysis(typ, typed_node)
+    return None
+
+
+def _replace_contextual_function_node(
+    branch: AnalysisBranch,
+    replacement: TypedFunctionNode,
+) -> AnalysisBranch:
+    """Replace one deferred function literal with its contextual typing."""
+    typed_body = list(branch.typed_body)
+    for index in range(len(typed_body) - 1, -1, -1):
+        node = typed_body[index]
+        if not isinstance(node, TypedFunctionNode):
+            continue
+        if node.node is replacement.node or node.node == replacement.node:
+            typed_body[index] = replacement
+            return replace(branch, typed_body=tuple(typed_body))
+    return branch
 
 
 def _call_args_in_current_order(
@@ -5962,8 +6132,6 @@ def _element_call_argument_plan(
                 return None
             if index in modifier_indexes or assignments[index] is not None:
                 return None
-            if param_defaults[index] is None:
-                return None
             assignments[index] = arg
             continue
 
@@ -6038,6 +6206,7 @@ def _specialized_modifier_orders(
     modifiers: tuple[ModifierArgumentAnalysis, ...],
     substitution: dict[str, T.Type],
     ctx: T.Context,
+    analyser: Analyser | None = None,
 ) -> Iterator[tuple[dict[str, T.Type], tuple[ModifierArgumentAnalysis, ...]]]:
     """Compute specialized modifier orders during static analysis."""
     if not modifier_indexes:
@@ -6059,6 +6228,7 @@ def _specialized_modifier_orders(
             modifiers[position],
             expected,
             ctx,
+            analyser,
         ):
             merged = _merge_substitutions(current_substitution, modifier_substitution)
             if merged is None:
@@ -6072,6 +6242,7 @@ def _modifier_variants_for_expected(
     modifier: ModifierArgumentAnalysis,
     expected: T.Type,
     ctx: T.Context,
+    analyser: Analyser | None = None,
 ) -> Iterator[tuple[ModifierArgumentAnalysis, dict[str, T.Type]]]:
     """Compute modifier variants for expected during static analysis."""
     expected = T.normalize(expected)
@@ -6116,7 +6287,8 @@ def _modifier_variants_for_expected(
                 )
                 return
 
-    for overload in modifier.typed_node.overloads:
+    overloads = _contextual_modifier_overloads(modifier, expected, analyser, ctx)
+    for overload in overloads:
         typ = T.normalize(overload.typ)
         if not isinstance(typ, T.FunctionType):
             continue
@@ -6139,6 +6311,98 @@ def _modifier_variants_for_expected(
             ),
             substitution,
         )
+
+
+def _contextual_modifier_overloads(
+    modifier: ModifierArgumentAnalysis,
+    expected: T.Type,
+    analyser: Analyser | None,
+    ctx: T.Context,
+) -> tuple[FunctionOverloadTyping, ...]:
+    """Analyse deferred untyped modifier functions against concrete inputs."""
+    expected = T.normalize(expected)
+    if analyser is None or not isinstance(expected, T.FunctionType):
+        return modifier.typed_node.overloads
+    if expected.params is None:
+        return modifier.typed_node.overloads
+
+    resolved: list[FunctionOverloadTyping] = []
+    deferred = False
+    for typing in modifier.typed_node.overloads:
+        overload = typing.overload
+        if not (
+            isinstance(overload, T.Overload)
+            and isinstance(overload.call_site_body, tuple)
+            and len(overload.call_site_body) == 2
+        ):
+            resolved.append(typing)
+            continue
+        deferred = True
+        outer, node = overload.call_site_body
+        if not isinstance(outer, AnalysisBranch) or not isinstance(node, FunctionNode):
+            continue
+        for params in _modifier_call_param_variants(expected.params):
+            analysis = analyser._analyse_function_at_call_site(outer, node, params)
+            if analysis is None:
+                continue
+            compatible = tuple(
+                candidate
+                for candidate in analysis.overloads
+                if _contextual_modifier_overload_matches(candidate, expected, ctx)
+            )
+            if compatible:
+                resolved.extend(compatible)
+                break
+
+    if deferred:
+        unique: list[FunctionOverloadTyping] = []
+        for typing in resolved:
+            if typing not in unique:
+                unique.append(typing)
+        return tuple(unique)
+    return modifier.typed_node.overloads
+
+
+def _contextual_modifier_overload_matches(
+    overload: FunctionOverloadTyping,
+    expected: T.FunctionType,
+    ctx: T.Context,
+) -> bool:
+    """Return whether a contextual modifier overload matches its expected type."""
+    typ = T.normalize(overload.typ)
+    if not isinstance(typ, T.FunctionType):
+        return False
+    substitution = _branch_argument_substitution((typ,), (expected,), ctx)
+    if substitution is None:
+        return False
+    concrete_expected = _substitute_branch_type(expected, substitution)
+    if not isinstance(T.normalize(concrete_expected), T.FunctionType):
+        return False
+    return _function_overload_matches_type(overload, concrete_expected, ctx)
+
+
+def _modifier_call_param_variants(
+    params: tuple[T.Type, ...],
+) -> tuple[tuple[T.Type, ...], ...]:
+    """Return concrete and progressively scalarized modifier input shapes."""
+    variants: list[tuple[T.Type, ...]] = [()]
+    for param in params:
+        choices = _modifier_param_rank_variants(param)
+        variants = [prefix + (choice,) for prefix in variants for choice in choices]
+    return tuple(variants)
+
+
+def _modifier_param_rank_variants(typ: T.Type) -> tuple[T.Type, ...]:
+    """Return a type plus lower-rank views usable for vectorized callables."""
+    normalized = T.normalize(typ)
+    if not isinstance(normalized, T.CollectionType):
+        return (typ,)
+    if not isinstance(normalized.rank, int):
+        return (typ,)
+    return (normalized.base,) + tuple(
+        T.C(type(normalized), normalized.base, rank)
+        for rank in range(1, normalized.rank + 1)
+    )
 
 
 def _merge_substitutions(
