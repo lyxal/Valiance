@@ -171,6 +171,17 @@ class OverloadedFunctionValue:
     __str__ = __repr__
 
 
+_OWNERSHIP_VALUE_TYPES = (
+    ObjectValue,
+    FunctionValue,
+    OverloadedFunctionValue,
+    list,
+    tuple,
+    dict,
+)
+_RELEASE_VALUE_TYPES = (LazyList, *_OWNERSHIP_VALUE_TYPES)
+
+
 @dataclass(frozen=True, slots=True)
 class BuiltinValue:
     """A built-in element implementation."""
@@ -1722,9 +1733,23 @@ def _release_stack_tail(stack: list[Any], count: int, vm: VirtualMachine) -> Non
     """Release stack tail during VM execution."""
     if count <= 0:
         return
+    start = len(stack) - count
+    for index in range(start, len(stack)):
+        if _needs_release(stack[index]):
+            break
+    else:
+        del stack[start:]
+        return
     values = _pop_many(stack, count)
     for value in values:
         _release_value(value, vm)
+
+
+def _needs_release(value: Any) -> bool:
+    """Return whether dropping a value requires ownership bookkeeping."""
+    if isinstance(value, TaggedValue):
+        value = value.value
+    return isinstance(value, _RELEASE_VALUE_TYPES)
 
 
 def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
@@ -1910,6 +1935,8 @@ def _finalize_builtin_result_ownership(
     result: tuple[Any, ...],
 ) -> None:
     """Update finalize builtin result ownership state during VM execution."""
+    if not _contains_owned_value(args) and not _contains_owned_value(result):
+        return
     counts: Counter[int] = Counter()
     values: dict[int, Any] = {}
     arg_ids = {
@@ -1939,6 +1966,14 @@ def _finalize_builtin_result_ownership(
         if id(value) in arg_ids:
             continue
         _retain_embedded_builtin_args(value, arg_ids, visited)
+
+
+def _contains_owned_value(values: tuple[Any, ...]) -> bool:
+    """Return whether values include a result requiring ownership finalization."""
+    for value in values:
+        if isinstance(value, _OWNERSHIP_VALUE_TYPES):
+            return True
+    return False
 
 
 def _retain_embedded_builtin_args(
@@ -1977,6 +2012,11 @@ def _bind_lazy_result_owners(
     result: tuple[Any, ...],
 ) -> tuple[Any, ...]:
     """Bind lazy result owners during VM execution."""
+    for value in result:
+        if isinstance(value, LazyList):
+            break
+    else:
+        return result
     bound: list[Any] = []
     for value in result:
         if not isinstance(value, LazyList):
@@ -4213,12 +4253,19 @@ def _apply_declared_return_tags(
     types: tuple[Any, ...],
 ) -> tuple[Any, ...]:
     """Apply declared return tags during VM execution."""
+    for typ in types:
+        if isinstance(typ, TaggedType):
+            break
+    else:
+        return values
     tag_sets = tuple(_declared_runtime_tags(typ) for typ in types)
     return _apply_runtime_return_tags(values, tag_sets)
 
 
 def _declared_runtime_tags(typ: Any) -> tuple[DataTag, ...]:
     """Compute declared runtime tags during VM execution."""
+    if not isinstance(typ, TaggedType):
+        return ()
     typ = normalize(typ)
     if isinstance(typ, TaggedType):
         return tuple(sorted(tag for tag in typ.tags if tag.depth == 0))
@@ -4232,6 +4279,11 @@ def _apply_runtime_return_tags(
     """Apply runtime return tags during VM execution."""
     if len(values) != len(tag_sets):
         return tuple(values)
+    for tags in tag_sets:
+        if tags:
+            break
+    else:
+        return values if isinstance(values, tuple) else tuple(values)
     return tuple(
         update_runtime_tags(
             value,
@@ -4249,6 +4301,11 @@ def _apply_runtime_collection_ranks(
     """Apply runtime collection ranks during VM execution."""
     if len(values) != len(ranks):
         return tuple(values)
+    for rank in ranks:
+        if rank is not None:
+            break
+    else:
+        return values if isinstance(values, tuple) else tuple(values)
     return tuple(
         with_runtime_collection_rank(value, rank)
         for value, rank in zip(values, ranks, strict=True)

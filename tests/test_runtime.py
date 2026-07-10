@@ -1036,6 +1036,47 @@ define add_one(n: Number) -> Number => $n 1 +
         self.assertNotIn(OpCode.LOAD_ELEMENT, ops)
         self.assertEqual(run(program), [Decimal("42")])
 
+    def test_control_flow_bodies_keep_resolved_element_calls(self):
+        source = """
+define fibonacci(n: Integer) -> Integer =>
+  $n match =>
+    0 => 0
+    1 => 1
+    _ => fibonacci($n - 1) + fibonacci($n - 2)
+  end
+end
+$total = 0
+range(1, 5) foreach (n) =>
+  $total := + fibonacci($n)
+end
+$total
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+
+        program = compile_program(typed)
+        function_code = program.main.instructions[0].arg
+        self.assertIsInstance(function_code, FunctionCode)
+        function_ops = tuple(
+            instruction.op for instruction in function_code.instructions
+        )
+        foreach_instruction = next(
+            instruction
+            for instruction in program.main.instructions
+            if instruction.op is OpCode.FOREACH
+        )
+        foreach_code = foreach_instruction.arg[0]
+        foreach_ops = tuple(
+            instruction.op for instruction in foreach_code.instructions
+        )
+
+        self.assertIn(OpCode.CALL_RESOLVED_ELEMENT, function_ops)
+        self.assertNotIn(OpCode.LOAD_ELEMENT, function_ops)
+        self.assertIn(OpCode.CALL_RESOLVED_ELEMENT, foreach_ops)
+        self.assertNotIn(OpCode.LOAD_ELEMENT, foreach_ops)
+        self.assertEqual(run(program), [Decimal("12")])
+
     def test_compiler_emits_every_user_defined_overload_body(self):
         source = """
 define same(x, y) => $x $y +

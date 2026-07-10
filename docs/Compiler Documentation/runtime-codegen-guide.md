@@ -602,7 +602,14 @@ ElementNode("name")
 
 The invariant is: type-level overload resolution belongs to analysis, and
 runtime should not redo it for operations whose selected implementation is known
-at compile time.
+at compile time. That metadata must survive structural boundaries too:
+`TypedMatchNode.case_bodies` and `TypedForNode.body` carry analysed descendants
+into nested function code. A stable resolved call inside a match case or
+`foreach` body must not regress to `LOAD_ELEMENT` followed by `CALL`.
+
+When control-flow analysis has multiple surviving branches, preserve a typed
+child block only when the branches agree. Falling back to raw lowering is safer
+than selecting metadata from an arbitrary branch.
 
 Implementation checklist:
 
@@ -855,6 +862,13 @@ When adding a wrapper-producing runtime helper, include a test that reads the
 embedded object after the call and another test through bytecode serialization.
 A correct-looking wrapper with an already-destroyed payload is an ownership bug,
 not a type-system bug.
+
+For scalar-heavy execution, keep no-op metadata and ownership paths cheap. The
+VM may bypass release scans when no value can own resources, return unchanged
+results when no return tags or collection ranks were declared, and skip lazy
+owner binding when no result is lazy. Do not extend these shortcuts to objects,
+closures, overloaded functions, containers, tagged payloads, or lazy values
+without preserving their retain/release behavior.
 
 ## Bytecode Files
 

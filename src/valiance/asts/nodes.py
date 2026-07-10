@@ -86,6 +86,20 @@ class TypedIfNode(TypedNode):
 
 
 @dataclass(frozen=True, slots=True)
+class TypedMatchNode(TypedNode):
+    """A typed match retaining the analysed body for every source case."""
+
+    case_bodies: tuple[tuple[ASTNode | TypedNode, ...], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TypedForNode(TypedNode):
+    """A typed foreach loop retaining its analysed body."""
+
+    body: tuple[ASTNode | TypedNode, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class TypedUnfoldNode(TypedNode):
     """A typed unfold expression with its selected state and body typing."""
 

@@ -60,9 +60,11 @@ from valiance.asts import (
     TypedAtNode,
     TypedElementExtension,
     TypedElementNode,
+    TypedForNode,
     TypedFunctionNode,
     TypedIfNode,
     TypedLiteralNode,
+    TypedMatchNode,
     TypedNode,
     TypedTagApplicationNode,
     TypedUnfoldNode,
@@ -390,7 +392,7 @@ class _Compiler:
             case AssertNode():
                 self.assert_node(node)
             case MatchNode():
-                self.match_node(node)
+                self.match_node(node, typed_node)
             case TryNode():
                 self.try_node(node)
             case WhileNode():
@@ -400,7 +402,7 @@ class _Compiler:
             case AtNode():
                 self.at_node(node, typed_node)
             case ForNode():
-                self.foreach_node(node)
+                self.foreach_node(node, typed_node)
             case BreakNode():
                 self.break_node(node)
             case ReturnNode(values):
@@ -739,7 +741,7 @@ class _Compiler:
             ),
         )
 
-    def foreach_node(self, node: ForNode) -> None:
+    def foreach_node(self, node: ForNode, typed_node: TypedNode | None) -> None:
         """Lower a foreach loop and its break-result handling."""
         params = (FunctionParam(node.variable),)
         if node.index_variable is not None:
@@ -749,20 +751,44 @@ class _Compiler:
             body=node.body,
             location=node.location,
         )
-        body_code = _compile_function_node(
-            body,
-            "foreach.body",
-            break_as_signal=True,
-            return_as_signal=True,
-        )
+        if isinstance(typed_node, TypedForNode):
+            body_code = _Compiler(
+                break_as_signal=True,
+                return_as_signal=True,
+            ).compile_function(
+                typed_node.body,
+                params=tuple(
+                    f"_{index}" if param.name is None else param.name.text
+                    for index, param in enumerate(params)
+                ),
+                name="foreach.body",
+                cycle_params=True,
+            )
+        else:
+            body_code = _compile_function_node(
+                body,
+                "foreach.body",
+                break_as_signal=True,
+                return_as_signal=True,
+            )
         completion_count = max(1, _max_break_values(node.body))
         self.emit(
             OpCode.FOREACH,
             (body_code, 1 if node.index_variable else 0, completion_count),
         )
 
-    def match_node(self, node: MatchNode) -> None:
+    def match_node(self, node: MatchNode, typed_node: TypedNode | None) -> None:
         """Lower typed match cases, guards, bindings, and join targets."""
+        typed_bodies = (
+            typed_node.case_bodies
+            if isinstance(typed_node, TypedMatchNode)
+            else ()
+        )
+        body_by_case = {
+            id(case): typed_bodies[index]
+            for index, case in enumerate(node.cases)
+            if index < len(typed_bodies)
+        }
         arity = _match_arity(node)
         if arity:
             self.emit(OpCode.SOURCE_ARGS, arity)
@@ -792,14 +818,14 @@ class _Compiler:
             )
             self.emit(OpCode.MATCH_ERROR)
             self.patch_match(default_jump, len(self.instructions))
-            for branch_node in default_case.body:
+            for branch_node in body_by_case.get(id(default_case), default_case.body):
                 self.node(branch_node)
             self.emit(OpCode.CYCLE_END)
             end_jumps.append(self.emit(OpCode.JUMP, None))
 
         for jump, case in case_jumps:
             self.patch_match(jump, len(self.instructions))
-            for branch_node in case.body:
+            for branch_node in body_by_case.get(id(case), case.body):
                 self.node(branch_node)
             self.emit(OpCode.CYCLE_END)
             end_jumps.append(self.emit(OpCode.JUMP, None))

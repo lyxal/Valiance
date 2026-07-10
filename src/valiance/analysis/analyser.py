@@ -67,9 +67,11 @@ from valiance.asts import (
     TypedElementExtension,
     TypedElementNode,
     TypedExtensionPatternRule,
+    TypedForNode,
     TypedFunctionNode,
     TypedIfNode,
     TypedLiteralNode,
+    TypedMatchNode,
     TypedNode,
     TypedTagApplicationNode,
     TypedUnfoldNode,
@@ -2817,6 +2819,7 @@ class Analyser:
             return BranchSet()
 
         joined: AnalysisBranch | None = None
+        typed_case_bodies: list[tuple[ASTNode | TypedNode, ...]] = []
         subject_variables = _match_subject_variables(branch, arity)
         previous_patterns: list[tuple[MatchPatternNode, ...]] = []
         for case in node.cases:
@@ -2844,6 +2847,13 @@ class Analyser:
             if not self._match_guards_are_valid(subject_types, case.patterns, node):
                 return BranchSet()
             case_outputs = self.analyse_block(BranchSet((case_input,)), case.body)
+            typed_case_bodies.append(
+                _typed_block(
+                    case_outputs,
+                    len(case_input.typed_body),
+                    case.body,
+                )
+            )
             for output in case_outputs:
                 candidate = _match_case_output(output, body_input, node)
                 joined = _join_match_output(
@@ -2862,7 +2872,11 @@ class Analyser:
         return BranchSet(
             (
                 joined.emit(
-                    TypedNode(node, _returns_result_type(joined.stack.items))
+                    TypedMatchNode(
+                        node,
+                        _returns_result_type(joined.stack.items),
+                        case_bodies=tuple(typed_case_bodies),
+                    )
                 ),
             )
         )
@@ -4736,7 +4750,15 @@ def _for_node(
         body_outputs,
         loop_locals,
     )
-    typed_for = TypedNode(node, result_type)
+    typed_for = TypedForNode(
+        node,
+        result_type,
+        body=_typed_block(
+            body_outputs,
+            len(body_branch.typed_body),
+            node.body,
+        ),
+    )
     body_element_tags = frozenset(
         tag for output in body_outputs for tag in output.element_tags
     )
@@ -8401,6 +8423,21 @@ def _join_try_output(
         .with_element_tags(output.element_tags)
         .with_data_element_uses(output.data_element_uses)
     )
+
+
+def _typed_block(
+    outputs: BranchSet,
+    start: int,
+    source_nodes: tuple[ASTNode, ...],
+) -> tuple[ASTNode | TypedNode, ...]:
+    """Return a stable typed block, falling back when branch metadata diverges."""
+    suffixes = tuple(output.typed_body[start:] for output in outputs)
+    if not suffixes:
+        return source_nodes
+    first = suffixes[0]
+    if all(suffix == first for suffix in suffixes[1:]):
+        return first
+    return source_nodes
 
 
 def _match_case_output(

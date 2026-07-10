@@ -331,7 +331,15 @@ Examples:
 - `TypedAtNode` becomes a function value plus a resolved `call` carrying stop
   ranks and the analysed body-overload index; and
 - typed literal items are compiled instead of their raw equivalents so nested
-  constructor type arguments are not lost.
+  constructor type arguments are not lost; and
+- `TypedMatchNode` and `TypedForNode` retain analysed child bodies so resolved
+  calls inside cases and loop bodies remain `CALL_RESOLVED_ELEMENT` operations.
+
+Control-flow bodies can produce different analysis branches. The analyser keeps
+child metadata only when every surviving branch agrees on the typed suffix; it
+otherwise falls back to raw child nodes. This conservative fallback preserves
+correctness while preventing stable recursive and loop bodies from repeating
+runtime overload search on every execution.
 
 When a codegen bug appears, compare the typed node to the emitted instruction.
 The compiler should be a faithful projection of that data.
@@ -580,7 +588,10 @@ Most opcodes fall into a few families.
 - `STACK_SHUFFLE`
 - `SOURCE_ARGS`
 
-These move values while applying retain/release rules.
+These move values while applying retain/release rules. Plain immutable scalar
+values take a direct stack path because they cannot own runtime resources;
+containers, closures, objects, tagged payloads, and lazy values still use the
+full ownership helpers.
 
 ### Construction operations
 
@@ -789,6 +800,11 @@ does not observe destroyed captures.
 
 Stack operations are therefore not merely Python `append` and `pop`. A semantic
 copy may increase ownership; a consumed stack tail must release its values.
+The VM first checks whether a consumed tail contains any ownership-bearing value
+and skips the recursive release walk for scalar-only tails. Return-tag and
+collection-rank attachment similarly return immediately when the analysed
+metadata is empty. These are performance fast paths, not changes to ownership or
+type semantics.
 
 ### Object duplication, cleanup, and must-call rules
 
