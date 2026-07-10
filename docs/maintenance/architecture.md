@@ -12,9 +12,10 @@ A normal compile-and-run operation follows these stages:
 2. `parsing/parser.py` turns tokens into raw nodes from `asts/nodes.py`.
 3. `analysis/analyser.py` transforms branch sets and emits typed AST nodes.
 4. `runtime/compiler.py` lowers typed nodes into instructions and function code.
-5. `runtime/serialization.py` optionally writes or reads portable bytecode.
-6. `runtime/vm.py` executes instructions using values from `runtime_values.py`.
-7. `main.py` presents diagnostics, output, and command behaviour to the user.
+5. `runtime/optimizer.py` runs ordered, semantics-preserving bytecode passes.
+6. `runtime/serialization.py` optionally writes or reads portable bytecode.
+7. `runtime/vm.py` executes instructions using values from `runtime_values.py`.
+8. `main.py` presents diagnostics, output, and command behaviour to the user.
 
 The same core pipeline is reused by project commands and the REPL. The REPL
 keeps analysis state, globals, and stack values alive between entries, but it
@@ -86,8 +87,9 @@ the corresponding `_analyser_functions.py`, `_analyser_calls.py`,
 `_analyser_patterns.py`, and `_analyser_utils.py` modules.
 
 Non-fatal source-pattern advice is recorded both as rendered lint text and as
-structured rewrite metadata. Detection belongs in analysis; any future
-optimisation remains a separate typed-structure pass. See
+structured rewrite metadata. Detection belongs in analysis. The current
+optimiser is a separate bytecode pass pipeline; future typed rewrites may
+consume proven analyser facts without coupling diagnostics to compilation. See
 [lints-and-rewrites.md](lints-and-rewrites.md).
 
 ### Environment and context
@@ -141,6 +143,12 @@ slots, explicit argument order, vectorisation stops, qualified object-friendly
 dispatch, and tag validators.
 
 `src/valiance/runtime/bytecode.py` defines instruction and function records.
+`runtime/optimizer.py` owns the extensible post-codegen pass pipeline. Its
+default control-flow pass recursively optimises nested function payloads,
+removes unreachable instructions and redundant jumps, and retargets absolute
+control-flow addresses. Add independent passes through `OptimizationPipeline`
+rather than hiding rewrites in code generation or VM execution.
+
 `runtime/serialization.py` defines the portable representation. These files
 form a compatibility boundary: changing a record without updating serialization
 can make in-memory tests pass while saved bytecode fails.

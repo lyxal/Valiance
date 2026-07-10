@@ -21,7 +21,7 @@ def execute(source: str):
     typed = analyser.analyse(program)
     if analyser.diagnostics:
         raise AssertionError(analyser.diagnostics)
-    return run(compile_program(typed))
+    return run(compile_program(typed, optimize=False))
 
 
 def materialize(value):

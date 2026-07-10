@@ -38,7 +38,7 @@ def execute(source: str, source_file: Path | None = None):
     typed = analyser.analyse(program)
     if analyser.diagnostics:
         raise AssertionError(analyser.diagnostics)
-    return run(compile_program(typed))
+    return run(compile_program(typed, optimize=False))
 
 
 def _materialize_lists(value):
@@ -138,7 +138,7 @@ end
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
 
-        self.assertEqual(vm.run(compile_program(typed)), [])
+        self.assertEqual(vm.run(compile_program(typed, optimize=False)), [])
         tape = vm.globals["tape"]
         self.assertIsInstance(tape, ListValue)
         self.assertEqual(tape.runtime_rank, 1)
@@ -161,7 +161,7 @@ end
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
 
-        self.assertEqual(vm.run(compile_program(typed)), [])
+        self.assertEqual(vm.run(compile_program(typed, optimize=False)), [])
         point = vm.globals["point"]
         self.assertIsInstance(point, DictValue)
         self.assertIs(point._ownership_trivial, True)
@@ -180,7 +180,7 @@ $record.x = 9
         analyser = Analyser()
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
-        program = loads(dumps(compile_program(typed)))
+        program = loads(dumps(compile_program(typed, optimize=False)))
         borrowed = [
             instruction
             for instruction in program.main.instructions
@@ -278,7 +278,7 @@ define #checked(:Number) -> #boolean Number => true end
         typed = analyser.analyse(program)
         if analyser.diagnostics:
             raise AssertionError(analyser.diagnostics)
-        bytecode = loads(dumps(compile_program(typed)))
+        bytecode = loads(dumps(compile_program(typed, optimize=False)))
         self.assertEqual(run(bytecode), [Decimal("1")])
 
     def test_declared_return_tag_selects_tagged_overload(self):
@@ -303,7 +303,7 @@ min $sortedNs
         analyser = Analyser()
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
-        bytecode = loads(dumps(compile_program(typed)))
+        bytecode = loads(dumps(compile_program(typed, optimize=False)))
 
         with contextlib.redirect_stdout(output):
             stack = run(bytecode)
@@ -459,7 +459,7 @@ define add(a: Integer, b: Integer) -> Integer => $a $b + end
         analyser = Analyser()
         typed = analyser.analyse(program)
         self.assertEqual(analyser.diagnostics, [])
-        bytecode = loads(dumps(compile_program(typed)))
+        bytecode = loads(dumps(compile_program(typed, optimize=False)))
 
         self.assertEqual(
             run(bytecode),
@@ -846,7 +846,7 @@ $lst map: classify | println
         analyser = Analyser()
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
-        program = loads(dumps(compile_program(typed)))
+        program = loads(dumps(compile_program(typed, optimize=False)))
         with contextlib.redirect_stdout(output):
             stack = run(program)
 
@@ -955,7 +955,7 @@ define describe(x: String) -> String => "string"
         analyser = Analyser()
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
-        program = loads(dumps(compile_program(typed)))
+        program = loads(dumps(compile_program(typed, optimize=False)))
         with contextlib.redirect_stdout(output):
             stack = run(program)
 
@@ -1101,7 +1101,7 @@ $f = fn => correspond: (double, +) end
         typed = analyser.analyse(parse("1 2 3 correspond: (double, +)"))
         self.assertEqual(analyser.diagnostics, [])
 
-        program = compile_program(typed)
+        program = compile_program(typed, optimize=False)
         references = tuple(
             instruction.arg
             for instruction in program.main.instructions
@@ -1136,7 +1136,7 @@ define keep_name(name: String, n: Number) -> String => $name
         typed = analyser.analyse(parse("1 2 +"))
         self.assertEqual(analyser.diagnostics, [])
 
-        program = compile_program(typed)
+        program = compile_program(typed, optimize=False)
         ops = tuple(instruction.op for instruction in program.main.instructions)
 
         self.assertIn(OpCode.CALL_RESOLVED_ELEMENT, ops)
@@ -1148,7 +1148,7 @@ define keep_name(name: String, n: Number) -> String => $name
         typed = analyser.analyse(parse('if true => 1 else => "x" end as! String'))
         self.assertEqual(analyser.diagnostics, [])
 
-        program = compile_program(typed)
+        program = compile_program(typed, optimize=False)
         ops = tuple(instruction.op for instruction in program.main.instructions)
 
         self.assertIn(OpCode.CHECK_CAST, ops)
@@ -1161,7 +1161,7 @@ define keep_name(name: String, n: Number) -> String => $name
         typed = analyser.analyse(parse('ValueError("x") as! Err'))
         self.assertEqual(analyser.diagnostics, [])
 
-        program = compile_program(typed)
+        program = compile_program(typed, optimize=False)
         ops = tuple(instruction.op for instruction in program.main.instructions)
 
         self.assertNotIn(OpCode.CHECK_CAST, ops)
@@ -1286,7 +1286,7 @@ define add_one(n: Number) -> Number => $n 1 +
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
 
-        program = compile_program(typed)
+        program = compile_program(typed, optimize=False)
         ops = tuple(instruction.op for instruction in program.main.instructions)
 
         self.assertIn(OpCode.CALL_RESOLVED_ELEMENT, ops)
@@ -1312,7 +1312,7 @@ $total
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
 
-        program = compile_program(typed)
+        program = compile_program(typed, optimize=False)
         function_code = program.main.instructions[0].arg
         self.assertIsInstance(function_code, FunctionCode)
         function_ops = tuple(
@@ -1353,7 +1353,7 @@ end
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
 
-        program = compile_program(typed)
+        program = compile_program(typed, optimize=False)
         ops = tuple(instruction.op for instruction in program.main.instructions)
 
         self.assertGreaterEqual(ops.count(OpCode.CALL_RESOLVED_ELEMENT), 6)
@@ -1365,7 +1365,10 @@ end
         )
         while_instruction = next(
             instruction
-            for instruction in compile_program(parameterised).main.instructions
+            for instruction in compile_program(
+                parameterised,
+                optimize=False,
+            ).main.instructions
             if instruction.op is OpCode.WHILE
         )
         condition_code, body_code, _arity = while_instruction.arg
@@ -1383,7 +1386,7 @@ define same(x, y) => $x $y +
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
 
-        program = compile_program(typed)
+        program = compile_program(typed, optimize=False)
         maker = program.main.instructions[0]
         self.assertEqual(maker.op, OpCode.MAKE_FUNCTION)
         self.assertIsInstance(maker.arg, FunctionSetCode)
@@ -1432,7 +1435,7 @@ collide
         analyser = Analyser()
         typed = analyser.analyse(program)
         self.assertEqual(analyser.diagnostics, [])
-        bytecode = loads(dumps(compile_program(typed)))
+        bytecode = loads(dumps(compile_program(typed, optimize=False)))
         self.assertEqual(run(bytecode), ["a/s", "s/a"])
 
     def test_multimethod_dispatches_hutton_razor_extension(self):
@@ -1638,7 +1641,7 @@ end
 """
             analyser = Analyser(source_file=main)
             typed = analyser.analyse(parse(source))
-            program = compile_program(typed)
+            program = compile_program(typed, optimize=False)
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
@@ -1908,7 +1911,7 @@ import { std.text }
 
     def test_compiler_requires_typed_nodes(self):
         with self.assertRaises(CompileError):
-            compile_program(parse("1"))
+            compile_program(parse("1"), optimize=False)
 
     def test_executes_variables_and_named_definitions(self):
         self.assertEqual(
@@ -2028,7 +2031,7 @@ $c()
         if analyser.diagnostics:
             raise AssertionError(analyser.diagnostics)
 
-        stack = run(compile_program(typed), output=output.write)
+        stack = run(compile_program(typed, optimize=False), output=output.write)
 
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "6\n6\n")
@@ -2473,7 +2476,7 @@ end
 1
 Box
 """
-        program = compile_program(Analyser().analyse(parse(source)))
+        program = compile_program(Analyser().analyse(parse(source)), optimize=False)
         stack = run(loads(dumps(program)))
 
         self.assertEqual(len(stack), 1)
@@ -2493,14 +2496,14 @@ Person("Ada")
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
 
-        [person] = run(loads(dumps(compile_program(typed))))
+        [person] = run(loads(dumps(compile_program(typed, optimize=False))))
 
         self.assertIsInstance(person, ObjectValue)
         self.assertEqual(person.fields, {"name": "Ada", "age": Decimal("0")})
 
     def test_function_element_tags_survive_bytecode_round_trip(self):
         source = "eager define log(value: Number) -> => $value println"
-        program = compile_program(Analyser().analyse(parse(source)))
+        program = compile_program(Analyser().analyse(parse(source)), optimize=False)
         restored = loads(dumps(program))
         maker = restored.main.instructions[0]
 
@@ -2837,7 +2840,7 @@ at (list+, item) => append
         analyser = Analyser()
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
-        bytecode = loads(dumps(compile_program(typed)))
+        bytecode = loads(dumps(compile_program(typed, optimize=False)))
 
         self.assertEqual(
             run(bytecode),
@@ -3116,7 +3119,7 @@ println(triple([1, 2, 3, 4, 5]))
         self.assertEqual(analyser.diagnostics, [])
 
         with contextlib.redirect_stdout(output):
-            stack = run(compile_program(typed))
+            stack = run(compile_program(typed, optimize=False))
 
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "15\n[3, 6, 9, 12, 15]\n")

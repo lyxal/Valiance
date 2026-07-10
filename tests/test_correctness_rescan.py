@@ -40,7 +40,7 @@ def execute_both(source: str):
     analyser, typed = analyse(source)
     if analyser.diagnostics:
         raise AssertionError(analyser.diagnostics)
-    program = compile_program(typed)
+    program = compile_program(typed, optimize=False)
     direct = run(program)
     restored = run(loads(dumps(program)))
     if direct != restored:
@@ -340,7 +340,7 @@ class RuntimeRepresentationAgreementTests(unittest.TestCase):
     def test_empty_flat_list_does_not_pass_an_exact_matrix_check(self):
         analyser, typed = analyse(EMPTY_MATRIX_GUARD)
         self.assertEqual(analyser.diagnostics, [])
-        program = compile_program(typed)
+        program = compile_program(typed, optimize=False)
 
         for candidate in (program, loads(dumps(program))):
             with self.subTest(round_tripped=candidate is not program):
@@ -410,7 +410,7 @@ end
         analyser, typed = analyse(source)
         self.assertEqual(analyser.diagnostics, [])
         with self.assertRaisesRegex(ValianceRuntimeError, "checked cast failed"):
-            run(compile_program(typed))
+            run(compile_program(typed, optimize=False))
 
     def test_non_reified_function_checked_cast_is_rejected_during_analysis(self):
         source = """

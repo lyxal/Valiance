@@ -108,6 +108,10 @@ vln compile --file samples/strings.vlnc
 vln compile --code '"hello" println' --output C:\tmp\hello.vbc
 ```
 
+Bytecode optimisation is enabled by default for both `compile` and `run`. Use
+`--no-optimize` on either command when inspecting or comparing the direct
+code-generator output.
+
 Run Valiance tests declared under a project's `tests/` directory:
 
 ```powershell

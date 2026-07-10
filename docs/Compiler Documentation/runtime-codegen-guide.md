@@ -16,12 +16,14 @@ The runtime path is:
 1. Source text is parsed into AST nodes.
 2. Static analysis turns those nodes into `TypedNode` values.
 3. `compile_program()` lowers only typed AST nodes into bytecode.
-4. `VirtualMachine` executes the bytecode.
-5. The CLI can optionally write or read portable binary bytecode files.
+4. The default `OptimizationPipeline` rewrites the bytecode unless disabled.
+5. `VirtualMachine` executes the bytecode.
+6. The CLI can optionally write or read portable binary bytecode files.
 
 The important boundary is step 3: analysis returns typed ASTs, and codegen
 expects typed ASTs. Do not make codegen accept raw ASTs as a convenience. If a
-test needs compilation, run the analyser first.
+test needs compilation, run the analyser first. Optimisation works on the
+resulting bytecode plan and must not recover semantic decisions from source.
 
 ## Runtime Module Map
 
@@ -49,7 +51,9 @@ The runtime implementation is small, but several files must evolve together.
 `src/valiance/runtime/compiler.py`
 
 - Lowers typed AST nodes to `Instruction` values.
-- `compile_program(nodes: list[TypedNode]) -> Program` rejects raw AST nodes.
+- `compile_program(nodes, *, optimize=True, optimization_pipeline=None)` rejects
+  raw AST nodes, optimises emitted bytecode by default, and accepts a custom
+  pipeline for one compilation.
 - Function literals and definitions become `MAKE_FUNCTION`.
 - Definitions compile as `MAKE_FUNCTION` followed by `STORE_VAR`.
 - `ImportNode` itself emits no runtime instruction. Analysis prepends each
@@ -99,6 +103,17 @@ resolved reference carries one stop rank per source argument and a zero-depth
 callable argument. Runtime vectorisation zips arguments while their ranks are
 above those stops, then invokes the selected body overload directly so a
 collection-valued stopped parameter is not automatically vectorised again.
+
+`src/valiance/runtime/optimizer.py`
+
+- Defines the whole-program `OptimizationPass` protocol and ordered
+  `OptimizationPipeline`.
+- Provides `FunctionOptimizationPass` for recursive function-local rewrites of
+  nested `FunctionCode`, overload sets, constructors, structured loop payloads,
+  and vector-extension callbacks.
+- Provides the default `ControlFlowOptimizationPass`, which removes unreachable
+  instructions and next-instruction jumps while retargeting absolute addresses.
+- Exposes `optimize_program(...)` for custom pipelines and differential tests.
 
 `src/valiance/runtime/vm.py`
 
@@ -236,11 +251,12 @@ JSON without adding documentation payloads to bytecode.
 
 Keep these rules intact unless the language design explicitly changes.
 
-`compile_program` takes typed AST nodes only.
+`compile_program` takes typed AST nodes only and optimises by default.
 
 The analyser is responsible for producing `TypedNode` values. The compiler may
 unwrap typed nodes internally to inspect the underlying AST, but the public
-compile boundary should keep rejecting raw ASTs.
+compile boundary should keep rejecting raw ASTs. Pass `optimize=False` only when
+the direct unoptimised instruction stream is intentionally required.
 
 Built-ins have one source of truth.
 

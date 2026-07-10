@@ -76,10 +76,10 @@ _ACTIONS = (
 
 HELP = """usage: valiance
        valiance <file> [-o <file>]
-       valiance compile [<entry>] [-o <file>]
+       valiance compile [<entry>] [-o <file>] [--no-optimize]
        valiance compile --file <file> [-o <file>]
        valiance compile -c <code> [-o <file>]
-       valiance run [<entry>]
+       valiance run [<entry>] [--no-optimize]
        valiance run --file <file>
        valiance run -c <code>
        valiance exec [<entry>]
@@ -117,6 +117,7 @@ options:
   -c, --code <code>   use inline Valiance code
   --file <file>        use an explicit source or bytecode file
   -o, --output <file> write compiled bytecode to this file
+  --no-optimize       disable bytecode optimisation for this compilation
   --implicit-output   print the final stack if execution prints nothing
                       (default for run --code)
   --preview-lists     preview lazy lists instead of forcing full output
@@ -221,6 +222,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         project_entry=project_entry,
         implicit_output=parsed.implicit_output,
         preview_lists=parsed.preview_lists,
+        optimize=not parsed.no_optimize,
     )
 
 
@@ -251,6 +253,12 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
     parser.add_argument("--emit-bytecode", dest="legacy_output")
     parser.add_argument("--implicit-output", action="store_true")
     parser.add_argument("--preview-lists", action="store_true")
+    parser.add_argument(
+        "--no-optimize",
+        "--no-optimise",
+        dest="no_optimize",
+        action="store_true",
+    )
     parser.add_argument("file", nargs="?")
     parser.add_argument("extra", nargs="*")
     parser.add_argument("-h", "--help", action="store_true")
@@ -282,7 +290,12 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
     parsed.bytecode_file = None
 
     if parsed.action == "exec":
-        if parsed.code is not None or parsed.output is not None or parsed.run:
+        if (
+            parsed.code is not None
+            or parsed.output is not None
+            or parsed.run
+            or parsed.no_optimize
+        ):
             print(
                 "error: exec cannot be combined with source input, --run, "
                 "or bytecode output",
@@ -308,6 +321,7 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
             or parsed.run
             or parsed.implicit_output
             or parsed.preview_lists
+            or parsed.no_optimize
         ):
             print(
                 "error: package commands cannot be combined with source options",
@@ -324,6 +338,12 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
         return None
     if parsed.preview_lists and parsed.action not in {"run", "exec"}:
         print("error: --preview-lists is only valid for run actions", file=sys.stderr)
+        return None
+    if parsed.no_optimize and parsed.action not in {"compile", "run"}:
+        print(
+            "error: --no-optimize is only valid for compile or run actions",
+            file=sys.stderr,
+        )
         return None
     if parsed.extra:
         print("error: too many positional arguments", file=sys.stderr)
@@ -1118,6 +1138,7 @@ def _run_source(
     project_entry: str | None = None,
     implicit_output: bool = False,
     preview_lists: bool = False,
+    optimize: bool = True,
 ) -> int:
     """Run source for CLI and REPL orchestration."""
     try:
@@ -1163,7 +1184,7 @@ def _run_source(
                 )
             return 1
 
-        bytecode = compile_program(typed)
+        bytecode = compile_program(typed, optimize=optimize)
         if action == "run":
             _run_bytecode(
                 bytecode,

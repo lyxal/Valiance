@@ -13,6 +13,7 @@ source text
   -> parser and raw AST
   -> analyser and typed AST
   -> bytecode compiler
+  -> bytecode optimiser
   -> serializer or in-memory program
   -> virtual machine
   -> runtime values and output
@@ -38,9 +39,9 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   work such as adding syntax, an element, a runtime value, or a CLI command.
 - [Testing and debugging](testing-and-debugging.md) explains the test layers,
   useful inspection commands, and a practical fault-isolation workflow.
-- [Lints and future rewrite passes](lints-and-rewrites.md) documents the
-  structured lint API, the safety bar for new rules, and the boundary for a
-  possible optimiser.
+- [Lints and optimisation passes](lints-and-rewrites.md) documents the
+  structured lint API, the bytecode optimisation pipeline, and the safety
+  boundary for future typed rewrites.
 - [Docstring policy](docstrings.md) explains what production docstrings should
   contain and how coverage is enforced.
 - [Reference documentation](reference-documentation.md) explains the metadata,
@@ -63,6 +64,7 @@ A stage should make the decisions for which it has enough information:
 - The analyser resolves names, access, overloads, vectorisation, types, and
   diagnostics.
 - The compiler turns typed nodes into explicit bytecode instructions.
+- The optimiser performs semantics-preserving bytecode rewrites.
 - The VM performs runtime-only work such as executing instructions, inspecting
   concrete values for authorised dynamic dispatch, and raising runtime faults.
 

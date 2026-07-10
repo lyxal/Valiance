@@ -55,12 +55,16 @@ You do not need to read it all at once.
 
 ## The sixty-second model
 
-A normal run has four runtime-facing stages:
+A normal run has five runtime-facing stages:
 
 ```text
 typed AST
    |
-   | compile_program(...)
+   | code generation
+   v
+unoptimised Program(FunctionCode(...))
+   |
+   | default OptimizationPipeline (optional)
    v
 Program(FunctionCode(...))
    |
@@ -150,6 +154,21 @@ jump targets.
 This file should translate decisions, not invent new semantic ones. When
 compiler code needs to ask a type question that analysis should already have
 answered, first check whether a typed-node field is missing.
+
+### `runtime/optimizer.py`: extensible bytecode rewrites
+
+`compile_program(...)` runs `DEFAULT_OPTIMIZATION_PIPELINE` after lowering unless
+`optimize=False` is supplied. `OptimizationPipeline` applies ordered whole-program passes.
+`FunctionOptimizationPass` supplies recursive traversal for function-local passes
+across every nested code payload. The default
+control-flow pass removes unreachable instructions and jumps to the next
+instruction, then retargets all absolute branch and panic-handler addresses.
+
+Keep optimisation separate from lowering and execution. A pass may simplify an
+already explicit bytecode plan, but it must not redo overload selection, type
+inference, argument sourcing, or other analyser work. Add a new pass by
+implementing `OptimizationPass` and placing it in a pipeline; do not grow one
+monolithic optimiser switch.
 
 ### `runtime/vm.py`: bytecode execution
 
@@ -281,7 +300,9 @@ group; the runtime must not rediscover that split from an overloaded callable.
 ## How code generation lowers typed nodes
 
 `compile_program(nodes)` first verifies that every node is typed. It then calls
-`_Compiler.compile_function(...)` for the top-level body.
+`_Compiler.compile_function(...)` for the top-level body and, by default, runs
+the resulting `Program` through `DEFAULT_OPTIMIZATION_PIPELINE`. Pass
+`optimize=False` when the exact direct code-generator output is required.
 
 The compiler is mostly a large pattern match in `_Compiler.node(...)`:
 
@@ -1079,6 +1100,8 @@ metadata was lost.
 | You need to... | Use or inspect... | Do not... |
 |---|---|---|
 | compile source meaning | analyse first, then `compile_program(typed)` | pass raw AST to codegen |
+| inspect direct codegen | `compile_program(typed, optimize=False)` | infer raw output from optimized offsets |
+| add an optimisation | a small `OptimizationPass` in an `OptimizationPipeline` | hide rewrites in compiler emission or the VM |
 | add a simple lowering | `_Compiler.node`, `emit` | interpret AST in the VM |
 | add forward control flow | `emit` plus `patch`/`patch_match` | store source nodes in bytecode |
 | call a statically selected element | `CALL_RESOLVED_ELEMENT` and `ResolvedElementReference` | rerun overload resolution |
@@ -1289,16 +1312,18 @@ A productive first pass is:
 1. `runtime/bytecode.py` — learn the records and opcodes.
 2. `runtime/compiler.py`: `compile_program`, `_Compiler.compile_function`, and
    `_Compiler.node`.
-3. `runtime/compiler.py`: `_resolved_element_reference` and function compilation
+3. `runtime/optimizer.py`: `OptimizationPipeline` and the default control-flow
+   pass.
+4. `runtime/compiler.py`: `_resolved_element_reference` and function compilation
    helpers.
-4. `runtime/vm.py`: `VirtualMachine.run`, `call`, and `execute`.
-5. `_Frame.source_args`, `_call_resolved_element`, and `_call_function`.
-6. vectorisation helpers around `_call_vectorized_resolved_builtin` and
+5. `runtime/vm.py`: `VirtualMachine.run`, `call`, and `execute`.
+6. `_Frame.source_args`, `_call_resolved_element`, and `_call_function`.
+7. vectorisation helpers around `_call_vectorized_resolved_builtin` and
    `_vectorize_*`.
-7. ownership helpers `_retain_value`, `_release_value`, and object cleanup.
-8. `runtime/serialization.py` writer and reader in parallel.
-9. focused cases in `tests/test_runtime.py` and
-   `tests/test_bytecode_serialization.py`.
+8. ownership helpers `_retain_value`, `_release_value`, and object cleanup.
+9. `runtime/serialization.py` writer and reader in parallel.
+10. focused cases in `tests/test_optimizer.py`, `tests/test_runtime.py`, and
+    `tests/test_bytecode_serialization.py`.
 
 Trace one small program before reading all four thousand lines of `vm.py`. Start
 at the opcode you care about and follow only its helper chain.

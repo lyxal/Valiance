@@ -13,6 +13,8 @@ The repository uses `unittest`. Important suites include:
 - `tests/test_analyser.py`: stack effects, name resolution, overloads, types,
   control flow, objects, traits, variants, tags, and diagnostics.
 - `tests/test_runtime.py`: compiled execution and user-visible behaviour.
+- `tests/test_optimizer.py`: pass traversal, control-flow retargeting, default
+  optimisation, and compile-time opt-out behaviour.
 - `tests/test_bytecode_serialization.py`: portable bytecode round trips.
 - `tests/test_types.py`: type relationships and overload solving.
 - `tests/test_programs.py`: fundamental Valiance behaviour. Do not casually
@@ -100,20 +102,25 @@ Check:
 
 If analysis is already wrong, do not compensate in code-generation or the VM.
 
-### 3. Compile
+### 3. Compile and optimise
 
-Compile the typed nodes and inspect instructions. Confirm that the selected
-static information is represented explicitly. Common losses include overload
-indexes, call argument order, dispatch flags, ranks, tags, and constructor
-metadata.
+Compile the typed nodes and inspect instructions. Use
+`compile_program(typed, optimize=False)` to inspect direct codegen, then compare
+it with the default optimised program. Confirm that selected static information
+is represented explicitly and survives optimisation. Common losses include
+overload indexes, call argument order, dispatch flags, ranks, tags, constructor
+metadata, and incorrectly retargeted control flow.
 
 ### 4. Serialize
 
-For any bytecode-relevant issue, compare direct and round-tripped execution:
+For any bytecode-relevant issue, compare unoptimised, optimised, and
+round-tripped execution:
 
 ```python
-program = compile_program(typed)
-assert run(program) == run(loads(dumps(program)))
+unoptimized = compile_program(typed, optimize=False)
+optimized = compile_program(typed)
+assert run(unoptimized) == run(optimized)
+assert run(optimized) == run(loads(dumps(optimized)))
 ```
 
 A difference isolates the problem to serialization or record compatibility.
@@ -215,6 +222,10 @@ Run, in order:
 3. `tests/test_programs.py`;
 4. serialization tests for bytecode work; and
 5. the full suite.
+
+Existing bytecode-shape and language regression tests compile with
+`optimize=False` so their historical instruction expectations remain stable. New
+optimiser tests must exercise the default path explicitly.
 
 Also run the docstring coverage test after introducing helpers. A feature is not
 finished if maintainers cannot tell why its new functions exist.

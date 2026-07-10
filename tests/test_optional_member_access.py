@@ -50,7 +50,7 @@ def execute(source: str, *, serialize: bool = False):
     analyser, typed = analyse(source)
     if analyser.diagnostics:
         raise AssertionError(analyser.diagnostics)
-    program = compile_program(typed)
+    program = compile_program(typed, optimize=False)
     if serialize:
         program = loads(dumps(program))
     return run(program)

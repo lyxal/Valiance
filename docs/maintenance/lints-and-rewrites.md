@@ -1,13 +1,14 @@
-# Lints and future rewrite passes
+# Lints and optimisation passes
 
 Valiance lints are non-fatal, actionable diagnostics for source patterns that are
 valid but unnecessarily indirect, redundant, or unreachable. They are produced
 by the analyser because that is the first stage with both the parsed structure
 and the type/overload facts needed to make safe recommendations.
 
-The compiler does **not** currently rewrite programs. The lint representation is
-structured so a later optimiser can reuse the same proven facts without parsing
-human-facing messages or changing today's compilation pipeline.
+The analyser does not rewrite programs while reporting lints. Optimisation is a
+separate post-codegen stage in `runtime/optimizer.py`, so enabling it does not
+change diagnostics or analysis decisions. The structured lint representation can
+still support future typed rewrites without parsing human-facing messages.
 
 ## Public analyser results
 
@@ -140,22 +141,58 @@ Run the focused analyser tests, the full suite, and the smart-diagnostics fuzz
 target. If the message spans lines, add a CLI rendering test so source arrows and
 carets remain correct.
 
-## Keeping the optimiser option open
+## The bytecode optimisation pipeline
 
-A future optimiser should be a distinct pass over analysed/typed structures,
-not hidden inside lint emission. A safe progression is:
+`compile_program(typed)` lowers the analysed program and then runs
+`DEFAULT_OPTIMIZATION_PIPELINE`. Pass `optimization_pipeline=...` to select a
+custom pipeline for that compilation, or `optimize=False` to inspect or preserve
+the direct code-generator output. The CLI exposes the opt-out through
+`--no-optimize` on `compile` and `run`.
 
-1. keep detecting patterns in the analyser;
+The public extension points are exported from `valiance.runtime`:
+
+```python
+from valiance.runtime import OptimizationPipeline, optimize_program
+
+pipeline = OptimizationPipeline((MyFunctionPass(), AnotherPass()))
+optimized = optimize_program(program, pipeline=pipeline)
+```
+
+An optimisation pass implements the `OptimizationPass` protocol: it has a stable
+`name` and an `optimize(program: Program) -> Program` method. This keeps the
+pipeline open to whole-program work such as inlining or global dead-code
+elimination. Most passes should subclass `FunctionOptimizationPass` and implement
+`optimize_function(...)`; the base class recursively traverses nested function
+code, overload sets, object initializers, loop and unfold payloads, and
+vector-extension callbacks.
+
+The default `ControlFlowOptimizationPass` conservatively:
+
+- removes instructions unreachable through ordinary branches or panic-handler
+  entries;
+- removes unconditional jumps to the immediately following instruction; and
+- rewrites `JUMP`, conditional/match jumps, and `TRY_BEGIN` handler targets after
+  instruction removal.
+
+A pass must preserve stack effects, selected overloads, element/data tags,
+panics, ownership, source-visible evaluation order, and serialization. It must
+not parse lint messages or rediscover facts that belong to analysis. Add focused
+bytecode tests, differential runtime tests for optimized and unoptimized output,
+and a serialization round trip for every new pass.
+
+## Future typed rewrites
+
+Some optimisations will need facts that are easier to express before bytecode,
+such as a proven identity cast or a structured unreachable-source suffix. Those
+should remain a distinct typed pass rather than being hidden inside lint
+emission. A safe progression is:
+
+1. detect the pattern during analysis;
 2. record stable `LintFinding` and `LintRewrite` facts;
-3. add typed-node rewrite plans where source AST identity is insufficient;
-4. implement an opt-in pass that consumes only supported, semantics-preserving
-   rewrite kinds; and
-5. validate original and optimised bytecode with differential tests.
+3. add an executable typed rewrite plan that does not depend on rendered text;
+4. lower the rewritten typed structure through the normal compiler; and
+5. validate original and optimised programs with differential tests.
 
-The optimiser must preserve stack effects, element/data tags, panics, ownership,
-source mappings, and selected overloads. It should never parse `message` or
-`replacement`, and enabling optimisation must not change which diagnostics are
-reported.
-
-Until that pass exists, rewrite metadata is descriptive only. The normal
-compiler continues to lower the original typed AST exactly as before.
+Enabling optimisation must never change which diagnostics are reported. The
+current bytecode optimiser intentionally does not consume lint messages or
+`replacement` display text.

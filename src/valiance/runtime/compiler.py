@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 from valiance.analysis.builtins import BUILTIN_ELEMENTS, runtime_elements
 from valiance.asts import (
@@ -121,6 +121,9 @@ from valiance.types import (
     normalize,
     show,
 )
+
+if TYPE_CHECKING:
+    from valiance.runtime.optimizer import OptimizationPipeline
 
 
 class CompileError(Exception):
@@ -1136,13 +1139,32 @@ class _Compiler:
         raise CompileError(f"cannot compile {feature}{location}")
 
 
-def compile_program(nodes: list[TypedNode]) -> Program:
-    """Compile analysed typed AST nodes to bytecode."""
+def compile_program(
+    nodes: list[TypedNode],
+    *,
+    optimize: bool = True,
+    optimization_pipeline: OptimizationPipeline | None = None,
+) -> Program:
+    """Compile analysed typed AST nodes, optimising bytecode by default."""
     if not all(isinstance(node, TypedNode) for node in nodes):
         raise CompileError("compile_program expects analysed TypedNode values")
     compiler = _Compiler()
     compiler.prepare_runtime_type_facts(tuple(nodes))
-    return Program(compiler.compile_function(tuple(nodes), name="<main>"))
+    program = Program(compiler.compile_function(tuple(nodes), name="<main>"))
+    if not optimize:
+        return program
+
+    from valiance.runtime.optimizer import (
+        DEFAULT_OPTIMIZATION_PIPELINE,
+        optimize_program,
+    )
+
+    pipeline = (
+        DEFAULT_OPTIMIZATION_PIPELINE
+        if optimization_pipeline is None
+        else optimization_pipeline
+    )
+    return optimize_program(program, pipeline=pipeline)
 
 
 def _compile_object_initializer(name: str, definition: DefineNode) -> FunctionCode:

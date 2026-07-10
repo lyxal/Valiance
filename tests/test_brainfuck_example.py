@@ -93,7 +93,7 @@ def compile_interpreter():
     typed = analyser.analyse(parse(BRAINFUCK_INTERPRETER))
     if analyser.diagnostics:
         raise AssertionError(analyser.diagnostics)
-    return loads(dumps(compile_program(typed)))
+    return loads(dumps(compile_program(typed, optimize=False)))
 
 
 class BrainfuckExampleTests(unittest.TestCase):

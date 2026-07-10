@@ -33,6 +33,8 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Implement argument cycling for explicitly declared function parameters.
 - [ ] Implement argument cycling for loop inputs where specified.
 - [x] Compile typed AST nodes to bytecode.
+- [x] Run an extensible bytecode optimisation pipeline by default.
+- [x] Allow optimisation to be disabled for a compilation.
 - [x] Execute bytecode with a stack-based virtual machine.
 
 ## 3. Numbers and truthiness

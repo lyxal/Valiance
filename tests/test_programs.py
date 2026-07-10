@@ -26,7 +26,7 @@ def execute(source: str, source_file: Path | None = None):
     typed = analyser.analyse(program)
     if analyser.diagnostics:
         raise AssertionError(analyser.diagnostics)
-    return run(compile_program(typed))
+    return run(compile_program(typed, optimize=False))
 
 
 FIZZBUZZ_TO_100 = [
