@@ -2,6 +2,7 @@ import unittest
 
 from valiance.symbols import Symbol
 from valiance.types import (
+    AtLeastList,
     C,
     Context,
     DataTag,
@@ -49,6 +50,7 @@ from valiance.types import (
     compatible,
     merge_stacks,
     merge_types,
+    normalize,
     optional,
     resolve_overload_result,
     subtype,
@@ -127,6 +129,20 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertTrue(assignable(Real, Number))
         self.assertFalse(assignable(Real, Integer))
         self.assertFalse(assignable(Number, Real))
+
+    def test_nested_collection_normalization_is_idempotent(self):
+        nested = ExactList(
+            ExactList(
+                AtLeastList(ExactList(String, 2), 4),
+                2,
+            ),
+            1,
+        )
+
+        once = normalize(nested)
+
+        self.assertEqual(normalize(once), once)
+        self.assertEqual(once, AtLeastList(String, 9))
 
     def test_collection_item_types_are_covariant(self):
         ctx = Context(trait_impls={CAR: {VEHICLE}})

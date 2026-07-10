@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from valiance.runtime.bytecode import (
@@ -105,7 +105,7 @@ def loads(data: bytes) -> Program:
         program = Program(reader.function())
         reader.expect_eof()
         return program
-    except (UnicodeDecodeError, struct.error) as exc:
+    except (InvalidOperation, UnicodeDecodeError, struct.error) as exc:
         raise BytecodeFormatError("invalid Valiance bytecode payload") from exc
 
 

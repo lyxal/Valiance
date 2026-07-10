@@ -1,7 +1,7 @@
 import unittest
 from decimal import Decimal
 
-from valiance.runtime import dumps, loads
+from valiance.runtime import BytecodeFormatError, dumps, loads
 from valiance.runtime.bytecode import (
     ExtensionRuleReference,
     FunctionCode,
@@ -15,6 +15,48 @@ from valiance.runtime.bytecode import (
 
 
 class BytecodeSerializationTests(unittest.TestCase):
+    def test_invalid_decimal_payload_raises_bytecode_format_error(self):
+        program = Program(
+            FunctionCode(
+                (Instruction(OpCode.PUSH_CONST, Decimal("42")),),
+                name="<main>",
+            )
+        )
+        data = dumps(program)
+        corrupted = data.replace(b"42", b"x2", 1)
+
+        with self.assertRaises(BytecodeFormatError):
+            loads(corrupted)
+
+    def test_every_truncation_is_reported_as_a_format_error(self):
+        nested = FunctionCode(
+            (
+                Instruction(OpCode.PUSH_CONST, Decimal("123.45")),
+                Instruction(
+                    OpCode.MAKE_FUNCTION,
+                    FunctionCode(
+                        (Instruction(OpCode.LOAD_VAR, "value"),),
+                        params=("value",),
+                        name="identity",
+                    ),
+                ),
+                Instruction(OpCode.RETURN),
+            ),
+            name="<main>",
+        )
+        data = dumps(Program(nested))
+
+        for end in range(len(data)):
+            with self.subTest(end=end):
+                with self.assertRaises(BytecodeFormatError):
+                    loads(data[:end])
+
+    def test_trailing_bytes_are_rejected(self):
+        data = dumps(Program(FunctionCode((Instruction(OpCode.RETURN),))))
+
+        with self.assertRaises(BytecodeFormatError):
+            loads(data + b"\x00")
+
     def test_serializes_byte_oriented_format_without_op_names(self):
         program = Program(
             FunctionCode(

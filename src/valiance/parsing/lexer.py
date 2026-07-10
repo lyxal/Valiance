@@ -92,7 +92,14 @@ class _Lexer:
             if char in " \t\r":
                 self._emit(TokenKind.WHITESPACE, self._advance())
             elif char == "\n":
-                self._emit(TokenKind.NEWLINE, self._advance())
+                line, col, offset = self.line, self.column, self.index
+                self._emit(
+                    TokenKind.NEWLINE,
+                    self._advance(),
+                    line=line,
+                    col=col,
+                    offset=offset,
+                )
             elif char == "#":
                 self._comment_or_tag()
             elif char == '"':
@@ -281,8 +288,8 @@ class _Lexer:
             self._exponent()
         if self._peek() == "i":
             self._advance()
-            if self._peek() in "+-" or self._peek().isdigit():
-                if self._peek() in "+-":
+            if self._peek() in {"+", "-"} or self._peek().isdigit():
+                if self._peek() in {"+", "-"}:
                     self._advance()
                 self._number_part()
                 if self._peek() in {"e", "E"}:
@@ -303,7 +310,7 @@ class _Lexer:
     def _exponent(self) -> None:
         """Scan exponent while tokenizing Valiance source."""
         self._advance()
-        if self._peek() in "+-":
+        if self._peek() in {"+", "-"}:
             self._advance()
         if not self._peek().isdigit():
             self._fail("expected exponent digits")

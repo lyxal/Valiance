@@ -45,6 +45,18 @@ uv run python -m unittest \
   tests.test_runtime.RuntimeTests.test_descriptive_name -v
 ```
 
+Deterministic fuzz targets exercise parser, analyser, runtime, serialization,
+and type-system invariants without external dependencies:
+
+```powershell
+$env:PYTHONPATH = "src;."
+python -m tools.fuzz --target all
+python -m tools.fuzz --target malformed-bytecode --iterations 10000 --seed 42
+```
+
+Each failure prints a one-case reproduction command. See
+[fuzzing.md](../fuzzing.md) for target descriptions and campaign guidance.
+
 When working in an environment whose available interpreter is older but still
 parses the checkout, direct `python -m unittest ...` can be useful for local
 feedback. Release and CI validation should still use the version declared in

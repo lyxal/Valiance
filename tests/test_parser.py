@@ -99,6 +99,11 @@ class LexerTests(unittest.TestCase):
 
         self.assertEqual(tokens[0].value, "positive?")
 
+    def test_lexes_imaginary_number_at_end_of_input(self):
+        tokens = lex("3i")
+
+        self.assertEqual(tokens[0].value, "3i")
+
     def test_lexes_data_tags_as_one_token(self):
         tokens = lex("#sorted #!infinite #infinite++")
 
@@ -111,8 +116,28 @@ class LexerTests(unittest.TestCase):
         with self.assertRaises(LexError):
             lex('"missing')
 
+    def test_newline_token_uses_the_consumed_character_location(self):
+        newline = next(token for token in lex("first\nsecond") if token.value == "\n")
+
+        self.assertEqual((newline.line, newline.column, newline.offset), (1, 6, 5))
+
 
 class ParserTests(unittest.TestCase):
+    def test_incomplete_ellipsis_reports_parse_error_instead_of_index_error(self):
+        with self.assertRaises(ParseError):
+            parse("\\positive?.")
+
+    def test_malformed_multiline_body_does_not_loop_without_progress(self):
+        source = (
+            'ge(1, 100) foreach (n) =>\n'
+            '  $output = ""  if ($n % 3 == 0) => $output := + "Fizz"\n'
+            ' ) =>\n'
+            '  $ou if ($n % 5 == 0) => $output := + '
+        )
+
+        with self.assertRaises(ParseError):
+            parse(source)
+
     def test_parses_vectorisation_extend_forms(self):
         default_nodes = parse("[1, 2, 3] [4, 5] + extend(0)")
         default_extension = default_nodes[-1].extension

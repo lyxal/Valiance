@@ -1145,7 +1145,11 @@ class Parser:
         while not self._check(TokenKind.EOF):
             if self._check_ident("end") or self._at_match_case_start():
                 break
-            nodes.extend(self._statement())
+            before = self.index
+            statement = self._statement()
+            if not statement and self.index == before:
+                self._error("expected statement")
+            nodes.extend(statement)
             self._skip_separators()
         return tuple(nodes)
 
@@ -1170,7 +1174,11 @@ class Parser:
         while not self._check(TokenKind.EOF):
             if self._check_ident(*stop_words):
                 break
-            nodes.extend(self._statement())
+            before = self.index
+            statement = self._statement()
+            if not statement and self.index == before:
+                self._error("expected statement")
+            nodes.extend(statement)
             self._skip_separators()
         self._consume_optional_end()
         return tuple(nodes)
@@ -2668,8 +2676,8 @@ class Parser:
                 and self.tokens[pos].kind is TokenKind.WHITESPACE
             ):
                 pos += 1
-            if remaining == 0:
-                return self.tokens[pos]
+            if remaining == 0 or pos >= len(self.tokens) - 1:
+                return self.tokens[min(pos, len(self.tokens) - 1)]
             pos += 1
             remaining -= 1
 

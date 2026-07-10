@@ -294,7 +294,7 @@ def normalize(t: Type) -> Type:
             # rank mode that preserves the meaning: Number*3.
             collapsed = collapse_nested_collection(type(t), base, t.rank)
             if collapsed is not None:
-                return collapsed
+                return normalize(collapsed)
         return type(t)(base, t.rank)
 
     if isinstance(t, RowType):
