@@ -4343,5 +4343,310 @@ end
         self.assertEqual(analyser.lints, [])
 
 
+    def test_guarded_variant_member_does_not_make_match_exhaustive(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+variant Maybe =>
+  Some => $value: Number end
+  None => end
+end
+Some(2)
+match =>
+  as :Some if 0 1 == => "impossible"
+  as :None => "none"
+end
+"""
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["7:1: non-exhaustive match for Maybe; missing cases: Maybe.Some"],
+        )
+
+    def test_restrictive_variant_destructure_does_not_make_match_exhaustive(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+variant Maybe =>
+  Some => $value: Number end
+  None => end
+end
+Some(2)
+match =>
+  as :Some(1) => "one"
+  as :None => "none"
+end
+"""
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["7:1: non-exhaustive match for Maybe; missing cases: Maybe.Some"],
+        )
+
+    def test_type_pattern_destructuring_arity_is_checked(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+variant Maybe =>
+  Some => $value: Number end
+  None => end
+end
+Some(2)
+match =>
+  as :Some(_, _) => "two"
+  as :None => "none"
+end
+"""
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "8:3: pattern for Maybe.Some destructures 2 fields, but the type "
+                "declares 1"
+            ],
+        )
+
+    def test_binding_wildcard_is_an_exhaustive_match_pattern(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(parse("1\nmatch =>\n  $x = _ => $x\nend"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Integer)
+
+    def test_or_pattern_with_wildcard_is_exhaustive_and_hides_later_cases(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                '1\nmatch =>\n  1 || _ => "first"\n'
+                '  2 => "second"\nend'
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            tuple(finding.code for finding in analyser.lint_findings),
+            ("unreachable-match-case",),
+        )
+
+    def test_or_pattern_requires_the_same_bindings_in_every_alternative(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                "1\nmatch =>\n  1 || $x = _ => $x\n"
+                "  _ => 0\nend"
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "3:3: every alternative in an or-pattern must bind the same "
+                "names; missing from some alternatives: x"
+            ],
+        )
+
+    def test_or_pattern_binding_types_are_merged_across_alternatives(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                '"s"\nmatch =>\n'
+                '  as x: Number if 1 1 == || as x: String => $x + 1\n'
+                '  _ => 0\nend'
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("overload", analyser.diagnostics[0])
+        self.assertIn("Number | String", analyser.diagnostics[0])
+
+    def test_match_binding_shadows_an_outer_variable(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                '$x = 1\n"abc"\nmatch =>\n'
+                '  as x: String => $x length\n'
+                '  _ => 0\nend'
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Integer)
+
+
+    def test_guarded_type_pattern_does_not_narrow_the_default_branch(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                '$x = (if 1 1 == => 1 else => "s" end)\n'
+                '$x\nmatch =>\n'
+                '  as :Number if 0 1 == => 0\n'
+                '  _ => $x length\nend'
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("no overloads for element 'length'", analyser.diagnostics[0])
+        self.assertIn("Integer | String", analyser.diagnostics[0])
+
+    def test_literal_pattern_does_not_narrow_the_default_branch_by_type(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                '$x = (if 1 1 == => 2 else => "s" end)\n'
+                '$x\nmatch =>\n'
+                '  1 => 0\n'
+                '  _ => $x length\nend'
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("no overloads for element 'length'", analyser.diagnostics[0])
+        self.assertIn("Integer | String", analyser.diagnostics[0])
+
+
+    def test_catchall_or_pattern_does_not_narrow_to_only_its_typed_arm(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                '$x = (if 0 1 == => 1 else => "s" end)\n'
+                '$x\nmatch =>\n'
+                '  1 || _ => $x + 1\nend'
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("overload", analyser.diagnostics[0])
+        self.assertIn("Integer | String", analyser.diagnostics[0])
+
+    def test_list_pattern_does_not_narrow_unconstrained_items(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                '$x = [1, "s"]\n$x\nmatch =>\n'
+                '  [1, _] => $x sum\n'
+                '  _ => 0\nend'
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("no overloads for element 'sum'", analyser.diagnostics[0])
+        self.assertIn("String", analyser.diagnostics[0])
+
+
+    def test_correlated_match_case_does_not_narrow_each_subject_independently(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                '$x = (if 1 1 == => 1 else => "x" end)\n'
+                '$y = (if 0 1 == => 1 else => "y" end)\n'
+                '$x $y\nmatch =>\n'
+                '  as :Number, as :Number => 0\n'
+                '  _, _ => $x length\nend'
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("no overloads for element 'length'", analyser.diagnostics[0])
+        self.assertIn("Integer | String", analyser.diagnostics[0])
+
+    def test_wildcard_coordinate_allows_independent_subject_narrowing(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                '$x = (if 0 1 == => 1 else => "x" end)\n'
+                '$y = (if 1 1 == => 1 else => "y" end)\n'
+                '$x $y\nmatch =>\n'
+                '  _, as :Number => 0\n'
+                '  _, _ => $x length\nend'
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Integer)
+
+
+    def test_repeated_case_binding_is_not_an_exhaustive_catchall(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                '1 2\nmatch =>\n'
+                '  $x = _, $x = _ => "same"\nend'
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["2:1: match without default requires one enum or variant value"],
+        )
+
+    def test_repeated_destructure_binding_does_not_cover_a_variant_member(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                '''variant Pairish =>
+  Pair =>
+    $left: Number
+    $right: Number
+  end
+end
+Pair(1, 2)
+match =>
+  as :Pair(x, x) => "same"
+end
+'''
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "8:1: non-exhaustive match for Pairish; missing cases: "
+                "Pairish.Pair"
+            ],
+        )
+
+    def test_repeated_binding_does_not_hide_a_fallback_case(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                '1 2\nmatch =>\n'
+                '  $x = _, $x = _ => "same"\n'
+                '  _, _ => "different"\nend'
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertNotIn(
+            "unreachable-match-case",
+            tuple(finding.code for finding in analyser.lint_findings),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

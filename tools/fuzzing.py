@@ -1922,6 +1922,170 @@ def _fuzz_smart_diagnostics(
         raise _GeneratedCaseFailure(case, exc) from exc
 
 
+_VARIANT_MATCH_PREFIX = """variant Maybe =>
+  Some => $value: Number end
+  None => end
+end
+"""
+
+
+def _fuzz_match_safety(
+    rng: random.Random,
+    _iteration: int,
+    _config: FuzzConfig,
+) -> object:
+    """Check that accepted match programs cannot fail from static pattern mistakes."""
+    mode = rng.randrange(19)
+    if mode == 0:
+        source = "1\nmatch =>\n  $x = _ => $x\nend"
+        expected = [Decimal("1")]
+        case = ("binding-catchall",)
+    elif mode == 1:
+        source = '1\nmatch =>\n  1 || _ => "first"\nend'
+        expected = ["first"]
+        case = ("or-catchall",)
+    elif mode == 2:
+        source = (
+            _VARIANT_MATCH_PREFIX
+            + 'Some(2)\nmatch =>\n  as :Some if 0 1 == => "never"\n'
+            '  as :None => "none"\nend'
+        )
+        expected = None
+        case = ("guarded-coverage",)
+    elif mode == 3:
+        source = (
+            _VARIANT_MATCH_PREFIX
+            + 'Some(2)\nmatch =>\n  as :Some(1) => "one"\n'
+            '  as :None => "none"\nend'
+        )
+        expected = None
+        case = ("restrictive-destructure",)
+    elif mode == 4:
+        source = (
+            _VARIANT_MATCH_PREFIX
+            + 'Some(2)\nmatch =>\n  as :Some(_, _) => "two"\n'
+            '  as :None => "none"\nend'
+        )
+        expected = None
+        case = ("destructure-arity",)
+    elif mode == 5:
+        source = "1\nmatch =>\n  1 || $x = _ => $x\n  _ => 0\nend"
+        expected = None
+        case = ("partial-or-binding",)
+    elif mode == 6:
+        source = (
+            '$x = 1\n"abc"\nmatch =>\n'
+            '  as x: String => $x length\n  _ => 0\nend'
+        )
+        expected = [3]
+        case = ("binding-shadow",)
+    elif mode == 7:
+        source = (
+            '"s"\nmatch =>\n'
+            '  as x: Number if 1 1 == || as x: String => $x + 1\n'
+            '  _ => 0\nend'
+        )
+        expected = None
+        case = ("or-binding-types",)
+    elif mode == 8:
+        source = (
+            '$x = (if 1 1 == => 1 else => "s" end)\n'
+            '$x\nmatch =>\n  as :Number if 0 1 == => 0\n'
+            '  _ => $x length\nend'
+        )
+        expected = None
+        case = ("guarded-default-narrowing",)
+    elif mode == 9:
+        source = (
+            '$x = (if 1 1 == => 2 else => "s" end)\n'
+            '$x\nmatch =>\n  1 => 0\n  _ => $x length\nend'
+        )
+        expected = None
+        case = ("literal-default-narrowing",)
+    elif mode == 10:
+        source = (
+            '$x = (if 0 1 == => 1 else => "s" end)\n'
+            '$x\nmatch =>\n  as :Number => 0\n'
+            '  _ => $x length\nend'
+        )
+        expected = [1]
+        case = ("irrefutable-default-narrowing",)
+    elif mode == 11:
+        source = (
+            '$x = (if 0 1 == => 1 else => "s" end)\n'
+            '$x\nmatch =>\n  1 || _ => $x + 1\nend'
+        )
+        expected = None
+        case = ("or-catchall-narrowing",)
+    elif mode == 12:
+        source = (
+            '$x = [1, "s"]\n$x\nmatch =>\n'
+            '  [1, _] => $x sum\n  _ => 0\nend'
+        )
+        expected = None
+        case = ("list-pattern-narrowing",)
+    elif mode == 13:
+        source = (
+            '$x = (if 1 1 == => 1 else => "x" end)\n'
+            '$y = (if 0 1 == => 1 else => "y" end)\n'
+            '$x $y\nmatch =>\n'
+            '  as :Number, as :Number => 0\n'
+            '  _, _ => $x length\nend'
+        )
+        expected = None
+        case = ("correlated-subject-narrowing",)
+    elif mode == 14:
+        source = (
+            '$x = (if 0 1 == => 1 else => "x" end)\n'
+            '$y = (if 1 1 == => 1 else => "y" end)\n'
+            '$x $y\nmatch =>\n'
+            '  _, as :Number => 0\n'
+            '  _, _ => $x length\nend'
+        )
+        expected = [1]
+        case = ("independent-subject-narrowing",)
+    elif mode == 15:
+        source = '1\nmatch =>\n  _ => "first"\n  1 => "second"\nend'
+        expected = ["first"]
+        case = ("wildcard-source-order",)
+    elif mode == 16:
+        source = (
+            '1\nmatch =>\n  as x if > 0 => "positive"\n'
+            '  1 => "one"\n  _ => "other"\nend'
+        )
+        expected = ["positive"]
+        case = ("guarded-source-order",)
+    elif mode == 17:
+        source = '1 2\nmatch =>\n  $x = _, $x = _ => "same"\nend'
+        expected = None
+        case = ("repeated-binding-not-exhaustive",)
+    else:
+        source = (
+            '1 2\nmatch =>\n  $x = _, $x = _ => "same"\n'
+            '  _, _ => "different"\nend'
+        )
+        expected = ["different"]
+        case = ("repeated-binding-fallback",)
+
+    try:
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        if expected is None:
+            if not analyser.diagnostics:
+                raise AssertionError(
+                    "unsafe match program was accepted without a diagnostic"
+                )
+            return case
+        if analyser.diagnostics:
+            raise AssertionError(analyser.diagnostics)
+        actual = run(compile_program(typed))
+        if actual != expected:
+            raise AssertionError((expected, actual))
+        return case
+    except BaseException as exc:
+        raise _GeneratedCaseFailure((case, source), exc) from exc
+
+
 TARGETS: dict[str, Target] = {
     "lexer-parser": _fuzz_lexer_parser,
     "source-mutations": _fuzz_source_mutations,
@@ -1937,6 +2101,7 @@ TARGETS: dict[str, Target] = {
     "structural-types": _fuzz_structural_types,
     "analyser-never": _fuzz_analyser_never_recovery,
     "smart-diagnostics": _fuzz_smart_diagnostics,
+    "match-safety": _fuzz_match_safety,
 }
 
 

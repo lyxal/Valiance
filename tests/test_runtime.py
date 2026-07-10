@@ -3306,5 +3306,100 @@ println(triple([1, 2, 3, 4, 5]))
         self.assertIn("<main> ip 2: call", message)
 
 
+    def test_match_binding_shadows_outer_variable_at_runtime(self):
+        self.assertEqual(
+            execute(
+                '$x = 1\n"abc"\nmatch =>\n'
+                '  as x: String => $x length\n'
+                '  _ => 0\nend'
+            ),
+            [3],
+        )
+
+    def test_irrefutable_variant_destructure_is_exhaustive(self):
+        self.assertEqual(
+            execute(
+                """
+variant Maybe =>
+  Some => $value: Number end
+  None => end
+end
+Some(2)
+match =>
+  as :Some(_) => "some"
+  as :None => "none"
+end
+"""
+            ),
+            ["some"],
+        )
+
+
+    def test_irrefutable_type_pattern_narrows_a_later_default_branch(self):
+        self.assertEqual(
+            execute(
+                '$x = (if 0 1 == => 1 else => "s" end)\n'
+                '$x\nmatch =>\n'
+                '  as :Number => 0\n'
+                '  _ => $x length\nend'
+            ),
+            [1],
+        )
+
+
+    def test_wildcard_coordinate_preserves_safe_multi_subject_narrowing(self):
+        self.assertEqual(
+            execute(
+                '$x = (if 0 1 == => 1 else => "x" end)\n'
+                '$y = (if 1 1 == => 1 else => "y" end)\n'
+                '$x $y\nmatch =>\n'
+                '  _, as :Number => 0\n'
+                '  _, _ => $x length\nend'
+            ),
+            [1],
+        )
+
+
+    def test_match_preserves_source_order_before_a_wildcard_case(self):
+        self.assertEqual(
+            execute(
+                '1\nmatch =>\n'
+                '  _ => "first"\n'
+                '  1 => "second"\nend'
+            ),
+            ["first"],
+        )
+
+    def test_guarded_untyped_pattern_is_not_reordered_or_dropped(self):
+        self.assertEqual(
+            execute(
+                '1\nmatch =>\n'
+                '  as x if > 0 => "positive"\n'
+                '  1 => "one"\n'
+                '  _ => "other"\nend'
+            ),
+            ["positive"],
+        )
+
+
+    def test_repeated_match_binding_requires_equal_values(self):
+        self.assertEqual(
+            execute(
+                '1 2\nmatch =>\n'
+                '  $x = _, $x = _ => "same"\n'
+                '  _, _ => "different"\nend'
+            ),
+            ["different"],
+        )
+        self.assertEqual(
+            execute(
+                '1 1\nmatch =>\n'
+                '  $x = _, $x = _ => "same"\n'
+                '  _, _ => "different"\nend'
+            ),
+            ["same"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

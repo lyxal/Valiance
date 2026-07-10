@@ -3084,6 +3084,8 @@ class Analyser:
             return BranchSet()
         stack_subjects, body_input = sourced
         subject_types = tuple(reversed(stack_subjects))
+        if not self._match_patterns_are_valid(subject_types, node):
+            return BranchSet()
         if not self._match_is_exhaustive(subject_types, node):
             return BranchSet()
         self._lint_match_patterns(node)
@@ -3097,6 +3099,7 @@ class Analyser:
                 body_input.variables,
                 case.patterns,
                 subject_types,
+                self.env,
             )
             if subject_variables:
                 case_variables = _refine_match_subject_variables(
@@ -3105,7 +3108,7 @@ class Analyser:
                     case.patterns,
                     subject_types,
                     tuple(previous_patterns),
-                    self.env.context,
+                    self.env,
                 )
             case_input = body_input.with_variables(case_variables)
             case_input = replace(
@@ -3259,6 +3262,42 @@ class Analyser:
                 return False
         return True
 
+    def _match_patterns_are_valid(
+        self,
+        subject_types: tuple[T.Type, ...],
+        node: MatchNode,
+    ) -> bool:
+        """Validate pattern structure that must agree with every runtime path."""
+        for case in node.cases:
+            for pattern, subject_type in zip(
+                case.patterns,
+                subject_types,
+                strict=True,
+            ):
+                mismatch = _or_pattern_binding_mismatch(pattern)
+                if mismatch:
+                    names = ", ".join(str(name) for name in mismatch)
+                    self._diagnose(
+                        "every alternative in an or-pattern must bind the same "
+                        f"names; missing from some alternatives: {names}",
+                        pattern,
+                    )
+                    return False
+                invalid = _invalid_destructure_arity(
+                    pattern,
+                    subject_type,
+                    self.env,
+                )
+                if invalid is not None:
+                    invalid_pattern, name, actual, expected = invalid
+                    self._diagnose(
+                        f"pattern for {name} destructures {actual} fields, but "
+                        f"the type declares {expected}",
+                        invalid_pattern,
+                    )
+                    return False
+        return True
+
     def _match_is_exhaustive(
         self,
         subject_types: tuple[T.Type, ...],
@@ -3286,10 +3325,15 @@ class Analyser:
             self._diagnose("match without default requires enum or variant value", node)
             return False
         covered = {
-            resolved
+            member
             for case in node.cases
-            for pattern_type in _match_case_pattern_types(case.patterns)
-            if (resolved := _resolve_closed_member(expected, pattern_type)) is not None
+            for pattern in case.patterns
+            for member in _covered_closed_members(
+                pattern,
+                subject_type,
+                expected,
+                self.env,
+            )
         }
         missing = tuple(member for member in expected if member not in covered)
         if missing:
@@ -8934,12 +8978,185 @@ def _resolve_closed_member(
     return None
 
 
-def _match_case_pattern_types(
-    patterns: tuple[MatchPatternNode, ...],
-) -> Iterator[T.Type]:
-    """Determine the types used for match case pattern during static analysis."""
-    for pattern in patterns:
-        yield from _match_pattern_types(pattern)
+def _lookup_object_by_suffix(
+    env: T.Environment,
+    name: Symbol,
+) -> T.ObjectDefinition | None:
+    """Resolve an object by its visible qualified or unique short name."""
+    direct = env.lookup_object(name)
+    if direct is not None:
+        return direct
+    current: T.Environment | None = env
+    while current is not None:
+        matches = tuple(
+            definition
+            for candidate, definition in current.objects.items()
+            if candidate.text.rsplit(".", 1)[-1] == name.text
+        )
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            return None
+        current = current.parent
+    return None
+
+
+def _pattern_object_definition(
+    pattern_type: T.Type | None,
+    subject_type: T.Type,
+    env: T.Environment,
+) -> T.ObjectDefinition | None:
+    """Resolve the concrete object destructured by a type pattern."""
+    pattern_name = None if pattern_type is None else _nominal_name(pattern_type)
+    subject_name = _nominal_name(subject_type)
+    if pattern_name is not None and subject_name is not None:
+        members = _closed_match_members(env, subject_name)
+        if members is not None:
+            resolved = _resolve_closed_member(members, pattern_type)
+            if resolved is not None:
+                definition = env.lookup_object(resolved)
+                if definition is not None:
+                    return definition
+    if pattern_name is not None:
+        definition = _lookup_object_by_suffix(env, pattern_name)
+        if definition is not None:
+            return definition
+    if subject_name is not None:
+        return _lookup_object_by_suffix(env, subject_name)
+    return None
+
+
+def _invalid_destructure_arity(
+    pattern: MatchPatternNode,
+    subject_type: T.Type,
+    env: T.Environment,
+) -> tuple[TypePatternNode, Symbol, int, int] | None:
+    """Return the first object pattern whose field count cannot match."""
+    if isinstance(pattern, BindingPatternNode):
+        return _invalid_destructure_arity(pattern.pattern, subject_type, env)
+    if isinstance(pattern, OrPatternNode):
+        for option in pattern.options:
+            invalid = _invalid_destructure_arity(option, subject_type, env)
+            if invalid is not None:
+                return invalid
+        return None
+    if isinstance(pattern, ListPatternNode):
+        item_type = T.collection_item_type(subject_type) or T.V("_matched_item")
+        for item in pattern.items:
+            nested_type = (
+                T.ExactList(item_type)
+                if _is_rest_match_pattern(item)
+                else item_type
+            )
+            invalid = _invalid_destructure_arity(item, nested_type, env)
+            if invalid is not None:
+                return invalid
+        return None
+    if not isinstance(pattern, TypePatternNode):
+        return None
+
+    definition = _pattern_object_definition(pattern.typ, subject_type, env)
+    if pattern.fields and definition is not None:
+        actual = len(pattern.fields)
+        expected = len(definition.attributes)
+        if actual != expected:
+            return pattern, definition.name, actual, expected
+    field_types = _destructure_field_types(pattern, subject_type, env)
+    for index, field in enumerate(pattern.fields):
+        field_type = (
+            field_types[index]
+            if index < len(field_types)
+            else T.V(f"_matched_field_{index}")
+        )
+        invalid = _invalid_destructure_arity(field, field_type, env)
+        if invalid is not None:
+            return invalid
+    return None
+
+
+def _covered_closed_members(
+    pattern: MatchPatternNode,
+    subject_type: T.Type,
+    expected: tuple[Symbol, ...],
+    env: T.Environment,
+) -> tuple[Symbol, ...]:
+    """Return closed members that this pattern accepts on every value path."""
+    if _has_repeated_match_bindings((pattern,)):
+        return ()
+    if isinstance(pattern, BindingPatternNode):
+        return _covered_closed_members(
+            pattern.pattern,
+            subject_type,
+            expected,
+            env,
+        )
+    if isinstance(pattern, OrPatternNode):
+        covered: set[Symbol] = set()
+        for option in pattern.options:
+            covered.update(
+                _covered_closed_members(option, subject_type, expected, env)
+            )
+        return tuple(sorted(covered, key=str))
+    if not isinstance(pattern, TypePatternNode) or pattern.typ is None:
+        return ()
+    member = _resolve_closed_member(expected, pattern.typ)
+    if member is None or pattern.guard:
+        return ()
+    if not pattern.fields:
+        return (member,)
+    definition = env.lookup_object(member)
+    if definition is None or len(pattern.fields) != len(definition.attributes):
+        return ()
+    if all(
+        _pattern_is_irrefutable(field, attribute.typ, env)
+        for field, attribute in zip(
+            pattern.fields,
+            definition.attributes,
+            strict=True,
+        )
+    ):
+        return (member,)
+    return ()
+
+
+def _pattern_is_irrefutable(
+    pattern: MatchPatternNode,
+    subject_type: T.Type,
+    env: T.Environment,
+) -> bool:
+    """Return whether a pattern succeeds for every value of ``subject_type``."""
+    if _has_repeated_match_bindings((pattern,)):
+        return False
+    if isinstance(pattern, (WildcardPatternNode, RestPatternNode)):
+        return True
+    if isinstance(pattern, BindingPatternNode):
+        return _pattern_is_irrefutable(pattern.pattern, subject_type, env)
+    if isinstance(pattern, OrPatternNode):
+        return any(
+            _pattern_is_irrefutable(option, subject_type, env)
+            for option in pattern.options
+        )
+    if not isinstance(pattern, TypePatternNode) or pattern.guard:
+        return False
+    if pattern.typ is not None and not T.assignable(
+        subject_type,
+        pattern.typ,
+        env.context,
+    ):
+        return False
+    if not pattern.fields:
+        return True
+    definition = _pattern_object_definition(pattern.typ, subject_type, env)
+    if definition is None or len(pattern.fields) != len(definition.attributes):
+        return False
+    return all(
+        _pattern_is_irrefutable(field, attribute.typ, env)
+        for field, attribute in zip(
+            pattern.fields,
+            definition.attributes,
+            strict=True,
+        )
+    )
 
 
 def _try_handler_output(
@@ -9053,15 +9270,6 @@ def _join_match_output(
     )
 
 
-def _match_pattern_types(pattern: MatchPatternNode) -> Iterator[T.Type]:
-    """Determine the types used for match pattern during static analysis."""
-    if isinstance(pattern, TypePatternNode) and pattern.typ is not None:
-        yield pattern.typ
-    if isinstance(pattern, OrPatternNode):
-        for option in pattern.options:
-            yield from _match_pattern_types(option)
-
-
 def _match_arity(node: MatchNode) -> int | None:
     """Determine the required arity for match during static analysis."""
     arity: int | None = None
@@ -9162,15 +9370,25 @@ def _literal_match_case_key(
 
 
 def _is_default_match_case(patterns: tuple[MatchPatternNode, ...]) -> bool:
-    """Return whether the value is default match case."""
-    return bool(patterns) and all(
-        _is_default_match_pattern(pattern) for pattern in patterns
+    """Return whether a case accepts every combination of subject values."""
+    return (
+        bool(patterns)
+        and not _has_repeated_match_bindings(patterns)
+        and all(_is_default_match_pattern(pattern) for pattern in patterns)
     )
 
 
 def _is_default_match_pattern(pattern: MatchPatternNode) -> bool:
     """Return whether a pattern unconditionally accepts every subject value."""
-    return isinstance(pattern, (WildcardPatternNode, RestPatternNode)) or (
+    if _has_repeated_match_bindings((pattern,)):
+        return False
+    if isinstance(pattern, (WildcardPatternNode, RestPatternNode)):
+        return True
+    if isinstance(pattern, BindingPatternNode):
+        return _is_default_match_pattern(pattern.pattern)
+    if isinstance(pattern, OrPatternNode):
+        return any(_is_default_match_pattern(option) for option in pattern.options)
+    return (
         isinstance(pattern, TypePatternNode)
         and pattern.typ is None
         and not pattern.fields
@@ -9181,14 +9399,16 @@ def _is_default_match_pattern(pattern: MatchPatternNode) -> bool:
 def _match_case_variables(
     variables: BranchVariables,
     patterns: tuple[MatchPatternNode, ...],
-    subject_types: tuple[T.Type, ...] = (),
+    subject_types: tuple[T.Type, ...],
+    env: T.Environment,
 ) -> BranchVariables:
     """Determine variable facts for match case during static analysis."""
     result = variables
     if subject_types:
-        result = _add_match_binding(result, Symbol("top"), subject_types[0])
-    for pattern in patterns:
-        result = _add_match_pattern_variables(result, pattern)
+        result = result.with_block_local(Symbol("top"), subject_types[0])
+    for pattern, subject_type in zip(patterns, subject_types, strict=True):
+        for name, typ in _pattern_binding_types(pattern, subject_type, env).items():
+            result = result.with_block_local(name, typ)
     return result
 
 
@@ -9215,7 +9435,7 @@ def _refine_match_subject_variables(
     patterns: tuple[MatchPatternNode, ...],
     subject_types: tuple[T.Type, ...],
     previous_patterns: tuple[tuple[MatchPatternNode, ...], ...],
-    ctx: T.Context,
+    env: T.Environment,
 ) -> BranchVariables:
     """Refine match subject variables during static analysis."""
     result = variables
@@ -9225,17 +9445,47 @@ def _refine_match_subject_variables(
         narrowed = _match_case_subject_type(
             patterns[index],
             subject_types[index],
-            tuple(
-                previous[index]
-                for previous in previous_patterns
-                if index < len(previous)
+            _independently_excluding_patterns(
+                index,
+                previous_patterns,
+                subject_types,
+                env,
             ),
-            ctx,
+            env,
         )
         if narrowed is None:
             continue
         result = _narrow_variable(result, name, narrowed)
     return result
+
+
+def _independently_excluding_patterns(
+    subject_index: int,
+    previous_cases: tuple[tuple[MatchPatternNode, ...], ...],
+    subject_types: tuple[T.Type, ...],
+    env: T.Environment,
+) -> tuple[MatchPatternNode, ...]:
+    """Return prior patterns that independently exclude one subject branch.
+
+    A multi-subject case is conjunctive. Failure of ``(Number, Number)`` does
+    not imply that either subject is non-numeric; only a case whose other
+    coordinates are irrefutable can safely narrow the selected coordinate.
+    """
+    result: list[MatchPatternNode] = []
+    for case in previous_cases:
+        if (
+            subject_index >= len(case)
+            or len(case) != len(subject_types)
+            or _has_repeated_match_bindings(case)
+        ):
+            continue
+        if all(
+            index == subject_index
+            or _pattern_is_irrefutable(pattern, subject_types[index], env)
+            for index, pattern in enumerate(case)
+        ):
+            result.append(case[subject_index])
+    return tuple(result)
 
 
 def _narrow_variable(
@@ -9287,22 +9537,71 @@ def _match_case_subject_type(
     pattern: MatchPatternNode,
     subject_type: T.Type,
     previous_patterns: tuple[MatchPatternNode, ...],
-    ctx: T.Context,
+    env: T.Environment,
 ) -> T.Type | None:
     """Determine the type of match case subject during static analysis."""
-    pattern_type = _pattern_subject_type(pattern)
-    if pattern_type is not None:
-        return pattern_type
     if not _is_default_match_pattern(pattern):
-        return None
+        return _successful_pattern_subject_type(pattern, subject_type, env)
     excluded = tuple(
         typ
         for previous in previous_patterns
-        if (typ := _pattern_subject_type(previous)) is not None
+        for typ in _fully_excluded_pattern_types(previous, env)
     )
     if not excluded:
         return subject_type
-    return _subtract_match_types(subject_type, excluded, ctx)
+    return _subtract_match_types(subject_type, excluded, env.context)
+
+
+def _successful_pattern_subject_type(
+    pattern: MatchPatternNode,
+    subject_type: T.Type,
+    env: T.Environment,
+) -> T.Type:
+    """Return a safe subject refinement shared by every successful path."""
+    if isinstance(pattern, BindingPatternNode):
+        return _successful_pattern_subject_type(pattern.pattern, subject_type, env)
+    if isinstance(pattern, TypePatternNode):
+        return pattern.typ or subject_type
+    if isinstance(pattern, LiteralPatternNode):
+        if isinstance(pattern.value, NumberLiteralNode):
+            return T.Number
+        if isinstance(pattern.value, StringLiteralNode):
+            return T.String
+        return subject_type
+    if isinstance(pattern, OrPatternNode) and pattern.options:
+        refinements = tuple(
+            _successful_pattern_subject_type(option, subject_type, env)
+            for option in pattern.options
+        )
+        result = refinements[0]
+        for refinement in refinements[1:]:
+            result = T.merge_types(result, refinement)
+        return result
+    # Guards, expression patterns, and structural list patterns can constrain
+    # values without proving a narrower type for the entire subject.
+    return subject_type
+
+
+def _fully_excluded_pattern_types(
+    pattern: MatchPatternNode,
+    env: T.Environment,
+) -> tuple[T.Type, ...]:
+    """Return type branches completely consumed by an earlier match pattern."""
+    if isinstance(pattern, BindingPatternNode):
+        return _fully_excluded_pattern_types(pattern.pattern, env)
+    if isinstance(pattern, OrPatternNode):
+        return tuple(
+            typ
+            for option in pattern.options
+            for typ in _fully_excluded_pattern_types(option, env)
+        )
+    if (
+        isinstance(pattern, TypePatternNode)
+        and pattern.typ is not None
+        and _pattern_is_irrefutable(pattern, pattern.typ, env)
+    ):
+        return (pattern.typ,)
+    return ()
 
 
 def _subtract_match_types(
@@ -9324,64 +9623,204 @@ def _subtract_match_types(
     return T.U(*remaining)
 
 
-def _add_match_pattern_variables(
-    variables: BranchVariables,
+def _pattern_binding_types(
     pattern: MatchPatternNode,
-) -> BranchVariables:
-    """Add match pattern variables during static analysis."""
+    subject_type: T.Type,
+    env: T.Environment,
+) -> dict[Symbol, T.Type]:
+    """Return bindings guaranteed to exist when this pattern succeeds."""
+    result: dict[Symbol, T.Type] = {}
+
+    def add(name: Symbol, typ: T.Type) -> None:
+        """Merge one guaranteed binding into the pattern-local type map."""
+        existing = result.get(name)
+        result[name] = typ if existing is None else T.merge_types(existing, typ)
+
     if isinstance(pattern, BindingPatternNode):
-        return _add_match_binding(
-            _add_match_pattern_variables(variables, pattern.pattern),
+        result.update(_pattern_binding_types(pattern.pattern, subject_type, env))
+        add(
             pattern.name,
-            _pattern_binding_type(pattern.pattern, pattern.name),
+            _narrowed_pattern_type(pattern.pattern, subject_type, env),
         )
+        return result
     if isinstance(pattern, RestPatternNode) and pattern.name is not None:
-        return _add_match_binding(
-            variables,
-            pattern.name,
-            T.C(T.ListExactType, T.V(f"_matched_{pattern.name}")),
-        )
+        add(pattern.name, subject_type)
+        return result
     if isinstance(pattern, TypePatternNode):
-        result = variables
         if pattern.name is not None:
-            result = _add_match_binding(
-                result,
-                pattern.name,
-                pattern.typ or T.V(f"_matched_{pattern.name}"),
+            add(pattern.name, pattern.typ or subject_type)
+        field_types = _destructure_field_types(pattern, subject_type, env)
+        for index, field in enumerate(pattern.fields):
+            field_type = (
+                field_types[index]
+                if index < len(field_types)
+                else T.V(f"_matched_field_{index}")
             )
-        for field in pattern.fields:
-            result = _add_match_pattern_variables(result, field)
+            for name, typ in _pattern_binding_types(field, field_type, env).items():
+                add(name, typ)
         return result
     if isinstance(pattern, ListPatternNode):
-        result = variables
+        item_type = T.collection_item_type(subject_type) or T.V("_matched_item")
         for item in pattern.items:
-            result = _add_match_pattern_variables(result, item)
+            nested_type = (
+                T.ExactList(item_type)
+                if _is_rest_match_pattern(item)
+                else item_type
+            )
+            for name, typ in _pattern_binding_types(item, nested_type, env).items():
+                add(name, typ)
         return result
     if isinstance(pattern, OrPatternNode):
-        result = variables
-        for option in pattern.options:
-            result = _add_match_pattern_variables(result, option)
+        option_bindings = tuple(
+            _pattern_binding_types(option, subject_type, env)
+            for option in pattern.options
+        )
+        if not option_bindings:
+            return result
+        names = set(option_bindings[0])
+        for option in option_bindings[1:]:
+            names.intersection_update(option)
+        for name in names:
+            types = tuple(option[name] for option in option_bindings)
+            typ = types[0]
+            for other in types[1:]:
+                typ = T.merge_types(typ, other)
+            add(name, typ)
         return result
-    return variables
+    return result
 
 
-def _add_match_binding(
-    variables: BranchVariables,
-    name: Symbol,
-    typ: T.Type,
-) -> BranchVariables:
-    """Add match binding during static analysis."""
-    write = variables.write(name, typ, block_local=True)
-    return variables if write.variables is None else write.variables
+def _is_rest_match_pattern(pattern: MatchPatternNode) -> bool:
+    """Return whether a list item consumes and optionally binds a rest slice."""
+    return isinstance(pattern, RestPatternNode) or (
+        isinstance(pattern, BindingPatternNode)
+        and _is_rest_match_pattern(pattern.pattern)
+    )
 
 
-def _pattern_binding_type(pattern: MatchPatternNode, name: Symbol) -> T.Type:
-    """Determine the type of pattern binding during static analysis."""
+def _narrowed_pattern_type(
+    pattern: MatchPatternNode,
+    subject_type: T.Type,
+    env: T.Environment,
+) -> T.Type:
+    """Return the value type bound by a successful wrapper binding."""
+    return _successful_pattern_subject_type(pattern, subject_type, env)
+
+
+def _pattern_binding_counts(pattern: MatchPatternNode) -> dict[Symbol, int]:
+    """Return maximum binding occurrences along one successful pattern path."""
+
+    def combine(
+        left: dict[Symbol, int],
+        right: dict[Symbol, int],
+    ) -> dict[Symbol, int]:
+        """Add binding counts from conjunctive child patterns."""
+        result = dict(left)
+        for name, count_ in right.items():
+            result[name] = result.get(name, 0) + count_
+        return result
+
+    if isinstance(pattern, BindingPatternNode):
+        result = _pattern_binding_counts(pattern.pattern)
+        result[pattern.name] = result.get(pattern.name, 0) + 1
+        return result
     if isinstance(pattern, RestPatternNode):
-        return T.C(T.ListExactType, T.V(f"_matched_{name}"))
-    if isinstance(pattern, TypePatternNode) and pattern.typ is not None:
-        return pattern.typ
-    return T.V(f"_matched_{name}")
+        return {} if pattern.name is None else {pattern.name: 1}
+    if isinstance(pattern, TypePatternNode):
+        result = {} if pattern.name is None else {pattern.name: 1}
+        for field in pattern.fields:
+            result = combine(result, _pattern_binding_counts(field))
+        return result
+    if isinstance(pattern, ListPatternNode):
+        result: dict[Symbol, int] = {}
+        for item in pattern.items:
+            result = combine(result, _pattern_binding_counts(item))
+        return result
+    if isinstance(pattern, OrPatternNode):
+        result: dict[Symbol, int] = {}
+        for option in pattern.options:
+            for name, count_ in _pattern_binding_counts(option).items():
+                result[name] = max(result.get(name, 0), count_)
+        return result
+    return {}
+
+
+def _has_repeated_match_bindings(
+    patterns: tuple[MatchPatternNode, ...],
+) -> bool:
+    """Return whether a successful case path can bind one name twice.
+
+    Reusing a name is an equality constraint at runtime, so a syntactically
+    catch-all pattern such as ``$x = _, $x = _`` is still refutable.
+    """
+    counts: dict[Symbol, int] = {}
+    for pattern in patterns:
+        for name, count_ in _pattern_binding_counts(pattern).items():
+            counts[name] = counts.get(name, 0) + count_
+    return any(count_ > 1 for count_ in counts.values())
+
+
+def _pattern_bound_names(pattern: MatchPatternNode) -> frozenset[Symbol]:
+    """Return every name that at least one successful pattern path may bind."""
+    names: set[Symbol] = set()
+    if isinstance(pattern, BindingPatternNode):
+        names.add(pattern.name)
+        names.update(_pattern_bound_names(pattern.pattern))
+    elif isinstance(pattern, RestPatternNode) and pattern.name is not None:
+        names.add(pattern.name)
+    elif isinstance(pattern, TypePatternNode):
+        if pattern.name is not None:
+            names.add(pattern.name)
+        for field in pattern.fields:
+            names.update(_pattern_bound_names(field))
+    elif isinstance(pattern, ListPatternNode):
+        for item in pattern.items:
+            names.update(_pattern_bound_names(item))
+    elif isinstance(pattern, OrPatternNode):
+        for option in pattern.options:
+            names.update(_pattern_bound_names(option))
+    return frozenset(names)
+
+
+def _or_pattern_binding_mismatch(
+    pattern: MatchPatternNode,
+) -> tuple[Symbol, ...]:
+    """Return names not bound by every alternative of a nested or-pattern."""
+    children: tuple[MatchPatternNode, ...] = ()
+    if isinstance(pattern, BindingPatternNode):
+        children = (pattern.pattern,)
+    elif isinstance(pattern, ListPatternNode):
+        children = pattern.items
+    elif isinstance(pattern, TypePatternNode):
+        children = pattern.fields
+    elif isinstance(pattern, OrPatternNode):
+        children = pattern.options
+
+    for child in children:
+        mismatch = _or_pattern_binding_mismatch(child)
+        if mismatch:
+            return mismatch
+
+    if not isinstance(pattern, OrPatternNode) or not pattern.options:
+        return ()
+    bound = tuple(_pattern_bound_names(option) for option in pattern.options)
+    union = set().union(*bound)
+    intersection = set(bound[0])
+    for names in bound[1:]:
+        intersection.intersection_update(names)
+    return tuple(sorted(union - intersection, key=str))
+
+
+def _destructure_field_types(
+    pattern: TypePatternNode,
+    subject_type: T.Type,
+    env: T.Environment,
+) -> tuple[T.Type, ...]:
+    """Return declared field types for a type pattern when they are known."""
+    definition = _pattern_object_definition(pattern.typ, subject_type, env)
+    if definition is None:
+        return ()
+    return tuple(attribute.typ for attribute in definition.attributes)
 
 
 def _match_pattern_guards(

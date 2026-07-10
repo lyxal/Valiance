@@ -853,38 +853,22 @@ class _Compiler:
         arity = _match_arity(node)
         if arity:
             self.emit(OpCode.SOURCE_ARGS, arity)
-        case_jumps: list[tuple[int, MatchCaseNode]] = []
-        default_case: MatchCaseNode | None = None
-        for case in node.cases:
-            if case.is_default or _is_default_case(case.patterns):
-                default_case = case
-                continue
-            case_jumps.append(
-                (
-                    self.emit(
-                        OpCode.JUMP_IF_MATCH,
-                        (_compile_case_patterns(case.patterns), None),
-                    ),
-                    case,
-                )
+        # Emit every pattern test in source order. Catch-all patterns are still
+        # ordinary matches at runtime: hoisting them to a synthetic fallback
+        # changes first-match semantics and can drop earlier guarded patterns.
+        case_jumps = [
+            (
+                self.emit(
+                    OpCode.JUMP_IF_MATCH,
+                    (_compile_case_patterns(case.patterns), None),
+                ),
+                case,
             )
+            for case in node.cases
+        ]
+        self.emit(OpCode.MATCH_ERROR)
 
         end_jumps: list[int] = []
-        if default_case is None:
-            self.emit(OpCode.MATCH_ERROR)
-        else:
-            default_jump = self.emit(
-                OpCode.JUMP_IF_MATCH,
-                (_compile_case_patterns(default_case.patterns), None),
-            )
-            self.emit(OpCode.MATCH_ERROR)
-            self.patch_match(default_jump, len(self.instructions))
-            self.expression(
-                body_by_case.get(id(default_case), default_case.body)
-            )
-            self.emit(OpCode.CYCLE_END)
-            end_jumps.append(self.emit(OpCode.JUMP, None))
-
         for jump, case in case_jumps:
             self.patch_match(jump, len(self.instructions))
             self.expression(body_by_case.get(id(case), case.body))
@@ -1881,15 +1865,3 @@ def _cast_type_spec(typ: Type) -> object:
     if isinstance(typ, (TaggedType, ExactType, AtomicType)):
         return _cast_type_spec(typ.inner)
     raise CompileError(f"cannot compile checked cast to {typ}")
-
-
-def _is_default_case(patterns: tuple[MatchPatternNode, ...]) -> bool:
-    """Return whether the value is default case."""
-    return bool(patterns) and all(_is_default_pattern(pattern) for pattern in patterns)
-
-
-def _is_default_pattern(pattern: MatchPatternNode) -> bool:
-    """Return whether the value is default pattern."""
-    return isinstance(pattern, (WildcardPatternNode, RestPatternNode)) or (
-        isinstance(pattern, TypePatternNode) and pattern.typ is None
-    )
