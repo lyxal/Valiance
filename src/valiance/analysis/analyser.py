@@ -7234,7 +7234,7 @@ def _solve_type_argument(
         return None
     substitution: dict[str, T.Type] = {}
     for name, values in solved.items():
-        combined = T._combine_all(values)
+        combined = T._combine_all(values, ctx)
         if combined is None:
             return None
         substitution[name] = combined

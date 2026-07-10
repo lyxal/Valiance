@@ -203,21 +203,51 @@ def _solve_anonymous_trait(
     target: AnonymousTraitType,
     ctx: Context,
 ) -> dict[str, list[Type]] | None:
-    """Solve anonymous trait during type and overload solving."""
+    """Solve a trait across every coherent requirement/overload path."""
     constraints: dict[str, list[Type]] = {}
     subject = _anonymous_trait_subject_name(target)
     if subject is not None:
         constraints[subject] = [source]
-    for requirement in target.requirements:
-        updated = _anonymous_requirement_constraints(requirement, constraints, ctx)
-        if updated is None:
-            return None
-        constraints = updated
-    return constraints
+
+    completed: list[dict[str, Type]] = []
+    seen: set[tuple[int, tuple[tuple[str, Type], ...]]] = set()
+
+    def solve_requirement(
+        index: int,
+        current: dict[str, list[Type]],
+    ) -> None:
+        """Collect complete paths while deduplicating equivalent solver states."""
+        substitution = _combined_substitution(current, ctx)
+        if substitution is None:
+            return
+        state = (index, tuple(sorted(substitution.items())))
+        if state in seen:
+            return
+        seen.add(state)
+        if index == len(target.requirements):
+            completed.append(substitution)
+            return
+        requirement = target.requirements[index]
+        for updated in _anonymous_requirement_constraint_options(
+            requirement,
+            current,
+            ctx,
+        ):
+            solve_requirement(index + 1, updated)
+
+    solve_requirement(0, constraints)
+    if not completed:
+        return None
+
+    merged: dict[str, list[Type]] = {}
+    for solution in completed:
+        for name, typ in solution.items():
+            merged.setdefault(name, []).append(typ)
+    return merged if _combined_substitution(merged, ctx) is not None else None
 
 
 def _anonymous_trait_subject_name(target: AnonymousTraitType) -> str | None:
-    """Return the canonical name for anonymous trait subject during type and overload solving."""
+    """Return the subject generic name for an anonymous structural trait."""
     if target.generics:
         return target.generics[0].text
     for requirement in target.requirements:
@@ -229,7 +259,7 @@ def _anonymous_trait_subject_name(target: AnonymousTraitType) -> str | None:
 
 
 def _first_type_var_name(typ: Type) -> str | None:
-    """Return the canonical name for first type var during type and overload solving."""
+    """Return the first nested type-variable name, if any."""
     typ = normalize(typ)
     if isinstance(typ, VarType):
         return typ.name
@@ -281,15 +311,16 @@ def _first_type_var_name(typ: Type) -> str | None:
     return None
 
 
-def _anonymous_requirement_constraints(
+def _anonymous_requirement_constraint_options(
     requirement: AnonymousTraitRequirement,
     constraints: dict[str, list[Type]],
     ctx: Context,
-) -> dict[str, list[Type]] | None:
-    """Compute anonymous requirement constraints during type and overload solving."""
+) -> tuple[dict[str, list[Type]], ...]:
+    """Return every coherent candidate solution for one trait requirement."""
+    options: list[dict[str, list[Type]]] = []
     for candidate in ctx.overloads_for_structural_trait(requirement.name):
         merged = {key: list(values) for key, values in constraints.items()}
-        subst = _combined_substitution(merged)
+        subst = _combined_substitution(merged, ctx)
         if subst is None:
             continue
         expected = _substitute_overload(requirement.overload, subst)
@@ -298,22 +329,23 @@ def _anonymous_requirement_constraints(
             continue
         for key, values in inferred.items():
             merged.setdefault(key, []).extend(values)
-        subst = _combined_substitution(merged)
+        subst = _combined_substitution(merged, ctx)
         if subst is None:
             continue
         expected = _substitute_overload(requirement.overload, subst)
         if _overload_satisfies_requirement(candidate, expected, ctx):
-            return merged
-    return None
+            options.append(merged)
+    return tuple(options)
 
 
 def _combined_substitution(
     constraints: dict[str, list[Type]],
+    ctx: Context | None = None,
 ) -> dict[str, Type] | None:
-    """Compute combined substitution during type and overload solving."""
+    """Compute a coherent substitution for accumulated generic evidence."""
     substitution: dict[str, Type] = {}
     for key, values in constraints.items():
-        combined = _combine_all(values)
+        combined = _combine_all(values, ctx)
         if combined is None:
             return None
         substitution[key] = combined
@@ -370,12 +402,16 @@ def _overload_satisfies_requirement(
         )
     ):
         return True
-    actual_returns = _overload_result_for_args(candidate, expected.params, ctx)
-    return actual_returns is not None and len(actual_returns) == len(
+    applied = apply_overload(candidate, expected.params, ctx)
+    return applied is not None and len(applied.actual_returns) == len(
         expected.returns
     ) and all(
         assignable(actual, required, ctx)
-        for actual, required in zip(actual_returns, expected.returns, strict=False)
+        for actual, required in zip(
+            applied.actual_returns,
+            expected.returns,
+            strict=False,
+        )
     )
 
 
@@ -721,7 +757,10 @@ def _solve(
             )
         if isinstance(p, RowType):
             actual_base = a.base if isinstance(a, RowType) else a
-            if not rec(p.base, actual_base):
+            if _contains_type_var(p.base):
+                if not rec(p.base, actual_base):
+                    return False
+            elif not assignable(actual_base, p.base, ctx):
                 return False
             if not p.fields:
                 return True
@@ -730,7 +769,12 @@ def _solve(
             actual_fields = {field.name: field.typ for field in a.fields}
             for field in p.fields:
                 actual_field = actual_fields.get(field.name)
-                if actual_field is None or not rec(field.typ, actual_field):
+                if actual_field is None:
+                    return False
+                if _contains_type_var(field.typ):
+                    if not rec(field.typ, actual_field):
+                        return False
+                elif not assignable(actual_field, field.typ, ctx):
                     return False
             return True
         if isinstance(p, TupleType) and isinstance(a, TupleType):
@@ -752,11 +796,17 @@ def _solve(
                 if _contains_type_var(expected):
                     if not rec(expected, actual):
                         return False
-                elif not compatible(expected, actual):
+                elif not compatible(expected, actual, ctx):
                     return False
+            substitution = _combined_substitution(constraints, ctx)
+            if substitution is None:
+                return False
+            solved_params = tuple(
+                _substitute(param, substitution) for param in p.params
+            )
             actual_returns = _overload_result_for_args(
                 Overload(a.params, a.returns),
-                p.params,
+                solved_params,
                 ctx,
             )
             if actual_returns is None:
@@ -950,14 +1000,18 @@ def _collection_view(t: Type) -> CollectionType | None:
     return None
 
 
-def _combine(a: Type, b: Type) -> Type | None:
+def _combine(
+    a: Type,
+    b: Type,
+    ctx: Context | None = None,
+) -> Type | None:
     """Merge two candidate generic solutions into a shared solution."""
     a, b = normalize(a), normalize(b)
     if same(a, b):
         return a
-    if assignable(a, b):
+    if assignable(a, b, ctx):
         return b
-    if assignable(b, a):
+    if assignable(b, a, ctx):
         return a
     if _is_optional(a) and _is_optional(b):
         ai, bi = _optional_inner(a), _optional_inner(b)
@@ -965,19 +1019,17 @@ def _combine(a: Type, b: Type) -> Type | None:
             return b
         if bi is None:
             return a
-        inner = _combine(ai, bi)
+        inner = _combine(ai, bi, ctx)
         return optional(inner) if inner else None
-    if (
-        isinstance(a, CollectionType)
-        and isinstance(b, CollectionType)
-        and _combine(a.base, b.base) is not None
-    ):
-        # Collection solutions can widen from exact to minimum/rugged when
-        # multiple constraints need one shared generic type.
-        return _combine_collections(
-            type(a)(_combine(a.base, b.base), a.rank),
-            type(b)(_combine(a.base, b.base), b.rank),
-        )
+    if isinstance(a, CollectionType) and isinstance(b, CollectionType):
+        base = _combine(a.base, b.base, ctx)
+        if base is not None:
+            # Collection solutions can widen from exact to minimum/rugged when
+            # multiple constraints need one shared generic type.
+            return _combine_collections(
+                type(a)(base, a.rank),
+                type(b)(base, b.rank),
+            )
     return None
 
 
@@ -1007,14 +1059,17 @@ def _combine_collections(a: Type, b: Type) -> Type | None:
     return None
 
 
-def _combine_all(values: Iterable[Type]) -> Type | None:
+def _combine_all(
+    values: Iterable[Type],
+    ctx: Context | None = None,
+) -> Type | None:
     """Merge a sequence of generic solutions, returning ``None`` on conflict."""
     vals = list(values)
     if not vals:
         return None
     out = vals[0]
     for value in vals[1:]:
-        out = _combine(out, value)
+        out = _combine(out, value, ctx)
         if out is None:
             return None
     return out
@@ -1090,12 +1145,16 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
             _substitute_element_tags(t.element_tags, subst),
         )
     if isinstance(t, AnonymousTraitType):
+        bound_names = {generic.text for generic in t.generics}
+        local_subst = {
+            name: typ for name, typ in subst.items() if name not in bound_names
+        }
         return AnonymousTraitType(
             t.generics,
             tuple(
                 AnonymousTraitRequirement(
                     requirement.name,
-                    _substitute_overload(requirement.overload, subst),
+                    _substitute_overload(requirement.overload, local_subst),
                 )
                 for requirement in t.requirements
             ),
@@ -1113,15 +1172,27 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
 
 
 def _substitute_overload(overload: Overload, subst: dict[str, Type]) -> Overload:
-    """Substitute overload during type and overload solving."""
+    """Substitute free overload variables without capturing local generics."""
+    local_names = {constraint.name for constraint in overload.generic_constraints}
+    local_subst = {
+        name: typ for name, typ in subst.items() if name not in local_names
+    }
+    constraints = tuple(
+        GenericConstraint(
+            constraint.name,
+            _substitute(constraint.bound, local_subst),
+            constraint.variance,
+        )
+        for constraint in overload.generic_constraints
+    )
     return Overload(
-        tuple(_substitute(param, subst) for param in overload.params),
-        tuple(_substitute(ret, subst) for ret in overload.returns),
-        overload.generic_constraints,
+        tuple(_substitute(param, local_subst) for param in overload.params),
+        tuple(_substitute(ret, local_subst) for ret in overload.returns),
+        constraints,
         overload.where_clause,
         overload.param_names,
         overload.call_site_body,
-        overload.element_tags,
+        frozenset(_substitute_element_tags(overload.element_tags, local_subst)),
         overload.annotation_error,
         overload.annotation_warning,
         overload.param_defaults,
@@ -1195,7 +1266,7 @@ def compatible(argument: Type, parameter: Type, ctx: Context | None = None) -> b
         # Compatibility can use generic solving as a fallback, but only when it
         # actually substitutes something. Otherwise concrete mismatches could
         # recurse forever.
-        subst = {k: _combine_all(v) for k, v in constraints.items()}
+        subst = {k: _combine_all(v, ctx) for k, v in constraints.items()}
         substituted = _substitute(parameter, subst)
         if (
             subst
@@ -1845,7 +1916,7 @@ def try_apply_overload(
 
     substitution: dict[str, Type] = {}
     for key, values in constraints.items():
-        combined = _combine_all(values)
+        combined = _combine_all(values, ctx)
         if combined is None:
             return OverloadAttempt(
                 None,
@@ -1885,7 +1956,7 @@ def try_apply_overload(
 
     substitution = {}
     for key, values in constraints.items():
-        combined = _combine_all(values)
+        combined = _combine_all(values, ctx)
         if combined is None:
             return OverloadAttempt(
                 None,

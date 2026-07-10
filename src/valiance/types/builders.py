@@ -468,8 +468,159 @@ def collapse_nested_collection(
 
 
 def same(a: Type, b: Type) -> bool:
-    """Return canonical type equality without subtyping or compatibility."""
-    return normalize(a) == normalize(b)
+    """Return canonical equality, including alpha-equivalent local generics."""
+    left = normalize(a)
+    right = normalize(b)
+    if left == right:
+        return True
+    return _alpha_canonicalize(left) == _alpha_canonicalize(right)
+
+
+def _alpha_canonicalize(
+    t: Type,
+    scope: dict[str, str] | None = None,
+    depth: int = 0,
+) -> Type:
+    """Rename locally bound generics to deterministic, capture-free names."""
+    scope = {} if scope is None else scope
+    if isinstance(t, VarType):
+        return VarType(scope.get(t.name, t.name))
+    if isinstance(t, NominalType):
+        return NominalType(
+            t.name,
+            tuple(_alpha_canonicalize(arg, scope, depth) for arg in t.args),
+        )
+    if isinstance(t, UnionType):
+        return UnionType(
+            frozenset(_alpha_canonicalize(item, scope, depth) for item in t.items)
+        )
+    if isinstance(t, IntersectionType):
+        return IntersectionType(
+            frozenset(_alpha_canonicalize(item, scope, depth) for item in t.items)
+        )
+    if isinstance(t, TupleType):
+        return TupleType(
+            tuple(_alpha_canonicalize(item, scope, depth) for item in t.params)
+        )
+    if isinstance(t, VariadicTupleType):
+        return VariadicTupleType(
+            tuple(
+                TupleTypeItem(
+                    _alpha_canonicalize(item.typ, scope, depth),
+                    item.repeated,
+                )
+                for item in t.items
+            )
+        )
+    if isinstance(t, RowType):
+        return RowType(
+            _alpha_canonicalize(t.base, scope, depth),
+            tuple(
+                RowField(
+                    field.name,
+                    _alpha_canonicalize(field.typ, scope, depth),
+                )
+                for field in t.fields
+            ),
+        )
+    if isinstance(t, CollectionType):
+        return type(t)(_alpha_canonicalize(t.base, scope, depth), t.rank)
+    if isinstance(t, FunctionType):
+        params = (
+            None
+            if t.params is None
+            else tuple(
+                _alpha_canonicalize(param, scope, depth) for param in t.params
+            )
+        )
+        returns = (
+            None
+            if t.returns is None
+            else tuple(_alpha_canonicalize(ret, scope, depth) for ret in t.returns)
+        )
+        tags = frozenset(
+            ElementTag(
+                tag.name,
+                tuple(_alpha_canonicalize(arg, scope, depth) for arg in tag.args),
+                tag.absent,
+            )
+            for tag in t.element_tags
+        )
+        return FunctionType(params, returns, tags)
+    if isinstance(t, AnonymousTraitType):
+        local = dict(scope)
+        canonical_generics: list[Symbol] = []
+        for index, generic in enumerate(t.generics):
+            canonical = f"\x00trait:{depth}:{index}"
+            local[generic.text] = canonical
+            canonical_generics.append(Symbol(canonical))
+        requirements = tuple(
+            AnonymousTraitRequirement(
+                requirement.name,
+                _alpha_canonicalize_overload(
+                    requirement.overload,
+                    local,
+                    depth + 1,
+                    index,
+                ),
+            )
+            for index, requirement in enumerate(t.requirements)
+        )
+        return AnonymousTraitType(tuple(canonical_generics), requirements)
+    if isinstance(t, OverloadSetType):
+        return OverloadSetType(
+            tuple(
+                _alpha_canonicalize_overload(overload, scope, depth + 1, index)
+                for index, overload in enumerate(t.overloads)
+            )
+        )
+    if isinstance(t, TaggedType):
+        return TaggedType(_alpha_canonicalize(t.inner, scope, depth), t.tags)
+    if isinstance(t, ExactType):
+        return ExactType(_alpha_canonicalize(t.inner, scope, depth))
+    if isinstance(t, AtomicType):
+        return AtomicType(_alpha_canonicalize(t.inner, scope, depth))
+    return t
+
+
+def _alpha_canonicalize_overload(
+    overload: Overload,
+    scope: dict[str, str],
+    depth: int,
+    overload_index: int,
+) -> Overload:
+    """Canonicalize one overload while respecting its local generic bounds."""
+    local = dict(scope)
+    for index, constraint in enumerate(overload.generic_constraints):
+        local[constraint.name] = f"\x00overload:{depth}:{overload_index}:{index}"
+    constraints = tuple(
+        type(constraint)(
+            local[constraint.name],
+            _alpha_canonicalize(constraint.bound, local, depth),
+            constraint.variance,
+        )
+        for constraint in overload.generic_constraints
+    )
+    return Overload(
+        tuple(_alpha_canonicalize(param, local, depth) for param in overload.params),
+        tuple(_alpha_canonicalize(ret, local, depth) for ret in overload.returns),
+        constraints,
+        overload.where_clause,
+        overload.param_names,
+        overload.call_site_body,
+        frozenset(
+            ElementTag(
+                tag.name,
+                tuple(_alpha_canonicalize(arg, local, depth) for arg in tag.args),
+                tag.absent,
+            )
+            for tag in overload.element_tags
+        ),
+        overload.annotation_error,
+        overload.annotation_warning,
+        overload.param_defaults,
+        overload.is_multi,
+    )
 
 
 def show(
@@ -578,7 +729,7 @@ def _show(
     if isinstance(t, AnonymousTraitType):
         trait_bound = bound | frozenset(str(generic) for generic in t.generics)
         generics = f"[{', '.join(str(g) for g in t.generics)}]" if t.generics else ""
-        requirements = "; ".join(
+        requirements = tuple(
             _show_anonymous_trait_requirement(
                 requirement,
                 type_variable_name,
@@ -586,7 +737,11 @@ def _show(
             )
             for requirement in t.requirements
         )
-        return f"trait{generics} => {requirements} end"
+        if len(requirements) <= 1:
+            body = requirements[0] if requirements else ""
+            return f"trait{generics} => {body} end"
+        body = "\n  ".join(requirements)
+        return f"trait{generics} =>\n  {body}\nend"
     if isinstance(t, TaggedType):
         tags = " ".join(_show_tag(tag) for tag in sorted(t.tags))
         return f"{tags} {_show(t.inner, type_variable_name, bound)}"

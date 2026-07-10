@@ -1339,8 +1339,52 @@ An `AnonymousTraitType` contains required element overloads. Satisfying it means
 finding visible structural overloads whose parameter/return shapes meet every
 requirement under one consistent generic substitution.
 
+The solver explores complete combinations of candidate overloads rather than
+committing to the first candidate for each requirement. This matters when two
+requirements share a generic: an early locally valid choice may conflict with a
+later requirement while another overload yields one coherent substitution.
+Requirement order and structural-overload insertion order must not change the
+result.
+
+If several complete solutions remain, their generic evidence is combined using
+the active `Context`. Compatible solutions widen to their common assignable type
+(for example `Car` and `Vehicle` become `Vehicle` when `Car <: Vehicle`), while
+incompatible solutions make the structural match ambiguous and therefore fail.
+Candidate-local generic bounds are checked through ordinary overload application,
+so a generic structural implementation cannot bypass its own constraints.
+
+Trait generic names are local binders. Substitution must not capture them, and
+`same(...)` compares traits modulo alpha-renaming of those local names. The same
+capture rule applies to generic constraints local to a required overload.
+
 This is structural because the source type does not need to declare a named
 implementation. It must simply provide the required callable behaviour.
+
+### Structural-generic verification rules
+
+Rows, anonymous traits, and anonymous source generics share the ordinary generic
+solver, so their tests must cover interactions rather than isolated syntax. The
+repository protects these laws:
+
+- row width is covariant: extra source fields are allowed;
+- row depth follows assignability for concrete fields and recursively solves
+  generic fields;
+- repeated named or anonymous variables produce one coherent substitution;
+- `compatible` may solve free row variables for a call, while `assignable` does
+  not allow an unresolved generic to escape into stored state;
+- declaration-site covariance, contravariance, and invariance continue to apply
+  when their arguments contain rows or anonymous traits;
+- function-shaped solving substitutes inferred row variables before checking
+  whether the actual callable accepts the solved input shape;
+- trait parameters are contravariant and trait returns are covariant;
+- bound variables in independently created traits and overloads remain scoped;
+- alpha-renaming does not alter structural meaning; and
+- every generated relation obeys `subtype(a, b) => assignable(a, b) =>
+  compatible(a, b)`.
+
+Focused examples live in `tests/test_structural_types.py`, source-level inference
+and diagnostics live in `tests/test_structural_analysis.py`, and the
+`structural-types` fuzz target composes these features across generated contexts.
 
 ## Data tags and element tags
 
@@ -1501,9 +1545,12 @@ assert attempt.applied.substitution == {"T": T.Real}
 assert attempt.applied.actual_returns == (T.Real,)
 ```
 
-For repository tests, place relation-focused cases in `tests/test_types.py`.
-Use analyser tests when branch facts, names, diagnostics, or typed nodes matter.
-Use runtime tests only when execution is part of the behaviour being protected.
+For repository tests, place general relation-focused cases in
+`tests/test_types.py`. Put row/anonymous-trait/anonymous-generic interaction
+regressions in `tests/test_structural_types.py`. Use analyser tests, including
+`tests/test_structural_analysis.py`, when branch facts, names, diagnostics, or
+typed nodes matter. Use runtime tests only when execution is part of the
+behaviour being protected.
 
 ## Common misconceptions
 
@@ -1610,6 +1657,23 @@ For:
 - overload scoring and dominance;
 - callable compatibility; and
 - union dispatch plans.
+
+### `tests/test_structural_types.py`
+
+For generated and focused interactions among:
+
+- row width/depth relations;
+- named and anonymous generic solving;
+- anonymous-trait requirement backtracking;
+- alpha-renaming and capture avoidance;
+- generic bounds and nominal subtype context;
+- variance through structural arguments; and
+- assignability versus call compatibility.
+
+### `tests/test_structural_analysis.py`
+
+For source-level structural inference, overload-order independence, and
+structural-generic diagnostics.
 
 ### `tests/test_analyser.py`
 

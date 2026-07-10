@@ -28,11 +28,16 @@ base seed, and iteration number.
   equality, subtyping, assignability, merging, exact/minimum list and array
   covariance, one-way array-to-list compatibility, tags, rows, and display
   invariants. Failure reports include both generated types and the wrapper rank.
-- `structural-types` generates row constraints, named and anonymous type
-  variables, and anonymous structural traits. It checks row width/depth laws,
-  assignability-to-compatibility implications, generic field solving, coherent
-  substitutions across multiple trait requirements, contradictory negative
-  requirements, and alpha-renaming invariance.
+- `structural-types` builds contexts containing nominal subtype facts,
+  declaration-site variance, row fields, and structural overloads. It generates
+  named and anonymous generics, rows, anonymous traits, functions, collections,
+  unions, optionals, and generic constructors. It checks row width/depth laws,
+  alpha-renaming, capture-avoiding substitution, coherent shared substitutions,
+  overload/requirement ordering, generic bounds, trait parameter and return
+  variance, and the directional implication `subtype => assignable => compatible`.
+  Positive worlds are built by construction; controlled mutations exercise
+  missing fields, incompatible evidence, reversed variance, and ambiguous trait
+  solutions.
 
 ## Running a campaign
 
@@ -53,9 +58,9 @@ PYTHONPATH=src:. python -m tools.fuzz \
   --seed 12345
 ```
 
-Depth 2 is intentionally the default because nested overload analysis becomes
-substantially more expensive at depth 3 and above. Larger target-specific
-campaigns can raise the limit deliberately:
+Depth 2 is intentionally the default because nested overload and structural
+analysis becomes substantially more expensive at depth 3 and above. Larger
+target-specific campaigns can raise the limit deliberately:
 
 ```text
 PYTHONPATH=src:. python -m tools.fuzz \
@@ -89,3 +94,6 @@ manual campaign so the ordinary unit suite remains useful during development.
 When a fuzzer finds a defect, add a focused regression test near the affected
 subsystem before fixing it. The fuzz smoke test should remain as the broad guard,
 while the focused test documents the exact language or bytecode contract.
+Structural relation regressions belong in `tests/test_structural_types.py`; use
+`tests/test_structural_analysis.py` when source parsing, inference, or diagnostics
+must participate in the failure.

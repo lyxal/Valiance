@@ -7,6 +7,7 @@ which makes a failure reproducible by target, base seed, and iteration number.
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import random
 from collections.abc import Callable
@@ -40,30 +41,38 @@ from valiance.types import (
     Boolean,
     Context,
     DataTag,
-    Field,
-    Overload,
-    V,
     Exact,
     ExactArray,
     ExactList,
+    Field,
+    Fn,
+    GenericConstraint,
+    I,
     Integer,
     N,
     NoneType,
     Number,
+    Overload,
     Real,
     Row,
     RuntimeTypePattern,
     String,
     Tagged,
     Tup,
+    Type,
     U,
     UnionDispatchBranch,
+    V,
     Variance,
+    _combine_all,
     _solve,
+    _substitute,
+    apply_overload,
     assignable,
     compatible,
     merge_types,
     normalize,
+    optional,
     same,
     show,
     subtype,
@@ -173,6 +182,8 @@ def run_target(name: str, config: FuzzConfig) -> FuzzStats:
             ) from exc.cause
         except BaseException as exc:
             raise FuzzFailure(name, config, iteration, case, exc) from exc
+        if (iteration - config.start + 1) % 512 == 0:
+            gc.collect()
 
     return FuzzStats(name, config.seed, config.start, config.iterations)
 
@@ -808,6 +819,8 @@ def _fuzz_type_relations(
             raise AssertionError("assignability is not reflexive")
         if not subtype(left, left):
             raise AssertionError("subtyping is not reflexive")
+        if not compatible(left, left):
+            raise AssertionError("compatibility is not reflexive")
         if same(left, right) != same(right, left):
             raise AssertionError("type equality is not symmetric")
         if not show(normalized):
@@ -820,6 +833,11 @@ def _fuzz_type_relations(
         merged = merge_types(left, right)
         if not assignable(left, merged) or not assignable(right, merged):
             raise AssertionError("merged type does not accept both inputs")
+
+        if subtype(left, right) and not assignable(left, right):
+            raise AssertionError("subtyping did not imply assignability")
+        if assignable(left, right) and not compatible(left, right):
+            raise AssertionError("assignability did not imply compatibility")
 
         if assignable(left, right):
             covariance_cases = (
@@ -851,110 +869,458 @@ def _fuzz_type_relations(
         raise _GeneratedCaseFailure(case, exc) from exc
 
 
+_STRUCT_FOO = Symbol("FuzzFoo")
+_STRUCT_ENTITY = Symbol("FuzzEntity")
+_STRUCT_CAR = Symbol("FuzzCar")
+_STRUCT_VEHICLE = Symbol("FuzzVehicle")
+_STRUCT_BOX = Symbol("FuzzBox")
+_STRUCT_SINK = Symbol("FuzzSink")
+_STRUCT_CELL = Symbol("FuzzCell")
+_STRUCT_READ = Symbol("fuzz-read")
+_STRUCT_WRITE = Symbol("fuzz-write")
+_STRUCT_MAP = Symbol("fuzz-map")
+_STRUCT_FIELDS = tuple(Symbol(f"field-{index}") for index in range(6))
+_STRUCT_FOO_TYPE = N(_STRUCT_FOO)
+_STRUCT_ENTITY_TYPE = N(_STRUCT_ENTITY)
+_STRUCT_CAR_TYPE = N(_STRUCT_CAR)
+_STRUCT_VEHICLE_TYPE = N(_STRUCT_VEHICLE)
+
+
+@dataclass(frozen=True, slots=True)
+class _StructuralTypeCase:
+    """Generated structural-type world retained in reproducible failures."""
+
+    row_source: Type
+    row_target: Type
+    generic_row: Type
+    trait: Type
+    subject: Type
+
+
+def _structural_context() -> Context:
+    """Create nominal, variance, and subtype facts for structural fuzzing."""
+    ctx = Context(
+        trait_impls={
+            _STRUCT_FOO: {_STRUCT_ENTITY},
+            _STRUCT_CAR: {_STRUCT_VEHICLE},
+        }
+    )
+    ctx.set_generic_variance(_STRUCT_BOX, (Variance.COVARIANT,))
+    ctx.set_generic_variance(_STRUCT_SINK, (Variance.CONTRAVARIANT,))
+    ctx.set_generic_variance(_STRUCT_CELL, (Variance.INVARIANT,))
+    return ctx
+
+
+def _positive_relation_pair(rng: random.Random) -> tuple[Type, Type]:
+    """Return a source/target pair known to satisfy directional assignment."""
+    return rng.choice(
+        (
+            (Integer, Integer),
+            (Integer, Real),
+            (Integer, Number),
+            (Real, Number),
+            (String, String),
+            (_STRUCT_FOO_TYPE, _STRUCT_ENTITY_TYPE),
+            (_STRUCT_CAR_TYPE, _STRUCT_VEHICLE_TYPE),
+        )
+    )
+
+
+def _incompatible_with(typ: Type, ctx: Context) -> Type:
+    """Return a simple type unrelated to ``typ`` in either direction."""
+    for candidate in (String, _STRUCT_FOO_TYPE, Integer):
+        if not assignable(typ, candidate, ctx) and not assignable(
+            candidate,
+            typ,
+            ctx,
+        ):
+            return candidate
+    raise AssertionError(f"no incompatible structural fuzz type for {typ}")
+
+
+def _combined_solution(
+    constraints: dict[str, list[Type]],
+    ctx: Context | None = None,
+) -> dict[str, Type]:
+    """Combine a solver result and reject incoherent generic evidence."""
+    result: dict[str, Type] = {}
+    for name, values in constraints.items():
+        combined = _combine_all(values, ctx)
+        if combined is None:
+            raise AssertionError(f"incoherent solution for {name}: {values!r}")
+        result[name] = combined
+    return result
+
+
+def _structural_requirement(
+    name: Symbol,
+    params: tuple[Type, ...],
+    returns: tuple[Type, ...],
+) -> AnonymousTraitRequirement:
+    """Build one concise anonymous structural-trait requirement."""
+    return AnonymousTraitRequirement(name, Overload(params, returns))
+
+
 def _fuzz_structural_types(
     rng: random.Random,
-    _iteration: int,
-    config: FuzzConfig,
+    iteration: int,
+    _config: FuzzConfig,
 ) -> object:
-    """Exercise rows, anonymous variables, and anonymous structural traits."""
-    atoms = (Integer, Real, Number, String)
-    base = N(Symbol(rng.choice(("Record", "Entity", "Value"))))
-    field_names = tuple(Symbol(name) for name in ("left", "right", "value", "meta"))
-    count = rng.randint(1, min(4, max(1, config.max_depth + 1)))
-    selected = rng.sample(field_names, count)
-    narrow_fields = []
-    wide_fields = []
-    for name in selected:
-        narrow = rng.choice(atoms)
-        wide = Number if narrow in (Integer, Real) else narrow
-        narrow_fields.append(Field(name, narrow))
-        wide_fields.append(Field(name, wide))
-    extra = Field(Symbol("extra"), rng.choice(atoms))
-    source = Row(base, *narrow_fields, extra)
-    target = Row(base, *wide_fields)
+    """Fuzz rows, scoped generics, traits, variance, and relation laws."""
+    ctx = _structural_context()
+    field_count = rng.randint(1, len(_STRUCT_FIELDS) - 1)
+    fields = list(_STRUCT_FIELDS[:field_count])
+    rng.shuffle(fields)
+    base_source, base_target = rng.choice(
+        (
+            (_STRUCT_FOO_TYPE, _STRUCT_ENTITY_TYPE),
+            (_STRUCT_CAR_TYPE, _STRUCT_VEHICLE_TYPE),
+            (_STRUCT_FOO_TYPE, _STRUCT_FOO_TYPE),
+        )
+    )
+    field_pairs = [_positive_relation_pair(rng) for _ in fields]
+    source_fields = tuple(
+        Field(name, source)
+        for name, (source, _target) in zip(fields, field_pairs, strict=True)
+    )
+    target_width = rng.randint(1, field_count)
+    target_fields = tuple(
+        Field(name, target)
+        for name, (_source, target) in zip(
+            fields[:target_width],
+            field_pairs[:target_width],
+            strict=True,
+        )
+    )
+    extra = Field(Symbol(f"extra-{iteration % 7}"), String)
+    row_source = Row(base_source, *source_fields, extra)
+    row_target = Row(base_target, *target_fields)
+    names = tuple(f"@{iteration % 101 + index + 1}" for index in range(field_count + 1))
+    generic_row = Row(
+        V(names[0]),
+        *(Field(name, V(names[index + 1])) for index, name in enumerate(fields)),
+    )
 
-    subject_name = rng.choice(("T", "@1", "@17"))
-    actual_subject = rng.choice((Integer, Real, String))
-    incompatible = String if actual_subject in (Integer, Real) else Integer
-    first = Symbol(f"op{rng.randint(0, 4)}")
-    second = Symbol(f"check{rng.randint(0, 4)}")
-    ctx = Context()
-    ctx.define_structural_overload(
-        first, Overload((actual_subject, actual_subject), (actual_subject,))
-    )
-    ctx.define_structural_overload(
-        second, Overload((actual_subject,), (actual_subject,))
-    )
-    positive = AnonymousTrait(
-        (Symbol(subject_name),),
+    subject, subject_parameter = _positive_relation_pair(rng)
+    return_value, required_return = _positive_relation_pair(rng)
+    trait = AnonymousTrait(
+        (Symbol("T"),),
         (
-            AnonymousTraitRequirement(
-                first,
-                Overload((V(subject_name), V(subject_name)), (V(subject_name),)),
-            ),
-            AnonymousTraitRequirement(
-                second,
-                Overload((V(subject_name),), (V(subject_name),)),
+            _structural_requirement(
+                _STRUCT_MAP,
+                (V("T"),),
+                (required_return,),
             ),
         ),
     )
-    negative = AnonymousTrait(
-        (Symbol(subject_name),),
-        (
-            AnonymousTraitRequirement(
-                first,
-                Overload((V(subject_name), V(subject_name)), (V(subject_name),)),
-            ),
-            AnonymousTraitRequirement(
-                second,
-                Overload((V(subject_name),), (incompatible,)),
-            ),
-        ),
-    )
-    case = (source, target, positive, negative, actual_subject)
+    case = _StructuralTypeCase(row_source, row_target, generic_row, trait, subject)
 
     try:
-        if not subtype(source, target):
-            raise AssertionError("row width/depth subtyping rejected a constructed case")
-        if not assignable(source, target) or not compatible(source, target):
-            raise AssertionError("row subtype did not imply assignability/compatibility")
-        if assignable(target, source):
+        # Width/depth row laws and relation implications.
+        if not subtype(row_source, row_target, ctx):
+            raise AssertionError("constructed row subtype was rejected")
+        if not assignable(row_source, row_target, ctx):
+            raise AssertionError("row subtype did not imply assignability")
+        if not compatible(row_source, row_target, ctx):
+            raise AssertionError("row assignment did not imply compatibility")
+        if assignable(row_target, row_source, ctx):
             raise AssertionError("row width subtyping became symmetric")
+        if not same(row_source, Row(base_source, extra, *reversed(source_fields))):
+            raise AssertionError("row field ordering changed canonical equality")
 
-        pattern = Row(
-            V("Base"),
-            *(Field(field.name, V(f"@{index + 1}")) for index, field in enumerate(target.fields)),
+        missing = Row(base_source, *source_fields[target_width:])
+        if assignable(missing, row_target, ctx):
+            raise AssertionError("row missing required fields was assignable")
+        first = target_fields[0]
+        source_by_name = {field.name: field.typ for field in source_fields}
+        wrong = Row(
+            base_target,
+            Field(first.name, _incompatible_with(source_by_name[first.name], ctx)),
+            *target_fields[1:],
         )
-        solved = _solve(pattern, target)
-        if solved is None or "Base" not in solved:
-            raise AssertionError("row base variable was not solved")
-        for index in range(len(target.fields)):
-            if f"@{index + 1}" not in solved:
-                raise AssertionError("anonymous row field variable was not solved")
+        if assignable(row_source, wrong, ctx):
+            raise AssertionError("row accepted an incompatible field")
 
-        if not assignable(actual_subject, positive, ctx):
-            raise AssertionError("coherent structural requirements were rejected")
-        if not compatible(actual_subject, positive, ctx):
-            raise AssertionError("assignable structural trait was not compatible")
-        if assignable(actual_subject, negative, ctx):
-            raise AssertionError("contradictory structural requirements were accepted")
+        # Named/anonymous row variables, reconstruction, and alpha renaming.
+        constraints = _solve(generic_row, row_source, ctx)
+        if constraints is None:
+            raise AssertionError("generic row did not solve")
+        substitution = _combined_solution(constraints, ctx)
+        solved_row = _substitute(generic_row, substitution)
+        if not assignable(row_source, solved_row, ctx):
+            raise AssertionError("row substitution did not reconstruct its pattern")
+        if assignable(row_source, generic_row, ctx):
+            raise AssertionError("free generic row allowed storage assignment")
+        if not compatible(row_source, generic_row, ctx):
+            raise AssertionError("generic row did not support call compatibility")
 
-        renamed = "@99" if subject_name != "@99" else "T2"
-        alpha = AnonymousTrait(
-            (Symbol(renamed),),
+        renamed_names = tuple(
+            f"@{500 + iteration % 101 + i}" for i in range(field_count + 1)
+        )
+        renamed_row = Row(
+            V(renamed_names[0]),
+            *(Field(name, V(renamed_names[i + 1])) for i, name in enumerate(fields)),
+        )
+        renamed = _solve(renamed_row, row_source, ctx)
+        if renamed is None or not assignable(
+            row_source,
+            _substitute(renamed_row, _combined_solution(renamed, ctx)),
+            ctx,
+        ):
+            raise AssertionError("alpha-renamed row solved differently")
+
+        # Shared generic evidence must combine or reject coherently.
+        shared = Row(
+            V("@base"),
+            Field(_STRUCT_FIELDS[0], V("@item")),
+            Field(_STRUCT_FIELDS[1], V("@item")),
+        )
+        shared_actual = Row(
+            _STRUCT_FOO_TYPE,
+            Field(_STRUCT_FIELDS[0], Integer),
+            Field(_STRUCT_FIELDS[1], Number),
+        )
+        shared_solution = _solve(shared, shared_actual, ctx)
+        if shared_solution is None or not same(
+            _combined_solution(shared_solution, ctx)["@item"],
+            Number,
+        ):
+            raise AssertionError("shared row generic did not widen to Number")
+        conflict_actual = Row(
+            _STRUCT_FOO_TYPE,
+            Field(_STRUCT_FIELDS[0], String),
+            Field(_STRUCT_FIELDS[1], Number),
+        )
+        if apply_overload(Overload((shared,), (V("@item"),)), (conflict_actual,), ctx):
+            raise AssertionError("conflicting row generic escaped overload solving")
+
+        # Structural types must respect declaration-site variance.
+        if not assignable(N(_STRUCT_BOX, row_source), N(_STRUCT_BOX, row_target), ctx):
+            raise AssertionError("row covariance failed in a nominal generic")
+        if not assignable(
+            N(_STRUCT_SINK, row_target),
+            N(_STRUCT_SINK, row_source),
+            ctx,
+        ):
+            raise AssertionError("row contravariance failed in a nominal generic")
+        if assignable(N(_STRUCT_SINK, row_source), N(_STRUCT_SINK, row_target), ctx):
+            raise AssertionError("row contravariance was accepted backwards")
+        if assignable(N(_STRUCT_CELL, row_source), N(_STRUCT_CELL, row_target), ctx):
+            raise AssertionError("row escaped an invariant generic")
+        if not assignable(ExactList(row_source), ExactList(row_target), ctx):
+            raise AssertionError("row covariance failed in a list")
+
+        # Function-shape solving substitutes row variables before callability.
+        function_return, _ = _positive_relation_pair(rng)
+        function_row = Row(base_source, *source_fields)
+        function_pattern = Fn((generic_row,), (V("@return"),))
+        function_actual = Fn((function_row,), (function_return,))
+        function_constraints = _solve(function_pattern, function_actual, ctx)
+        if function_constraints is None or not same(
+            _combined_solution(function_constraints, ctx)["@return"],
+            function_return,
+        ):
+            raise AssertionError("generic function shape solved incorrectly")
+
+        # Trait parameter contravariance and return covariance.
+        ctx.define_structural_overload(
+            _STRUCT_MAP,
+            Overload((subject_parameter,), (return_value,)),
+        )
+        relations = (
+            subtype(subject, trait, ctx),
+            assignable(subject, trait, ctx),
+            compatible(subject, trait, ctx),
+        )
+        if relations != (True, True, True):
+            raise AssertionError(f"trait relation disagreement: {relations!r}")
+
+        wrong_parameter_ctx = _structural_context()
+        wrong_parameter_ctx.define_structural_overload(
+            _STRUCT_MAP,
+            Overload((_incompatible_with(subject, ctx),), (return_value,)),
+        )
+        if assignable(subject, trait, wrong_parameter_ctx):
+            raise AssertionError("trait accepted an unusable candidate parameter")
+
+        # Shared variables require complete backtracking, not first-match choice.
+        coherent = rng.choice((Number, String))
+        incoherent = String if same(coherent, Number) else Number
+        shared_trait = AnonymousTrait(
+            (Symbol("T"), Symbol("U")),
             (
-                AnonymousTraitRequirement(
-                    first,
-                    Overload((V(renamed), V(renamed)), (V(renamed),)),
-                ),
-                AnonymousTraitRequirement(
-                    second,
-                    Overload((V(renamed),), (V(renamed),)),
+                _structural_requirement(_STRUCT_READ, (V("T"),), (V("U"),)),
+                _structural_requirement(_STRUCT_WRITE, (V("T"),), (V("U"),)),
+            ),
+        )
+        swapped_trait = AnonymousTrait(
+            (Symbol("T"), Symbol("U")),
+            tuple(reversed(shared_trait.requirements)),
+        )
+        for order in ((incoherent, coherent), (coherent, incoherent)):
+            shared_ctx = _structural_context()
+            for result in order:
+                shared_ctx.define_structural_overload(
+                    _STRUCT_READ,
+                    Overload((_STRUCT_FOO_TYPE,), (result,)),
+                )
+            shared_ctx.define_structural_overload(
+                _STRUCT_WRITE,
+                Overload((_STRUCT_FOO_TYPE,), (coherent,)),
+            )
+            if not assignable(_STRUCT_FOO_TYPE, shared_trait, shared_ctx):
+                raise AssertionError("trait solver failed to backtrack")
+            if not assignable(_STRUCT_FOO_TYPE, swapped_trait, shared_ctx):
+                raise AssertionError("requirement order changed trait satisfaction")
+
+        # Multiple complete paths must aggregate deterministically.
+        result_trait = AnonymousTrait(
+            (Symbol("T"), Symbol("U")),
+            (_structural_requirement(_STRUCT_READ, (V("T"),), (V("U"),)),),
+        )
+        result_overload = Overload((result_trait,), (V("U"),))
+        ambiguous_ctx = _structural_context()
+        ambiguous_ctx.define_structural_overload(
+            _STRUCT_READ,
+            Overload((_STRUCT_FOO_TYPE,), (String,)),
+        )
+        ambiguous_ctx.define_structural_overload(
+            _STRUCT_READ,
+            Overload((_STRUCT_FOO_TYPE,), (Number,)),
+        )
+        if assignable(_STRUCT_FOO_TYPE, result_trait, ambiguous_ctx):
+            raise AssertionError("incompatible trait solutions were accepted")
+        if apply_overload(result_overload, (_STRUCT_FOO_TYPE,), ambiguous_ctx):
+            raise AssertionError("ambiguous trait generic escaped application")
+
+        widening_ctx = _structural_context()
+        for result in (Integer, Number):
+            widening_ctx.define_structural_overload(
+                _STRUCT_READ,
+                Overload((_STRUCT_FOO_TYPE,), (result,)),
+            )
+        widened = apply_overload(result_overload, (_STRUCT_FOO_TYPE,), widening_ctx)
+        if widened is None or not same(widened.substitution["U"], Number):
+            raise AssertionError("compatible trait solutions did not widen")
+
+        contextual_ctx = _structural_context()
+        for result in (_STRUCT_CAR_TYPE, _STRUCT_VEHICLE_TYPE):
+            contextual_ctx.define_structural_overload(
+                _STRUCT_READ,
+                Overload((_STRUCT_FOO_TYPE,), (result,)),
+            )
+        contextual = apply_overload(
+            result_overload,
+            (_STRUCT_FOO_TYPE,),
+            contextual_ctx,
+        )
+        if contextual is None or not same(
+            contextual.substitution["U"],
+            _STRUCT_VEHICLE_TYPE,
+        ):
+            raise AssertionError("trait solution ignored nominal subtype context")
+
+        # Alpha-renaming and capture avoidance preserve meaning.
+        renamed_trait = AnonymousTrait(
+            (Symbol("Subject"),),
+            (
+                _structural_requirement(
+                    _STRUCT_MAP,
+                    (V("Subject"),),
+                    (required_return,),
                 ),
             ),
         )
-        if assignable(actual_subject, positive, ctx) != assignable(actual_subject, alpha, ctx):
-            raise AssertionError("anonymous-trait alpha renaming changed semantics")
+        if not same(trait, renamed_trait):
+            raise AssertionError("alpha-renamed traits were not equal")
+        scoped_trait = AnonymousTrait(
+            (Symbol("Local"),),
+            (_structural_requirement(_STRUCT_READ, (V("Local"),), (V("Outer"),)),),
+        )
+        substituted = _substitute(
+            scoped_trait,
+            {"Local": String, "Outer": required_return},
+        )
+        expected = AnonymousTrait(
+            (Symbol("Local"),),
+            (_structural_requirement(_STRUCT_READ, (V("Local"),), (required_return,)),),
+        )
+        if not same(substituted, expected):
+            raise AssertionError("outer substitution captured a trait generic")
+
+        local_name = f"Local{iteration % 97}"
+        renamed_local = f"Renamed{iteration % 89}"
+        local_trait = AnonymousTrait(
+            (),
+            (
+                AnonymousTraitRequirement(
+                    _STRUCT_READ,
+                    Overload(
+                        (V(local_name),),
+                        (V("Outer"),),
+                        (GenericConstraint(local_name, V("Outer")),),
+                    ),
+                ),
+            ),
+        )
+        alpha_local_trait = AnonymousTrait(
+            (),
+            (
+                AnonymousTraitRequirement(
+                    _STRUCT_READ,
+                    Overload(
+                        (V(renamed_local),),
+                        (required_return,),
+                        (GenericConstraint(renamed_local, required_return),),
+                    ),
+                ),
+            ),
+        )
+        substituted_local = _substitute(
+            local_trait,
+            {local_name: String, "Outer": required_return},
+        )
+        if not same(substituted_local, alpha_local_trait):
+            raise AssertionError("requirement-local generic capture or alpha failure")
+
+        # Candidate-local generic bounds and nested structural composition.
+        bounded_trait = AnonymousTrait(
+            (Symbol("T"),),
+            (_structural_requirement(_STRUCT_MAP, (V("T"),), (V("T"),)),),
+        )
+        bounded_ctx = _structural_context()
+        bounded_ctx.define_structural_overload(
+            _STRUCT_MAP,
+            Overload(
+                (V("X"),),
+                (V("X"),),
+                (GenericConstraint("X", _STRUCT_VEHICLE_TYPE),),
+            ),
+        )
+        if not assignable(_STRUCT_CAR_TYPE, bounded_trait, bounded_ctx):
+            raise AssertionError("bounded generic candidate rejected subtype")
+        if assignable(String, bounded_trait, bounded_ctx):
+            raise AssertionError("bounded generic candidate accepted invalid type")
+
+        if not assignable(N(_STRUCT_BOX, subject), N(_STRUCT_BOX, trait), ctx):
+            raise AssertionError("trait failed in a covariant generic")
+        if not assignable(N(_STRUCT_SINK, trait), N(_STRUCT_SINK, subject), ctx):
+            raise AssertionError("trait failed in a contravariant generic")
+        if assignable(N(_STRUCT_CELL, subject), N(_STRUCT_CELL, trait), ctx):
+            raise AssertionError("trait escaped an invariant generic")
+        if not assignable(ExactList(subject), ExactList(trait), ctx):
+            raise AssertionError("trait failed in a list")
+        if not assignable(subject, U(trait, _incompatible_with(subject, ctx)), ctx):
+            raise AssertionError("trait failed in a union")
+        if not assignable(subject, optional(trait), ctx):
+            raise AssertionError("trait failed in an optional")
+        if not assignable(
+            Row(_STRUCT_FOO_TYPE, Field(_STRUCT_FIELDS[0], subject)),
+            Row(_STRUCT_ENTITY_TYPE, Field(_STRUCT_FIELDS[0], trait)),
+            ctx,
+        ):
+            raise AssertionError("trait failed as a row field")
+
         return case
     except BaseException as exc:
         raise _GeneratedCaseFailure(case, exc) from exc
