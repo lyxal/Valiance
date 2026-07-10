@@ -488,6 +488,23 @@ class Environment:
         """Return whether a matching visible overload is not a friendly default."""
         return self.non_object_friendly_overload_index(name, overload) is not None
 
+    def has_local_non_object_friendly_overload(
+        self,
+        name: Symbol,
+        overload: Overload,
+    ) -> bool:
+        """Return whether this scope already defines the requested overload.
+
+        User definitions live in a child scope above built-ins and imports. A
+        same-shaped local definition must therefore be registered so it shadows
+        the parent callable at both analysis and runtime.
+        """
+        friendly = self.object_friendly_overloads.get(name, set())
+        return any(
+            candidate == overload and index not in friendly
+            for index, candidate in enumerate(self.overloads.get(name, ()))
+        )
+
     def overloads_for(self, name: Symbol) -> tuple[Overload, ...]:
         """Return the overload candidates registered for ``name``."""
         if name.text.startswith("*::"):

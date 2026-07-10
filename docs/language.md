@@ -2243,7 +2243,7 @@ tag #<name> as <category>
 ```
 
 - The tag is then attacted to the value. For example, `[1, 2, 3] #sorted` is a `#sorted Number+`.
-- Tags can also be removed from a value using `#!<name>`. Attempting to remove a tag from a value that does not have that tag is a compile error.
+- Tags can also be removed from a value using `#!<name>` or the equivalent `#-<name>` spelling. Attempting to remove a tag from a value that does not have that tag is a compile error.
 
 ## 17.1. Constructed Tags
 - Constructed tags represent properties of data that are a consequence of how that data is constructed. For example, an infinite list can only be infinite if it is constructed that way. In a sense, constructed tags are sticky. Performing an operation on an infinite list usually does not change its infiniteness. Thus a constructed tag sticks around unless explicitly removed.

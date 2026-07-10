@@ -201,7 +201,7 @@ class _Lexer:
         """Scan tag while tokenizing Valiance source."""
         line, col, offset = self.line, self.column, self.index
         self._advance()
-        if self._peek() == "!":
+        if self._peek() in ("!", "-"):
             self._advance()
         if not self._is_ident_start(self._peek()):
             self._fail("expected tag name", line, col)

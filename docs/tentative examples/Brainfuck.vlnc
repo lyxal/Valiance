@@ -1,0 +1,72 @@
+const $TAPE_SIZE = 30000
+$tape = [0] overtake $TAPE_SIZE
+
+tag #TapePointer as unit
+define #TapePointer(:Integer) => inRange(0, $TAPE_SIZE)
+
+define get(tape: Integer+, ind: #TapePointer Integer) => $tape[#-TapePointer $ind]
+define apply(:#TapePointer Integer, fn: Function[Integer -> Integer]) =>
+  #-TapePointer | #TapePointer $fn()
+end
+
+$tp: #TapePointer Integer = 0
+
+$program = input("Enter brainfuck program: ")
+
+$instructions: record[cmd: String, jump: Integer]+ = $program map fn (ch) =>
+  record{cmd: $ch, jump: -1}
+end
+
+$stack: Integer+ = []
+
+$instructions foreach (instr, i) =>
+  $instr.cmd match =>
+    "[" =>
+      $stack := append $i
+    "]" =>
+      if (length $stack == 0) => panic ValueFault("Unmatched ]")
+      $open = $stack last
+      $stack := dropLast
+      $instructions[$open].jump = $i + 1
+      $instructions[$i].jump = $open
+    _ => None
+  end
+end
+
+if (length $stack != 0) => panic ValueFault("Unmatched [")
+
+$pc: Integer = 0
+
+while ($pc < length $instructions) =>
+  $instr = $instructions[$pc]
+  $instr.cmd match =>
+    "+" =>
+      $tape[$tp] := + 1
+      $pc := + 1
+    "-" =>
+      $tape[$tp] := - 1
+      $pc := + 1
+    ">" =>
+      $tp := apply: + 1
+      $pc := + 1
+    "<" =>
+      $tp := apply: -1
+      $pc := + 1
+    "." =>
+      print fromCharcode $tape[$tp]
+      $pc := + 1
+    "[" =>
+      if ($tape[$tp] == 0) =>
+        $pc = $instr.jump
+      else =>
+        $pc := inc
+      end
+    "]" =>
+      if ($tape[$tp] != 0) =>
+        $pc = $instr.jump
+      else =>
+        $pc := + 1
+      end
+    _ => panic ValueFault("Unexpected command in program")
+  end
+end

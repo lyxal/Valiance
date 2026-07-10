@@ -12,7 +12,7 @@ import builtins as python_builtins
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from decimal import MAX_EMAX, MIN_EMIN, Decimal, localcontext
-from itertools import chain, groupby, islice
+from itertools import chain, cycle, groupby, islice
 from typing import Any
 
 import valiance.types as T
@@ -165,7 +165,10 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
     ),
     "-": element_documentation(
         "Subtract the top numeric operand from the value beneath it.",
-        parameters=(("left", "Value to subtract from."), ("right", "Value to subtract.")),
+        parameters=(
+            ("left", "Value to subtract from."),
+            ("right", "Value to subtract."),
+        ),
         returns="The numeric difference.",
         examples=(("10 3 -", "7"),),
         category="Arithmetic",
@@ -190,7 +193,10 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
             "Numeric overloads divide the value beneath the top of the stack by the top value.",
             "The list overload, also available as `fold`, uses the first item as the accumulator and applies the reducer to every remaining item.",
         ),
-        parameters=(("left_or_values", "Dividend or non-empty list."), ("right_or_reducer", "Divisor or two-input reducer.")),
+        parameters=(
+            ("left_or_values", "Dividend or non-empty list."),
+            ("right_or_reducer", "Divisor or two-input reducer."),
+        ),
         returns="The quotient or final accumulated value.",
         category="Arithmetic",
         see_also=("fold",),
@@ -282,13 +288,19 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
     "map": element_documentation(
         "Apply a callable to every item in a list.",
         description="Pure mappings are lazy; mappings whose callable is eager execute immediately and return no list.",
-        parameters=(("values", "Input list."), ("operation", "Callable applied to each item.")),
+        parameters=(
+            ("values", "Input list."),
+            ("operation", "Callable applied to each item."),
+        ),
         returns="A list of mapped values, or no value for an eager effect-only callable.",
         category="Collections",
     ),
     "take": element_documentation(
         "Return at most the first requested number of list items.",
-        parameters=(("values", "Input list."), ("count", "Non-negative number of items to retain.")),
+        parameters=(
+            ("values", "Input list."),
+            ("count", "Non-negative number of items to retain."),
+        ),
         returns="A list containing the selected prefix.",
         category="Collections",
     ),
@@ -319,7 +331,10 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
     ),
     "drop": element_documentation(
         "Discard a prefix from a list or string.",
-        parameters=(("values", "Input value."), ("count", "Number of leading items to remove.")),
+        parameters=(
+            ("values", "Input value."),
+            ("count", "Number of leading items to remove."),
+        ),
         returns="The remaining suffix.",
         category="Collections",
     ),
@@ -347,7 +362,10 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         "Return a list without the item at one index.",
         parameters=(
             ("values", "Input list."),
-            ("index", "Zero-based index to remove; negative indices count from the end."),
+            (
+                "index",
+                "Zero-based index to remove; negative indices count from the end.",
+            ),
         ),
         returns="A new list containing every other item.",
         category="Collections",
@@ -371,13 +389,19 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
     ),
     "addAll": element_documentation(
         "Append every item from one list to another list.",
-        parameters=(("items", "Items to append."), ("target", "List receiving the items.")),
+        parameters=(
+            ("items", "Items to append."),
+            ("target", "List receiving the items."),
+        ),
         returns="A combined list.",
         category="Collections",
     ),
     "join": element_documentation(
         "Join a list of strings with a separator.",
-        parameters=(("values", "Strings to join."), ("separator", "Text inserted between adjacent strings.")),
+        parameters=(
+            ("values", "Strings to join."),
+            ("separator", "Text inserted between adjacent strings."),
+        ),
         returns="The joined string.",
         category="Strings",
     ),
@@ -389,7 +413,10 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
     ),
     "rotate": element_documentation(
         "Rotate a finite list or string to the left.",
-        parameters=(("value", "Value to rotate."), ("amount", "Signed rotation amount.")),
+        parameters=(
+            ("value", "Value to rotate."),
+            ("amount", "Signed rotation amount."),
+        ),
         returns="The rotated value.",
         category="Collections",
     ),
@@ -431,7 +458,10 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
     ),
     "&": element_documentation(
         "Continue an optional or result computation only when a value is present or successful.",
-        parameters=(("value", "Optional, result, or recoverable error."), ("operation", "Callable applied to the present or successful value.")),
+        parameters=(
+            ("value", "Optional, result, or recoverable error."),
+            ("operation", "Callable applied to the present or successful value."),
+        ),
         returns="The transformed container, while empty or error values pass through unchanged.",
         category="Optionals and results",
     ),
@@ -474,7 +504,10 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
     ),
     "or": element_documentation(
         "Choose a fallback string or optional value.",
-        parameters=(("value", "Preferred string or optional."), ("fallback", "Value used when the preferred value is empty.")),
+        parameters=(
+            ("value", "Preferred string or optional."),
+            ("fallback", "Value used when the preferred value is empty."),
+        ),
         returns="The preferred non-empty value, otherwise the fallback.",
         category="Optionals and results",
     ),
@@ -1087,10 +1120,17 @@ def _decimal_multiply(left: Decimal, right: Decimal) -> Decimal:
 
 def _decimal_remainder(left: Decimal, right: Decimal) -> Decimal:
     """Compute decimal remainder for the built-in catalogue and runtime."""
+
+    def _wrapping_mod(a: Decimal, b: Decimal) -> Decimal:
+        r = a % b
+        if r and (r < 0) != (b < 0):
+            r += b
+        return r
+
     return _decimal_binary(
         left,
         right,
-        lambda a, b: a % b,
+        _wrapping_mod,
         _decimal_addition_precision(left, right),
     )
 
@@ -1232,6 +1272,48 @@ def _squared(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (_decimal_multiply(args[0], args[0]),)
 
 
+@builtin(
+    "inc",
+    (T.Integer,),
+    (T.Integer,),
+    documentation=element_documentation(
+        "Increase an integer by one.",
+        parameters=(("value", "Integer to increment."),),
+        returns="The next integer.",
+        category="Arithmetic",
+    ),
+)
+@builtin("inc", (T.Number,), (T.Number,))
+def _inc(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Increase a numeric value by one."""
+    del ctx
+    return (args[0] + Decimal(1),)
+
+
+@builtin(
+    "inRange",
+    (T.Number, T.Number, T.Number),
+    (T.Boolean,),
+    param_names=("start", "stop", "value"),
+    documentation=element_documentation(
+        "Test whether a number lies in a half-open interval.",
+        description="The start is included and the stop is excluded.",
+        parameters=(
+            ("start", "Inclusive lower bound."),
+            ("stop", "Exclusive upper bound."),
+            ("value", "Number to test, normally supplied from the stack."),
+        ),
+        returns="A Boolean number indicating whether start <= value < stop.",
+        category="Comparison",
+    ),
+)
+def _in_range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return whether value is within the requested half-open interval."""
+    del ctx
+    start, stop, value = args
+    return (_truth(start <= value < stop),)
+
+
 @builtin("positive?", (T.Number,), (T.Boolean,))
 def _is_positive(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `positive?` built-in runtime overload."""
@@ -1250,10 +1332,26 @@ def _equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (_truth(args[0] == args[1]),)
 
 
+@builtin(
+    "!=",
+    (T.Number, T.Number),
+    (T.Boolean,),
+    documentation=element_documentation(
+        "Test whether two numbers or strings differ.",
+        parameters=(("left", "First value."), ("right", "Second value.")),
+        returns="A Boolean number that is true when the values differ.",
+        category="Comparison",
+    ),
+)
+@builtin("!=", (T.String, T.String), (T.Boolean,))
+def _not_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the negation of ordinary value equality."""
+    del ctx
+    return (_truth(args[0] != args[1]),)
+
+
 @builtin("===", (T.V("T"), T.V("T")), (T.Boolean,))
-def _structural_equals(
-    args: tuple[Any, ...], ctx: RuntimeContext
-) -> tuple[Any, ...]:
+def _structural_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Compare two values using the runtime's structural value equality."""
     del ctx
     return (_truth(args[0] == args[1]),)
@@ -1327,6 +1425,20 @@ def _false(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin(
     "map",
     (
+        T.String,
+        T.Fn((T.String,), (T.TypeVariable("Mapped"),)),
+    ),
+    (T.ExactList(T.TypeVariable("Mapped")),),
+)
+def _map_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Map a unary function over the characters of a finite string."""
+    values, function = args
+    return ([ctx.call(function, [character])[0] for character in values],)
+
+
+@builtin(
+    "map",
+    (
         T.ExactList(T.TypeVariable("Item")),
         T.Fn((T.TypeVariable("Item"),), (T.TypeVariable("Mapped"),)),
     ),
@@ -1334,6 +1446,7 @@ def _false(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `map` built-in runtime overload."""
+
     def mapped_items():
         """Collect the items for mapped for the built-in catalogue and runtime."""
         for item in args[0]:
@@ -1355,6 +1468,7 @@ def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _map_niladic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Call a niladic mapping function once for every input-list item."""
+
     def mapped_items():
         """Yield one niladic callable result for each input item."""
         for _item in args[0]:
@@ -1379,6 +1493,33 @@ def _map_eager_effect(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
     for item in args[0]:
         ctx.call(args[1], [item])
     return ()
+
+
+@builtin(
+    "overtake",
+    (T.ExactList(T.V("Item")), T.Integer),
+    (T.ExactList(T.V("Item")),),
+    documentation=element_documentation(
+        "Repeat a finite list cyclically until the requested length is reached.",
+        parameters=(
+            ("values", "Non-empty finite source list."),
+            ("count", "Requested output length."),
+        ),
+        returns="A list of exactly count items.",
+        category="Collections",
+    ),
+)
+def _overtake(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Cycle a non-empty finite list and take exactly the requested count."""
+    del ctx
+    values, raw_count = args
+    count = int(raw_count)
+    if raw_count != raw_count.to_integral_value() or count < 0:
+        raise RuntimeError("overtake requires a non-negative integer count")
+    materialized = list(values)
+    if count and not materialized:
+        raise RuntimeError("overtake requires a non-empty source list")
+    return (list(islice(cycle(materialized), count)),)
 
 
 @builtin(
@@ -1481,6 +1622,26 @@ def _drop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @builtin(
+    "dropLast",
+    (T.ExactList(T.V("Item")),),
+    (T.ExactList(T.V("Item")),),
+    documentation=element_documentation(
+        "Return a finite list without its final item.",
+        parameters=(("values", "Input finite list."),),
+        returns="All items except the final item.",
+        category="Collections",
+    ),
+)
+def _drop_last(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return a materialized list with its final item removed."""
+    del ctx
+    values = list(args[0])
+    if not values:
+        raise RuntimeError("dropLast requires a non-empty list")
+    return (values[:-1],)
+
+
+@builtin(
     "groupConsecutive",
     (T.ExactList(T.V("Item")),),
     (T.ExactList(T.V("Item"), 2),),
@@ -1556,12 +1717,7 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
             f"reshape needs exactly {expected} items for shape ({rows}, {columns}); "
             f"received {'more than ' if len(items) > expected else ''}{len(items)}"
         )
-    return (
-        [
-            items[row * columns : (row + 1) * columns]
-            for row in range(rows)
-        ],
-    )
+    return ([items[row * columns : (row + 1) * columns] for row in range(rows)],)
 
 
 @builtin(
@@ -1712,6 +1868,7 @@ def _message_type_documentation(type_name: Symbol) -> ElementDocumentation:
 
 def _register_builtin_message_type(type_name: Symbol) -> None:
     """Register builtin message type for the built-in catalogue and runtime."""
+
     @builtin(
         type_name,
         (T.String,),
@@ -1888,9 +2045,7 @@ def _println(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.TypeVariable("F"),),
     (T.Never(),),
     (T.GenericConstraint("F", T.N(FAULT)),),
-    element_tags=(
-        T.ElementTag(Symbol("Panic"), (T.TypeVariable("F"),)),
-    ),
+    element_tags=(T.ElementTag(Symbol("Panic"), (T.TypeVariable("F"),)),),
 )
 def _panic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `panic` built-in runtime overload."""
@@ -1900,6 +2055,31 @@ def _panic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 # --------------------------------------------------------------------------
 # Strings
 # --------------------------------------------------------------------------
+
+
+@builtin(
+    "fromCharcode",
+    (T.Integer,),
+    (T.String,),
+    documentation=element_documentation(
+        "Convert an integer Unicode code point to a one-character string.",
+        parameters=(("codepoint", "Unicode scalar value."),),
+        returns="The corresponding character.",
+        category="Strings",
+    ),
+)
+@alias("fromCharCode")
+def _from_charcode(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Convert an integral Unicode code point to a character."""
+    del ctx
+    raw_codepoint = args[0]
+    if raw_codepoint != raw_codepoint.to_integral_value():
+        raise RuntimeError("fromCharcode requires an integer code point")
+    codepoint = int(raw_codepoint)
+    try:
+        return (chr(codepoint),)
+    except ValueError as exc:
+        raise RuntimeError("fromCharcode code point is out of range") from exc
 
 
 @builtin("toString", (T.V("T"),), (T.String,))

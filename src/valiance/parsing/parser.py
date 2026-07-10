@@ -1818,53 +1818,29 @@ class Parser:
                 breaks_chain=True,
             )
         name = self._symbol("expected variable name")
-        if self._match(TokenKind.LBRACKET):
-            selectors = self._index_selectors()
-            if self._match(TokenKind.AUG_ASSIGN):
-                rhs = self._chain_until(_LINE_TERMINATORS)
-                receiver = (GetVariableNode(name, location=_loc(start)),)
-                index_values = self._selector_expressions(selectors)
-                return _ChainPiece(
-                    (
-                        *receiver,
-                        *index_values,
-                        IndexAccessNode(selectors, location=_loc(start)),
-                        *rhs,
-                        *receiver,
-                        *index_values,
-                        IndexSetNode(selectors, location=_loc(start)),
-                        SetVariableNode(name, location=_loc(start)),
-                    ),
-                    True,
-                )
-            return _ChainPiece(
-                (
-                    GetVariableNode(name, location=_loc(start)),
-                    *self._selector_expressions(selectors),
-                    IndexAccessNode(selectors, location=_loc(start)),
-                ),
-                True,
-            )
-        if self._match(TokenKind.DOT):
-            field = self._symbol("expected field name")
+        path: list[tuple[str, object]] = []
+        while True:
+            if self._match(TokenKind.LBRACKET):
+                path.append(("index", self._index_selectors()))
+                continue
+            if self._match(TokenKind.DOT):
+                path.append(("field", self._symbol("expected field name")))
+                continue
+            break
+
+        if path:
             if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
                 op = self._previous.kind
                 rhs = self._chain_until(_LINE_TERMINATORS)
-                receiver = (GetVariableNode(name, location=_loc(start)),)
-                prefix = (
-                    (*receiver, FieldAccessNode(field, location=_loc(start)))
-                    if op is TokenKind.AUG_ASSIGN
-                    else receiver
-                )
-                return _ChainPiece(
-                    (*prefix, *rhs, FieldSetNode(field, location=_loc(start))),
-                    True,
-                )
+                nodes: list[ASTNode] = []
+                if op is TokenKind.AUG_ASSIGN:
+                    nodes.extend(self._variable_path_read(name, path, start))
+                nodes.extend(rhs)
+                nodes.extend(self._variable_path_rebuild(name, path, start))
+                nodes.append(SetVariableNode(name, location=_loc(start)))
+                return _ChainPiece(tuple(nodes), True)
             return _ChainPiece(
-                (
-                    GetVariableNode(name, location=_loc(start)),
-                    FieldAccessNode(field, location=_loc(start)),
-                ),
+                self._variable_path_read(name, path, start),
                 True,
             )
         declared_type = None
@@ -1875,6 +1851,7 @@ class Parser:
             rhs = self._chain_until(_LINE_TERMINATORS)
             if declared_type is not None:
                 rhs = _contextual_empty_list(rhs, declared_type)
+                rhs = (*rhs, *_declared_tag_applications(declared_type, start))
             prefix = (
                 (GetVariableNode(name, location=_loc(start)),)
                 if op is TokenKind.AUG_ASSIGN
@@ -1909,6 +1886,51 @@ class Parser:
                 True,
             )
         return _ChainPiece((GetVariableNode(name, location=_loc(start)),), True)
+
+    def _variable_path_read(
+        self,
+        name: Symbol,
+        path: list[tuple[str, object]],
+        start: Token,
+    ) -> tuple[ASTNode, ...]:
+        """Lower a variable access path into ordinary field/index reads."""
+        nodes: list[ASTNode] = [GetVariableNode(name, location=_loc(start))]
+        for kind, payload in path:
+            if kind == "field":
+                nodes.append(FieldAccessNode(payload, location=_loc(start)))
+                continue
+            selectors = payload
+            nodes.extend(self._selector_expressions(selectors))
+            nodes.append(IndexAccessNode(selectors, location=_loc(start)))
+        return tuple(nodes)
+
+    def _variable_path_rebuild(
+        self,
+        name: Symbol,
+        path: list[tuple[str, object]],
+        start: Token,
+    ) -> tuple[ASTNode, ...]:
+        """Reconstruct every parent in a mixed field/index assignment path."""
+        nodes: list[ASTNode] = []
+        for depth in range(len(path) - 1, -1, -1):
+            kind, payload = path[depth]
+            parent_path = path[:depth]
+            nodes.extend(self._variable_path_read(name, parent_path, start))
+            if kind == "field":
+                nodes.append(
+                    StackShuffleNode(
+                        Symbol("move"),
+                        (Symbol("value"), Symbol("receiver")),
+                        (Symbol("receiver"), Symbol("value")),
+                        location=_loc(start),
+                    )
+                )
+                nodes.append(FieldSetNode(payload, location=_loc(start)))
+                continue
+            selectors = payload
+            nodes.extend(self._selector_expressions(selectors))
+            nodes.append(IndexSetNode(selectors, location=_loc(start)))
+        return tuple(nodes)
 
     def _multiple_assignment(
         self,
@@ -2121,6 +2143,17 @@ class Parser:
         """Parse modifier function from the current token stream."""
         if len(body) == 1 and isinstance(body[0], FunctionNode):
             return body[0]
+        if (
+            len(body) == 1
+            and isinstance(body[0], NumberLiteralNode)
+            and body[0].value.startswith("-")
+            and len(body[0].value) > 1
+        ):
+            # Modifier shorthand is stack-oriented: ``apply: -1`` means
+            # subtract one from the cycled argument. A constant negative value
+            # remains available explicitly as ``apply(fn => -1)``.
+            literal = replace(body[0], value=body[0].value[1:])
+            body = (literal, ElementNode(name=Symbol("-"), location=body[0].location))
         return FunctionNode(body=body, location=_loc(start))
 
     def _record_fields(self) -> tuple[tuple[Symbol, tuple[ASTNode, ...]], ...]:
@@ -2507,6 +2540,25 @@ class Parser:
                     returns = self._type_list_until({TokenKind.RBRACKET})
                     self._expect(TokenKind.RBRACKET)
                     return _optionalize_type(Fn(params, returns), optional_depth)
+                if name == "record":
+                    fields: list[RowField] = []
+                    self._skip_newlines()
+                    if not self._match(TokenKind.RBRACKET):
+                        while True:
+                            field_name = self._symbol("expected record field name")
+                            self._expect(TokenKind.COLON)
+                            fields.append(
+                                Field(field_name, self.parse_type_expression())
+                            )
+                            self._skip_newlines()
+                            if self._match(TokenKind.RBRACKET):
+                                break
+                            self._expect(TokenKind.COMMA)
+                            self._skip_newlines()
+                    return _optionalize_type(
+                        Row(N(Symbol("record")), *fields),
+                        optional_depth,
+                    )
                 if not self._match(TokenKind.RBRACKET):
                     while True:
                         args.append(self.parse_type_expression())
@@ -2911,13 +2963,29 @@ def _loc(token: Token) -> SourceLocation:
     return SourceLocation(token.line, token.column, token.offset)
 
 
+def _declared_tag_applications(
+    typ: Type,
+    token: Token,
+) -> tuple[TagApplicationNode, ...]:
+    """Lower declared top-level data tags into validating applications."""
+    normalized = typ
+    tags: list[DataTag] = []
+    while isinstance(normalized, TaggedType):
+        tags.extend(tag for tag in normalized.tags if not tag.absent)
+        normalized = normalized.inner
+    return tuple(
+        TagApplicationNode(tag, location=_loc(token))
+        for tag in sorted(tags, key=lambda item: (item.depth, item.name))
+    )
+
+
 def _tag_from_token(token: Token) -> DataTag:
     """Parse tag from token from the current token stream."""
     value = token.value
     if not value.startswith("#"):
         raise ParseError("expected data tag", line=token.line, column=token.column)
     raw = value[1:]
-    absent = raw.startswith("!")
+    absent = raw.startswith(("!", "-"))
     if absent:
         raw = raw[1:]
     name, _, suffix = raw.partition("+")

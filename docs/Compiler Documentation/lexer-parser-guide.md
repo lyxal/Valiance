@@ -87,7 +87,7 @@ Important token rules:
   a following `define` and field parsing live in `source_tools.py`, not in the
   language parser.
 - `#/ ... /#` is a nested multiline comment.
-- A bare `#name`, `#!name`, or `#name++` is emitted as one `OP` token for data
+- A bare `#name`, `#!name`, `#-name`, or `#name++` is emitted as one `OP` token for data
   tags.
 - `"` starts a string. Strings may contain literal newlines. Escaped `"`, `\`,
   and `$` are unescaped; other backslash sequences are preserved with the
@@ -253,7 +253,7 @@ you are changing. Most regressions here look like elements in the wrong order.
 - Quick functions: `'chain`
 - Control-flow nodes in expression position
 - `break` and `return`
-- Data-tag application: `#tag` and `#!tag`
+- Data-tag application: `#tag`, plus removal via `#!tag` or its `#-tag` alias
 - Elements, element call syntax, niladic element names, and `:` modifiers
 - Function annotations such as `@recursive fn ...`
 - Element annotations such as `@@tupled foo`

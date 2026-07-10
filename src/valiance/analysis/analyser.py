@@ -181,6 +181,22 @@ class BranchVariables:
             result[name] = typ
         return _sorted_items(result.items())
 
+    def constant_items(self) -> tuple[tuple[Symbol, T.Type], ...]:
+        """Return visible immutable bindings that are safe to read in functions."""
+        constant_names = set(self.function_constants) | set(self.block_constants)
+        return tuple(
+            (name, typ)
+            for name, typ in self.visible_items()
+            if name in constant_names
+        )
+
+    def nonconstant_names(self) -> frozenset[Symbol]:
+        """Return visible binding names that may change after function creation."""
+        constant_names = set(self.function_constants) | set(self.block_constants)
+        return frozenset(
+            name for name, _typ in self.visible_items() if name not in constant_names
+        )
+
     def read(self, name: Symbol) -> T.Type | None:
         """Read a variable using block, function, parameter, capture order."""
         for scope in (
@@ -941,7 +957,7 @@ class Analyser:
         )
         if (
             declared_overload is not None
-            and not self.env.has_non_object_friendly_overload(
+            and not self.env.has_local_non_object_friendly_overload(
                 name,
                 declared_overload,
             )
@@ -969,7 +985,7 @@ class Analyser:
             if overload is None:
                 continue
             overload_typings[typing_index] = replace(typing, overload=overload)
-            if not self.env.has_non_object_friendly_overload(name, overload):
+            if not self.env.has_local_non_object_friendly_overload(name, overload):
                 self.env.define_overload(name, overload)
             original_index = self.env.non_object_friendly_overload_index(
                 name,
@@ -2988,6 +3004,27 @@ class Analyser:
                 receiver_type = refined_receiver
             return receiver_type, field_type, popped
 
+        if (
+            branch.input_mode is InputMode.CYCLE_EXPLICIT_PARAMS
+            and branch.cycle_params
+        ):
+            receiver_type = branch.cycle_params[
+                branch.cycle_index % len(branch.cycle_params)
+            ]
+            popped = replace(
+                branch,
+                cycle_index=(branch.cycle_index + 1) % len(branch.cycle_params),
+            )
+            field_type, refined_receiver = self._field_type(
+                receiver_type,
+                name,
+                popped,
+            )
+            if refined_receiver is not None:
+                popped = popped.refine_type(receiver_type, refined_receiver)
+                receiver_type = refined_receiver
+            return receiver_type, field_type, popped
+
         if branch.input_mode is not InputMode.INFER_INPUTS:
             return None
 
@@ -3011,9 +3048,9 @@ class Analyser:
         """Determine the type of field during static analysis."""
         receiver_type = T.normalize(receiver_type)
         if isinstance(receiver_type, T.RowType):
-            if write:
-                return None, None
             existing = _row_field_type(receiver_type, name)
+            if write:
+                return (existing, None) if existing is not None else (None, None)
             if existing is not None:
                 return existing, None
             field_type = _anonymous_type_var(branch, 1)
@@ -3170,7 +3207,13 @@ class Analyser:
             else:
                 variables = write.variables
         initial_stack = T.TypeStack(
-            body_params if mode is InputMode.CYCLE_EXPLICIT_PARAMS else ()
+            tuple(
+                typ
+                for param, typ in zip(node.params or (), body_params, strict=True)
+                if param.name is None
+            )
+            if mode is InputMode.CYCLE_EXPLICIT_PARAMS
+            else ()
         )
         initial = AnalysisBranch(
             stack=initial_stack,
@@ -4819,14 +4862,15 @@ def _tag_application_node(
     branch: AnalysisBranch,
 ) -> BranchSet:
     """Analyse a `TagApplicationNode` node and return the surviving branches."""
-    if not branch.stack:
+    sourced = branch.source_arguments((T.V("_tagged_value"),))
+    if sourced is None:
         self._diagnose(
             f"empty stack when applying tag '{_show_tag(node.tag)}'",
             node,
         )
         return BranchSet((branch.emit(TypedNode(node, None)),))
 
-    value_type = branch.stack[-1]
+    (value_type,), base_branch = sourced
     validator: T.AppliedOverload | None = None
     validator_index: int | None = None
     added_tags: tuple[T.DataTag, ...] = ()
@@ -4899,7 +4943,7 @@ def _tag_application_node(
                 )
                 return BranchSet((branch.emit(TypedNode(node, None)),))
 
-    stack = T.TypeStack((*branch.stack.items[:-1], tagged))
+    stack = base_branch.stack.push(tagged)
     typed = TypedTagApplicationNode(
         node,
         tagged,
@@ -4908,7 +4952,7 @@ def _tag_application_node(
         added_tags,
         removed_tags,
     )
-    return BranchSet((branch.with_stack(stack).emit(typed),))
+    return BranchSet((base_branch.with_stack(stack).emit(typed),))
 
 
 @register(ImportNode)
@@ -5356,10 +5400,16 @@ def _params_to_types(params: tuple[FunctionParam, ...]) -> tuple[T.Type, ...]:
 
 
 def _function_capture_source(outer: AnalysisBranch) -> BranchVariables | None:
-    """Compute function capture source during static analysis."""
-    if outer.input_mode is InputMode.TOP_LEVEL:
+    """Return bindings whose types are available inside a function body."""
+    if outer.input_mode is not InputMode.TOP_LEVEL:
+        return outer.variables
+    constants = outer.variables.constant_items()
+    if not constants:
         return None
-    return outer.variables
+    return BranchVariables(
+        function_locals=constants,
+        function_constants=tuple(name for name, _typ in constants),
+    )
 
 
 def _top_level_assignment_capture_nodes(
@@ -5369,7 +5419,7 @@ def _top_level_assignment_capture_nodes(
     """Compute top level assignment capture nodes during static analysis."""
     if outer.input_mode is not InputMode.TOP_LEVEL:
         return ()
-    visible = {name for name, _typ in outer.variables.visible_items()}
+    visible = set(outer.variables.nonconstant_names())
     if not visible:
         return ()
     return _top_level_assignment_capture_reads_in_function(node, visible, frozenset())
@@ -5912,6 +5962,28 @@ def _contextual_stack_argument_variants(
     analyser: Analyser | None,
 ) -> Iterator[tuple[tuple[T.Type, ...], AnalysisBranch]]:
     """Contextualize deferred function literals passed on the value stack."""
+    inferred_literal_vars: set[str] = set()
+    for arg, param in zip(args, params, strict=True):
+        if not isinstance(T.normalize(param), T.FunctionType):
+            continue
+        if _stack_function_literal(arg, branch) is None:
+            continue
+        inferred_literal_vars.update(_type_variable_names(arg))
+
+    if inferred_literal_vars:
+        inferred = _branch_argument_substitution(args, params, ctx)
+        if inferred is not None:
+            literal_substitution = {
+                name: typ
+                for name, typ in inferred.items()
+                if name in inferred_literal_vars
+            }
+            if literal_substitution:
+                branch = _specialize_branch_arguments(branch, literal_substitution)
+                args = tuple(
+                    _substitute_branch_type(arg, literal_substitution) for arg in args
+                )
+
     deferred: list[tuple[int, ModifierArgumentAnalysis]] = []
     for index, (arg, param) in enumerate(zip(args, params, strict=True)):
         if not isinstance(T.normalize(param), T.FunctionType):
@@ -5991,6 +6063,50 @@ def _contextual_stack_argument_variants(
             )
 
     yield from rec(0, substitution, ())
+
+
+def _stack_function_literal(
+    typ: T.Type,
+    branch: AnalysisBranch,
+) -> TypedFunctionNode | None:
+    """Return the most recent function literal carrying the requested type."""
+    for typed_node in reversed(branch.typed_body):
+        if isinstance(typed_node, TypedFunctionNode) and T.same(typed_node.typ, typ):
+            return typed_node
+    return None
+
+
+def _type_variable_names(typ: T.Type) -> frozenset[str]:
+    """Collect free type-variable names from a type tree."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.VarType):
+        return frozenset((typ.name,))
+    if isinstance(typ, T.NominalType):
+        children = typ.args
+    elif isinstance(typ, (T.UnionType, T.IntersectionType)):
+        children = typ.items
+    elif isinstance(typ, T.TupleType):
+        children = typ.params
+    elif isinstance(typ, T.VariadicTupleType):
+        children = tuple(item.typ for item in typ.items)
+    elif isinstance(typ, T.RowType):
+        children = (typ.base, *(field.typ for field in typ.fields))
+    elif isinstance(typ, T.CollectionType):
+        children = (typ.base,)
+    elif isinstance(typ, T.FunctionType):
+        children = (
+            ()
+            if typ.params is None or typ.returns is None
+            else typ.params + typ.returns
+        )
+    elif isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+        children = (typ.inner,)
+    else:
+        children = ()
+    names: set[str] = set()
+    for child in children:
+        names.update(_type_variable_names(child))
+    return frozenset(names)
 
 
 def _deferred_stack_function_argument(
@@ -7650,6 +7766,27 @@ def _solve_branch_argument(
             if _contains_named_type_var(actual, expected.name):
                 return True
             return bind(expected.name, actual)
+        if (
+            isinstance(actual, T.FunctionType)
+            and isinstance(expected, T.FunctionType)
+            and actual.params is not None
+            and actual.returns is not None
+            and expected.params is not None
+            and expected.returns is not None
+            and (_contains_type_var(actual) or _contains_type_var(expected))
+        ):
+            return (
+                len(actual.params) == len(expected.params)
+                and len(actual.returns) == len(expected.returns)
+                and all(
+                    rec(left, right)
+                    for left, right in zip(
+                        actual.params + actual.returns,
+                        expected.params + expected.returns,
+                        strict=True,
+                    )
+                )
+            )
         if T.compatible(actual, expected, ctx):
             return True
         if isinstance(actual, T.RowType):
@@ -7946,9 +8083,23 @@ def _selectors_assignable(
     """Return the Boolean result of selectors assignable during static analysis."""
     expected = _selector_expected_types(receiver_type, selectors)
     return len(expected) == len(index_types) and all(
-        T.assignable(actual, target, ctx)
+        T.assignable(_index_value_type(actual), target, ctx)
         for actual, target in zip(index_types, expected, strict=True)
     )
+
+
+def _index_value_type(typ: T.Type) -> T.Type:
+    """Strip data tags from a value used as an index.
+
+    Unit-like tags refine an integer's meaning without changing its suitability
+    as a list or string index. Runtime indexing already unwraps tagged values.
+    """
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        return _index_value_type(typ.inner)
+    if isinstance(typ, T.UnionType):
+        return T.U(*(_index_value_type(item) for item in typ.items))
+    return typ
 
 
 def _selector_expected_types(

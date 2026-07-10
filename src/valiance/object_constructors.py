@@ -46,7 +46,17 @@ def prepare_constructor_body(body: tuple[ASTNode, ...]) -> tuple[ASTNode, ...]:
             body,
             index,
         )
-        if targets_self and _field_set_reads_target(body, index):
+        already_rebound = (
+            targets_self
+            and index + 1 < len(body)
+            and isinstance(body[index + 1], SetVariableNode)
+            and body[index + 1].name == _SELF
+        )
+        if (
+            targets_self
+            and not already_rebound
+            and _field_set_reads_target(body, index)
+        ):
             transformed.extend(
                 (
                     GetVariableNode(_SELF, location=node.location),
@@ -59,7 +69,7 @@ def prepare_constructor_body(body: tuple[ASTNode, ...]) -> tuple[ASTNode, ...]:
                 )
             )
         transformed.append(_prepare_constructor_child(node))
-        if targets_self:
+        if targets_self and not already_rebound:
             transformed.append(SetVariableNode(_SELF, location=node.location))
     return tuple(transformed)
 

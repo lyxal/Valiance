@@ -986,7 +986,7 @@ def _compile_function_node(
         params=params,
         name=name,
         cycle_params=bool(params),
-        accepts_stack_inputs=accepts_stack_inputs,
+        accepts_stack_inputs=accepts_stack_inputs or ast.params is None,
         element_tags=_function_element_tag_names(node),
         recursive=_function_is_recursive(ast),
         multi=multi,
