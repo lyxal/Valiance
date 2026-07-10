@@ -135,6 +135,10 @@ can make in-memory tests pass while saved bytecode fails.
 
 ## Runtime
 
+Start with [Understanding the runtime and code generator](runtime-system.md)
+for a traced, human-first explanation of typed-AST lowering, bytecode records,
+frames, calls, vectorisation, ownership, panics, and serialization.
+
 ### Virtual machine
 
 `src/valiance/runtime/vm.py` owns frames, stacks, locals, globals, function

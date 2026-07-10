@@ -3,7 +3,9 @@ any changes.
 Start with `docs/maintenance/README.md` for the human-facing architecture and
 change playbooks, then use the compiler guides for subsystem detail.
 For analyser or type-relation work, read `docs/maintenance/type-system.md`
-before the exhaustive compiler type-system reference.
+before the exhaustive compiler type-system reference. For code generation,
+bytecode, VM, runtime-value, or serialization work, read
+`docs/maintenance/runtime-system.md` before the exhaustive runtime reference.
 
 Windows notes for future agents:
 

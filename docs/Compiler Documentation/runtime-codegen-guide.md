@@ -1,5 +1,10 @@
 # Runtime and Codegen Guide
 
+> New to this subsystem? Read the human-first
+> [runtime and code-generator guide](../maintenance/runtime-system.md) first.
+> This document is the exhaustive implementation reference; the maintenance
+> guide explains the mental model and traces complete calls.
+
 This guide is for future agents working on Valiance's bytecode compiler,
 runtime, built-ins, or saved bytecode format. It is intentionally self-contained:
 do not assume the reader has loaded any other compiler guide.

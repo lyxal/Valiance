@@ -31,6 +31,9 @@ behaviour becomes harder to reason about and static guarantees become weaker.
 - [Understanding the type system](type-system.md) gives a human-first mental
   model of type relations, generic solving, overload application, and branch
   analysis, with traced examples and an API decision table.
+- [Understanding the runtime and code generator](runtime-system.md) follows
+  typed nodes through bytecode, frames, calls, vectorisation, ownership, panics,
+  serialization, and VM debugging.
 - [Change playbooks](change-playbooks.md) gives step-by-step recipes for common
   work such as adding syntax, an element, a runtime value, or a CLI command.
 - [Testing and debugging](testing-and-debugging.md) explains the test layers,
