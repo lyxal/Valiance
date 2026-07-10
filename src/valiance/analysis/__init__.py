@@ -12,20 +12,36 @@ from valiance.analysis.analyser import (
     analyse_function_details,
 )
 from valiance.analysis.builtins import default_environment
-from valiance.analysis.lints import LintFinding, LintRewrite, RewriteKind
+from valiance.analysis.lints import (
+    DEFAULT_REGISTRY,
+    BlockLintContext,
+    LintFinding,
+    LintRegistry,
+    LintRewrite,
+    MatchLintContext,
+    NodeLintContext,
+    RewriteKind,
+    finding,
+)
 
 __all__ = [
     "AnalysisBranch",
+    "BlockLintContext",
+    "DEFAULT_REGISTRY",
     "Analyser",
     "BranchSet",
     "BranchVariables",
     "FunctionAnalysis",
     "InputMode",
     "LintFinding",
+    "LintRegistry",
     "LintRewrite",
+    "MatchLintContext",
+    "NodeLintContext",
     "RewriteKind",
     "analyse",
     "analyse_function",
     "analyse_function_details",
     "default_environment",
+    "finding",
 ]

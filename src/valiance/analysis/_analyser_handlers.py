@@ -7,7 +7,6 @@ from typing import cast
 
 import valiance.analysis.annotations as annotation_hooks
 import valiance.types as T
-from valiance.analysis.lints import LintRewrite, RewriteKind
 from valiance.asts import (
     AnnotationNode,
     ArrayLiteralNode,
@@ -796,26 +795,6 @@ def _cast_node(
     if node.checked:
         if T.assignable(source, target, self.env.context):
             node = replace(node, checked=False)
-            if T.same(source, target):
-                self._lint(
-                    f"unnecessary checked cast to {T.show(target)}; "
-                    f"remove `as! {T.show(target)}`",
-                    node,
-                    code="redundant-checked-cast",
-                    rewrite=LintRewrite(RewriteKind.REMOVE_NODE),
-                )
-            else:
-                self._lint(
-                    f"checked cast to {T.show(target)} is statically safe; "
-                    f"write `as {T.show(target)}` instead of "
-                    f"`as! {T.show(target)}`",
-                    node,
-                    code="safe-checked-cast",
-                    rewrite=LintRewrite(
-                        RewriteKind.REPLACE_NODE,
-                        replacement=f"as {T.show(target)}",
-                    ),
-                )
         elif (
             invalid_runtime_type := _patterns._uncheckable_runtime_type(target)
         ) is not None:
@@ -841,14 +820,6 @@ def _cast_node(
             node,
         )
         return _core.BranchSet()
-    elif T.same(source, target):
-        self._lint(
-            f"unnecessary cast to {T.show(target)}; "
-            f"remove `as {T.show(target)}`",
-            node,
-            code="redundant-cast",
-            rewrite=LintRewrite(RewriteKind.REMOVE_NODE),
-        )
 
     stack = T.TypeStack((*branch.stack.items[:-1], target))
     return _core.BranchSet((branch.with_stack(stack).emit(TypedNode(node, target)),))
@@ -874,26 +845,6 @@ def _stack_shuffle_node(
         return _core.BranchSet()
 
     args, popped = sourced
-    if _utils._is_noop_move(node):
-        labels = ", ".join(str(label) for label in node.poststack)
-        self._lint(
-            "this move leaves the stack unchanged; "
-            f"remove `move({labels} -> {labels})`",
-            node,
-            code="no-op-move",
-            rewrite=LintRewrite(RewriteKind.REMOVE_NODE),
-        )
-    elif node.mode == Symbol("copy") and not node.poststack:
-        labels = ", ".join(
-            "_" if label is None else str(label) for label in node.prestack
-        )
-        self._lint(
-            "this copy produces no values and has no effect; "
-            f"remove `copy({labels} ->)`",
-            node,
-            code="no-op-copy",
-            rewrite=LintRewrite(RewriteKind.REMOVE_NODE),
-        )
     labelled = {
         label: typ
         for label, typ in zip(node.prestack, args, strict=True)

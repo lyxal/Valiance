@@ -34,8 +34,13 @@ For an approachable explanation before this exhaustive reference, read
   destructuring, narrowing, and exhaustiveness helpers.
 
 - `src/valiance/analysis/_analyser_utils.py`
-  Contains shared diagnostics, branch merging, literal helpers, copy checks,
-  and typed/type refinement utilities.
+  Contains shared diagnostics, branch merging, copy checks, and typed/type
+  refinement utilities.
+
+- `src/valiance/analysis/lints/`
+  Contains the extensible lint registry, lifecycle contexts, structured finding
+  model, and automatically discovered built-in rule modules. New lint rules
+  should be added here without modifying analyser handlers.
 
 - `src/valiance/analysis/builtins.py`
   Declares the default element environment and runtime implementations for
@@ -1227,22 +1232,25 @@ the current lexical environment.
 ## Diagnostics
 
 The analyser stores errors, warnings, and lints separately. Use
-`_diagnose(message, node)` for fatal compiler diagnostics, `_warn(message,
-node)` for semantic or annotation warnings, and `_lint(message, node)` for
-non-fatal source-pattern advice. All three helpers attach source locations when
-available.
+`_diagnose(message, node)` for fatal compiler diagnostics and `_warn(message,
+node)` for semantic or annotation warnings. Non-fatal source-pattern advice is
+produced by registered rules in `analysis/lints/`, not by concrete analyser
+handlers.
+
+The analyser invokes the lint registry at generic block, analysed-node, and
+validated-match lifecycle points. Rules return structured `LintFinding` values;
+the analyser records and deduplicates them while keeping the legacy
+`analyser.lints` rendering synchronized. This means a new rule module can be
+added under `analysis/lints/rules/` without changing `analyser.py` or
+`_analyser_handlers.py`.
 
 Lint messages should be actionable: explain what is redundant or risky and give
 a concrete replacement such as removing an identity cast or replacing a
 statically safe checked cast with an ordinary cast. A lint must not stop typed
-analysis or code generation.
-
-Each lint is also recorded as a structured `LintFinding` in
-`analyser.lint_findings`. Supply a stable rule code and, when the transformation
-is proven semantics-preserving, a `LintRewrite` with the narrowest
-`RewriteKind`. The legacy `analyser.lints` strings remain the CLI/REPL rendering
-surface. See `docs/maintenance/lints-and-rewrites.md` for the rule-development
-checklist and optimiser boundary.
+analysis or code generation. Supply a stable rule code and, when the
+transformation is proven semantics-preserving, a `LintRewrite` with the
+narrowest `RewriteKind`. See `docs/maintenance/lints-and-rewrites.md` for the
+registry API, rule-development checklist, and optimiser boundary.
 
 Unknown-element suggestions are filtered twice: the source name must be close
 enough to the requested spelling, and at least one overload must be applicable

@@ -1,14 +1,35 @@
 # Lints and optimisation passes
 
 Valiance lints are non-fatal, actionable diagnostics for source patterns that are
-valid but unnecessarily indirect, redundant, or unreachable. They are produced
-by the analyser because that is the first stage with both the parsed structure
-and the type/overload facts needed to make safe recommendations.
+valid but unnecessarily indirect, redundant, or unreachable. They run during
+analysis because that is the first stage with both parsed structure and the
+resolved type, branch, and overload facts needed to make safe recommendations.
+
+Lint detection is deliberately isolated from the analyser implementation under
+`src/valiance/analysis/lints/`. The analyser exposes generic lifecycle hooks;
+individual rules register against those hooks and never need to be wired into
+`analyser.py` or `_analyser_handlers.py`.
 
 The analyser does not rewrite programs while reporting lints. Optimisation is a
 separate post-codegen stage in `runtime/optimizer.py`, so enabling it does not
 change diagnostics or analysis decisions. The structured lint representation can
 still support future typed rewrites without parsing human-facing messages.
+
+## Package layout
+
+The lint subsystem is split by responsibility:
+
+- `lints/models.py` defines `LintFinding`, `LintRewrite`, `RewriteKind`, and the
+  `finding(...)` constructor.
+- `lints/contexts.py` defines the immutable context objects supplied to rules.
+- `lints/registry.py` owns rule registration and dispatch.
+- `lints/rules/` contains built-in rule modules.
+- `lints/rules/__init__.py` discovers every non-private module in that directory
+  and calls its `register(registry)` function.
+
+Because discovery is automatic, adding a built-in lint normally means adding one
+new module under `lints/rules/`. No existing analyser file or rule index needs to
+change.
 
 ## Public analyser results
 
@@ -20,10 +41,18 @@ An `Analyser` exposes two views of the same findings:
   code, raw message, source location, originating AST node, and optional
   `LintRewrite` metadata.
 
-The structured types are exported from `valiance.analysis`:
+The structured types and registry API are exported from `valiance.analysis`:
 
 ```python
-from valiance.analysis import Analyser, LintFinding, LintRewrite, RewriteKind
+from valiance.analysis import (
+    Analyser,
+    LintFinding,
+    LintRegistry,
+    LintRewrite,
+    NodeLintContext,
+    RewriteKind,
+    finding,
+)
 ```
 
 `LintRewrite.semantics_preserving` is true for the current rules. Its
@@ -36,7 +65,7 @@ and structured collections synchronized.
 
 ## Current rules
 
-The initial rules cover:
+The built-in rule modules cover:
 
 - identity casts and statically safe checked casts;
 - `move(...)` operations that leave the stack unchanged;
@@ -51,7 +80,7 @@ patterns as unconditional, and do not equate repeated guards or arbitrary
 expression patterns. Those expressions may be effectful or depend on mutable
 state, so removing one is not proven safe merely because the ASTs look alike.
 
-## Adding a lint pattern
+## Adding a lint rule
 
 ### 1. Establish the safety argument
 
@@ -69,13 +98,14 @@ A textual resemblance is not enough. For example, arithmetic identities must
 not be added solely by checking an element name such as `+`: a user-defined or
 overlaid overload may have effects that the builtin does not.
 
-If safety depends on a selected overload, type, or branch fact, emit the rule
-after that fact has been resolved. If safety cannot be proven, prefer a warning
-without rewrite metadata or do not add the rule.
+If safety depends on a selected overload, type, or branch fact, use a context
+that runs after that fact has been resolved. If safety cannot be proven, prefer
+a warning without rewrite metadata or do not add the rule.
 
-### 2. Add failing tests before implementation
+### 2. Add focused tests first
 
-Place focused analyser tests in `tests/test_analyser.py`. Cover:
+Place focused analyser tests in `tests/test_analyser.py` or registry-focused
+tests in `tests/test_lints.py`. Cover:
 
 1. the positive pattern;
 2. a nearby pattern that must not be flagged;
@@ -88,30 +118,68 @@ For a rule likely to encounter many syntax combinations, extend the
 that lints remain non-fatal, structured and rendered views agree, and advertised
 rewrites are marked semantics-preserving.
 
-### 3. Choose the narrowest analysis point
+### 3. Choose a lifecycle context
 
-Common locations are:
+The registry supports three rule shapes:
 
-- a registered node handler after overload/type resolution;
-- `Analyser.analyse_block(...)` for relationships between sibling statements;
-- the match analyser for relationships between ordered cases; or
-- a small pure helper near the corresponding AST/type helper.
+- `register_block(rule)` receives `BlockLintContext` once for each lexical block
+  and is appropriate for relationships between sibling statements.
+- `register_node(NodeType, rule)` receives `NodeLintContext` after one concrete
+  AST node has been analysed. It includes the incoming branch, resulting branch
+  set, and current environment.
+- `register_match(rule)` receives `MatchLintContext` after pattern validity and
+  exhaustiveness checks have succeeded, which prevents advice from being emitted
+  for malformed matches.
 
 Do not put lint decisions in the parser merely because a pattern is syntactic.
-The analyser can still inspect raw AST while retaining access to type and effect
-facts, and it keeps all non-fatal semantic advice in one stage.
+The lint contexts retain access to raw AST and analysis facts while keeping all
+non-fatal semantic advice in one subsystem.
 
-### 4. Emit a structured finding
+### 4. Add one automatically discovered rule module
 
-Call `_lint(...)` with an actionable message, stable kebab-case code, source
+Create a module in `src/valiance/analysis/lints/rules/`. It must expose a
+`register(registry)` function. For example:
+
+```python
+from valiance.asts import NumberLiteralNode
+
+from ..contexts import NodeLintContext
+from ..models import finding
+from ..registry import LintRegistry
+
+
+def register(registry: LintRegistry) -> None:
+    """Register this module's rules."""
+    registry.register_node(NumberLiteralNode, lint_number)
+
+
+def lint_number(context: NodeLintContext):
+    """Report the example number-literal pattern."""
+    return (
+        finding(
+            "example-number",
+            "replace this example number with a named constant",
+            context.node,
+        ),
+    )
+```
+
+The discovery loader imports the new module on process start. Do not add an
+import to an analyser module or edit a central list.
+
+### 5. Emit structured findings
+
+Use `finding(...)` with an actionable message, stable kebab-case code, source
 node, and optional rewrite:
 
 ```python
-self._lint(
-    "this copy produces no values and has no effect; remove it",
-    node,
-    code="no-op-copy",
-    rewrite=LintRewrite(RewriteKind.REMOVE_NODE),
+return (
+    finding(
+        "no-op-copy",
+        "this copy produces no values and has no effect; remove it",
+        context.node,
+        rewrite=LintRewrite(RewriteKind.REMOVE_NODE),
+    ),
 )
 ```
 
@@ -129,17 +197,21 @@ Use the narrowest rewrite kind:
 Add a new enum member only when none of these accurately describes the
 structural action. Do not encode an optimiser algorithm in a lint message.
 
-### 5. Preserve child-analyser findings
+### 6. Use a custom registry when embedding
 
-Nested functions and call-site analysis use child analysers. Merge findings with
-`_extend_lint_findings(...)`, not by extending `lints` directly, so structured
-metadata and rendered messages stay synchronized and deduplicated.
+`Analyser(lint_registry=registry)` installs an isolated registry for one analysis
+session. Child analysers automatically reuse it, so rules also apply inside
+nested functions and call-site analysis.
 
-### 6. Verify presentation and behaviour
+The package-level `DEFAULT_REGISTRY` contains the automatically discovered
+built-in rules. Embedders may construct a fresh `LintRegistry` to enable only
+selected rules, or register additional rules on their own registry.
 
-Run the focused analyser tests, the full suite, and the smart-diagnostics fuzz
-target. If the message spans lines, add a CLI rendering test so source arrows and
-carets remain correct.
+### 7. Verify presentation and behaviour
+
+Run the focused analyser tests, `tests/test_lints.py`, the full suite, and the
+smart-diagnostics fuzz target. If the message spans lines, add a CLI rendering
+test so source arrows and carets remain correct.
 
 ## The bytecode optimisation pipeline
 

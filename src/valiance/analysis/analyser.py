@@ -22,11 +22,17 @@ from pathlib import Path
 import valiance.analysis.annotations as annotation_hooks
 import valiance.types as T
 from valiance.analysis.builtins import default_environment
-from valiance.analysis.lints import LintFinding, LintRewrite, RewriteKind
+from valiance.analysis.lints import (
+    DEFAULT_REGISTRY as DEFAULT_LINT_REGISTRY,
+    BlockLintContext,
+    LintFinding,
+    LintRegistry,
+    MatchLintContext,
+    NodeLintContext,
+)
 from valiance.asts import (
     AnnotationNode,
     ASTNode,
-    BindingPatternNode,
     DefineNode,
     ElementExtension,
     ElementNode,
@@ -37,13 +43,10 @@ from valiance.asts import (
     ImportComponent,
     ImportPath,
     ImportSpec,
-    ListPatternNode,
     MatchCaseNode,
     MatchNode,
     MatchPatternNode,
     ObjectNode,
-    OrPatternNode,
-    ReturnNode,
     SourceLocation,
     TraitRequirementNode,
     TryHandlerNode,
@@ -59,10 +62,9 @@ from valiance.asts import (
     TypedNode,
     TypedTagApplicationNode,
     TypedTryNode,
-    TypePatternNode,
     VariantMemberNode,
 )
-from valiance.asts.nodes import BreakNode, GetVariableNode, ObjectFieldNode
+from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
 from valiance.modules import ModuleLoader, ModuleLoadError, import_definitions
 from valiance.object_constructors import (
     constructor_definitions,
@@ -801,12 +803,14 @@ class Analyser:
         *,
         module_loader: ModuleLoader | None = None,
         source_file: Path | None = None,
+        lint_registry: LintRegistry | None = None,
         _prelude: _AnalysisPrelude | None = None,
     ):
         """Initialize an analysis session with its environment and module context."""
         self.env = env if env is not None else default_environment().child_scope()
         self.module_loader = module_loader or ModuleLoader()
         self.source_file = source_file
+        self.lint_registry = lint_registry or DEFAULT_LINT_REGISTRY
         self._prelude = _prelude or _AnalysisPrelude(_prelude_seed(source_file))
         self._owns_prelude = _prelude is None
         self.diagnostics: list[str] = []
@@ -840,7 +844,11 @@ class Analyser:
         nodes: tuple[ASTNode, ...],
     ) -> BranchSet:
         """Analyse a block as a branch-set transformation."""
-        self._lint_unreachable_suffix(nodes)
+        self._extend_lint_findings(
+            self.lint_registry.check_block(
+                BlockLintContext(nodes=nodes, env=self.env)
+            )
+        )
         current = initial
 
         for node in nodes:
@@ -888,6 +896,7 @@ class Analyser:
             env,
             module_loader=self.module_loader,
             source_file=self.source_file,
+            lint_registry=self.lint_registry,
             _prelude=self._prelude,
         )
         child._friendly_owners = self._friendly_owners
@@ -993,6 +1002,16 @@ class Analyser:
             )
 
         outputs = handler(self, node, branch)
+        self._extend_lint_findings(
+            self.lint_registry.check_node(
+                NodeLintContext(
+                    node=node,
+                    branch=branch,
+                    outputs=outputs,
+                    env=self.env,
+                )
+            )
+        )
         self._observe_element_effects(branch, outputs)
         return outputs
 
@@ -3093,7 +3112,11 @@ class Analyser:
             return BranchSet()
         if not self._match_is_exhaustive(subject_types, node):
             return BranchSet()
-        self._lint_match_patterns(node)
+        self._extend_lint_findings(
+            self.lint_registry.check_match(
+                MatchLintContext(node=node, branch=branch, env=self.env)
+            )
+        )
 
         joined: AnalysisBranch | None = None
         typed_case_bodies: list[tuple[ASTNode | TypedNode, ...]] = []
@@ -3959,24 +3982,6 @@ class Analyser:
         """Update warn state during static analysis."""
         self.warnings.append(_utils._diagnostic_message(message, node))
 
-    def _lint(
-        self,
-        message: str,
-        node: ASTNode | None = None,
-        *,
-        code: str,
-        rewrite: LintRewrite | None = None,
-    ) -> None:
-        """Record an actionable lint and its optional structural rewrite."""
-        finding = LintFinding(
-            code=code,
-            message=message,
-            location=None if node is None else node.location,
-            rewrite=rewrite,
-            node=node,
-        )
-        self._record_lint_finding(finding)
-
     def _record_lint_finding(self, finding: LintFinding) -> None:
         """Append one structured finding while preserving the string API."""
         if finding in self.lint_findings:
@@ -3994,89 +3999,6 @@ class Analyser:
         self.lints.clear()
         self.lint_findings.clear()
 
-    def _lint_unreachable_suffix(self, nodes: tuple[ASTNode, ...]) -> None:
-        """Report the first statement after a direct return or break."""
-        for index, node in enumerate(nodes[:-1]):
-            if not isinstance(node, (ReturnNode, BreakNode)):
-                continue
-            keyword = "return" if isinstance(node, ReturnNode) else "break"
-            self._lint(
-                f"code after `{keyword}` is unreachable; "
-                f"remove it or move it before the {keyword}",
-                nodes[index + 1],
-                code="unreachable-code",
-                rewrite=LintRewrite(RewriteKind.REMOVE_UNREACHABLE_SUFFIX),
-            )
-            return
-
-    def _lint_match_patterns(self, node: MatchNode) -> None:
-        """Report unreachable cases and duplicate stable literal patterns."""
-        seen_literal_cases: set[tuple[tuple[str, object], ...]] = set()
-        default_seen = False
-        for case in node.cases:
-            for pattern in case.patterns:
-                self._lint_duplicate_pattern_alternatives(pattern)
-
-            if default_seen:
-                self._lint(
-                    "match case is unreachable because an earlier case "
-                    "matches every value; remove this case",
-                    case,
-                    code="unreachable-match-case",
-                    rewrite=LintRewrite(RewriteKind.REMOVE_MATCH_CASE),
-                )
-                continue
-
-            key = _patterns._literal_match_case_key(case.patterns)
-            if key is not None:
-                if key in seen_literal_cases:
-                    self._lint(
-                        "duplicate match case; remove this case because the "
-                        "same literal pattern appears earlier",
-                        case,
-                        code="duplicate-match-case",
-                        rewrite=LintRewrite(RewriteKind.REMOVE_MATCH_CASE),
-                    )
-                else:
-                    seen_literal_cases.add(key)
-
-            if _patterns._is_default_match_case(case.patterns):
-                default_seen = True
-
-    def _lint_duplicate_pattern_alternatives(
-        self,
-        pattern: MatchPatternNode,
-    ) -> None:
-        """Report repeated literal alternatives without assuming guards are pure."""
-        if isinstance(pattern, OrPatternNode):
-            seen: set[tuple[str, object]] = set()
-            for option in pattern.options:
-                key = _patterns._literal_match_pattern_key(option)
-                if key is not None:
-                    if key in seen:
-                        self._lint(
-                            "duplicate match alternative; remove the repeated "
-                            "literal pattern",
-                            option,
-                            code="duplicate-pattern-alternative",
-                            rewrite=LintRewrite(
-                                RewriteKind.REMOVE_PATTERN_ALTERNATIVE
-                            ),
-                        )
-                    else:
-                        seen.add(key)
-                self._lint_duplicate_pattern_alternatives(option)
-            return
-        if isinstance(pattern, BindingPatternNode):
-            self._lint_duplicate_pattern_alternatives(pattern.pattern)
-            return
-        if isinstance(pattern, ListPatternNode):
-            for item in pattern.items:
-                self._lint_duplicate_pattern_alternatives(item)
-            return
-        if isinstance(pattern, TypePatternNode):
-            for field_pattern in pattern.fields:
-                self._lint_duplicate_pattern_alternatives(field_pattern)
 
 
 def analyse(

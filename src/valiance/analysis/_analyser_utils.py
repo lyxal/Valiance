@@ -39,16 +39,6 @@ from . import analyser as _core
 from . import _analyser_functions as _functions
 
 
-def _is_noop_move(node: StackShuffleNode) -> bool:
-    """Return whether a move names the same unique stack segment in order."""
-    if node.mode != Symbol("move"):
-        return False
-    if any(label is None for label in node.prestack):
-        return False
-    labels = tuple(cast(Symbol, label) for label in node.prestack)
-    return labels == node.poststack and len(set(labels)) == len(labels)
-
-
 def _show_stack(stack: T.TypeStack) -> str:
     """Format stack during static analysis."""
     if not stack:

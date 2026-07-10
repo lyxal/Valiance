@@ -87,9 +87,12 @@ the corresponding `_analyser_functions.py`, `_analyser_calls.py`,
 `_analyser_patterns.py`, and `_analyser_utils.py` modules.
 
 Non-fatal source-pattern advice is recorded both as rendered lint text and as
-structured rewrite metadata. Detection belongs in analysis. The current
-optimiser is a separate bytecode pass pipeline; future typed rewrites may
-consume proven analyser facts without coupling diagnostics to compilation. See
+structured rewrite metadata. Detection belongs in the registry-driven
+`analysis/lints/` package rather than concrete analyser handlers. Built-in rule
+modules are discovered automatically, and the analyser only exposes generic
+block, node, and validated-match lifecycle hooks. The current optimiser is a
+separate bytecode pass pipeline; future typed rewrites may consume proven
+analysis facts without coupling diagnostics to compilation. See
 [lints-and-rewrites.md](lints-and-rewrites.md).
 
 ### Environment and context

@@ -716,33 +716,6 @@ def _pattern_subject_type(
     return None
 
 
-def _literal_match_pattern_key(
-    pattern: MatchPatternNode,
-) -> tuple[str, object] | None:
-    """Return a stable key only for side-effect-free literal patterns."""
-    if not isinstance(pattern, LiteralPatternNode):
-        return None
-    value = pattern.value
-    if isinstance(value, NumberLiteralNode):
-        try:
-            return ("number", Decimal(value.value))
-        except InvalidOperation:
-            return None
-    if isinstance(value, StringLiteralNode):
-        return ("string", value.value)
-    return None
-
-
-def _literal_match_case_key(
-    patterns: tuple[MatchPatternNode, ...],
-) -> tuple[tuple[str, object], ...] | None:
-    """Return a key when every case item is a stable literal pattern."""
-    keys = tuple(_literal_match_pattern_key(pattern) for pattern in patterns)
-    if not keys or any(key is None for key in keys):
-        return None
-    return cast(tuple[tuple[str, object], ...], keys)
-
-
 def _is_default_match_case(patterns: tuple[MatchPatternNode, ...]) -> bool:
     """Return whether a case accepts every combination of subject values."""
     return (
