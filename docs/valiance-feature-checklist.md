@@ -575,9 +575,12 @@ Current audit total: 546 / 779 items complete (70.1%).
       and function-parameter usage.
 - [x] Support covariant collection item assignability.
 - [x] Support trait constraints on generic parameters.
-- [x] Parse the atomic generic marker.
-- [x] Resolve the atomic base type of ranked generic values.
-- [x] Exclude atomic parameter positions from driving unification where specified.
+- [x] Parse the atomic overload-resolution marker.
+- [x] Enforce scalar-only atomic positions without changing generic identity.
+- [x] Use atomic positions as validation/fallback evidence rather than ordinary
+      rank-peeling evidence.
+- [x] Preserve atomic guarantees through generic function analysis without
+      exposing markers as body value types.
 - [x] Implement generic unification across concrete generic constructors.
 - [x] Implement unification across exact, minimum, rugged, and array ranks.
 - [x] Implement optional-type unification.

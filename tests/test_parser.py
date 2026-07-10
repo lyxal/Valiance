@@ -1353,6 +1353,10 @@ end
             )
         )
 
+    def test_duplicate_atomic_type_marker_is_rejected(self):
+        with self.assertRaises(ParseError):
+            parse_type("Number atomic atomic")
+
     def test_parses_exact_type_marker(self):
         self.assertTrue(same(parse_type("Number exact"), Exact(Number)))
         self.assertTrue(

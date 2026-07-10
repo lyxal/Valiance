@@ -952,17 +952,19 @@ fn (:Number+, :Number+) => +
 
 ## 7.2. Disabling Vectorisation in an Overload
 
-- By default, parameters vectorise. Marking a parameter with the postfix type
-  marker `exact` prevents that parameter from being used as a vectorisation
-  target. An argument must be directly compatible with the marked type;
-  vectorisation cannot peel collection ranks from it to make the call fit.
+- By default, parameters vectorise. Marking a parameter with the postfix
+  call-policy marker `exact` prevents that parameter from being used as a
+  vectorisation target. An argument must be directly compatible with the
+  marked type; vectorisation cannot peel collection ranks from it to make the
+  call fit.
+- `exact` is not a runtime type and does not change the value received by the
+  function body. It is retained in overload and `Function[...]` signatures so
+  direct calls and calls through function values enforce the same policy, then
+  erased from the parameter type visible inside the body.
 - `exact` does not require the runtime value to have exactly the same nominal
   type. Ordinary assignability still applies, so an `Integer` can satisfy
   `Number exact`. It only disables the vectorisation fallback for that
   parameter.
-- `exact` is part of the parameter's type, not just an overload resolution
-  hint. It is preserved in `Function[...]` types and therefore affects calls
-  through function values as well as direct element calls.
 - `exact` is a terminal postfix for the type expression it marks. Put rank,
   optional, and tag syntax before it, such as `Number+ exact`, `Number? exact`,
   or `#sorted Number+ exact`.
@@ -2246,23 +2248,52 @@ define[T] sum(
 ) -> T => fold: +
 ```
 
-## 16.1. `atomic` type marker 
-_Note: The utility of this feature is still under question_
+## 16.1. `atomic` type marker
 
-- Sometimes you may want to express parameters as the atomic type of a generic type.
-- For example, if `T` could be a `Number+4`, you may wish to say "I want to be able to expect a `Number+`
-- `atomic` after a generic type will expect that type.
-- Example
+- `atomic` is an overload-resolution marker that requires the marked position
+  to be scalar (rank zero). Like `exact`, it is retained in callable parameter
+  signatures, but it is not a runtime type and is erased from the value type
+  visible inside the function body. A top-level marker written on a return or
+  cast target is likewise erased; it cannot create a distinct value type.
+- Its main use is preventing a collection pattern from absorbing extra rank
+  into a generic. Without the marker, `T+` accepts a rank-2 list by binding `T`
+  to a rank-1 list type. `T atomic +` instead requires `T` itself to be scalar,
+  so the argument must be a rank-1 list of scalar values.
 
 ```
-define[T] find(
-  haystack: T+, 
-  needle: T atomic
-) => ...
+define[T] rankOne(values: T atomic +) -> T+ =>
+  #? $values has type T+ here, not an "atomic type"
+  $values
+end
+
+[1, 2, 3] rankOne        #? accepted
+[[1, 2], [3, 4]] rankOne #? compile error
 ```
 
-- Note that `(T atomic)+` does not always equal `T+`. If `T` would unify to `Number++`, `(T atomic)+` would equal `Number+`, because `T atomic` would be `Number`.
-- Also note that at this stage, `T atomic` types are not going to influence the unification result.
+- `atomic` never changes what `T` means. If another parameter solves `T` as a
+  collection type, a separate `T atomic` parameter cannot reinterpret `T` as
+  that collection's scalar base; the overload is inconsistent and is rejected.
+- An atomic occurrence can provide fallback evidence when it is the only place
+  a generic appears. For example, a scalar argument to `T atomic` can still
+  infer `T`. If ordinary occurrences also provide evidence, they determine the
+  generic and the atomic occurrence validates that same solution.
+- A generic function that forwards a value to an atomic parameter must expose
+  the same guarantee in its own signature. An unmarked `U+` parameter cannot
+  safely be forwarded to `T atomic +`, because a later call could instantiate
+  `U` with a collection type.
+
+```
+define[T] rankOne(values: T atomic +) -> T+ => $values end
+
+define[U] safeForward(values: U atomic +) -> U+ =>
+  $values rankOne
+end
+
+# This is rejected at its definition, not deferred until a bad call:
+define[U] unsafeForward(values: U+) -> U+ =>
+  $values rankOne
+end
+```
 
 ## 16.2. Generics and Unification
 
@@ -2293,13 +2324,10 @@ solve(T?, U?) = T := U
 solve(T?, U) = T := U
 ```
 
-Note that in unification:
-
-- `T+0` == `T atomic`
-- `T*0` == `T atomic | T*`
-- `T~0` == `T atomic | T~`
-- `T^0` == `T atomic`
-- `T>0` == `T atomic | T>`
+The `atomic` marker is not a rank-zero type constructor and does not rewrite a
+solved generic to its scalar base. It contributes scalar-validation evidence to
+call resolution; the underlying generic still has one consistent meaning across
+all parameters and returns.
 
 Additionally:
 
@@ -2318,8 +2346,12 @@ combine(T*n, T) = T*n
 combine(T~n, T) = T~n
 ```
 
-- `combine(T+n, T exact)` is not allowed.
-- After solving and combining, all types that do not participate in unification (eg union types, types marked as `atomic`) are verified for consistency with the unified type and the overload being applied.
+- `exact` and `atomic` are call-policy evidence, not alternate generic
+  solutions. After ordinary evidence is combined, marked positions are checked
+  against the resulting substitution and the actual argument shape.
+- If an atomic occurrence is the only evidence for a generic, its scalar actual
+  may supply the fallback solution; the marker itself is never part of that
+  solution.
 
 ## 16.3. Anonymous Generics in Function Types
 

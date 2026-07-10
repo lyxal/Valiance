@@ -2406,6 +2406,8 @@ class Parser:
                 typ = FunctionType(typ.params, typ.returns, self._element_tag_list())
                 continue
             if self._match_ident("atomic"):
+                if isinstance(typ, AtomicType):
+                    self._error("type is already marked atomic")
                 typ = Atomic(typ)
                 continue
             if self._match_ident("exact"):

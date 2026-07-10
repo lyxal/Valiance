@@ -561,6 +561,8 @@ def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
         return True
     if isinstance(target, ExactType):
         return assignable(source, target.inner, ctx)
+    if isinstance(target, AtomicType):
+        return _is_scalar_type(source) and assignable(source, target.inner, ctx)
 
     if subtype(source, target, ctx):
         return True
@@ -654,6 +656,28 @@ def _source_subtypes_result(
         source_ok, source_err = source.args
         return assignable(source_ok, ok, ctx) and assignable(source_err, err, ctx)
     if source.name == OK and len(source.args) == 1:
+        return assignable(source.args[0], ok, ctx)
+    return assignable(source, ok, ctx) or assignable(source, err, ctx)
+
+
+def _is_result_injection(source: Type, target: Type, ctx: Context) -> bool:
+    """Return whether ``source`` is implicitly injected into a ``Result``."""
+    source = normalize(source)
+    target = normalize(target)
+    if not (
+        isinstance(target, NominalType)
+        and target.name == RESULT
+        and len(target.args) == 2
+    ):
+        return False
+    if isinstance(source, NominalType) and source.name == RESULT:
+        return False
+    ok, err = target.args
+    if (
+        isinstance(source, NominalType)
+        and source.name == OK
+        and len(source.args) == 1
+    ):
         return assignable(source.args[0], ok, ctx)
     return assignable(source, ok, ctx) or assignable(source, err, ctx)
 
@@ -757,7 +781,16 @@ def _solve(
         if isinstance(p, ExactType):
             return rec(p.inner, a)
         if isinstance(p, AtomicType):
-            return True
+            if not _is_scalar_type(a):
+                return False
+            if isinstance(p.inner, VarType):
+                # Atomic occurrences are validation evidence, not ordinary
+                # unification evidence.  A non-atomic occurrence of the same
+                # variable wins when present; when this is the only evidence,
+                # the scalar actual still provides a useful fallback solution.
+                add(p.inner.name, AtomicType(a))
+                return True
+            return rec(p.inner, a)
         if _is_optional(p):
             if isinstance(a, NoneTypeNode):
                 # None does not constrain T in T?. Another argument or context
@@ -910,6 +943,11 @@ def _solve(
         if isinstance(a, TaggedType):
             return rec(p, a.inner)
         if isinstance(p, CollectionType) and isinstance(a, CollectionType):
+            if isinstance(p.base, AtomicType):
+                return _atomic_collection_shape_matches(p, a) and rec(
+                    p.base,
+                    a.base,
+                )
             if (
                 not isinstance(p.base, VarType)
                 and type(p) is type(a)
@@ -971,6 +1009,39 @@ def _solve(
         return rec_tuple(0, 0)
 
     return constraints if rec(pattern, actual) else None
+
+
+def _atomic_collection_shape_matches(
+    pattern: CollectionType,
+    actual: CollectionType,
+) -> bool:
+    """Return whether an atomic-base collection matches without rank peeling."""
+    n, m = pattern.rank, actual.rank
+    if not isinstance(n, int) or not isinstance(m, int):
+        return type(pattern) is type(actual) and n == m
+    pk, ak = type(pattern), type(actual)
+    if pk is ListExactType:
+        return m == n and ak in {ListExactType, ArrayExactType}
+    if pk is ListMinType:
+        return m >= n and ak in {
+            ListExactType,
+            ArrayExactType,
+            ListMinType,
+            ArrayMinType,
+        }
+    if pk is ListRuggedType:
+        return m >= n and ak in {
+            ListExactType,
+            ArrayExactType,
+            ListMinType,
+            ArrayMinType,
+            ListRuggedType,
+        }
+    if pk is ArrayExactType:
+        return m == n and ak is ArrayExactType
+    if pk is ArrayMinType:
+        return m >= n and ak in {ArrayExactType, ArrayMinType}
+    return False
 
 
 def _solve_collection(
@@ -1134,6 +1205,17 @@ def _combine_all(
     vals = list(dict.fromkeys(normalize(value) for value in values))
     if not vals:
         return None
+
+    # ``AtomicType`` values are solver-only evidence.  They must not narrow or
+    # widen a solution supplied by an ordinary occurrence of the generic.  If
+    # every occurrence is atomic, however, their scalar payloads are sufficient
+    # to infer the generic rather than leaving the overload permanently
+    # underconstrained (for example ``T atomic +``).
+    ordinary = [value for value in vals if not isinstance(value, AtomicType)]
+    if ordinary:
+        vals = ordinary
+    else:
+        vals = [value.inner for value in vals if isinstance(value, AtomicType)]
 
     # Prefer an evidence type that already accepts every other observation.
     # This handles chains such as Integer -> Real -> Number and bridge types
@@ -1313,11 +1395,8 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
         return Tagged(_substitute(t.inner, subst), *t.tags)
     if isinstance(t, ExactType):
         return ExactType(_substitute(t.inner, subst))
-    if isinstance(t, AtomicType) and isinstance(t.inner, VarType):
-        solved = subst.get(t.inner.name)
-        return ExactType(_atomic_of(solved)) if solved else t
     if isinstance(t, AtomicType):
-        return ExactType(_atomic_of(_substitute(t.inner, subst)))
+        return AtomicType(_substitute(t.inner, subst))
     return t
 
 
@@ -1373,12 +1452,22 @@ def _generic_constraints_met(
     return True
 
 
-def _atomic_of(t: Type) -> Type:
-    """Return the atomic base type of a collection-like solved generic."""
+def _is_scalar_type(t: Type) -> bool:
+    """Return whether every value represented by ``t`` has collection rank zero."""
     t = normalize(t)
+    if isinstance(t, (TaggedType, ExactType, AtomicType)):
+        return _is_scalar_type(t.inner)
     if isinstance(t, CollectionType):
-        return _atomic_of(t.base)
-    return t
+        return False
+    if isinstance(t, UnionType):
+        return all(_is_scalar_type(item) for item in t.items)
+    if isinstance(t, IntersectionType):
+        return any(_is_scalar_type(item) for item in t.items)
+    if isinstance(t, RowType):
+        return _is_scalar_type(t.base)
+    if isinstance(t, AnonymousTraitType):
+        return False
+    return True
 
 
 def compatible(argument: Type, parameter: Type, ctx: Context | None = None) -> bool:
@@ -1920,12 +2009,20 @@ def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:
 
 
 def _match_specificity(
-    argument: Type, parameter: Type, ctx: Context | None = None
+    argument: Type,
+    parameter: Type,
+    ctx: Context | None = None,
+    *,
+    declared_parameter: Type | None = None,
 ) -> Specificity:
     """Classify how specifically an argument matches a parameter."""
     ctx = ctx or Context()
     argument, parameter = normalize(argument), normalize(parameter)
     if same(argument, parameter):
+        if declared_parameter is not None and _contains_type_var(
+            declared_parameter
+        ):
+            return Specificity.EXACT_GENERIC
         return Specificity.EXACT
     # The order here mirrors the language's specificity ladder. The first
     # applicable category wins.
@@ -1950,6 +2047,10 @@ def _match_specificity(
         and _collection_subtype(argument, parameter, ctx)
     ):
         return Specificity.RANK
+    if _is_result_injection(argument, parameter, ctx):
+        # Result accepts bare success/error values through an implicit sum-type
+        # injection. Rank that like a union arm, below a direct generic match.
+        return Specificity.UNION
     if isinstance(parameter, UnionType) and compatible(argument, parameter, ctx):
         return Specificity.UNION
     if isinstance(parameter, ExactType) and compatible(argument, parameter.inner, ctx):
@@ -2143,8 +2244,18 @@ def try_apply_overload(
             )
 
     scores = tuple(
-        _match_specificity(arg, param, ctx)
-        for arg, param in zip(base_args, params, strict=False)
+        _match_specificity(
+            arg,
+            param,
+            ctx,
+            declared_parameter=declared,
+        )
+        for arg, param, declared in zip(
+            base_args,
+            params,
+            overload.params,
+            strict=False,
+        )
     )
     if any(score == Specificity.NO_MATCH for score in scores):
         index = next(

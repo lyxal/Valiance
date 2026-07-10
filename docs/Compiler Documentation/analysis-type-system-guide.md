@@ -615,11 +615,13 @@ enough to represent this case: treating every list-shaped runtime argument as a
 vector target would incorrectly iterate an exact collection parameter.
 
 The marker remains in `Overload.params` and `FunctionType.params`, so type
-display and introspection preserve it. Function-body analysis strips only the
-outer marker before seeding parameter variables and the cycling stack, then
-reapplies it when constructing the function signature. Data-tag normalization
-hoists `exact` outside the tagged type so `#tag T exact` has the same call-policy
-behaviour as `Exact(Tagged(T, tag))`.
+display and introspection preserve it. Function-body analysis recursively strips
+call-policy wrappers from the parameter's value shape before seeding variables
+and the cycling stack, then reapplies them when constructing the callable
+signature. Top-level wrappers on returns and cast targets are erased because
+they cannot affect a value. Data-tag normalization hoists `exact` outside the
+tagged type so `#tag T exact` has the same call-policy behaviour as
+`Exact(Tagged(T, tag))`.
 
 ### Nested Collection Normalization
 

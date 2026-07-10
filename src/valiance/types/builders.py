@@ -204,12 +204,12 @@ def WithoutTag(inner: Type, name: str, *, depth: int = 0) -> Type:
 
 
 def Exact(inner: Type) -> Type:
-    """Create a parameter wrapper that disables vectorisation for the inner type."""
+    """Create call-policy metadata that disables parameter vectorisation."""
     return ExactType(inner)
 
 
 def Atomic(var: Type) -> Type:
-    """Create an atomic-view marker for a type variable."""
+    """Create call-policy metadata requiring a scalar argument position."""
     return AtomicType(var)
 
 
@@ -365,6 +365,10 @@ def normalize(t: Type) -> Type:
     if isinstance(t, ExactType):
         inner = normalize(t.inner)
         return inner if isinstance(inner, ExactType) else ExactType(inner)
+
+    if isinstance(t, AtomicType):
+        inner = normalize(t.inner)
+        return inner if isinstance(inner, AtomicType) else AtomicType(inner)
 
     return t
 
@@ -812,6 +816,8 @@ def _show(
         return f"{tags} {_show(t.inner, type_variable_name, bound)}"
     if isinstance(t, ExactType):
         return f"{_show(t.inner, type_variable_name, bound)} exact"
+    if isinstance(t, AtomicType):
+        return f"{_show(t.inner, type_variable_name, bound)} atomic"
     if isinstance(t, OverloadSetType):
         entries = ", ".join(
             _show_overload(overload, type_variable_name, bound)

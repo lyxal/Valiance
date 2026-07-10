@@ -41,13 +41,108 @@ def _declared_params(node: FunctionNode) -> tuple[T.Type, ...]:
     return _params_to_types(node.params)
 
 
+def _atomic_type_var_names(typ: T.Type) -> frozenset[str]:
+    """Collect generics whose own rank determines an atomic position."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.AtomicType):
+        return _atomic_subject_type_var_names(typ.inner)
+    if isinstance(typ, T.NominalType):
+        children = typ.args
+    elif isinstance(typ, (T.UnionType, T.IntersectionType)):
+        children = typ.items
+    elif isinstance(typ, T.TupleType):
+        children = typ.params
+    elif isinstance(typ, T.VariadicTupleType):
+        children = tuple(item.typ for item in typ.items)
+    elif isinstance(typ, T.RowType):
+        children = (typ.base, *(field.typ for field in typ.fields))
+    elif isinstance(typ, T.CollectionType):
+        children = (typ.base,)
+    elif isinstance(typ, T.FunctionType):
+        # Markers in a nested callable signature constrain calls through that
+        # value, not the outer function's generic arguments.
+        children = ()
+    elif isinstance(typ, (T.TaggedType, T.ExactType)):
+        children = (typ.inner,)
+    else:
+        children = ()
+    names: set[str] = set()
+    for child in children:
+        names.update(_atomic_type_var_names(child))
+    return frozenset(names)
+
+
+def _atomic_subject_type_var_names(typ: T.Type) -> frozenset[str]:
+    """Collect variables whose substitution can change subject rank."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.VarType):
+        return frozenset((typ.name,))
+    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _atomic_subject_type_var_names(typ.inner)
+    if isinstance(typ, (T.UnionType, T.IntersectionType)):
+        names: set[str] = set()
+        for item in typ.items:
+            names.update(_atomic_subject_type_var_names(item))
+        return frozenset(names)
+    # Nominals, tuples, rows, and callable values are scalar independently of
+    # their type arguments. Collections are never scalar at the marked level.
+    return frozenset()
+
+
+def _atomic_parameter_type_vars(
+    params: tuple[T.Type, ...],
+) -> frozenset[str]:
+    """Collect scalar generic guarantees declared by function parameters."""
+    names: set[str] = set()
+    for param in params:
+        names.update(_atomic_type_var_names(param))
+    return frozenset(names)
+
+
 def _parameter_value_type(typ: T.Type) -> T.Type:
     """Return the type visible inside a function body for one parameter."""
     typ = T.normalize(typ)
-    return typ.inner if isinstance(typ, T.ExactType) else typ
+    if isinstance(typ, (T.ExactType, T.AtomicType)):
+        return _parameter_value_type(typ.inner)
+    if isinstance(typ, T.NominalType):
+        return T.N(
+            typ.name,
+            *(_parameter_value_type(arg) for arg in typ.args),
+        )
+    if isinstance(typ, T.UnionType):
+        return T.U(*(_parameter_value_type(item) for item in typ.items))
+    if isinstance(typ, T.IntersectionType):
+        return T.I(*(_parameter_value_type(item) for item in typ.items))
+    if isinstance(typ, T.TupleType):
+        return T.Tup(*(_parameter_value_type(item) for item in typ.params))
+    if isinstance(typ, T.VariadicTupleType):
+        return T.TupVariadic(
+            *(
+                T.TupleTypeItem(
+                    _parameter_value_type(item.typ),
+                    item.repeated,
+                )
+                for item in typ.items
+            )
+        )
+    if isinstance(typ, T.RowType):
+        return T.Row(
+            _parameter_value_type(typ.base),
+            *(
+                T.Field(field.name, _parameter_value_type(field.typ))
+                for field in typ.fields
+            ),
+        )
+    if isinstance(typ, T.CollectionType):
+        return T.C(type(typ), _parameter_value_type(typ.base), typ.rank)
+    if isinstance(typ, T.TaggedType):
+        return T.Tagged(_parameter_value_type(typ.inner), *typ.tags)
+    # Markers inside a callable value describe calls through that value, not
+    # the outer function parameter, so preserve the callable signature intact.
+    return typ
 
 
-def _restore_exact_parameter_markers(
+def _restore_parameter_markers(
     declared: tuple[T.Type, ...],
     inferred: tuple[T.Type, ...],
 ) -> tuple[T.Type, ...]:
@@ -56,12 +151,117 @@ def _restore_exact_parameter_markers(
         return inferred
     offset = len(inferred) - len(declared)
     restored = tuple(
-        T.Exact(actual)
-        if isinstance(T.normalize(expected), T.ExactType)
-        else actual
+        _restore_type_markers(expected, actual)
         for expected, actual in zip(declared, inferred[offset:], strict=True)
     )
     return inferred[:offset] + restored
+
+
+def _restore_type_markers(declared: T.Type, inferred: T.Type) -> T.Type:
+    """Overlay parameter-only markers from ``declared`` onto ``inferred``."""
+    declared = T.normalize(declared)
+    inferred = T.normalize(inferred)
+    if isinstance(declared, T.ExactType):
+        return T.Exact(_restore_type_markers(declared.inner, inferred))
+    if isinstance(declared, T.AtomicType):
+        return T.Atomic(_restore_type_markers(declared.inner, inferred))
+    if isinstance(declared, T.NominalType) and isinstance(inferred, T.NominalType):
+        if declared.name == inferred.name and len(declared.args) == len(inferred.args):
+            return T.N(
+                inferred.name,
+                *(
+                    _restore_type_markers(expected, actual)
+                    for expected, actual in zip(
+                        declared.args,
+                        inferred.args,
+                        strict=True,
+                    )
+                ),
+            )
+    if isinstance(declared, T.TupleType) and isinstance(inferred, T.TupleType):
+        if len(declared.params) == len(inferred.params):
+            return T.Tup(
+                *(
+                    _restore_type_markers(expected, actual)
+                    for expected, actual in zip(
+                        declared.params,
+                        inferred.params,
+                        strict=True,
+                    )
+                )
+            )
+    if isinstance(declared, T.VariadicTupleType) and isinstance(
+        inferred,
+        T.VariadicTupleType,
+    ):
+        if len(declared.items) == len(inferred.items):
+            return T.TupVariadic(
+                *(
+                    T.TupleTypeItem(
+                        _restore_type_markers(expected.typ, actual.typ),
+                        actual.repeated,
+                    )
+                    for expected, actual in zip(
+                        declared.items,
+                        inferred.items,
+                        strict=True,
+                    )
+                )
+            )
+    if isinstance(declared, T.RowType) and isinstance(inferred, T.RowType):
+        declared_fields = {field.name: field.typ for field in declared.fields}
+        return T.Row(
+            _restore_type_markers(declared.base, inferred.base),
+            *(
+                T.Field(
+                    field.name,
+                    _restore_type_markers(
+                        declared_fields.get(field.name, field.typ),
+                        field.typ,
+                    ),
+                )
+                for field in inferred.fields
+            ),
+        )
+    if isinstance(declared, T.CollectionType) and isinstance(
+        inferred,
+        T.CollectionType,
+    ):
+        if type(declared) is type(inferred) and declared.rank == inferred.rank:
+            return T.C(
+                type(inferred),
+                _restore_type_markers(declared.base, inferred.base),
+                inferred.rank,
+            )
+    if isinstance(declared, T.TaggedType) and isinstance(inferred, T.TaggedType):
+        return T.Tagged(
+            _restore_type_markers(declared.inner, inferred.inner),
+            *inferred.tags,
+        )
+    if isinstance(declared, (T.UnionType, T.IntersectionType)) and isinstance(
+        inferred,
+        type(declared),
+    ):
+        unmatched = list(declared.items)
+        restored_items: list[T.Type] = []
+        for actual in inferred.items:
+            match_index = next(
+                (
+                    index
+                    for index, expected in enumerate(unmatched)
+                    if T.same(_parameter_value_type(expected), actual)
+                ),
+                None,
+            )
+            if match_index is None:
+                restored_items.append(actual)
+                continue
+            restored_items.append(
+                _restore_type_markers(unmatched.pop(match_index), actual)
+            )
+        constructor = T.U if isinstance(declared, T.UnionType) else T.I
+        return constructor(*restored_items)
+    return inferred
 
 
 def _function_overload(
@@ -1074,9 +1274,7 @@ def _genericize_function_node(
     function: FunctionNode,
     generics: tuple[Symbol, ...],
 ) -> FunctionNode:
-    """Generalize function node during static analysis."""
-    if not generics:
-        return function
+    """Generalize a function and erase call-policy markers from value returns."""
     params = None
     if function.params is not None:
         params = tuple(
@@ -1085,7 +1283,10 @@ def _genericize_function_node(
         )
     returns = None
     if function.returns is not None:
-        returns = tuple(_genericize_type(ret, generics) for ret in function.returns)
+        returns = tuple(
+            _parameter_value_type(_genericize_type(ret, generics))
+            for ret in function.returns
+        )
     generic_constraints = tuple(
         None if bound is None else _genericize_type(bound, generics)
         for bound in function.generic_constraints

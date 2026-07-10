@@ -772,24 +772,11 @@ def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
             ),
         )
     if isinstance(typ, T.AtomicType):
-        inner = _refine_type(typ.inner, old, new)
-        if not isinstance(inner, T.VarType):
-            return _atomic_base_type(inner)
-        return T.Atomic(inner)
+        return T.Atomic(_refine_type(typ.inner, old, new))
     return _functions._transform_type_children(
         typ,
         lambda child: _refine_type(child, old, new),
     )
-
-
-def _atomic_base_type(typ: T.Type) -> T.Type:
-    """Determine the type of atomic base during static analysis."""
-    typ = T.normalize(typ)
-    if isinstance(typ, T.TaggedType):
-        return _atomic_base_type(typ.inner)
-    if isinstance(typ, T.CollectionType):
-        return _atomic_base_type(typ.base)
-    return typ
 
 
 def _erase_absent_tag_requirements(typ: T.Type) -> T.Type:

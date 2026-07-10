@@ -543,6 +543,111 @@ $myfun(10)
         self.assertEqual(show(typed[0].typ), "Function[Number exact -> Number]")
         self.assertEqual(typed[-1].typ, Number)
 
+    def test_call_policy_markers_are_erased_from_value_returns_and_casts(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                """
+fn () -> Number atomic => 1
+fn () -> Number exact => 1
+1 as Number atomic
+1 as Number exact
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(show(typed[0].typ), "Function[ -> Number]")
+        self.assertEqual(show(typed[1].typ), "Function[ -> Number]")
+        self.assertEqual(typed[3].typ, Number)
+        self.assertEqual(typed[5].typ, Number)
+
+    def test_atomic_marker_is_visible_in_signature_but_not_function_body(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                """
+define[T] rankOne(xs: T atomic +) -> T+ => $xs end
+[1, 2, 3] rankOne
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        definition = typed[0]
+        self.assertIsInstance(definition, TypedFunctionNode)
+        self.assertEqual(
+            show(definition.overloads[0].overload.params[0]),
+            "T atomic+",
+        )
+        self.assertEqual(
+            definition.overloads[0].body[0].typ,
+            C(ListExactType, Integer),
+        )
+        self.assertEqual(typed[-1].typ, C(ListExactType, Integer))
+
+    def test_atomic_requirement_is_retained_across_generic_forwarding(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                """
+define[T] rankOne(xs: T atomic +) -> T+ => $xs end
+define[U] forward(xs: U atomic +) -> U+ => $xs rankOne end
+"""
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        definition = typed[1]
+        self.assertIsInstance(definition, TypedFunctionNode)
+        self.assertEqual(
+            show(definition.overloads[0].overload.params[0]),
+            "U atomic+",
+        )
+        self.assertEqual(
+            [show(node.typ) for node in definition.overloads[0].body],
+            ["U+", "U+"],
+        )
+
+    def test_unmarked_generic_cannot_forward_to_atomic_parameter(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+define[T] rankOne(xs: T atomic +) -> T+ => $xs end
+define[U] unsafeForward(xs: U+) -> U+ => $xs rankOne end
+"""
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "no overloads for element 'rankOne' match",
+            analyser.diagnostics[0],
+        )
+
+    def test_atomic_collection_marker_rejects_higher_rank_argument(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                """
+define[T] rankOne(xs: T atomic +) -> T+ => $xs end
+[[1, 2], [3, 4]] rankOne
+"""
+            )
+        )
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "no overloads for element 'rankOne' match",
+            analyser.diagnostics[0],
+        )
+
     def test_exact_function_parameter_rejects_higher_rank_argument(self):
         analyser = Analyser()
 

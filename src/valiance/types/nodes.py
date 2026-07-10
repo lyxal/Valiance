@@ -255,14 +255,14 @@ class TaggedType(Type):
 
 @dataclass(frozen=True)
 class ExactType(Type):
-    """A parameter wrapper that disables vectorisation for the inner type."""
+    """Call-policy metadata that disables parameter vectorisation."""
 
     inner: Type
 
 
 @dataclass(frozen=True)
 class AtomicType(Type):
-    """An atomic-view marker for a type variable."""
+    """Call-policy metadata requiring a scalar argument position."""
 
     inner: Type
 

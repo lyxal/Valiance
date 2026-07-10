@@ -37,6 +37,117 @@ def _overload_index(
         return None
 
 
+def _atomic_call_requirements_satisfied(
+    args: tuple[T.Type, ...],
+    params: tuple[T.Type, ...],
+    scalar_generics: frozenset[str],
+) -> bool:
+    """Check analysis-only scalar guarantees required by atomic markers."""
+    return len(args) == len(params) and all(
+        _atomic_requirement_satisfied(actual, expected, scalar_generics)
+        for actual, expected in zip(args, params, strict=True)
+    )
+
+
+def _atomic_requirement_satisfied(
+    actual: T.Type,
+    expected: T.Type,
+    scalar_generics: frozenset[str],
+) -> bool:
+    """Check one parameter tree without exposing markers as value types."""
+    actual = T.normalize(actual)
+    expected = T.normalize(expected)
+    if isinstance(expected, T.AtomicType):
+        return _analysis_type_is_scalar(actual, scalar_generics)
+    if isinstance(actual, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _atomic_requirement_satisfied(
+            actual.inner,
+            expected,
+            scalar_generics,
+        )
+    if isinstance(expected, (T.TaggedType, T.ExactType)):
+        return _atomic_requirement_satisfied(
+            actual,
+            expected.inner,
+            scalar_generics,
+        )
+    if isinstance(actual, T.CollectionType) and isinstance(
+        expected,
+        T.CollectionType,
+    ):
+        return _atomic_requirement_satisfied(
+            actual.base,
+            expected.base,
+            scalar_generics,
+        )
+    if isinstance(actual, T.NominalType) and isinstance(expected, T.NominalType):
+        if actual.name != expected.name or len(actual.args) != len(expected.args):
+            return True
+        return all(
+            _atomic_requirement_satisfied(left, right, scalar_generics)
+            for left, right in zip(actual.args, expected.args, strict=True)
+        )
+    if isinstance(actual, T.TupleType) and isinstance(expected, T.TupleType):
+        if len(actual.params) != len(expected.params):
+            return True
+        return all(
+            _atomic_requirement_satisfied(left, right, scalar_generics)
+            for left, right in zip(actual.params, expected.params, strict=True)
+        )
+    if isinstance(actual, T.RowType) and isinstance(expected, T.RowType):
+        if not _atomic_requirement_satisfied(
+            actual.base,
+            expected.base,
+            scalar_generics,
+        ):
+            return False
+        actual_fields = {field.name: field.typ for field in actual.fields}
+        return all(
+            field.name not in actual_fields
+            or _atomic_requirement_satisfied(
+                actual_fields[field.name],
+                field.typ,
+                scalar_generics,
+            )
+            for field in expected.fields
+        )
+    # Compound alternatives are resolved by the normal overload solver. Atomic
+    # constraints in the common collection/nominal/tuple paths above are the
+    # ones that can otherwise be erased by symbolic generic substitution.
+    return True
+
+
+def _analysis_type_is_scalar(
+    typ: T.Type,
+    scalar_generics: frozenset[str],
+) -> bool:
+    """Return whether analysis proves a type has rank zero."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.AtomicType):
+        return True
+    if isinstance(typ, (T.TaggedType, T.ExactType)):
+        return _analysis_type_is_scalar(typ.inner, scalar_generics)
+    if isinstance(typ, T.VarType):
+        return typ.name in scalar_generics
+    if isinstance(typ, T.CollectionType):
+        return False
+    if isinstance(typ, T.UnionType):
+        return all(
+            _analysis_type_is_scalar(item, scalar_generics)
+            for item in typ.items
+        )
+    if isinstance(typ, T.IntersectionType):
+        return any(
+            _analysis_type_is_scalar(item, scalar_generics)
+            for item in typ.items
+        )
+    if isinstance(typ, T.RowType):
+        return _analysis_type_is_scalar(typ.base, scalar_generics)
+    if isinstance(typ, T.AnonymousTraitType):
+        return False
+    return True
+
+
 def _source_element_arguments(
     branch: _core.AnalysisBranch,
     overload: T.Overload,
@@ -58,6 +169,12 @@ def _source_element_arguments(
         if sourced is not None:
             current_args, popped = sourced
             args = _call_args_in_parameter_order(current_args, call_arg_order)
+            if not _atomic_call_requirements_satisfied(
+                args,
+                overload.params,
+                popped.atomic_type_vars,
+            ):
+                return
             for specialized_args, specialized_popped in (
                 _contextual_stack_argument_variants(
                     args,
@@ -107,13 +224,20 @@ def _source_element_arguments(
                 _substitute_branch_type(arg, substitution) for arg in stack_args
             )
             specialized_popped = _specialize_branch_arguments(popped, substitution)
+            merged_args = _merge_element_arguments(
+                overload.params,
+                modifier_indexes,
+                specialized_stack_args,
+                specialized_modifiers,
+            )
+            if not _atomic_call_requirements_satisfied(
+                merged_args,
+                overload.params,
+                specialized_popped.atomic_type_vars,
+            ):
+                continue
             yield (
-                _merge_element_arguments(
-                    overload.params,
-                    modifier_indexes,
-                    specialized_stack_args,
-                    specialized_modifiers,
-                ),
+                merged_args,
                 specialized_popped,
                 specialized_modifiers,
             )
@@ -2092,10 +2216,7 @@ def _substitute_branch_type(typ: T.Type, substitution: dict[str, T.Type]) -> T.T
     if isinstance(typ, T.ExactType):
         return T.Exact(_substitute_branch_type(typ.inner, substitution))
     if isinstance(typ, T.AtomicType):
-        inner = _substitute_branch_type(typ.inner, substitution)
-        if not isinstance(inner, T.VarType):
-            return _utils._atomic_base_type(inner)
-        return T.Atomic(inner)
+        return T.Atomic(_substitute_branch_type(typ.inner, substitution))
     return typ
 
 

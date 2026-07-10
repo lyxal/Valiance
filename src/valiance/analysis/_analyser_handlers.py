@@ -782,7 +782,11 @@ def _cast_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse a `CastNode` node and return the surviving branches."""
-    target = T.normalize(node.typ)
+    # ``exact`` and ``atomic`` are callable-parameter policy, not value
+    # constructors.  A cast may target a callable whose own parameters carry
+    # those policies, but a marker wrapped around the cast value itself is
+    # erased.
+    target = _functions._parameter_value_type(T.normalize(node.typ))
     self._validate_element_tags_in_types((target,), node)
     if not branch.stack:
         self._diagnose(

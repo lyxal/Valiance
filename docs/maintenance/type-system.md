@@ -356,13 +356,22 @@ A `TaggedType` wraps a type with data-tag requirements, including absence
 requirements and collection depth. Tags are type facts, not separate stack
 values.
 
-#### Exact and atomic wrappers
+#### Exact and atomic call-policy wrappers
 
 `ExactType` prevents automatic vectorisation through a parameter.
 
-`AtomicType` asks generic substitution for the atomic base of a solved
-collection. It is used when a generic describes both a collection and an
-operation on its scalar element.
+`AtomicType` requires the marked argument position to be scalar. It prevents a
+collection pattern such as `T+` from solving `T` as another collection and
+thereby absorbing extra rank.
+
+Neither wrapper is a value or runtime type. Both remain in overload and
+callable parameter signatures so resolution can enforce them, while
+function-body parameter types are produced by recursively erasing the wrappers.
+Top-level wrappers in return declarations and cast targets are also erased; a
+marker nested inside a callable parameter signature is preserved because it
+controls calls through that callable value. Substitution must preserve the
+wrappers; it must never turn `atomic` into `exact` or replace a solved collection
+generic with its scalar base.
 
 ## Normalize before reasoning
 
@@ -529,7 +538,7 @@ It includes assignability, then adds call-only behaviour:
 - overloaded callable selection;
 - vectorisation;
 - intersection/union parameter handling; and
-- atomic generic views.
+- atomic scalar validation and rank-preserving generic solving.
 
 Do not use `compatible` for ordinary variable assignment. A collection may be
 compatible with a scalar parameter because the call can vectorise, but that
@@ -732,8 +741,8 @@ It returns `None` when no coherent solution exists.
 - tags; and
 - exact/atomic wrappers.
 
-For an atomic wrapper, substitution peels collection ranks to the scalar base
-and restores exactness.
+Substitution preserves both wrappers around the substituted inner type. Marker
+erasure happens only when deriving the value type visible in a function body.
 
 The result is then checked again. Solving proposes a substitution; compatibility
 validates that the substituted overload really accepts the arguments.
@@ -1340,8 +1349,29 @@ Return types are wrapped back to the resulting vectorised shape.
 parameter. It does not mean nominal equality; after stripping the wrapper,
 ordinary assignability still applies.
 
+The wrapper is call-policy metadata. It is preserved in overload/function
+signatures and recursively erased from the value type used to analyse the
+function body.
+
 Use exactness when a collection is meant to be passed as one value rather than
 mapped elementwise.
+
+### Atomic parameters
+
+`Atomic(parameter)` requires the corresponding argument position to be proven
+scalar. For `T atomic +`, generic solving must match the declared collection
+rank directly and solve `T` from the scalar base; it may not peel excess rank
+into `T`.
+
+Atomic evidence is validation evidence. Ordinary occurrences of `T` retain one
+consistent solution, and an atomic occurrence checks that same solution rather
+than replacing it with a scalar-base view. When the atomic occurrence is the
+only evidence, its scalar argument can provide a fallback solution.
+
+During generic function analysis, scalar guarantees declared by atomic
+parameters are tracked separately from value types. This lets the body see an
+ordinary `T`/`T+` while preventing an unmarked generic wrapper from forwarding a
+possibly collection-valued generic into an atomic overload.
 
 ## Callable compatibility
 

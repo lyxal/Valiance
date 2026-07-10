@@ -402,6 +402,7 @@ class AnalysisBranch:
     )
     input_mode: InputMode = InputMode.TOP_LEVEL
     cycle_params: tuple[T.Type, ...] = ()
+    atomic_type_vars: frozenset[str] = field(default_factory=frozenset)
     cycle_index: int = 0
     break_type: T.Type | None = None
     errors: tuple[Diagnostic, ...] = ()
@@ -3057,6 +3058,10 @@ class Analyser:
                 InputMode.CYCLE_EXPLICIT_PARAMS if body_params else InputMode.NILADIC
             ),
             cycle_params=body_params,
+            atomic_type_vars=(
+                outer.atomic_type_vars
+                | _functions._atomic_parameter_type_vars(params)
+            ),
             origin=outer.origin,
         )
         function_analyser = self._child_analyser(self.env.lexical_child_scope())
@@ -3736,6 +3741,10 @@ class Analyser:
             variables=variables,
             input_mode=mode,
             cycle_params=body_params if mode is InputMode.CYCLE_EXPLICIT_PARAMS else (),
+            atomic_type_vars=(
+                outer.atomic_type_vars
+                | _functions._atomic_parameter_type_vars(params)
+            ),
             origin=outer.origin,
         )
 
@@ -3843,6 +3852,10 @@ class Analyser:
             inputs=call_params,
             variables=variables,
             input_mode=InputMode.NILADIC,
+            atomic_type_vars=(
+                outer.atomic_type_vars
+                | _functions._atomic_parameter_type_vars(call_params)
+            ),
             origin=outer.origin,
         )
         function_analyser = self._child_analyser(self.env.lexical_child_scope())
@@ -3895,7 +3908,7 @@ class Analyser:
                 )
                 else branch.inputs
             )
-            inputs = _functions._restore_exact_parameter_markers(
+            inputs = _functions._restore_parameter_markers(
                 declared_params,
                 inputs,
             )

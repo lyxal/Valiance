@@ -5,6 +5,7 @@ from valiance.symbols import Symbol
 from valiance.types import (
     AnonymousTrait,
     AnonymousTraitRequirement,
+    Atomic,
     AtLeastArray,
     AtLeastList,
     C,
@@ -88,6 +89,9 @@ ParseError = N(PARSE_ERROR)
 
 
 class TypeLibraryTests(unittest.TestCase):
+    def test_atomic_marker_normalization_is_idempotent(self):
+        self.assertEqual(normalize(Atomic(Atomic(Integer))), Atomic(Integer))
+
     def test_intersection_with_never_normalizes_to_bottom(self):
         self.assertEqual(I(Integer, Never()), Never())
         self.assertEqual(I(Never(), String), Never())
@@ -734,6 +738,84 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(applied.vectorised_depths, (0, 1))
         self.assertEqual(applied.actual_returns, (C(ListExactType, Number),))
 
+    def test_atomic_marker_can_supply_the_only_generic_evidence(self):
+        applied = apply_overload(
+            Overload((Atomic(V("T")),), (V("T"),)),
+            (Integer,),
+        )
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.substitution["T"], Integer)
+        self.assertEqual(applied.actual_returns, (Integer,))
+        self.assertIsNone(
+            apply_overload(
+                Overload((Atomic(V("T")),), (V("T"),)),
+                (C(ListExactType, Integer),),
+            )
+        )
+
+    def test_atomic_collection_base_requires_scalar_items_and_declared_rank(self):
+        overload = Overload(
+            (C(ListExactType, Atomic(V("T"))),),
+            (C(ListExactType, V("T")),),
+        )
+
+        matching = apply_overload(overload, (C(ListExactType, Integer),))
+
+        self.assertIsNotNone(matching)
+        self.assertEqual(matching.substitution["T"], Integer)
+        self.assertEqual(
+            matching.actual_returns,
+            (C(ListExactType, Integer),),
+        )
+        self.assertIsNone(
+            apply_overload(overload, (C(ListExactType, Integer, 2),))
+        )
+        self.assertIsNone(
+            apply_overload(
+                overload,
+                (C(ListExactType, C(ListExactType, Integer)),),
+            )
+        )
+
+    def test_atomic_list_pattern_preserves_direct_array_to_list_compatibility(self):
+        overload = Overload(
+            (C(ListExactType, Atomic(V("T"))),),
+            (C(ListExactType, V("T")),),
+        )
+
+        applied = apply_overload(overload, (ExactArray(Integer),))
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.substitution["T"], Integer)
+        self.assertFalse(applied.vectorised)
+
+    def test_atomic_evidence_validates_without_overriding_regular_evidence(self):
+        overload = Overload(
+            (C(ListExactType, V("T")), Atomic(V("T"))),
+            (V("T"),),
+        )
+
+        applied = apply_overload(
+            overload,
+            (C(ListExactType, Integer), Integer),
+        )
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.substitution["T"], Integer)
+        self.assertIsNone(
+            apply_overload(
+                overload,
+                (C(ListExactType, Integer), String),
+            )
+        )
+        self.assertIsNone(
+            apply_overload(
+                overload,
+                (C(ListExactType, Integer, 2), Integer),
+            )
+        )
+
     def test_collection_item_type_looks_through_tags(self):
         self.assertEqual(
             collection_item_type(Tagged(C(ListExactType, Number), "infinite")),
@@ -1122,6 +1204,44 @@ class TypeLibraryTests(unittest.TestCase):
         result = resolve_overload_result((concrete, unioned), (Number,))
         self.assertIsNotNone(result)
         self.assertIs(result.overload, concrete)
+
+    def test_concrete_exact_overload_beats_exact_generic_equivalent(self):
+        concrete = Overload((Integer,), (String,))
+        generic = Overload((V("T"),), (Number,))
+
+        concrete_applied = apply_overload(concrete, (Integer,))
+        generic_applied = apply_overload(generic, (Integer,))
+        result = resolve_overload_result((generic, concrete), (Integer,))
+
+        self.assertEqual(concrete_applied.scores, (Specificity.EXACT,))
+        self.assertEqual(
+            generic_applied.scores,
+            (Specificity.EXACT_GENERIC,),
+        )
+        self.assertIsNotNone(result)
+        self.assertIs(result.overload, concrete)
+
+    def test_direct_generic_beats_implicit_result_injection(self):
+        direct = Overload((V("E"),), (V("E"),))
+        result_error = Overload(
+            (N(Symbol("Result"), Never(), V("E")),),
+            (V("E"),),
+        )
+
+        direct_applied = apply_overload(direct, (ParseError,))
+        injected_applied = apply_overload(result_error, (ParseError,))
+        result = resolve_overload_result(
+            (result_error, direct),
+            (ParseError,),
+        )
+
+        self.assertEqual(
+            direct_applied.scores,
+            (Specificity.EXACT_GENERIC,),
+        )
+        self.assertEqual(injected_applied.scores, (Specificity.UNION,))
+        self.assertIsNotNone(result)
+        self.assertIs(result.overload, direct)
 
     def test_numeric_tower_specificity_selects_narrowest_overload(self):
         integer = Overload((Integer, Integer), (Integer,))

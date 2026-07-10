@@ -573,6 +573,17 @@ end
             analyser.analyse(parse(definition + call))
             self.assertTrue(analyser.diagnostics)
 
+    def test_generic_atomic_rank_one_list_executes_with_unmarked_body_type(self):
+        self.assertEqual(
+            execute(
+                """
+define[T] rankOne(xs: T atomic +) -> T+ => $xs end
+[1, 2, 3] rankOne
+"""
+            ),
+            [[Decimal("1"), Decimal("2"), Decimal("3")]],
+        )
+
     def test_add_all_extends_top_stack_list_with_items(self):
         self.assertEqual(
             execute("[3, 4] [1, 2] addAll"),

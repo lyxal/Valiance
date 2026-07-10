@@ -484,7 +484,8 @@ The type parser currently supports:
 - Anonymous generic variables: `@1`, `@2`, and so on
 - Row-constrained types: `T(.bar: U)` and `T(.bar: U, .baz: String)`
 - Optional types: `T?`, `T???`, `T?3`, lowered to nested `Some[T] | None`
-- Atomic generic views: `T atomic`, lowered to `Atomic(T)`
+- Atomic call-policy markers: `T atomic`, lowered to `Atomic(T)` and retained
+  in callable parameter signatures while erased from body value types
 - Exact parameter markers: `T exact`, lowered to `Exact(T)` and retained inside
   `Function[...]` parameter types
 - List rank postfixes: `T+`, `T+3`, `T+$n`, `T*`, `T*3`, `T*$n`,
