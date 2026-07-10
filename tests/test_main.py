@@ -205,6 +205,62 @@ class MainTests(unittest.TestCase):
             source.replace("\\value =>", "\\value -> =>") + "\n",
         )
 
+    def test_main_tidy_renders_inferred_parameter_as_anonymous_generic(self):
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            exit_code = main(
+                ["tidy", "--code", "define id(x) => $x", "--stdout"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            output.getvalue(),
+            "define id(x: @1) -> @1 => $x\n",
+        )
+
+    def test_main_tidy_renders_all_inferred_row_generics(self):
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            exit_code = main(
+                ["tidy", "--code", "define get(x) => $x.foo", "--stdout"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            output.getvalue(),
+            "define get(x: @1(.foo: @2)) -> @2 => $x.foo\n",
+        )
+
+    def test_main_tidy_preserves_named_generics_beside_anonymous_ones(self):
+        output = io.StringIO()
+        source = "define[T: Vehicle] choose(x: T, y) => $y"
+
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["tidy", "--code", source, "--stdout"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            output.getvalue(),
+            "define[T: Vehicle] choose(x: T, y: @1) -> @1 => $y\n",
+        )
+
+    def test_main_tidy_generic_output_is_idempotent(self):
+        source = "define get(x) => $x.foo"
+        first_output = io.StringIO()
+        with contextlib.redirect_stdout(first_output):
+            first_exit = main(["tidy", "--code", source, "--stdout"])
+        rendered = first_output.getvalue().rstrip("\n")
+
+        second_output = io.StringIO()
+        with contextlib.redirect_stdout(second_output):
+            second_exit = main(["tidy", "--code", rendered, "--stdout"])
+
+        self.assertEqual(first_exit, 0)
+        self.assertEqual(second_exit, 0)
+        self.assertEqual(second_output.getvalue(), first_output.getvalue())
+
     def test_main_tidy_rewrites_one_file_with_docstrings_and_formatting(self):
         with tempfile.TemporaryDirectory() as directory:
             source_file = Path(directory) / "main.vlnc"

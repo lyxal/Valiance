@@ -197,7 +197,11 @@ JSON without adding documentation payloads to bytecode.
 - `exec` loads existing bytecode and never recompiles source.
 - `tidy` rewrites one source file or all project `.vlnc` files. Its independent
   passes add inferred signatures, insert `#??` doc stubs, and normalize leading
-  indentation to two spaces. `annotate` is the print-only compatibility alias.
+  indentation to two spaces. The typed-source emitter keeps declared generics
+  and bounds unchanged, while analyser-local variables are rendered as stable
+  source-level anonymous generics (`@1`, `@2`, and so on). Anonymous generic
+  numbering is scoped to each function signature, making repeated tidy runs
+  parseable and idempotent. `annotate` is the print-only compatibility alias.
 - `docs` analyses source for display signatures, extracts `#??` blocks, and
   writes a self-contained HTML reference. Project mode defaults to
   `docs/reference.html`.

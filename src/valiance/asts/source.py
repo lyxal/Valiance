@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from valiance.asts.nodes import (
@@ -22,6 +22,23 @@ from valiance.asts.nodes import (
     TypedNode,
 )
 from valiance.types import FunctionType, Type, normalize, show
+
+
+@dataclass
+class _SourceTypeVariables:
+    """Assign stable anonymous names to analyser-local type variables."""
+
+    declared: frozenset[str]
+    aliases: dict[str, str] = field(default_factory=dict)
+
+    def __call__(self, name: str) -> str:
+        """Return a declared name or allocate the next anonymous generic."""
+
+        if name in self.declared:
+            return name
+        if name not in self.aliases:
+            self.aliases[name] = f"@{len(self.aliases) + 1}"
+        return self.aliases[name]
 
 
 def typed_source(
@@ -50,19 +67,42 @@ def _typed_function_source(node: TypedFunctionNode) -> str:
     ast = node.node
     typ = normalize(node.typ) if node.typ is not None else None
     if isinstance(ast, DefineNode) and isinstance(typ, FunctionType):
-        signature = _function_signature(ast.function, typ, definition=True)
+        variables = _source_type_variables(ast.generics)
+        signature = _function_signature(
+            ast.function,
+            typ,
+            variables,
+            definition=True,
+        )
+        generics = _generic_clause_source(
+            ast.generics,
+            ast.generic_variances,
+            ast.generic_constraints,
+            variables,
+        )
         return (
-            f"define {ast.name}{signature} => "
+            f"define{generics} {ast.name}{signature} => "
             f"{_body_source(ast.function.body)}"
         )
     if isinstance(ast, FunctionNode) and isinstance(typ, FunctionType):
-        return f"fn{_function_signature(ast, typ)} => {_body_source(ast.body)}"
+        variables = _source_type_variables(ast.generics)
+        generics = _generic_clause_source(
+            ast.generics,
+            ast.generic_variances,
+            ast.generic_constraints,
+            variables,
+        )
+        return (
+            f"fn{generics}{_function_signature(ast, typ, variables)} => "
+            f"{_body_source(ast.body)}"
+        )
     return _typed_node_source(TypedNode(ast, node.typ))
 
 
 def _function_signature(
     node: FunctionNode,
     typ: FunctionType,
+    variables: _SourceTypeVariables,
     *,
     definition: bool = False,
 ) -> str:
@@ -72,13 +112,14 @@ def _function_signature(
     if definition and node.params is None and not params:
         param_clause = ""
     else:
-        param_clause = f"({_params_source(node.params, params)})"
-    return param_clause + _return_clause(returns)
+        param_clause = f"({_params_source(node.params, params, variables)})"
+    return param_clause + _return_clause(returns, variables)
 
 
 def _params_source(
     source_params: tuple[FunctionParam, ...] | None,
     params: tuple[Type, ...],
+    variables: _SourceTypeVariables,
 ) -> str:
     """Compute params source while reconstructing Valiance source."""
     labels: list[str] = []
@@ -88,15 +129,22 @@ def _params_source(
             param = source_params[index]
             if param.name is not None:
                 name = str(param.name)
-        labels.append(f"{name}: {show(typ)}")
+        labels.append(
+            f"{name}: {show(typ, type_variable_name=variables)}"
+        )
     return ", ".join(labels)
 
 
-def _return_clause(returns: tuple[Type, ...]) -> str:
+def _return_clause(
+    returns: tuple[Type, ...],
+    variables: _SourceTypeVariables,
+) -> str:
     """Compute return clause while reconstructing Valiance source."""
     if not returns:
         return " ->"
-    return " -> " + ", ".join(show(ret) for ret in returns)
+    return " -> " + ", ".join(
+        show(ret, type_variable_name=variables) for ret in returns
+    )
 
 
 @dataclass(frozen=True)
@@ -196,6 +244,8 @@ def _signature_replacements(
 
     params = typ.params or ()
     returns = typ.returns or ()
+    declared_generics = ast.generics if isinstance(ast, DefineNode) else function.generics
+    variables = _source_type_variables(declared_generics)
     replace_params = _needs_parameter_annotations(function, params)
     replace_returns = function.returns is None
     if not replace_params and not replace_returns:
@@ -207,7 +257,7 @@ def _signature_replacements(
         return []
     fat_arrow = tokens[fat_arrow_index]
     param_span = _params_span(tokens, start, fat_arrow_index)
-    param_text = f"({_params_source(function.params, params)})"
+    param_text = f"({_params_source(function.params, params, variables)})"
     replacements: list[_Replacement] = []
     if replace_params and param_span is not None:
         replacements.append(_Replacement(param_span[0], param_span[1], param_text))
@@ -235,7 +285,7 @@ def _signature_replacements(
         return replacements
 
     prefix = param_text if replace_params and param_span is None else ""
-    return_text = _return_clause(returns)
+    return_text = _return_clause(returns, variables)
     if arrow_index is None:
         replacements.append(
             _Replacement(
@@ -264,6 +314,37 @@ def _needs_parameter_annotations(
     if function.params is None:
         return bool(inferred_params)
     return any(param.typ is None for param in function.params)
+
+
+def _source_type_variables(
+    declared_generics: Sequence[Any],
+) -> _SourceTypeVariables:
+    """Create a source renderer scoped to one function's named generics."""
+
+    return _SourceTypeVariables(
+        frozenset(str(generic) for generic in declared_generics)
+    )
+
+
+def _generic_clause_source(
+    generics: Sequence[Any],
+    variances: Sequence[Any],
+    constraints: Sequence[Type | None],
+    variables: _SourceTypeVariables,
+) -> str:
+    """Render an existing generic clause when rebuilding source from an AST."""
+
+    entries: list[str] = []
+    for index, generic in enumerate(generics):
+        entry = str(generic)
+        constraint = constraints[index] if index < len(constraints) else None
+        variance = variances[index] if index < len(variances) else None
+        if constraint is not None:
+            label = f"{variance} " if variance is not None else ""
+            rendered = show(constraint, type_variable_name=variables)
+            entry += f": {label}{rendered}"
+        entries.append(entry)
+    return f"[{', '.join(entries)}]" if entries else ""
 
 
 def _function_fat_arrow_index(

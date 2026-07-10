@@ -2366,6 +2366,15 @@ class Parser:
         """Parse type primary from the current token stream."""
         if self._check_ident("trait"):
             return self._anonymous_trait_type()
+        if self._match(TokenKind.AT):
+            token = self._expect(TokenKind.NUMBER)
+            if not token.value.isdecimal() or int(token.value) < 1:
+                raise ParseError(
+                    "anonymous generic index must be a positive integer",
+                    line=token.line,
+                    column=token.column,
+                )
+            return V(f"@{int(token.value)}")
         if self._match(TokenKind.LBRACE):
             items: list[TupleTypeItem] = []
             has_repeated = False

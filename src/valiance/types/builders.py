@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from valiance.symbols import Symbol
 from valiance.types.nodes import (
@@ -477,36 +477,75 @@ def same(a: Type, b: Type) -> bool:
     return normalize(a) == normalize(b)
 
 
-def show(t: Type) -> str:
-    """Render a type as compact user-facing syntax."""
+def show(
+    t: Type,
+    *,
+    type_variable_name: Callable[[str], str] | None = None,
+) -> str:
+    """Render a type as compact user-facing syntax.
+
+    ``type_variable_name`` lets source emitters replace analyser-local variable
+    names without mutating the type. Variables bound by an anonymous trait or
+    overload remain local and bypass the callback.
+    """
+
+    return _show(t, type_variable_name, frozenset())
+
+
+def _show(
+    t: Type,
+    type_variable_name: Callable[[str], str] | None,
+    bound: frozenset[str],
+) -> str:
+    """Render one type while tracking locally bound generic variables."""
+
     t = normalize(t)
     if isinstance(t, NeverType):
         return "Never"
     if isinstance(t, NoneTypeNode):
         return "None"
     if isinstance(t, VarType):
-        return t.name
+        if type_variable_name is None or t.name in bound:
+            return t.name
+        return type_variable_name(t.name)
     if isinstance(t, NominalType):
         if not t.args:
             return str(t.name)
-        return f"{t.name}[{', '.join(show(a) for a in t.args)}]"
+        args = ", ".join(_show(a, type_variable_name, bound) for a in t.args)
+        return f"{t.name}[{args}]"
     if isinstance(t, UnionType):
-        return " | ".join(sorted(show(i) for i in t.items))
+        items = (
+            _show(item, type_variable_name, bound)
+            for item in sorted(t.items, key=repr)
+        )
+        return " | ".join(sorted(items))
     if isinstance(t, IntersectionType):
-        return " & ".join(sorted(show(i) for i in t.items))
+        items = (
+            _show(item, type_variable_name, bound)
+            for item in sorted(t.items, key=repr)
+        )
+        return " & ".join(sorted(items))
     if isinstance(t, TupleType):
-        return "{" + ", ".join(show(p) for p in t.params) + "}"
+        return "{" + ", ".join(
+            _show(param, type_variable_name, bound) for param in t.params
+        ) + "}"
     if isinstance(t, VariadicTupleType):
         return (
             "{"
             + ", ".join(
-                show(item.typ) + ("..." if item.repeated else "") for item in t.items
+                _show(item.typ, type_variable_name, bound)
+                + ("..." if item.repeated else "")
+                for item in t.items
             )
             + "}"
         )
     if isinstance(t, RowType):
-        fields = ", ".join(f".{field.name}: {show(field.typ)}" for field in t.fields)
-        return f"{show(t.base)}({fields})"
+        base = _show(t.base, type_variable_name, bound)
+        rendered_fields = ", ".join(
+            f".{field.name}: {_show(field.typ, type_variable_name, bound)}"
+            for field in t.fields
+        )
+        return f"{base}({rendered_fields})"
     if isinstance(t, CollectionType):
         suffix = {
             ListExactType: "+",
@@ -519,46 +558,147 @@ def show(t: Type) -> str:
             rank = f"${t.rank.name}"
         else:
             rank = "" if t.rank == 1 else str(t.rank)
-        return f"{_show_collection_base(t.base)}{suffix}{rank}"
+        base = _show_collection_base(t.base, type_variable_name, bound)
+        return f"{base}{suffix}{rank}"
     if isinstance(t, FunctionType):
         if t.params is None and t.returns is None:
-            return _show_function_with_tags("Function", t.element_tags)
-        params = ", ".join(show(p) for p in t.params)
-        returns = ", ".join(show(r) for r in t.returns)
+            return _show_function_with_tags(
+                "Function",
+                t.element_tags,
+                type_variable_name,
+                bound,
+            )
+        params = ", ".join(
+            _show(param, type_variable_name, bound) for param in t.params
+        )
+        returns = ", ".join(
+            _show(ret, type_variable_name, bound) for ret in t.returns
+        )
         return _show_function_with_tags(
             f"Function[{params} -> {returns}]",
             t.element_tags,
+            type_variable_name,
+            bound,
         )
     if isinstance(t, AnonymousTraitType):
+        trait_bound = bound | frozenset(str(generic) for generic in t.generics)
         generics = f"[{', '.join(str(g) for g in t.generics)}]" if t.generics else ""
         requirements = "; ".join(
-            f"extend {req.name}({', '.join(show(p) for p in req.overload.params)})"
-            + (
-                " -> " + ", ".join(show(r) for r in req.overload.returns)
-                if req.overload.returns
-                else ""
+            _show_anonymous_trait_requirement(
+                requirement,
+                type_variable_name,
+                trait_bound,
             )
-            for req in t.requirements
+            for requirement in t.requirements
         )
         return f"trait{generics} => {requirements} end"
     if isinstance(t, TaggedType):
-        return f"{' '.join(_show_tag(tag) for tag in sorted(t.tags))} {show(t.inner)}"
+        tags = " ".join(_show_tag(tag) for tag in sorted(t.tags))
+        return f"{tags} {_show(t.inner, type_variable_name, bound)}"
     if isinstance(t, ExactType):
-        return f"{show(t.inner)} exact"
+        return f"{_show(t.inner, type_variable_name, bound)} exact"
     if isinstance(t, OverloadSetType):
         entries = ", ".join(
-            show(Fn(overload.params, overload.returns)) for overload in t.overloads
+            _show_overload(overload, type_variable_name, bound)
+            for overload in t.overloads
         )
         return f"OverloadSet[{entries}]"
     return type(t).__name__
 
 
-def _show_collection_base(t: Type) -> str:
+def _show_anonymous_trait_requirement(
+    requirement: AnonymousTraitRequirement,
+    type_variable_name: Callable[[str], str] | None,
+    bound: frozenset[str],
+) -> str:
+    """Render one structural-trait requirement with its local generic scope."""
+
+    overload_bound = bound | frozenset(
+        constraint.name for constraint in requirement.overload.generic_constraints
+    )
+    params = ", ".join(
+        _show(param, type_variable_name, overload_bound)
+        for param in requirement.overload.params
+    )
+    returns = ", ".join(
+        _show(ret, type_variable_name, overload_bound)
+        for ret in requirement.overload.returns
+    )
+    suffix = f" -> {returns}" if returns else ""
+    return f"extend {requirement.name}({params}){suffix}"
+
+
+def _show_overload(
+    overload: Overload,
+    type_variable_name: Callable[[str], str] | None,
+    bound: frozenset[str],
+) -> str:
+    """Render an overload-set entry while respecting its generic binders."""
+
+    overload_bound = bound | frozenset(
+        constraint.name for constraint in overload.generic_constraints
+    )
+    params = ", ".join(
+        _show(param, type_variable_name, overload_bound)
+        for param in overload.params
+    )
+    returns = ", ".join(
+        _show(ret, type_variable_name, overload_bound)
+        for ret in overload.returns
+    )
+    return f"Function[{params} -> {returns}]"
+
+
+def _show_collection_base(
+    t: Type,
+    type_variable_name: Callable[[str], str] | None,
+    bound: frozenset[str],
+) -> str:
     """Format collection base for type construction and display."""
-    rendered = show(t)
+
+    rendered = _show(t, type_variable_name, bound)
     if isinstance(normalize(t), (UnionType, IntersectionType)):
         return f"({rendered})"
     return rendered
+
+
+def _show_function_with_tags(
+    base: str,
+    tags: frozenset[ElementTag],
+    type_variable_name: Callable[[str], str] | None,
+    bound: frozenset[str],
+) -> str:
+    """Format function with tags for type construction and display."""
+
+    if not tags:
+        return base
+    rendered = ", ".join(
+        _show_element_tag(tag, type_variable_name, bound) for tag in sorted(tags)
+    )
+    return f"{base}<{rendered}>"
+
+
+def _show_element_tag(
+    tag: ElementTag,
+    type_variable_name: Callable[[str], str] | None,
+    bound: frozenset[str],
+) -> str:
+    """Format element tag for type construction and display."""
+
+    prefix = "!" if tag.absent else ""
+    if not tag.args:
+        return f"{prefix}{tag.name}"
+    args = ", ".join(
+        _show(arg, type_variable_name, bound) for arg in tag.args
+    )
+    return f"{prefix}{tag.name}[{args}]"
+
+
+def _show_tag(tag: DataTag) -> str:
+    """Format tag for type construction and display."""
+    prefix = "#!" if tag.absent else "#"
+    depth = "+" * tag.depth
+    return f"{prefix}{tag.name}{depth}"
 
 
 def _tag(tag: TagSpec) -> DataTag:
@@ -577,25 +717,3 @@ def _element_tag(tag: ElementTag | str) -> ElementTag:
     absent = tag.startswith("!")
     name = tag[1:] if absent else tag
     return ElementTag(Symbol(name), absent=absent)
-
-
-def _show_function_with_tags(base: str, tags: frozenset[ElementTag]) -> str:
-    """Format function with tags for type construction and display."""
-    if not tags:
-        return base
-    return f"{base}<{', '.join(_show_element_tag(tag) for tag in sorted(tags))}>"
-
-
-def _show_element_tag(tag: ElementTag) -> str:
-    """Format element tag for type construction and display."""
-    prefix = "!" if tag.absent else ""
-    if not tag.args:
-        return f"{prefix}{tag.name}"
-    return f"{prefix}{tag.name}[{', '.join(show(arg) for arg in tag.args)}]"
-
-
-def _show_tag(tag: DataTag) -> str:
-    """Format tag for type construction and display."""
-    prefix = "#!" if tag.absent else "#"
-    depth = "+" * tag.depth
-    return f"{prefix}{tag.name}{depth}"

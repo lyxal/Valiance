@@ -2197,6 +2197,8 @@ fn (x) => $x end
 - But! There's no explicit generics in the function.
 - So, the type of the function is `Function[@1 -> @1]`
 - `@n` is effectively "anonymous generic type variable `n`"
+- Anonymous generic types can be written in type positions, so generated
+  signatures such as `(value: @1) -> @1` remain valid source.
 - Anonymous generics are only used if a type can't be inferred from usage.
 
 ## 16.4. Row Polymorphism

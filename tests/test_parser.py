@@ -389,6 +389,12 @@ end
         self.assertEqual(function.params[0].typ, C(ListRuggedType, N(Symbol("T"))))
         self.assertEqual(function.returns, (C(ListExactType, N(Symbol("T"))),))
 
+    def test_parses_anonymous_generic_types(self):
+        [function] = parse("fn (value: @1) -> @1 => $value")
+
+        self.assertEqual(function.params[0].typ, V("@1"))
+        self.assertEqual(function.returns, (V("@1"),))
+
     def test_parses_parentheses_as_grouping(self):
         self.assertEqual(
             parse("(1 + 2) * (3 + 4)"),

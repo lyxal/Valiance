@@ -420,6 +420,7 @@ The type parser currently supports:
   `{Number..., String}`, `{Number..., String...}`
 - Union types: `A | B`
 - Intersection types: `A & B`
+- Anonymous generic variables: `@1`, `@2`, and so on
 - Row-constrained types: `T(.bar: U)` and `T(.bar: U, .baz: String)`
 - Optional types: `T?`, `T???`, `T?3`, lowered to nested `Some[T] | None`
 - Atomic generic views: `T atomic`, lowered to `Atomic(T)`

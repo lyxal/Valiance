@@ -158,6 +158,10 @@ For `tidy`, documentation generation, or test discovery:
 
 - use the normal lexer/parser/analyser;
 - preserve source text that the tool does not own;
+- render inferred type variables with valid source syntax rather than leaking
+  analyser-local parameter names;
+- preserve named generic clauses and their constraints;
 - test Windows and POSIX path handling;
 - test inline source and project mode separately; and
-- make output deterministic so generated files produce stable diffs.
+- make output deterministic and idempotent so generated files produce stable
+  diffs.
