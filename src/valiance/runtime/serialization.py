@@ -291,6 +291,7 @@ class _Writer:
         """Encode function in the portable bytecode stream."""
         self.optional_string(function.name)
         self.u8(1 if function.cycle_params else 0)
+        self.u8(1 if function.accepts_stack_inputs else 0)
         self.u8(1 if function.recursive else 0)
         self.u32(len(function.params))
         for param in function.params:
@@ -595,6 +596,11 @@ class _Reader:
         cycle_params = self.u8()
         if cycle_params not in {0, 1}:
             raise BytecodeFormatError(f"invalid function cycle flag {cycle_params}")
+        accepts_stack_inputs = self.u8()
+        if accepts_stack_inputs not in {0, 1}:
+            raise BytecodeFormatError(
+                f"invalid function stack-input flag {accepts_stack_inputs}"
+            )
         recursive = self.u8()
         if recursive not in {0, 1}:
             raise BytecodeFormatError(f"invalid function recursive flag {recursive}")
@@ -636,6 +642,7 @@ class _Reader:
             params=params,
             name=name,
             cycle_params=bool(cycle_params),
+            accepts_stack_inputs=bool(accepts_stack_inputs),
             element_tags=element_tags,
             recursive=bool(recursive),
             multi=bool(multi),

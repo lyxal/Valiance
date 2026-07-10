@@ -703,14 +703,14 @@ define choose(a: Integer?) -> Integer? => $a end
                 define discrim(:Integer, :Integer, :Integer) -> Integer =>
                   copy(a, b, c -> a, c)
                   * * 4
-                  dip: (** 2)
+                  dip: (^^ 2)
                   -
                 end
                 """
             )
         )
 
-        self.assertEqual(analyser.diagnostics, ["5:25: unknown element '**'"])
+        self.assertEqual(analyser.diagnostics, ["5:25: unknown element '^^'"])
 
     def test_diagnostics_include_source_location_when_available(self):
         analyser = Analyser(Environment())
@@ -3105,7 +3105,7 @@ define f(value: #left #right Number) -> Number => $value
         self.assertEqual(len(branches), 1)
         self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
 
-    def test_length_of_finite_list_returns_number(self):
+    def test_length_of_finite_list_returns_integer(self):
         analyser = Analyser()
 
         typed = analyser.analyse(parse("print length [1, 2, 3, 4, 5]"))
@@ -3113,7 +3113,7 @@ define f(value: #left #right Number) -> Number => $value
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             [node.typ for node in typed],
-            [C(ListExactType, Integer), Number, None],
+            [C(ListExactType, Integer), Integer, None],
         )
 
     def test_length_rejects_infinite_list(self):
@@ -3126,7 +3126,7 @@ define f(value: #left #right Number) -> Number => $value
             analyser.diagnostics,
             [
                 "1:25: no overloads for element 'length' match stack [#infinite "
-                "Integer+]; available overloads: Function[#!infinite Item+ -> Number]"
+                "Integer+]; available overloads: Function[String -> Integer]; Function[#!infinite Item+ -> Integer]"
             ],
         )
 
@@ -3166,15 +3166,12 @@ define f(value: #left #right Number) -> Number => $value
         self.assertEqual(branch.stack, TypeStack((optional(Number),)))
         self.assertIsNone(branch.break_type)
 
-    def test_list_indexing_requires_integer_index(self):
+    def test_list_indexing_accepts_number_typed_indices(self):
         analyser = Analyser()
 
         analyser.analyse(parse("[1, 2] $[1.5]"))
 
-        self.assertEqual(
-            analyser.diagnostics,
-            ["1:8: list indexing requires Integer index value(s)"],
-        )
+        self.assertEqual(analyser.diagnostics, [])
 
     def test_sum_accumulator_widens_from_integer_initializer(self):
         analyser = Analyser()

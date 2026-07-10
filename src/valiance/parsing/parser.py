@@ -842,17 +842,18 @@ class Parser:
         """Parse if from the current token stream."""
         condition = self._condition()
         self._expect(TokenKind.FAT_ARROW)
-        then_branch = self._body({"else", "end"})
+        then_branch = self._body({"else", "end"}, owner_column=self._line_start_column(start))
         else_branch: tuple[ASTNode, ...] = ()
         self._skip_newlines()
         if self._match_ident("else"):
             if self._match_ident("if"):
                 else_branch = (self._if(self._previous),)
+                self._consume_optional_end(owner_column=self._line_start_column(start))
             else:
                 self._expect(TokenKind.FAT_ARROW)
-                else_branch = self._body({"end"})
+                else_branch = self._body({"end"}, owner_column=self._line_start_column(start))
                 self._skip_newlines()
-                self._consume_optional_end()
+                self._consume_optional_end(owner_column=self._line_start_column(start))
         return IfNode(condition, then_branch, else_branch, location=_loc(start))
 
     def _while(self, start: Token) -> WhileNode:
@@ -860,7 +861,12 @@ class Parser:
         condition = self._condition()
         params = self._control_params()
         self._expect(TokenKind.FAT_ARROW)
-        return WhileNode(condition, params, self._body(), location=_loc(start))
+        return WhileNode(
+            condition,
+            params,
+            self._body(owner_column=self._line_start_column(start)),
+            location=_loc(start),
+        )
 
     def _assert(self, start: Token) -> AssertNode:
         """Parse assert from the current token stream."""
@@ -880,7 +886,12 @@ class Parser:
             condition = self._condition()
         params = self._control_params()
         self._expect(TokenKind.FAT_ARROW)
-        return UnfoldNode(condition, params, self._body(), location=_loc(start))
+        return UnfoldNode(
+            condition,
+            params,
+            self._body(owner_column=self._line_start_column(start)),
+            location=_loc(start),
+        )
 
     def _try(self, start: Token) -> TryNode:
         """Parse try from the current token stream."""
@@ -953,7 +964,10 @@ class Parser:
         self._expect(TokenKind.FAT_ARROW)
         cases: list[MatchCaseNode] = []
         self._skip_newlines()
+        case_column = self._current.column
         while not self._check_ident("end") and not self._check(TokenKind.EOF):
+            if cases and self._current.column < case_column:
+                break
             case_start = self._current
             if self._match_ident("default"):
                 self._expect(TokenKind.FAT_ARROW)
@@ -963,7 +977,7 @@ class Parser:
                         (),
                         None,
                         True,
-                        self._match_body(),
+                        self._match_body(case_column),
                         location=_loc(case_start),
                     )
                 )
@@ -984,7 +998,7 @@ class Parser:
                     (),
                     pattern_type,
                     False,
-                    self._match_body(),
+                    self._match_body(case_column),
                     location=_loc(case_start),
                 )
             )
@@ -1135,8 +1149,8 @@ class Parser:
             self._expect(TokenKind.COMMA)
             self._skip_newlines()
 
-    def _match_body(self) -> tuple[ASTNode, ...]:
-        """Parse match body from the current token stream."""
+    def _match_body(self, case_column: int) -> tuple[ASTNode, ...]:
+        """Parse a match-case body, using indentation to distinguish cases."""
         single_line = not self._check(TokenKind.NEWLINE)
         if single_line:
             body = self._chain_until(_LINE_TERMINATORS)
@@ -1145,7 +1159,11 @@ class Parser:
         self._skip_newlines()
         nodes: list[ASTNode] = []
         while not self._check(TokenKind.EOF):
-            if self._check_ident("end") or self._at_match_case_start():
+            if self._check_ident("end"):
+                break
+            if self._current.column <= case_column and self._at_match_case_start():
+                break
+            if self._current.column < case_column:
                 break
             before = self.index
             statement = self._statement()
@@ -1161,14 +1179,19 @@ class Parser:
             return True
         return self._check(TokenKind.NUMBER, TokenKind.STRING, TokenKind.LBRACKET)
 
-    def _body(self, stop_words: set[str] | None = None) -> tuple[ASTNode, ...]:
-        """Parse body from the current token stream."""
+    def _body(
+        self,
+        stop_words: set[str] | None = None,
+        *,
+        owner_column: int | None = None,
+    ) -> tuple[ASTNode, ...]:
+        """Parse a body, leaving less-indented `end` tokens to outer blocks."""
         single_line = not self._check(TokenKind.NEWLINE)
         if single_line:
             body_line = self._current.line
             body = self._chain_until(_LINE_TERMINATORS)
             if self._check_ident("end") and self._current.line == body_line:
-                self._consume_optional_end()
+                self._consume_optional_end(owner_column=owner_column)
             return body
         self._skip_newlines()
         nodes: list[ASTNode] = []
@@ -1182,7 +1205,7 @@ class Parser:
                 self._error("expected statement")
             nodes.extend(statement)
             self._skip_separators()
-        self._consume_optional_end()
+        self._consume_optional_end(owner_column=owner_column)
         return tuple(nodes)
 
     def _condition(self) -> tuple[ASTNode, ...]:
@@ -1304,8 +1327,34 @@ class Parser:
                 ),
                 True,
             )
-        if self._match_ident("record") and self._match(TokenKind.LBRACE):
-            token = self._previous
+        if (
+            self._check_ident("record")
+            and self._peek(1).kind is TokenKind.DOT
+            and self._peek(2).kind is TokenKind.IDENT
+            and self._peek(2).value == "extend"
+            and self._peek(3).kind is TokenKind.LBRACE
+        ):
+            token = self._advance()
+            self._advance()
+            self._advance()
+            self._advance()
+            extension = RecordLiteralNode(
+                self._record_fields(),
+                location=_loc(token),
+            )
+            return _ChainPiece(
+                (
+                    extension,
+                    ElementNode(
+                        Symbol("extend", ("record",)),
+                        location=_loc(token),
+                    ),
+                ),
+                True,
+            )
+        if self._check_ident("record") and self._peek(1).kind is TokenKind.LBRACE:
+            token = self._advance()
+            self._advance()
             return _ChainPiece(
                 (RecordLiteralNode(self._record_fields(), location=_loc(token)),),
                 True,
@@ -1894,9 +1943,16 @@ class Parser:
             self._skip_newlines()
         self._expect(TokenKind.RPAREN)
         self._expect(TokenKind.ASSIGN)
-        values = self._chain_until(_LINE_TERMINATORS)
+        values: list[ASTNode] = []
+        while True:
+            values.extend(
+                self._chain_until(_LINE_TERMINATORS | {TokenKind.COMMA})
+            )
+            if not self._match(TokenKind.COMMA):
+                break
+            self._skip_newlines()
         return (
-            *values,
+            *tuple(values),
             SetVariablesNode(
                 tuple(targets),
                 location=_loc(start),
@@ -2190,6 +2246,7 @@ class Parser:
 
     def _returns(self) -> tuple[Type, ...] | None:
         """Parse returns from the current token stream."""
+        self._skip_newlines()
         if not self._match(TokenKind.ARROW):
             return None
         if self._check(TokenKind.FAT_ARROW):
@@ -2591,10 +2648,22 @@ class Parser:
         while self._match(TokenKind.NEWLINE, TokenKind.PIPE):
             pass
 
-    def _consume_optional_end(self) -> None:
-        """Parse consume optional end from the current token stream."""
-        if self._match_ident("end"):
+    def _line_start_column(self, token: Token) -> int:
+        """Return the first non-whitespace token column on ``token``'s line."""
+        return min(
+            candidate.column
+            for candidate in self.tokens
+            if candidate.line == token.line
+            and candidate.kind not in {TokenKind.WHITESPACE, TokenKind.NEWLINE}
+        )
+
+    def _consume_optional_end(self, *, owner_column: int | None = None) -> None:
+        """Consume an `end` owned by this block, respecting indentation."""
+        if not self._check_ident("end"):
             return
+        if owner_column is not None and self._current.column < owner_column:
+            return
+        self._advance()
 
     def _at_terminator(self, terminators: set[TokenKind | str]) -> bool:
         """Return the Boolean result of at terminator from the current parser token stream."""
@@ -2885,10 +2954,12 @@ def _lower_chain_segment(segment: list[_ChainPiece]) -> tuple[ASTNode, ...]:
         right = segment[-1]
         left = segment[:-1]
         if left and all(piece.is_element for piece in left):
-            return (
-                *right.nodes,
-                *(node for piece in reversed(left) for node in piece.nodes),
+            lowered_left = tuple(
+                node for piece in reversed(left) for node in piece.nodes
             )
+            if right.nodes and isinstance(right.nodes[0], MatchNode):
+                return (*lowered_left, *right.nodes)
+            return (*right.nodes, *lowered_left)
 
     return tuple(node for piece in segment for node in piece.nodes)
 

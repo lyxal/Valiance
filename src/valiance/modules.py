@@ -152,6 +152,11 @@ class ModuleLoader:
             else:
                 root = self.std_root
             return _source_path(root, path.parts[1:])
+        if path.root is None and len(path.parts) == 1:
+            native_exports = _native_std_exports(path)
+            if native_exports is not None:
+                root = Path(__file__).parent / "std"
+                return _source_path(root, path.parts)
         if path.root == Symbol("root"):
             root = _project_root(current_file)
             if root is None:
@@ -593,11 +598,15 @@ def _native_std_exports(path: ImportPath) -> ModuleExports | None:
     """Compute native std exports during module loading and import resolution."""
     if path.root is not None:
         return None
-    if len(path.parts) != 2 or path.parts[0] != "std":
+    if len(path.parts) == 2 and path.parts[0] == "std":
+        module_name = path.parts[1]
+    elif len(path.parts) == 1:
+        module_name = path.parts[0]
+    else:
         return None
     from valiance.stdlib_native import native_module_exports
 
-    exports = native_module_exports(path.parts[1])
+    exports = native_module_exports(module_name)
     if isinstance(exports, ModuleExports):
         return exports
     return None

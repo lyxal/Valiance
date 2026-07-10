@@ -8,10 +8,11 @@
 
 from __future__ import annotations
 
+import builtins as python_builtins
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from decimal import MAX_EMAX, MIN_EMIN, Decimal, localcontext
-from itertools import chain, islice
+from itertools import chain, groupby, islice
 from typing import Any
 
 import valiance.types as T
@@ -208,6 +209,12 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         examples=(("5 squared", "25"),),
         category="Arithmetic",
     ),
+    "**": element_documentation(
+        "Raise a number to a numeric power.",
+        parameters=(("base", "Number to raise."), ("exponent", "Power to apply.")),
+        returns="The exponentiated number.",
+        category="Arithmetic",
+    ),
     "positive?": element_documentation(
         "Test whether a number is greater than zero.",
         parameters=(("value", "Number to test."),),
@@ -219,6 +226,24 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         parameters=(("left", "First value."), ("right", "Second value.")),
         returns="A Boolean equality result.",
         category="Comparison",
+    ),
+    "===": element_documentation(
+        "Test any two values for structural equality.",
+        parameters=(("left", "First value."), ("right", "Second value.")),
+        returns="A Boolean equality result.",
+        category="Comparison",
+    ),
+    "in": element_documentation(
+        "Test whether a value occurs in a collection or string.",
+        parameters=(("needle", "Value to find."), ("haystack", "Value to search.")),
+        returns="A Boolean membership result.",
+        category="Comparison",
+    ),
+    "numeric?": element_documentation(
+        "Test whether a string is a valid base-ten integer.",
+        parameters=(("value", "String to inspect."),),
+        returns="A Boolean result.",
+        category="Strings",
     ),
     "<": element_documentation(
         "Test whether the left number is less than the right number.",
@@ -268,9 +293,9 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         category="Collections",
     ),
     "length": element_documentation(
-        "Return the number of items in a finite list.",
-        parameters=(("values", "Finite list whose size is required."),),
-        returns="The list length.",
+        "Return the number of items in a finite list or string.",
+        parameters=(("values", "Finite list or string whose size is required."),),
+        returns="The value length as an `Integer`.",
         category="Collections",
         see_also=("len",),
     ),
@@ -278,6 +303,30 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         "Return the first item of a non-empty list.",
         parameters=(("values", "Non-empty input list."),),
         returns="The first list item.",
+        category="Collections",
+    ),
+    "first": element_documentation(
+        "Return the first item of a non-empty list or string.",
+        parameters=(("values", "Non-empty input value."),),
+        returns="The first item or one-character string.",
+        category="Collections",
+    ),
+    "last": element_documentation(
+        "Return the last item of a non-empty finite list or string.",
+        parameters=(("values", "Non-empty input value."),),
+        returns="The final item or one-character string.",
+        category="Collections",
+    ),
+    "drop": element_documentation(
+        "Discard a prefix from a list or string.",
+        parameters=(("values", "Input value."), ("count", "Number of leading items to remove.")),
+        returns="The remaining suffix.",
+        category="Collections",
+    ),
+    "groupConsecutive": element_documentation(
+        "Group adjacent equal items.",
+        parameters=(("values", "Input list or string."),),
+        returns="A list of consecutive groups.",
         category="Collections",
     ),
     "range": element_documentation(
@@ -331,6 +380,30 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         parameters=(("values", "Strings to join."), ("separator", "Text inserted between adjacent strings.")),
         returns="The joined string.",
         category="Strings",
+    ),
+    "split": element_documentation(
+        "Split a string around a separator.",
+        parameters=(("value", "String to split."), ("separator", "Separator text.")),
+        returns="A list of string segments.",
+        category="Strings",
+    ),
+    "rotate": element_documentation(
+        "Rotate a finite list or string to the left.",
+        parameters=(("value", "Value to rotate."), ("amount", "Signed rotation amount.")),
+        returns="The rotated value.",
+        category="Collections",
+    ),
+    "parseInt": element_documentation(
+        "Parse a base-ten integer string.",
+        parameters=(("value", "String to parse."),),
+        returns="The parsed `Integer`, or `None` when parsing fails.",
+        category="Strings",
+    ),
+    "input": element_documentation(
+        "Read one line of text from standard input.",
+        parameters=(("prompt", "Prompt displayed before reading."),),
+        returns="The entered line without its trailing newline.",
+        category="Input and output",
     ),
     "message": element_documentation(
         "Read the message stored by an error or fault.",
@@ -428,6 +501,7 @@ class BuiltinOverload:
 
     signature: T.Overload
     implementation: RuntimeImpl | None = None
+    vectorisable: bool = True
 
     def runtime_matches(self, args: tuple[Any, ...]) -> bool:
         """Return whether these runtime arguments match the nominal signature."""
@@ -492,6 +566,7 @@ def builtin(
     data_tags: tuple[tuple[str | Symbol, T.TagKind], ...] = (),
     param_names: tuple[str | Symbol | None, ...] = (),
     documentation: ElementDocumentation | None = None,
+    vectorisable: bool = True,
 ):
     """Register one overload of `name`, implemented by the decorated function."""
     normalized_param_names = tuple(
@@ -515,6 +590,7 @@ def builtin(
                 element_tags=frozenset(element_tags),
             ),
             fn,
+            vectorisable,
         )
 
         aliases: tuple[str, ...] = getattr(fn, _ALIAS_ATTR, ())
@@ -545,7 +621,13 @@ _ALIAS_ATTR = "__builtin_aliases__"
 
 def _name_key(name: str | Symbol) -> str:
     """Build the comparison key for name for the built-in catalogue and runtime."""
-    return name.text if isinstance(name, Symbol) else name
+    return name.dotted() if isinstance(name, Symbol) else name
+
+
+def _symbol_key(name: str) -> Symbol:
+    """Reconstruct a qualified symbol from a dotted registry key."""
+    parts = name.split(".")
+    return Symbol(parts[-1], tuple(parts[:-1]))
 
 
 def alias(*names: str | Symbol):
@@ -743,9 +825,14 @@ def _peek_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     stack = call_params[:-1]
     for candidate in _callable_overloads(function_type):
         arity = len(candidate.params)
-        if len(stack) < arity:
+        if len(stack) >= arity:
+            args = stack[-arity:] if arity else ()
+        elif not stack:
+            # In an input-inferred function (for example an unfold body), the
+            # callable itself supplies the input shape that peek preserves.
+            args = candidate.params
+        else:
             continue
-        args = stack[-arity:] if arity else ()
         application = _apply_callable(candidate, args)
         if application is not None:
             return T.Overload(
@@ -1065,6 +1152,17 @@ def _string_repeat_reverse(
     return (args[0] * int(args[1]),)
 
 
+@builtin("**", (T.Number, T.Number), (T.Number,))
+def _power(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Raise one Valiance number to another numeric power."""
+    del ctx
+    base, exponent = args
+    try:
+        return (base**exponent,)
+    except (ArithmeticError, ValueError) as exc:
+        raise RuntimeError("invalid numeric exponentiation") from exc
+
+
 @builtin("%", (T.Integer, T.Integer), (T.Integer,))
 @builtin("%", (T.Real, T.Real), (T.Real,))
 @builtin("%", (T.Real, T.Integer), (T.Real,))
@@ -1096,16 +1194,27 @@ def _slash(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     ),
     (T.TypeVariable("Item"),),
 )
+@builtin(
+    "/",
+    (
+        T.Tup(T.Integer, T.String),
+        T.Fn((T.Integer, T.String), (T.String,)),
+    ),
+    (T.String,),
+)
 @alias("fold")
 def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `/` built-in runtime overload."""
-    iterator = iter(args[0])
+    values, reducer = args
+    if hasattr(values, "code") or hasattr(values, "overloads"):
+        values, reducer = reducer, values
+    iterator = iter(values)
     try:
         result = next(iterator)
     except StopIteration as exc:
         raise RuntimeError("reduce requires a non-empty list") from exc
     for item in iterator:
-        called = ctx.call(args[1], [result, item])
+        called = ctx.call(reducer, [result, item])
         result = called[0]
     return (result,)
 
@@ -1117,6 +1226,7 @@ def _double(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @builtin("squared", (T.Number,), (T.Number,))
+@alias("square")
 def _squared(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `squared` built-in runtime overload."""
     return (_decimal_multiply(args[0], args[0]),)
@@ -1138,6 +1248,39 @@ def _is_positive(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `==`, `==` built-in runtime overloads."""
     return (_truth(args[0] == args[1]),)
+
+
+@builtin("===", (T.V("T"), T.V("T")), (T.Boolean,))
+def _structural_equals(
+    args: tuple[Any, ...], ctx: RuntimeContext
+) -> tuple[Any, ...]:
+    """Compare two values using the runtime's structural value equality."""
+    del ctx
+    return (_truth(args[0] == args[1]),)
+
+
+@builtin("in", (T.String, T.String), (T.Boolean,))
+@builtin(
+    "in",
+    (T.V("Item"), T.ExactList(T.V("Item"))),
+    (T.Boolean,),
+)
+def _contains(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Test membership in a string or finite/list-like value."""
+    del ctx
+    needle, haystack = args
+    return (_truth(needle in haystack),)
+
+
+@builtin("numeric?", (T.String,), (T.Boolean,))
+def _numeric(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return whether a string can be parsed as a base-ten integer."""
+    del ctx
+    try:
+        int(args[0].strip(), 10)
+    except ValueError:
+        return (_truth(False),)
+    return (_truth(True),)
 
 
 @builtin("<", (T.Number, T.Number), (T.Boolean,))
@@ -1256,11 +1399,13 @@ def _take(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin(
     "length",
     (T.WithoutTag(T.ExactList(T.TypeVariable("Item")), "infinite"),),
-    (T.Number,),
+    (T.Integer,),
+    vectorisable=False,
 )
+@builtin("length", (T.String,), (T.Integer,), vectorisable=False)
 @alias("len")
 def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `length` built-in runtime overload."""
+    """Return the exact length of a finite list or string."""
     return (Decimal(len(args[0])),)
 
 
@@ -1272,11 +1417,89 @@ def _head(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     raise RuntimeError("head requires a non-empty list")
 
 
+@builtin("first", (T.ExactList(T.V("Item")),), (T.V("Item"),))
+@builtin("first", (T.String,), (T.String,))
+def _first_value(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the first item from a non-empty finite/list-like value."""
+    del ctx
+    value = args[0]
+    for item in value:
+        return (item,)
+    raise RuntimeError("first requires a non-empty value")
+
+
+@builtin(
+    "last",
+    (T.WithoutTag(T.ExactList(T.V("Item")), "infinite"),),
+    (T.V("Item"),),
+)
+@builtin("last", (T.String,), (T.String,))
+def _last_value(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the final item from a non-empty finite list or string."""
+    del ctx
+    value = args[0]
+    if not value:
+        raise RuntimeError("last requires a non-empty value")
+    return (value[-1],)
+
+
 @builtin("range", (T.Integer, T.Integer), (T.ExactList(T.Integer),))
+@builtin("range", (T.Number, T.Number), (T.ExactList(T.Number),))
 def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `range` built-in runtime overload."""
     start, stop = args
+    if start != start.to_integral_value() or stop != stop.to_integral_value():
+        raise RuntimeError("range bounds must be integral numbers")
     return (LazyList(Decimal(item) for item in range(int(start), int(stop) + 1)),)
+
+
+@builtin(
+    "drop",
+    (T.ExactList(T.V("Item")), T.Integer),
+    (T.ExactList(T.V("Item")),),
+)
+@builtin(
+    "drop",
+    (T.Integer, T.ExactList(T.V("Item"))),
+    (T.ExactList(T.V("Item")),),
+)
+@builtin("drop", (T.String, T.Integer), (T.String,))
+@builtin("drop", (T.Integer, T.String), (T.String,))
+def _drop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Drop a non-negative number of leading items from a list or string."""
+    del ctx
+    if isinstance(args[0], Decimal):
+        raw_count, values = args
+    else:
+        values, raw_count = args
+    count = int(raw_count)
+    if count < 0:
+        raise RuntimeError("drop requires a non-negative integer")
+    if isinstance(values, LazyList):
+        return (LazyList(islice(iter(values), count, None)),)
+    return (values[count:],)
+
+
+@builtin(
+    "groupConsecutive",
+    (T.ExactList(T.V("Item")),),
+    (T.ExactList(T.V("Item"), 2),),
+)
+def _group_consecutive_list(
+    args: tuple[Any, ...], ctx: RuntimeContext
+) -> tuple[Any, ...]:
+    """Group adjacent equal list items into materialized sublists."""
+    del ctx
+    return ([[*items] for _key, items in groupby(args[0])],)
+
+
+@builtin("groupConsecutive", (T.String,), (T.ExactList(T.String),))
+def _group_consecutive_string(
+    args: tuple[Any, ...], ctx: RuntimeContext
+) -> tuple[Any, ...]:
+    """Group adjacent equal characters into strings."""
+    del ctx
+    return (["".join(items) for _key, items in groupby(args[0])],)
 
 
 @builtin("sum", (T.ExactList(T.Number),), (T.Number,))
@@ -1379,6 +1602,88 @@ def _join(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `join` built-in runtime overload."""
     values, separator = args
     return (separator.join(str(item) for item in values),)
+
+
+@builtin(
+    "split",
+    (T.String, T.String),
+    (T.ExactList(T.String),),
+    param_names=("on", "value"),
+)
+def _split_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Split a string at every occurrence of a literal separator."""
+    del ctx
+    separator, value = args
+    if separator == "":
+        return (list(value),)
+    return (value.split(separator),)
+
+
+@builtin("rotate", (T.String, T.Integer), (T.String,))
+@builtin(
+    "rotate",
+    (T.ExactList(T.V("Item")), T.Integer),
+    (T.ExactList(T.V("Item")),),
+)
+def _rotate(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Rotate a finite sequence left by the requested signed amount."""
+    del ctx
+    values, raw_amount = args
+    materialized = values if isinstance(values, str) else list(values)
+    if not materialized:
+        return (materialized,)
+    amount = int(raw_amount) % len(materialized)
+    return (materialized[amount:] + materialized[:amount],)
+
+
+@builtin("parseInt", (T.String,), (T.optional(T.Integer),))
+def _parse_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Parse a base-ten integer, returning `None` when parsing fails."""
+    del ctx
+    try:
+        return (Decimal(int(args[0].strip(), 10)),)
+    except ValueError:
+        return (ObjectValue("None", {}),)
+
+
+@builtin(
+    Symbol("merge", ("record",)),
+    (T.N(Symbol("record")), T.N(Symbol("record"))),
+    (T.N(Symbol("record")),),
+    documentation=element_documentation(
+        "Merge two anonymous records, preferring fields from the right record.",
+        parameters=(("left", "Base record."), ("right", "Fields to merge.")),
+        returns="A merged anonymous record.",
+        category="Records",
+    ),
+)
+def _record_merge(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Merge two anonymous records, preferring fields from the right record."""
+    del ctx
+    left, right = args
+    return ({**left, **right},)
+
+
+@builtin(
+    Symbol("extend", ("record",)),
+    (T.N(Symbol("record")), T.N(Symbol("record"))),
+    (T.N(Symbol("record")),),
+    documentation=element_documentation(
+        "Extend an anonymous record with fields that are not already present.",
+        parameters=(("record", "Base record."), ("fields", "New fields.")),
+        returns="The extended anonymous record.",
+        category="Records",
+    ),
+)
+def _record_extend(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Extend an anonymous record while rejecting duplicate field names."""
+    del ctx
+    left, right = args
+    duplicates = set(left).intersection(right)
+    if duplicates:
+        names = ", ".join(sorted(duplicates))
+        raise RuntimeError(f"record.extend duplicates field(s): {names}")
+    return ({**left, **right},)
 
 
 # --------------------------------------------------------------------------
@@ -1557,6 +1862,13 @@ def _question_bang(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
 # --------------------------------------------------------------------------
 
 
+@builtin("input", (T.String,), (T.String,), element_tags=(EAGER_TAG, IO_TAG))
+def _input(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Read one line from standard input after displaying a prompt."""
+    del ctx
+    return (python_builtins.input(args[0]),)
+
+
 @builtin("print", (T.V("T"),), (), element_tags=(EAGER_TAG, IO_TAG))
 def _print(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `print` built-in runtime overload."""
@@ -1624,11 +1936,11 @@ def _all_elements() -> tuple[BuiltinElement, ...]:
     """Compute all elements for the built-in catalogue and runtime."""
     return tuple(
         BuiltinElement(
-            Symbol(name),
+            _symbol_key(name),
             tuple(overloads),
             _DOCUMENTATION_REGISTRY.get(name),
             (
-                Symbol(canonical)
+                _symbol_key(canonical)
                 if (canonical := _CANONICAL_NAME_REGISTRY.get(name, name)) != name
                 else None
             ),
@@ -1676,7 +1988,7 @@ def default_environment() -> T.Environment:
 def runtime_elements() -> dict[str, BuiltinElement]:
     """Return built-in elements that have at least one runtime implementation."""
     return {
-        item.name.text: item
+        item.name.dotted(): item
         for item in BUILTIN_ELEMENTS
         if any(overload.implementation is not None for overload in item.definitions)
     }

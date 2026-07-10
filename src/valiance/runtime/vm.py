@@ -231,6 +231,14 @@ class _Frame:
 
         stack_count = min(len(self.stack), arity)
         stack_args = tuple(self.stack[-stack_count:]) if stack_count else ()
+        if arity == 1 and stack_count == 0 and self.cycle_values:
+            value = self.cycle_values[self.cycle_index % len(self.cycle_values)]
+            return (
+                (value,),
+                0,
+                (self.cycle_index + 1) % len(self.cycle_values),
+                0,
+            )
         initial_count = min(
             self.cycle_stack_remaining,
             arity - stack_count,
@@ -318,18 +326,32 @@ class VirtualMachine:
         isolate_captures: bool = True,
     ) -> list[Any]:
         """Invoke one compiled function with explicit runtime arguments."""
-        if len(args) != len(function.code.params):
-            raise RuntimeError(
-                f"{_function_name(function.code)} expected "
-                f"{len(function.code.params)} arguments, got {len(args)}"
-            )
+        parameter_count = len(function.code.params)
+        if function.code.accepts_stack_inputs:
+            if len(args) < parameter_count:
+                raise RuntimeError(
+                    f"{_function_name(function.code)} expected at least "
+                    f"{parameter_count} arguments, got {len(args)}"
+                )
+            explicit_args = args[-parameter_count:] if parameter_count else []
+            stack_args = args[:-parameter_count] if parameter_count else args
+        else:
+            if len(args) != parameter_count:
+                raise RuntimeError(
+                    f"{_function_name(function.code)} expected "
+                    f"{parameter_count} arguments, got {len(args)}"
+                )
+            explicit_args = args
+            stack_args = []
         locals_, retained_locals = _function_call_locals(
             function,
-            args,
+            explicit_args,
             isolate_captures=isolate_captures,
         )
-        cycle_values = tuple(args) if function.code.cycle_params else ()
-        initial_stack = list(args) if function.code.params and not cycle_values else []
+        cycle_values = tuple(explicit_args) if function.code.cycle_params else ()
+        initial_stack = list(stack_args)
+        if function.code.params and not cycle_values:
+            initial_stack.extend(explicit_args)
         result = self.execute(
             function.code,
             locals_,
@@ -1551,7 +1573,9 @@ def _enter_cycle(frame: _Frame, spec: object) -> None:
     if not isinstance(spec, tuple) or len(spec) != 2:
         raise RuntimeError(f"invalid cycle scope {spec!r}")
     arity, seed_stack = spec
-    if arity is None:
+    if arity == "current":
+        values = frame.cycle_values
+    elif arity is None:
         values = tuple(frame.stack)
     elif isinstance(arity, int):
         values = _source_args(frame, arity, "cycle scope")
@@ -2230,8 +2254,61 @@ def _runtime_type_name(value: Any) -> str | None:
     return None
 
 
+
+def _dynamic_callable_arity(value: Any) -> int | None:
+    """Return one unambiguous runtime arity for a callable value."""
+    if isinstance(value, FunctionValue):
+        return len(value.code.params)
+    if isinstance(value, OverloadedFunctionValue):
+        arities = {len(overload.code.params) for overload in value.overloads}
+        return next(iter(arities)) if len(arities) == 1 else None
+    if isinstance(value, ObjectConstructorValue):
+        if value.initializer is None:
+            return len(value.required)
+        initializer = value.initializer
+        overloads = (initializer,) if isinstance(initializer, FunctionValue) else initializer.overloads
+        arities = {max(0, len(overload.code.params) - 1) for overload in overloads}
+        return next(iter(arities)) if len(arities) == 1 else None
+    return None
+
 def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
     """Invoke builtin during VM execution."""
+    if callee.element.name.text == "call" and frame.stack:
+        callable_arity = _dynamic_callable_arity(frame.stack[-1])
+        if callable_arity is not None:
+            overload = callee.element.definitions[0]
+            try:
+                (
+                    args,
+                    stack_count,
+                    next_cycle_index,
+                    next_cycle_stack_remaining,
+                ) = frame.source_args(callable_arity + 1)
+            except _StackUnderflow:
+                pass
+            else:
+                implementation = overload.implementation
+                assert implementation is not None
+                try:
+                    result = implementation(_unwrapped_args(args), callee.context)
+                except _py_builtins.RuntimeError as exc:
+                    raise _with_call_detail(
+                        exc,
+                        f"element '{callee.element.name}'",
+                        args,
+                    ) from exc
+                result = _bind_lazy_result_owners(args, result)
+                _finalize_builtin_result_ownership(args, result)
+                if stack_count:
+                    _release_stack_tail(
+                        frame.stack,
+                        stack_count,
+                        callee.context.call.__self__,
+                    )
+                frame.cycle_index = next_cycle_index
+                frame.cycle_stack_remaining = next_cycle_stack_remaining
+                frame.stack.extend(result)
+                return
     candidates = sorted(
         callee.element.definitions,
         key=lambda overload: len(overload.signature.params),
@@ -2652,7 +2729,11 @@ def _call_vectorized_builtin(
     context: RuntimeContext,
 ) -> tuple[Any, ...] | None:
     """Invoke vectorized builtin during VM execution."""
-    if overload.implementation is None or not any(is_list_like(arg) for arg in args):
+    if (
+        overload.implementation is None
+        or not overload.vectorisable
+        or not any(is_list_like(arg) for arg in args)
+    ):
         return None
     if not overload.runtime_vector_matches(args):
         return None
@@ -2673,6 +2754,9 @@ def _call_vectorized_resolved_builtin(
     """Invoke vectorized resolved builtin during VM execution."""
     implementation = overload.implementation
     assert implementation is not None
+    if not overload.vectorisable:
+        return None
+
     def typed_implementation(
         item_args: tuple[Any, ...],
         item_context: RuntimeContext,

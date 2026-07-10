@@ -61,6 +61,7 @@ from valiance.asts import (
     TypedElementExtension,
     TypedElementNode,
     TypedFunctionNode,
+    TypedIfNode,
     TypedLiteralNode,
     TypedNode,
     TypedTagApplicationNode,
@@ -146,6 +147,7 @@ class _Compiler:
         ] = {}
         self.tag_disjoints: dict[str, set[str]] = {}
         self.tag_parents: dict[str, str] = {}
+        self._temporary_index = 0
 
     def compile_function(
         self,
@@ -154,6 +156,7 @@ class _Compiler:
         params: tuple[str, ...] = (),
         name: str | None = None,
         cycle_params: bool = False,
+        accepts_stack_inputs: bool = False,
         element_tags: tuple[str, ...] = (),
         recursive: bool = False,
         multi: bool = False,
@@ -173,6 +176,7 @@ class _Compiler:
             params=params,
             name=name,
             cycle_params=cycle_params,
+            accepts_stack_inputs=accepts_stack_inputs,
             element_tags=element_tags,
             recursive=recursive,
             multi=multi,
@@ -380,7 +384,7 @@ class _Compiler:
             case IndexSetNode(selectors):
                 self.emit(OpCode.SET_INDEX, _index_spec(selectors, False))
             case IfNode():
-                self.if_node(node)
+                self.if_node(node, typed_node)
             case AssertNode():
                 self.assert_node(node)
             case MatchNode():
@@ -418,9 +422,18 @@ class _Compiler:
         *,
         argument: object | None = None,
     ) -> None:
-        """Compile collection items and emit the requested construction opcode."""
+        """Compile collection items as isolated expressions."""
+        temporaries: list[str] = []
         for item in items:
+            name = f"\x00literal_{self._temporary_index}"
+            self._temporary_index += 1
+            self.emit(OpCode.CYCLE_BEGIN, ("current", 0))
             self.expression(item)
+            self.emit(OpCode.CYCLE_END)
+            self.emit(OpCode.STORE_VAR, name)
+            temporaries.append(name)
+        for name in temporaries:
+            self.emit(OpCode.LOAD_VAR, name)
         self.emit(op, len(items) if argument is None else argument)
 
     def _register_runtime_tag_declaration(self, node: TagDeclarationNode) -> None:
@@ -474,6 +487,10 @@ class _Compiler:
                 for definition in node.definitions:
                     if definition not in constructors:
                         self.friendly_definition(runtime_name, definition)
+            case "trait":
+                runtime_name = _symbol_runtime_name(node.name)
+                for definition in node.definitions:
+                    self.friendly_definition(runtime_name, definition)
             case "variant":
                 required_names = {requirement.name for requirement in node.requirements}
                 for member in node.variants:
@@ -622,17 +639,24 @@ class _Compiler:
         )
         self.emit(OpCode.STORE_VAR, f"{owner}::{runtime_definition_name}")
 
-    def if_node(self, node: IfNode) -> None:
-        """Lower a typed conditional with patched branch targets."""
-        for condition_node in node.condition:
+    def if_node(self, node: IfNode, typed_node: TypedNode | None = None) -> None:
+        """Lower a conditional using analysed child nodes when available."""
+        condition: tuple[ASTNode | TypedNode, ...] = node.condition
+        then_branch: tuple[ASTNode | TypedNode, ...] = node.then_branch
+        else_branch: tuple[ASTNode | TypedNode, ...] = node.else_branch
+        if isinstance(typed_node, TypedIfNode):
+            condition = typed_node.condition
+            then_branch = typed_node.then_branch
+            else_branch = typed_node.else_branch
+        for condition_node in condition:
             self.node(condition_node)
         jump_to_else = self.emit(OpCode.JUMP_IF_FALSE, None)
-        for branch_node in node.then_branch:
+        for branch_node in then_branch:
             self.node(branch_node)
         jump_to_end = self.emit(OpCode.JUMP, None)
         else_start = len(self.instructions)
         self.patch(jump_to_else, else_start)
-        for branch_node in node.else_branch:
+        for branch_node in else_branch:
             self.node(branch_node)
         self.patch(jump_to_end, len(self.instructions))
 
@@ -655,12 +679,16 @@ class _Compiler:
     def unfold_node(self, node: UnfoldNode, typed_node: TypedNode | None) -> None:
         """Lower an unfold operation through its analysed callable body."""
         arity = _unfold_state_arity(node, typed_node)
-        body = FunctionNode(
-            params=node.params or tuple(FunctionParam(None) for _ in range(arity)),
-            body=node.body,
-            location=node.location,
-        )
-        body_code = _compile_function_value(body, "unfold.body")
+        if isinstance(typed_node, TypedUnfoldNode) and typed_node.function is not None:
+            body_code = _compile_function_value(typed_node.function, "unfold.body")
+        else:
+            body = FunctionNode(
+                params=node.params
+                or tuple(FunctionParam(None) for _ in range(arity)),
+                body=node.body,
+                location=node.location,
+            )
+            body_code = _compile_function_value(body, "unfold.body")
         condition_code = None
         if node.condition:
             params = node.params
@@ -906,6 +934,17 @@ def _compile_function_value(
     typed = node if isinstance(node, TypedFunctionNode) else None
     if typed is not None and typed.overloads:
         ast = _function_ast(node)
+        if len(typed.overloads) == 1:
+            declared = typed.overloads[0].overload
+            if (
+                isinstance(declared, Overload)
+                and isinstance(declared.call_site_body, tuple)
+            ):
+                return _compile_function_node(
+                    node,
+                    name,
+                    accepts_stack_inputs=True,
+                )
         overloads = tuple(
             _compile_function_overload(ast, overload, name)
             for overload in typed.overloads
@@ -927,6 +966,7 @@ def _compile_function_node(
     return_as_signal: bool = False,
     multi: bool = False,
     dispatch_types: tuple[str | None, ...] = (),
+    accepts_stack_inputs: bool = False,
 ) -> FunctionCode:
     """Compile function node during typed-AST bytecode lowering."""
     ast = _function_ast(node)
@@ -936,6 +976,8 @@ def _compile_function_node(
             f"_{index}" if param.name is None else param.name.text
             for index, param in enumerate(ast.params)
         )
+    elif (inferred_arity := _single_element_function_arity(ast)) is not None:
+        params = tuple(f"_{index}" for index in range(inferred_arity))
     return _Compiler(
         break_as_signal=break_as_signal,
         return_as_signal=return_as_signal,
@@ -943,12 +985,30 @@ def _compile_function_node(
         ast.body,
         params=params,
         name=name,
-        cycle_params=bool(ast.params),
+        cycle_params=bool(params),
+        accepts_stack_inputs=accepts_stack_inputs,
         element_tags=_function_element_tag_names(node),
         recursive=_function_is_recursive(ast),
         multi=multi,
         dispatch_types=dispatch_types,
     )
+
+
+def _single_element_function_arity(ast: FunctionNode) -> int | None:
+    """Infer a bare function's arity when a typed control-flow body was erased."""
+    if len(ast.body) != 1 or not isinstance(ast.body[0], ElementNode):
+        return None
+    element = ast.body[0]
+    if element.modifier_args or element.call_args:
+        return None
+    arities = {
+        len(overload.params)
+        for item in BUILTIN_ELEMENTS
+        if item.name == element.name
+        for overload in item.overloads
+        if overload.call_site_body is None
+    }
+    return next(iter(arities)) if len(arities) == 1 else None
 
 
 def _should_pop_statement_result(node: ASTNode | TypedNode) -> bool:
@@ -976,7 +1036,7 @@ def _compile_function_overload(
         overload.body,
         params=(*_overload_param_names(ast, overload), *_static_param_names(overload)),
         name=name,
-        cycle_params=bool(ast.params),
+        cycle_params=bool(typ.params),
         element_tags=_function_element_tag_names(overload.typ),
         recursive=_function_is_recursive(ast),
         multi=_overload_is_multi(overload),

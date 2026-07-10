@@ -77,10 +77,20 @@ class TypedTagApplicationNode(TypedNode):
 
 
 @dataclass(frozen=True, slots=True)
+class TypedIfNode(TypedNode):
+    """A typed conditional retaining the analysed condition and branches."""
+
+    condition: tuple[TypedNode, ...] = ()
+    then_branch: tuple[TypedNode, ...] = ()
+    else_branch: tuple[TypedNode, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class TypedUnfoldNode(TypedNode):
-    """A typed unfold expression with the selected state arity."""
+    """A typed unfold expression with its selected state and body typing."""
 
     state_arity: int = 0
+    function: TypedFunctionNode | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -68,6 +68,7 @@ from valiance.asts import (
     TypedElementNode,
     TypedExtensionPatternRule,
     TypedFunctionNode,
+    TypedIfNode,
     TypedLiteralNode,
     TypedNode,
     TypedTagApplicationNode,
@@ -1390,13 +1391,54 @@ class Analyser:
         branch: AnalysisBranch,
         node: ObjectNode,
     ) -> BranchSet:
-        """Build the definition for trait during static analysis."""
+        """Build a trait and type-check its default methods against requirements."""
         self._define_trait_shape(node.name, node)
-        current = self._register_friendly_definitions(
-            branch.emit(TypedNode(node, None)),
-            node.name,
-            node.definitions,
-        )
+        trait = self.env.lookup_trait(node.name)
+        self_type = _declared_nominal(node.name, node.generics)
+
+        # Trait requirements are abstract, so expose receiver-specialized versions
+        # only while checking default bodies. Keeping them out of the persistent
+        # overload table ensures concrete implementations retain stable runtime
+        # overload indexes.
+        snapshots: dict[Symbol, tuple[list[T.Overload] | None, set[int] | None]] = {}
+        for requirement in trait.requirements if trait is not None else ():
+            name = requirement.name
+            if name not in snapshots:
+                snapshots[name] = (
+                    list(self.env.overloads[name]) if name in self.env.overloads else None,
+                    set(self.env.object_friendly_overloads[name])
+                    if name in self.env.object_friendly_overloads
+                    else None,
+                )
+            # Object-friendly elements receive their explicit arguments below
+            # the receiver on the stack.  A default such as ``$self log``
+            # therefore sees the requirement's arguments before ``self``.
+            overload = replace(
+                requirement.overload,
+                params=(*requirement.overload.params, self_type),
+                param_names=(*requirement.overload.param_names, None),
+            )
+            candidates = self.env.overloads.setdefault(name, [])
+            index = len(candidates)
+            candidates.append(overload)
+            self.env.object_friendly_overloads.setdefault(name, set()).add(index)
+
+        try:
+            current = self._register_friendly_definitions(
+                branch.emit(TypedNode(node, None)),
+                node.name,
+                node.definitions,
+            )
+        finally:
+            for name, (overloads, friendly) in snapshots.items():
+                if overloads is None:
+                    self.env.overloads.pop(name, None)
+                else:
+                    self.env.overloads[name] = overloads
+                if friendly is None:
+                    self.env.object_friendly_overloads.pop(name, None)
+                else:
+                    self.env.object_friendly_overloads[name] = friendly
         return BranchSet((current,))
 
     def _variant_definition(
@@ -1752,8 +1794,20 @@ class Analyser:
             )
 
     def _define_trait_shape(self, name: Symbol, node: ObjectNode) -> None:
-        """Record trait shape during static analysis."""
-        requirements = _trait_requirements(node)
+        """Record trait shape, including requirements inherited from a parent."""
+        requirements = list(_trait_requirements(node))
+        parent_name: Symbol | None = None
+        if node.target is not None:
+            target = T.normalize(node.target)
+            if isinstance(target, T.NominalType):
+                parent_name = target.name
+                parent = self.env.lookup_trait(parent_name)
+                if parent is not None:
+                    for requirement in parent.requirements:
+                        if requirement not in requirements:
+                            requirements.append(requirement)
+
+        all_requirements = tuple(requirements)
         self.env.define_trait(
             name,
             generics=node.generics,
@@ -1761,14 +1815,12 @@ class Analyser:
                 node.generics,
                 node.generic_variances,
                 (),
-                requirements,
+                all_requirements,
             ),
-            requirements=requirements,
+            requirements=all_requirements,
         )
-        if node.target is not None:
-            target = T.normalize(node.target)
-            if isinstance(target, T.NominalType):
-                self.env.add_trait_parent(name, target.name)
+        if parent_name is not None:
+            self.env.add_trait_parent(name, parent_name)
 
     def _register_constructor_definition(
         self,
@@ -2178,8 +2230,10 @@ class Analyser:
         ambiguous_message: str,
     ) -> tuple[CallCandidate, ...] | None:
         """Select the most specific viable call candidates and diagnose ambiguity."""
-        winners = _collapse_equivalent_friendly_multidispatch_winners(
-            _best_candidates(candidates, branch)
+        winners = _collapse_equivalent_call_winners(
+            _collapse_equivalent_friendly_multidispatch_winners(
+                _best_candidates(candidates, branch)
+            )
         )
         if not winners:
             self._diagnose(no_match_message, node)
@@ -3357,7 +3411,9 @@ class Analyser:
 
     def _diagnose(self, message: str, node: ASTNode | None = None) -> None:
         """Update diagnose state during static analysis."""
-        self.diagnostics.append(_diagnostic_message(message, node))
+        diagnostic = _diagnostic_message(message, node)
+        if diagnostic not in self.diagnostics:
+            self.diagnostics.append(diagnostic)
 
     def _warn(self, message: str, node: ASTNode | None = None) -> None:
         """Update warn state during static analysis."""
@@ -3611,7 +3667,7 @@ def _if_node(
     node: IfNode,
     branch: AnalysisBranch,
 ) -> BranchSet:
-    """Analyse a `IfNode` node and return the surviving branches."""
+    """Analyse a conditional and retain typed nodes for both runtime branches."""
     condition = self.analyse_from(branch, node.condition)
     body_inputs = self.require_stack_top_assignable(
         condition,
@@ -3625,40 +3681,49 @@ def _if_node(
         self._diagnose("if condition must be a boolean value", node)
         return BranchSet()
 
-    then_outputs = self.analyse_block(body_inputs, node.then_branch)
-    else_outputs = self.analyse_block(body_inputs, node.else_branch)
-
     outputs: list[AnalysisBranch] = []
     saw_mismatched_inputs = False
-    for left in then_outputs:
-        for right in else_outputs:
-            if left.inputs != right.inputs:
-                saw_mismatched_inputs = True
-                continue
+    for body_input in body_inputs:
+        condition_body = body_input.typed_body[len(branch.typed_body) :]
+        then_outputs = self.analyse_from(body_input, node.then_branch)
+        else_outputs = self.analyse_from(body_input, node.else_branch)
 
-            if left.break_type is not None or right.break_type is not None:
-                for output in (left, right):
-                    typ = output.break_type
-                    if typ is None:
-                        typ = _returns_result_type(output.stack.items)
-                    outputs.append(output.emit(TypedNode(node, typ)))
-                continue
+        for left in then_outputs:
+            for right in else_outputs:
+                if left.inputs != right.inputs:
+                    saw_mismatched_inputs = True
+                    continue
 
-            stack = merge_stacks(left.stack, right.stack)
-            base = replace(
-                _refine_branch_like(branch, left),
-                inputs=left.inputs,
-            ).with_element_tags(right.element_tags).with_data_element_uses(
-                right.data_element_uses
-            )
-            variables = left.variables.merge_against(
-                right.variables,
-                base.variables,
-            )
-            typed_if = TypedNode(node, _returns_result_type(stack.items))
-            outputs.append(
-                base.with_stack(stack).with_variables(variables).emit(typed_if)
-            )
+                if left.break_type is not None or right.break_type is not None:
+                    for output in (left, right):
+                        typ = output.break_type
+                        if typ is None:
+                            typ = _returns_result_type(output.stack.items)
+                        outputs.append(output.emit(TypedNode(node, typ)))
+                    continue
+
+                stack = merge_stacks(left.stack, right.stack)
+                base = replace(
+                    _refine_branch_like(branch, left),
+                    inputs=left.inputs,
+                ).with_element_tags(right.element_tags).with_data_element_uses(
+                    right.data_element_uses
+                )
+                variables = left.variables.merge_against(
+                    right.variables,
+                    base.variables,
+                )
+                typ = _returns_result_type(stack.items)
+                typed_if = TypedIfNode(
+                    node,
+                    typ,
+                    condition=condition_body,
+                    then_branch=left.typed_body[len(body_input.typed_body) :],
+                    else_branch=right.typed_body[len(body_input.typed_body) :],
+                )
+                outputs.append(
+                    base.with_stack(stack).with_variables(variables).emit(typed_if)
+                )
 
     if not outputs and saw_mismatched_inputs:
         self._diagnose("if branches inferred different inputs", node)
@@ -4668,6 +4733,11 @@ def _unfold_node(
                     node,
                     list_type,
                     state_arity=cast(int, candidate.callable_overload_index),
+                    function=TypedFunctionNode(
+                        body_function,
+                        body_analysis.typ,
+                        body_analysis.overloads,
+                    ),
                 )
             )
         )
@@ -6684,11 +6754,23 @@ def _apply_call_site_checked_overload(
         if consumed_count is None or consumed_count > len(branch.stack):
             continue
         concrete_stack_count = len(concrete.params) - len(args)
-        if concrete_stack_count < 0 or concrete_stack_count > len(branch.stack):
+        if concrete_stack_count < 0:
             continue
-        concrete_stack_args = (
-            branch.stack.items[-concrete_stack_count:] if concrete_stack_count else ()
-        )
+        if concrete_stack_count <= len(branch.stack):
+            concrete_stack_args = (
+                branch.stack.items[-concrete_stack_count:]
+                if concrete_stack_count
+                else ()
+            )
+            result_branch = branch.with_stack(branch.stack.pop(consumed_count))
+        else:
+            stack_params = concrete.params[:concrete_stack_count]
+            sourced = branch.source_arguments(stack_params)
+            if sourced is None:
+                continue
+            concrete_stack_args, sourced_branch = sourced
+            preserved = concrete_stack_args[: concrete_stack_count - consumed_count]
+            result_branch = sourced_branch.push(*preserved)
         concrete_args = concrete_stack_args + args
         if len(concrete.params) != len(concrete_args):
             continue
@@ -6724,10 +6806,7 @@ def _apply_call_site_checked_overload(
             ),
             vectorised_target_ranks=candidate.vectorised_target_ranks,
         )
-        return OverloadApplication(
-            applied,
-            branch.with_stack(branch.stack.pop(consumed_count)),
-        )
+        return OverloadApplication(applied, result_branch)
     return None
 
 
@@ -6756,6 +6835,44 @@ def _call_site_checked_overload_signature(
 ) -> T.Overload | None:
     """Build the signature for call site checked overload during static analysis."""
     if callable(overload.call_site_body):
+        if (
+            analyser is not None
+            and getattr(overload.call_site_body, "__name__", "") == "_call_call_site"
+            and call_params
+        ):
+            function_type = call_params[-1]
+            explicit = call_params[:-1]
+            deferred = False
+            for candidate in _callable_overloads(function_type):
+                if not (
+                    isinstance(candidate.call_site_body, tuple)
+                    and len(candidate.call_site_body) == 2
+                ):
+                    continue
+                deferred = True
+                outer, node = candidate.call_site_body
+                if not isinstance(outer, AnalysisBranch) or not isinstance(
+                    node, FunctionNode
+                ):
+                    continue
+                analysis = analyser._analyse_function_at_call_site(
+                    outer,
+                    node,
+                    explicit,
+                )
+                if analysis is None:
+                    continue
+                candidates = _callable_overloads(analysis.typ)
+                if len(candidates) != 1:
+                    continue
+                concrete = candidates[0]
+                return T.Overload(
+                    (*concrete.params, function_type),
+                    concrete.returns,
+                    call_site_body=len(concrete.params),
+                )
+            if deferred:
+                return None
         return overload.call_site_body(call_params)
     if overload.call_site_body is not None and analyser is not None:
         outer, node = overload.call_site_body
@@ -7915,7 +8032,7 @@ def _single_index_key_type(typ: T.Type) -> T.Type:
         and len(typ.args) == 2
     ):
         return typ.args[0]
-    return T.Integer
+    return T.Number
 
 
 def _single_index_type(typ: T.Type) -> T.Type:
@@ -8879,6 +8996,47 @@ def _mark_multidispatch(
     return replace(applied, multidispatch=True)
 
 
+def _collapse_equivalent_call_winners(
+    winners: tuple[CallCandidate, ...],
+) -> tuple[CallCandidate, ...]:
+    """Collapse inference paths that resolve to the same concrete invocation."""
+    unique: list[CallCandidate] = []
+    for candidate in winners:
+        equivalent_index = next(
+            (
+                index
+                for index, existing in enumerate(unique)
+                if candidate.applied.params == existing.applied.params
+                and candidate.applied.actual_returns == existing.applied.actual_returns
+                and candidate.branch == existing.branch
+                and candidate.call_arg_order == existing.call_arg_order
+                and candidate.callable_overload_index
+                == existing.callable_overload_index
+                and candidate.overload_index == existing.overload_index
+                and candidate.dispatch_priority == existing.dispatch_priority
+            ),
+            None,
+        )
+        if equivalent_index is None:
+            unique.append(candidate)
+            continue
+        existing = unique[equivalent_index]
+        if _contextual_modifier_quality(candidate) > _contextual_modifier_quality(
+            existing
+        ):
+            unique[equivalent_index] = candidate
+    return tuple(unique)
+
+
+def _contextual_modifier_quality(candidate: CallCandidate) -> int:
+    """Prefer modifier typings already specialized to their contextual type."""
+    return sum(
+        typing.typ == modifier.typ
+        for modifier in candidate.modifiers
+        for typing in modifier.typed_node.overloads
+    )
+
+
 def _collapse_equivalent_friendly_multidispatch_winners(
     winners: tuple[CallCandidate, ...],
 ) -> tuple[CallCandidate, ...]:
@@ -9698,11 +9856,29 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typ,
             typed_node.overload,
         )
+    if isinstance(typed_node, TypedIfNode):
+        return TypedIfNode(
+            typed_node.node,
+            typ,
+            _refine_typed_body(typed_node.condition, old, new),
+            _refine_typed_body(typed_node.then_branch, old, new),
+            _refine_typed_body(typed_node.else_branch, old, new),
+        )
     if isinstance(typed_node, TypedUnfoldNode):
+        function = typed_node.function
+        refined_function = (
+            None
+            if function is None
+            else cast(
+                TypedFunctionNode,
+                _refine_typed_node(function, old, new),
+            )
+        )
         return TypedUnfoldNode(
             typed_node.node,
             typ,
             typed_node.state_arity,
+            refined_function,
         )
     if isinstance(typed_node, TypedAtNode):
         function = typed_node.function
