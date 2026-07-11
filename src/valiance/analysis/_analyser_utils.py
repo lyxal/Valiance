@@ -652,6 +652,7 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.added_tags,
             typed_node.removed_tags,
             typed_node.validator_runtime_name,
+            typed_node.validator_plans,
         )
     if isinstance(typed_node, TypedElementNode):
         return TypedElementNode(

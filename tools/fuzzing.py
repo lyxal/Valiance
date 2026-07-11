@@ -57,6 +57,7 @@ from valiance.types import (
     DataTag,
     Exact,
     ExactArray,
+    ExactTags,
     Environment,
     ExactList,
     Field,
@@ -934,7 +935,15 @@ def _fuzz_serialization_roundtrip(
     config: FuzzConfig,
 ) -> object:
     forced_op = tuple(OpCode)[iteration % len(OpCode)]
-    program = Program(_random_function(rng, config.max_depth, forced_op))
+    tag_parents = (
+        (("ascending", "sorted"), ("descending", "sorted"))
+        if iteration % 3 == 0
+        else ()
+    )
+    program = Program(
+        _random_function(rng, config.max_depth, forced_op),
+        tag_parents,
+    )
     try:
         encoded = dumps(program)
         decoded = loads(encoded)
@@ -953,7 +962,7 @@ def _fuzz_numeric_boolean_serialization(
     iteration: int,
     _config: FuzzConfig,
 ) -> object:
-    """Require host booleans to use Valiance's numeric bytecode representation."""
+    """Require host booleans to preserve their bytecode representation."""
     value = bool((iteration + rng.randrange(2)) % 2)
     program = Program(
         FunctionCode(
@@ -967,10 +976,10 @@ def _fuzz_numeric_boolean_serialization(
     try:
         decoded = loads(dumps(program))
         decoded_value = decoded.main.instructions[0].arg
-        if type(decoded_value) is not int or decoded_value != int(value):
-            raise AssertionError("boolean bytecode did not canonicalize to 0 or 1")
-        if run(decoded) != [int(value)]:
-            raise AssertionError("numeric boolean changed at runtime")
+        if type(decoded_value) is not bool or decoded_value is not value:
+            raise AssertionError("boolean bytecode changed type or value")
+        if run(decoded) != [value]:
+            raise AssertionError("boolean changed at runtime")
         return program
     except BaseException as exc:
         raise _GeneratedCaseFailure(program, exc) from exc
@@ -2784,6 +2793,225 @@ end
         raise _GeneratedCaseFailure(case, exc) from exc
 
 
+def _fuzz_data_tags(
+    rng: random.Random,
+    iteration: int,
+    config: FuzzConfig,
+) -> object:
+    """Exercise tag-set, variant, validator, disjoint, and unit invariants."""
+    del config
+    mode = iteration % 12
+    case: object = ("uninitialized", mode)
+    try:
+        if mode == 0:
+            universe = ("a", "b", "c")
+            actual_names = frozenset(
+                name for name in universe if rng.choice((False, True))
+            )
+            required_names = frozenset(
+                name for name in universe if rng.choice((False, True))
+            )
+            actual = (
+                Tagged(Integer, *sorted(actual_names))
+                if actual_names
+                else Integer
+            )
+            required = ExactTags(Number, *sorted(required_names))
+            case = ("exact-set-relation", actual_names, required_names)
+            if assignable(actual, required) != (actual_names == required_names):
+                raise AssertionError(
+                    "exact tag-set matching disagreed with set equality"
+                )
+        elif mode == 1:
+            name = rng.choice(("a", "sorted", "finite"))
+            case = ("absence-relation", name)
+            if assignable(
+                Tagged(Integer, name),
+                Tagged(Number, DataTag(name, absent=True)),
+            ):
+                raise AssertionError("present tag satisfied an absent-tag requirement")
+        elif mode == 2:
+            index = rng.randint(0, 2)
+            source = f"tag #km as unit\n[10, 20, 30] $[{index} #km]"
+            case = ("unit-index-rejected", source)
+            analyser = Analyser()
+            analyser.analyse(parse(source))
+            if not any("index" in str(item) for item in analyser.diagnostics):
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 3:
+            index = rng.randint(0, 2)
+            expected = Decimal((index + 1) * 10)
+            source = (
+                "tag #km as unit\n"
+                f"$index = {index} #km\n"
+                "[10, 20, 30] $[#-km $index]"
+            )
+            case = ("unit-index-explicit-removal", source, expected)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            if run(compile_program(typed, optimize=False)) != [expected]:
+                raise AssertionError("explicit unit removal did not restore indexing")
+        elif mode == 4:
+            value = rng.randint(-50, 50)
+            source = (
+                "tag #sorted as computed\n"
+                "tag #ascending as #sorted\n"
+                f"{value} #ascending"
+            )
+            case = ("variant-static-runtime-split", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or show(typed[-1].typ) != "#sorted Integer":
+                raise AssertionError(analyser.diagnostics or typed[-1].typ)
+            [result] = run(compile_program(typed, optimize=False))
+            if {tag.name for tag in result.tags} != {"sorted", "ascending"}:
+                raise AssertionError(result)
+        elif mode == 5:
+            value = rng.randint(-50, 50)
+            source = f"""
+tag #sorted as computed
+tag #ascending as #sorted
+define classify(value: [#sorted] Number) -> String =>
+  $value |
+  match =>
+    as :#ascending Number => "ascending"
+    _ => "sorted"
+  end
+end
+{value} #ascending | classify
+"""
+            case = ("variant-runtime-match", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            program = compile_program(typed, optimize=False)
+            if run(program) != ["ascending"]:
+                raise AssertionError("variant runtime pattern did not match")
+            if run(loads(dumps(program))) != ["ascending"]:
+                raise AssertionError(
+                    "serialized variant runtime pattern did not match"
+                )
+        elif mode == 6:
+            value = rng.randint(0, 50)
+            source = f"""
+tag #positive as computed
+define #positive(value: Number) -> #boolean Number => false end
+define #positive(value: Integer) -> #boolean Number => true end
+{value} #positive
+"""
+            case = ("validator-specificity", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            run(compile_program(typed, optimize=False))
+        elif mode == 7:
+            value = -rng.randint(1, 50)
+            source = f"""
+tag #sorted as computed
+tag #ascending as #sorted
+define #sorted(value: Number) -> #boolean Number => $value 0 > end
+{value} #ascending
+"""
+            case = ("variant-parent-validator", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            try:
+                run(compile_program(typed, optimize=False))
+            except ValianceRuntimeError:
+                pass
+            else:
+                raise AssertionError("variant application skipped its parent validator")
+        elif mode == 8:
+            apply_unsorted_last = rng.choice((False, True))
+            expression = (
+                "1 #ascending | #unsorted"
+                if apply_unsorted_last
+                else "1 #unsorted | #ascending"
+            )
+            expected = (
+                {"unsorted"}
+                if apply_unsorted_last
+                else {"sorted", "ascending"}
+            )
+            source = f"""
+tag #unsorted as computed
+tag #sorted as computed
+tag #ascending as #sorted
+tag #sorted disjoint #unsorted
+{expression}
+"""
+            case = ("variant-disjoint-closure", source, expected)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            [result] = run(compile_program(typed, optimize=False))
+            if {tag.name for tag in result.tags} != expected:
+                raise AssertionError(result)
+        elif mode == 9:
+            source = "tag #distance as unit\ntag #km as #distance"
+            case = ("invalid-variant-parent", source)
+            analyser = Analyser()
+            analyser.analyse(parse(source))
+            if not any(
+                "must be computed" in str(item)
+                for item in analyser.diagnostics
+            ):
+                raise AssertionError(analyser.diagnostics)
+        elif mode == 10:
+            source = """
+tag #a as computed
+tag #b as computed
+define exact(value: [#a] Number) -> String => "exact" end
+1 #a #b | exact
+"""
+            case = ("exact-overload-rejects-extra", source)
+            analyser = Analyser()
+            analyser.analyse(parse(source))
+            if not any("no overloads" in str(item) for item in analyser.diagnostics):
+                raise AssertionError(analyser.diagnostics)
+        else:
+            value = rng.randint(-50, 50)
+            source = f"""
+tag #sorted as computed
+tag #ascending as #sorted
+tag #other as computed
+define retag(value: Number) -> #sorted Number =>
+  $value | #ascending
+end
+define classify(value: [#sorted] Number) -> String =>
+  $value |
+  match =>
+    as :#other Number => "leaked"
+    as :#ascending Number => "ascending"
+    _ => "sorted"
+  end
+end
+{value} #other | retag | classify
+"""
+            case = ("function-return-tag-canonicalization", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            program = compile_program(typed, optimize=False)
+            if run(program) != ["ascending"]:
+                raise AssertionError(
+                    "variant evidence was lost or unrelated tag leaked"
+                )
+            if run(loads(dumps(program))) != ["ascending"]:
+                raise AssertionError("serialized return-tag canonicalization changed")
+        return case
+    except BaseException as exc:
+        raise _GeneratedCaseFailure(case, exc) from exc
+
+
 TARGETS: dict[str, Target] = {
     "lexer-parser": _fuzz_lexer_parser,
     "source-mutations": _fuzz_source_mutations,
@@ -2796,6 +3024,7 @@ TARGETS: dict[str, Target] = {
     "bytecode-depth": _fuzz_bytecode_depth,
     "runtime-bytecode": _fuzz_runtime_bytecode,
     "type-relations": _fuzz_type_relations,
+    "data-tags": _fuzz_data_tags,
     "type-algebra": _fuzz_type_algebra,
     "overload-markers": _fuzz_overload_markers,
     "structural-types": _fuzz_structural_types,

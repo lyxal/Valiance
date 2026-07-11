@@ -188,9 +188,16 @@ def AnonymousTrait(
 TagSpec = str | DataTag
 
 
-def Tagged(inner: Type, *tags: TagSpec) -> Type:
+def Tagged(inner: Type, *tags: TagSpec, exact: bool = False) -> Type:
     """Create a tagged type, merging nested tag wrappers during normalization."""
-    return normalize(TaggedType(inner, frozenset(_tag(tag) for tag in tags)))
+    return normalize(
+        TaggedType(inner, frozenset(_tag(tag) for tag in tags), exact=exact)
+    )
+
+
+def ExactTags(inner: Type, *tags: TagSpec) -> Type:
+    """Create a type that accepts exactly the listed positive data tags."""
+    return Tagged(inner, *tags, exact=True)
 
 
 def WithTag(inner: Type, name: str, *, depth: int = 0) -> Type:
@@ -357,10 +364,14 @@ def normalize(t: Type) -> Type:
     if isinstance(t, TaggedType):
         inner = normalize(t.inner)
         if isinstance(inner, TaggedType):
-            return Tagged(inner.inner, *(set(t.tags) | set(inner.tags)))
+            return Tagged(
+                inner.inner,
+                *(set(t.tags) | set(inner.tags)),
+                exact=t.exact or inner.exact,
+            )
         if isinstance(inner, ExactType):
-            return Exact(Tagged(inner.inner, *t.tags))
-        return TaggedType(inner, t.tags)
+            return Exact(Tagged(inner.inner, *t.tags, exact=t.exact))
+        return TaggedType(inner, t.tags, exact=t.exact)
 
     if isinstance(t, ExactType):
         inner = normalize(t.inner)
@@ -643,7 +654,11 @@ def _alpha_canonicalize(
             )
         )
     if isinstance(t, TaggedType):
-        return TaggedType(_alpha_canonicalize(t.inner, scope, depth), t.tags)
+        return TaggedType(
+            _alpha_canonicalize(t.inner, scope, depth),
+            t.tags,
+            exact=t.exact,
+        )
     if isinstance(t, ExactType):
         return ExactType(_alpha_canonicalize(t.inner, scope, depth))
     if isinstance(t, AtomicType):
@@ -813,6 +828,8 @@ def _show(
         return f"trait{generics} =>\n  {body}\nend"
     if isinstance(t, TaggedType):
         tags = " ".join(_show_tag(tag) for tag in sorted(t.tags))
+        if t.exact:
+            tags = f"[{tags}]"
         return f"{tags} {_show(t.inner, type_variable_name, bound)}"
     if isinstance(t, ExactType):
         return f"{_show(t.inner, type_variable_name, bound)} exact"

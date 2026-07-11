@@ -32,8 +32,9 @@ base seed, and iteration number.
   execution to match direct codegen, then checks that the selected optimisation
   family actually changed the expected bytecode shape.
 - `numeric-booleans` generates host Boolean constants at the bytecode boundary
-  and requires them to canonicalize to the language's numeric `0`/`1`
-  representation after decoding and execution.
+  and requires their Boolean type and value to survive decoding and execution.
+  This protects nested runtime-pattern metadata from being confused with integer
+  `0`/`1` values.
 - `malformed-bytecode` truncates, flips, replaces, appends, and splices bytes in
   valid programs. A payload must either decode successfully and stabilize after
   re-encoding or fail with `BytecodeFormatError`.
@@ -48,6 +49,11 @@ base seed, and iteration number.
   exact/minimum list and array covariance, one-way array-to-list compatibility,
   tags, rows, and display invariants. Failure reports include both generated
   types and the wrapper rank.
+- `data-tags` exercises exact and absent tag constraints, unit-tag index
+  safety, explicit unit erasure, variant parent/runtime evidence, validator
+  overload selection, parent validation, disjoint replacement closure, and
+  invalid variant declarations. Valid cases are compiled and executed; runtime
+  variant cases also cross the bytecode serialization boundary.
 - `type-algebra` targets the highest-risk algebraic contracts directly: bottom
   intersections, numeric-intersection simplification, optional covariance,
   associative branch and stack joins, permutation-independent generic evidence,

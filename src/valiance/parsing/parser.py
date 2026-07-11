@@ -86,6 +86,7 @@ from valiance.types import (
     DataTag,
     ElementTag,
     Exact,
+    ExactTags,
     ExactType,
     Field,
     Fn,
@@ -2386,9 +2387,30 @@ class Parser:
     def _type_tagged(self) -> Type:
         """Parse type tagged from the current token stream."""
         tags: list[DataTag] = []
-        while self._check(TokenKind.OP) and self._current.value.startswith("#"):
-            tags.append(_tag_from_token(self._advance()))
+        exact = False
+        if self._match(TokenKind.LBRACKET):
+            exact = True
+            self._skip_newlines()
+            while not self._check(TokenKind.RBRACKET):
+                if not (
+                    self._check(TokenKind.OP)
+                    and self._current.value.startswith("#")
+                ):
+                    self._error("expected data tag in exact tag set")
+                tag = _tag_from_token(self._advance())
+                if tag.absent:
+                    self._error("exact tag sets can only contain present tags")
+                tags.append(tag)
+                self._skip_newlines()
+                self._match(TokenKind.COMMA)
+                self._skip_newlines()
+            self._expect(TokenKind.RBRACKET)
+        else:
+            while self._check(TokenKind.OP) and self._current.value.startswith("#"):
+                tags.append(_tag_from_token(self._advance()))
         typ = self._type_postfix()
+        if exact:
+            return ExactTags(typ, *tags)
         return Tagged(typ, *tags) if tags else typ
 
     def _type_postfix(self) -> Type:
@@ -2997,7 +3019,11 @@ def _local_generic_type(typ: Type, generics: tuple[Symbol, ...]) -> Type:
             typ.element_tags,
         )
     if isinstance(typ, TaggedType):
-        return Tagged(_local_generic_type(typ.inner, generics), *typ.tags)
+        return Tagged(
+            _local_generic_type(typ.inner, generics),
+            *typ.tags,
+            exact=typ.exact,
+        )
     if isinstance(typ, ExactType):
         return Exact(_local_generic_type(typ.inner, generics))
     if isinstance(typ, AtomicType):

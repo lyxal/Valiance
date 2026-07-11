@@ -43,8 +43,12 @@ The runtime implementation is small, but several files must evolve together.
 - `FunctionCode.multi` and `FunctionCode.dispatch_types` mark compiled
   multimethod bodies and record the exact runtime nominal type names used by VM
   dispatch.
-- `FunctionCode.return_tags` retains top-level data-tag evidence for compiled
-  function results.
+- `FunctionCode.return_tags` retains one top-level data-tag contract for each
+  compiled function result, including empty contracts used to remove stale
+  runtime evidence.
+- `Program.tag_parents` records variant-to-computed-parent relationships so the
+  VM can preserve authorised runtime variants while removing unrelated tags at
+  function boundaries.
 - `FunctionSetCode.dispatch_plan` stores the statically selected overload for
   every accepted union branch.
 
@@ -159,14 +163,18 @@ collection-valued stopped parameter is not automatically vectorised again.
 `src/valiance/runtime/serialization.py`
 
 - Encodes `Program` as portable binary bytecode.
-- The current magic/version marker is `b"VLNCBC\x0c"`.
+- The current magic/version marker is `b"VLNCBC\x12"`.
 - Opcodes are one byte each in `_OP_TO_BYTE`.
 - Instruction arguments are tagged binary values, not Python pickle, repr, or
   JSON.
 - Nested `FunctionCode` values are serialized as tagged values, which is how
   function literals survive bytecode round trips.
-- Function records include the `recursive`, `multi`, and dispatch-type metadata.
-  Bump the magic/version marker again if function metadata changes
+- Function records include the `recursive`, `multi`, dispatch-type, and return
+  tag metadata. Program records also include variant-parent metadata.
+- Generic instruction values encode Booleans distinctly from integers; runtime
+  match metadata therefore survives a bytecode round trip without `False`
+  becoming `0`.
+- Bump the magic/version marker again if function or program metadata changes
   incompatibly.
 
 `src/valiance/analysis/builtins.py`

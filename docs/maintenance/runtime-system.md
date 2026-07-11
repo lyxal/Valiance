@@ -393,6 +393,12 @@ For each analysed overload, `_compile_function_overload(...)` records:
 - return tags; and
 - return ranks.
 
+`Program.tag_parents` records variant-to-computed-parent relationships once for
+runtime use. At each function boundary, the VM removes undeclared tag evidence,
+reapplies declared return tags, and retains a runtime variant only when its
+computed parent is declared on that return. This keeps runtime evidence aligned
+with the static contract without erasing a variant that the function established.
+
 This lets runtime invocation remain mechanical. The VM does not reopen the AST
 or call the type solver.
 
@@ -955,17 +961,18 @@ small-number benchmark is not permission to round large integers silently.
 
 `dumps(program)` writes:
 
-1. the magic/version marker `VLNCBC\x0f`;
-2. the top-level `FunctionCode`; and
-3. all nested instruction payloads recursively.
+1. the magic/version marker `VLNCBC\x12`;
+2. the top-level `FunctionCode` and all nested instruction payloads; and
+3. program-level variant-to-parent tag metadata.
 
 The format uses:
 
 - fixed opcode bytes;
 - big-endian length and integer fields;
 - tagged values for constants and reference records;
+- distinct generic encodings for Boolean and integer values;
 - explicit strings and tuples; and
-- validation while reading.
+- validation while reading, writing, and before direct VM execution.
 
 It intentionally does not use pickle, Python `repr`, enum names, or arbitrary
 object serialization.

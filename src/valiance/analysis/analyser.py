@@ -33,6 +33,7 @@ from valiance.analysis.lints import (
 from valiance.asts import (
     AnnotationNode,
     ASTNode,
+    BindingPatternNode,
     DefineNode,
     ElementExtension,
     ElementNode,
@@ -43,14 +44,17 @@ from valiance.asts import (
     ImportComponent,
     ImportPath,
     ImportSpec,
+    ListPatternNode,
     MatchCaseNode,
     MatchNode,
     MatchPatternNode,
     ObjectNode,
+    OrPatternNode,
     SourceLocation,
     TraitRequirementNode,
     TryHandlerNode,
     TryNode,
+    TypePatternNode,
     TypedCallNode,
     TypedElementExtension,
     TypedElementNode,
@@ -795,6 +799,89 @@ def _with_import_runtime_name(
         return TypedImportedObjectNode(node.node, node.typ, runtime_name)
     return node
 
+
+def _nested_types(typ: T.Type) -> Iterator[T.Type]:
+    """Yield a normalized type and every nested type it contains."""
+    typ = T.normalize(typ)
+    yield typ
+    if isinstance(typ, T.TaggedType):
+        yield from _nested_types(typ.inner)
+        return
+    if isinstance(typ, T.NominalType):
+        for arg in typ.args:
+            yield from _nested_types(arg)
+        return
+    if isinstance(typ, (T.UnionType, T.IntersectionType)):
+        for item in typ.items:
+            yield from _nested_types(item)
+        return
+    if isinstance(typ, T.TupleType):
+        for item in typ.params:
+            yield from _nested_types(item)
+        return
+    if isinstance(typ, T.VariadicTupleType):
+        for item in typ.items:
+            yield from _nested_types(item.typ)
+        return
+    if isinstance(typ, T.RowType):
+        yield from _nested_types(typ.base)
+        for field in typ.fields:
+            yield from _nested_types(field.typ)
+        return
+    if isinstance(typ, T.CollectionType):
+        yield from _nested_types(typ.base)
+        return
+    if isinstance(typ, T.FunctionType):
+        for item in (*(typ.params or ()), *(typ.returns or ())):
+            yield from _nested_types(item)
+        for element_tag in typ.element_tags:
+            for arg in element_tag.args:
+                yield from _nested_types(arg)
+        return
+    if isinstance(typ, (T.ExactType, T.AtomicType)):
+        yield from _nested_types(typ.inner)
+        return
+    if isinstance(typ, T.AnonymousTraitType):
+        for requirement in typ.requirements:
+            for item in (
+                *requirement.overload.params,
+                *requirement.overload.returns,
+            ):
+                yield from _nested_types(item)
+        return
+    if isinstance(typ, T.OverloadSetType):
+        for overload in typ.overloads:
+            for item in (*overload.params, *overload.returns):
+                yield from _nested_types(item)
+
+
+def _all_data_tags(typ: T.Type) -> Iterator[T.DataTag]:
+    """Yield every data-tag requirement nested inside one type."""
+    for nested in _nested_types(typ):
+        if isinstance(nested, T.TaggedType):
+            yield from nested.tags
+
+
+def _match_pattern_types(pattern: MatchPatternNode) -> Iterator[T.Type]:
+    """Yield every explicit runtime type nested inside a match pattern."""
+    if isinstance(pattern, TypePatternNode):
+        if pattern.typ is not None:
+            yield pattern.typ
+        for field in pattern.fields:
+            yield from _match_pattern_types(field)
+        return
+    if isinstance(pattern, BindingPatternNode):
+        yield from _match_pattern_types(pattern.pattern)
+        return
+    if isinstance(pattern, OrPatternNode):
+        for option in pattern.options:
+            yield from _match_pattern_types(option)
+        return
+    if isinstance(pattern, ListPatternNode):
+        for item in pattern.items:
+            yield from _match_pattern_types(item)
+
+
 class Analyser:
     """Analysis session owning global environment, diagnostics, and dispatch."""
 
@@ -1182,7 +1269,8 @@ class Analyser:
             )
             return None
 
-        self._validate_data_tags((overload.params, overload.returns), node)
+        if not self._validate_data_tags((overload.params, overload.returns), node):
+            return None
         overload = _functions._with_generic_constraints(overload, generic_constraints)
         overload = annotation_hooks.DEFAULT_REGISTRY.transform_overload(
             overload,
@@ -1423,10 +1511,56 @@ class Analyser:
         self,
         groups: Iterable[Iterable[T.Type]],
         origin: ASTNode,
-    ) -> None:
-        """Validate data tags during static analysis."""
+        *,
+        allow_variants: bool = False,
+        require_declared: bool = False,
+    ) -> bool:
+        """Validate data tags during static analysis and report success."""
         for group in groups:
             for typ in group:
+                for tag in _all_data_tags(typ):
+                    definition = self.env.lookup_tag(tag.name)
+                    if definition is None:
+                        if require_declared:
+                            self._diagnose(
+                                f"unknown data tag '#{tag.name}'",
+                                origin,
+                            )
+                            return False
+                        continue
+                    if (
+                        definition.kind is T.TagKind.VARIANT
+                        and not allow_variants
+                    ):
+                        self._diagnose(
+                            f"variant data tag '#{tag.name}' is runtime-only and "
+                            "cannot appear in a compile-time signature",
+                            origin,
+                        )
+                        return False
+                for nested in _nested_types(typ):
+                    if not isinstance(nested, T.TaggedType):
+                        continue
+                    positive = {
+                        (tag.name, tag.depth)
+                        for tag in nested.tags
+                        if not tag.absent
+                    }
+                    negative = {
+                        (tag.name, tag.depth)
+                        for tag in nested.tags
+                        if tag.absent
+                    }
+                    conflict = positive.intersection(negative)
+                    if conflict:
+                        name, depth = sorted(conflict)[0]
+                        suffix = "+" * depth
+                        self._diagnose(
+                            f"data tag '#{name}{suffix}' cannot be both present "
+                            "and absent",
+                            origin,
+                        )
+                        return False
                 conflict = _calls._disjoint_data_tags(typ, self.env.context)
                 if conflict is None:
                     continue
@@ -1435,7 +1569,8 @@ class Analyser:
                     f"data tags '#{left.text}' and '#{right.text}' cannot both apply",
                     origin,
                 )
-                return
+                return False
+        return True
 
     def _object_definition(
         self,
@@ -3325,6 +3460,14 @@ class Analyser:
                 subject_types,
                 strict=True,
             ):
+                for pattern_type in _match_pattern_types(pattern):
+                    if not self._validate_data_tags(
+                        ((pattern_type,),),
+                        pattern,
+                        allow_variants=True,
+                        require_declared=True,
+                    ):
+                        return False
                 uncheckable = _patterns._uncheckable_runtime_pattern_type(pattern)
                 if uncheckable is not None:
                     invalid_pattern, invalid_type = uncheckable

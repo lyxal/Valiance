@@ -19,8 +19,8 @@ from valiance.runtime.bytecode import (
 
 
 class BytecodeSerializationTests(unittest.TestCase):
-    def test_boolean_constants_use_the_numeric_wire_representation(self):
-        for value, expected in ((False, 0), (True, 1)):
+    def test_boolean_constants_preserve_boolean_type(self):
+        for value in (False, True):
             with self.subTest(value=value):
                 program = Program(
                     FunctionCode(
@@ -35,9 +35,53 @@ class BytecodeSerializationTests(unittest.TestCase):
                 decoded = loads(dumps(program))
                 decoded_value = decoded.main.instructions[0].arg
 
-                self.assertEqual(decoded_value, expected)
-                self.assertIs(type(decoded_value), int)
-                self.assertEqual(run(decoded), [expected])
+                self.assertEqual(decoded_value, value)
+                self.assertIs(type(decoded_value), bool)
+                self.assertEqual(run(decoded), [value])
+
+    def test_nested_boolean_instruction_arguments_preserve_boolean_type(self):
+        argument = (("ascending", 0, False), ("descending", 1, True))
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.PUSH_CONST, argument),
+                    Instruction(OpCode.RETURN),
+                ),
+                name="<main>",
+            )
+        )
+
+        decoded = loads(dumps(program))
+        decoded_argument = decoded.main.instructions[0].arg
+
+        self.assertEqual(decoded_argument, argument)
+        self.assertIs(type(decoded_argument[0][2]), bool)
+        self.assertIs(type(decoded_argument[1][2]), bool)
+
+    def test_serializes_variant_parent_metadata(self):
+        program = Program(
+            FunctionCode((Instruction(OpCode.RETURN),), name="<main>"),
+            (("ascending", "sorted"), ("descending", "sorted")),
+        )
+
+        self.assertEqual(loads(dumps(program)), program)
+
+    def test_rejects_malformed_variant_parent_metadata(self):
+        malformed = (
+            (("ascending", "sorted"), ("ascending", "ordered")),
+            (("ascending", "ascending"),),
+            (("ascending", "descending"), ("descending", "sorted")),
+        )
+        for tag_parents in malformed:
+            with self.subTest(tag_parents=tag_parents):
+                program = Program(
+                    FunctionCode((Instruction(OpCode.RETURN),), name="<main>"),
+                    tag_parents,
+                )
+                with self.assertRaises(BytecodeFormatError):
+                    dumps(program)
+                with self.assertRaises(RuntimeError):
+                    run(program)
 
     def test_invalid_decimal_payload_raises_bytecode_format_error(self):
         program = Program(
@@ -183,7 +227,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x11"))
+        self.assertTrue(data.startswith(b"VLNCBC\x12"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)

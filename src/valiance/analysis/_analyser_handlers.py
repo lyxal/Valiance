@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import replace
 from typing import cast
 
@@ -127,6 +128,11 @@ def _set_variable(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse a `SetVariableNode` node and return the surviving branches."""
+    if node.declared_type is not None and not self._validate_data_tags(
+        ((node.declared_type,),),
+        node,
+    ):
+        return _core.BranchSet((branch.emit(TypedNode(node, None)),))
     if not branch.stack:
         if branch.input_mode is _core.InputMode.INFER_INPUTS:
             inferred = node.declared_type or T.V(f"_inferred_{node.name}")
@@ -263,6 +269,11 @@ def _set_variables_node(
     value_types = inferred + branch.stack.items[len(branch.stack) - available :]
     variables = branch.variables
     for target, value_type in zip(node.targets, value_types, strict=True):
+        if target.declared_type is not None and not self._validate_data_tags(
+            ((target.declared_type,),),
+            target,
+        ):
+            return _core.BranchSet((branch.emit(TypedNode(node, None)),))
         variable_type = target.declared_type or value_type
         if target.declared_type is not None and not T.assignable(
             value_type,
@@ -788,6 +799,13 @@ def _cast_node(
     # erased.
     target = _functions._parameter_value_type(T.normalize(node.typ))
     self._validate_element_tags_in_types((target,), node)
+    if not self._validate_data_tags(
+        ((target,),),
+        node,
+        allow_variants=False,
+        require_declared=True,
+    ):
+        return _core.BranchSet((branch.emit(TypedNode(node, None)),))
     if not branch.stack:
         self._diagnose(
             f"empty stack when casting to {T.show(target)}",
@@ -1545,6 +1563,23 @@ def _unfold_node(
     return _core.BranchSet.collect(results)
 
 
+def _runtime_tag_removal_closure(
+    tags: Iterable[T.DataTag],
+    ctx: T.Context,
+) -> tuple[T.DataTag, ...]:
+    """Remove variant evidence whenever its computed parent is removed."""
+    pending = list(tags)
+    removed = set(pending)
+    while pending:
+        current = pending.pop()
+        for variant, parent in ctx.tag_parents.items():
+            candidate = T.DataTag(variant.text, current.depth)
+            if parent.text == current.name and candidate not in removed:
+                removed.add(candidate)
+                pending.append(candidate)
+    return tuple(sorted(removed))
+
+
 @_core.register(TagDeclarationNode)
 def _tag_declaration_node(
     self: _core.Analyser,
@@ -1558,6 +1593,21 @@ def _tag_declaration_node(
         else:
             self.env.add_disjoint_data_element_tags(node.tag.name, node.disjoint)
     elif node.parent is not None:
+        parent = self.env.lookup_tag(node.parent.name)
+        if parent is None:
+            self._diagnose(
+                f"variant tag '#{node.tag.name}' requires declared computed "
+                f"parent '#{node.parent.name}'",
+                node,
+            )
+            return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+        if parent.kind is not T.TagKind.COMPUTED:
+            self._diagnose(
+                f"variant tag '#{node.tag.name}' parent '#{node.parent.name}' "
+                "must be computed",
+                node,
+            )
+            return _core.BranchSet((branch.emit(TypedNode(node, None)),))
         self.env.add_variant_tag(node.tag.name, node.parent.name)
     elif node.kind == Symbol("constructed"):
         self.env.add_constructed_tag(node.tag.name)
@@ -1596,10 +1646,14 @@ def _tag_overlay_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse a `TagOverlayNode` node and return the surviving branches."""
+    if self.env.lookup_tag(node.tag.name) is None:
+        self._diagnose(f"unknown data tag '#{node.tag.name}'", node)
+        return _core.BranchSet((branch.emit(TypedNode(node, None)),))
     public = node.visibility == Symbol("public")
     for element in node.elements:
         for params, returns in node.signatures:
-            self._validate_data_tags((params, returns), node)
+            if not self._validate_data_tags((params, returns), node):
+                continue
             overload = T.Overload(params=params, returns=returns)
             if node.generics:
                 overload = _functions._genericize_overload(overload, node.generics)
@@ -1620,6 +1674,10 @@ def _tag_application_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse a `TagApplicationNode` node and return the surviving branches."""
+    definition = self.env.lookup_tag(node.tag.name)
+    if definition is None:
+        self._diagnose(f"unknown data tag '#{node.tag.name}'", node)
+        return _core.BranchSet((branch.emit(TypedNode(node, None)),))
     sourced = branch.source_arguments((T.V("_tagged_value"),))
     if sourced is None:
         self._diagnose(
@@ -1632,6 +1690,7 @@ def _tag_application_node(
     validator: T.AppliedOverload | None = None
     validator_index: int | None = None
     validator_runtime_name: Symbol | None = None
+    validator_plans: list[tuple[Symbol, int]] = []
     added_tags: tuple[T.DataTag, ...] = ()
     removed_tags: tuple[T.DataTag, ...] = ()
     if node.tag.absent:
@@ -1643,66 +1702,110 @@ def _tag_application_node(
                 node,
             )
             return _core.BranchSet((branch.emit(TypedNode(node, None)),))
-        removed_tags = (T.DataTag(node.tag.name, node.tag.depth),)
+        removed_tags = _runtime_tag_removal_closure(
+            (T.DataTag(node.tag.name, node.tag.depth),),
+            self.env.context,
+        )
     else:
-        tagged = _calls._with_data_tags(value_type, (node.tag,), self.env.context)
         added = [T.DataTag(node.tag.name, node.tag.depth)]
         parent = self.env.context.tag_parent(node.tag.name)
         if parent is not None:
             added.append(T.DataTag(parent.text, node.tag.depth))
-        added_tags = tuple(added)
-        removed_tags = tuple(
-            T.DataTag(str(name), node.tag.depth)
-            for name in sorted(
-                self.env.context.tag_disjoints(node.tag.name),
-                key=str,
+            tagged = _calls._with_data_tags(
+                value_type,
+                (T.DataTag(parent.text, node.tag.depth),),
+                self.env.context,
             )
+        else:
+            tagged = _calls._with_data_tags(value_type, (node.tag,), self.env.context)
+        added_tags = tuple(added)
+        disjoint_names: set[Symbol] = set()
+        for added_tag in added_tags:
+            disjoint_names.update(
+                self.env.context.tag_disjoints(added_tag.name)
+            )
+        removed_tags = _runtime_tag_removal_closure(
+            (
+                T.DataTag(str(name), node.tag.depth)
+                for name in sorted(disjoint_names, key=str)
+            ),
+            self.env.context,
         )
-        validator_name = Symbol(f"#{node.tag.name}")
-        validator_overloads = self.env.overloads_for(validator_name)
-        if validator_overloads:
-            matches: list[tuple[T.AppliedOverload, int]] = []
-            for index, overload in enumerate(validator_overloads):
-                applied = T.try_apply_overload(
+        for removed_tag in removed_tags:
+            without = _calls._remove_data_tag(tagged, removed_tag)
+            if without is not None:
+                tagged = without
+        for applied_tag in added_tags:
+            validator_name = Symbol(f"#{applied_tag.name}")
+            validator_overloads = self.env.overloads_for(validator_name)
+            if not validator_overloads:
+                continue
+            resolved = T.resolve_overload_result(
+                validator_overloads,
+                (value_type,),
+                self.env.context,
+            )
+            matching = tuple(
+                (index, overload)
+                for index, overload in enumerate(validator_overloads)
+                if T.try_apply_overload(
                     overload,
                     (value_type,),
                     self.env.context,
                 ).applied
-                if applied is None:
-                    continue
-                if not _calls._validator_overload_ok(overload, self.env.context):
+                is not None
+            )
+            if resolved is None:
+                if matching:
                     self._diagnose(
-                        f"tag validator '{validator_name}' must return "
-                        "#boolean Number",
+                        f"ambiguous validator overloads for '{validator_name}' "
+                        f"with {T.show(value_type)}",
                         node,
                     )
-                    return _core.BranchSet((branch.emit(TypedNode(node, None)),))
-                matches.append((applied, index))
-
-            if not matches:
+                else:
+                    self._diagnose(
+                        f"no validator overload for '{validator_name}' matches "
+                        f"{T.show(value_type)}",
+                        node,
+                    )
+                return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+            selected_index = next(
+                index
+                for index, overload in enumerate(validator_overloads)
+                if overload is resolved.overload or overload == resolved.overload
+            )
+            selected = validator_overloads[selected_index]
+            if not _calls._validator_overload_ok(selected, self.env.context):
                 self._diagnose(
-                    f"no validator overload for '{validator_name}' matches "
-                    f"{T.show(value_type)}",
+                    f"tag validator '{validator_name}' must return "
+                    "#boolean Number",
                     node,
                 )
                 return _core.BranchSet((branch.emit(TypedNode(node, None)),))
-
-            validator, validator_index = matches[0]
+            applied = T.try_apply_overload(
+                selected,
+                (value_type,),
+                self.env.context,
+            ).applied
+            assert applied is not None
             static_result = self.env.tag_validator_static_result(
                 validator_name,
-                validator_index,
+                selected_index,
             )
             if static_result is True:
-                validator = None
-                validator_index = None
+                continue
             elif static_result is False:
                 self._diagnose(
                     f"tag validator '{validator_name}' is statically false",
                     node,
                 )
                 return _core.BranchSet((branch.emit(TypedNode(node, None)),))
-            if validator is not None:
-                validator_runtime_name = self.env.runtime_name_for(validator_name)
+            runtime_name = self.env.runtime_name_for(validator_name) or validator_name
+            validator_plans.append((runtime_name, selected_index))
+            if applied_tag.name == node.tag.name:
+                validator = applied
+                validator_index = selected_index
+                validator_runtime_name = runtime_name
 
     stack = base_branch.stack.push(tagged)
     typed = TypedTagApplicationNode(
@@ -1713,6 +1816,7 @@ def _tag_application_node(
         added_tags,
         removed_tags,
         validator_runtime_name,
+        tuple(validator_plans),
     )
     return _core.BranchSet((base_branch.with_stack(stack).emit(typed),))
 

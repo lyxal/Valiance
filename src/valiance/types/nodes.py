@@ -251,6 +251,7 @@ class TaggedType(Type):
 
     inner: Type
     tags: frozenset[DataTag] = field(default_factory=frozenset[DataTag])
+    exact: bool = False
 
 
 @dataclass(frozen=True)

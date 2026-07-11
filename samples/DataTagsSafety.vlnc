@@ -1,0 +1,28 @@
+#? Data-tag safety example: static guarantees, runtime variants, and unit erasure.
+
+tag #sorted as computed
+tag #ascending as #sorted
+tag #descending as #sorted
+tag #ascending disjoint #descending
+tag #km as unit
+
+define #sorted(values: Number+) -> #boolean Number => true end
+
+define markAscending(values: Number+) -> #sorted Number+ =>
+  $values | #ascending
+end
+
+define classify(values: [#sorted] Number+) -> String =>
+  $values |
+  match =>
+    as :#ascending Number+ => "ascending"
+    as :#descending Number+ => "descending"
+    _ => "sorted"
+  end
+end
+
+$readings = [1, 2, 3] | markAscending
+$distance = 7 #km
+
+classify $readings
+#-km $distance

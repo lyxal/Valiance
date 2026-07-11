@@ -172,22 +172,23 @@ def _selectors_assignable(
     """Return the Boolean result of selectors assignable during static analysis."""
     expected = _selector_expected_types(receiver_type, selectors)
     return len(expected) == len(index_types) and all(
-        T.assignable(_index_value_type(actual), target, ctx)
+        T.assignable(_index_value_type(actual, ctx), target, ctx)
         for actual, target in zip(index_types, expected, strict=True)
     )
 
 
-def _index_value_type(typ: T.Type) -> T.Type:
-    """Strip data tags from a value used as an index.
-
-    Unit-like tags refine an integer's meaning without changing its suitability
-    as a list or string index. Runtime indexing already unwraps tagged values.
-    """
+def _index_value_type(typ: T.Type, ctx: T.Context) -> T.Type:
+    """Strip erasable data tags while preserving unit semantics for indices."""
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
-        return _index_value_type(typ.inner)
+        if any(
+            not tag.absent and ctx.is_unit_tag(tag.name)
+            for tag in typ.tags
+        ):
+            return typ
+        return _index_value_type(typ.inner, ctx)
     if isinstance(typ, T.UnionType):
-        return T.U(*(_index_value_type(item) for item in typ.items))
+        return T.U(*(_index_value_type(item, ctx) for item in typ.items))
     return typ
 
 
@@ -238,7 +239,11 @@ def _single_index_assignment_type(
     typ = T.normalize(receiver_type)
     if isinstance(typ, T.TaggedType):
         updated = _single_index_assignment_type(typ.inner, value_type, ctx)
-        return None if updated is None else T.Tagged(updated, *typ.tags)
+        return (
+            None
+            if updated is None
+            else T.Tagged(updated, *typ.tags, exact=typ.exact)
+        )
     if isinstance(typ, T.CollectionType):
         if T.assignable(value_type, typ.base, ctx):
             return receiver_type

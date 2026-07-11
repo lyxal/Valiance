@@ -2411,20 +2411,22 @@ tag #<name> as <category>
 [1, 2, 3] #sorted
 ```
 
-- The tag is then attacted to the value. For example, `[1, 2, 3] #sorted` is a `#sorted Number+`.
+- The tag is then attached to the value. For example, `[1, 2, 3] #sorted` is a `#sorted Number+`.
 - Tags can also be removed from a value using `#!<name>` or the equivalent `#-<name>` spelling. Attempting to remove a tag from a value that does not have that tag is a compile error.
 
 ## 17.1. Constructed Tags
-- Constructed tags represent properties of data that are a consequence of how that data is constructed. For example, an infinite list can only be infinite if it is constructed that way. In a sense, constructed tags are sticky. Performing an operation on an infinite list usually does not change its infiniteness. Thus a constructed tag sticks around unless explicitly removed.
-- If an input of rank n has constructed tag T, then the output will have tag T at depth (output rank - 1) if output rank >= n. If output rank < input rank, then no tag is carried.
-- A value tagged with a constructed tag can be used anywhere the value's type is expected.
+- Constructed tags represent properties of data that are a consequence of how that data is constructed. For example, an infinite list can only be infinite if it is constructed that way.
+- Constructed tags are sticky only across operations whose signature or tag overlay explicitly preserves them. Ordinary generic flow does not preserve a constructed tag merely because the input carried it. This conservative rule prevents runtime tag evidence from outliving the compile-time return contract.
+- When a signature or overlay preserves a constructed tag from an input of rank `n`, the output carries that tag at depth `(output rank - 1)` if the output rank is at least `n`. If the output rank is lower than the input rank, the tag is not carried.
+- A constructed-tagged value can otherwise be used where the untagged base type is expected. Unit tags are the exception described below.
 
 ## 17.2. Unit Tags
 - One might think that constructed tags would be helpful for attaching units to data. For example, you might have `km` as a unit you wish to attach to a number. By all means, `km` should stick to a number if it is passed into an operation - it's not information that should be easily lost.
 - However, this can lead to situations where a unit number is used in a situation where it doesn't make semantic sense.
 - For example, indexing a list by a distance doesn't really make that much sense.
-- Unit tags are constructed tags with an extra rule: a unit tagged value cannot be passed where a unit tag isn't expected.
-- This preserves semantic meaning while still having the utility of a sticky tag.
+- Unit tags are constructed tags with an extra rule: a unit-tagged value cannot be passed where that unit tag is not expected.
+- Operations that consume a plain scalar, including collection indexing, therefore reject unit-tagged values. The unit must be explicitly removed with `#!unit` or `#-unit` when discarding it is intentional.
+- This preserves semantic meaning while still allowing explicitly declared tag-preserving operations.
 
 ## 17.3. Computed Tags
 - Some properties of data are more fragile than constructed tags. That is, they may be dependent on the computed structure of the data. For example, the sortedness of a list is computed from whether it is ordered, rather than solely when it is constructed. Additionally, the sortedness of a list is not sticky - whereas doing most things to an infinite list doesn't make that list finite, doing most things to a sorted list has a good chance of breaking the sortedness.
@@ -2452,7 +2454,8 @@ tag #descending as #sorted
 ```
 
 - Applying a variant tag to a value automatically applies the parent computed tag.
-- Variant tags do not form part of the compile-time type. However, they can be pattern matched upon at runtime.
+- The compile-time type contains only the parent computed tag. The variant is retained as runtime evidence and may appear only in runtime match patterns, not in parameter, return, variable, overlay, or cast types.
+- Removing the parent, or replacing it through a disjoint rule, also removes every runtime variant that depends on that parent. Applying a variant cannot leave its parent absent.
 - Eg
 
 ```
@@ -2470,7 +2473,8 @@ end
 - To signify that a parameter expects data to have a certain tag, simply add that tag as part of the type.
 - However, to signify that a parameter must have an absence of a certain tag, the tag must start with `#!` instead of `#`.
 - When a tag is expected, a parameter is only matched if the argument has that expected tag. The argument can have any other number of tags, so long as it has the specified tag.
-- However, it may be desirable to disallow this flexibility. Wrapping the set of data tags in `[]` in a parameter type will indicate that only those tags can be present. An argument with any tags not inside the set will not match the parameter.
+- However, it may be desirable to disallow this flexibility. Wrapping the set of data tags in `[]` in a parameter type requires the compile-time present-tag set to be exactly that set. An argument with any additional or missing present tags will not match. `[] T` therefore requires an exact empty tag set.
+- Absence requirements are checked before erasable computed or constructed tags are forgotten, so a present `#tag` can never satisfy `#!tag` by implicit tag loss.
 - Example:
 
 ```
@@ -2505,6 +2509,7 @@ tag #A disjoint #B
 - This is because the intention is to apply the new tag, making the old tag obsolete.
 - In this way, the tag disjoint rule only belongs to `#A`. `#B` does not need to know about the rule.
 - Explicit type signatures that contain disjoint present tags at the same position are rejected at compile time.
+- Disjoint replacement is closed over variant parents: removing a computed parent also removes its runtime variants, while applying a variant restores its parent and removes tags disjoint with either one.
 
 ## 17.7. Tag Overlays
 - To make use of tags, the tag needs to be included in a function's parameters.
@@ -2573,7 +2578,8 @@ end
 	- Tags are meant to be compile time human trust based metadata, useful for avoiding costly runtime checks. But sometimes the semantic meaning of a tag may legitimately need validation before application.
 - Tag validation is simply a `define` with the tag name. The `define` must return a `#boolean Number`.
 - Tag validation occurs at runtime when a tag would be applied. A panic is raised if the validator fails (either returns `0`/`false` or panics). 
-- Tag validators can have multiple overloads. If an overload is not found for a validator, and there is at least one validator, then a compile time (not runtime - this can be checked during compilation) is raised.
+- Tag validators can have multiple overloads. Normal overload specificity rules choose the validator; declaration order does not decide between applicable overloads. Missing or ambiguous validator overloads are compile-time errors.
+- Applying a variant runs every applicable validator in its chain, including the parent computed tag's validator, before any runtime tag evidence is committed. Validation is atomic: failure leaves the value untagged by that application.
 - Example:
 
 ```

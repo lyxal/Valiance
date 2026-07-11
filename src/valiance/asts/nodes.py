@@ -76,6 +76,7 @@ class TypedTagApplicationNode(TypedNode):
     added_tags: tuple[DataTag, ...] = ()
     removed_tags: tuple[DataTag, ...] = ()
     validator_runtime_name: Symbol | None = None
+    validator_plans: tuple[tuple[Symbol, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

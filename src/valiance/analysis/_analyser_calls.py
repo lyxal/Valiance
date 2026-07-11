@@ -1670,7 +1670,11 @@ def _substitute_rank_values(typ: T.Type, ranks: dict[str, int]) -> T.Type:
             _substitute_rank_values_in_element_tags(typ.element_tags, ranks),
         )
     if isinstance(typ, T.TaggedType):
-        return T.Tagged(_substitute_rank_values(typ.inner, ranks), *typ.tags)
+        return T.Tagged(
+            _substitute_rank_values(typ.inner, ranks),
+            *typ.tags,
+            exact=typ.exact,
+        )
     if isinstance(typ, T.ExactType):
         return T.Exact(_substitute_rank_values(typ.inner, ranks))
     if isinstance(typ, T.AtomicType):
@@ -1789,6 +1793,8 @@ def _strip_implicit_computed_tags(
     if isinstance(typ, T.TaggedType):
         kept = tuple(tag for tag in typ.tags if tag in explicit_tags)
         inner = _strip_implicit_computed_tags(typ.inner, explicit_tags, ctx)
+        if typ.exact:
+            return T.Tagged(inner, *kept, exact=True)
         return _with_data_tags(inner, kept, ctx) if kept else inner
     if isinstance(typ, T.CollectionType):
         return T.C(
@@ -1855,9 +1861,11 @@ def _with_data_tags(
 ) -> T.Type:
     """Compute with data tags during static analysis."""
     existing: set[T.DataTag] = set()
+    exact = False
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
         existing.update(typ.tags)
+        exact = typ.exact
         typ = typ.inner
     for tag in tags:
         existing = {
@@ -1869,7 +1877,7 @@ def _with_data_tags(
         parent = ctx.tag_parent(tag.name)
         if parent is not None:
             existing.add(T.DataTag(parent.text, tag.depth))
-    return T.Tagged(typ, *sorted(existing)) if existing else typ
+    return T.Tagged(typ, *sorted(existing), exact=exact) if existing or exact else typ
 
 
 def _remove_data_tag(typ: T.Type, tag: T.DataTag) -> T.Type | None:
@@ -1882,7 +1890,11 @@ def _remove_data_tag(typ: T.Type, tag: T.DataTag) -> T.Type | None:
     if positive not in existing:
         return None
     existing.remove(positive)
-    return T.Tagged(typ.inner, *sorted(existing)) if existing else typ.inner
+    return (
+        T.Tagged(typ.inner, *sorted(existing), exact=typ.exact)
+        if existing or typ.exact
+        else typ.inner
+    )
 
 
 def _show_tag(tag: T.DataTag) -> str:
@@ -2212,7 +2224,11 @@ def _substitute_branch_type(typ: T.Type, substitution: dict[str, T.Type]) -> T.T
             _substitute_branch_element_tags(typ.element_tags, substitution),
         )
     if isinstance(typ, T.TaggedType):
-        return T.Tagged(_substitute_branch_type(typ.inner, substitution), *typ.tags)
+        return T.Tagged(
+            _substitute_branch_type(typ.inner, substitution),
+            *typ.tags,
+            exact=typ.exact,
+        )
     if isinstance(typ, T.ExactType):
         return T.Exact(_substitute_branch_type(typ.inner, substitution))
     if isinstance(typ, T.AtomicType):

@@ -47,7 +47,10 @@ class FunctionOptimizationPass:
 
     def optimize(self, program: Program) -> Program:
         """Optimise every nested function in a compiled program."""
-        return Program(self._optimize_nested_function(program.main))
+        return Program(
+            self._optimize_nested_function(program.main),
+            program.tag_parents,
+        )
 
     def optimize_function(self, function: FunctionCode) -> FunctionCode:
         """Return an optimised replacement for one function body."""
@@ -222,7 +225,7 @@ class ConstantFoldingOptimizationPass(FunctionOptimizationPass):
                 shadowed,
             )
 
-        return Program(transform(program.main))
+        return Program(transform(program.main), program.tag_parents)
 
     def optimize_function(self, function: FunctionCode) -> FunctionCode:
         """Fold constants in one independently supplied function."""
@@ -855,7 +858,7 @@ def _constant_inline_body(
         or function.recursive
         or function.multi
         or function.dispatch_types
-        or function.return_tags
+        or any(function.return_tags)
         or function.return_collection_ranks
         or function.param_collection_ranks
         or not function.instructions

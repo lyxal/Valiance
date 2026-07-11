@@ -55,10 +55,10 @@ while ($pc < length $instructions) =>
   $instr = $instructions[$pc]
   $instr.cmd match =>
     "+" =>
-      $tape[$tp] := + 1 | % 256
+      $tape[#-TapePointer $tp] := + 1 | % 256
       $pc := + 1
     "-" =>
-      $tape[$tp] := - 1 | % 256
+      $tape[#-TapePointer $tp] := - 1 | % 256
       $pc := + 1
     ">" =>
       $tp := apply: fn => + 1 | % $TAPE_SIZE
@@ -67,16 +67,16 @@ while ($pc < length $instructions) =>
       $tp := apply: fn => - 1 | % $TAPE_SIZE
       $pc := + 1
     "." =>
-      print fromCharcode $tape[$tp]
+      print fromCharcode $tape[#-TapePointer $tp]
       $pc := + 1
     "[" =>
-      if ($tape[$tp] == 0) =>
+      if ($tape[#-TapePointer $tp] == 0) =>
         $pc = $instr.jump
       else =>
         $pc := inc
       end
     "]" =>
-      if ($tape[$tp] != 0) =>
+      if ($tape[#-TapePointer $tp] != 0) =>
         $pc = $instr.jump
       else =>
         $pc := + 1

@@ -386,6 +386,7 @@ class VirtualMachine:
             value,
             lazy_preview_limit=list_preview_limit,
         )
+        self.tag_parents: dict[str, str] = {}
         self._resolved_builtin_cache: dict[
             int,
             tuple[ResolvedElementReference, BuiltinValue, BuiltinOverload],
@@ -408,6 +409,7 @@ class VirtualMachine:
     def run(self, program: Program) -> list[Any]:
         """Execute a compiled program and return the final stack."""
         try:
+            self.tag_parents = _validated_tag_parent_mapping(program.tag_parents)
             return self.call(FunctionValue(program.main, self.globals), [])
         except PanicSignal as exc:
             raise RuntimeError(f"uncaught panic: {_format_value(exc.value)}") from exc
@@ -467,7 +469,11 @@ class VirtualMachine:
             else result
         )
         tagged = (
-            _apply_runtime_return_tags(ranked, function.code.return_tags)
+            _canonicalize_runtime_return_tags(
+                ranked,
+                function.code.return_tags,
+                self.tag_parents,
+            )
             if function.code.return_tags
             else ranked
         )
@@ -693,7 +699,11 @@ class VirtualMachine:
             else result
         )
         tagged = (
-            _apply_runtime_return_tags(ranked, function.code.return_tags)
+            _canonicalize_runtime_return_tags(
+                ranked,
+                function.code.return_tags,
+                self.tag_parents,
+            )
             if function.code.return_tags
             else ranked
         )
@@ -1734,7 +1744,11 @@ class VirtualMachine:
             else result
         )
         tagged = (
-            _apply_runtime_return_tags(ranked, function.code.return_tags)
+            _canonicalize_runtime_return_tags(
+                ranked,
+                function.code.return_tags,
+                self.tag_parents,
+            )
             if function.code.return_tags
             else ranked
         )
@@ -5520,6 +5534,75 @@ def _runtime_tag_delta(
         tuple(tag for tag in tags if not tag.absent),
         tuple(tag for tag in tags if tag.absent),
     )
+
+
+def _validated_tag_parent_mapping(
+    tag_parents: tuple[tuple[str, str], ...],
+) -> dict[str, str]:
+    """Validate program-level variant-parent metadata before execution."""
+    mapping = dict(tag_parents)
+    if len(mapping) != len(tag_parents):
+        raise RuntimeError("invalid bytecode: duplicate variant tag parent metadata")
+    if any(variant == parent for variant, parent in tag_parents):
+        raise RuntimeError("invalid bytecode: variant tag cannot parent itself")
+    if any(parent in mapping for parent in mapping.values()):
+        raise RuntimeError(
+            "invalid bytecode: variant tag parent must be a computed tag"
+        )
+    return mapping
+
+
+def _canonicalize_runtime_return_tags(
+    values: tuple[Any, ...] | list[Any],
+    tag_sets: tuple[tuple[DataTag, ...], ...],
+    tag_parents: dict[str, str],
+) -> tuple[Any, ...]:
+    """Make runtime tag evidence agree with a function return contract.
+
+    Ordinary tags not named by the return type are removed. Runtime variants
+    are retained only when their declared computed parent is itself retained;
+    this lets a function return newly established variant evidence without
+    allowing unrelated tags to leak through a broader return type.
+    """
+    if len(values) != len(tag_sets):
+        return tuple(values)
+    outputs: list[Any] = []
+    for value, declared in zip(values, tag_sets, strict=True):
+        additions = tuple(tag for tag in declared if not tag.absent)
+        declared_keys = {(tag.name, tag.depth) for tag in additions}
+        existing = tuple(runtime_value_tags(value))
+        retained_variants = {
+            (tag.name, tag.depth)
+            for tag in existing
+            if _runtime_variant_parent_is_retained(
+                tag,
+                declared_keys,
+                tag_parents,
+            )
+        }
+        removals = tuple(
+            tag
+            for tag in existing
+            if (tag.name, tag.depth) not in declared_keys | retained_variants
+        )
+        outputs.append(update_runtime_tags(value, add=additions, remove=removals))
+    return tuple(outputs)
+
+
+def _runtime_variant_parent_is_retained(
+    tag: DataTag,
+    declared: set[tuple[str, int]],
+    tag_parents: dict[str, str],
+) -> bool:
+    """Return whether a runtime variant descends from a retained parent tag."""
+    seen: set[str] = set()
+    current = tag.name
+    while current in tag_parents and current not in seen:
+        seen.add(current)
+        current = tag_parents[current]
+        if (current, tag.depth) in declared:
+            return True
+    return False
 
 
 def _apply_runtime_return_tags(

@@ -437,36 +437,95 @@ class _Compiler:
                     added_tags = typed_node.added_tags
                     removed_tags = typed_node.removed_tags
                     validator_runtime_name = typed_node.validator_runtime_name
+                    validator_plans = typed_node.validator_plans
                 elif node.tag.absent:
                     validator_index = None
                     added_tags = ()
-                    removed_tags = (DataTag(node.tag.name, node.tag.depth),)
+                    removed_names = {node.tag.name}
+                    pending = [node.tag.name]
+                    while pending:
+                        parent = pending.pop()
+                        for variant, variant_parent in self.tag_parents.items():
+                            if (
+                                variant_parent == parent
+                                and variant not in removed_names
+                            ):
+                                removed_names.add(variant)
+                                pending.append(variant)
+                    removed_tags = tuple(
+                        DataTag(name, node.tag.depth)
+                        for name in sorted(removed_names)
+                    )
                     validator_runtime_name = None
+                    validator_plans = ()
                 else:
                     validator_index = None
                     validator_runtime_name = None
+                    validator_plans = ()
                     added = [DataTag(node.tag.name, node.tag.depth)]
                     parent = self.tag_parents.get(node.tag.name)
                     if parent is not None:
                         added.append(DataTag(parent, node.tag.depth))
                     added_tags = tuple(added)
+                    disjoint_names = {
+                        name
+                        for tag in added_tags
+                        for name in self.tag_disjoints.get(tag.name, ())
+                    }
+                    pending = list(disjoint_names)
+                    while pending:
+                        parent = pending.pop()
+                        for variant, variant_parent in self.tag_parents.items():
+                            if (
+                                variant_parent == parent
+                                and variant not in disjoint_names
+                            ):
+                                disjoint_names.add(variant)
+                                pending.append(variant)
                     removed_tags = tuple(
                         DataTag(name, node.tag.depth)
-                        for name in sorted(self.tag_disjoints.get(node.tag.name, ()))
+                        for name in sorted(disjoint_names)
                     )
-                self.emit(
-                    OpCode.VALIDATE_TAG,
-                    (
+                if validator_plans:
+                    for index, (runtime_name, overload_index) in enumerate(
+                        validator_plans
+                    ):
+                        final = index + 1 == len(validator_plans)
+                        self.emit(
+                            OpCode.VALIDATE_TAG,
+                            (
+                                _symbol_runtime_name(runtime_name),
+                                overload_index,
+                                (
+                                    tuple(
+                                        (tag.name, tag.depth) for tag in added_tags
+                                    )
+                                    if final
+                                    else ()
+                                ),
+                                (
+                                    tuple(
+                                        (tag.name, tag.depth) for tag in removed_tags
+                                    )
+                                    if final
+                                    else ()
+                                ),
+                            ),
+                        )
+                else:
+                    self.emit(
+                        OpCode.VALIDATE_TAG,
                         (
-                            f"#{node.tag.name}"
-                            if validator_runtime_name is None
-                            else _symbol_runtime_name(validator_runtime_name)
+                            (
+                                f"#{node.tag.name}"
+                                if validator_runtime_name is None
+                                else _symbol_runtime_name(validator_runtime_name)
+                            ),
+                            validator_index,
+                            tuple((tag.name, tag.depth) for tag in added_tags),
+                            tuple((tag.name, tag.depth) for tag in removed_tags),
                         ),
-                        validator_index,
-                        tuple((tag.name, tag.depth) for tag in added_tags),
-                        tuple((tag.name, tag.depth) for tag in removed_tags),
-                    ),
-                )
+                    )
             case TagDeclarationNode():
                 self._register_runtime_tag_declaration(node)
             case ElementTagDeclarationNode() | TagOverlayNode():
@@ -1150,7 +1209,8 @@ def compile_program(
         raise CompileError("compile_program expects analysed TypedNode values")
     compiler = _Compiler()
     compiler.prepare_runtime_type_facts(tuple(nodes))
-    program = Program(compiler.compile_function(tuple(nodes), name="<main>"))
+    main = compiler.compile_function(tuple(nodes), name="<main>")
+    program = Program(main, tuple(sorted(compiler.tag_parents.items())))
     if not optimize:
         return program
 
@@ -1331,7 +1391,7 @@ def _compile_function_overload(
         recursive=_function_is_recursive(ast),
         multi=_overload_is_multi(overload),
         dispatch_types=_overload_dispatch_types(overload),
-        return_tags=_function_return_tags(typ),
+        return_tags=_function_overload_return_tags(overload, typ),
         return_collection_ranks=_function_return_collection_ranks(typ),
         param_collection_ranks=(
             *_function_param_collection_ranks(typ),
@@ -1400,14 +1460,29 @@ def _overload_dispatch_types(
     return tuple(_runtime_dispatch_type(param) for param in source.params)
 
 
+def _function_overload_return_tags(
+    overload: FunctionOverloadTyping,
+    typ: FunctionType,
+) -> tuple[tuple[DataTag, ...], ...]:
+    """Return runtime tag contracts from the declared, unspecialized signature."""
+    source = overload.overload
+    returns = source.returns if isinstance(source, Overload) else typ.returns
+    if returns is None:
+        return ()
+    return tuple(_top_level_runtime_tags(ret) for ret in returns)
+
+
 def _function_return_tags(
     typ: FunctionType,
 ) -> tuple[tuple[DataTag, ...], ...]:
     """Compute function return tags during typed-AST bytecode lowering."""
     if typ.returns is None:
         return ()
-    tags = tuple(_top_level_runtime_tags(ret) for ret in typ.returns)
-    return tags if any(tags) else ()
+    # Keep one entry per declared return even when no tags are declared. The
+    # VM uses this metadata to canonicalize runtime tag evidence to the static
+    # return contract, preventing stale computed or variant tags from leaking
+    # through an untagged function boundary.
+    return tuple(_top_level_runtime_tags(ret) for ret in typ.returns)
 
 
 def _function_return_collection_ranks(

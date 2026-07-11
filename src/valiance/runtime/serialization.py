@@ -25,7 +25,7 @@ from valiance.types import (
     Variance,
 )
 
-MAGIC = b"VLNCBC\x11"
+MAGIC = b"VLNCBC\x12"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -84,6 +84,7 @@ _RESOLVED_ELEMENT_REFERENCE = 0x07
 _EXTENSION_RULE_REFERENCE = 0x08
 _VECTOR_EXTENSION_REFERENCE = 0x09
 _OBJECT_CONSTRUCTOR_REFERENCE = 0x0A
+_BOOL = 0x0B
 
 
 class BytecodeFormatError(Exception):
@@ -95,7 +96,12 @@ def dumps(program: Program) -> bytes:
     try:
         writer = _Writer()
         writer.bytes(MAGIC)
+        _validate_tag_parent_metadata(program.tag_parents)
         writer.function(program.main)
+        writer.u32(len(program.tag_parents))
+        for variant, parent in program.tag_parents:
+            writer.string(variant)
+            writer.string(parent)
         return writer.finish()
     except BytecodeFormatError:
         raise
@@ -108,7 +114,12 @@ def loads(data: bytes) -> Program:
     reader = _Reader(data)
     try:
         reader.expect(MAGIC)
-        program = Program(reader.function())
+        main = reader.function()
+        tag_parents = tuple(
+            (reader.string(), reader.string()) for _ in range(reader.u32())
+        )
+        _validate_tag_parent_metadata(tag_parents)
+        program = Program(main, tag_parents)
         reader.expect_eof()
         return program
     except (
@@ -119,6 +130,19 @@ def loads(data: bytes) -> Program:
         struct.error,
     ) as exc:
         raise BytecodeFormatError("invalid Valiance bytecode payload") from exc
+
+
+def _validate_tag_parent_metadata(
+    tag_parents: tuple[tuple[str, str], ...],
+) -> None:
+    """Reject malformed variant-parent metadata at the bytecode boundary."""
+    mapping = dict(tag_parents)
+    if len(mapping) != len(tag_parents):
+        raise BytecodeFormatError("duplicate variant tag parent metadata")
+    if any(variant == parent for variant, parent in tag_parents):
+        raise BytecodeFormatError("variant tag cannot be its own parent")
+    if any(parent in mapping for parent in mapping.values()):
+        raise BytecodeFormatError("variant tag parent must be a computed tag")
 
 
 class _Writer:
@@ -166,6 +190,9 @@ class _Writer:
         """Encode one supported tagged bytecode value."""
         if value is None:
             self.u8(_NONE)
+        elif isinstance(value, bool):
+            self.u8(_BOOL)
+            self.bool(value)
         elif isinstance(value, int):
             self.u8(_INT)
             self.i64(value)
@@ -393,6 +420,8 @@ class _Reader:
             return None
         if tag == _INT:
             return self.i64()
+        if tag == _BOOL:
+            return self.bool()
         if tag == _DECIMAL:
             return Decimal(self.string())
         if tag == _STRING:

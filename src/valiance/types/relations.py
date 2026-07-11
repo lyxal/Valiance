@@ -143,20 +143,21 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
     if isinstance(source, IntersectionType):
         return any(subtype(s, target, ctx) for s in source.items)
 
-    if isinstance(source, TaggedType):
-        if not _has_unit_tag(source.tags, ctx) and subtype(source.inner, target, ctx):
-            return True
-
     if isinstance(target, TaggedType):
-        # Positive tag requirements must be present; absent tag requirements
-        # are encoded as ``DataTag(absent=True)``.
+        # Resolve tag requirements before allowing erasable source tags to be
+        # forgotten. Otherwise ``#a T`` could satisfy ``#!a T`` or ``[] T``
+        # by erasing the very evidence the target is checking.
         actual_tags = source.tags if isinstance(source, TaggedType) else frozenset()
         inner = source.inner if isinstance(source, TaggedType) else source
         if not _unit_tags_preserved(actual_tags, target.tags, ctx):
             return False
-        if not _tag_requirements_met(actual_tags, target.tags):
+        if not _tag_requirements_met(actual_tags, target.tags, exact=target.exact):
             return False
         return subtype(inner, target.inner, ctx)
+
+    if isinstance(source, TaggedType):
+        if not _has_unit_tag(source.tags, ctx) and subtype(source.inner, target, ctx):
+            return True
 
     if isinstance(target, RowType):
         return _row_subtype(source, target, ctx)
@@ -936,8 +937,16 @@ def _solve(
             return True
         if isinstance(p, TaggedType):
             if not isinstance(a, TaggedType):
-                return all(tag.absent for tag in p.tags) and rec(p.inner, a)
-            if not _tag_requirements_met(a.tags, p.tags):
+                return (
+                    all(tag.absent for tag in p.tags)
+                    and not p.exact
+                    and rec(p.inner, a)
+                ) or (
+                    p.exact
+                    and not any(not tag.absent for tag in p.tags)
+                    and rec(p.inner, a)
+                )
+            if not _tag_requirements_met(a.tags, p.tags, exact=p.exact):
                 return False
             return rec(p.inner, a.inner)
         if isinstance(a, TaggedType):
@@ -1392,7 +1401,7 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
             ),
         )
     if isinstance(t, TaggedType):
-        return Tagged(_substitute(t.inner, subst), *t.tags)
+        return Tagged(_substitute(t.inner, subst), *t.tags, exact=t.exact)
     if isinstance(t, ExactType):
         return ExactType(_substitute(t.inner, subst))
     if isinstance(t, AtomicType):
@@ -2027,7 +2036,11 @@ def _match_specificity(
     # The order here mirrors the language's specificity ladder. The first
     # applicable category wins.
     if isinstance(parameter, TaggedType) and isinstance(argument, TaggedType):
-        if _tag_requirements_met(argument.tags, parameter.tags) and same(
+        if _tag_requirements_met(
+            argument.tags,
+            parameter.tags,
+            exact=parameter.exact,
+        ) and same(
             argument.inner, parameter.inner
         ):
             return Specificity.TAGGED
@@ -2671,6 +2684,8 @@ def _type_more_specific_or_same(left: Type, right: Type, ctx: Context) -> bool:
 def _tag_requirements_met(
     actual: frozenset[DataTag],
     required: frozenset[DataTag],
+    *,
+    exact: bool = False,
 ) -> bool:
     """Return whether an actual tag set satisfies required/present tags."""
     for tag in required:
@@ -2679,6 +2694,15 @@ def _tag_requirements_met(
             if positive in actual:
                 return False
         elif positive not in actual:
+            return False
+    if exact:
+        actual_present = {tag for tag in actual if not tag.absent}
+        required_present = {
+            DataTag(tag.name, tag.depth)
+            for tag in required
+            if not tag.absent
+        }
+        if actual_present != required_present:
             return False
     return True
 

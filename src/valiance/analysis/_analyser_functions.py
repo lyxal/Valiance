@@ -136,7 +136,11 @@ def _parameter_value_type(typ: T.Type) -> T.Type:
     if isinstance(typ, T.CollectionType):
         return T.C(type(typ), _parameter_value_type(typ.base), typ.rank)
     if isinstance(typ, T.TaggedType):
-        return T.Tagged(_parameter_value_type(typ.inner), *typ.tags)
+        return T.Tagged(
+            _parameter_value_type(typ.inner),
+            *typ.tags,
+            exact=typ.exact,
+        )
     # Markers inside a callable value describe calls through that value, not
     # the outer function parameter, so preserve the callable signature intact.
     return typ
@@ -237,6 +241,7 @@ def _restore_type_markers(declared: T.Type, inferred: T.Type) -> T.Type:
         return T.Tagged(
             _restore_type_markers(declared.inner, inferred.inner),
             *inferred.tags,
+            exact=declared.exact,
         )
     if isinstance(declared, (T.UnionType, T.IntersectionType)) and isinstance(
         inferred,
@@ -1538,7 +1543,7 @@ def _transform_type_children(
             element_tags(typ.element_tags),
         )
     if isinstance(typ, T.TaggedType):
-        return T.Tagged(transform(typ.inner), *typ.tags)
+        return T.Tagged(transform(typ.inner), *typ.tags, exact=typ.exact)
     if isinstance(typ, T.ExactType):
         return T.Exact(transform(typ.inner))
     if isinstance(typ, T.AtomicType):

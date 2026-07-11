@@ -596,11 +596,17 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Parse data-tag declarations.
 - [x] Support constructed tags.
 - [x] Support unit tags.
+- [x] Reject unit-tagged values at untagged scalar boundaries such as indexing.
 - [x] Support computed tags.
 - [x] Support variant tags.
+- [x] Keep variants out of compile-time types while retaining runtime evidence.
+- [x] Require variant parents to be computed tags.
+- [x] Remove dependent variants when their parent is removed or replaced.
 - [x] Apply tags to values.
 - [x] Remove tags using tag-negation syntax.
 - [x] Include tags in parameter and return types.
+- [x] Support exact present-tag sets, including exact-empty `[]`.
+- [x] Check absent-tag requirements before erasable tags are forgotten.
 - [x] Give tagged overloads higher specificity.
 - [x] Support tag constraints in generic contexts.
 - [x] Support tag disjoint declarations.
@@ -610,6 +616,8 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Support overlays for multiple elements.
 - [x] Remove constructed tags when no overlay preserves them.
 - [x] Support tag validators as tag-named definitions.
+- [x] Resolve validator overloads by specificity rather than declaration order.
+- [x] Run parent validators when applying a variant.
 - [x] Require validators to return `#boolean Number`.
 - [x] Run validators when tags are applied.
 - [x] Panic when tag validation fails.
@@ -620,6 +628,8 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Support elements attached to tag imports.
 - [x] Parse tag depth using repeated `+` or numeric shorthand.
 - [x] Apply tags at the requested nested collection depth.
+- [x] Canonicalize runtime tag evidence to declared function return tags.
+- [x] Preserve Boolean runtime-pattern metadata across bytecode serialization.
 
 ## 34. Element tags and effects
 
@@ -880,7 +890,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Report conflicting generic solutions.
 - [ ] Report invalid rank relationships.
 - [x] Report tag disjoint violations.
-- [ ] Report missing tag validators.
+- [x] Report missing tag validators.
 - [x] Report effect-tag violations.
 - [ ] Report import and implementation conflicts.
 - [ ] Report invalid package-version usage.

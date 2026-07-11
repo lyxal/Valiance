@@ -146,3 +146,4 @@ class Program:
     """A compiled Valiance program."""
 
     main: FunctionCode
+    tag_parents: tuple[tuple[str, str], ...] = ()
