@@ -961,9 +961,13 @@ small-number benchmark is not permission to round large integers silently.
 
 `dumps(program)` writes:
 
-1. the magic/version marker `VLNCBC\x14`;
+1. the magic/version marker `VLNCBC\x15`;
 2. the top-level `FunctionCode` and all nested instruction payloads; and
 3. program-level variant-to-parent tag metadata.
+
+Dynamic `CALL` instructions may contain a tuple of recursive return-tag
+contracts. This payload is part of the compatibility boundary: older runtimes
+that ignore it can leave static and runtime tag evidence inconsistent.
 
 The format uses:
 

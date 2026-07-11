@@ -928,7 +928,18 @@ class VirtualMachine:
                             )
                         case OpCode.CALL:
                             try:
-                                request = self._call_stack_top(frame)
+                                if instruction.arg is None:
+                                    return_tag_specs = ()
+                                elif isinstance(instruction.arg, tuple):
+                                    return_tag_specs = instruction.arg
+                                else:
+                                    raise RuntimeError(
+                                        "invalid bytecode: malformed call-site tag contract"
+                                    )
+                                request = self._call_stack_top(
+                                    frame,
+                                    return_tag_specs=return_tag_specs,
+                                )
                                 if request is not None:
                                     activation.pending_call = request
                                     activation.ip = ip
@@ -1335,6 +1346,8 @@ class VirtualMachine:
     def _call_stack_top(
         self,
         frame: _Frame,
+        *,
+        return_tag_specs: tuple[object, ...] = (),
     ) -> _FunctionCallRequest | None:
         """Invoke stack top or suspend for a user-function activation."""
         callee = _pop(frame.stack, "call")
@@ -1345,19 +1358,37 @@ class VirtualMachine:
         try:
             if isinstance(callee, BuiltinValue):
                 _call_builtin(callee, frame)
+                _canonicalize_frame_return_tag_contracts(
+                    frame,
+                    return_tag_specs,
+                    self.tag_parents,
+                )
                 return None
             if isinstance(callee, FunctionValue):
-                request = self._call_function(callee, frame)
+                request = self._call_function(
+                    callee,
+                    frame,
+                    return_tag_specs=return_tag_specs,
+                )
                 if request is None:
                     return None
                 release_callee = False
                 return replace(request, release_after=callee)
             if isinstance(callee, ObjectConstructorValue):
                 _call_object_constructor(callee, frame, self)
+                _canonicalize_frame_return_tag_contracts(
+                    frame,
+                    return_tag_specs,
+                    self.tag_parents,
+                )
                 return None
             if isinstance(callee, OverloadedFunctionValue):
                 if len(callee.overloads) == 1:
-                    request = self._call_function(callee.overloads[0], frame)
+                    request = self._call_function(
+                        callee.overloads[0],
+                        frame,
+                        return_tag_specs=return_tag_specs,
+                    )
                     if request is None:
                         return None
                     release_callee = False
@@ -5927,6 +5958,26 @@ def _runtime_tag_contract_matches(
     if kind == "collection":
         return len(spec) == 4 and is_list_like(payload)
     return False
+
+
+def _canonicalize_frame_return_tag_contracts(
+    frame: _Frame,
+    specs: tuple[object, ...],
+    tag_parents: dict[str, str],
+) -> None:
+    """Apply a dynamic call's static tag contract to its output stack tail."""
+    if not specs:
+        return
+    if len(frame.stack) < len(specs):
+        raise RuntimeError(
+            "invalid bytecode: call returned fewer values than its tag contract"
+        )
+    start = len(frame.stack) - len(specs)
+    frame.stack[start:] = _canonicalize_runtime_tag_contracts(
+        frame.stack[start:],
+        specs,
+        tag_parents,
+    )
 
 
 def _canonicalize_runtime_return_tags(

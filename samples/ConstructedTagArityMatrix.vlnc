@@ -1,0 +1,79 @@
+#? Constructed tags are generic metadata and flow through arbitrary fixed arities.
+
+tag #provenance as constructed
+tag #encrypted as constructed
+tag #audited as constructed
+tag #cached as constructed
+tag #generated as constructed
+
+define unary(value: Number) -> Number => $value 1 + end
+
+define ternary(a: Number, b: Number, c: Number) -> Number =>
+  $a $b + $c +
+end
+
+define five(
+  a: Number, b: Number, c: Number, d: Number, e: Number
+) -> Number =>
+  $a $b + $c + $d + $e +
+end
+
+define eight(
+  a: Number, b: Number, c: Number, d: Number,
+  e: Number, f: Number, g: Number, h: Number
+) -> Number =>
+  $a $b + $c + $d + $e + $f + $g + $h +
+end
+
+define combineFour(a: Number, b: Number, c: Number, d: Number) -> Number =>
+  $a $b + $c + $d +
+end
+
+define \seed -> #generated Number => 42 #generated end
+
+1 #provenance unary |
+match =>
+  as :#provenance Number => "unary-provenance"
+  _ => "unary-missing"
+end
+
+1 2 #encrypted 3 ternary |
+match =>
+  as :#encrypted Number => "ternary-encrypted"
+  _ => "ternary-missing"
+end
+
+1 2 3 #audited 4 5 five |
+match =>
+  as :#audited Number => "five-audited"
+  _ => "five-missing"
+end
+
+1 2 3 4 5 6 7 8 #cached eight |
+match =>
+  as :#cached Number => "eight-cached"
+  _ => "eight-missing"
+end
+
+1 #provenance 2 #encrypted 3 #audited 4 #cached combineFour |
+match =>
+  as :#provenance #encrypted #audited #cached Number => "merged-all-tags"
+  _ => "merged-missing"
+end
+
+$callable = fn (
+  a: Number, b: Number, c: Number, d: Number, e: Number
+) -> Number =>
+  $a $b + $c + $d + $e +
+end
+call($callable, 1, 2, 3 #provenance, 4, 5) |
+match =>
+  as :#provenance Number => "first-class-five"
+  _ => "first-class-missing"
+end
+
+\seed |
+match =>
+  as :#generated Number => "niladic-constructed"
+  _ => "niladic-missing"
+end

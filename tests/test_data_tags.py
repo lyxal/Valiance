@@ -345,6 +345,130 @@ define[T] identity(value: T) -> T => $value end
             self.assertIsInstance(value, TaggedValue)
             self.assertEqual({tag.name for tag in value.tags}, {"sticky"})
 
+    def test_constructed_flow_is_tag_name_and_fixed_arity_agnostic(self):
+        tag_names = ("provenance", "encrypted", "audited", "generated")
+        arities = (1, 2, 3, 5, 8, 12)
+        for tag_name in tag_names:
+            for arity in arities:
+                positions = sorted({0, arity // 2, arity - 1})
+                params = ", ".join(
+                    f"value{index}: Number" for index in range(arity)
+                )
+                body = "$value0"
+                for index in range(1, arity):
+                    body += f" $value{index} +"
+                calls = []
+                for tagged_index in positions:
+                    args = " ".join(
+                        f"{index + 1}{f' #{tag_name}' if index == tagged_index else ''}"
+                        for index in range(arity)
+                    )
+                    calls.append(f"{args} combine")
+                source = f"""
+tag #{tag_name} as constructed
+define combine({params}) -> Number => {body} end
+{chr(10).join(calls)}
+"""
+                with self.subTest(tag=tag_name, arity=arity):
+                    typed, outputs = execute_all_modes(source)
+                    self.assertEqual(show(typed[-1].typ), f"#{tag_name} Number")
+                    for output in outputs:
+                        self.assertEqual(len(output), len(positions))
+                        for value in output:
+                            self.assertIsInstance(value, TaggedValue)
+                            self.assertEqual(
+                                {(tag.name, tag.depth) for tag in value.tags},
+                                {(tag_name, 0)},
+                            )
+
+    def test_constructed_tags_from_many_arguments_merge_on_the_result(self):
+        source = """
+tag #provenance as constructed
+tag #encrypted as constructed
+tag #audited as constructed
+tag #cached as constructed
+define combine(
+  a: Number, b: Number, c: Number, d: Number,
+  e: Number, f: Number, g: Number, h: Number
+) -> Number =>
+  $a $b + $c + $d + $e + $f + $g + $h +
+end
+1 #provenance 2 3 #encrypted 4 5 #audited 6 7 #cached 8 combine
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(
+            show(typed[-1].typ),
+            "#audited #cached #encrypted #provenance Number",
+        )
+        for output in outputs:
+            [value] = output
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual(
+                {tag.name for tag in value.tags},
+                {"provenance", "encrypted", "audited", "cached"},
+            )
+
+    def test_constructed_flow_applies_to_every_return_of_higher_arity_function(self):
+        source = """
+tag #provenance as constructed
+define split(
+  a: Number, b: Number, c: Number, d: Number, e: Number
+) -> Number, Number =>
+  $a $b + $c $d + $e +
+end
+1 2 3 #provenance 4 5 split
+"""
+        analyser, typed = analyse_source(source)
+        self.assertEqual(analyser.diagnostics, [])
+        applied = typed[-1].overload
+        self.assertIsNotNone(applied)
+        self.assertEqual(
+            tuple(show(item) for item in applied.actual_returns),
+            ("#provenance Number", "#provenance Number"),
+        )
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for executable in (program, loads(dumps(program))):
+                output = run(executable)
+                self.assertEqual(len(output), 2)
+                for value in output:
+                    self.assertIsInstance(value, TaggedValue)
+                    self.assertEqual(
+                        {(tag.name, tag.depth) for tag in value.tags},
+                        {("provenance", 0)},
+                    )
+
+    def test_constructed_flow_through_first_class_call_is_arity_agnostic(self):
+        source = """
+tag #origin as constructed
+$combine = fn (
+  a: Number, b: Number, c: Number, d: Number,
+  e: Number, f: Number, g: Number
+) -> Number =>
+  $a $b + $c + $d + $e + $f + $g +
+end
+call($combine, 1, 2, 3, 4 #origin, 5, 6, 7)
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "#origin Number")
+        for output in outputs:
+            [value] = output
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual({tag.name for tag in value.tags}, {"origin"})
+
+    def test_niladic_functions_have_no_input_flow_but_can_construct_tags(self):
+        source = r"""
+tag #generated as constructed
+define \make -> #generated Number => 1 #generated end
+\make
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "#generated Number")
+        for output in outputs:
+            [value] = output
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual({tag.name for tag in value.tags}, {"generated"})
+
     def test_constructed_tag_flows_through_ordinary_user_function(self):
         source = """
 tag #stream as constructed
@@ -797,6 +921,27 @@ class DataTagRealWorldTests(unittest.TestCase):
             "head-finite",
             "archive-encrypted",
             Decimal("25"),
+        ]
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            self.assertEqual(run(program), expected)
+            self.assertEqual(run(loads(dumps(program))), expected)
+
+    def test_constructed_tag_arity_matrix_across_execution_modes(self):
+        path = Path(__file__).parents[1] / "samples" / "ConstructedTagArityMatrix.vlnc"
+        analyser, typed = analyse_source(
+            path.read_text(encoding="utf-8"),
+            source_file=path,
+        )
+        self.assertEqual(analyser.diagnostics, [])
+        expected = [
+            "unary-provenance",
+            "ternary-encrypted",
+            "five-audited",
+            "eight-cached",
+            "merged-all-tags",
+            "first-class-five",
+            "niladic-constructed",
         ]
         for optimize in (False, True):
             program = compile_program(typed, optimize=optimize)

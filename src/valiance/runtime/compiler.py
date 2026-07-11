@@ -423,7 +423,13 @@ class _Compiler:
                         OpCode.LOAD_ELEMENT,
                         _symbol_runtime_name(runtime_name),
                     )
-                    self.emit(OpCode.CALL)
+                    return_tag_specs = (
+                        _call_site_return_tag_specs(typed_node.overload)
+                        if isinstance(typed_node, TypedElementNode)
+                        and typed_node.overload is not None
+                        else ()
+                    )
+                    self.emit(OpCode.CALL, return_tag_specs or None)
                 else:
                     self.emit(OpCode.CALL_RESOLVED_ELEMENT, resolved)
                 tupled_count = _tupled_element_return_count(node, typed_node)

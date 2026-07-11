@@ -2847,7 +2847,7 @@ def _fuzz_data_tags(
 ) -> object:
     """Exercise tag-set, variant, validator, disjoint, and unit invariants."""
     del config
-    mode = iteration % 20
+    mode = iteration % 32
     case: object = ("uninitialized", mode)
     try:
         if mode == 0:
@@ -3338,7 +3338,7 @@ define strip(value: #sticky Number) -> [] Number => #-sticky $value end
             [value] = run(loads(dumps(compile_program(typed, optimize=False))))
             if isinstance(value, TaggedValue):
                 raise AssertionError("exact empty return retained constructed tag")
-        else:
+        elif mode == 29:
             right_wins = rng.choice((False, True))
             expression = "1 #a 2 #b +" if right_wins else "1 #b 2 #a +"
             expected = {"b"} if right_wins else {"a"}
@@ -3358,6 +3358,87 @@ tag #a disjoint #b
                 tag.name for tag in value.tags
             } != expected:
                 raise AssertionError(value)
+        elif mode == 30:
+            tag_name = f"trace{rng.randint(0, 9999)}"
+            arity = rng.randint(1, 12)
+            tagged_index = rng.randrange(arity)
+            params = ", ".join(
+                f"value{index}: Number" for index in range(arity)
+            )
+            body = "$value0" + "".join(
+                f" $value{index} +" for index in range(1, arity)
+            )
+            args = ", ".join(
+                f"{index + 1}{f' #{tag_name}' if index == tagged_index else ''}"
+                for index in range(arity)
+            )
+            source = f"""
+tag #{tag_name} as constructed
+define combine({params}) -> Number => {body} end
+combine({args})
+"""
+            case = (
+                "constructed-arbitrary-name-and-arity",
+                tag_name,
+                arity,
+                tagged_index,
+                source,
+            )
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or show(typed[-1].typ) != f"#{tag_name} Number":
+                raise AssertionError(analyser.diagnostics or typed[-1].typ)
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                for result in (run(program), run(loads(dumps(program)))):
+                    [value] = result
+                    if not isinstance(value, TaggedValue) or {
+                        (tag.name, tag.depth) for tag in value.tags
+                    } != {(tag_name, 0)}:
+                        raise AssertionError(value)
+        else:
+            tag_name = f"source{rng.randint(0, 9999)}"
+            arity = rng.randint(2, 10)
+            tagged_index = rng.randrange(arity)
+            params = ", ".join(
+                f"value{index}: Number" for index in range(arity)
+            )
+            args = ", ".join(
+                f"{index + 1}{f' #{tag_name}' if index == tagged_index else ''}"
+                for index in range(arity)
+            )
+            source = f"""
+tag #{tag_name} as constructed
+define split({params}) -> Number, Number => $value0 $value1 end
+split({args})
+"""
+            case = (
+                "constructed-higher-arity-multiple-returns",
+                tag_name,
+                arity,
+                tagged_index,
+                source,
+            )
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            applied = typed[-1].overload
+            if applied is None or tuple(show(item) for item in applied.actual_returns) != (
+                f"#{tag_name} Number",
+                f"#{tag_name} Number",
+            ):
+                raise AssertionError(applied)
+            for optimize in (False, True):
+                program = compile_program(typed, optimize=optimize)
+                for result in (run(program), run(loads(dumps(program)))):
+                    if len(result) != 2:
+                        raise AssertionError(result)
+                    for value in result:
+                        if not isinstance(value, TaggedValue) or {
+                            (tag.name, tag.depth) for tag in value.tags
+                        } != {(tag_name, 0)}:
+                            raise AssertionError(value)
         return case
     except BaseException as exc:
         raise _GeneratedCaseFailure(case, exc) from exc

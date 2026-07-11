@@ -163,7 +163,7 @@ collection-valued stopped parameter is not automatically vectorised again.
 `src/valiance/runtime/serialization.py`
 
 - Encodes `Program` as portable binary bytecode.
-- The current magic/version marker is `b"VLNCBC\x14"`.
+- The current magic/version marker is `b"VLNCBC\x15"`.
 - Opcodes are one byte each in `_OP_TO_BYTE`.
 - Instruction arguments are tagged binary values, not Python pickle, repr, or
   JSON.
@@ -171,6 +171,9 @@ collection-valued stopped parameter is not automatically vectorised again.
   function literals survive bytecode round trips.
 - Function records include the `recursive`, `multi`, dispatch-type, and return
   tag metadata. Program records also include variant-parent metadata.
+- A dynamic `CALL` instruction may carry recursive return-tag contracts. The VM
+  applies them to the call result just as it does for a resolved element call;
+  this preserves tag flow when a user element shadows a built-in name.
 - Generic instruction values encode Booleans distinctly from integers; runtime
   match metadata therefore survives a bytecode round trip without `False`
   becoming `0`.
