@@ -1,4 +1,5 @@
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -1844,6 +1845,36 @@ define id_rank(xs: Number+$n) -> Number+$n => $xs
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, C(ListExactType, Number, 2))
 
+    def test_where_rank_specializes_first_class_postfix_call(self):
+        source = """
+[[1], [2]] (fn (xs: Number+$n) -> Number+$n => $xs end) call
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, C(ListExactType, Number, 2))
+        self.assertEqual(typed[-1].overload.runtime_static_values[0], 0)
+        self.assertEqual(
+            typed[-1].overload.runtime_static_values[-1],
+            Decimal("2"),
+        )
+
+    def test_where_clause_rejects_namespaced_static_operation(self):
+        source = """
+define invalid_static(x: Number) -> Number where (1 2 unsafe.max) => 1
+1 invalid_static
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+
+        self.assertTrue(
+            any(
+                "static operations cannot be namespaced" in diagnostic
+                for diagnostic in analyser.diagnostics
+            )
+        )
+
     def test_where_clause_computes_return_rank_from_tuple_length(self):
         source = """
 define shaped(xs: Number*, shape: {Number, Number}) -> Number+$n
@@ -1870,6 +1901,7 @@ where ($n = length $shape) => $xs as! T+$n
         typed = analyser.analyse(parse(source))
 
         self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, C(ListExactType, Integer, 3))
         self.assertEqual(typed[-1].overload.rank_values, (("n", 3),))
 
     def test_arbitrary_length_tuple_parameter_matches_mixed_pattern(self):
@@ -1958,11 +1990,253 @@ define invalid_static(xs: Number+$n) -> String where ($n double ?) => "bad"
         analyser = Analyser()
         analyser.analyse(parse(source))
 
-        self.assertEqual(len(analyser.diagnostics), 1)
-        self.assertIn(
-            "no overloads for element 'invalid_static' match",
-            analyser.diagnostics[0],
+        self.assertTrue(
+            any(
+                "invalid where clause: operation 'double' is not allowed"
+                in diagnostic
+                for diagnostic in analyser.diagnostics
+            )
         )
+
+    def test_where_clause_accepts_matching_assertion(self):
+        source = """
+define rank_case(xs: Number+$n) -> String where ($n 2 == ?) => "matrix"
+define rank_case(xs: Number+) -> String => "vector"
+[[1], [2]] rank_case
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            typed[-1].overload.params,
+            (C(ListExactType, Number, 2),),
+        )
+
+    def test_where_clause_backtracks_variadic_tuple_rank_bindings(self):
+        analyser = Analyser()
+        branches = analyser.analyse_block(
+            BranchSet((AnalysisBranch(),)),
+            tuple(
+                parse(
+                    """
+define ranks(xs: {Number+$n..., String+...}) -> Number => $n
+{[1], [\"a\"]} ranks
+"""
+                )
+            ),
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
+
+    def test_where_clause_rejects_conflicting_input_rank_bindings(self):
+        source = """
+define same_rank(left: Number+$n, right: Number+$n) -> String => "same"
+[1, 2] [[1], [2]] same_rank
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+
+        self.assertTrue(
+            any(
+                "no overloads for element 'same_rank' match" in diagnostic
+                for diagnostic in analyser.diagnostics
+            )
+        )
+
+    def test_where_clause_rejects_malformed_numeric_literals_without_crashing(self):
+        source = """
+define invalid_number(x: Number) -> String where (3i4 pop) => "bad"
+1 invalid_number
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+
+        self.assertTrue(
+            any(
+                "contains invalid numeric literal '3i4'" in diagnostic
+                for diagnostic in analyser.diagnostics
+            )
+        )
+
+    def test_where_clause_rejects_generated_parameter_name_assignment(self):
+        source = """
+define collision(: Number) -> Number where ($_0 = 1) => $_0
+2 collision
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+
+        self.assertTrue(
+            any(
+                "static variable '$_0' uses a reserved generated name"
+                in diagnostic
+                for diagnostic in analyser.diagnostics
+            )
+        )
+
+    def test_where_clause_rejects_generated_parameter_rank_name(self):
+        source = """
+define collision(: Number+$_0) -> Number => 1
+[1] collision
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+
+        self.assertTrue(
+            any(
+                "rank variable name(s) are reserved for generated parameters: $_0"
+                in diagnostic
+                for diagnostic in analyser.diagnostics
+            )
+        )
+
+    def test_where_clause_rejects_assignment_to_input_rank(self):
+        source = """
+define overwrite(xs: Number+$n) -> Number where ($n = 2) => 1
+[1] overwrite
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+
+        self.assertTrue(
+            any(
+                "cannot assign read-only static variable '$n'" in diagnostic
+                for diagnostic in analyser.diagnostics
+            )
+        )
+
+    def test_where_clause_requires_output_rank_assignment(self):
+        source = """
+define missing_rank(x: Number) -> Number+$n => [1]
+1 missing_rank
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+
+        self.assertTrue(
+            any(
+                "does not assign return rank variable(s): $n" in diagnostic
+                for diagnostic in analyser.diagnostics
+            )
+        )
+
+    def test_where_clause_rejects_rank_parameter_name_collision(self):
+        source = """
+define conflict(n: Number+$n) -> Number => 1
+[1] conflict
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+
+        self.assertTrue(
+            any(
+                "parameter name(s) conflict with rank variable(s): $n"
+                in diagnostic
+                for diagnostic in analyser.diagnostics
+            )
+        )
+
+    def test_where_clause_assertion_requires_number(self):
+        source = """
+define invalid_truth(x: Number) -> String
+where ($t = Number, $t ?) => "bad"
+1 invalid_truth
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+
+        self.assertTrue(
+            any(
+                "'?' requires a number" in diagnostic
+                for diagnostic in analyser.diagnostics
+            )
+        )
+
+    def test_where_clause_rejects_result_type_literals(self):
+        source = """
+define invalid_result(x: Number) -> String
+where (Result[Number, String] pop) => "bad"
+1 invalid_result
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+
+        self.assertTrue(
+            any(
+                "cannot use Result types; use optionals instead" in diagnostic
+                for diagnostic in analyser.diagnostics
+            )
+        )
+
+    def test_where_clause_compares_generic_type_literals(self):
+        source = """
+define[T] same_type(xs: T) -> String where ($xs T == ?) => "same"
+1 same_type
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, String)
+
+    def test_where_clause_type_assignment_is_available_to_later_expressions(self):
+        source = """
+define same_type(x: Number) -> String
+where ($t = Number, $t Number == ?) => "same"
+1 same_type
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, String)
+
+    def test_where_clause_computed_rank_substitutes_in_later_type_literal(self):
+        source = """
+define next_type(xs: Number+$n) -> String
+where ($m = $n 1 +, Number+$m Number+3 == ?) => "next"
+[[1], [2]] next_type
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, String)
+
+    def test_where_clause_rejects_static_stack_underflow(self):
+        source = """
+define invalid_stack(x: Number) -> String where (swap) => "bad"
+1 invalid_stack
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+
+        self.assertTrue(
+            any(
+                "'swap' underflows the static stack" in diagnostic
+                for diagnostic in analyser.diagnostics
+            )
+        )
+
+    def test_where_clause_rejects_invalid_output_ranks_without_crashing(self):
+        for value in ("0", "-1", "1.5", "65536"):
+            with self.subTest(value=value):
+                source = f"""
+define invalid_rank(x: Number) -> Number+$n
+where ($n = {value}) => [1]
+1 invalid_rank
+"""
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+
+                self.assertTrue(
+                    any(
+                        "no overloads for element 'invalid_rank' match" in diagnostic
+                        for diagnostic in analyser.diagnostics
+                    )
+                )
 
     def test_where_clause_introspects_function_parameters(self):
         source = """

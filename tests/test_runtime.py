@@ -1492,6 +1492,97 @@ define rank_of(xs: Number+$n) -> Number => $n
 """
         self.assertEqual(execute(source), [Decimal("2")])
 
+    def test_where_rank_variable_in_return_type_executes(self):
+        source = """
+define id_rank(xs: Number+$n) -> Number+$n => $xs
+[[1], [2]] id_rank
+"""
+        self.assertEqual(
+            _materialize_lists(execute(source)),
+            [[[Decimal("1")], [Decimal("2")]]],
+        )
+
+    def test_where_computed_variable_is_available_at_runtime(self):
+        source = """
+define static_values(x: Number) -> Number, Number
+where ($a = 1.5, $b = and(1, not(0))) => $a $b
+1 static_values
+"""
+        self.assertEqual(execute(source), [Decimal("1.5"), Decimal("1")])
+
+    def test_where_rank_function_executes_through_postfix_call(self):
+        source = """
+[[1], [2]] (fn (xs: Number+$n) -> Number => $n end) call
+"""
+        self.assertEqual(execute(source), [Decimal("2")])
+
+    def test_where_function_executes_through_explicit_call(self):
+        source = """
+call(fn (shape: {Number...}) -> Number where ($n = length $shape) => $n end, {1, 2, 3})
+"""
+        self.assertEqual(execute(source), [Decimal("3")])
+
+    def test_where_function_vectorises_through_explicit_call(self):
+        source = """
+call(fn (x: Number) -> Number where ($offset = 1) => $x $offset + end, [1, 2])
+"""
+        self.assertEqual(
+            _materialize_lists(execute(source)),
+            [[Decimal("2"), Decimal("3")]],
+        )
+
+    def test_where_call_site_checked_function_receives_static_values(self):
+        source = """
+define shape_len(shape: {Number...}) -> Number
+where ($n = length $shape) => $n
+{1, 2, 3} shape_len
+"""
+        self.assertEqual(execute(source), [Decimal("3")])
+
+    def test_where_introspects_bare_function_signatures_at_call_site(self):
+        source = """
+define signature(f: Function) -> Number, Number, Number, Number
+where (
+  $a = $f.arity,
+  $i = length $f.inputs,
+  $m = $f.multiplicity,
+  $o = length $f.outputs
+) => $a $i $m $o
+fn (x: Number, y: String) -> Number, String => 1 "x" end signature
+"""
+        self.assertEqual(
+            execute(source),
+            [Decimal("2"), Decimal("2"), Decimal("2"), Decimal("2")],
+        )
+
+    def test_where_variadic_tuple_rank_binding_backtracks_at_runtime(self):
+        source = """
+define ranks(xs: {Number+$n..., String+...}) -> Number => $n
+{[1], ["a"]} ranks
+"""
+        self.assertEqual(execute(source), [Decimal("1")])
+
+    def test_where_rank_variable_resolves_in_checked_cast(self):
+        source = """
+define cast_same(xs: Number+$n) -> Number+$n => $xs as! Number+$n
+[[1], [2]] cast_same
+"""
+        self.assertEqual(
+            _materialize_lists(execute(source)),
+            [[[Decimal("1")], [Decimal("2")]]],
+        )
+
+    def test_where_output_rank_resolves_in_call_site_checked_cast(self):
+        source = """
+define make_shape(shape: {Number...}) -> Number+$n
+where ($n = length $shape) => [[1]] as! Number+$n
+{1, 1} make_shape
+"""
+        self.assertEqual(
+            _materialize_lists(execute(source)),
+            [[[Decimal("1")]]],
+        )
+
     def test_executes_string_interpolation(self):
         source = """
 $name = "Valiance"

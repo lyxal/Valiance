@@ -45,11 +45,13 @@ from valiance.runtime_values import (
     with_runtime_collection_rank,
 )
 from valiance.stdlib_native import runtime_stdlib_elements
+from valiance.where_clause import MAX_COMPILE_TIME_RANK
 from valiance.types import (
     AtomicType,
     CollectionType,
     DataTag,
     ExactType,
+    RankVariable,
     RuntimeTypePattern,
     TaggedType,
     UnionDispatchBranch,
@@ -454,6 +456,9 @@ class VirtualMachine:
         initial_stack = list(stack_args)
         if function.code.params and not cycle_values:
             initial_stack.extend(explicit_args)
+        return_tag_specs = _resolve_static_rank_variables(
+            function.code.return_tag_specs, locals_
+        )
         result = self.execute(
             function.code,
             locals_,
@@ -482,10 +487,10 @@ class VirtualMachine:
         contracted = (
             _canonicalize_runtime_tag_contracts(
                 tagged,
-                function.code.return_tag_specs,
+                return_tag_specs,
                 self.tag_parents,
             )
-            if function.code.return_tag_specs
+            if return_tag_specs
             else tagged
         )
         return list(contracted)
@@ -552,20 +557,49 @@ class VirtualMachine:
         value: Any,
         args: list[Any],
         overload_index: int,
+        static_values: tuple[Any, ...] = (),
+        vectorised: bool = False,
+        vectorised_depths: tuple[int, ...] = (),
+        vectorised_target_ranks: tuple[int | None, ...] = (),
     ) -> list[Any]:
         """Invoke one statically selected overload of a runtime callable."""
         if isinstance(value, FunctionValue):
-            if overload_index == 0:
-                return self.call(value, args)
-            raise RuntimeError(f"function has no overload {overload_index}")
-        if isinstance(value, OverloadedFunctionValue):
+            if overload_index != 0:
+                raise RuntimeError(f"function has no overload {overload_index}")
+            selected = value
+        elif isinstance(value, OverloadedFunctionValue):
             try:
-                return self.call(value.overloads[overload_index], args)
+                selected = value.overloads[overload_index]
             except IndexError as exc:
                 raise RuntimeError(
                     f"function has no overload {overload_index}"
                 ) from exc
-        raise RuntimeError(f"cannot call value {_format_value(value)}")
+        else:
+            raise RuntimeError(f"cannot call value {_format_value(value)}")
+
+        call_args = (*args, *static_values)
+        if not vectorised:
+            return self.call(selected, list(call_args))
+        static_count = len(static_values)
+        depths = (
+            (*vectorised_depths, *(0 for _ in range(static_count)))
+            if vectorised_depths
+            else ()
+        )
+        target_ranks = (
+            (*vectorised_target_ranks, *(None for _ in range(static_count)))
+            if vectorised_target_ranks
+            else ()
+        )
+        return list(
+            _vectorize_function(
+                self,
+                selected,
+                call_args,
+                depths=depths,
+                target_ranks=target_ranks,
+            )
+        )
 
     def execute(
         self,
@@ -718,13 +752,19 @@ class VirtualMachine:
             if function.code.return_tags
             else ranked
         )
+        function_locals = dict(
+            zip(function.code.params, request.args, strict=False)
+        )
+        function_return_specs = _resolve_static_rank_variables(
+            function.code.return_tag_specs, function_locals
+        )
         function_contracted = (
             _canonicalize_runtime_tag_contracts(
                 tagged,
-                function.code.return_tag_specs,
+                function_return_specs,
                 self.tag_parents,
             )
-            if function.code.return_tag_specs
+            if function_return_specs
             else tagged
         )
         call_site_tagged = (
@@ -967,7 +1007,10 @@ class VirtualMachine:
                                 continue
                         case OpCode.CHECK_CAST:
                             value = _pop(frame.stack, "checked cast")
-                            if not _matches_cast_type(value, instruction.arg):
+                            cast_spec = _resolve_static_rank_variables(
+                                instruction.arg, frame.locals
+                            )
+                            if not _matches_cast_type(value, cast_spec):
                                 raise RuntimeError(
                                     f"checked cast failed: {_format_value(value)} is "
                                     f"{_runtime_type_name(value)}"
@@ -975,9 +1018,12 @@ class VirtualMachine:
                             frame.stack.append(value)
                         case OpCode.CANONICALIZE_TAGS:
                             value = _pop(frame.stack, "tag canonicalization")
+                            contract_spec = _resolve_static_rank_variables(
+                                instruction.arg, frame.locals
+                            )
                             frame.stack.append(
                                 _canonicalize_runtime_value_tag_contract(
-                                    value, instruction.arg, self.tag_parents
+                                    value, contract_spec, self.tag_parents
                                 )
                             )
                         case OpCode.BUILD_LIST:
@@ -1845,6 +1891,9 @@ class VirtualMachine:
         locals_, retained_locals = _function_call_locals(function, args)
         cycle_values = tuple(args) if function.code.cycle_params else ()
         initial_stack = [] if cycle_values else list(args)
+        return_tag_specs = _resolve_static_rank_variables(
+            function.code.return_tag_specs, locals_
+        )
         activation = self._new_activation(
             function.code,
             locals_,
@@ -1876,10 +1925,10 @@ class VirtualMachine:
         contracted = (
             _canonicalize_runtime_tag_contracts(
                 tagged,
-                function.code.return_tag_specs,
+                return_tag_specs,
                 self.tag_parents,
             )
-            if function.code.return_tag_specs
+            if return_tag_specs
             else tagged
         )
         return list(contracted)
@@ -4471,6 +4520,27 @@ def _matches_type_pattern(value: Any, pattern: str) -> bool:
     return isinstance(member_name, str) and (
         member_name == pattern or f"{value.type_name}.{member_name}" == pattern
     )
+
+
+def _resolve_static_rank_variables(
+    spec: object,
+    locals_: dict[str, Any],
+) -> object:
+    """Resolve rank-variable placeholders from validated hidden parameters."""
+    if isinstance(spec, RankVariable):
+        value = locals_.get(spec.name)
+        if isinstance(value, Decimal) and value.is_finite():
+            integral = value.to_integral_value()
+            if integral == value and 0 < value <= MAX_COMPILE_TIME_RANK:
+                return int(integral)
+        if type(value) is int and 0 < value <= MAX_COMPILE_TIME_RANK:
+            return value
+        raise RuntimeError(
+            f"invalid bytecode: unresolved rank variable '${spec.name}'"
+        )
+    if isinstance(spec, tuple):
+        return tuple(_resolve_static_rank_variables(item, locals_) for item in spec)
+    return spec
 
 
 def _matches_cast_type(value: Any, spec: object) -> bool:

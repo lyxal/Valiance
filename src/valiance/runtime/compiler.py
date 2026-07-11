@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, NoReturn
 
+from valiance import where_clause as static_where
 from valiance.analysis.builtins import BUILTIN_ELEMENTS, runtime_elements
 from valiance.asts import (
     AnnotationNode,
@@ -1316,6 +1317,8 @@ def _compile_function_node(
         )
     elif (inferred_arity := _single_element_function_arity(ast)) is not None:
         params = tuple(f"_{index}" for index in range(inferred_arity))
+    cycle_params = bool(params)
+    params = (*params, *_ast_static_param_names(ast))
     return _Compiler(
         break_as_signal=break_as_signal,
         return_as_signal=return_as_signal,
@@ -1323,7 +1326,7 @@ def _compile_function_node(
         ast.body,
         params=params,
         name=name,
-        cycle_params=bool(params),
+        cycle_params=cycle_params,
         accepts_stack_inputs=accepts_stack_inputs or ast.params is None,
         element_tags=_function_element_tag_names(node),
         recursive=_function_is_recursive(ast),
@@ -1400,9 +1403,10 @@ def _compile_function_overload(
         raise CompileError(
             f"cannot compile function overload from {type(typ).__name__}"
         )
+    static_params = _static_param_names(ast, overload)
     return _Compiler().compile_function(
         overload.body,
-        params=(*_overload_param_names(ast, overload), *_static_param_names(overload)),
+        params=(*_overload_param_names(ast, overload), *static_params),
         name=name,
         cycle_params=bool(typ.params),
         element_tags=_function_element_tag_names(overload.typ),
@@ -1414,7 +1418,7 @@ def _compile_function_overload(
         return_collection_ranks=_function_return_collection_ranks(typ),
         param_collection_ranks=(
             *_function_param_collection_ranks(typ),
-            *(None for _ in _static_param_names(overload)),
+            *(None for _ in static_params),
         ),
     )
 
@@ -1446,21 +1450,41 @@ def _overload_param_names(
     return _function_param_names(ast, len(typ.params))
 
 
-def _static_param_names(overload: FunctionOverloadTyping) -> tuple[str, ...]:
-    """Collect the names for static param during typed-AST bytecode lowering."""
+def _static_param_names(
+    ast: FunctionNode,
+    overload: FunctionOverloadTyping,
+) -> tuple[str, ...]:
+    """Collect hidden numeric ``where`` parameters in deterministic order."""
     source = overload.overload
-    if source is None:
-        return ()
-    names: set[str] = set()
-    if isinstance(source, Overload):
-        for param in source.params:
-            names.update(_rank_var_names_in_type(param))
-        for ret in source.returns:
-            names.update(_rank_var_names_in_type(ret))
-        for node in source.where_clause:
-            if isinstance(node, SetVariableNode):
-                names.add(node.name.text)
-    return tuple(sorted(names))
+    if isinstance(source, Overload) and (
+        source.where_clause
+        or static_where.rank_variable_names(source.params + source.returns)
+    ):
+        return static_where.static_parameter_names(
+            params=source.params,
+            returns=source.returns,
+            param_names=source.param_names,
+            clause=source.where_clause,
+        )
+
+    # Call-site-checked functions intentionally publish a deferred overload
+    # with empty returns/where metadata.  Their original AST still owns the
+    # static program and must define the same hidden parameters that calls pass.
+    return _ast_static_param_names(ast)
+
+
+def _ast_static_param_names(ast: FunctionNode) -> tuple[str, ...]:
+    """Collect hidden static parameters directly from a function AST."""
+    params = tuple(
+        param.typ for param in (ast.params or ()) if param.typ is not None
+    )
+    param_names = tuple(param.name for param in (ast.params or ()))
+    return static_where.static_parameter_names(
+        params=params,
+        returns=ast.returns or (),
+        param_names=param_names,
+        clause=ast.where_clause,
+    )
 
 
 def _overload_is_multi(overload: FunctionOverloadTyping) -> bool:
@@ -1567,39 +1591,6 @@ def _runtime_dispatch_type(typ: Type) -> str | None:
     if isinstance(typ, NominalType):
         return show(typ)
     return None
-
-
-def _rank_var_names_in_type(typ: Type) -> set[str]:
-    """Determine the type of rank var names in during typed-AST bytecode lowering."""
-    typ = normalize(typ)
-    names: set[str] = set()
-    if isinstance(typ, CollectionType):
-        if isinstance(typ.rank, RankVariable):
-            names.add(typ.rank.name)
-        names.update(_rank_var_names_in_type(typ.base))
-    elif isinstance(typ, NominalType):
-        for arg in typ.args:
-            names.update(_rank_var_names_in_type(arg))
-    elif isinstance(typ, FunctionType):
-        if typ.params is None or typ.returns is None:
-            return names
-        for item in typ.params + typ.returns:
-            names.update(_rank_var_names_in_type(item))
-    elif isinstance(typ, TupleType):
-        for item in typ.params:
-            names.update(_rank_var_names_in_type(item))
-    elif isinstance(typ, VariadicTupleType):
-        for item in typ.items:
-            names.update(_rank_var_names_in_type(item.typ))
-    elif isinstance(typ, UnionType):
-        for item in typ.items:
-            names.update(_rank_var_names_in_type(item))
-    elif isinstance(typ, IntersectionType):
-        for item in typ.items:
-            names.update(_rank_var_names_in_type(item))
-    elif isinstance(typ, (TaggedType, ExactType, AtomicType)):
-        names.update(_rank_var_names_in_type(typ.inner))
-    return names
 
 
 def _compiled_function_arity(code: FunctionCode | FunctionSetCode) -> int:
@@ -1996,7 +1987,14 @@ def _resolved_element_reference(
         and not ast.name.namespace
         and node.call_overload_index is not None
     ):
-        static_values = (node.call_overload_index,)
+        static_values = (
+            node.call_overload_index,
+            *(
+                node.overload.runtime_static_values
+                if node.overload is not None
+                else ()
+            ),
+        )
     elif node.overload is not None and node.overload.runtime_static_values:
         static_values = node.overload.runtime_static_values
     else:

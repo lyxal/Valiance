@@ -15,6 +15,7 @@ from valiance.asts.nodes import (
     GetVariableNode,
     ListLiteralNode,
     NumberLiteralNode,
+    TypeLiteralNode,
     SetVariableNode,
     SetVariablesNode,
     StringLiteralNode,
@@ -534,6 +535,8 @@ def _body_source(body: tuple[ASTNode, ...]) -> str:
 
 def _node_source(node: ASTNode) -> str:
     """Compute node source while reconstructing Valiance source."""
+    if isinstance(node, TypeLiteralNode):
+        return show(node.typ)
     if isinstance(node, NumberLiteralNode):
         return node.value
     if isinstance(node, StringLiteralNode):

@@ -8,6 +8,7 @@ from typing import cast
 
 import valiance.analysis.annotations as annotation_hooks
 import valiance.types as T
+from valiance import where_clause as static_where
 from valiance.asts import (
     ASTNode,
     CallArgument,
@@ -564,44 +565,15 @@ def _element_tags_contain_named_type_var(
 
 
 def _static_body_variable_names(node: FunctionNode) -> tuple[Symbol, ...]:
-    """Collect the names for static body variable during static analysis."""
-    names: set[Symbol] = set()
-    for typ in (*_declared_params(node), *(node.returns or ())):
-        names.update(Symbol(name) for name in _rank_var_names_in_type(typ))
-    for where_node in node.where_clause:
-        if isinstance(where_node, SetVariableNode):
-            names.add(where_node.name)
-    return tuple(sorted(names))
-
-
-def _rank_var_names_in_type(typ: T.Type) -> set[str]:
-    """Determine the type of rank var names in during static analysis."""
-    typ = T.normalize(typ)
-    names: set[str] = set()
-    if isinstance(typ, T.CollectionType):
-        if isinstance(typ.rank, T.RankVariable):
-            names.add(typ.rank.name)
-        names.update(_rank_var_names_in_type(typ.base))
-    elif isinstance(typ, T.NominalType):
-        for arg in typ.args:
-            names.update(_rank_var_names_in_type(arg))
-    elif isinstance(typ, (T.UnionType, T.IntersectionType)):
-        for item in typ.items:
-            names.update(_rank_var_names_in_type(item))
-    elif isinstance(typ, T.TupleType):
-        for item in typ.params:
-            names.update(_rank_var_names_in_type(item))
-    elif isinstance(typ, T.VariadicTupleType):
-        for item in typ.items:
-            names.update(_rank_var_names_in_type(item.typ))
-    elif isinstance(typ, T.FunctionType):
-        if typ.params is None or typ.returns is None:
-            return names
-        for item in typ.params + typ.returns:
-            names.update(_rank_var_names_in_type(item))
-    elif isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
-        names.update(_rank_var_names_in_type(typ.inner))
-    return names
+    """Collect numeric compile-time values exposed inside a function body."""
+    params = _declared_params(node)
+    names = static_where.static_parameter_names(
+        params=params,
+        returns=node.returns or (),
+        param_names=_function_param_names_for_overload(node, params),
+        clause=node.where_clause,
+    )
+    return tuple(Symbol(name) for name in names)
 
 
 def _params_to_types(params: tuple[FunctionParam, ...]) -> tuple[T.Type, ...]:
@@ -1302,7 +1274,9 @@ def _genericize_function_node(
         params=params,
         body=tuple(_genericize_ast_node(node, generics) for node in function.body),
         returns=returns,
-        where_clause=function.where_clause,
+        where_clause=tuple(
+            _genericize_ast_node(node, generics) for node in function.where_clause
+        ),
         element_tags=frozenset(
             _genericize_element_tags(function.element_tags, generics)
         ),
@@ -1412,6 +1386,103 @@ def _empty_list_return_type(expected: T.Type) -> T.Type | None:
     if isinstance(expected, (T.ArrayExactType, T.ArrayMinType)):
         return T.C(T.ArrayExactType, expected.base, expected.rank)
     return None
+
+
+def _substitute_rank_variables_in_ast(
+    node: ASTNode,
+    ranks: dict[str, int],
+    types: dict[str, T.Type] | None = None,
+    *,
+    root: bool = True,
+) -> ASTNode:
+    """Substitute solved static bindings in AST types without capture."""
+    active_ranks = ranks
+    active_types = types or {}
+    if isinstance(node, FunctionNode) and not root:
+        declared = _declared_params(node) + (node.returns or ())
+        shadowed_ranks = static_where.rank_variable_names(declared)
+        active_ranks = {
+            name: value
+            for name, value in ranks.items()
+            if name not in shadowed_ranks
+        }
+        shadowed_types = {generic.text for generic in node.generics}
+        active_types = {
+            name: value
+            for name, value in active_types.items()
+            if name not in shadowed_types
+        }
+        if not active_ranks and not active_types:
+            return node
+    updates: dict[str, object] = {}
+    for item in fields(node):
+        value = getattr(node, item.name)
+        updated = _substitute_rank_variables_in_ast_value(
+            value, active_ranks, active_types
+        )
+        if updated is not value:
+            updates[item.name] = updated
+    return replace(node, **updates) if updates else node
+
+
+def _substitute_rank_variables_in_ast_value(
+    value: object,
+    ranks: dict[str, int],
+    types: dict[str, T.Type],
+) -> object:
+    """Substitute static bindings through one recursively nested AST value."""
+    if isinstance(value, T.Type):
+        return static_where.substitute_static_type(
+            value, ranks=ranks, types=types
+        )
+    if isinstance(value, FunctionParam):
+        typ = (
+            None
+            if value.typ is None
+            else static_where.substitute_static_type(
+                value.typ, ranks=ranks, types=types
+            )
+        )
+        default = tuple(
+            cast(
+                ASTNode,
+                _substitute_rank_variables_in_ast(
+                    node, ranks, types, root=False
+                ),
+            )
+            for node in value.default
+        )
+        if typ is value.typ and default == value.default:
+            return value
+        return replace(value, typ=typ, default=default)
+    if isinstance(value, CallArgument):
+        argument = tuple(
+            cast(
+                ASTNode,
+                _substitute_rank_variables_in_ast(
+                    node, ranks, types, root=False
+                ),
+            )
+            for node in value.value
+        )
+        if argument == value.value:
+            return value
+        return replace(value, value=argument)
+    if isinstance(value, ASTNode):
+        return _substitute_rank_variables_in_ast(
+            value, ranks, types, root=False
+        )
+    if isinstance(value, tuple):
+        return tuple(
+            _substitute_rank_variables_in_ast_value(item, ranks, types)
+            for item in value
+        )
+    if isinstance(value, frozenset):
+        return frozenset(
+            _substitute_rank_variables_in_ast_value(item, ranks, types)
+            for item in value
+        )
+    return value
 
 
 def _genericize_ast_node(node: ASTNode, generics: tuple[Symbol, ...]) -> ASTNode:

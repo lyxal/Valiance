@@ -66,6 +66,7 @@ from valiance.asts import (
     TryHandlerNode,
     TryNode,
     TupleLiteralNode,
+    TypeLiteralNode,
     TypePatternNode,
     UnfoldNode,
     VariantMemberNode,
@@ -159,6 +160,7 @@ class Parser:
         self.tokens = list(tokens)
         self.index = 0
         self._allow_variadic_tuple_type = False
+        self._where_clause_depth = 0
 
     def parse_program(self) -> list[ASTNode]:
         """Parse all top-level statements from the current token stream."""
@@ -841,7 +843,11 @@ class Parser:
         if not self._match_ident("where"):
             return ()
         self._expect(TokenKind.LPAREN)
-        expressions = self._comma_expressions(TokenKind.RPAREN)
+        self._where_clause_depth += 1
+        try:
+            expressions = self._comma_expressions(TokenKind.RPAREN)
+        finally:
+            self._where_clause_depth -= 1
         self._skip_newlines()
         return _flatten(expressions)
 
@@ -1239,16 +1245,35 @@ class Parser:
         segment: list[_ChainPiece] = []
         self._skip_newlines()
         while not self._at_terminator(terminators):
+            if self._where_clause_depth and self._check(TokenKind.NEWLINE):
+                self._skip_newlines()
+                if self._at_terminator(terminators):
+                    break
             if self._match(TokenKind.PIPE):
-                nodes.extend(_lower_chain_segment(segment))
+                nodes.extend(
+                    _lower_chain_segment(
+                        segment,
+                        reverse_elements=not bool(self._where_clause_depth),
+                    )
+                )
                 segment.clear()
                 continue
             piece = self._term()
             segment.append(piece)
             if piece.breaks_chain:
-                nodes.extend(_lower_chain_segment(segment))
+                nodes.extend(
+                    _lower_chain_segment(
+                        segment,
+                        reverse_elements=not bool(self._where_clause_depth),
+                    )
+                )
                 segment.clear()
-        nodes.extend(_lower_chain_segment(segment))
+        nodes.extend(
+            _lower_chain_segment(
+                segment,
+                reverse_elements=not bool(self._where_clause_depth),
+            )
+        )
         return tuple(nodes)
 
     def _chain_segment_until(
@@ -1263,7 +1288,12 @@ class Parser:
             segment.append(piece)
             if piece.breaks_chain:
                 break
-        return tuple(_lower_chain_segment(segment))
+        return tuple(
+            _lower_chain_segment(
+                segment,
+                reverse_elements=not bool(self._where_clause_depth),
+            )
+        )
 
     def _term(self) -> _ChainPiece:
         """Parse term from the current token stream."""
@@ -1281,6 +1311,12 @@ class Parser:
             )
         if self._match(TokenKind.DOLLAR):
             return self._variable(self._previous)
+        if self._where_clause_depth and self._where_type_literal_ahead():
+            start = self._current
+            return _ChainPiece(
+                (TypeLiteralNode(self.parse_type_expression(), location=_loc(start)),),
+                True,
+            )
         if self._match_ellipsis():
             start = self._previous
             self._expect(TokenKind.DOLLAR)
@@ -1514,6 +1550,53 @@ class Parser:
                 breaks_chain=breaks_chain,
             )
         self._error("expected expression")
+
+    def _where_type_literal_ahead(self) -> bool:
+        """Return whether the next static term starts a type literal."""
+        if self._check(TokenKind.AT):
+            return True
+        if self._check(TokenKind.LBRACE):
+            return self._peek(1).kind in {TokenKind.IDENT, TokenKind.RBRACE}
+        if self._check(TokenKind.LBRACKET):
+            token = self._peek(1)
+            return token.kind is TokenKind.OP and token.value.startswith("#")
+        if self._check(TokenKind.OP) and self._current.value.startswith("#"):
+            return True
+        if self._check(TokenKind.LPAREN):
+            # Function type syntax ``(A, B -> C)`` is distinguishable from an
+            # ordinary grouped static expression by the top-level arrow.
+            depth = 0
+            ahead = 0
+            while True:
+                token = self._peek(ahead)
+                if token.kind in {TokenKind.EOF, TokenKind.NEWLINE}:
+                    return False
+                if token.kind is TokenKind.LPAREN:
+                    depth += 1
+                elif token.kind is TokenKind.RPAREN:
+                    depth -= 1
+                    if depth == 0:
+                        return False
+                elif token.kind is TokenKind.ARROW and depth == 1:
+                    return True
+                ahead += 1
+        if not self._check(TokenKind.IDENT):
+            return False
+        if self._current.value in {"trait", "record"}:
+            return True
+
+        # Bare type symbols and generic variables conventionally start with an
+        # upper-case letter.  For qualified names, inspect the final component
+        # so lower-case namespaces such as ``pkg.Type`` remain available.
+        ahead = 0
+        final = self._current.value
+        while (
+            self._peek(ahead + 1).kind is TokenKind.DOT
+            and self._peek(ahead + 2).kind is TokenKind.IDENT
+        ):
+            ahead += 2
+            final = self._peek(ahead).value
+        return bool(final) and final[0].isupper()
 
     def _element_piece(
         self,
@@ -1755,7 +1838,7 @@ class Parser:
             selectors = self._index_selectors()
             if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
                 op = self._previous.kind
-                rhs = self._chain_until(_LINE_TERMINATORS)
+                rhs = self._assignment_rhs()
                 index_values = self._selector_expressions(selectors)
                 if op is TokenKind.AUG_ASSIGN:
                     return _ChainPiece(
@@ -1829,7 +1912,7 @@ class Parser:
                 kind, field = path[0]
                 optional_safe = kind == "safe_field"
                 op = self._previous.kind
-                rhs = self._chain_until(_LINE_TERMINATORS)
+                rhs = self._assignment_rhs()
                 prefix = (
                     (
                         FieldAccessNode(
@@ -1882,7 +1965,7 @@ class Parser:
         if path:
             if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
                 op = self._previous.kind
-                rhs = self._chain_until(_LINE_TERMINATORS)
+                rhs = self._assignment_rhs()
                 nodes: list[ASTNode] = []
                 if op is TokenKind.AUG_ASSIGN:
                     nodes.extend(self._variable_path_read(name, path, start))
@@ -1899,7 +1982,7 @@ class Parser:
             declared_type = self.parse_type_expression()
         if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
             op = self._previous.kind
-            rhs = self._chain_until(_LINE_TERMINATORS)
+            rhs = self._assignment_rhs()
             if declared_type is not None:
                 rhs = _contextual_empty_list(rhs, declared_type)
                 rhs = (*rhs, *_declared_tag_applications(declared_type, start))
@@ -1937,6 +2020,13 @@ class Parser:
                 True,
             )
         return _ChainPiece((GetVariableNode(name, location=_loc(start)),), True)
+
+    def _assignment_rhs(self) -> tuple[ASTNode, ...]:
+        """Parse assignment input, respecting static-expression separators."""
+        terminators = set(_LINE_TERMINATORS)
+        if self._where_clause_depth:
+            terminators.update({TokenKind.COMMA, TokenKind.RPAREN})
+        return self._chain_until(terminators)
 
     def _variable_path_read(
         self,
@@ -3100,20 +3190,27 @@ def _tag_from_token(token: Token) -> DataTag:
     return DataTag(name, depth=depth, absent=absent)
 
 
-def _lower_chain_segment(segment: list[_ChainPiece]) -> tuple[ASTNode, ...]:
+def _lower_chain_segment(
+    segment: list[_ChainPiece],
+    *,
+    reverse_elements: bool = True,
+) -> tuple[ASTNode, ...]:
     """Parse lower chain segment from the current token stream."""
     if not segment:
         return ()
 
     if all(piece.is_element for piece in segment):
-        return tuple(node for piece in reversed(segment) for node in piece.nodes)
+        pieces = reversed(segment) if reverse_elements else segment
+        return tuple(node for piece in pieces for node in piece.nodes)
 
     if segment[-1].breaks_chain:
         right = segment[-1]
         left = segment[:-1]
         if left and all(piece.is_element for piece in left):
             lowered_left = tuple(
-                node for piece in reversed(left) for node in piece.nodes
+                node
+                for piece in (reversed(left) if reverse_elements else left)
+                for node in piece.nodes
             )
             if right.nodes and isinstance(right.nodes[0], MatchNode):
                 return (*lowered_left, *right.nodes)

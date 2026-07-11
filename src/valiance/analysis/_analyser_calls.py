@@ -8,17 +8,16 @@ from itertools import count, permutations
 from typing import cast
 
 import valiance.types as T
+from valiance import where_clause as static_where
 from valiance.asts import (
     ASTNode,
     CallArgument,
     ElementNode,
     FunctionNode,
     FunctionOverloadTyping,
-    NumberLiteralNode,
     TypedFunctionNode,
     TypedNode,
 )
-from valiance.asts.nodes import FieldAccessNode, GetVariableNode, SetVariableNode
 from valiance.symbols import Symbol
 
 from . import analyser as _core
@@ -482,26 +481,52 @@ def _call_element_candidates(
     call_arg_order: tuple[int, ...],
     disambiguation: tuple[T.Type | None, ...],
     ctx: T.Context,
+    env: T.Environment | None = None,
+    analyser: _core.Analyser | None = None,
 ) -> list[_core.CallCandidate]:
     """Collect viable candidates for call element during static analysis."""
     candidates: list[_core.CallCandidate] = []
     if disambiguation and len(disambiguation) != len(explicit_args):
         return candidates
+    application_branch = branch.with_stack(T.TypeStack(base_stack))
     for callable_index, callable_overload in enumerate(
         _functions._callable_overloads(function_type)
     ):
-        callable_application = T.try_apply_overload(
-            callable_overload,
-            explicit_args,
-            ctx,
-            disambiguation=disambiguation,
-        ).applied
-        if callable_application is None:
-            continue
+        declared = _call_site_static_overload(callable_overload)
+        uses_static_values = bool(
+            declared.where_clause
+            or static_where.rank_variable_names(
+                declared.params + declared.returns
+            )
+        )
+        if uses_static_values:
+            callable_result = _apply_overload_to_branch(
+                callable_overload,
+                explicit_args,
+                application_branch,
+                ctx,
+                env,
+                disambiguation,
+                analyser,
+            )
+            if callable_result is None:
+                continue
+            callable_application = callable_result.applied
+            result_branch = callable_result.branch
+        else:
+            callable_application = T.try_apply_overload(
+                callable_overload,
+                explicit_args,
+                ctx,
+                disambiguation=disambiguation,
+            ).applied
+            if callable_application is None:
+                continue
+            result_branch = application_branch
         concrete_function_type = T.Fn(
             callable_application.params,
             callable_application.actual_returns,
-            callable_overload.element_tags,
+            callable_application.element_tags,
         )
         concrete_args = (*explicit_args, concrete_function_type)
         concrete_overload = T.Overload(
@@ -518,7 +543,7 @@ def _call_element_candidates(
             continue
         actual_returns = _apply_data_tag_flow(
             explicit_args,
-            callable_overload.returns,
+            callable_application.returns,
             callable_application.actual_returns,
             ctx,
         )
@@ -533,6 +558,7 @@ def _call_element_candidates(
                     concrete_application.scores,
                     concrete_application.vectorised,
                     concrete_application.vectorised_depths,
+                    callable_application.rank_values,
                     runtime_consumed_count=len(explicit_args) + 1,
                     element_tags=_propagated_element_tags(
                         concrete_overload,
@@ -542,8 +568,15 @@ def _call_element_candidates(
                     vectorised_target_ranks=(
                         concrete_application.vectorised_target_ranks
                     ),
+                    runtime_static_values=(
+                        "__call_static__",
+                        callable_application.vectorised,
+                        callable_application.vectorised_depths,
+                        callable_application.vectorised_target_ranks,
+                        *callable_application.runtime_static_values,
+                    ),
                 ),
-                branch=branch.with_stack(T.TypeStack(base_stack)),
+                branch=result_branch,
                 call_arg_order=call_arg_order,
                 callable_overload_index=callable_index,
             )
@@ -1046,50 +1079,75 @@ def _apply_overload_to_branch(
         )
     args = _row_views_for_arguments(args, overload.params, env)
     original_overload = overload
-    rank_values = _initial_rank_values(overload.params, args)
-    rank_values = _evaluate_where_clause(overload, args, rank_values)
-    if rank_values is None:
-        return None
-    overload = _substitute_overload_ranks(overload, rank_values)
-    substitution = _branch_argument_substitution(args, overload.params, ctx)
-    if substitution is None:
-        return None
-    specialized_branch = _specialize_branch_arguments(branch, substitution)
-    specialized_args = tuple(_substitute_branch_type(arg, substitution) for arg in args)
-    attempt = T.try_apply_overload(
-        overload,
-        specialized_args,
-        ctx,
-        disambiguation=disambiguation,
-    )
-    applied = attempt.applied
-    if applied is None:
-        return None
-    actual_returns = _apply_data_tag_flow(
-        specialized_args,
-        overload.returns,
-        applied.actual_returns,
-        ctx,
-    )
-    applied = T.AppliedOverload(
-        original_overload,
-        applied.substitution,
-        applied.params,
-        applied.returns,
-        actual_returns,
-        applied.scores,
-        applied.vectorised,
-        applied.vectorised_depths,
-        tuple(sorted(rank_values.items())),
-        element_tags=_propagated_element_tags(
+    for initial_rank_values in _initial_rank_value_candidates(
+        overload.params, args
+    ):
+        rank_bound = _substitute_overload_ranks(overload, initial_rank_values)
+        preliminary_substitution = (
+            _static_type_substitution(args, rank_bound.params, ctx)
+            if overload.where_clause
+            else _branch_argument_substitution(args, rank_bound.params, ctx)
+        )
+        if preliminary_substitution is None:
+            continue
+        where_result = _evaluate_where_clause(
             overload,
+            args,
+            initial_rank_values,
+            preliminary_substitution,
+        )
+        if where_result is None:
+            continue
+        rank_values = dict(where_result.rank_values)
+        specialized_overload = _substitute_overload_ranks(overload, rank_values)
+        substitution = _branch_argument_substitution(
+            args, specialized_overload.params, ctx
+        )
+        if substitution is None:
+            continue
+        specialized_branch = _specialize_branch_arguments(branch, substitution)
+        specialized_args = tuple(
+            _substitute_branch_type(arg, substitution) for arg in args
+        )
+        attempt = T.try_apply_overload(
+            specialized_overload,
             specialized_args,
+            ctx,
+            disambiguation=disambiguation,
+        )
+        applied = attempt.applied
+        if applied is None:
+            continue
+        actual_returns = _apply_data_tag_flow(
+            specialized_args,
+            specialized_overload.returns,
+            applied.actual_returns,
+            ctx,
+        )
+        applied = T.AppliedOverload(
+            original_overload,
             applied.substitution,
-        ),
-        vectorised_target_ranks=applied.vectorised_target_ranks,
-        runtime_static_values=applied.runtime_static_values,
-    )
-    return _core.OverloadApplication(applied, specialized_branch)
+            applied.params,
+            applied.returns,
+            actual_returns,
+            applied.scores,
+            applied.vectorised,
+            applied.vectorised_depths,
+            where_result.rank_values,
+            element_tags=_propagated_element_tags(
+                specialized_overload,
+                specialized_args,
+                applied.substitution,
+            ),
+            vectorised_target_ranks=applied.vectorised_target_ranks,
+            runtime_static_values=(
+                where_result.runtime_values
+                if where_result.runtime_values
+                else applied.runtime_static_values
+            ),
+        )
+        return _core.OverloadApplication(applied, specialized_branch)
+    return None
 
 
 def _apply_tag_overlay(
@@ -1214,83 +1272,147 @@ def _apply_call_site_checked_overload(
     disambiguation: tuple[T.Type | None, ...],
     analyser: _core.Analyser | None,
 ) -> _core.OverloadApplication | None:
-    """Apply call site checked overload during static analysis."""
-    args = _row_views_for_arguments(args, overload.params, env)
-    if len(args) != len(overload.params):
-        return None
-    if not _call_site_explicit_args_match(overload.params, args, ctx):
+    """Apply a deferred overload after solving its static program."""
+    static_source = _call_site_static_overload(overload)
+    args = _row_views_for_arguments(args, static_source.params, env)
+    if len(args) != len(static_source.params):
         return None
     if disambiguation and len(disambiguation) != len(args):
         return None
 
-    for extra_count in range(len(branch.stack) + 1):
-        stack_args = branch.stack.items[-extra_count:] if extra_count else ()
-        call_params = stack_args + args
-        concrete = _call_site_checked_overload_signature(
-            overload, call_params, ctx, analyser
+    for initial_rank_values in _initial_rank_value_candidates(
+        static_source.params, args
+    ):
+        rank_bound = _substitute_overload_ranks(
+            static_source, initial_rank_values
         )
-        if concrete is None or len(concrete.params) < len(args):
-            continue
-        consumed_count = _call_site_consumed_count(overload, concrete, extra_count)
-        if consumed_count is None:
-            continue
-        concrete_stack_count = len(concrete.params) - len(args)
-        if concrete_stack_count < 0:
-            continue
-        if concrete_stack_count <= len(branch.stack):
-            concrete_stack_args = (
-                branch.stack.items[-concrete_stack_count:]
-                if concrete_stack_count
-                else ()
-            )
-            result_branch = branch.with_stack(branch.stack.pop(consumed_count))
-        else:
-            stack_params = concrete.params[:concrete_stack_count]
-            sourced = branch.source_arguments(stack_params)
-            if sourced is None:
-                continue
-            concrete_stack_args, sourced_branch = sourced
-            preserved = concrete_stack_args[: concrete_stack_count - consumed_count]
-            result_branch = sourced_branch.push(*preserved)
-        concrete_args = concrete_stack_args + args
-        if len(concrete.params) != len(concrete_args):
-            continue
-        rank_values = _initial_rank_values(concrete.params, concrete_args)
-        rank_values = _evaluate_where_clause(concrete, concrete_args, rank_values)
-        if rank_values is None:
-            continue
-        concrete = _substitute_overload_ranks(concrete, rank_values)
-        candidate = T.try_apply_overload(concrete, concrete_args, ctx).applied
-        if candidate is None:
-            continue
-        actual_returns = _apply_data_tag_flow(
-            concrete_args,
-            concrete.returns,
-            candidate.actual_returns,
-            ctx,
+        preliminary_substitution = (
+            _static_type_substitution(args, rank_bound.params, ctx)
+            if static_source.where_clause
+            else _branch_argument_substitution(args, rank_bound.params, ctx)
         )
-        applied = T.AppliedOverload(
+        if preliminary_substitution is None:
+            continue
+        where_result = _evaluate_where_clause(
+            static_source,
+            args,
+            initial_rank_values,
+            preliminary_substitution,
+        )
+        if where_result is None:
+            continue
+        rank_values = dict(where_result.rank_values)
+        specialized_source = _substitute_overload_ranks(
+            static_source, rank_values
+        )
+        if not _call_site_explicit_args_match(
+            specialized_source.params, args, ctx
+        ):
+            continue
+
+        deferred = replace(
             overload,
-            candidate.substitution,
-            concrete.params,
-            concrete.returns,
-            actual_returns,
-            candidate.scores,
-            candidate.vectorised,
-            candidate.vectorised_depths,
-            tuple(sorted(rank_values.items())),
-            consumed_count + len(args),
-            element_tags=_propagated_element_tags(
-                concrete,
-                concrete_args,
-                candidate.substitution,
-            ),
-            vectorised_target_ranks=candidate.vectorised_target_ranks,
-            runtime_static_values=concrete.runtime_static_values,
+            params=specialized_source.params,
+            generic_constraints=specialized_source.generic_constraints,
         )
-        return _core.OverloadApplication(applied, result_branch)
+        for extra_count in range(len(branch.stack) + 1):
+            stack_args = branch.stack.items[-extra_count:] if extra_count else ()
+            call_params = stack_args + args
+            concrete = _call_site_checked_overload_signature(
+                deferred,
+                call_params,
+                ctx,
+                analyser,
+                rank_values=rank_values,
+                type_values=preliminary_substitution,
+                where_evaluated=True,
+            )
+            if concrete is None or len(concrete.params) < len(args):
+                continue
+            consumed_count = _call_site_consumed_count(
+                overload, concrete, extra_count
+            )
+            if consumed_count is None:
+                continue
+            concrete_stack_count = len(concrete.params) - len(args)
+            if concrete_stack_count < 0:
+                continue
+            if concrete_stack_count <= len(branch.stack):
+                concrete_stack_args = (
+                    branch.stack.items[-concrete_stack_count:]
+                    if concrete_stack_count
+                    else ()
+                )
+                result_branch = branch.with_stack(
+                    branch.stack.pop(consumed_count)
+                )
+            else:
+                stack_params = concrete.params[:concrete_stack_count]
+                sourced = branch.source_arguments(stack_params)
+                if sourced is None:
+                    continue
+                concrete_stack_args, sourced_branch = sourced
+                preserved = concrete_stack_args[
+                    : concrete_stack_count - consumed_count
+                ]
+                result_branch = sourced_branch.push(*preserved)
+            concrete_args = concrete_stack_args + args
+            if len(concrete.params) != len(concrete_args):
+                continue
+            candidate = T.try_apply_overload(
+                concrete, concrete_args, ctx
+            ).applied
+            if candidate is None:
+                continue
+            actual_returns = _apply_data_tag_flow(
+                concrete_args,
+                concrete.returns,
+                candidate.actual_returns,
+                ctx,
+            )
+            applied = T.AppliedOverload(
+                overload,
+                candidate.substitution,
+                concrete.params,
+                concrete.returns,
+                actual_returns,
+                candidate.scores,
+                candidate.vectorised,
+                candidate.vectorised_depths,
+                where_result.rank_values,
+                consumed_count + len(args),
+                element_tags=_propagated_element_tags(
+                    concrete,
+                    concrete_args,
+                    candidate.substitution,
+                ),
+                vectorised_target_ranks=candidate.vectorised_target_ranks,
+                runtime_static_values=(
+                    where_result.runtime_values
+                    if where_result.runtime_values
+                    else concrete.runtime_static_values
+                ),
+            )
+            return _core.OverloadApplication(applied, result_branch)
     return None
 
+
+def _call_site_static_overload(overload: T.Overload) -> T.Overload:
+    """Restore the declared signature hidden by deferred body checking."""
+    body = overload.call_site_body
+    if not (isinstance(body, tuple) and len(body) == 2):
+        return overload
+    _, node = body
+    if not isinstance(node, FunctionNode):
+        return overload
+    params = _functions._declared_params(node)
+    return replace(
+        overload,
+        params=params,
+        returns=node.returns or (),
+        where_clause=node.where_clause,
+        param_names=_functions._function_param_names_for_overload(node, params),
+    )
 
 def _overload_needs_call_site_checking(overload: T.Overload) -> bool:
     """Return whether an overload requires call-site checking."""
@@ -1317,6 +1439,10 @@ def _call_site_checked_overload_signature(
     call_params: tuple[T.Type, ...],
     ctx: T.Context,
     analyser: _core.Analyser | None,
+    *,
+    rank_values: dict[str, int] | None = None,
+    type_values: dict[str, T.Type] | None = None,
+    where_evaluated: bool = False,
 ) -> T.Overload | None:
     """Build the signature for call site checked overload during static analysis."""
     if callable(overload.call_site_body):
@@ -1326,46 +1452,108 @@ def _call_site_checked_overload_signature(
             and call_params
         ):
             function_type = call_params[-1]
-            explicit = call_params[:-1]
-            deferred = False
-            for candidate in _functions._callable_overloads(function_type):
-                if not (
+            stack = call_params[:-1]
+            for callable_index, candidate in enumerate(
+                _functions._callable_overloads(function_type)
+            ):
+                declared = _call_site_static_overload(candidate)
+                uses_static_values = bool(
+                    declared.where_clause
+                    or static_where.rank_variable_names(
+                        declared.params + declared.returns
+                    )
+                )
+                if (
                     isinstance(candidate.call_site_body, tuple)
                     and len(candidate.call_site_body) == 2
+                    and not uses_static_values
                 ):
+                    outer, node = candidate.call_site_body
+                    if not isinstance(outer, _core.AnalysisBranch) or not isinstance(
+                        node, FunctionNode
+                    ):
+                        continue
+                    analysis = analyser._analyse_function_at_call_site(
+                        outer,
+                        node,
+                        stack,
+                    )
+                    if analysis is None:
+                        continue
+                    candidates = _functions._callable_overloads(analysis.typ)
+                    if len(candidates) != 1:
+                        continue
+                    concrete = candidates[0]
+                    return T.Overload(
+                        (*concrete.params, function_type),
+                        concrete.returns,
+                        call_site_body=len(concrete.params),
+                        runtime_static_values=concrete.runtime_static_values,
+                    )
+
+                arity = len(declared.params)
+                if len(stack) < arity:
                     continue
-                deferred = True
-                outer, node = candidate.call_site_body
-                if not isinstance(outer, _core.AnalysisBranch) or not isinstance(
-                    node, FunctionNode
-                ):
+                explicit = stack[-arity:] if arity else ()
+                if uses_static_values:
+                    application = _apply_overload_to_branch(
+                        candidate,
+                        explicit,
+                        _core.AnalysisBranch(),
+                        ctx,
+                        analyser=analyser,
+                    )
+                    if application is None:
+                        continue
+                    applied = application.applied
+                    return T.Overload(
+                        (*explicit, function_type),
+                        applied.actual_returns,
+                        call_site_body=len(explicit),
+                        runtime_static_values=(
+                            callable_index,
+                            "__call_static__",
+                            applied.vectorised,
+                            applied.vectorised_depths,
+                            applied.vectorised_target_ranks,
+                            *applied.runtime_static_values,
+                        ),
+                    )
+
+                applied = T.try_apply_overload(candidate, explicit, ctx).applied
+                if applied is None:
                     continue
-                analysis = analyser._analyse_function_at_call_site(
-                    outer,
-                    node,
+                concrete_function_type = T.Fn(
                     explicit,
+                    applied.actual_returns,
+                    candidate.element_tags,
                 )
-                if analysis is None:
-                    continue
-                candidates = _functions._callable_overloads(analysis.typ)
-                if len(candidates) != 1:
-                    continue
-                concrete = candidates[0]
                 return T.Overload(
-                    (*concrete.params, function_type),
-                    concrete.returns,
-                    call_site_body=len(concrete.params),
+                    (*explicit, concrete_function_type),
+                    applied.actual_returns,
+                    call_site_body=arity,
+                    runtime_static_values=(),
                 )
-            if deferred:
-                return None
+            return None
         return overload.call_site_body(call_params)
     if overload.call_site_body is not None and analyser is not None:
         outer, node = overload.call_site_body
-        analysis = analyser._analyse_function_at_call_site(outer, node, call_params)
+        analysis = analyser._analyse_function_at_call_site(
+            outer,
+            node,
+            call_params,
+            rank_values=rank_values,
+            type_values=type_values,
+            where_evaluated=where_evaluated,
+        )
         if analysis is None:
             return None
         overloads = _functions._callable_overloads(analysis.typ)
-        return overloads[0] if len(overloads) == 1 else None
+        if len(overloads) != 1:
+            return None
+        return _substitute_overload_ranks(
+            overloads[0], rank_values or {}
+        )
     if len(call_params) < len(overload.params):
         return None
     explicit = call_params[-len(overload.params) :] if overload.params else ()
@@ -1425,53 +1613,233 @@ def _propagated_element_tags(
     return frozenset(tags)
 
 
-def _initial_rank_values(
+def _initial_rank_value_candidates(
     params: tuple[T.Type, ...],
     args: tuple[T.Type, ...],
-) -> dict[str, int]:
-    """Collect the values for initial rank during static analysis."""
-    values: dict[str, int] = {}
+) -> tuple[dict[str, int], ...]:
+    """Collect every consistent rank binding that can fit the arguments."""
+    candidates: tuple[dict[str, int], ...] = ({},)
     for param, arg in zip(params, args, strict=False):
-        _collect_rank_values(param, arg, values)
-    return values
+        expanded = (
+            candidate
+            for values in candidates
+            for candidate in _rank_value_candidates(param, arg, values)
+        )
+        candidates = _deduplicate_rank_candidates(expanded)
+        if not candidates:
+            return ()
+    return candidates
 
 
-def _collect_rank_values(
+def _rank_value_candidates(
     pattern: T.Type,
     actual: T.Type,
     values: dict[str, int],
-) -> None:
-    """Collect rank values during static analysis."""
+) -> tuple[dict[str, int], ...]:
+    """Collect consistent rank bindings across one nested type pair."""
     pattern = T.normalize(pattern)
     actual = T.normalize(actual)
     if isinstance(pattern, T.CollectionType) and isinstance(actual, T.CollectionType):
+        candidate = dict(values)
         if isinstance(pattern.rank, T.RankVariable) and isinstance(actual.rank, int):
-            values.setdefault(pattern.rank.name, actual.rank)
-        _collect_rank_values(pattern.base, actual.base, values)
-    elif isinstance(pattern, T.NominalType) and isinstance(actual, T.NominalType):
-        for left, right in zip(pattern.args, actual.args, strict=False):
-            _collect_rank_values(left, right, values)
-    elif isinstance(pattern, T.FunctionType) and isinstance(actual, T.FunctionType):
-        for left, right in zip(
-            pattern.params + pattern.returns,
-            actual.params + actual.returns,
-            strict=False,
-        ):
-            _collect_rank_values(left, right, values)
-    elif isinstance(pattern, T.TupleType) and isinstance(actual, T.TupleType):
-        for left, right in zip(pattern.params, actual.params, strict=False):
-            _collect_rank_values(left, right, values)
-    elif isinstance(pattern, T.VariadicTupleType) and isinstance(actual, T.TupleType):
-        _match_variadic_tuple_types(
-            pattern,
-            actual,
-            lambda left, right: _collect_rank_values(left, right, values) or True,
+            previous = candidate.get(pattern.rank.name)
+            if previous is not None and previous != actual.rank:
+                return ()
+            candidate[pattern.rank.name] = actual.rank
+        return _rank_value_candidates(pattern.base, actual.base, candidate)
+    if (
+        isinstance(pattern, T.NominalType)
+        and isinstance(actual, T.NominalType)
+        and pattern.name == actual.name
+        and len(pattern.args) == len(actual.args)
+    ):
+        return _rank_candidates_for_pairs(
+            zip(pattern.args, actual.args, strict=True), values
         )
-    elif isinstance(pattern, (T.TaggedType, T.ExactType, T.AtomicType)):
-        _collect_rank_values(pattern.inner, actual, values)
-    elif isinstance(actual, (T.TaggedType, T.ExactType, T.AtomicType)):
-        _collect_rank_values(pattern, actual.inner, values)
+    if isinstance(pattern, T.RowType) and isinstance(actual, T.RowType):
+        candidates = _rank_value_candidates(pattern.base, actual.base, values)
+        actual_fields = {field.name: field.typ for field in actual.fields}
+        pairs = tuple(
+            (field.typ, actual_fields[field.name])
+            for field in pattern.fields
+            if field.name in actual_fields
+        )
+        return _extend_rank_candidates(candidates, pairs)
+    if (
+        isinstance(pattern, T.FunctionType)
+        and isinstance(actual, T.FunctionType)
+        and pattern.params is not None
+        and pattern.returns is not None
+        and actual.params is not None
+        and actual.returns is not None
+        and len(pattern.params) == len(actual.params)
+        and len(pattern.returns) == len(actual.returns)
+    ):
+        pairs: list[tuple[T.Type, T.Type]] = list(
+            zip(
+                pattern.params + pattern.returns,
+                actual.params + actual.returns,
+                strict=True,
+            )
+        )
+        actual_tags = {tag.name: tag for tag in actual.element_tags}
+        for tag in pattern.element_tags:
+            actual_tag = actual_tags.get(tag.name)
+            if actual_tag is None or len(tag.args) != len(actual_tag.args):
+                continue
+            pairs.extend(zip(tag.args, actual_tag.args, strict=True))
+        return _rank_candidates_for_pairs(pairs, values)
+    if (
+        isinstance(pattern, T.TupleType)
+        and isinstance(actual, T.TupleType)
+        and len(pattern.params) == len(actual.params)
+    ):
+        return _rank_candidates_for_pairs(
+            zip(pattern.params, actual.params, strict=True), values
+        )
+    if isinstance(pattern, T.VariadicTupleType) and isinstance(actual, T.TupleType):
+        return _variadic_tuple_rank_candidates(pattern, actual, values)
+    if isinstance(pattern, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _rank_value_candidates(pattern.inner, actual, values)
+    if isinstance(actual, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _rank_value_candidates(pattern, actual.inner, values)
+    return (dict(values),)
 
+
+def _rank_candidates_for_pairs(
+    pairs: Iterable[tuple[T.Type, T.Type]],
+    values: dict[str, int],
+) -> tuple[dict[str, int], ...]:
+    """Fold nested rank extraction over an iterable of type pairs."""
+    candidates: tuple[dict[str, int], ...] = (dict(values),)
+    for pattern, actual in pairs:
+        candidates = _extend_rank_candidates(
+            candidates, ((pattern, actual),)
+        )
+        if not candidates:
+            break
+    return candidates
+
+
+def _extend_rank_candidates(
+    candidates: tuple[dict[str, int], ...],
+    pairs: tuple[tuple[T.Type, T.Type], ...],
+) -> tuple[dict[str, int], ...]:
+    """Apply type pairs to every current rank-binding candidate."""
+    current = candidates
+    for pattern, actual in pairs:
+        expanded = (
+            candidate
+            for values in current
+            for candidate in _rank_value_candidates(pattern, actual, values)
+        )
+        current = _deduplicate_rank_candidates(expanded)
+        if not current:
+            return ()
+    return current
+
+
+def _variadic_tuple_rank_candidates(
+    pattern: T.VariadicTupleType,
+    actual: T.TupleType,
+    values: dict[str, int],
+) -> tuple[dict[str, int], ...]:
+    """Backtrack over variadic tuple splits without leaking rank bindings."""
+    cache: dict[
+        tuple[int, int, tuple[tuple[str, int], ...]],
+        tuple[tuple[tuple[str, int], ...], ...],
+    ] = {}
+
+    def rec(
+        pattern_index: int,
+        actual_index: int,
+        bindings: tuple[tuple[str, int], ...],
+    ) -> tuple[tuple[tuple[str, int], ...], ...]:
+        """Return bounded distinct bindings from the current tuple indexes."""
+        key = (pattern_index, actual_index, bindings)
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        if pattern_index == len(pattern.items):
+            result = (bindings,) if actual_index == len(actual.params) else ()
+            cache[key] = result
+            return result
+
+        item = pattern.items[pattern_index]
+        results: set[tuple[tuple[str, int], ...]] = set()
+        if item.repeated:
+            results.update(rec(pattern_index + 1, actual_index, bindings))
+            consumed = (dict(bindings),)
+            for index in range(actual_index, len(actual.params)):
+                consumed = _extend_rank_candidates(
+                    consumed, ((item.typ, actual.params[index]),)
+                )
+                if not consumed:
+                    break
+                for candidate in consumed:
+                    results.update(
+                        rec(
+                            pattern_index + 1,
+                            index + 1,
+                            _rank_binding_key(candidate),
+                        )
+                    )
+                if len(results) > _MAX_RANK_BINDING_CANDIDATES:
+                    cache[key] = ()
+                    return ()
+        elif actual_index < len(actual.params):
+            for candidate in _rank_value_candidates(
+                item.typ, actual.params[actual_index], dict(bindings)
+            ):
+                results.update(
+                    rec(
+                        pattern_index + 1,
+                        actual_index + 1,
+                        _rank_binding_key(candidate),
+                    )
+                )
+        result = _deduplicate_rank_binding_keys(sorted(results))
+        cache[key] = result
+        return result
+
+    return tuple(
+        dict(bindings)
+        for bindings in rec(0, 0, _rank_binding_key(values))
+    )
+
+
+_MAX_RANK_BINDING_CANDIDATES = 1_024
+
+
+def _rank_binding_key(values: dict[str, int]) -> tuple[tuple[str, int], ...]:
+    """Return a stable immutable key for one rank-binding candidate."""
+    return tuple(sorted(values.items()))
+
+
+def _deduplicate_rank_binding_keys(
+    candidates: Iterable[tuple[tuple[str, int], ...]],
+) -> tuple[tuple[tuple[str, int], ...], ...]:
+    """Bound and deduplicate immutable rank-binding candidates."""
+    unique: list[tuple[tuple[str, int], ...]] = []
+    seen: set[tuple[tuple[str, int], ...]] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        unique.append(candidate)
+        if len(unique) > _MAX_RANK_BINDING_CANDIDATES:
+            return ()
+    return tuple(unique)
+
+
+def _deduplicate_rank_candidates(
+    candidates: Iterable[dict[str, int]],
+) -> tuple[dict[str, int], ...]:
+    """Bound and deduplicate mutable rank-binding candidates."""
+    keys = _deduplicate_rank_binding_keys(
+        _rank_binding_key(candidate) for candidate in candidates
+    )
+    return tuple(dict(key) for key in keys)
 
 def _match_variadic_tuple_types(
     pattern: T.VariadicTupleType,
@@ -1509,182 +1877,18 @@ def _evaluate_where_clause(
     overload: T.Overload,
     args: tuple[T.Type, ...],
     rank_values: dict[str, int],
-) -> dict[str, int] | None:
-    """Evaluate where clause during static analysis."""
-    if not overload.where_clause:
-        return rank_values
-    variables: dict[str, StaticValue] = {
-        name: value for name, value in rank_values.items()
-    }
-    for param_name, arg in zip(overload.param_names, args, strict=False):
-        if param_name is not None:
-            variables[param_name.text] = arg
-    stack: list[StaticValue] = []
-    for node in overload.where_clause:
-        if not _static_eval_node(node, stack, variables):
-            return None
-    result = dict(rank_values)
-    for name, value in variables.items():
-        if isinstance(value, int) and not isinstance(value, bool):
-            result[name] = value
-    return result
-
-
-StaticValue = int | bool | T.Type | tuple[T.Type, ...]
-
-
-def _static_eval_node(
-    node: ASTNode,
-    stack: list[StaticValue],
-    variables: dict[str, StaticValue],
-) -> bool:
-    """Return the Boolean result of static eval node during static analysis."""
-    match node:
-        case NumberLiteralNode(value):
-            stack.append(int(value))
-            return True
-        case GetVariableNode(name):
-            value = variables.get(name.text)
-            if value is None:
-                return False
-            stack.append(value)
-            return True
-        case SetVariableNode(name):
-            if not stack:
-                return False
-            variables[name.text] = stack.pop()
-            return True
-        case FieldAccessNode(name):
-            if not stack:
-                return False
-            value = stack.pop()
-            if isinstance(value, T.FunctionType):
-                if value.params is None or value.returns is None:
-                    return False
-                match name.text:
-                    case "inputs":
-                        stack.append(value.params)
-                        return True
-                    case "outputs":
-                        stack.append(value.returns)
-                        return True
-                    case "arity":
-                        stack.append(len(value.params))
-                        return True
-                    case "multiplicity":
-                        stack.append(len(value.returns))
-                        return True
-            return False
-        case ElementNode(name, _, _, call_args):
-            if call_args:
-                for arg in call_args:
-                    if arg.placeholder or arg.name is not None:
-                        return False
-                    for value_node in arg.value:
-                        if not _static_eval_node(value_node, stack, variables):
-                            return False
-            return _static_eval_element(name.text, stack)
-        case _:
-            return False
-
-
-def _static_eval_element(name: str, stack: list[StaticValue]) -> bool:
-    """Return the Boolean result of static eval element during static analysis."""
-    def pop_truthy_values(count: int) -> tuple[int | bool, ...] | None:
-        """Collect the values for pop truthy during static analysis."""
-        if len(stack) < count:
-            return None
-        values = tuple(stack[-count:])
-        if not all(isinstance(value, (int, bool)) for value in values):
-            return None
-        del stack[-count:]
-        return values
-
-    if name in {"+", "-", "*", "max", "min", "<", ">", "<=", ">=", "==", "!="}:
-        if len(stack) < 2:
-            return False
-        right = stack.pop()
-        left = stack.pop()
-        if name in {"==", "!="}:
-            equal = left == right
-            stack.append(equal if name == "==" else not equal)
-            return True
-        if not (
-            isinstance(left, int)
-            and not isinstance(left, bool)
-            and isinstance(right, int)
-            and not isinstance(right, bool)
-        ):
-            return False
-        match name:
-            case "+":
-                stack.append(left + right)
-            case "-":
-                stack.append(left - right)
-            case "*":
-                stack.append(left * right)
-            case "max":
-                stack.append(max(left, right))
-            case "min":
-                stack.append(min(left, right))
-            case "<":
-                stack.append(left < right)
-            case ">":
-                stack.append(left > right)
-            case "<=":
-                stack.append(left <= right)
-            case ">=":
-                stack.append(left >= right)
-        return True
-    if name == "length":
-        if not stack:
-            return False
-        value = stack.pop()
-        if isinstance(value, T.TupleType):
-            stack.append(len(value.params))
-            return True
-        if isinstance(value, tuple):
-            stack.append(len(value))
-            return True
-        return False
-    if name == "and":
-        values = pop_truthy_values(2)
-        if values is None:
-            return False
-        stack.append(bool(values[0]) and bool(values[1]))
-        return True
-    if name == "or":
-        values = pop_truthy_values(2)
-        if values is None:
-            return False
-        stack.append(bool(values[0]) or bool(values[1]))
-        return True
-    if name == "not":
-        values = pop_truthy_values(1)
-        if values is None:
-            return False
-        stack.append(not bool(values[0]))
-        return True
-    if name == "?":
-        if not stack:
-            return False
-        return bool(stack.pop())
-    if name == "dup":
-        if not stack:
-            return False
-        stack.append(stack[-1])
-        return True
-    if name == "pop":
-        if not stack:
-            return False
-        stack.pop()
-        return True
-    if name == "swap":
-        if len(stack) < 2:
-            return False
-        stack[-1], stack[-2] = stack[-2], stack[-1]
-        return True
-    return False
+    type_substitution: dict[str, T.Type] | None = None,
+) -> static_where.WhereEvaluation | None:
+    """Evaluate one validated ``where`` clause for an overload candidate."""
+    return static_where.evaluate_where_clause(
+        params=overload.params,
+        returns=overload.returns,
+        param_names=overload.param_names,
+        clause=overload.where_clause,
+        args=args,
+        initial_ranks=rank_values,
+        type_substitution=type_substitution,
+    )
 
 
 def _substitute_overload_ranks(
@@ -1702,52 +1906,8 @@ def _substitute_overload_ranks(
 
 
 def _substitute_rank_values(typ: T.Type, ranks: dict[str, int]) -> T.Type:
-    """Substitute rank values during static analysis."""
-    typ = T.normalize(typ)
-    if isinstance(typ, T.CollectionType):
-        rank = typ.rank
-        if isinstance(rank, T.RankVariable):
-            solved = ranks.get(rank.name)
-            rank = solved if solved is not None else rank
-        return T.C(type(typ), _substitute_rank_values(typ.base, ranks), rank)
-    if isinstance(typ, T.NominalType):
-        return T.N(typ.name, *(_substitute_rank_values(arg, ranks) for arg in typ.args))
-    if isinstance(typ, T.UnionType):
-        return T.U(*(_substitute_rank_values(item, ranks) for item in typ.items))
-    if isinstance(typ, T.IntersectionType):
-        return T.I(*(_substitute_rank_values(item, ranks) for item in typ.items))
-    if isinstance(typ, T.TupleType):
-        return T.Tup(*(_substitute_rank_values(item, ranks) for item in typ.params))
-    if isinstance(typ, T.VariadicTupleType):
-        return T.TupVariadic(
-            *(
-                T.TupleTypeItem(_substitute_rank_values(item.typ, ranks), item.repeated)
-                for item in typ.items
-            )
-        )
-    if isinstance(typ, T.FunctionType):
-        if typ.params is None or typ.returns is None:
-            return T.Fn(
-                None,
-                None,
-                _substitute_rank_values_in_element_tags(typ.element_tags, ranks),
-            )
-        return T.Fn(
-            (_substitute_rank_values(item, ranks) for item in typ.params),
-            (_substitute_rank_values(item, ranks) for item in typ.returns),
-            _substitute_rank_values_in_element_tags(typ.element_tags, ranks),
-        )
-    if isinstance(typ, T.TaggedType):
-        return T.Tagged(
-            _substitute_rank_values(typ.inner, ranks),
-            *typ.tags,
-            exact=typ.exact,
-        )
-    if isinstance(typ, T.ExactType):
-        return T.Exact(_substitute_rank_values(typ.inner, ranks))
-    if isinstance(typ, T.AtomicType):
-        return T.Atomic(_substitute_rank_values(typ.inner, ranks))
-    return typ
+    """Substitute rank values recursively during static analysis."""
+    return static_where.substitute_rank_variables(typ, ranks)
 
 
 def _substitute_rank_values_in_element_tags(
@@ -2170,6 +2330,93 @@ def _branch_argument_substitution(
                 return None
             substitution[name] = typ
     return substitution
+
+
+def _static_type_substitution(
+    args: tuple[T.Type, ...],
+    params: tuple[T.Type, ...],
+    ctx: T.Context,
+) -> dict[str, T.Type] | None:
+    """Infer static generic values with collection variables as element types."""
+    substitution = _branch_argument_substitution(args, params, ctx)
+    if substitution is None:
+        return None
+    direct: dict[str, T.Type] = {}
+    for arg, param in zip(args, params, strict=True):
+        if not _collect_static_element_bindings(param, arg, direct):
+            return None
+    substitution.update(direct)
+    specialized = tuple(
+        _substitute_branch_type(param, substitution) for param in params
+    )
+    if not all(
+        _functions._call_site_placeholder_accepts(param, arg, ctx)
+        for param, arg in zip(specialized, args, strict=True)
+    ):
+        return None
+    return substitution
+
+
+def _collect_static_element_bindings(
+    pattern: T.Type,
+    actual: T.Type,
+    bindings: dict[str, T.Type],
+) -> bool:
+    """Bind generic collection bases to compile-time element types."""
+    pattern = T.normalize(pattern)
+    actual = T.normalize(actual)
+    if isinstance(pattern, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _collect_static_element_bindings(pattern.inner, actual, bindings)
+    if isinstance(actual, (T.TaggedType, T.ExactType, T.AtomicType)):
+        return _collect_static_element_bindings(pattern, actual.inner, bindings)
+    if isinstance(pattern, T.CollectionType) and isinstance(actual, T.CollectionType):
+        if isinstance(pattern.base, T.VarType):
+            previous = bindings.get(pattern.base.name)
+            if previous is None:
+                bindings[pattern.base.name] = actual.base
+                return True
+            return T.same(previous, actual.base)
+        return _collect_static_element_bindings(
+            pattern.base, actual.base, bindings
+        )
+    if (
+        isinstance(pattern, T.NominalType)
+        and isinstance(actual, T.NominalType)
+        and pattern.name == actual.name
+        and len(pattern.args) == len(actual.args)
+    ):
+        return all(
+            _collect_static_element_bindings(left, right, bindings)
+            for left, right in zip(pattern.args, actual.args, strict=True)
+        )
+    if (
+        isinstance(pattern, T.TupleType)
+        and isinstance(actual, T.TupleType)
+        and len(pattern.params) == len(actual.params)
+    ):
+        return all(
+            _collect_static_element_bindings(left, right, bindings)
+            for left, right in zip(pattern.params, actual.params, strict=True)
+        )
+    if (
+        isinstance(pattern, T.FunctionType)
+        and isinstance(actual, T.FunctionType)
+        and pattern.params is not None
+        and pattern.returns is not None
+        and actual.params is not None
+        and actual.returns is not None
+        and len(pattern.params) == len(actual.params)
+        and len(pattern.returns) == len(actual.returns)
+    ):
+        return all(
+            _collect_static_element_bindings(left, right, bindings)
+            for left, right in zip(
+                pattern.params + pattern.returns,
+                actual.params + actual.returns,
+                strict=True,
+            )
+        )
+    return True
 
 
 def _solve_type_argument(

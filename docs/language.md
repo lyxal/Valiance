@@ -3198,7 +3198,9 @@ end
 
 - The standard type system cannot always precisely express relationships between inputs and outputs.
 - For example, the output rank of `reshape` depends on the length of the `shape` argument - but since `shape` can be any length, the exact output rank is unknowable without additional machinery. A minimum rank return type (`T*`) is valid but loses meaningful type information.
-- The `where` clause solves this by allowing types to be constructed from compile-time-known properties of inputs.
+- The `where` clause solves this by allowing types to be constructed from
+  compile-time-known properties of inputs and by letting those computed values
+  flow into later type and call-site decisions.
 - Syntax:
 
 ```
@@ -3208,8 +3210,11 @@ end
 define name(...) -> ... where (<static expressions>) => ...
 ```
 
-- The `where` clause is a small stack-based program that runs at compile time. Its results are used to fill in type variables in the return type, and to constrain overload selection.
-- Static expressions are evaluated in order, left to right. The same stack rules apply as everywhere else in Valiance.
+- The `where` clause is a small static stack-based program that runs at compile
+  time. Its results are used to fill in type variables in the return type, to
+  constrain overload selection, and to provide hidden numeric values to later
+  code generation when needed.
+- Static expressions are evaluated in order, left to right.
 - Variables declared in the where clause can be used in the function body.
 - Executed entirely at compile time.
 
@@ -3243,9 +3248,12 @@ define name(...) -> ... where (<static expressions>) => ...
 ## 22.3. Restrictions
 
 - The implemented static evaluator is intentionally small. The supported operations are the ones listed above.
-- Arbitrary element calls are not allowed - only the operations listed above. This ensures the `where` clause always terminates.
+- Arbitrary element calls are not allowed - only the operations listed above.
+  Namespaced, modified, annotated, disambiguated, or placeholder/named-argument
+  static calls are rejected. This ensures the `where` clause always terminates.
 - Recursive or looping constructs are not allowed for the same reason.
-- `Result` types are not available in the `where` clause - only optionals.
+- `Result` types are not available in static type literals - only optionals.
+- Optional-safe field access is not available in `where` clauses.
 
 ## 22.4. Examples
 
@@ -4908,4 +4916,3 @@ end
 ```
 
 - Here, the type cast safely constructs a `Point`. There's no blind reliance on `as!`
-

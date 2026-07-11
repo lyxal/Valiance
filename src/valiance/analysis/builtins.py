@@ -549,7 +549,21 @@ class RuntimeContext:
     output: Callable[[str], None]
     call: Callable[[Any, list[Any]], list[Any]]
     format_value: Callable[[Any], str] = format_runtime_value
-    call_overload: Callable[[Any, list[Any], int], list[Any]] | None = None
+    call_overload: (
+        Callable[
+            [
+                Any,
+                list[Any],
+                int,
+                tuple[Any, ...],
+                bool,
+                tuple[int, ...],
+                tuple[int | None, ...],
+            ],
+            list[Any],
+        ]
+        | None
+    ) = None
     static_values: tuple[Any, ...] = ()
     type_args: tuple[str, ...] = ()
 
@@ -1256,8 +1270,40 @@ def _call(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         callable_value = args[0]
         call_args = list(args[1:])
     selected = ctx.static_values[0] if ctx.static_values else None
+    vectorised = False
+    vectorised_depths: tuple[int, ...] = ()
+    vectorised_target_ranks: tuple[int | None, ...] = ()
+    if len(ctx.static_values) >= 5 and ctx.static_values[1] == "__call_static__":
+        vectorised = bool(ctx.static_values[2])
+        raw_depths = ctx.static_values[3]
+        raw_targets = ctx.static_values[4]
+        if not isinstance(raw_depths, tuple) or not all(
+            isinstance(depth, int) for depth in raw_depths
+        ):
+            raise RuntimeError("invalid call vectorisation depth metadata")
+        if not isinstance(raw_targets, tuple) or not all(
+            target is None or isinstance(target, int) for target in raw_targets
+        ):
+            raise RuntimeError("invalid call vectorisation rank metadata")
+        vectorised_depths = raw_depths
+        vectorised_target_ranks = raw_targets
+        hidden_static_values = tuple(ctx.static_values[5:])
+    else:
+        hidden_static_values = tuple(ctx.static_values[1:])
     if isinstance(selected, int) and ctx.call_overload is not None:
-        return tuple(ctx.call_overload(callable_value, call_args, selected))
+        return tuple(
+            ctx.call_overload(
+                callable_value,
+                call_args,
+                selected,
+                hidden_static_values,
+                vectorised,
+                vectorised_depths,
+                vectorised_target_ranks,
+            )
+        )
+    if hidden_static_values:
+        raise RuntimeError("call is missing its statically selected overload")
     return tuple(ctx.call(callable_value, call_args))
 
 

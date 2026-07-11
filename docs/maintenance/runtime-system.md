@@ -83,7 +83,7 @@ The analyser has already decided:
 - the order in which explicit or named arguments map to parameters;
 - whether a call vectorises;
 - how deeply each argument vectorises;
-- static rank values from `where` clauses;
+- static rank values and hidden numeric `where` results;
 - whether runtime union or multimethod dispatch is permitted;
 - return tags and known collection ranks; and
 - which object-friendly or external element implementation is selected.
@@ -220,7 +220,8 @@ the VM from disagreeing about what a value is.
 A built-in declaration pairs a static `Overload` with a Python runtime
 implementation. `RuntimeContext` gives implementations controlled access to
 output, callable invocation, formatting, selected overload invocation, and
-static values recorded by codegen.
+static values recorded by codegen, including hidden numeric results from
+`where` clauses and other compile-time constants that need to reach runtime.
 
 There is deliberately one built-in registry rather than separate analyser and
 VM registries.
@@ -287,8 +288,8 @@ example, `ResolvedElementReference` carries:
 - `vectorised_target_ranks`: exact runtime rank boundaries;
 - `return_collection_ranks`: rank evidence to reattach;
 - `type_args`: concrete generic object/variant arguments;
-- `static_values`: hidden values such as solved rank variables or
-  call-site-selected callable group arities;
+- `static_values`: hidden values such as solved rank variables, `where`
+  results, or call-site-selected callable group arities;
 - `arity_override` and `consumed_override`: call-site checked stack contracts;
 - `multidispatch`: permission to select a `multi` specialisation; and
 - `extension`: compiled unequal-length vector extension behaviour.
@@ -301,7 +302,8 @@ applied overload. Codegen copies those values into `ResolvedElementReference`,
 and the VM exposes them through `RuntimeContext.static_values`. This is the
 correct way to preserve an analysis-only partition decision such as
 `correspond` choosing an `n`-argument lower group and an `m`-argument upper
-group; the runtime must not rediscover that split from an overloaded callable.
+group, or a `where` clause computing a hidden numeric constant; the runtime
+must not rediscover those values from an overloaded callable.
 
 ## How code generation lowers typed nodes
 

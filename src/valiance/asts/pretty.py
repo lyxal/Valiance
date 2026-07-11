@@ -31,6 +31,7 @@ from valiance.asts.nodes import (
     TypedExtensionPatternRule,
     TypedFunctionNode,
     TypedNode,
+    TypeLiteralNode,
 )
 from valiance.symbols import Symbol
 from valiance.types import Type
@@ -67,6 +68,8 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
         return _try_node(value, level)
     if isinstance(value, TryHandlerNode):
         return _try_handler_node(value, level)
+    if isinstance(value, TypeLiteralNode):
+        return f"TypeLiteralNode(type={value.typ}{_location_arg(value)})"
     if isinstance(value, NumberLiteralNode):
         return f"NumberLiteralNode(value={value.value!r}{_location_arg(value)})"
     if isinstance(value, StringLiteralNode):

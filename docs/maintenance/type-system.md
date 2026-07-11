@@ -882,6 +882,8 @@ fields include:
 - `scores`: specificity vector;
 - `vectorised_depths` and `vectorised_target_ranks`;
 - `rank_values` from `where` clauses;
+- `runtime_static_values` for hidden compile-time numbers and type-derived
+  static arguments;
 - propagated `element_tags`; and
 - multidispatch metadata.
 
@@ -1189,8 +1191,9 @@ source. This layer combines type-level overload application with branch
 specialization, call-site checking, tag overlays, and multidispatch marking.
 For call-site checked built-ins, the concrete overload may also record
 `runtime_static_values`: hidden constants derived during analysis, such as the
-two independently selected argument-group arities for `correspond`. These are
-compiler metadata, not source-visible values or part of semantic type identity.
+two independently selected argument-group arities for `correspond` or numeric
+results produced by a `where` clause. These are compiler metadata, not
+source-visible values or part of semantic type identity.
 
 ### 4. Winner selection
 

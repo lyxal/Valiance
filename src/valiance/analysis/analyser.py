@@ -18,9 +18,11 @@ from enum import Enum, auto
 from hashlib import sha1
 from itertools import count
 from pathlib import Path
+from typing import cast
 
 import valiance.analysis.annotations as annotation_hooks
 import valiance.types as T
+from valiance import where_clause as static_where
 from valiance.analysis.builtins import default_environment
 from valiance.analysis.lints import (
     DEFAULT_REGISTRY as DEFAULT_LINT_REGISTRY,
@@ -3122,6 +3124,8 @@ class Analyser:
             explicit_function_order,
             node.disambiguation,
             self.env.context,
+            self.env,
+            self,
         )
         if candidates or not base_stack:
             return candidates
@@ -3135,6 +3139,8 @@ class Analyser:
             (),
             node.disambiguation,
             self.env.context,
+            self.env,
+            self,
         )
 
     def _modifier_argument_types(
@@ -3815,6 +3821,21 @@ class Analyser:
         initial_function_locals: tuple[tuple[Symbol, T.Type], ...] = (),
     ) -> tuple[FunctionAnalysis, AnalysisBranch] | None:
         """Analyse function literal during static analysis."""
+        declared_params = _functions._declared_params(node)
+        _, where_error = static_where.validate_where_clause(
+            params=declared_params,
+            returns=node.returns or (),
+            param_names=_functions._function_param_names_for_overload(
+                node, declared_params
+            ),
+            clause=node.where_clause,
+        )
+        if where_error is not None:
+            self._diagnose(
+                f"invalid where clause: {where_error.message}",
+                where_error.node or node,
+            )
+            return None
         node = _functions._contextualize_function_empty_returns(node)
         if node.params is not None and any(
             _functions._is_call_site_checked_param(param.typ) for param in node.params
@@ -3886,12 +3907,10 @@ class Analyser:
                 block_local=False,
             )
             if write.variables is None:
-                variables = BranchVariables.from_parameters(
-                    named_params,
-                    captures=_functions._function_capture_source(outer),
-                )
-            else:
-                variables = write.variables
+                diagnostic = write.diagnostic or f"cannot define '{name}'"
+                self._diagnose(diagnostic, node)
+                return None
+            variables = write.variables
         initial_stack = T.TypeStack(
             tuple(
                 typ
@@ -3976,9 +3995,25 @@ class Analyser:
         outer: AnalysisBranch,
         node: FunctionNode,
         call_params: tuple[T.Type, ...],
+        *,
+        rank_values: dict[str, int] | None = None,
+        type_values: dict[str, T.Type] | None = None,
+        where_evaluated: bool = False,
     ) -> FunctionAnalysis | None:
-        """Analyse function at call site during static analysis."""
-        declared = tuple(node.params or ())
+        """Analyse a deferred function using call-site static bindings."""
+        typed_node = cast(
+            FunctionNode,
+            _functions._substitute_rank_variables_in_ast(
+                node, {}, type_values
+            ),
+        )
+        parameter_node = cast(
+            FunctionNode,
+            _functions._substitute_rank_variables_in_ast(
+                node, rank_values or {}, type_values
+            ),
+        )
+        declared = tuple(parameter_node.params or ())
         if len(call_params) < len(declared):
             return None
         substituted_params = _functions._call_site_substituted_params(
@@ -3990,13 +4025,13 @@ class Analyser:
             return None
         call_site_node = FunctionNode(
             params=substituted_params,
-            body=node.body,
-            returns=node.returns,
-            where_clause=node.where_clause,
-            element_tags=node.element_tags,
-            element_tags_explicit=node.element_tags_explicit,
-            companion_tags_allowed=node.companion_tags_allowed,
-            location=node.location,
+            body=typed_node.body,
+            returns=typed_node.returns,
+            where_clause=() if where_evaluated else typed_node.where_clause,
+            element_tags=typed_node.element_tags,
+            element_tags_explicit=typed_node.element_tags_explicit,
+            companion_tags_allowed=typed_node.companion_tags_allowed,
+            location=typed_node.location,
         )
         explicit_count = len(declared)
         stack_params = call_params[:-explicit_count] if explicit_count else call_params
@@ -4013,6 +4048,15 @@ class Analyser:
             named_params,
             captures=_functions._function_capture_source(outer),
         )
+        for name in _functions._static_body_variable_names(node):
+            write = variables.write(
+                name,
+                T.Number,
+                block_local=False,
+            )
+            if write.variables is None:
+                return None
+            variables = write.variables
         initial = AnalysisBranch(
             stack=T.TypeStack(stack_params),
             inputs=call_params,
@@ -4025,7 +4069,9 @@ class Analyser:
             origin=outer.origin,
         )
         function_analyser = self._child_analyser(self.env.lexical_child_scope())
-        final = function_analyser.analyse_block(BranchSet((initial,)), node.body)
+        final = function_analyser.analyse_block(
+            BranchSet((initial,)), call_site_node.body
+        )
         signatures = self._function_signatures(call_site_node, final)
         return _functions._function_analysis_from_signatures(signatures)
 

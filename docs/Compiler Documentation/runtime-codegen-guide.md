@@ -699,8 +699,9 @@ arguments in `ResolvedElementReference.type_args`. The VM passes `type_args` to
 
 Resolved calls may also include hidden analysis results in
 `ResolvedElementReference.static_values`. User-defined elements use this for
-static rank values produced by a `where` clause; call-site checked built-ins use
-it for execution-plan constants such as `both`/`correspond` group arities.
+numeric results produced by a `where` clause, including solved rank values and
+other compile-time constants; call-site checked built-ins use it for
+execution-plan constants such as `both`/`correspond` group arities.
 
 If a resolved user-defined fallback call needs runtime multimethod selection,
 set `ResolvedElementReference.multidispatch`. Call-site checked built-ins can
@@ -730,11 +731,12 @@ helper `?!` remains a normal resolved built-in: it unwraps success values and
 panics with `UnwrappedNoneFault` or `UnwrappedResultFault` for absent/error
 values.
 
-`AppliedOverload.rank_values` is converted by codegen into runtime
+`AppliedOverload.rank_values` and any hidden numeric results from the `where`
+evaluator are converted by codegen into runtime
 `ResolvedElementReference.static_values`. The VM appends these values as hidden
 arguments when invoking the selected user-defined overload, allowing function
-bodies to read computed static variables such as `$n`. Built-in overloads should
-not infer or recompute these values at runtime.
+bodies to read computed static variables such as `$n`. Built-in overloads
+should not infer or recompute these values at runtime.
 
 Be careful with saved bytecode. The current bytecode format encodes positional
 overload indices, so changing built-in overload order is a compatibility

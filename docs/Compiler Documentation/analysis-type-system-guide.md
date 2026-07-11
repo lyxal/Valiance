@@ -697,19 +697,27 @@ lowering.
 When an overload is applied, analysis:
 
 1. Binds rank variables that appear in parameter types from the actual argument
-   collection ranks.
+   collection ranks, backtracking when a variadic tuple can match more than one
+   shape.
 2. Binds source parameter names such as `$shape` to their actual static types.
-3. Evaluates the `where` clause with the small static evaluator.
+3. Validates and evaluates the `where` clause with the small static evaluator.
 4. Substitutes solved rank values into parameters and returns.
-5. Records the solved values in `AppliedOverload.rank_values` so runtime codegen
-   can pass them into user-defined function bodies when needed.
+5. Records the solved rank values and any hidden numeric static results in
+   `AppliedOverload.rank_values` and `AppliedOverload.runtime_static_values` so
+   runtime codegen can pass them into user-defined function bodies when needed.
 
 The static evaluator intentionally permits only terminating operations:
-number literals, static variables, assignment, arithmetic (`+`, `-`, `*`,
-`min`, `max`), comparisons, boolean operations, stack operations (`dup`, `pop`,
-`swap`), `length` on fixed tuple types/values, function type introspection, and
-`?` overload assertions. Unknown element calls reject the current overload
-candidate.
+number literals, type literals, static variables, assignment, arithmetic
+(`+`, `-`, `*`, `min`, `max`), comparisons, boolean operations, stack
+operations (`dup`, `pop`, `swap`), `length` on fixed tuple types/values,
+function type introspection (`.inputs`, `.outputs`, `.arity`,
+`.multiplicity`), and `?` overload assertions. Type equality is supported, but
+`Result` types are rejected inside static type literals.
+
+Unknown element calls reject the current overload candidate. Static calls also
+must stay unnamespaced, unmodified, unannotated, undisambiguated, and free of
+named arguments or placeholders. Optional-safe field access is not available in
+`where` clauses.
 
 ## Optional And Result Normalization
 
@@ -978,7 +986,8 @@ Important invariants:
 Variadic tuple parameters trigger the same deferral because their concrete
 length is known only once the argument tuple type is known. At the call site,
 rank/length-related `where` clauses are evaluated against the fixed tuple shape
-and the resulting rank values are recorded on the applied overload.
+and the resulting rank values and hidden static numbers are recorded on the
+applied overload.
 
 ## Literals
 

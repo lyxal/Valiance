@@ -45,6 +45,7 @@ from valiance.asts import (
     TraitRequirementNode,
     TryNode,
     TupleLiteralNode,
+    TypeLiteralNode,
     TypePatternNode,
     UnfoldNode,
     VariantMemberNode,
@@ -70,6 +71,7 @@ from valiance.types import (
     Row,
     String,
     Tagged,
+    Tup,
     TupleTypeItem,
     TupVariadic,
     V,
@@ -792,6 +794,28 @@ define[T] sum(
                 GetVariableNode(Symbol("shape")),
                 ElementNode(Symbol("length")),
                 SetVariableNode(Symbol("n")),
+            ),
+        )
+
+    def test_where_clause_preserves_static_order_and_type_literals(self):
+        [node] = parse(
+            "define f(xs: Number+$n) -> String "
+            "where ($t = Number, $n 2 == ?, "
+            '{Number, String} length pop) => "ok"'
+        )
+
+        self.assertEqual(
+            node.function.where_clause,
+            (
+                TypeLiteralNode(Number),
+                SetVariableNode(Symbol("t")),
+                GetVariableNode(Symbol("n")),
+                NumberLiteralNode("2"),
+                ElementNode(Symbol("==")),
+                ElementNode(Symbol("?")),
+                TypeLiteralNode(Tup(Number, String)),
+                ElementNode(Symbol("length")),
+                ElementNode(Symbol("pop")),
             ),
         )
 

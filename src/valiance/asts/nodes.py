@@ -219,6 +219,13 @@ class TypedElementExtension:
 
 
 @dataclass(frozen=True)
+class TypeLiteralNode(ASTNode):
+    """A type literal used by the compile-time ``where`` evaluator."""
+
+    typ: Type
+
+
+@dataclass(frozen=True)
 class NumberLiteralNode(ASTNode):
     """A numeric literal."""
 
