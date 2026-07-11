@@ -536,7 +536,15 @@ class _Compiler:
             case CastNode(typ, checked):
                 if checked:
                     self.emit(OpCode.CHECK_CAST, _cast_type_spec(typ))
-                self.emit(OpCode.CANONICALIZE_TAGS, _runtime_tag_contract_spec(typ))
+                contract_type = (
+                    typed_node.typ
+                    if isinstance(typed_node, TypedNode) and typed_node.typ is not None
+                    else typ
+                )
+                self.emit(
+                    OpCode.CANONICALIZE_TAGS,
+                    _runtime_tag_contract_spec(contract_type),
+                )
             case StackShuffleNode():
                 self.emit(OpCode.STACK_SHUFFLE, _stack_shuffle_spec(node))
             case FunctionNode():

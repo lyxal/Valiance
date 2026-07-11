@@ -1110,6 +1110,7 @@ def _apply_tag_overlay(
             overlay.overload.returns,
             candidate.actual_returns,
             ctx,
+            overlay_tag=overlay.tag.text,
         )
         matches.append(
             T.AppliedOverload(
@@ -1822,17 +1823,128 @@ def _apply_data_tag_flow(
     declared_returns: tuple[T.Type, ...],
     actual_returns: tuple[T.Type, ...],
     ctx: T.Context,
+    *,
+    overlay_tag: str | None = None,
 ) -> tuple[T.Type, ...]:
-    """Strip implicit tags that are not preserved by the chosen signature."""
-    explicit_tags = tuple(_explicit_tags(ret) for ret in declared_returns)
-    return tuple(
-        _strip_implicit_computed_tags(
-            ret,
-            explicit_tags[index] if index < len(explicit_tags) else frozenset(),
-            ctx,
+    """Apply computed and constructed data-tag flow for one chosen signature.
+
+    Computed tags survive only when the return contract names them. Constructed
+    and unit tags are sticky: every guaranteed constructed-like input tag is
+    projected onto each output whose rank is high enough. An explicit absent
+    fact, an exact tag-set return, or omission from the owning tag overlay is an
+    intentional removal and suppresses that automatic projection.
+    """
+    constructed_sources = _constructed_tag_source_ranks(args, ctx)
+    outputs: list[T.Type] = []
+    for index, ret in enumerate(actual_returns):
+        declared = declared_returns[index] if index < len(declared_returns) else ret
+        explicit = _explicit_tags(declared)
+        flowed = _strip_implicit_computed_tags(ret, explicit, ctx)
+        output_rank = _type_rank(flowed)
+        additions = tuple(
+            T.DataTag(name, max(output_rank - 1, 0))
+            for name, source_rank in constructed_sources.items()
+            if output_rank >= source_rank
+            and not _constructed_flow_is_suppressed(
+                declared,
+                name,
+                overlay_tag=overlay_tag,
+            )
         )
-        for index, ret in enumerate(actual_returns)
-    )
+        if additions:
+            flowed = _with_data_tags(flowed, additions, ctx)
+            # An explicit return contract wins over implicit flow when tags are
+            # disjoint. This also keeps an explicitly selected depth canonical.
+            flowed = _with_data_tags(
+                flowed,
+                (tag for tag in explicit if not tag.absent),
+                ctx,
+            )
+        outputs.append(flowed)
+    return tuple(outputs)
+
+
+def _constructed_tag_source_ranks(
+    args: tuple[T.Type, ...],
+    ctx: T.Context,
+) -> dict[str, int]:
+    """Return the lowest guaranteed source rank for each sticky input tag."""
+    result: dict[str, int] = {}
+    for arg in args:
+        for name, rank in _guaranteed_constructed_tag_sources(arg, ctx).items():
+            current = result.get(name)
+            if current is None or rank < current:
+                result[name] = rank
+    return result
+
+
+def _guaranteed_constructed_tag_sources(
+    typ: T.Type,
+    ctx: T.Context,
+) -> dict[str, int]:
+    """Find constructed-like tags guaranteed to occur within one value type."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        rank = _type_rank(typ.inner)
+        result = _guaranteed_constructed_tag_sources(typ.inner, ctx)
+        for tag in sorted(typ.tags):
+            if tag.absent or not ctx.is_constructed_like_tag(tag.name):
+                continue
+            source_rank = max(rank - tag.depth, 0)
+            current = result.get(tag.name)
+            if current is None or source_rank < current:
+                result[tag.name] = source_rank
+        return result
+    if isinstance(typ, T.CollectionType):
+        return _guaranteed_constructed_tag_sources(typ.base, ctx)
+    if isinstance(typ, T.UnionType):
+        branches = [
+            _guaranteed_constructed_tag_sources(item, ctx) for item in typ.items
+        ]
+        if not branches:
+            return {}
+        common = set(branches[0]).intersection(*(set(item) for item in branches[1:]))
+        return {
+            name: max(branch[name] for branch in branches)
+            for name in sorted(common)
+        }
+    if isinstance(typ, T.IntersectionType):
+        result: dict[str, int] = {}
+        for item in typ.items:
+            for name, rank in _guaranteed_constructed_tag_sources(item, ctx).items():
+                current = result.get(name)
+                if current is None or rank < current:
+                    result[name] = rank
+        return result
+    if isinstance(typ, (T.ExactType, T.AtomicType)):
+        return _guaranteed_constructed_tag_sources(typ.inner, ctx)
+    return {}
+
+
+def _constructed_flow_is_suppressed(
+    declared: T.Type,
+    name: str,
+    *,
+    overlay_tag: str | None,
+) -> bool:
+    """Return whether a return contract intentionally removes a sticky tag."""
+    explicit = _explicit_tags(declared)
+    if any(tag.name == name and tag.absent for tag in explicit):
+        return True
+    positive = any(tag.name == name and not tag.absent for tag in explicit)
+    if overlay_tag == name and not positive:
+        return True
+    return _has_exact_tag_contract(declared) and not positive
+
+
+def _has_exact_tag_contract(typ: T.Type) -> bool:
+    """Return whether a type contains an exact present-tag set at its root."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        return typ.exact
+    if isinstance(typ, (T.ExactType, T.AtomicType)):
+        return _has_exact_tag_contract(typ.inner)
+    return False
 
 
 def _explicit_tags(typ: T.Type) -> frozenset[T.DataTag]:

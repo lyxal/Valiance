@@ -20,7 +20,7 @@ define classify(value: #stream+ Number++) -> String =>
   end
 end
 
-define eraseStream(value: #stream Number+) -> Number+ => $value end
+define eraseStream(value: #stream Number+) -> #!stream Number+ => $value end
 
 $nested = [1, 2, 3] #stream | wrap
 $distance = 10 #km | 5 +

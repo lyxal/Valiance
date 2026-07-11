@@ -843,8 +843,16 @@ def _cast_node(
         )
         return _core.BranchSet()
 
-    stack = T.TypeStack((*branch.stack.items[:-1], target))
-    return _core.BranchSet((branch.with_stack(stack).emit(TypedNode(node, target)),))
+    flowed_target = _calls._apply_data_tag_flow(
+        (source,),
+        (target,),
+        (target,),
+        self.env.context,
+    )[0]
+    stack = T.TypeStack((*branch.stack.items[:-1], flowed_target))
+    return _core.BranchSet(
+        (branch.with_stack(stack).emit(TypedNode(node, flowed_target)),)
+    )
 
 
 @_core.register(StackShuffleNode)

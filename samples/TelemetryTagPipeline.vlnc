@@ -1,0 +1,53 @@
+#? A telemetry pipeline where construction provenance must survive transforms.
+
+tag #live as constructed
+tag #encrypted as constructed
+tag #ordered as computed
+tag #ms as unit
+
+define calibrate(readings: Number+, offset: Number) -> Number+ =>
+  $readings | $offset +
+end
+
+define window(readings: Number+) -> Number++ => [$readings] end
+define head(readings: Number+) -> Number => $readings $[0] end
+define archive(readings: #live Number+) -> #!live Number+ => $readings end
+
+#ms: + =>
+  (#ms Number, Number) -> #ms Number
+end
+
+$liveReadings = #encrypted #live #ordered [100, 110, 120]
+$calibrated = $liveReadings | 5 calibrate
+$windowed = $calibrated | window
+$first = $calibrated | head
+$archived = $calibrated | archive
+$latency = 20 #ms | 5 +
+
+$calibrated |
+match =>
+  as :#encrypted #live #ordered Number+ => "computed-leaked"
+  as :#encrypted #live Number+ => "calibrated-live"
+  _ => "calibrated-missing"
+end
+
+$windowed |
+match =>
+  as :#encrypted+ #live+ Number+2 => "windowed-live"
+  _ => "windowed-missing"
+end
+
+$first |
+match =>
+  as :#live Number => "head-leaked"
+  _ => "head-finite"
+end
+
+$archived |
+match =>
+  as :#live Number+ => "archive-live"
+  as :#encrypted Number+ => "archive-encrypted"
+  _ => "archive-missing"
+end
+
+#-ms $latency

@@ -2416,9 +2416,12 @@ tag #<name> as <category>
 
 ## 17.1. Constructed Tags
 - Constructed tags represent properties of data that are a consequence of how that data is constructed. For example, an infinite list can only be infinite if it is constructed that way.
-- Constructed tags are sticky only across operations whose signature or tag overlay explicitly preserves them. Ordinary generic flow does not preserve a constructed tag merely because the input carried it. This conservative rule prevents runtime tag evidence from outliving the compile-time return contract.
-- An explicit return or cast contract is enforced recursively at both compile time and runtime. If it preserves a constructed tag, the returned runtime value carries the same evidence; if it omits the tag, stale evidence is removed even inside heterogeneous collections. This remains true through optimized and serialized bytecode execution.
-- When a signature or overlay preserves a constructed tag from an input of rank `n`, the output carries that tag at depth `(output rank - 1)` if the output rank is at least `n`. If the output rank is lower than the input rank, the tag is not carried.
+- Constructed tags are sticky across ordinary operations and generic flow. A constructed-like tag guaranteed on any input is carried to every output whose rank is high enough, without requiring a tag overlay.
+- A constructed tag is removed only by an explicit absence contract such as `#!infinite`, direct `#!infinite`/`#-infinite` removal, an exact return tag set that excludes it, or omission from that tag's own overlay return contract. Computed tags remain non-sticky.
+- If a tagged input has effective rank `n`, the output carries the tag at depth `(output rank - 1)` when the output rank is at least `n`. For a tag at depth `d` on a rank-`r` input, its effective rank is `max(r - d, 0)`. If the output rank is lower, the tag is not carried.
+- Runtime evidence follows the same rule through built-ins, user functions, casts, optimization, and serialized bytecode. Recursive return and cast contracts remove only evidence that their explicit tag policy excludes.
+- For example, `#infinite [1, 2, 3] + 4` has type `#infinite Integer+`; no overlay is required for the constructed tag to survive the vectorized addition.
+- Automatic propagation processes inputs from left to right. If different inputs carry disjoint constructed tags, the later input's tag replaces the earlier one, matching ordinary explicit tag-application order.
 - Collection construction canonicalizes a tag shared by every item onto the collection at one greater depth. This keeps nested static types and runtime evidence aligned without wrapping each child redundantly.
 - A constructed-tagged value can otherwise be used where the untagged base type is expected. Unit tags are the exception described below.
 
@@ -2429,7 +2432,7 @@ tag #<name> as <category>
 - Unit tags are constructed tags with an extra rule: a unit-tagged value cannot be passed where that unit tag is not expected.
 - Operations that consume a plain scalar, including collection indexing, therefore reject unit-tagged values. The unit must be explicitly removed with `#!unit` or `#-unit` when discarding it is intentional.
 - A matching unit-tag overlay is an explicit permission for an otherwise plain implementation to consume that unit. Only the overlay's own unit is erased for underlying overload selection; unrelated units remain protected.
-- This preserves semantic meaning while still allowing explicitly declared tag-preserving operations.
+- Once an operation is permitted to consume a unit-tagged value, the unit follows the same sticky rank/depth rules as any constructed tag unless explicitly removed.
 
 ## 17.3. Computed Tags
 - Some properties of data are more fragile than constructed tags. That is, they may be dependent on the computed structure of the data. For example, the sortedness of a list is computed from whether it is ordered, rather than solely when it is constructed. Additionally, the sortedness of a list is not sticky - whereas doing most things to an infinite list doesn't make that list finite, doing most things to a sorted list has a good chance of breaking the sortedness.
@@ -2577,7 +2580,7 @@ end
 - Every overlay must require its attached tag positively on at least one input. An overlay can control only that tag in its return contract; it cannot add, remove, or preserve foreign tags.
 - A constructed or unit overlay that preserves its tag must obey the rank/depth rule from 17.1. Unsafe rank changes are rejected during analysis.
 - Overlay return contracts are reified on the actual runtime result, including user functions that suspend for nested calls and bytecode that has been serialized and restored.
-- Constructed tags are not preserved by ordinary generic flow. A function signature or tag overlay must explicitly preserve a constructed tag for it to remain on the return value.
+- Constructed tags already flow through ordinary operations. Constructed overlays are therefore mainly useful for explicitly removing the attached tag, documenting a specialised rank contract, or granting a unit-tagged value permission to use an otherwise untagged implementation.
 
 ## 17.8. Tag Validators
 - Sometimes you may want to validate that data being tagged actually exhibits the property of the tag.

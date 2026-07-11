@@ -614,7 +614,8 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Support tag-overlay declarations.
 - [x] Apply overlay signatures without changing underlying element behavior.
 - [x] Support overlays for multiple elements.
-- [x] Remove constructed tags when no overlay preserves them.
+- [x] Propagate constructed tags automatically through ordinary and generic flow.
+- [x] Remove constructed tags only through explicit absence, exact exclusion, rank drop, or owning-overlay removal.
 - [x] Support tag validators as tag-named definitions.
 - [x] Resolve validator overloads by specificity rather than declaration order.
 - [x] Run parent validators when applying a variant.

@@ -2505,7 +2505,7 @@ def _fuzz_correctness_workloads(
     _config: FuzzConfig,
 ) -> object:
     """Exercise type algebra and realistic runtime representation boundaries."""
-    mode = iteration % 20
+    mode = iteration % 30
     case: object = ("uninitialized", mode)
     try:
         if mode == 0:
@@ -3183,7 +3183,7 @@ end
                 raise AssertionError(analyser.diagnostics)
             if run(loads(dumps(compile_program(typed, optimize=False)))) != ["tagged"]:
                 raise AssertionError("indexing failed to project tag depth")
-        else:
+        elif mode == 19:
             source = """
 tag #nested as constructed
 $outer = [[1, 2] #nested, [3, 4] #nested]
@@ -3200,6 +3200,164 @@ end
                 raise AssertionError(analyser.diagnostics)
             if run(loads(dumps(compile_program(typed, optimize=False)))) != ["tagged"]:
                 raise AssertionError("slicing failed to preserve tag depth")
+        elif mode == 20:
+            offset = rng.randint(-20, 20)
+            source = f"""
+tag #infinite as constructed
+#infinite [1, 2, 3] + {offset}
+"""
+            case = ("constructed-automatic-vector-flow", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or show(typed[-1].typ) != "#infinite Integer+":
+                raise AssertionError(analyser.diagnostics or typed[-1].typ)
+            [value] = run(loads(dumps(compile_program(typed, optimize=False))))
+            if not isinstance(value, TaggedValue) or {
+                (tag.name, tag.depth) for tag in value.tags
+            } != {("infinite", 0)}:
+                raise AssertionError(value)
+        elif mode == 21:
+            source = """
+tag #sticky as constructed
+define[T] identity(value: T) -> T => $value end
+#sticky [1, 2, 3] | identity
+"""
+            case = ("constructed-generic-flow", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or show(typed[-1].typ) != "#sticky Integer+":
+                raise AssertionError(analyser.diagnostics or typed[-1].typ)
+            [value] = run(loads(dumps(compile_program(typed, optimize=False))))
+            if not isinstance(value, TaggedValue) or {
+                tag.name for tag in value.tags
+            } != {"sticky"}:
+                raise AssertionError(value)
+        elif mode == 22:
+            source = """
+tag #stream as constructed
+define wrap(value: Number+) -> Number++ => [$value] end
+#stream [1, 2, 3] | wrap
+"""
+            case = ("constructed-rank-increase", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or show(typed[-1].typ) != "#stream+ Number+2":
+                raise AssertionError(analyser.diagnostics or typed[-1].typ)
+            [value] = run(loads(dumps(compile_program(typed, optimize=False))))
+            if not isinstance(value, TaggedValue) or {
+                (tag.name, tag.depth) for tag in value.tags
+            } != {("stream", 1)}:
+                raise AssertionError(value)
+        elif mode == 23:
+            source = """
+tag #stream as constructed
+define first(value: Number+) -> Number => $value $[0] end
+#stream [1, 2, 3] | first
+"""
+            case = ("constructed-rank-drop", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or show(typed[-1].typ) != "Number":
+                raise AssertionError(analyser.diagnostics or typed[-1].typ)
+            [value] = run(loads(dumps(compile_program(typed, optimize=False))))
+            if isinstance(value, TaggedValue):
+                raise AssertionError("rank drop retained constructed tag")
+        elif mode == 24:
+            source = """
+tag #stream as constructed
+define materialize(value: #stream Number+) -> #!stream Number+ => $value end
+#stream [1, 2, 3] | materialize
+"""
+            case = ("constructed-explicit-absence", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            [value] = run(loads(dumps(compile_program(typed, optimize=False))))
+            if isinstance(value, TaggedValue):
+                raise AssertionError("explicit absence failed to remove tag")
+        elif mode == 25:
+            source = """
+tag #stream as constructed
+tag #sorted as computed
+#stream #sorted [1, 2, 3] + 1
+"""
+            case = ("constructed-versus-computed-flow", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or show(typed[-1].typ) != "#stream Integer+":
+                raise AssertionError(analyser.diagnostics or typed[-1].typ)
+            [value] = run(loads(dumps(compile_program(typed, optimize=False))))
+            if not isinstance(value, TaggedValue) or {
+                tag.name for tag in value.tags
+            } != {"stream"}:
+                raise AssertionError(value)
+        elif mode == 26:
+            value = rng.randint(-50, 50)
+            source = f"""
+tag #sticky as constructed
+{value} #sticky as Number
+"""
+            case = ("constructed-cast-flow", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or show(typed[-1].typ) != "#sticky Number":
+                raise AssertionError(analyser.diagnostics or typed[-1].typ)
+            [result] = run(loads(dumps(compile_program(typed, optimize=False))))
+            if not isinstance(result, TaggedValue) or {
+                tag.name for tag in result.tags
+            } != {"sticky"}:
+                raise AssertionError(result)
+        elif mode == 27:
+            source = """
+tag #cached as constructed
+tag #stream as constructed
+#cached #stream [1, 2, 3] + 1
+"""
+            case = ("multiple-constructed-flow", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            [value] = run(loads(dumps(compile_program(typed, optimize=False))))
+            if not isinstance(value, TaggedValue) or {
+                tag.name for tag in value.tags
+            } != {"cached", "stream"}:
+                raise AssertionError(value)
+        elif mode == 28:
+            source = """
+tag #sticky as constructed
+define strip(value: #sticky Number) -> [] Number => #-sticky $value end
+1 #sticky | strip
+"""
+            case = ("constructed-exact-empty-removal", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics or show(typed[-1].typ) != "[] Number":
+                raise AssertionError(analyser.diagnostics or typed[-1].typ)
+            [value] = run(loads(dumps(compile_program(typed, optimize=False))))
+            if isinstance(value, TaggedValue):
+                raise AssertionError("exact empty return retained constructed tag")
+        else:
+            right_wins = rng.choice((False, True))
+            expression = "1 #a 2 #b +" if right_wins else "1 #b 2 #a +"
+            expected = {"b"} if right_wins else {"a"}
+            source = f"""
+tag #a as constructed
+tag #b as constructed
+tag #a disjoint #b
+{expression}
+"""
+            case = ("constructed-disjoint-input-order", source, expected)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            [value] = run(loads(dumps(compile_program(typed, optimize=False))))
+            if not isinstance(value, TaggedValue) or {
+                tag.name for tag in value.tags
+            } != expected:
+                raise AssertionError(value)
         return case
     except BaseException as exc:
         raise _GeneratedCaseFailure(case, exc) from exc

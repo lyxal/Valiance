@@ -2997,14 +2997,17 @@ define sort(:Number+) -> #sorted Number+ => top
         [overload] = analyser.env.overloads_for(Symbol("sort"))
         self.assertEqual(overload.returns, (Tagged(ExactList(Number), "sorted"),))
 
-    def test_constructed_tags_drop_without_overlay_preservation(self):
+    def test_constructed_tags_propagate_without_overlay_preservation(self):
         analyser = Analyser()
         [branch] = analyser.analyse_block(
             BranchSet((AnalysisBranch(),)),
             tuple(parse("tag #sticky as constructed\n1 #sticky 2 +")),
         )
 
-        self.assertEqual(branch.stack, TypeStack((Integer,)))
+        self.assertEqual(
+            branch.stack,
+            TypeStack((Tagged(Integer, "sticky"),)),
+        )
 
     def test_tag_overlay_preserves_computed_tag_without_runtime_override(self):
         analyser = Analyser()
@@ -3170,7 +3173,7 @@ define f(value: #left #right Number) -> Number => $value
         self.assertEqual(len(branches), 1)
         self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
 
-    def test_constructed_tags_do_not_propagate_through_generic_returns(self):
+    def test_constructed_tags_propagate_through_generic_returns(self):
         env = Environment()
         env.add_constructed_tag("infinite")
         env.define_overload(OP, Overload((V("T"),), (V("T"),)))
@@ -3185,10 +3188,10 @@ define f(value: #left #right Number) -> Number => $value
         self.assertEqual(len(branches), 1)
         self.assertEqual(
             next(iter(branches)).stack,
-            TypeStack((C(ListExactType, Number),)),
+            TypeStack((Tagged(C(ListExactType, Number), "infinite"),)),
         )
 
-    def test_constructed_tags_do_not_propagate_to_output_depth(self):
+    def test_constructed_tags_propagate_to_output_depth(self):
         env = Environment()
         env.add_constructed_tag("infinite")
         env.define_overload(OP, Overload((V("T"),), (V("T"),)))
@@ -3210,10 +3213,17 @@ define f(value: #left #right Number) -> Number => $value
         self.assertEqual(len(branches), 1)
         self.assertEqual(
             next(iter(branches)).stack,
-            TypeStack((C(ListExactType, Number, 2),)),
+            TypeStack(
+                (
+                    Tagged(
+                        C(ListExactType, Number, 2),
+                        DataTag("infinite", depth=1),
+                    ),
+                )
+            ),
         )
 
-    def test_multiple_constructed_like_tags_drop_without_overlay(self):
+    def test_multiple_constructed_like_tags_propagate_through_generic_flow(self):
         env = Environment()
         env.add_constructed_tag("infinite")
         env.add_unit_tag("km")
@@ -3227,7 +3237,10 @@ define f(value: #left #right Number) -> Number => $value
         )
 
         self.assertEqual(len(branches), 1)
-        self.assertEqual(next(iter(branches)).stack, TypeStack((Number,)))
+        self.assertEqual(
+            next(iter(branches)).stack,
+            TypeStack((Tagged(Number, "infinite", "km"),)),
+        )
 
     def test_unit_tags_do_not_satisfy_untagged_concrete_parameters(self):
         env = Environment()

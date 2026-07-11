@@ -1,0 +1,67 @@
+#? Comprehensive constructed-tag interaction matrix.
+
+tag #infinite as constructed
+tag #cached as constructed
+tag #sorted as computed
+tag #km as unit
+
+define[T] identity(value: T) -> T => $value end
+define batch(value: Number+) -> Number++ => [$value] end
+define first(value: Number+) -> Number => $value $[0] end
+define materialize(value: #infinite Number+) -> #!infinite Number+ => $value end
+
+#km: + =>
+  (#km Number, Number) -> #km Number
+end
+
+#infinite [1, 2, 3] + 4 |
+match =>
+  as :#infinite Number+ => "arithmetic-sticky"
+  _ => "arithmetic-missing"
+end
+
+#cached [1, 2, 3] | identity |
+match =>
+  as :#cached Number+ => "generic-sticky"
+  _ => "generic-missing"
+end
+
+#infinite [1, 2, 3] | batch |
+match =>
+  as :#infinite+ Number+2 => "rank-up"
+  _ => "rank-up-missing"
+end
+
+#infinite [9, 8] | first |
+match =>
+  as :#infinite Number => "rank-drop-leaked"
+  _ => "rank-drop"
+end
+
+#infinite [1, 2, 3] | materialize |
+match =>
+  as :#infinite Number+ => "explicit-removal-failed"
+  _ => "explicit-removal"
+end
+
+#cached #infinite [1, 2, 3] + 1 |
+match =>
+  as :#cached #infinite Number+ => "multiple-sticky"
+  _ => "multiple-missing"
+end
+
+#infinite #sorted [1, 2, 3] + 1 |
+match =>
+  as :#sorted Number+ => "computed-leaked"
+  as :#infinite Number+ => "computed-dropped"
+  _ => "constructed-missing"
+end
+
+$casted = 1 #cached as Number
+$casted |
+match =>
+  as :#cached Number => "cast-sticky"
+  _ => "cast-missing"
+end
+
+10 #km | 5 + | #-km

@@ -40,6 +40,19 @@ def execute(source: str):
     return run(compile_program(typed, optimize=False))
 
 
+def execute_all_modes(source: str):
+    """Execute valid source directly, optimized, and after bytecode round trips."""
+    analyser, typed = analyse_source(source)
+    if analyser.diagnostics:
+        raise AssertionError(analyser.diagnostics)
+    outputs = []
+    for optimize in (False, True):
+        program = compile_program(typed, optimize=optimize)
+        outputs.append(run(program))
+        outputs.append(run(loads(dumps(program))))
+    return typed, outputs
+
+
 class DataTagUnitTests(unittest.TestCase):
     def test_exact_tag_set_syntax_parses_and_round_trips(self):
         self.assertEqual(show(parse_type("[#a, #b+] Number")), "[#a #b+] Number")
@@ -277,6 +290,224 @@ define invalid(value: Result[#checked #!checked Number, String]) -> Number => 0 
 """
         )
         self.assertIn("cannot be both present and absent", diagnostics_text(analyser))
+
+
+    def test_constructed_tag_automatically_flows_through_vector_arithmetic(self):
+        source = """
+tag #infinite as constructed
+#infinite [1, 2, 3] + 4
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "#infinite Integer+")
+        for output in outputs:
+            [value] = output
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual(
+                value.value,
+                [Decimal("5"), Decimal("6"), Decimal("7")],
+            )
+            self.assertEqual(
+                {(tag.name, tag.depth) for tag in value.tags},
+                {("infinite", 0)},
+            )
+
+    def test_constructed_tag_from_either_operand_flows_to_result(self):
+        sources = (
+            """
+tag #sticky as constructed
+1 #sticky | 2 +
+""",
+            """
+tag #sticky as constructed
+1 | 2 #sticky | +
+""",
+        )
+        for source in sources:
+            with self.subTest(source=source):
+                typed, outputs = execute_all_modes(source)
+                self.assertEqual(show(typed[-1].typ), "#sticky Integer")
+                for output in outputs:
+                    [value] = output
+                    self.assertIsInstance(value, TaggedValue)
+                    self.assertEqual(value.value, Decimal("3"))
+                    self.assertEqual({tag.name for tag in value.tags}, {"sticky"})
+
+    def test_constructed_tag_flows_through_generic_identity(self):
+        source = """
+tag #sticky as constructed
+define[T] identity(value: T) -> T => $value end
+#sticky [1, 2, 3] | identity
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "#sticky Integer+")
+        for output in outputs:
+            [value] = output
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual({tag.name for tag in value.tags}, {"sticky"})
+
+    def test_constructed_tag_flows_through_ordinary_user_function(self):
+        source = """
+tag #stream as constructed
+define offset(value: Number+, amount: Number) -> Number+ =>
+  $value | $amount +
+end
+#stream [1, 2, 3] | 4 offset
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "#stream Number+")
+        for output in outputs:
+            [value] = output
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual({tag.name for tag in value.tags}, {"stream"})
+
+    def test_computed_tag_drops_while_constructed_tag_survives_same_call(self):
+        source = """
+tag #stream as constructed
+tag #sorted as computed
+#stream #sorted [1, 2, 3] + 4
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "#stream Integer+")
+        for output in outputs:
+            [value] = output
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual({tag.name for tag in value.tags}, {"stream"})
+
+    def test_multiple_constructed_tags_flow_together(self):
+        source = """
+tag #cached as constructed
+tag #stream as constructed
+#cached #stream [1, 2, 3] + 4
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "#cached #stream Integer+")
+        for output in outputs:
+            [value] = output
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual(
+                {tag.name for tag in value.tags},
+                {"cached", "stream"},
+            )
+
+    def test_constructed_tag_flows_through_widening_cast(self):
+        source = """
+tag #sticky as constructed
+1 #sticky as Number
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "#sticky Number")
+        for output in outputs:
+            [value] = output
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual(value.value, Decimal("1"))
+            self.assertEqual({tag.name for tag in value.tags}, {"sticky"})
+
+    def test_rank_increase_projects_constructed_tag_to_output_depth(self):
+        source = """
+tag #stream as constructed
+define wrap(value: Number+) -> Number++ => [$value] end
+#stream [1, 2, 3] | wrap
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "#stream+ Number+2")
+        for output in outputs:
+            [value] = output
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual(
+                {(tag.name, tag.depth) for tag in value.tags},
+                {("stream", 1)},
+            )
+
+    def test_same_rank_matrix_flow_uses_output_rank_minus_one_depth(self):
+        source = """
+tag #grid as constructed
+define keep(value: Number+2) -> Number+2 => $value end
+#grid [[1, 2], [3, 4]] | keep
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "#grid+ Number+2")
+        for output in outputs:
+            [value] = output
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual(
+                {(tag.name, tag.depth) for tag in value.tags},
+                {("grid", 1)},
+            )
+
+    def test_rank_drop_does_not_carry_constructed_tag(self):
+        source = """
+tag #stream as constructed
+define first(value: Number+) -> Number => $value $[0] end
+#stream [1, 2, 3] | first
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "Number")
+        for output in outputs:
+            self.assertEqual(output, [Decimal("1")])
+            self.assertNotIsInstance(output[0], TaggedValue)
+
+    def test_explicit_absent_return_removes_constructed_tag(self):
+        source = """
+tag #stream as constructed
+define materialize(value: #stream Number+) -> #!stream Number+ => $value end
+#stream [1, 2, 3] | materialize
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "#!stream Number+")
+        for output in outputs:
+            self.assertEqual(
+                output,
+                [[Decimal("1"), Decimal("2"), Decimal("3")]],
+            )
+            self.assertNotIsInstance(output[0], TaggedValue)
+
+
+    def test_exact_empty_return_contract_excludes_constructed_tag(self):
+        source = """
+tag #sticky as constructed
+define strip(value: #sticky Number) -> [] Number => #-sticky $value end
+1 #sticky | strip
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "[] Number")
+        for output in outputs:
+            self.assertEqual(output, [Decimal("1")])
+            self.assertNotIsInstance(output[0], TaggedValue)
+
+    def test_later_disjoint_constructed_input_wins_automatic_flow(self):
+        cases = (
+            ("1 #a 2 #b +", "#b Integer", {"b"}),
+            ("1 #b 2 #a +", "#a Integer", {"a"}),
+        )
+        for expression, expected_type, expected_tags in cases:
+            source = f"""
+tag #a as constructed
+tag #b as constructed
+tag #a disjoint #b
+{expression}
+"""
+            with self.subTest(expression=expression):
+                typed, outputs = execute_all_modes(source)
+                self.assertEqual(show(typed[-1].typ), expected_type)
+                for output in outputs:
+                    [value] = output
+                    self.assertIsInstance(value, TaggedValue)
+                    self.assertEqual({tag.name for tag in value.tags}, expected_tags)
+
+    def test_owning_overlay_omission_still_explicitly_removes_constructed_tag(self):
+        source = """
+tag #sticky as constructed
+define keep(value: #sticky Number) -> #sticky Number => $value end
+#sticky: keep =>
+  (#sticky Number) -> Number
+end
+1 #sticky | keep
+"""
+        typed, outputs = execute_all_modes(source)
+        self.assertEqual(show(typed[-1].typ), "Number")
+        for output in outputs:
+            self.assertEqual(output, [Decimal("1")])
+            self.assertNotIsInstance(output[0], TaggedValue)
 
     def test_constructed_overlay_reifies_runtime_evidence(self):
         source = """
@@ -528,6 +759,49 @@ class DataTagRealWorldTests(unittest.TestCase):
             run(compile_program(typed, optimize=False)),
             ["ascending", Decimal("7")],
         )
+
+
+    def test_constructed_tag_interaction_matrix_across_execution_modes(self):
+        path = Path(__file__).parents[1] / "samples" / "ConstructedTagInteractions.vlnc"
+        analyser, typed = analyse_source(
+            path.read_text(encoding="utf-8"),
+            source_file=path,
+        )
+        self.assertEqual(analyser.diagnostics, [])
+        expected = [
+            "arithmetic-sticky",
+            "generic-sticky",
+            "rank-up",
+            "rank-drop",
+            "explicit-removal",
+            "multiple-sticky",
+            "computed-dropped",
+            "cast-sticky",
+            Decimal("15"),
+        ]
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            self.assertEqual(run(program), expected)
+            self.assertEqual(run(loads(dumps(program))), expected)
+
+    def test_telemetry_tag_pipeline_across_execution_modes(self):
+        path = Path(__file__).parents[1] / "samples" / "TelemetryTagPipeline.vlnc"
+        analyser, typed = analyse_source(
+            path.read_text(encoding="utf-8"),
+            source_file=path,
+        )
+        self.assertEqual(analyser.diagnostics, [])
+        expected = [
+            "calibrated-live",
+            "windowed-live",
+            "head-finite",
+            "archive-encrypted",
+            Decimal("25"),
+        ]
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            self.assertEqual(run(program), expected)
+            self.assertEqual(run(loads(dumps(program))), expected)
 
     def test_constructed_tag_flow_sample_across_execution_modes(self):
         path = Path(__file__).parents[1] / "samples" / "ConstructedTagFlow.vlnc"
