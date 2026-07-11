@@ -21,6 +21,7 @@ class OpCode(Enum):
     CALL = "call"
     CALL_RESOLVED_ELEMENT = "call_resolved_element"
     CHECK_CAST = "check_cast"
+    CANONICALIZE_TAGS = "canonicalize_tags"
     BUILD_LIST = "build_list"
     BUILD_STRING = "build_string"
     BUILD_TUPLE = "build_tuple"
@@ -78,6 +79,8 @@ class ResolvedElementReference:
     vectorised_depths: tuple[int, ...] = ()
     vectorised_target_ranks: tuple[int | None, ...] = ()
     return_collection_ranks: tuple[int | None, ...] = ()
+    return_tags: tuple[tuple[DataTag, ...], ...] = ()
+    return_tag_specs: tuple[object, ...] = ()
     type_args: tuple[str, ...] = ()
     static_values: tuple[Any, ...] = ()
     arity_override: int | None = None
@@ -100,6 +103,7 @@ class FunctionCode:
     multi: bool = False
     dispatch_types: tuple[str | None, ...] = ()
     return_tags: tuple[tuple[DataTag, ...], ...] = ()
+    return_tag_specs: tuple[object, ...] = ()
     return_collection_ranks: tuple[int | None, ...] = ()
     param_collection_ranks: tuple[int | None, ...] = ()
 

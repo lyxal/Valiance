@@ -1541,6 +1541,18 @@ class Analyser:
                 for nested in _nested_types(typ):
                     if not isinstance(nested, T.TaggedType):
                         continue
+                    rank = _calls._type_rank(T.normalize(nested.inner))
+                    invalid_depths = tuple(
+                        tag for tag in nested.tags if tag.depth > rank
+                    )
+                    if invalid_depths:
+                        tag = sorted(invalid_depths)[0]
+                        self._diagnose(
+                            f"data tag '#{tag.name}{'+' * tag.depth}' has depth "
+                            f"{tag.depth}, but {T.show(nested.inner)} has rank {rank}",
+                            origin,
+                        )
+                        return False
                     positive = {
                         (tag.name, tag.depth)
                         for tag in nested.tags
@@ -2766,6 +2778,17 @@ class Analyser:
                 node.disambiguation,
                 self,
             )
+            if candidate is None:
+                candidate = _calls._apply_overload_via_unit_overlay(
+                    node.name,
+                    source.overload,
+                    source.arguments,
+                    source.branch,
+                    self.env.context,
+                    self.env,
+                    node.disambiguation,
+                    self,
+                )
             if candidate is None:
                 continue
 

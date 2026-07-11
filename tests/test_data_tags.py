@@ -278,6 +278,243 @@ define invalid(value: Result[#checked #!checked Number, String]) -> Number => 0 
         )
         self.assertIn("cannot be both present and absent", diagnostics_text(analyser))
 
+    def test_constructed_overlay_reifies_runtime_evidence(self):
+        source = """
+tag #sticky as constructed
+#sticky: + =>
+  (#sticky Number, Number) -> #sticky Number
+end
+1 #sticky | 2 +
+"""
+        analyser, typed = analyse_source(source)
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(show(typed[-1].typ), "#sticky Number")
+
+        program = compile_program(typed, optimize=False)
+        for executable in (program, loads(dumps(program))):
+            [value] = run(executable)
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual(value.value, Decimal("3"))
+            self.assertEqual(
+                {(tag.name, tag.depth) for tag in value.tags},
+                {("sticky", 0)},
+            )
+
+    def test_constructed_overlay_survives_suspended_user_function_call(self):
+        source = """
+tag #sticky as constructed
+define increment(value: Number) -> Number => $value 1 + end
+#sticky: increment =>
+  (#sticky Number) -> #sticky Number
+end
+1 #sticky | increment
+"""
+        analyser, typed = analyse_source(source)
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(show(typed[-1].typ), "#sticky Number")
+
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for executable in (program, loads(dumps(program))):
+                [value] = run(executable)
+                self.assertIsInstance(value, TaggedValue)
+                self.assertEqual(value.value, Decimal("2"))
+                self.assertEqual({tag.name for tag in value.tags}, {"sticky"})
+
+    def test_impossible_tag_depth_is_rejected(self):
+        direct, _ = analyse_source(
+            """
+tag #nested as constructed
+1 #nested+
+"""
+        )
+        self.assertIn("has depth 1", diagnostics_text(direct))
+        self.assertIn("has rank 0", diagnostics_text(direct))
+
+        signature, _ = analyse_source(
+            """
+tag #nested as constructed
+define invalid(value: #nested++ Number+) -> Number => 0 end
+"""
+        )
+        self.assertIn("has depth 2", diagnostics_text(signature))
+        self.assertIn("has rank 1", diagnostics_text(signature))
+
+    def test_constructed_tag_erasure_recurses_through_casts(self):
+        source = """
+tag #sticky as constructed
+$values = [1 #sticky, 2]
+$plain = $values as Integer+
+$plain $[0] |
+match =>
+  as :#sticky Integer => "leaked"
+  _ => "plain"
+end
+"""
+        analyser, typed = analyse_source(source)
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            self.assertEqual(run(program), ["plain"])
+            self.assertEqual(run(loads(dumps(program))), ["plain"])
+
+    def test_constructed_tag_erasure_recurses_through_function_returns(self):
+        source = """
+tag #sticky as constructed
+define make(dummy: Number) -> Integer+ => [1 #sticky, 2] end
+$plain = make 0
+$plain $[0] |
+match =>
+  as :#sticky Integer => "leaked"
+  _ => "plain"
+end
+"""
+        analyser, typed = analyse_source(source)
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            self.assertEqual(run(program), ["plain"])
+            self.assertEqual(run(loads(dumps(program))), ["plain"])
+
+    def test_indexing_projects_constructed_tag_depth(self):
+        source = """
+tag #nested as constructed
+$outer = [[1, 2] #nested]
+$inner = $outer $[0]
+$inner |
+match =>
+  as :#nested Integer+ => "tagged"
+  _ => "plain"
+end
+"""
+        analyser, typed = analyse_source(source)
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            self.assertEqual(run(program), ["tagged"])
+            self.assertEqual(run(loads(dumps(program))), ["tagged"])
+
+    def test_slicing_preserves_constructed_tag_depth(self):
+        source = """
+tag #nested as constructed
+$outer = [[1, 2] #nested, [3, 4] #nested]
+$slice = $outer[0:0]
+$slice |
+match =>
+  as :#nested+ Integer+2 => "tagged"
+  _ => "plain"
+end
+"""
+        analyser, typed = analyse_source(source)
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        self.assertEqual(run(program), ["tagged"])
+        self.assertEqual(run(loads(dumps(program))), ["tagged"])
+
+    def test_constructed_overlay_can_explicitly_remove_tag(self):
+        source = """
+tag #sticky as constructed
+define keep(value: #sticky Number) -> #sticky Number => $value end
+#sticky: keep =>
+  (#sticky Number) -> Number
+end
+1 #sticky | keep
+"""
+        analyser, typed = analyse_source(source)
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(show(typed[-1].typ), "Number")
+
+        program = compile_program(typed, optimize=False)
+        for executable in (program, loads(dumps(program))):
+            [value] = run(executable)
+            self.assertEqual(value, Decimal("1"))
+            self.assertNotIsInstance(value, TaggedValue)
+
+    def test_unit_overlay_is_explicit_permission_for_plain_implementation(self):
+        source = """
+tag #km as unit
+#km: + =>
+  (#km Number, Number) -> #km Number
+end
+1 #km | 2 +
+"""
+        analyser, typed = analyse_source(source)
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        for executable in (program, loads(dumps(program))):
+            [value] = run(executable)
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual(value.value, Decimal("3"))
+            self.assertEqual({tag.name for tag in value.tags}, {"km"})
+
+    def test_unit_overlay_does_not_launder_unrelated_units(self):
+        analyser, _ = analyse_source(
+            """
+tag #km as unit
+tag #seconds as unit
+#km: + =>
+  (#km Number, Number) -> #km Number
+end
+1 #seconds | 2 +
+"""
+        )
+        self.assertIn("no overloads for element '+' match", diagnostics_text(analyser))
+
+    def test_constructed_depth_contract_survives_serialization(self):
+        source = """
+tag #nested as constructed
+define keep(value: Number+) -> #nested+ Number+ => $value end
+[1, 2] | keep
+"""
+        analyser, typed = analyse_source(source)
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        for executable in (program, loads(dumps(program))):
+            [value] = run(executable)
+            self.assertIsInstance(value, TaggedValue)
+            self.assertEqual(
+                {(tag.name, tag.depth) for tag in value.tags},
+                {("nested", 1)},
+            )
+
+    def test_collection_construction_lifts_common_tag_depth(self):
+        source = """
+tag #nested as constructed
+[[1, 2] #nested]
+"""
+        analyser, typed = analyse_source(source)
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(show(typed[-1].typ), "#nested+ Integer+2")
+        [value] = run(compile_program(typed, optimize=False))
+        self.assertIsInstance(value, TaggedValue)
+        self.assertEqual(
+            {(tag.name, tag.depth) for tag in value.tags},
+            {("nested", 1)},
+        )
+        self.assertNotIsInstance(value.value[0], TaggedValue)
+
+    def test_constructed_overlay_rejects_unsafe_rank_or_foreign_tag_flow(self):
+        rank, _ = analyse_source(
+            """
+tag #nested as constructed
+#nested: [T] wrap =>
+  (#nested T+) -> #nested T++
+end
+"""
+        )
+        self.assertIn("unsafe rank/depth flow", diagnostics_text(rank))
+
+        foreign, _ = analyse_source(
+            """
+tag #sticky as constructed
+tag #other as computed
+#sticky: + =>
+  (#sticky Number, Number) -> #other Number
+end
+"""
+        )
+        self.assertIn("foreign tag '#other'", diagnostics_text(foreign))
+
 
 class DataTagRealWorldTests(unittest.TestCase):
     def test_data_tag_safety_sample(self):
@@ -291,6 +528,24 @@ class DataTagRealWorldTests(unittest.TestCase):
             run(compile_program(typed, optimize=False)),
             ["ascending", Decimal("7")],
         )
+
+    def test_constructed_tag_flow_sample_across_execution_modes(self):
+        path = Path(__file__).parents[1] / "samples" / "ConstructedTagFlow.vlnc"
+        analyser, typed = analyse_source(
+            path.read_text(encoding="utf-8"),
+            source_file=path,
+        )
+        self.assertEqual(analyser.diagnostics, [])
+        expected = [
+            "nested-stream",
+            "projected-stream",
+            Decimal("15"),
+            "finite",
+        ]
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            self.assertEqual(run(program), expected)
+            self.assertEqual(run(loads(dumps(program))), expected)
 
 
 if __name__ == "__main__":

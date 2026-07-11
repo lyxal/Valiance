@@ -1137,6 +1137,73 @@ def _apply_tag_overlay(
     )[0]
 
 
+def _apply_overload_via_unit_overlay(
+    element: Symbol,
+    overload: T.Overload,
+    args: tuple[T.Type, ...],
+    branch: _core.AnalysisBranch,
+    ctx: T.Context,
+    env: T.Environment,
+    disambiguation: tuple[T.Type | None, ...] = (),
+    analyser: _core.Analyser | None = None,
+) -> _core.OverloadApplication | None:
+    """Apply an implementation through a matching unit-tag overlay.
+
+    Unit values deliberately cannot satisfy ordinary untagged parameters. A
+    matching overlay is the explicit permission that allows the implementation
+    to consume the underlying value while the overlay controls the unit tag's
+    return contract. Only the overlay's own unit tag is erased for this check;
+    unrelated units remain protected.
+    """
+    for overlay in env.overlays_for(element):
+        if not ctx.is_unit_tag(overlay.tag):
+            continue
+        if T.try_apply_overload(overlay.overload, args, ctx).applied is None:
+            continue
+        erased_args = tuple(
+            _erase_overlay_owned_tag(arg, overlay.tag.text) for arg in args
+        )
+        candidate = _apply_overload_to_branch(
+            overload,
+            erased_args,
+            branch,
+            ctx,
+            env,
+            disambiguation,
+            analyser,
+        )
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _erase_overlay_owned_tag(typ: T.Type, name: str) -> T.Type:
+    """Erase one overlay-owned tag without laundering any other unit tag."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        kept = tuple(tag for tag in typ.tags if tag.name != name)
+        inner = _erase_overlay_owned_tag(typ.inner, name)
+        return T.Tagged(inner, *kept, exact=typ.exact) if kept or typ.exact else inner
+    if isinstance(typ, T.CollectionType):
+        return T.C(type(typ), _erase_overlay_owned_tag(typ.base, name), typ.rank)
+    if isinstance(typ, T.NominalType):
+        return T.N(
+            typ.name,
+            *(_erase_overlay_owned_tag(arg, name) for arg in typ.args),
+        )
+    if isinstance(typ, T.UnionType):
+        return T.U(*(_erase_overlay_owned_tag(item, name) for item in typ.items))
+    if isinstance(typ, T.IntersectionType):
+        return T.I(*(_erase_overlay_owned_tag(item, name) for item in typ.items))
+    if isinstance(typ, T.TupleType):
+        return T.Tup(*(_erase_overlay_owned_tag(item, name) for item in typ.params))
+    if isinstance(typ, T.ExactType):
+        return T.Exact(_erase_overlay_owned_tag(typ.inner, name))
+    if isinstance(typ, T.AtomicType):
+        return T.Atomic(_erase_overlay_owned_tag(typ.inner, name))
+    return typ
+
+
 def _apply_call_site_checked_overload(
     overload: T.Overload,
     args: tuple[T.Type, ...],
@@ -1810,48 +1877,6 @@ def _strip_implicit_computed_tags(
             )
         )
     return typ
-
-
-@dataclass(frozen=True)
-class StickyInputTag:
-    tag: T.DataTag
-    rank: int
-
-
-def _sticky_input_tags(typ: T.Type, ctx: T.Context) -> tuple[StickyInputTag, ...]:
-    """Compute sticky input tags during static analysis."""
-    typ = T.normalize(typ)
-    if not isinstance(typ, T.TaggedType):
-        return ()
-    return tuple(
-        StickyInputTag(tag, max(_type_rank(typ.inner) - tag.depth, 0))
-        for tag in sorted(typ.tags)
-        if ctx.is_constructed_like_tag(tag.name)
-    )
-
-
-def _propagate_sticky_tags(
-    typ: T.Type,
-    sticky_inputs: tuple[StickyInputTag, ...],
-    ctx: T.Context,
-) -> T.Type:
-    """Compute propagate sticky tags during static analysis."""
-    result = typ
-    output_rank = _type_rank(result)
-    for sticky in sticky_inputs:
-        if output_rank >= sticky.rank:
-            result = _tag_at_depth(
-                result,
-                sticky.tag.name,
-                max(output_rank - 1, 0),
-                ctx,
-            )
-    return result
-
-
-def _tag_at_depth(typ: T.Type, tag: str, depth: int, ctx: T.Context) -> T.Type:
-    """Compute tag at depth during static analysis."""
-    return _with_data_tags(typ, (T.DataTag(tag, depth),), ctx)
 
 
 def _with_data_tags(

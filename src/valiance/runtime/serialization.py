@@ -25,7 +25,7 @@ from valiance.types import (
     Variance,
 )
 
-MAGIC = b"VLNCBC\x12"
+MAGIC = b"VLNCBC\x14"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -70,6 +70,7 @@ _OP_TO_BYTE = {
     OpCode.RETURN_SIGNAL: 0x28,
     OpCode.WRAP_ASSERT_ERROR: 0x29,
     OpCode.LOAD_VAR_BORROW: 0x2A,
+    OpCode.CANONICALIZE_TAGS: 0x2B,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 
@@ -246,6 +247,14 @@ class _Writer:
         self.value(reference.vectorised_depths)
         self.value(reference.vectorised_target_ranks)
         self.value(reference.return_collection_ranks)
+        self.u32(len(reference.return_tags))
+        for tags in reference.return_tags:
+            self.u32(len(tags))
+            for tag in tags:
+                self.string(tag.name)
+                self.i64(tag.depth)
+                self.bool(tag.absent)
+        self.value(reference.return_tag_specs)
         self.value(reference.type_args)
         self.value(reference.static_values)
         self.optional_int(reference.arity_override)
@@ -349,6 +358,7 @@ class _Writer:
                 self.string(tag.name)
                 self.i64(tag.depth)
                 self.bool(tag.absent)
+        self.value(function.return_tag_specs)
         self.value(function.return_collection_ranks)
         self.value(function.param_collection_ranks)
         self.u32(len(function.instructions))
@@ -466,6 +476,14 @@ class _Reader:
         vectorised_depths = self.value()
         vectorised_target_ranks = self.value()
         return_collection_ranks = self.value()
+        return_tags = tuple(
+            tuple(
+                DataTag(self.string(), self.i64(), self.bool())
+                for _ in range(self.u32())
+            )
+            for _ in range(self.u32())
+        )
+        return_tag_specs = self.value()
         type_args = self.value()
         static_values = self.value()
         arity_override = self.optional_int()
@@ -490,6 +508,8 @@ class _Reader:
             raise BytecodeFormatError(
                 "invalid resolved element return collection ranks"
             )
+        if not isinstance(return_tag_specs, tuple):
+            raise BytecodeFormatError("invalid resolved element return tag contracts")
         if not isinstance(type_args, tuple) or not all(
             isinstance(type_arg, str) for type_arg in type_args
         ):
@@ -508,6 +528,8 @@ class _Reader:
             vectorised_depths=vectorised_depths,
             vectorised_target_ranks=vectorised_target_ranks,
             return_collection_ranks=return_collection_ranks,
+            return_tags=return_tags,
+            return_tag_specs=return_tag_specs,
             type_args=type_args,
             static_values=static_values,
             arity_override=arity_override,
@@ -658,6 +680,9 @@ class _Reader:
             )
             for _ in range(self.u32())
         )
+        return_tag_specs = self.value()
+        if not isinstance(return_tag_specs, tuple):
+            raise BytecodeFormatError("invalid function return tag contracts")
         return_collection_ranks = self.value()
         if not isinstance(return_collection_ranks, tuple) or not all(
             rank is None or isinstance(rank, int)
@@ -689,6 +714,7 @@ class _Reader:
             multi=bool(multi),
             dispatch_types=dispatch_types,
             return_tags=return_tags,
+            return_tag_specs=return_tag_specs,
             return_collection_ranks=return_collection_ranks,
             param_collection_ranks=param_collection_ranks,
         )

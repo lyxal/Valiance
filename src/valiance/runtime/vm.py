@@ -257,6 +257,8 @@ class _FunctionCallRequest:
     target: str
     release_after: FunctionValue | OverloadedFunctionValue | None = None
     isolate_captures: bool = True
+    return_tags: tuple[tuple[DataTag, ...], ...] = ()
+    return_tag_specs: tuple[object, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -477,7 +479,16 @@ class VirtualMachine:
             if function.code.return_tags
             else ranked
         )
-        return list(tagged)
+        contracted = (
+            _canonicalize_runtime_tag_contracts(
+                tagged,
+                function.code.return_tag_specs,
+                self.tag_parents,
+            )
+            if function.code.return_tag_specs
+            else tagged
+        )
+        return list(contracted)
 
     def call_value(self, value: Any, args: list[Any]) -> list[Any]:
         """Invoke a runtime callable, resolving overload and vectorisation behaviour."""
@@ -707,7 +718,34 @@ class VirtualMachine:
             if function.code.return_tags
             else ranked
         )
-        return list(tagged)
+        function_contracted = (
+            _canonicalize_runtime_tag_contracts(
+                tagged,
+                function.code.return_tag_specs,
+                self.tag_parents,
+            )
+            if function.code.return_tag_specs
+            else tagged
+        )
+        call_site_tagged = (
+            _canonicalize_runtime_return_tags(
+                function_contracted,
+                request.return_tags,
+                self.tag_parents,
+            )
+            if request.return_tags
+            else function_contracted
+        )
+        call_site_contracted = (
+            _canonicalize_runtime_tag_contracts(
+                call_site_tagged,
+                request.return_tag_specs,
+                self.tag_parents,
+            )
+            if request.return_tag_specs
+            else call_site_tagged
+        )
+        return list(call_site_contracted)
 
     def _resume_call_success(
         self,
@@ -924,17 +962,27 @@ class VirtualMachine:
                                     f"{_runtime_type_name(value)}"
                                 )
                             frame.stack.append(value)
+                        case OpCode.CANONICALIZE_TAGS:
+                            value = _pop(frame.stack, "tag canonicalization")
+                            frame.stack.append(
+                                _canonicalize_runtime_value_tag_contract(
+                                    value, instruction.arg, self.tag_parents
+                                )
+                            )
                         case OpCode.BUILD_LIST:
                             count, rank = (
                                 instruction.arg
                                 if isinstance(instruction.arg, tuple)
                                 else (instruction.arg, None)
                             )
+                            items, lifted_tags = _lift_common_collection_tags(
+                                _pop_many(frame.stack, count)
+                            )
+                            value = ListValue(items, runtime_rank=rank)
                             frame.stack.append(
-                                ListValue(
-                                    _pop_many(frame.stack, count),
-                                    runtime_rank=rank,
-                                )
+                                update_runtime_tags(value, add=lifted_tags)
+                                if lifted_tags
+                                else value
                             )
                         case OpCode.BUILD_STRING:
                             frame.stack.append(
@@ -1347,6 +1395,8 @@ class VirtualMachine:
                 reference.vectorised_depths,
                 reference.vectorised_target_ranks,
                 reference.return_collection_ranks,
+                reference.return_tags,
+                reference.return_tag_specs,
                 reference.arity_override,
                 reference.consumed_override,
                 reference.static_values,
@@ -1378,6 +1428,8 @@ class VirtualMachine:
                 reference.vectorised_depths,
                 reference.vectorised_target_ranks,
                 reference.return_collection_ranks,
+                reference.return_tags,
+                reference.return_tag_specs,
                 reference.arity_override,
                 reference.consumed_override,
                 reference.static_values,
@@ -1430,6 +1482,8 @@ class VirtualMachine:
             reference.vectorised_depths,
             reference.vectorised_target_ranks,
             reference.return_collection_ranks,
+            reference.return_tags,
+            reference.return_tag_specs,
             reference.arity_override,
             reference.consumed_override,
             reference.static_values,
@@ -1453,6 +1507,8 @@ class VirtualMachine:
             vectorised_depths=reference.vectorised_depths,
             vectorised_target_ranks=reference.vectorised_target_ranks,
             extension_reference=reference.extension,
+            return_tags=reference.return_tags,
+            return_tag_specs=reference.return_tag_specs,
         )
 
     def _call_resolved_overloaded_function(
@@ -1479,6 +1535,8 @@ class VirtualMachine:
             vectorised_depths=reference.vectorised_depths,
             vectorised_target_ranks=reference.vectorised_target_ranks,
             extension_reference=reference.extension,
+            return_tags=reference.return_tags,
+            return_tag_specs=reference.return_tag_specs,
         )
 
     def _validate_tag(self, frame: _Frame, spec: object) -> None:
@@ -1605,6 +1663,8 @@ class VirtualMachine:
         vectorised_depths: tuple[int, ...] = (),
         vectorised_target_ranks: tuple[int | None, ...] = (),
         extension_reference: VectorExtensionReference | None = None,
+        return_tags: tuple[tuple[DataTag, ...], ...] = (),
+        return_tag_specs: tuple[object, ...] = (),
     ) -> _FunctionCallRequest | None:
         """Invoke or suspend a user function during VM execution."""
         arity = len(callee.code.params)
@@ -1651,6 +1711,18 @@ class VirtualMachine:
             finally:
                 _release_runtime_vector_extension(extension, self)
             _mark_mustcall_method(args, result, callee)
+            if return_tags:
+                result = _canonicalize_runtime_return_tags(
+                    result,
+                    return_tags,
+                    self.tag_parents,
+                )
+            if return_tag_specs:
+                result = _canonicalize_runtime_tag_contracts(
+                    result,
+                    return_tag_specs,
+                    self.tag_parents,
+                )
             frame.stack.extend(result)
         else:
             target = f"function '{_function_name(callee.code)}'"
@@ -1660,9 +1732,27 @@ class VirtualMachine:
                 except _py_builtins.RuntimeError as exc:
                     raise _with_call_detail(exc, target, args) from exc
                 _mark_mustcall_method(args, result, callee)
+                if return_tags:
+                    result = _canonicalize_runtime_return_tags(
+                        result,
+                        return_tags,
+                        self.tag_parents,
+                    )
+                if return_tag_specs:
+                    result = _canonicalize_runtime_tag_contracts(
+                        result,
+                        return_tag_specs,
+                        self.tag_parents,
+                    )
                 frame.stack.extend(result)
             else:
-                return _FunctionCallRequest(callee, args, target)
+                return _FunctionCallRequest(
+                    callee,
+                    args,
+                    target,
+                    return_tags=return_tags,
+                    return_tag_specs=return_tag_specs,
+                )
         return None
 
     def _can_execute_direct_leaf(
@@ -1752,7 +1842,16 @@ class VirtualMachine:
             if function.code.return_tags
             else ranked
         )
-        return list(tagged)
+        contracted = (
+            _canonicalize_runtime_tag_contracts(
+                tagged,
+                function.code.return_tag_specs,
+                self.tag_parents,
+            )
+            if function.code.return_tag_specs
+            else tagged
+        )
+        return list(contracted)
 
     def _match_patterns(
         self,
@@ -3419,6 +3518,8 @@ def _call_resolved_builtin(
     vectorised_depths: tuple[int, ...] = (),
     vectorised_target_ranks: tuple[int | None, ...] = (),
     return_collection_ranks: tuple[int | None, ...] = (),
+    return_tags: tuple[tuple[DataTag, ...], ...] = (),
+    return_tag_specs: tuple[object, ...] = (),
     arity_override: int | None = None,
     consumed_override: int | None = None,
     static_values: tuple[Any, ...] = (),
@@ -3485,6 +3586,18 @@ def _call_resolved_builtin(
                 vectorized,
                 return_collection_ranks,
             )
+            if return_tags:
+                vectorized = _canonicalize_runtime_return_tags(
+                    vectorized,
+                    return_tags,
+                    vm.tag_parents,
+                )
+            if return_tag_specs:
+                vectorized = _canonicalize_runtime_tag_contracts(
+                    vectorized,
+                    return_tag_specs,
+                    vm.tag_parents,
+                )
             _finalize_builtin_result_ownership(ownership_args, vectorized)
         except _py_builtins.RuntimeError as exc:
             raise _with_call_detail(
@@ -3513,6 +3626,18 @@ def _call_resolved_builtin(
             result = _apply_runtime_collection_ranks(
                 result,
                 return_collection_ranks,
+            )
+        if return_tags:
+            result = _canonicalize_runtime_return_tags(
+                result,
+                return_tags,
+                vm.tag_parents,
+            )
+        if return_tag_specs:
+            result = _canonicalize_runtime_tag_contracts(
+                result,
+                return_tag_specs,
+                vm.tag_parents,
             )
     except _py_builtins.RuntimeError as exc:
         raise _with_call_detail(
@@ -4716,10 +4841,25 @@ def _lazy_index_request(index: Any) -> tuple[int, list[Any]]:
 
 
 def _index_one(receiver: Any, index: Any) -> Any:
-    """Index one during VM execution."""
+    """Index one value and project nested tag evidence by one depth."""
+    projected_tags = tuple(
+        DataTag(tag.name, tag.depth - 1)
+        for tag in runtime_value_tags(receiver)
+        if not tag.absent and tag.depth > 0
+    )
+    receiver = unwrap_runtime_value(receiver)
+
+    def finish(result: Any) -> Any:
+        """Attach the tags projected from the indexed receiver."""
+        return (
+            update_runtime_tags(result, add=projected_tags)
+            if projected_tags
+            else result
+        )
+
     if isinstance(receiver, dict):
         try:
-            return receiver[index]
+            return finish(receiver[index])
         except KeyError as exc:
             raise PanicSignal(
                 _fault_object(
@@ -4730,7 +4870,7 @@ def _index_one(receiver: Any, index: Any) -> Any:
     if isinstance(receiver, (tuple, str, list)) or is_eager_sequence(receiver):
         target = _int_index(index)
         try:
-            return receiver[target]
+            return finish(receiver[target])
         except IndexError as exc:
             raise PanicSignal(
                 _fault_object(
@@ -4746,7 +4886,7 @@ def _index_one(receiver: Any, index: Any) -> Any:
             raise RuntimeError("lazy list indexing does not support negative indices")
         for offset, item in enumerate(receiver):
             if offset == target:
-                return item
+                return finish(item)
         raise PanicSignal(
             _fault_object("IndexFault", _index_fault_message(target))
         )
@@ -4754,12 +4894,19 @@ def _index_one(receiver: Any, index: Any) -> Any:
 
 
 def _slice_value(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
-    """Slice value during VM execution."""
+    """Slice a value while preserving tag depth at the unchanged rank."""
+    tags = tuple(tag for tag in runtime_value_tags(receiver) if not tag.absent)
+    receiver = unwrap_runtime_value(receiver)
+
+    def finish(result: Any) -> Any:
+        """Restore the receiver's same-rank tag evidence on the slice."""
+        return update_runtime_tags(result, add=tags) if tags else result
+
     if _is_path(start) or _is_path(stop):
-        return _slice_path(receiver, start, stop, step)
+        return finish(_slice_path(receiver, start, stop, step))
     if not (is_eager_sequence(receiver) or isinstance(receiver, str)):
         if is_list_like(receiver):
-            return _slice_lazy(receiver, start, stop, step)
+            return finish(_slice_lazy(receiver, start, stop, step))
         raise RuntimeError("slicing requires a list or string")
     step_int = 1 if step is None else _int_index(step)
     if step_int == 0:
@@ -4770,8 +4917,8 @@ def _slice_value(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
     python_stop = stop_int + (1 if step_int > 0 else -1)
     sliced = receiver[start_int:python_stop:step_int]
     if isinstance(receiver, str):
-        return "".join(sliced)
-    return _copy_eager_list(receiver, sliced)
+        return finish("".join(sliced))
+    return finish(_copy_eager_list(receiver, sliced))
 
 
 def _slice_lazy(receiver: Any, start: Any, stop: Any, step: Any) -> LazyList:
@@ -5462,6 +5609,29 @@ def _runtime_type_name(value: Any) -> str:
     return type(value).__name__
 
 
+def _lift_common_collection_tags(
+    values: list[Any],
+) -> tuple[list[Any], tuple[DataTag, ...]]:
+    """Lift tags shared by every collection item to one deeper tag fact."""
+    if not values:
+        return values, ()
+    common = set(runtime_value_tags(values[0]))
+    for value in values[1:]:
+        common.intersection_update(runtime_value_tags(value))
+        if not common:
+            return values, ()
+    if not common:
+        return values, ()
+    ordered = tuple(sorted(common))
+    cleaned = [update_runtime_tags(value, remove=ordered) for value in values]
+    lifted = tuple(
+        DataTag(tag.name, tag.depth + 1)
+        for tag in ordered
+        if not tag.absent
+    )
+    return cleaned, lifted
+
+
 def _unwrapped_args(args: tuple[Any, ...]) -> tuple[Any, ...]:
     """Return arguments directly unless one carries a runtime tag wrapper."""
     if len(args) == 1:
@@ -5497,7 +5667,7 @@ def _declared_runtime_tags(typ: Any) -> tuple[DataTag, ...]:
         return ()
     typ = normalize(typ)
     if isinstance(typ, TaggedType):
-        return tuple(sorted(tag for tag in typ.tags if tag.depth == 0))
+        return tuple(sorted(typ.tags))
     return ()
 
 
@@ -5550,6 +5720,213 @@ def _validated_tag_parent_mapping(
             "invalid bytecode: variant tag parent must be a computed tag"
         )
     return mapping
+
+
+def _canonicalize_runtime_tag_contracts(
+    values: tuple[Any, ...] | list[Any],
+    specs: tuple[object, ...],
+    tag_parents: dict[str, str],
+) -> tuple[Any, ...]:
+    """Recursively align runtime tag evidence with static return contracts."""
+    if len(values) != len(specs):
+        # Some stack-polymorphic functions have a conservative declared return
+        # shape whose arity is refined only by the caller. Preserve the result
+        # rather than applying a contract to the wrong stack slot.
+        return tuple(values)
+    return tuple(
+        _canonicalize_runtime_value_tag_contract(value, spec, tag_parents)
+        for value, spec in zip(values, specs, strict=True)
+    )
+
+
+def _canonicalize_runtime_value_tag_contract(
+    value: Any,
+    spec: object,
+    tag_parents: dict[str, str],
+) -> Any:
+    """Recursively enforce one structural runtime tag contract."""
+    if not isinstance(spec, tuple) or not spec or not isinstance(spec[0], str):
+        raise RuntimeError("invalid bytecode: malformed runtime tag contract")
+    kind = spec[0]
+    if kind == "tagged":
+        if len(spec) != 3 or not isinstance(spec[2], tuple):
+            raise RuntimeError("invalid bytecode: malformed tagged contract")
+        declared: list[DataTag] = []
+        for item in spec[2]:
+            if (
+                not isinstance(item, tuple)
+                or len(item) != 3
+                or not isinstance(item[0], str)
+                or type(item[1]) is not int
+                or type(item[2]) is not bool
+                or item[1] < 0
+            ):
+                raise RuntimeError("invalid bytecode: malformed tag fact")
+            declared.append(DataTag(item[0], item[1], item[2]))
+        existing = tuple(runtime_value_tags(value))
+        payload = _canonicalize_runtime_value_tag_contract(
+            unwrap_runtime_value(value), spec[1], tag_parents
+        )
+        additions = tuple(tag for tag in declared if not tag.absent)
+        declared_keys = {(tag.name, tag.depth) for tag in additions}
+        retained = tuple(
+            tag
+            for tag in existing
+            if _runtime_variant_parent_is_retained(
+                tag, declared_keys, tag_parents
+            )
+        )
+        return update_runtime_tags(payload, add=(*additions, *retained))
+
+    payload = unwrap_runtime_value(value)
+    if kind in {"any", "none", "nominal"}:
+        return payload
+    if kind == "union":
+        if len(spec) != 2 or not isinstance(spec[1], tuple) or not spec[1]:
+            raise RuntimeError("invalid bytecode: malformed union tag contract")
+        branch = next(
+            (
+                item
+                for item in spec[1]
+                if _runtime_tag_contract_matches(value, item, require_tags=True)
+            ),
+            None,
+        )
+        if branch is None:
+            branch = next(
+                (
+                    item
+                    for item in spec[1]
+                    if _runtime_tag_contract_matches(value, item, require_tags=False)
+                ),
+                spec[1][0],
+            )
+        return _canonicalize_runtime_value_tag_contract(value, branch, tag_parents)
+    if kind == "intersection":
+        if len(spec) != 2 or not isinstance(spec[1], tuple):
+            raise RuntimeError("invalid bytecode: malformed intersection tag contract")
+        result = value
+        for item in spec[1]:
+            result = _canonicalize_runtime_value_tag_contract(
+                result, item, tag_parents
+            )
+        return result
+    if kind == "tuple":
+        if len(spec) != 2 or not isinstance(spec[1], tuple):
+            raise RuntimeError("invalid bytecode: malformed tuple tag contract")
+        if not isinstance(payload, tuple) or len(payload) != len(spec[1]):
+            return payload
+        return tuple(
+            _canonicalize_runtime_value_tag_contract(item, item_spec, tag_parents)
+            for item, item_spec in zip(payload, spec[1], strict=True)
+        )
+    if kind == "collection":
+        if (
+            len(spec) != 4
+            or not isinstance(spec[1], str)
+            or type(spec[2]) is not int
+            or spec[2] < 1
+        ):
+            raise RuntimeError("invalid bytecode: malformed collection tag contract")
+        return _canonicalize_runtime_collection_tag_contract(
+            payload, spec[1], spec[2], spec[3], tag_parents
+        )
+    raise RuntimeError(f"invalid bytecode: unknown tag contract kind {kind!r}")
+
+
+def _canonicalize_runtime_collection_tag_contract(
+    value: Any,
+    kind: str,
+    rank: int,
+    base_spec: object,
+    tag_parents: dict[str, str],
+) -> Any:
+    """Canonicalize tags below one collection without consuming lazy inputs."""
+    if not is_list_like(value):
+        return value
+
+    def item_spec(item: Any) -> object:
+        """Return the child contract appropriate for one collection item."""
+        if kind in {"list_exact", "array_exact"}:
+            return base_spec if rank == 1 else ("collection", kind, rank - 1, base_spec)
+        if is_list_like(unwrap_runtime_value(item)):
+            next_rank = max(rank - 1, 1)
+            return ("collection", kind, next_rank, base_spec)
+        return base_spec
+
+    def converted_items() -> Iterable[Any]:
+        """Yield collection items with recursively canonicalized evidence."""
+        for item in value:
+            yield _canonicalize_runtime_value_tag_contract(
+                item, item_spec(item), tag_parents
+            )
+
+    if isinstance(value, LazyList):
+        return LazyList(converted_items(), runtime_rank=value.runtime_rank)
+    converted = list(converted_items())
+    if isinstance(value, ListValue):
+        value[:] = converted
+        return value
+    if isinstance(value, list):
+        value[:] = converted
+        return value
+    return converted
+
+
+def _runtime_tag_contract_matches(
+    value: Any,
+    spec: object,
+    *,
+    require_tags: bool,
+) -> bool:
+    """Check enough shape and tag facts to choose a union contract branch."""
+    if not isinstance(spec, tuple) or not spec or not isinstance(spec[0], str):
+        return False
+    kind = spec[0]
+    if kind == "tagged":
+        if len(spec) != 3 or not isinstance(spec[2], tuple):
+            return False
+        if require_tags:
+            actual = runtime_value_tags(value)
+            for item in spec[2]:
+                if not isinstance(item, tuple) or len(item) != 3:
+                    return False
+                required = DataTag(item[0], item[1])
+                present = required in actual
+                if bool(item[2]) == present:
+                    return False
+        return _runtime_tag_contract_matches(
+            unwrap_runtime_value(value), spec[1], require_tags=require_tags
+        )
+    payload = unwrap_runtime_value(value)
+    if kind == "any":
+        return True
+    if kind == "none":
+        return _is_none_result_value(payload)
+    if kind == "nominal":
+        return len(spec) == 2 and isinstance(spec[1], str) and _matches_type_pattern(
+            payload, spec[1]
+        )
+    if kind == "union":
+        return len(spec) == 2 and isinstance(spec[1], tuple) and any(
+            _runtime_tag_contract_matches(value, item, require_tags=require_tags)
+            for item in spec[1]
+        )
+    if kind == "intersection":
+        return len(spec) == 2 and isinstance(spec[1], tuple) and all(
+            _runtime_tag_contract_matches(value, item, require_tags=require_tags)
+            for item in spec[1]
+        )
+    if kind == "tuple":
+        return (
+            len(spec) == 2
+            and isinstance(spec[1], tuple)
+            and isinstance(payload, tuple)
+            and len(payload) == len(spec[1])
+        )
+    if kind == "collection":
+        return len(spec) == 4 and is_list_like(payload)
+    return False
 
 
 def _canonicalize_runtime_return_tags(

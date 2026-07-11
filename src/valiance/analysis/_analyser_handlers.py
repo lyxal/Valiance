@@ -1261,8 +1261,23 @@ def _list_literal_node(
         branch,
         item_options,
         node,
-        lambda combo: T.C(T.ListExactType, T.U(*(item.typ for item in combo))),
+        lambda combo: _list_literal_type(tuple(item.typ for item in combo)),
         self.env.context,
+    )
+
+
+def _list_literal_type(items: tuple[T.Type, ...]) -> T.Type:
+    """Build a list type, lifting tags common to every item by one depth."""
+    base = T.normalize(T.U(*items))
+    if not isinstance(base, T.TaggedType):
+        return T.C(T.ListExactType, base)
+    lifted = tuple(
+        T.DataTag(tag.name, tag.depth + 1, tag.absent) for tag in base.tags
+    )
+    return T.Tagged(
+        T.C(T.ListExactType, base.inner),
+        *lifted,
+        exact=base.exact,
     )
 
 
@@ -1654,6 +1669,15 @@ def _tag_overlay_node(
         for params, returns in node.signatures:
             if not self._validate_data_tags((params, returns), node):
                 continue
+            overlay_error = _tag_overlay_contract_error(
+                node.tag.name,
+                params,
+                returns,
+                self.env.context,
+            )
+            if overlay_error is not None:
+                self._diagnose(overlay_error, node)
+                continue
             overload = T.Overload(params=params, returns=returns)
             if node.generics:
                 overload = _functions._genericize_overload(overload, node.generics)
@@ -1665,6 +1689,51 @@ def _tag_overlay_node(
             )
 
     return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+
+
+def _tag_overlay_contract_error(
+    name: str,
+    params: tuple[T.Type, ...],
+    returns: tuple[T.Type, ...],
+    ctx: T.Context,
+) -> str | None:
+    """Return why an overlay would violate tag ownership or rank flow."""
+    source_tags = tuple(
+        (tag, _calls._type_rank(T.normalize(param)))
+        for param in params
+        for tag in _top_level_data_tags(param)
+        if tag.name == name and not tag.absent
+    )
+    if not source_tags:
+        return f"tag overlay '#{name}' must require that tag on an input"
+
+    for ret in returns:
+        return_rank = _calls._type_rank(T.normalize(ret))
+        for tag in _top_level_data_tags(ret):
+            if tag.name != name:
+                return (
+                    f"tag overlay '#{name}' cannot add, remove, or preserve "
+                    f"foreign tag '#{tag.name}' in its return contract"
+                )
+            if tag.absent or not ctx.is_constructed_like_tag(name):
+                continue
+            valid_source = any(
+                return_rank >= max(source_rank - source.depth, 0)
+                and tag.depth == max(return_rank - 1, 0)
+                for source, source_rank in source_tags
+            )
+            if not valid_source:
+                return (
+                    f"constructed tag overlay '#{name}' has unsafe rank/depth "
+                    "flow in its return contract"
+                )
+    return None
+
+
+def _top_level_data_tags(typ: T.Type) -> tuple[T.DataTag, ...]:
+    """Return tags decorating the value represented by ``typ``."""
+    normalized = T.normalize(typ)
+    return tuple(normalized.tags) if isinstance(normalized, T.TaggedType) else ()
 
 
 @_core.register(TagApplicationNode)
@@ -1687,6 +1756,15 @@ def _tag_application_node(
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
 
     (value_type,), base_branch = sourced
+    value_rank = _calls._type_rank(T.normalize(value_type))
+    if node.tag.depth > value_rank:
+        self._diagnose(
+            f"data tag '{_calls._show_tag(node.tag)}' has depth "
+            f"{node.tag.depth}, but {T.show(value_type)} has rank {value_rank}",
+            node,
+        )
+        return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+
     validator: T.AppliedOverload | None = None
     validator_index: int | None = None
     validator_runtime_name: Symbol | None = None

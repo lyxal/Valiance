@@ -961,7 +961,7 @@ small-number benchmark is not permission to round large integers silently.
 
 `dumps(program)` writes:
 
-1. the magic/version marker `VLNCBC\x12`;
+1. the magic/version marker `VLNCBC\x14`;
 2. the top-level `FunctionCode` and all nested instruction payloads; and
 3. program-level variant-to-parent tag metadata.
 

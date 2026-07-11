@@ -284,7 +284,13 @@ def _single_index_type(typ: T.Type) -> T.Type:
     """Determine the type of single index during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
-        return _single_index_type(typ.inner)
+        item = _single_index_type(typ.inner)
+        carried = tuple(
+            T.DataTag(tag.name, tag.depth - 1, tag.absent)
+            for tag in typ.tags
+            if tag.depth > 0
+        )
+        return T.Tagged(item, *carried) if carried else item
     if isinstance(typ, T.UnionType):
         return T.U(*(_single_index_type(item) for item in typ.items))
     if isinstance(typ, T.CollectionType):

@@ -45,6 +45,7 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
+from valiance.runtime_values import TaggedValue
 from valiance.symbols import Symbol
 from valiance.types import (
     AnonymousTrait,
@@ -613,6 +614,40 @@ def _random_tag(rng: random.Random) -> DataTag:
     )
 
 
+def _random_tag_contract(rng: random.Random, depth: int = 1) -> object:
+    """Return a bounded serializable runtime tag-contract tree."""
+    if depth <= 0:
+        return rng.choice((("any",), ("nominal", "Integer")))
+    choice = rng.choice(("any", "nominal", "tagged", "collection", "tuple"))
+    if choice == "any":
+        return ("any",)
+    if choice == "nominal":
+        return ("nominal", rng.choice(("Integer", "Number", "String")))
+    if choice == "tagged":
+        return (
+            "tagged",
+            _random_tag_contract(rng, depth - 1),
+            tuple(
+                (tag.name, tag.depth, tag.absent)
+                for tag in (_random_tag(rng) for _ in range(rng.randint(1, 2)))
+            ),
+        )
+    if choice == "collection":
+        return (
+            "collection",
+            "list_exact",
+            rng.randint(1, 3),
+            _random_tag_contract(rng, depth - 1),
+        )
+    return (
+        "tuple",
+        tuple(
+            _random_tag_contract(rng, depth - 1)
+            for _ in range(rng.randint(0, 3))
+        ),
+    )
+
+
 def _random_pattern(rng: random.Random, depth: int) -> RuntimeTypePattern:
     child_count = rng.randint(0, 3) if depth > 0 else 0
     return RuntimeTypePattern(
@@ -694,6 +729,14 @@ def _simple_value(rng: random.Random, depth: int) -> object:
             return_collection_ranks=tuple(
                 None if rng.random() < 0.3 else rng.randint(0, 4)
                 for _ in range(rng.randint(0, 4))
+            ),
+            return_tags=tuple(
+                tuple(_random_tag(rng) for _ in range(rng.randint(0, 3)))
+                for _ in range(rng.randint(0, 4))
+            ),
+            return_tag_specs=tuple(
+                _random_tag_contract(rng, max(0, depth - 1))
+                for _ in range(rng.randint(0, 3))
             ),
             type_args=tuple(_random_string(rng, 8) for _ in range(rng.randint(0, 3))),
             static_values=tuple(
@@ -788,6 +831,10 @@ def _random_function(
         return_tags=tuple(
             tuple(_random_tag(rng) for _ in range(rng.randint(0, 3)))
             for _ in range(rng.randint(0, 4))
+        ),
+        return_tag_specs=tuple(
+            _random_tag_contract(rng, max(0, depth - 1))
+            for _ in range(rng.randint(0, 3))
         ),
         return_collection_ranks=tuple(
             None if rng.random() < 0.3 else rng.randint(0, 5)
@@ -2800,7 +2847,7 @@ def _fuzz_data_tags(
 ) -> object:
     """Exercise tag-set, variant, validator, disjoint, and unit invariants."""
     del config
-    mode = iteration % 12
+    mode = iteration % 20
     case: object = ("uninitialized", mode)
     try:
         if mode == 0:
@@ -2976,7 +3023,7 @@ define exact(value: [#a] Number) -> String => "exact" end
             analyser.analyse(parse(source))
             if not any("no overloads" in str(item) for item in analyser.diagnostics):
                 raise AssertionError(analyser.diagnostics)
-        else:
+        elif mode == 11:
             value = rng.randint(-50, 50)
             source = f"""
 tag #sorted as computed
@@ -3007,6 +3054,152 @@ end
                 )
             if run(loads(dumps(program))) != ["ascending"]:
                 raise AssertionError("serialized return-tag canonicalization changed")
+        elif mode == 12:
+            left = rng.randint(-50, 50)
+            right = rng.randint(-50, 50)
+            source = f"""
+tag #sticky as constructed
+#sticky: + =>
+  (#sticky Number, Number) -> #sticky Number
+end
+{left} #sticky | {right} +
+"""
+            case = ("constructed-overlay-runtime", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            program = compile_program(typed, optimize=False)
+            for result in (run(program), run(loads(dumps(program)))):
+                [value] = result
+                if not isinstance(value, TaggedValue):
+                    raise AssertionError("constructed overlay lost runtime tag")
+                if {(tag.name, tag.depth) for tag in value.tags} != {("sticky", 0)}:
+                    raise AssertionError(value)
+        elif mode == 13:
+            left = rng.randint(-50, 50)
+            right = rng.randint(-50, 50)
+            source = f"""
+tag #km as unit
+#km: + =>
+  (#km Number, Number) -> #km Number
+end
+{left} #km | {right} +
+"""
+            case = ("unit-overlay-permission", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            [value] = run(loads(dumps(compile_program(typed, optimize=False))))
+            if not isinstance(value, TaggedValue) or {
+                tag.name for tag in value.tags
+            } != {"km"}:
+                raise AssertionError(value)
+        elif mode == 14:
+            source = """
+tag #nested as constructed
+define keep(value: Number+) -> #nested+ Number+ => $value end
+[1, 2] | keep
+"""
+            case = ("constructed-depth-serialization", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            [value] = run(loads(dumps(compile_program(typed, optimize=False))))
+            if not isinstance(value, TaggedValue) or {
+                (tag.name, tag.depth) for tag in value.tags
+            } != {("nested", 1)}:
+                raise AssertionError(value)
+        elif mode == 15:
+            value = rng.randint(-50, 50)
+            source = f"""
+tag #sticky as constructed
+define keep(value: #sticky Number) -> #sticky Number => $value end
+#sticky: keep =>
+  (#sticky Number) -> Number
+end
+{value} #sticky | keep
+"""
+            case = ("constructed-overlay-removal", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            [result] = run(loads(dumps(compile_program(typed, optimize=False))))
+            if isinstance(result, TaggedValue):
+                raise AssertionError("overlay removal left stale constructed tag")
+        elif mode == 16:
+            source = """
+tag #sticky as constructed
+$values = [1 #sticky, 2]
+$plain = $values as Integer+
+$plain $[0] |
+match =>
+  as :#sticky Integer => "leaked"
+  _ => "plain"
+end
+"""
+            case = ("recursive-cast-erasure", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            if run(loads(dumps(compile_program(typed, optimize=False)))) != ["plain"]:
+                raise AssertionError("cast leaked nested constructed evidence")
+        elif mode == 17:
+            source = """
+tag #sticky as constructed
+define make(dummy: Number) -> Integer+ => [1 #sticky, 2] end
+$plain = make 0
+$plain $[0] |
+match =>
+  as :#sticky Integer => "leaked"
+  _ => "plain"
+end
+"""
+            case = ("recursive-return-erasure", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            if run(loads(dumps(compile_program(typed, optimize=False)))) != ["plain"]:
+                raise AssertionError("function return leaked nested evidence")
+        elif mode == 18:
+            source = """
+tag #nested as constructed
+$outer = [[1, 2] #nested]
+$outer $[0] |
+match =>
+  as :#nested Integer+ => "tagged"
+  _ => "plain"
+end
+"""
+            case = ("depth-index-projection", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            if run(loads(dumps(compile_program(typed, optimize=False)))) != ["tagged"]:
+                raise AssertionError("indexing failed to project tag depth")
+        else:
+            source = """
+tag #nested as constructed
+$outer = [[1, 2] #nested, [3, 4] #nested]
+$outer[0:0] |
+match =>
+  as :#nested+ Integer+2 => "tagged"
+  _ => "plain"
+end
+"""
+            case = ("depth-slice-preservation", source)
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            if analyser.diagnostics:
+                raise AssertionError(analyser.diagnostics)
+            if run(loads(dumps(compile_program(typed, optimize=False)))) != ["tagged"]:
+                raise AssertionError("slicing failed to preserve tag depth")
         return case
     except BaseException as exc:
         raise _GeneratedCaseFailure(case, exc) from exc

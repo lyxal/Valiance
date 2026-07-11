@@ -95,6 +95,7 @@ from valiance.runtime.bytecode import (
 )
 from valiance.symbols import Symbol
 from valiance.types import (
+    AppliedOverload,
     ArrayExactType,
     ArrayMinType,
     AtomicType,
@@ -302,6 +303,7 @@ class _Compiler:
         multi: bool = False,
         dispatch_types: tuple[str | None, ...] = (),
         return_tags: tuple[tuple[DataTag, ...], ...] = (),
+        return_tag_specs: tuple[object, ...] = (),
         return_collection_ranks: tuple[int | None, ...] = (),
         param_collection_ranks: tuple[int | None, ...] = (),
     ) -> FunctionCode:
@@ -323,6 +325,7 @@ class _Compiler:
             multi=multi,
             dispatch_types=dispatch_types,
             return_tags=return_tags,
+            return_tag_specs=return_tag_specs,
             return_collection_ranks=return_collection_ranks,
             param_collection_ranks=param_collection_ranks,
         )
@@ -533,6 +536,7 @@ class _Compiler:
             case CastNode(typ, checked):
                 if checked:
                     self.emit(OpCode.CHECK_CAST, _cast_type_spec(typ))
+                self.emit(OpCode.CANONICALIZE_TAGS, _runtime_tag_contract_spec(typ))
             case StackShuffleNode():
                 self.emit(OpCode.STACK_SHUFFLE, _stack_shuffle_spec(node))
             case FunctionNode():
@@ -1392,6 +1396,7 @@ def _compile_function_overload(
         multi=_overload_is_multi(overload),
         dispatch_types=_overload_dispatch_types(overload),
         return_tags=_function_overload_return_tags(overload, typ),
+        return_tag_specs=_function_overload_return_tag_specs(overload, typ),
         return_collection_ranks=_function_return_collection_ranks(typ),
         param_collection_ranks=(
             *_function_param_collection_ranks(typ),
@@ -1485,6 +1490,25 @@ def _function_return_tags(
     return tuple(_top_level_runtime_tags(ret) for ret in typ.returns)
 
 
+def _function_overload_return_tag_specs(
+    overload: FunctionOverloadTyping,
+    typ: FunctionType,
+) -> tuple[object, ...]:
+    """Compile recursive runtime tag contracts for one function overload."""
+    source = overload.overload
+    returns = source.returns if isinstance(source, Overload) else typ.returns
+    if returns is None:
+        return ()
+    return tuple(_runtime_tag_contract_spec(ret) for ret in returns)
+
+
+def _function_return_tag_specs(typ: FunctionType) -> tuple[object, ...]:
+    """Compile recursive runtime tag contracts for a function type."""
+    if typ.returns is None:
+        return ()
+    return tuple(_runtime_tag_contract_spec(ret) for ret in typ.returns)
+
+
 def _function_return_collection_ranks(
     typ: FunctionType,
 ) -> tuple[int | None, ...]:
@@ -1518,10 +1542,7 @@ def _runtime_parameter_rank(typ: Type) -> int | None:
 
 def _top_level_runtime_tags(typ: Type) -> tuple[DataTag, ...]:
     """Compute top level runtime tags during typed-AST bytecode lowering."""
-    typ = normalize(typ)
-    if isinstance(typ, TaggedType):
-        return tuple(sorted(tag for tag in typ.tags if tag.depth == 0))
-    return ()
+    return _runtime_tags_for_type(typ)
 
 
 def _runtime_dispatch_type(typ: Type) -> str | None:
@@ -1982,6 +2003,16 @@ def _resolved_element_reference(
     )
     if not any(rank is not None for rank in return_collection_ranks):
         return_collection_ranks = ()
+    return_tags = (
+        _call_site_return_tag_contract(node.overload)
+        if node.overload is not None
+        else ()
+    )
+    return_tag_specs = (
+        _call_site_return_tag_specs(node.overload)
+        if node.overload is not None
+        else ()
+    )
     arity_override = None
     consumed_override = None
     if (
@@ -1999,6 +2030,8 @@ def _resolved_element_reference(
         vectorised_depths=vectorised_depths,
         vectorised_target_ranks=vectorised_target_ranks,
         return_collection_ranks=return_collection_ranks,
+        return_tags=return_tags,
+        return_tag_specs=return_tag_specs,
         type_args=type_args,
         static_values=static_values,
         arity_override=arity_override,
@@ -2018,6 +2051,52 @@ def _runtime_collection_rank(typ: Type | None) -> int | None:
     if isinstance(typ, (ListExactType, ArrayExactType)) and isinstance(typ.rank, int):
         return typ.rank
     return None
+
+
+def _call_site_return_tag_contract(
+    applied: AppliedOverload,
+) -> tuple[tuple[DataTag, ...], ...]:
+    """Return a runtime contract when a call-site overlay changes tag flow."""
+    actual = tuple(_runtime_tags_for_type(ret) for ret in applied.actual_returns)
+    declared = tuple(_runtime_tags_for_type(ret) for ret in applied.overload.returns)
+    return actual if actual != declared else ()
+
+
+def _call_site_return_tag_specs(applied: AppliedOverload) -> tuple[object, ...]:
+    """Return recursive contracts when tagged inputs may affect call results."""
+    if not any(_type_contains_data_tags(param) for param in applied.params):
+        actual = tuple(_runtime_tag_contract_spec(ret) for ret in applied.actual_returns)
+        declared = tuple(
+            _runtime_tag_contract_spec(ret) for ret in applied.overload.returns
+        )
+        return actual if actual != declared else ()
+    return tuple(_runtime_tag_contract_spec(ret) for ret in applied.actual_returns)
+
+
+def _type_contains_data_tags(typ: Type) -> bool:
+    """Return whether any part of a type carries a data-tag fact."""
+    typ = normalize(typ)
+    if isinstance(typ, TaggedType):
+        return bool(typ.tags) or _type_contains_data_tags(typ.inner)
+    if isinstance(typ, CollectionType):
+        return _type_contains_data_tags(typ.base)
+    if isinstance(typ, NominalType):
+        return any(_type_contains_data_tags(arg) for arg in typ.args)
+    if isinstance(typ, (UnionType, IntersectionType)):
+        return any(_type_contains_data_tags(item) for item in typ.items)
+    if isinstance(typ, TupleType):
+        return any(_type_contains_data_tags(item) for item in typ.params)
+    if isinstance(typ, (ExactType, AtomicType)):
+        return _type_contains_data_tags(typ.inner)
+    return False
+
+
+def _runtime_tags_for_type(typ: Type) -> tuple[DataTag, ...]:
+    """Return all runtime-reified tags attached to one value type."""
+    typ = normalize(typ)
+    if isinstance(typ, TaggedType):
+        return tuple(sorted(typ.tags))
+    return ()
 
 
 def _compiled_element_extension(
@@ -2222,6 +2301,54 @@ def _type_pattern_name(typ: object) -> str:
     if not isinstance(typ, NominalType):
         raise CompileError(f"cannot compile match type pattern {typ}")
     return typ.name.text
+
+
+def _runtime_tag_contract_spec(typ: Type) -> object:
+    """Compile the structural tag contract needed to canonicalize a value."""
+    from valiance.types import VarType
+
+    typ = normalize(typ)
+    if isinstance(typ, TaggedType):
+        return (
+            "tagged",
+            _runtime_tag_contract_spec(typ.inner),
+            tuple(
+                (str(tag.name), tag.depth, tag.absent)
+                for tag in sorted(typ.tags)
+            ),
+        )
+    if isinstance(typ, NoneTypeNode):
+        return ("none",)
+    if isinstance(typ, VarType):
+        return ("any",)
+    if isinstance(typ, NominalType):
+        return ("nominal", typ.name.text)
+    if isinstance(typ, UnionType):
+        return ("union", tuple(_runtime_tag_contract_spec(item) for item in typ.items))
+    if isinstance(typ, IntersectionType):
+        return (
+            "intersection",
+            tuple(_runtime_tag_contract_spec(item) for item in typ.items),
+        )
+    if isinstance(typ, TupleType):
+        return ("tuple", tuple(_runtime_tag_contract_spec(item) for item in typ.params))
+    if isinstance(typ, CollectionType):
+        kind = {
+            ListExactType: "list_exact",
+            ListMinType: "list_min",
+            ListRuggedType: "list_rugged",
+            ArrayExactType: "array_exact",
+            ArrayMinType: "array_min",
+        }[type(typ)]
+        return (
+            "collection",
+            kind,
+            typ.rank,
+            _runtime_tag_contract_spec(typ.base),
+        )
+    if isinstance(typ, (ExactType, AtomicType)):
+        return _runtime_tag_contract_spec(typ.inner)
+    return ("any",)
 
 
 def _cast_type_spec(typ: Type) -> object:

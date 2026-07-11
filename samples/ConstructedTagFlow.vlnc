@@ -1,0 +1,39 @@
+#? Constructed-tag flow across overlays, rank changes, units, and erasure.
+
+tag #stream as constructed
+tag #km as unit
+
+define wrap(value: Number+) -> Number++ => [$value] end
+#stream: wrap =>
+  (#stream Number+) -> #stream+ Number++
+end
+
+#km: + =>
+  (#km Number, Number) -> #km Number
+end
+
+define classify(value: #stream+ Number++) -> String =>
+  $value |
+  match =>
+    as :#stream+ Number++ => "nested-stream"
+    _ => "missing"
+  end
+end
+
+define eraseStream(value: #stream Number+) -> Number+ => $value end
+
+$nested = [1, 2, 3] #stream | wrap
+$distance = 10 #km | 5 +
+
+classify $nested
+$nested $[0] |
+match =>
+  as :#stream Number+ => "projected-stream"
+  _ => "missing-projection"
+end
+#-km $distance
+[4, 5] #stream | eraseStream |
+match =>
+  as :#stream Number+ => "leaked"
+  _ => "finite"
+end

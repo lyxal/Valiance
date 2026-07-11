@@ -777,6 +777,8 @@ def _simple_resolved_reference(reference: ResolvedElementReference) -> bool:
         or reference.vectorised_depths
         or reference.vectorised_target_ranks
         or reference.return_collection_ranks
+        or reference.return_tags
+        or reference.return_tag_specs
         or reference.type_args
         or reference.static_values
         or reference.arity_override is not None
@@ -951,7 +953,11 @@ def _exact_straight_line_depth(
         return depth - 1 if depth else None
     if instruction.op in {OpCode.RETURN, OpCode.CYCLE_BEGIN, OpCode.CYCLE_END}:
         return depth
-    if instruction.op in {OpCode.CHECK_CAST, OpCode.VALIDATE_TAG}:
+    if instruction.op in {
+        OpCode.CHECK_CAST,
+        OpCode.CANONICALIZE_TAGS,
+        OpCode.VALIDATE_TAG,
+    }:
         return depth if depth else None
     if instruction.op is OpCode.BUILD_TUPLE:
         return _builder_depth(depth, instruction.arg, 1)

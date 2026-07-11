@@ -2417,7 +2417,9 @@ tag #<name> as <category>
 ## 17.1. Constructed Tags
 - Constructed tags represent properties of data that are a consequence of how that data is constructed. For example, an infinite list can only be infinite if it is constructed that way.
 - Constructed tags are sticky only across operations whose signature or tag overlay explicitly preserves them. Ordinary generic flow does not preserve a constructed tag merely because the input carried it. This conservative rule prevents runtime tag evidence from outliving the compile-time return contract.
+- An explicit return or cast contract is enforced recursively at both compile time and runtime. If it preserves a constructed tag, the returned runtime value carries the same evidence; if it omits the tag, stale evidence is removed even inside heterogeneous collections. This remains true through optimized and serialized bytecode execution.
 - When a signature or overlay preserves a constructed tag from an input of rank `n`, the output carries that tag at depth `(output rank - 1)` if the output rank is at least `n`. If the output rank is lower than the input rank, the tag is not carried.
+- Collection construction canonicalizes a tag shared by every item onto the collection at one greater depth. This keeps nested static types and runtime evidence aligned without wrapping each child redundantly.
 - A constructed-tagged value can otherwise be used where the untagged base type is expected. Unit tags are the exception described below.
 
 ## 17.2. Unit Tags
@@ -2426,6 +2428,7 @@ tag #<name> as <category>
 - For example, indexing a list by a distance doesn't really make that much sense.
 - Unit tags are constructed tags with an extra rule: a unit-tagged value cannot be passed where that unit tag is not expected.
 - Operations that consume a plain scalar, including collection indexing, therefore reject unit-tagged values. The unit must be explicitly removed with `#!unit` or `#-unit` when discarding it is intentional.
+- A matching unit-tag overlay is an explicit permission for an otherwise plain implementation to consume that unit. Only the overlay's own unit is erased for underlying overload selection; unrelated units remain protected.
 - This preserves semantic meaning while still allowing explicitly declared tag-preserving operations.
 
 ## 17.3. Computed Tags
@@ -2571,6 +2574,9 @@ end
 ```
 
 - Absence of a constructed tag will remove that tag.
+- Every overlay must require its attached tag positively on at least one input. An overlay can control only that tag in its return contract; it cannot add, remove, or preserve foreign tags.
+- A constructed or unit overlay that preserves its tag must obey the rank/depth rule from 17.1. Unsafe rank changes are rejected during analysis.
+- Overlay return contracts are reified on the actual runtime result, including user functions that suspend for nested calls and bytecode that has been serialized and restored.
 - Constructed tags are not preserved by ordinary generic flow. A function signature or tag overlay must explicitly preserve a constructed tag for it to remain on the return value.
 
 ## 17.8. Tag Validators
@@ -2617,6 +2623,8 @@ define[T] #sorted sort(:#sorted T+) => top
 - If you would have `(#tag T+)+`, you can rewrite it as `#tag+ T+`. Each `+` after a tag is a level of depth that tag applies at. ie levels of nesting from the top.
 - Example: `(#B (#A T+)+)+` == `#A++ #B+ T+3`
 - Numeric shorthand can also be used. `#tag+3` == `#tag+++`
+- A tag depth cannot exceed the rank of the value it decorates. For example, `#tag+ Number+` is valid, while `#tag+ Number` and `#tag++ Number+` are compile-time errors.
+- Single indexing lowers positive tag depth by one: indexing a `#tag+ T+` produces `#tag T`. Slicing preserves tag depth because the result retains the receiver's rank.
 
 # 18. Element Tags
 
