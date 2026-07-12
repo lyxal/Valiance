@@ -3665,6 +3665,26 @@ define f(value: #left #right Number) -> Number => $value
         overload = analyser.env.overloads_for(Symbol("insideAForLoop"))[0]
         self.assertEqual(show(overload.params[0]), "#!infinite+ Number+2")
 
+    def test_negative_tag_requirement_propagates_through_list_selection(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                "define selectionFromList(ns: Number+) =>\n"
+                "  $items = [[1, 2], [1, 2, 3], $ns]\n"
+                "  length $items[1]\n"
+                "end\n"
+                "selectionFromList(#infinite [1, 2, 3])"
+            )
+        )
+
+        overload = analyser.env.overloads_for(Symbol("selectionFromList"))[0]
+        self.assertEqual(show(overload.params[0]), "#!infinite Number+")
+        self.assertIn(
+            "no overloads for element 'selectionFromList'",
+            analyser.diagnostics[0],
+        )
+
     def test_length_still_rejects_indexing_heterogeneous_list_to_union(self):
         analyser = Analyser()
 

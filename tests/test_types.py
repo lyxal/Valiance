@@ -619,6 +619,19 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(applied.actual_returns, (Number,))
         self.assertFalse(applied.vectorised)
 
+    def test_generic_parameter_solves_across_every_actual_union_branch(self):
+        overload = Overload(
+            (WithoutTag(ExactList(V("Item")), "infinite"),),
+            (Integer,),
+        )
+        actual = U(ExactList(Integer), ExactList(Number))
+
+        applied = apply_overload(overload, (actual,))
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.substitution["Item"], Number)
+        self.assertEqual(applied.actual_returns, (Integer,))
+
     def test_constructed_tags_are_transparent_to_generic_overload_solving(self):
         overload = Overload(
             (C(ListExactType, V("Item")), Integer),

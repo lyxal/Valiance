@@ -811,6 +811,15 @@ def _solve(
                 and actual_inner is not None
                 and rec(inner, actual_inner)
             )
+        if isinstance(a, UnionType):
+            # A non-union parameter can accept a union argument only when every
+            # possible actual branch matches it. Gather generic evidence from
+            # every branch so the solution conservatively covers the complete
+            # runtime union.
+            for branch in a.items:
+                if not rec(p, branch):
+                    return False
+            return True
         if isinstance(p, UnionType):
             # Ordinary union solving is allowed only when exactly one branch
             # matches. Ambiguous generic unions should require explicit types.

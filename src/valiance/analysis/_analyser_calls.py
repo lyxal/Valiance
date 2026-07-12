@@ -1166,8 +1166,57 @@ def _propagate_absent_parameter_requirements(
         source = branch.typed_body[-1].node if branch.typed_body else None
         if isinstance(source, GetVariableNode) and source.name in branch.input_names:
             branch = branch.refine_named_input_requirement(source.name, arg, param)
+            continue
+        branch = branch.refine_input_requirement(arg, param)
+        branch = _propagate_union_requirement_to_inputs(branch, arg, param)
+    return branch
+
+
+def _propagate_union_requirement_to_inputs(
+    branch: _core.AnalysisBranch,
+    arg: T.Type,
+    param: T.Type,
+) -> _core.AnalysisBranch:
+    """Conservatively project a union call requirement onto matching inputs.
+
+    Aggregate construction and later projection can erase the exact source path
+    while retaining its type as one member of a union. If an input could supply
+    such a member, preserve the negative tag requirement on that input.
+    """
+    normalized_arg = T.normalize(arg)
+    normalized_param = T.normalize(param)
+    if not isinstance(normalized_arg, T.UnionType):
+        return branch
+    required_shape = (
+        normalized_param.inner
+        if isinstance(normalized_param, T.TaggedType)
+        else normalized_param
+    )
+    required_tags = (
+        tuple(tag for tag in normalized_param.tags if tag.absent)
+        if isinstance(normalized_param, T.TaggedType)
+        else ()
+    )
+    if not required_tags:
+        return branch
+    for index, input_type in enumerate(branch.inputs):
+        input_value = _utils._erase_absent_tag_requirements(input_type)
+        if not T.assignable(input_value, required_shape, T.Context()):
+            continue
+        if not any(
+            T.assignable(input_value, member, T.Context())
+            or T.assignable(member, input_value, T.Context())
+            for member in normalized_arg.items
+        ):
+            continue
+        refined = T.Tagged(input_value, *required_tags)
+        name = branch.input_names[index] if index < len(branch.input_names) else None
+        if name is not None:
+            branch = branch.refine_named_input_requirement(
+                name, input_type, refined
+            )
         else:
-            branch = branch.refine_input_requirement(arg, param)
+            branch = branch.refine_input_requirement(input_type, refined)
     return branch
 
 
