@@ -79,6 +79,7 @@ from valiance.types import (
     V,
     Variance,
     WithTag,
+    WithoutTag,
     assignable,
     optional,
     show,
@@ -3589,6 +3590,30 @@ define f(value: #left #right Number) -> Number => $value
         self.assertEqual(
             [node.typ for node in typed],
             [C(ListExactType, Integer), Integer, None],
+        )
+
+    def test_negative_tag_requirement_is_inferred_for_explicit_parameter(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                "define mingle(ns: Number+) => length $ns + 5\n"
+                "println mingle(#infinite [1, 2, 3, 4])"
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "2:9: no overloads for element 'mingle' match explicit call syntax\n"
+                "available overloads:\n"
+                "  - mingle(ns: #!infinite Number+) -> Integer"
+            ],
+        )
+        overload = analyser.env.overloads_for(Symbol("mingle"))[0]
+        self.assertEqual(
+            overload.params,
+            (WithoutTag(C(ListExactType, Number), "infinite"),),
         )
 
     def test_length_rejects_infinite_list(self):

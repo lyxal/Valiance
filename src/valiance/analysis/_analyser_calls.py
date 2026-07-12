@@ -1146,9 +1146,69 @@ def _apply_overload_to_branch(
                 else applied.runtime_static_values
             ),
         )
+        specialized_branch = _propagate_absent_parameter_requirements(
+            specialized_branch, specialized_args, applied.params
+        )
         return _core.OverloadApplication(applied, specialized_branch)
     return None
 
+
+
+def _propagate_absent_parameter_requirements(
+    branch: _core.AnalysisBranch,
+    args: tuple[T.Type, ...],
+    params: tuple[T.Type, ...],
+) -> _core.AnalysisBranch:
+    """Propagate negative data-tag requirements back to function inputs.
+
+    An untagged argument can satisfy an absent-tag parameter, but when that
+    argument originated from a function parameter the absence is a constraint
+    on callers of the enclosing function.  Preserve that fact in branch-local
+    input, variable, and cycle-parameter types so the inferred overload exposes
+    the requirement.
+    """
+    for arg, param in zip(args, params, strict=True):
+        if not _contains_absent_data_tag(param):
+            continue
+        branch = branch.refine_input_requirement(arg, param)
+    return branch
+
+
+def _contains_absent_data_tag(typ: T.Type) -> bool:
+    """Return whether a type contains a negative data-tag requirement."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        return any(tag.absent for tag in typ.tags) or _contains_absent_data_tag(
+            typ.inner
+        )
+    if isinstance(typ, T.NominalType):
+        return any(_contains_absent_data_tag(arg) for arg in typ.args)
+    if isinstance(typ, (T.UnionType, T.IntersectionType)):
+        return any(_contains_absent_data_tag(item) for item in typ.items)
+    if isinstance(typ, T.TupleType):
+        return any(_contains_absent_data_tag(item) for item in typ.params)
+    if isinstance(typ, T.VariadicTupleType):
+        return any(_contains_absent_data_tag(item.typ) for item in typ.items)
+    if isinstance(typ, T.RowType):
+        return _contains_absent_data_tag(typ.base) or any(
+            _contains_absent_data_tag(field.typ) for field in typ.fields
+        )
+    if isinstance(typ, T.CollectionType):
+        return _contains_absent_data_tag(typ.base)
+    if isinstance(typ, T.FunctionType):
+        return any(
+            _contains_absent_data_tag(item)
+            for item in (*(typ.params or ()), *(typ.returns or ()))
+        )
+    if isinstance(typ, (T.ExactType, T.AtomicType)):
+        return _contains_absent_data_tag(typ.inner)
+    if isinstance(typ, T.AnonymousTraitType):
+        return any(
+            _contains_absent_data_tag(item)
+            for requirement in typ.requirements
+            for item in (*requirement.overload.params, *requirement.overload.returns)
+        )
+    return False
 
 def _apply_tag_overlay(
     element: Symbol,

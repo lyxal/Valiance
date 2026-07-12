@@ -780,6 +780,42 @@ def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
     )
 
 
+def _refine_input_requirement(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
+    """Refine a function-input fact while preserving negative tag constraints."""
+    typ = T.normalize(typ)
+    if T.same(typ, old):
+        return new
+    if isinstance(typ, T.AnonymousTraitType):
+        return T.AnonymousTrait(
+            typ.generics,
+            (
+                T.AnonymousTraitRequirement(
+                    requirement.name,
+                    _functions._transform_overload_types(
+                        requirement.overload,
+                        lambda item: _refine_input_requirement(item, old, new),
+                    ),
+                )
+                for requirement in typ.requirements
+            ),
+        )
+    if isinstance(typ, T.AtomicType):
+        return T.Atomic(_refine_input_requirement(typ.inner, old, new))
+    return _functions._transform_type_children(
+        typ,
+        lambda child: _refine_input_requirement(child, old, new),
+    )
+
+
+def _refine_input_requirement_items(
+    items: tuple[tuple[Symbol, T.Type], ...], old: T.Type, new: T.Type
+) -> tuple[tuple[Symbol, T.Type], ...]:
+    """Refine named input facts while preserving negative tag constraints."""
+    return tuple(
+        (name, _refine_input_requirement(typ, old, new)) for name, typ in items
+    )
+
+
 def _erase_absent_tag_requirements(typ: T.Type) -> T.Type:
     """Compute erase absent tag requirements during static analysis."""
     typ = T.normalize(typ)

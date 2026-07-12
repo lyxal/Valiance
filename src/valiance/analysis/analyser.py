@@ -343,6 +343,23 @@ class BranchVariables:
             block_constants=self.block_constants,
         )
 
+    def refine_input_requirement(
+        self, old: T.Type, new: T.Type
+    ) -> BranchVariables:
+        """Refine parameter-backed variables with a call requirement."""
+        return BranchVariables(
+            function_locals=_utils._refine_input_requirement_items(
+                self.function_locals, old, new
+            ),
+            parameters=_utils._refine_input_requirement_items(
+                self.parameters, old, new
+            ),
+            captures=self.captures,
+            block_locals=self.block_locals,
+            function_constants=self.function_constants,
+            block_constants=self.block_constants,
+        )
+
     def merge_against(
         self,
         other: BranchVariables,
@@ -572,6 +589,23 @@ class AnalysisBranch:
             ),
             cycle_params=tuple(
                 _utils._refine_type(item, old, new) for item in self.cycle_params
+            ),
+        )
+
+    def refine_input_requirement(
+        self, old: T.Type, new: T.Type
+    ) -> AnalysisBranch:
+        """Propagate a call constraint into enclosing function input facts."""
+        return replace(
+            self,
+            inputs=tuple(
+                _utils._refine_input_requirement(item, old, new)
+                for item in self.inputs
+            ),
+            variables=self.variables.refine_input_requirement(old, new),
+            cycle_params=tuple(
+                _utils._refine_input_requirement(item, old, new)
+                for item in self.cycle_params
             ),
         )
 
