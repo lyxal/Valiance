@@ -14,6 +14,7 @@ from valiance.asts import (
     CallArgument,
     ElementNode,
     FunctionNode,
+    GetVariableNode,
     FunctionOverloadTyping,
     TypedFunctionNode,
     TypedNode,
@@ -1153,24 +1154,20 @@ def _apply_overload_to_branch(
     return None
 
 
-
 def _propagate_absent_parameter_requirements(
     branch: _core.AnalysisBranch,
     args: tuple[T.Type, ...],
     params: tuple[T.Type, ...],
 ) -> _core.AnalysisBranch:
-    """Propagate negative data-tag requirements back to function inputs.
-
-    An untagged argument can satisfy an absent-tag parameter, but when that
-    argument originated from a function parameter the absence is a constraint
-    on callers of the enclosing function.  Preserve that fact in branch-local
-    input, variable, and cycle-parameter types so the inferred overload exposes
-    the requirement.
-    """
+    """Propagate negative data-tag requirements back to function inputs."""
     for arg, param in zip(args, params, strict=True):
         if not _contains_absent_data_tag(param):
             continue
-        branch = branch.refine_input_requirement(arg, param)
+        source = branch.typed_body[-1].node if branch.typed_body else None
+        if isinstance(source, GetVariableNode) and source.name in branch.input_names:
+            branch = branch.refine_named_input_requirement(source.name, arg, param)
+        else:
+            branch = branch.refine_input_requirement(arg, param)
     return branch
 
 
@@ -1209,6 +1206,7 @@ def _contains_absent_data_tag(typ: T.Type) -> bool:
             for item in (*requirement.overload.params, *requirement.overload.returns)
         )
     return False
+
 
 def _apply_tag_overlay(
     element: Symbol,

@@ -79,7 +79,6 @@ from valiance.types import (
     V,
     Variance,
     WithTag,
-    WithoutTag,
     assignable,
     optional,
     show,
@@ -3592,29 +3591,83 @@ define f(value: #left #right Number) -> Number => $value
             [C(ListExactType, Integer), Integer, None],
         )
 
-    def test_negative_tag_requirement_is_inferred_for_explicit_parameter(self):
+    def test_negative_tag_requirement_refines_only_the_used_parameter(self):
         analyser = Analyser()
 
         analyser.analyse(
             parse(
-                "define mingle(ns: Number+) => length $ns + 5\n"
-                "println mingle(#infinite [1, 2, 3, 4])"
+                "define onlySecond(a: Number+, b: Number+) => length $b"
             )
         )
 
+        overload = analyser.env.overloads_for(Symbol("onlySecond"))[0]
         self.assertEqual(
-            analyser.diagnostics,
-            [
-                "2:9: no overloads for element 'mingle' match explicit call syntax\n"
-                "available overloads:\n"
-                "  - mingle(ns: #!infinite Number+) -> Integer"
-            ],
+            tuple(show(param) for param in overload.params),
+            ("Number+", "#!infinite Number+"),
         )
-        overload = analyser.env.overloads_for(Symbol("mingle"))[0]
+
+    def test_negative_tag_requirement_propagates_through_local_variable(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                "define remingle(ns: Number+) =>\n"
+                "  $xs = $ns\n"
+                "  length $xs + 5\n"
+                "end\n"
+                "remingle(#infinite [1, 2, 3, 4])"
+            )
+        )
+
+        overload = analyser.env.overloads_for(Symbol("remingle"))[0]
         self.assertEqual(
-            overload.params,
-            (WithoutTag(C(ListExactType, Number), "infinite"),),
+            show(overload.params[0]),
+            "#!infinite Number+",
         )
+        self.assertIn("no overloads for element 'remingle'", analyser.diagnostics[0])
+
+    def test_negative_tag_requirement_propagates_through_branch_join(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                "define conditional(ns: Number+) =>\n"
+                "  if ($ns[0] == 0) => $ns\n"
+                "  else => [1, 2, 3]\n"
+                "  length | + 5\n"
+                "end\n"
+                "conditional(#infinite [1, 2, 3, 4])"
+            )
+        )
+
+        overload = analyser.env.overloads_for(Symbol("conditional"))[0]
+        self.assertEqual(
+            show(overload.params[0]),
+            "#!infinite Number+",
+        )
+        self.assertIn(
+            "no overloads for element 'conditional'", analyser.diagnostics[0]
+        )
+
+    def test_negative_tag_requirement_propagates_through_closure_capture(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                "define closures(ns: Number+) =>\n"
+                "  define \\inner => $ns\n"
+                "  length \\inner + 5\n"
+                "end\n"
+                "closures(#infinite [1, 2, 3, 4])"
+            )
+        )
+
+        overload = analyser.env.overloads_for(Symbol("closures"))[0]
+        self.assertEqual(
+            show(overload.params[0]),
+            "#!infinite Number+",
+        )
+        self.assertIn("no overloads for element 'closures'", analyser.diagnostics[0])
 
     def test_length_rejects_infinite_list(self):
         analyser = Analyser()

@@ -417,6 +417,7 @@ class AnalysisBranch:
 
     stack: T.TypeStack = field(default_factory=T.TypeStack)
     inputs: tuple[T.Type, ...] = ()
+    input_names: tuple[Symbol | None, ...] = ()
     variables: BranchVariables = field(default_factory=BranchVariables)
     typed_body: tuple[TypedNode, ...] = ()
     element_tags: frozenset[T.ElementTag] = field(default_factory=frozenset)
@@ -606,6 +607,39 @@ class AnalysisBranch:
             cycle_params=tuple(
                 _utils._refine_input_requirement(item, old, new)
                 for item in self.cycle_params
+            ),
+        )
+
+    def refine_named_input_requirement(
+        self, name: Symbol, old: T.Type, new: T.Type
+    ) -> AnalysisBranch:
+        """Refine one named explicit input without affecting equal-typed peers."""
+        inputs = tuple(
+            (
+                _utils._refine_input_requirement(item, old, new)
+                if index < len(self.input_names) and self.input_names[index] == name
+                else item
+            )
+            for index, item in enumerate(self.inputs)
+        )
+        parameters = tuple(
+            (
+                param_name,
+                _utils._refine_input_requirement(typ, old, new)
+                if param_name == name
+                else typ,
+            )
+            for param_name, typ in self.variables.parameters
+        )
+        return replace(
+            self,
+            inputs=inputs,
+            variables=replace(self.variables, parameters=parameters),
+            cycle_params=tuple(
+                _utils._refine_input_requirement(item, old, new)
+                if index < len(self.input_names) and self.input_names[index] == name
+                else item
+                for index, item in enumerate(self.cycle_params)
             ),
         )
 
@@ -3957,6 +3991,11 @@ class Analyser:
         initial = AnalysisBranch(
             stack=initial_stack,
             inputs=body_params if mode is not InputMode.INFER_INPUTS else (),
+            input_names=(
+                tuple(param.name for param in node.params or ())
+                if mode is not InputMode.INFER_INPUTS
+                else ()
+            ),
             variables=variables,
             input_mode=mode,
             cycle_params=body_params if mode is InputMode.CYCLE_EXPLICIT_PARAMS else (),
