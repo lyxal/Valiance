@@ -1371,6 +1371,36 @@ def _array_literal_node(
     return _core.BranchSet((branch.emit(TypedNode(node, None)),))
 
 
+def _loop_iterable_requirement(
+    iterable_type: T.Type,
+    outputs: _core.BranchSet,
+) -> T.Type | None:
+    """Lift negative loop-item tag requirements onto the iterable input."""
+    absent_tags: set[T.DataTag] = set()
+    for output in outputs:
+        if not output.cycle_params:
+            continue
+        item = T.normalize(output.cycle_params[0])
+        if not isinstance(item, T.TaggedType):
+            continue
+        absent_tags.update(
+            T.DataTag(tag.name, tag.depth + 1, absent=True)
+            for tag in item.tags
+            if tag.absent
+        )
+    if not absent_tags:
+        return None
+    normalized = T.normalize(iterable_type)
+    if isinstance(normalized, T.TaggedType):
+        return T.Tagged(
+            normalized.inner,
+            *normalized.tags,
+            *absent_tags,
+            exact=normalized.exact,
+        )
+    return T.Tagged(normalized, *absent_tags)
+
+
 @_core.register(ForNode)
 def _for_node(
     self: _core.Analyser,
@@ -1419,6 +1449,24 @@ def _for_node(
     body_outputs = self.analyse_from(body_branch, node.body)
     if not body_outputs:
         return _core.BranchSet()
+
+    refined_iterable = _loop_iterable_requirement(iterable_type, body_outputs)
+    if refined_iterable is not None:
+        source = branch.typed_body[-1].node if branch.typed_body else None
+        if isinstance(source, GetVariableNode) and source.name in branch.input_names:
+            branch = branch.refine_named_input_requirement(
+                source.name, iterable_type, refined_iterable
+            )
+            body_branch = body_branch.refine_named_input_requirement(
+                source.name, iterable_type, refined_iterable
+            )
+        else:
+            branch = branch.refine_input_requirement(
+                iterable_type, refined_iterable
+            )
+            body_branch = body_branch.refine_input_requirement(
+                iterable_type, refined_iterable
+            )
 
     refined_item_type = _utils._loop_variable_output_type(
         node.variable,

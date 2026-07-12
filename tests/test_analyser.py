@@ -3649,6 +3649,40 @@ define f(value: #left #right Number) -> Number => $value
             "no overloads for element 'conditional'", analyser.diagnostics[0]
         )
 
+    def test_negative_tag_requirement_propagates_through_for_item(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                "define insideAForLoop(nss: Number++) =>\n"
+                "  $nss foreach (ns) =>\n"
+                "    length $ns\n"
+                "  end\n"
+                "end"
+            )
+        )
+
+        overload = analyser.env.overloads_for(Symbol("insideAForLoop"))[0]
+        self.assertEqual(show(overload.params[0]), "#!infinite+ Number+2")
+
+    def test_length_still_rejects_indexing_heterogeneous_list_to_union(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                "define selectionFromList(ns: Number+) =>\n"
+                "  $items = [1, 2, [1, 2, 3], $ns]\n"
+                "  length $items[1]\n"
+                "end"
+            )
+        )
+
+        self.assertIn(
+            "no overloads for element 'length' match stack "
+            "[Integer | Integer+ | Number+]",
+            analyser.diagnostics[0],
+        )
+
     def test_negative_tag_requirement_propagates_through_closure_capture(self):
         analyser = Analyser()
 
