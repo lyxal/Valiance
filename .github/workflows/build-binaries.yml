@@ -51,7 +51,7 @@ jobs:
 
       - name: Build with Nuitka
         run: >
-          uv run python -m nuitka
+          uv run --with nuitka python -m nuitka
           --onefile
           --standalone
           --include-package=valiance
@@ -91,4 +91,4 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          files:  artifacts/**/*
