@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import math
-from decimal import Decimal
 from typing import Any
 
 import valiance.types as T
 from valiance.analysis.builtins import RuntimeContext
 from valiance.documentation import element_documentation
 from valiance.stdlib_native import stdlib_element
+from valiance.runtime_values import Number
 
 
-def _number(value: float) -> Decimal:
+def _number(value: float) -> Number:
     """Compute number within this subsystem."""
-    return Decimal(str(value))
+    return Number(str(value))
 
 
 @stdlib_element(
@@ -33,10 +33,15 @@ def _pi(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @stdlib_element(
-    "sin", (T.Number,), (T.Number,), param_names=("n",),
+    "sin",
+    (T.Number,),
+    (T.Number,),
+    param_names=("n",),
     documentation=element_documentation(
         "Return the sine of an angle in radians.",
-        parameters=(("n", "Angle in radians."),), returns="The sine of the angle.", category="Trigonometry"
+        parameters=(("n", "Angle in radians."),),
+        returns="The sine of the angle.",
+        category="Trigonometry",
     ),
 )
 def _sin(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -45,10 +50,15 @@ def _sin(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @stdlib_element(
-    "cos", (T.Number,), (T.Number,), param_names=("n",),
+    "cos",
+    (T.Number,),
+    (T.Number,),
+    param_names=("n",),
     documentation=element_documentation(
         "Return the cosine of an angle in radians.",
-        parameters=(("n", "Angle in radians."),), returns="The cosine of the angle.", category="Trigonometry"
+        parameters=(("n", "Angle in radians."),),
+        returns="The cosine of the angle.",
+        category="Trigonometry",
     ),
 )
 def _cos(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -57,10 +67,15 @@ def _cos(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @stdlib_element(
-    "tan", (T.Number,), (T.Number,), param_names=("n",),
+    "tan",
+    (T.Number,),
+    (T.Number,),
+    param_names=("n",),
     documentation=element_documentation(
         "Return the tangent of an angle in radians.",
-        parameters=(("n", "Angle in radians."),), returns="The tangent of the angle.", category="Trigonometry"
+        parameters=(("n", "Angle in radians."),),
+        returns="The tangent of the angle.",
+        category="Trigonometry",
     ),
 )
 def _tan(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -69,10 +84,15 @@ def _tan(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @stdlib_element(
-    "asin", (T.Number,), (T.Number,), param_names=("n",),
+    "asin",
+    (T.Number,),
+    (T.Number,),
+    param_names=("n",),
     documentation=element_documentation(
         "Return the inverse sine in radians.",
-        parameters=(("n", "Input ratio."),), returns="The corresponding angle in radians.", category="Trigonometry"
+        parameters=(("n", "Input ratio."),),
+        returns="The corresponding angle in radians.",
+        category="Trigonometry",
     ),
 )
 def _asin(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -81,10 +101,15 @@ def _asin(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @stdlib_element(
-    "acos", (T.Number,), (T.Number,), param_names=("n",),
+    "acos",
+    (T.Number,),
+    (T.Number,),
+    param_names=("n",),
     documentation=element_documentation(
         "Return the inverse cosine in radians.",
-        parameters=(("n", "Input ratio."),), returns="The corresponding angle in radians.", category="Trigonometry"
+        parameters=(("n", "Input ratio."),),
+        returns="The corresponding angle in radians.",
+        category="Trigonometry",
     ),
 )
 def _acos(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -93,10 +118,15 @@ def _acos(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @stdlib_element(
-    "atan", (T.Number,), (T.Number,), param_names=("n",),
+    "atan",
+    (T.Number,),
+    (T.Number,),
+    param_names=("n",),
     documentation=element_documentation(
         "Return the inverse tangent in radians.",
-        parameters=(("n", "Input ratio."),), returns="The corresponding angle in radians.", category="Trigonometry"
+        parameters=(("n", "Input ratio."),),
+        returns="The corresponding angle in radians.",
+        category="Trigonometry",
     ),
 )
 def _atan(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
