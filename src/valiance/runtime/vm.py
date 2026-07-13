@@ -6,7 +6,6 @@ import builtins as _py_builtins
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
-from decimal import Decimal
 from functools import lru_cache
 from itertools import islice, zip_longest
 from typing import Any, cast
@@ -31,6 +30,7 @@ from valiance.runtime_values import (
     DictValue,
     LazyList,
     ListValue,
+    Number,
     ObjectRuntimeType,
     ObjectValue,
     PanicSignal,
@@ -141,7 +141,7 @@ _NO_EXTENSION_DEFAULT = object()
 _MISSING_VECTOR_ITEM = object()
 _UNINITIALIZED_OBJECT_FIELD = object()
 _MISSING_NAME = object()
-_SCALAR_RUNTIME_TYPES = (Decimal, str, int, bool, type(None))
+_SCALAR_RUNTIME_TYPES = (Number, str, int, bool, type(None))
 
 
 @dataclass(slots=True)
@@ -1718,7 +1718,7 @@ class VirtualMachine:
         for index, item in enumerate(iterable):
             args = [item]
             if has_index:
-                args.append(Decimal(index))
+                args.append(Number(index))
             try:
                 self.call(body, args, isolate_captures=False)
             except _LoopBreak as signal:
@@ -2963,11 +2963,11 @@ def _panic_matches(value: Any, type_name: str) -> bool:
     if type_name == "String":
         return isinstance(value, str)
     if type_name == "Integer":
-        return isinstance(value, Decimal) and value == value.to_integral_value()
+        return isinstance(value, Number) and value == value.to_integral_value()
     if type_name == "Real":
-        return isinstance(value, Decimal)
+        return isinstance(value, Number)
     if type_name == "Number":
-        return isinstance(value, Decimal)
+        return isinstance(value, Number)
     return False
 
 
@@ -3118,7 +3118,7 @@ def _runtime_value_pattern(value: Any) -> RuntimeTypePattern | None:
             accepted_names=accepted_names,
             variances=variances,
         )
-    if isinstance(value, Decimal):
+    if isinstance(value, Number):
         name = "Integer" if value == value.to_integral_value() else "Real"
         return RuntimeTypePattern("nominal", name=name, accepted_names=(name,))
     if isinstance(value, str):
@@ -3342,7 +3342,7 @@ def _runtime_type_name(value: Any) -> str | None:
         if not value.type_args:
             return value.type_name
         return f"{value.type_name}[{', '.join(value.type_args)}]"
-    if isinstance(value, Decimal):
+    if isinstance(value, Number):
         if value == value.to_integral_value():
             return "Integer"
         return "Real"
@@ -4485,11 +4485,11 @@ def _matches_type_pattern(value: Any, pattern: str) -> bool:
     """Return whether the value matches type pattern."""
     value = unwrap_runtime_value(value)
     if pattern == "Integer":
-        return isinstance(value, Decimal) and value == value.to_integral_value()
+        return isinstance(value, Number) and value == value.to_integral_value()
     if pattern == "Real":
-        return isinstance(value, Decimal)
+        return isinstance(value, Number)
     if pattern == "Number":
-        return isinstance(value, Decimal)
+        return isinstance(value, Number)
     if pattern == "String":
         return isinstance(value, str)
     if pattern == "Err":
@@ -4529,7 +4529,7 @@ def _resolve_static_rank_variables(
     """Resolve rank-variable placeholders from validated hidden parameters."""
     if isinstance(spec, RankVariable):
         value = locals_.get(spec.name)
-        if isinstance(value, Decimal) and value.is_finite():
+        if isinstance(value, Number) and value.is_finite():
             integral = value.to_integral_value()
             if integral == value and 0 < value <= MAX_COMPILE_TIME_RANK:
                 return int(integral)
@@ -4933,7 +4933,7 @@ def _lazy_index_request(index: Any) -> tuple[int, list[Any]]:
             raise RuntimeError("empty index path is invalid")
         target = index[0]
         tail = list(index[1:])
-    if not isinstance(target, Decimal):
+    if not isinstance(target, Number):
         raise RuntimeError("lazy list indexing requires a numeric index")
     target_int = _int_index(target)
     if target_int < 0:
@@ -4980,7 +4980,7 @@ def _index_one(receiver: Any, index: Any) -> Any:
                 )
             ) from exc
     if is_list_like(receiver):
-        if not isinstance(index, Decimal):
+        if not isinstance(index, Number):
             raise RuntimeError("lazy list indexing requires a numeric index")
         target = _int_index(index)
         if target < 0:
@@ -5045,7 +5045,7 @@ def _slice_path(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
         raise RuntimeError("multidimensional slice bounds must have the same rank")
     if not start:
         return receiver
-    step_value = Decimal(1) if step is None else step
+    step_value = Number(1) if step is None else step
     head = _slice_value(receiver, start[0], stop[0], step_value)
     if len(start) == 1:
         return head
@@ -5343,7 +5343,7 @@ def _is_path(value: Any) -> bool:
 def _int_index(value: Any) -> int:
     """Find the index for int during VM execution."""
     value = unwrap_runtime_value(value)
-    if isinstance(value, Decimal) and value == value.to_integral_value():
+    if isinstance(value, Number) and value == value.to_integral_value():
         return int(value)
     if isinstance(value, int):
         return value
@@ -5579,7 +5579,7 @@ def _format_instruction_arg(arg: object) -> str:
     """Format instruction arg during VM execution."""
     if isinstance(arg, str):
         return repr(arg)
-    if isinstance(arg, Decimal):
+    if isinstance(arg, Number):
         return _format_value(arg)
     if isinstance(arg, tuple):
         return repr(arg)
@@ -5691,7 +5691,7 @@ def _string_value(value: Any) -> str:
 def _runtime_type_name(value: Any) -> str:
     """Return the canonical name for runtime type during VM execution."""
     value = unwrap_runtime_value(value)
-    if isinstance(value, Decimal):
+    if isinstance(value, Number):
         return "Integer" if value == value.to_integral_value() else "Real"
     if isinstance(value, str):
         return "String"

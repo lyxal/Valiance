@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, NoReturn
 
 from valiance import where_clause as static_where
@@ -94,6 +93,7 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
+from valiance.runtime_values import Number
 from valiance.symbols import Symbol
 from valiance.types import (
     AppliedOverload,
@@ -150,9 +150,7 @@ class _Compiler:
         self.break_as_signal = break_as_signal
         self.return_as_signal = return_as_signal
         self.object_runtime_metadata: dict[str, tuple[object, ...]] = {}
-        self.runtime_type_facts: dict[
-            str, tuple[tuple[str, ...], tuple[str, ...]]
-        ] = {}
+        self.runtime_type_facts: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
         self.runtime_supertype_templates: dict[
             str, tuple[tuple[str, tuple[str, ...]], ...]
         ] = {}
@@ -207,9 +205,7 @@ class _Compiler:
             if node.kind.text == "variant":
                 declarations.setdefault(name, _runtime_generic_variances(node))
                 for member in node.variants:
-                    member_name = (
-                        f"{name}.{_symbol_runtime_name(member.name)}"
-                    )
+                    member_name = f"{name}.{_symbol_runtime_name(member.name)}"
                     declarations[member_name] = _runtime_generic_variances(node)
                     implementations.setdefault(member_name, set()).add(name)
 
@@ -268,9 +264,7 @@ class _Compiler:
             expanded[name] = result
             return result
 
-        self.runtime_supertype_templates = {
-            name: expand(name) for name in names
-        }
+        self.runtime_supertype_templates = {name: expand(name) for name in names}
 
     def _runtime_metadata(
         self,
@@ -368,7 +362,7 @@ class _Compiler:
                             raise CompileError(
                                 "named or placeholder element call arguments require "
                                 "resolved typed compilation"
-                        )
+                            )
                         self.expression(arg.value)
                 if (
                     isinstance(typed_node, TypedElementNode)
@@ -463,8 +457,7 @@ class _Compiler:
                                 removed_names.add(variant)
                                 pending.append(variant)
                     removed_tags = tuple(
-                        DataTag(name, node.tag.depth)
-                        for name in sorted(removed_names)
+                        DataTag(name, node.tag.depth) for name in sorted(removed_names)
                     )
                     validator_runtime_name = None
                     validator_plans = ()
@@ -493,8 +486,7 @@ class _Compiler:
                                 disjoint_names.add(variant)
                                 pending.append(variant)
                     removed_tags = tuple(
-                        DataTag(name, node.tag.depth)
-                        for name in sorted(disjoint_names)
+                        DataTag(name, node.tag.depth) for name in sorted(disjoint_names)
                     )
                 if validator_plans:
                     for index, (runtime_name, overload_index) in enumerate(
@@ -507,16 +499,12 @@ class _Compiler:
                                 _symbol_runtime_name(runtime_name),
                                 overload_index,
                                 (
-                                    tuple(
-                                        (tag.name, tag.depth) for tag in added_tags
-                                    )
+                                    tuple((tag.name, tag.depth) for tag in added_tags)
                                     if final
                                     else ()
                                 ),
                                 (
-                                    tuple(
-                                        (tag.name, tag.depth) for tag in removed_tags
-                                    )
+                                    tuple((tag.name, tag.depth) for tag in removed_tags)
                                     if final
                                     else ()
                                 ),
@@ -601,9 +589,7 @@ class _Compiler:
                 self.collection(compiled_items, OpCode.BUILD_TUPLE)
             case RecordLiteralNode(fields):
                 typed_items = (
-                    typed_node.items
-                    if isinstance(typed_node, TypedLiteralNode)
-                    else ()
+                    typed_node.items if isinstance(typed_node, TypedLiteralNode) else ()
                 )
                 keys = []
                 for index, (key, expr) in enumerate(fields):
@@ -612,9 +598,7 @@ class _Compiler:
                 self.emit(OpCode.BUILD_RECORD, tuple(keys))
             case DictLiteralNode(entries):
                 typed_items = (
-                    typed_node.items
-                    if isinstance(typed_node, TypedLiteralNode)
-                    else ()
+                    typed_node.items if isinstance(typed_node, TypedLiteralNode) else ()
                 )
                 expressions = tuple(expr for entry in entries for expr in entry)
                 for index, expr in enumerate(expressions):
@@ -668,8 +652,8 @@ class _Compiler:
     def expression(self, nodes: tuple[ASTNode | TypedNode, ...]) -> None:
         """Lower an expression body with assignment-receiver borrow metadata."""
         previous = self._borrowed_assignment_nodes
-        self._borrowed_assignment_nodes = (
-            previous | _borrowed_assignment_receivers(nodes)
+        self._borrowed_assignment_nodes = previous | _borrowed_assignment_receivers(
+            nodes
         )
         try:
             for node in nodes:
@@ -963,8 +947,7 @@ class _Compiler:
             body_code = _compile_function_value(typed_node.function, "unfold.body")
         else:
             body = FunctionNode(
-                params=node.params
-                or tuple(FunctionParam(None) for _ in range(arity)),
+                params=node.params or tuple(FunctionParam(None) for _ in range(arity)),
                 body=node.body,
                 location=node.location,
             )
@@ -1008,8 +991,7 @@ class _Compiler:
                     None,
                 ),
                 return_collection_ranks=tuple(
-                    _runtime_collection_rank(ret)
-                    for ret in applied.actual_returns
+                    _runtime_collection_rank(ret) for ret in applied.actual_returns
                 ),
                 static_values=(typed_node.function_overload_index,),
                 arity_override=arity,
@@ -1056,9 +1038,7 @@ class _Compiler:
     def match_node(self, node: MatchNode, typed_node: TypedNode | None) -> None:
         """Lower typed match cases, guards, bindings, and join targets."""
         typed_bodies = (
-            typed_node.case_bodies
-            if isinstance(typed_node, TypedMatchNode)
-            else ()
+            typed_node.case_bodies if isinstance(typed_node, TypedMatchNode) else ()
         )
         body_by_case = {
             id(case): typed_bodies[index]
@@ -1275,9 +1255,8 @@ def _compile_function_value(
         ast = _function_ast(node)
         if len(typed.overloads) == 1:
             declared = typed.overloads[0].overload
-            if (
-                isinstance(declared, Overload)
-                and isinstance(declared.call_site_body, tuple)
+            if isinstance(declared, Overload) and isinstance(
+                declared.call_site_body, tuple
             ):
                 return _compile_function_node(
                     node,
@@ -1475,9 +1454,7 @@ def _static_param_names(
 
 def _ast_static_param_names(ast: FunctionNode) -> tuple[str, ...]:
     """Collect hidden static parameters directly from a function AST."""
-    params = tuple(
-        param.typ for param in (ast.params or ()) if param.typ is not None
-    )
+    params = tuple(param.typ for param in (ast.params or ()) if param.typ is not None)
     param_names = tuple(param.name for param in (ast.params or ()))
     return static_where.static_parameter_names(
         params=params,
@@ -1670,8 +1647,7 @@ def _function_element_tag_names(
 def _function_is_recursive(ast: FunctionNode) -> bool:
     """Return the Boolean result of function is recursive during typed-AST bytecode lowering."""
     return any(
-        isinstance(annotation, AnnotationNode)
-        and annotation.name.text == "recursive"
+        isinstance(annotation, AnnotationNode) and annotation.name.text == "recursive"
         for annotation in ast.annotations
     )
 
@@ -1835,8 +1811,7 @@ def _record_runtime_variance_use(
 def _definition_has_annotation(definition: DefineNode, name: str) -> bool:
     """Return the Boolean result of definition has annotation during typed-AST bytecode lowering."""
     return any(
-        isinstance(annotation, AnnotationNode)
-        and annotation.name.text == name
+        isinstance(annotation, AnnotationNode) and annotation.name.text == name
         for annotation in definition.annotations
     )
 
@@ -1919,8 +1894,7 @@ def _tupled_element_return_count(
 ) -> int | None:
     """Compute tupled element return count during typed-AST bytecode lowering."""
     if not any(
-        isinstance(annotation, AnnotationNode)
-        and annotation.name.text == "@@tupled"
+        isinstance(annotation, AnnotationNode) and annotation.name.text == "@@tupled"
         for annotation in node.annotations
     ):
         return None
@@ -1989,11 +1963,7 @@ def _resolved_element_reference(
     ):
         static_values = (
             node.call_overload_index,
-            *(
-                node.overload.runtime_static_values
-                if node.overload is not None
-                else ()
-            ),
+            *(node.overload.runtime_static_values if node.overload is not None else ()),
         )
     elif node.overload is not None and node.overload.runtime_static_values:
         static_values = node.overload.runtime_static_values
@@ -2021,9 +1991,7 @@ def _resolved_element_reference(
         else ()
     )
     return_tag_specs = (
-        _call_site_return_tag_specs(node.overload)
-        if node.overload is not None
-        else ()
+        _call_site_return_tag_specs(node.overload) if node.overload is not None else ()
     )
     arity_override = None
     consumed_override = None
@@ -2077,7 +2045,9 @@ def _call_site_return_tag_contract(
 def _call_site_return_tag_specs(applied: AppliedOverload) -> tuple[object, ...]:
     """Return recursive contracts when tagged inputs may affect call results."""
     if not any(_type_contains_data_tags(param) for param in applied.params):
-        actual = tuple(_runtime_tag_contract_spec(ret) for ret in applied.actual_returns)
+        actual = tuple(
+            _runtime_tag_contract_spec(ret) for ret in applied.actual_returns
+        )
         declared = tuple(
             _runtime_tag_contract_spec(ret) for ret in applied.overload.returns
         )
@@ -2138,14 +2108,11 @@ def _compiled_element_extension(
     )
 
 
-def _runtime_rank_values(node: TypedElementNode) -> tuple[Decimal, ...]:
+def _runtime_rank_values(node: TypedElementNode) -> tuple[Number, ...]:
     """Collect the values for runtime rank during typed-AST bytecode lowering."""
     if node.overload is None or not node.overload.rank_values:
         return ()
-    return tuple(
-        Decimal(value)
-        for _, value in node.overload.rank_values
-    )
+    return tuple(Number(value) for _, value in node.overload.rank_values)
 
 
 def _resolved_constructor_type_args(
@@ -2204,20 +2171,18 @@ def _literal_expression_value(nodes: tuple[ASTNode, ...]) -> object:
         case StringLiteralNode(value):
             return value
         case StringInterpolationNode():
-            raise CompileError(
-                "object and enum default values must be literal values"
-            )
+            raise CompileError("object and enum default values must be literal values")
         case _:
-            raise CompileError(
-                "object and enum default values must be literal values"
-            )
+            raise CompileError("object and enum default values must be literal values")
 
 
-def _number(value: str, node: ASTNode) -> Decimal:
+def _number(value: str, node: ASTNode) -> Number:
     """Compute number during typed-AST bytecode lowering."""
+    import decimal
+
     try:
-        return Decimal(value)
-    except InvalidOperation as exc:
+        return Number(value)
+    except decimal.InvalidOperation as exc:
         location = ""
         if node.location is not None:
             location = f" at {node.location.line}:{node.location.column}"
@@ -2324,10 +2289,7 @@ def _runtime_tag_contract_spec(typ: Type) -> object:
         return (
             "tagged",
             _runtime_tag_contract_spec(typ.inner),
-            tuple(
-                (str(tag.name), tag.depth, tag.absent)
-                for tag in sorted(typ.tags)
-            ),
+            tuple((str(tag.name), tag.depth, tag.absent) for tag in sorted(typ.tags)),
         )
     if isinstance(typ, NoneTypeNode):
         return ("none",)
@@ -2376,10 +2338,7 @@ def _cast_type_spec(typ: Type) -> object:
         return (
             "tagged",
             _cast_type_spec(typ.inner),
-            tuple(
-                (str(tag.name), tag.depth, tag.absent)
-                for tag in sorted(typ.tags)
-            ),
+            tuple((str(tag.name), tag.depth, tag.absent) for tag in sorted(typ.tags)),
         )
     if isinstance(typ, NominalType):
         return (

@@ -441,6 +441,10 @@ class Number:
             return NotImplemented
         return self.real > other.real and self.imag > other.imag
 
+    def to_integral_value(self) -> Number:
+        """Return the integral part of this number."""
+        return Number((self.real.to_integral_value(), self.imag.to_integral_value()))
+
 
 DIAGNOSTIC_LIST_PREVIEW_LIMIT = 100
 

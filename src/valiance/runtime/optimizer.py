@@ -5,7 +5,6 @@ from __future__ import annotations
 from bisect import bisect_left
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from decimal import Decimal
 from typing import Protocol
 
 from valiance.runtime.bytecode import (
@@ -19,6 +18,7 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
+from valiance.runtime_values import Number
 
 
 class OptimizationError(ValueError):
@@ -241,9 +241,13 @@ class ConstantFoldingOptimizationPass(FunctionOptimizationPass):
         while True:
             folded = _constant_fold_once(instructions, shadowed)
             if folded == instructions:
-                return function if instructions is function.instructions else replace(
-                    function,
-                    instructions=instructions,
+                return (
+                    function
+                    if instructions is function.instructions
+                    else replace(
+                        function,
+                        instructions=instructions,
+                    )
                 )
             instructions = folded
 
@@ -377,15 +381,23 @@ class BytecodePeepholeOptimizationPass(FunctionOptimizationPass):
                 index += 1
 
             if not replacements:
-                return function if instructions is function.instructions else replace(
-                    function,
-                    instructions=instructions,
+                return (
+                    function
+                    if instructions is function.instructions
+                    else replace(
+                        function,
+                        instructions=instructions,
+                    )
                 )
             rewritten = _rewrite_ranges(instructions, replacements)
             if rewritten == instructions:
-                return function if instructions is function.instructions else replace(
-                    function,
-                    instructions=instructions,
+                return (
+                    function
+                    if instructions is function.instructions
+                    else replace(
+                        function,
+                        instructions=instructions,
+                    )
                 )
             instructions = rewritten
 
@@ -464,8 +476,7 @@ class StackShuffleOptimizationPass(FunctionOptimizationPass):
                                         "move",
                                         labels,
                                         tuple(
-                                            labels[position]
-                                            for position in combined
+                                            labels[position] for position in combined
                                         ),
                                     ),
                                 ),
@@ -499,9 +510,13 @@ class ControlFlowOptimizationPass(FunctionOptimizationPass):
             simplified = _remove_unreachable(simplified)
             simplified = _remove_redundant_jumps(simplified)
             if simplified == instructions:
-                return function if instructions is function.instructions else replace(
-                    function,
-                    instructions=instructions,
+                return (
+                    function
+                    if instructions is function.instructions
+                    else replace(
+                        function,
+                        instructions=instructions,
+                    )
                 )
             instructions = simplified
 
@@ -561,9 +576,7 @@ def _map_nested_functions(
         return replace(
             value,
             default=_map_nested_functions(value.default, transform),
-            rules=tuple(
-                _map_nested_functions(rule, transform) for rule in value.rules
-            ),
+            rules=tuple(_map_nested_functions(rule, transform) for rule in value.rules),
             selector=_map_nested_functions(value.selector, transform),
         )
     if isinstance(value, ExtensionRuleReference):
@@ -574,7 +587,6 @@ def _map_nested_functions(
     if isinstance(value, tuple):
         return tuple(_map_nested_functions(item, transform) for item in value)
     return value
-
 
 
 def _collect_bound_names(function: FunctionCode) -> set[str]:
@@ -608,6 +620,7 @@ def _collect_bound_names_from_value(value: object, names: set[str]) -> None:
     elif isinstance(value, tuple):
         for item in value:
             _collect_bound_names_from_value(item, names)
+
 
 def _constant_fold_once(
     instructions: tuple[Instruction, ...],
@@ -841,9 +854,7 @@ def _source_cycle_names(
     cycled = tuple(
         params[(cycle_index + offset) % len(params)] for offset in range(missing)
     )
-    next_index = (
-        (cycle_index + missing) % len(params) if params else cycle_index
-    )
+    next_index = (cycle_index + missing) % len(params) if params else cycle_index
     return cycled + initial, next_index, initial_start
 
 
@@ -880,7 +891,7 @@ def _constant_inline_body(
 
 def _is_scalar_constant(value: object) -> bool:
     """Return whether a value has immutable, lifecycle-free runtime semantics."""
-    return value is None or isinstance(value, (int, Decimal, str))
+    return value is None or isinstance(value, (int, Number, str))
 
 
 def _is_serializable_constant(value: object) -> bool:
@@ -969,13 +980,17 @@ def _exact_straight_line_depth(
         )
         return _builder_depth(depth, count, 1)
     if instruction.op is OpCode.BUILD_RECORD:
-        return _builder_depth(depth, len(instruction.arg), 1) if isinstance(
-            instruction.arg, tuple
-        ) else None
+        return (
+            _builder_depth(depth, len(instruction.arg), 1)
+            if isinstance(instruction.arg, tuple)
+            else None
+        )
     if instruction.op is OpCode.BUILD_DICT:
-        return _builder_depth(depth, instruction.arg * 2, 1) if isinstance(
-            instruction.arg, int
-        ) else None
+        return (
+            _builder_depth(depth, instruction.arg * 2, 1)
+            if isinstance(instruction.arg, int)
+            else None
+        )
     if instruction.op is OpCode.BUILD_STRING:
         if not isinstance(instruction.arg, tuple):
             return None

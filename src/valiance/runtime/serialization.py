@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from valiance.runtime.bytecode import (
@@ -18,6 +17,7 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
+from valiance.runtime_values import Number
 from valiance.types import (
     DataTag,
     RuntimeTypePattern,
@@ -113,6 +113,8 @@ def dumps(program: Program) -> bytes:
 def loads(data: bytes) -> Program:
     """Deserialize a bytecode program from portable binary bytes."""
     reader = _Reader(data)
+    import decimal
+
     try:
         reader.expect(MAGIC)
         main = reader.function()
@@ -124,7 +126,7 @@ def loads(data: bytes) -> Program:
         reader.expect_eof()
         return program
     except (
-        InvalidOperation,
+        decimal.InvalidOperation,
         OverflowError,
         RecursionError,
         UnicodeDecodeError,
@@ -197,7 +199,7 @@ class _Writer:
         elif isinstance(value, int):
             self.u8(_INT)
             self.i64(value)
-        elif isinstance(value, Decimal):
+        elif isinstance(value, Number):
             self.u8(_DECIMAL)
             self.string(str(value))
         elif isinstance(value, str):
@@ -433,7 +435,7 @@ class _Reader:
         if tag == _BOOL:
             return self.bool()
         if tag == _DECIMAL:
-            return Decimal(self.string())
+            return Number(self.string())
         if tag == _STRING:
             return self.string()
         if tag == _TUPLE:
@@ -495,15 +497,13 @@ class _Reader:
         ):
             raise BytecodeFormatError("invalid resolved element vectorised depths")
         if not isinstance(vectorised_target_ranks, tuple) or not all(
-            rank is None or isinstance(rank, int)
-            for rank in vectorised_target_ranks
+            rank is None or isinstance(rank, int) for rank in vectorised_target_ranks
         ):
             raise BytecodeFormatError(
                 "invalid resolved element vectorised target ranks"
             )
         if not isinstance(return_collection_ranks, tuple) or not all(
-            rank is None or isinstance(rank, int)
-            for rank in return_collection_ranks
+            rank is None or isinstance(rank, int) for rank in return_collection_ranks
         ):
             raise BytecodeFormatError(
                 "invalid resolved element return collection ranks"
@@ -579,9 +579,7 @@ class _Reader:
         ):
             raise BytecodeFormatError("invalid object constructor required fields")
         if not isinstance(defaults, tuple) or not all(
-            isinstance(item, tuple)
-            and len(item) == 2
-            and isinstance(item[0], str)
+            isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str)
             for item in defaults
         ):
             raise BytecodeFormatError("invalid object constructor defaults")
@@ -602,9 +600,7 @@ class _Reader:
     def function_set(self) -> FunctionSetCode:
         """Decode function set in the portable bytecode stream."""
         overloads = tuple(self.function() for _ in range(self.u32()))
-        dispatch_plan = tuple(
-            self.union_dispatch_branch() for _ in range(self.u32())
-        )
+        dispatch_plan = tuple(self.union_dispatch_branch() for _ in range(self.u32()))
         return FunctionSetCode(overloads, dispatch_plan)
 
     def union_dispatch_branch(self) -> UnionDispatchBranch:
@@ -637,8 +633,7 @@ class _Reader:
                     f"invalid runtime type variance marker {marker}"
                 ) from exc
         tags = tuple(
-            DataTag(self.string(), self.i64(), self.bool())
-            for _ in range(self.u32())
+            DataTag(self.string(), self.i64(), self.bool()) for _ in range(self.u32())
         )
         rank = self.optional_int()
         collection_kind = self.optional_string()
@@ -685,14 +680,12 @@ class _Reader:
             raise BytecodeFormatError("invalid function return tag contracts")
         return_collection_ranks = self.value()
         if not isinstance(return_collection_ranks, tuple) or not all(
-            rank is None or isinstance(rank, int)
-            for rank in return_collection_ranks
+            rank is None or isinstance(rank, int) for rank in return_collection_ranks
         ):
             raise BytecodeFormatError("invalid function return collection ranks")
         param_collection_ranks = self.value()
         if not isinstance(param_collection_ranks, tuple) or not all(
-            rank is None or isinstance(rank, int)
-            for rank in param_collection_ranks
+            rank is None or isinstance(rank, int) for rank in param_collection_ranks
         ):
             raise BytecodeFormatError("invalid function parameter collection ranks")
         instructions = []
