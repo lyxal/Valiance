@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from decimal import Decimal, DecimalException
+from decimal import DecimalException
 from enum import Enum, auto
 from typing import Mapping
 
+from valiance.runtime_values import Number
 import valiance.types as T
 from valiance.asts import (
     ASTNode,
@@ -33,7 +34,7 @@ class StaticKind(Enum):
     TYPE_TUPLE = auto()
 
 
-StaticValue = Decimal | T.Type | tuple[T.Type, ...]
+StaticValue = Number | T.Type | tuple[T.Type, ...]
 
 
 @dataclass(frozen=True)
@@ -57,7 +58,7 @@ class WhereEvaluation:
     """Call-site results of a successful ``where`` evaluation."""
 
     rank_values: tuple[tuple[str, int], ...]
-    runtime_values: tuple[Decimal, ...]
+    runtime_values: tuple[Number, ...]
 
 
 def rank_variable_names_in_type(typ: T.Type) -> set[str]:
@@ -259,7 +260,7 @@ def evaluate_where_clause(
     input_ranks = rank_variable_names(params)
     all_ranks = input_ranks | rank_variable_names(returns)
     variables: dict[str, StaticValue] = {
-        name: Decimal(value) for name, value in initial_ranks.items()
+        name: Number(value) for name, value in initial_ranks.items()
     }
     for param_name, arg in zip(param_names, args, strict=False):
         if param_name is not None:
@@ -288,10 +289,10 @@ def evaluate_where_clause(
             return None
         rank_values.append((name, rank))
 
-    runtime_values: list[Decimal] = []
+    runtime_values: list[Number] = []
     for name in shape.static_parameter_names:
         value = variables.get(name)
-        if not isinstance(value, Decimal) or not value.is_finite():
+        if not isinstance(value, Number) or not value.is_finite():
             return None
         runtime_values.append(value)
 
@@ -597,9 +598,9 @@ def _evaluate_field_access(
     elif name == "outputs":
         stack.append(value.returns)
     elif name == "arity":
-        stack.append(Decimal(len(value.params)))
+        stack.append(Number(len(value.params)))
     elif name == "multiplicity":
-        stack.append(Decimal(len(value.returns)))
+        stack.append(Number(len(value.returns)))
     else:
         return False
     return True
@@ -642,7 +643,7 @@ def _evaluate_element(name: str, stack: list[StaticValue]) -> bool:
             return False
         right = stack.pop()
         left = stack.pop()
-        if isinstance(left, Decimal) and isinstance(right, Decimal):
+        if isinstance(left, Number) and isinstance(right, Number):
             equal = left == right
         elif isinstance(left, T.Type) and isinstance(right, T.Type):
             equal = T.same(left, right)
@@ -674,10 +675,10 @@ def _evaluate_element(name: str, stack: list[StaticValue]) -> bool:
             return False
         value = stack.pop()
         if isinstance(value, T.TupleType):
-            stack.append(Decimal(len(value.params)))
+            stack.append(Number(len(value.params)))
             return True
         if isinstance(value, tuple) and all(isinstance(item, T.Type) for item in value):
-            stack.append(Decimal(len(value)))
+            stack.append(Number(len(value)))
             return True
         return False
     if name == "dup":
@@ -700,29 +701,29 @@ def _evaluate_element(name: str, stack: list[StaticValue]) -> bool:
 
 def _pop_numbers(
     stack: list[StaticValue], count: int
-) -> tuple[Decimal, ...] | None:
+) -> tuple[Number, ...] | None:
     """Pop ``count`` finite static numbers, preserving source order."""
     if len(stack) < count:
         return None
     values = tuple(stack[-count:])
-    if not all(isinstance(value, Decimal) and value.is_finite() for value in values):
+    if not all(isinstance(value, Number) and value.is_finite() for value in values):
         return None
     del stack[-count:]
-    return tuple(value for value in values if isinstance(value, Decimal))
+    return tuple(value for value in values if isinstance(value, Number))
 
 
-def _parse_number(value: str) -> Decimal | None:
+def _parse_number(value: str) -> Number | None:
     """Parse a finite Valiance number without leaking decimal exceptions."""
     try:
-        number = Decimal(value)
+        number = Number(value)
     except (DecimalException, ValueError):
         return None
     return number if number.is_finite() else None
 
 
-def _truth_number(value: bool) -> Decimal:
+def _truth_number(value: bool) -> Number:
     """Represent static truth using Valiance's numeric truthiness model."""
-    return Decimal(1 if value else 0)
+    return Number(1 if value else 0)
 
 
 def _is_generated_parameter_name(name: str) -> bool:
@@ -732,9 +733,9 @@ def _is_generated_parameter_name(name: str) -> bool:
 
 def _positive_rank(value: StaticValue | None) -> int | None:
     """Convert a static number to a safe positive collection rank."""
-    if not isinstance(value, Decimal) or not value.is_finite():
+    if not isinstance(value, Number) or not value.is_finite():
         return None
-    if value <= 0 or value > Decimal(MAX_COMPILE_TIME_RANK):
+    if value <= 0 or value > Number(MAX_COMPILE_TIME_RANK):
         return None
     integral = value.to_integral_value()
     if integral != value:

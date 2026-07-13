@@ -445,6 +445,10 @@ class Number:
         """Return the integral part of this number."""
         return Number((self.real.to_integral_value(), self.imag.to_integral_value()))
 
+    def is_finite(self) -> bool:
+        """Return whether this number is finite."""
+        return self.real.is_finite() and self.imag.is_finite()
+
 
 DIAGNOSTIC_LIST_PREVIEW_LIMIT = 100
 
