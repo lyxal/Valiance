@@ -2014,7 +2014,6 @@ where ($n = {value}) => [1]
 """
                 analyser = Analyser()
                 analyser.analyse(parse(source))
-
                 self.assertTrue(
                     any(
                         "no overloads for element 'invalid_rank' match" in diagnostic

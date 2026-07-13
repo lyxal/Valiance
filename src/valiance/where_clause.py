@@ -309,7 +309,8 @@ def _validate_node(
     """Abstractly execute one node and return its first validation error."""
     match node:
         case NumberLiteralNode(value):
-            if _parse_number(value) is None:
+            parsed = _parse_number(value)
+            if parsed is None:
                 return WhereClauseError(
                     f"contains invalid numeric literal {value!r}", node
                 )
@@ -718,6 +719,8 @@ def _parse_number(value: str) -> RuntimeNumber | None:
         number = RuntimeNumber(value)
     except (DecimalException, ValueError):
         return None
+    if number.is_complex():
+        return None # Complex numbers are not allowed in static evaluation.
     return number if number.is_finite() else None
 
 

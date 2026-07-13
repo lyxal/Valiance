@@ -37,6 +37,7 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
+from valiance.runtime_values import RuntimeNumber
 
 
 @dataclass
@@ -88,9 +89,9 @@ $value()
         self.assertIsInstance(custom_function, FunctionCode)
         self.assertEqual(len(custom_function.instructions), 4)
         self.assertIn("<main>", seen)
-        self.assertEqual(run(optimized), [Number("1")])
-        self.assertEqual(run(unoptimized), [Number("1")])
-        self.assertEqual(run(loads(dumps(optimized))), [Number("1")])
+        self.assertEqual(run(optimized), [RuntimeNumber("1")])
+        self.assertEqual(run(unoptimized), [RuntimeNumber("1")])
+        self.assertEqual(run(loads(dumps(optimized))), [RuntimeNumber("1")])
 
     def test_control_flow_targets_are_rewritten_after_removal(self):
         program = Program(
@@ -215,7 +216,7 @@ define add(left: Number, right: Number) -> Number => + end
             ),
         )
         self.assertEqual(run(optimized), run(unoptimized))
-        self.assertEqual(run(loads(dumps(optimized))), [Number("7")])
+        self.assertEqual(run(loads(dumps(optimized))), [RuntimeNumber("7")])
 
     def test_explicit_argument_pass_leaves_nested_cycle_scopes_implicit(self):
         reference = ResolvedElementReference("+", 1)
@@ -272,20 +273,20 @@ define add(left: Number, right: Number) -> Number => + end
         self.assertEqual(
             optimized.main.instructions,
             (
-                Instruction(OpCode.PUSH_CONST, Number("14")),
+                Instruction(OpCode.PUSH_CONST, RuntimeNumber("14")),
                 Instruction(OpCode.RETURN),
             ),
         )
-        self.assertEqual(run(loads(dumps(optimized))), [Number("14")])
+        self.assertEqual(run(loads(dumps(optimized))), [RuntimeNumber("14")])
 
     def test_constant_folding_collapses_literal_tuple_and_string_builders(self):
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, Number("1")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("1")),
                     Instruction(OpCode.PUSH_CONST, "two"),
                     Instruction(OpCode.BUILD_TUPLE, 2),
-                    Instruction(OpCode.PUSH_CONST, Number("3")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("3")),
                     Instruction(OpCode.BUILD_STRING, ("total=", None)),
                     Instruction(OpCode.RETURN),
                 ),
@@ -302,7 +303,7 @@ define add(left: Number, right: Number) -> Number => + end
             (
                 Instruction(
                     OpCode.PUSH_CONST,
-                    (Number("1"), "two"),
+                    (RuntimeNumber("1"), "two"),
                 ),
                 Instruction(OpCode.PUSH_CONST, "total=3"),
                 Instruction(OpCode.RETURN),
@@ -342,11 +343,11 @@ define \rate -> Number => 0.2 end
             )
         )
         self.assertIn(
-            Instruction(OpCode.PUSH_CONST, Number("0.2")),
+            Instruction(OpCode.PUSH_CONST, RuntimeNumber("0.2")),
             optimized.main.instructions,
         )
         self.assertEqual(run(optimized), run(unoptimized))
-        self.assertEqual(run(loads(dumps(optimized))), [Number("20.0")])
+        self.assertEqual(run(loads(dumps(optimized))), [RuntimeNumber("20.0")])
 
     def test_small_function_inlining_obeys_bytecode_size_threshold(self):
         source = r"""
@@ -378,9 +379,9 @@ define \rate -> Number => 0.2 end
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, Number("99")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("99")),
                     Instruction(OpCode.POP),
-                    Instruction(OpCode.PUSH_CONST, Number("0")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("0")),
                     Instruction(OpCode.JUMP_IF_FALSE, 6),
                     Instruction(OpCode.PUSH_CONST, "wrong"),
                     Instruction(OpCode.JUMP, 7),
@@ -397,7 +398,7 @@ define \rate -> Number => 0.2 end
 
         self.assertEqual(optimized.main.instructions[0], Instruction(OpCode.JUMP, 3))
         self.assertNotIn(
-            Instruction(OpCode.PUSH_CONST, Number("99")),
+            Instruction(OpCode.PUSH_CONST, RuntimeNumber("99")),
             optimized.main.instructions,
         )
         self.assertEqual(run(optimized), ["right"])
@@ -421,22 +422,22 @@ end
         self.assertEqual(
             optimized.main.instructions,
             (
-                Instruction(OpCode.PUSH_CONST, Number("10")),
+                Instruction(OpCode.PUSH_CONST, RuntimeNumber("10")),
                 Instruction(OpCode.RETURN),
             ),
         )
         self.assertEqual(run(optimized), run(unoptimized))
-        self.assertEqual(run(loads(dumps(optimized))), [Number("10")])
+        self.assertEqual(run(loads(dumps(optimized))), [RuntimeNumber("10")])
 
     def test_constant_folding_respects_rebound_builtin_names(self):
         reference = ResolvedElementReference("+", 0)
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, Number("5")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("5")),
                     Instruction(OpCode.STORE_VAR, "+"),
-                    Instruction(OpCode.PUSH_CONST, Number("2")),
-                    Instruction(OpCode.PUSH_CONST, Number("3")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("2")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("3")),
                     Instruction(OpCode.CALL_RESOLVED_ELEMENT, reference),
                     Instruction(OpCode.RETURN),
                 ),
@@ -458,8 +459,8 @@ end
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, Number("10")),
-                    Instruction(OpCode.PUSH_CONST, Number("20")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("10")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("20")),
                     swap,
                     swap,
                     Instruction(OpCode.RETURN),
@@ -478,7 +479,7 @@ end
                 for instruction in optimized.main.instructions
             )
         )
-        self.assertEqual(run(optimized), [Number("10"), Number("20")])
+        self.assertEqual(run(optimized), [RuntimeNumber("10"), RuntimeNumber("20")])
         self.assertEqual(run(loads(dumps(optimized))), run(program))
 
     def test_stack_shuffle_does_not_remove_cycle_backed_identity(self):
@@ -506,8 +507,8 @@ end
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, Number("10")),
-                    Instruction(OpCode.PUSH_CONST, Number("20")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("10")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("20")),
                     Instruction(
                         OpCode.STACK_SHUFFLE,
                         (

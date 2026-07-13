@@ -2178,11 +2178,9 @@ def _literal_expression_value(nodes: tuple[ASTNode, ...]) -> object:
 
 def _number(value: str, node: ASTNode) -> RuntimeNumber:
     """Compute number during typed-AST bytecode lowering."""
-    import decimal
-
     try:
         return RuntimeNumber(value)
-    except decimal.InvalidOperation as exc:
+    except TypeError as exc:
         location = ""
         if node.location is not None:
             location = f" at {node.location.line}:{node.location.column}"
