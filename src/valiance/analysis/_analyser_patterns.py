@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import field, replace
-from decimal import Decimal, InvalidOperation
-from itertools import count
-from typing import cast
+from dataclasses import replace
 
 import valiance.types as T
 from valiance.asts import (
@@ -181,10 +178,7 @@ def _index_value_type(typ: T.Type, ctx: T.Context) -> T.Type:
     """Strip erasable data tags while preserving unit semantics for indices."""
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
-        if any(
-            not tag.absent and ctx.is_unit_tag(tag.name)
-            for tag in typ.tags
-        ):
+        if any(not tag.absent and ctx.is_unit_tag(tag.name) for tag in typ.tags):
             return typ
         return _index_value_type(typ.inner, ctx)
     if isinstance(typ, T.UnionType):
@@ -240,9 +234,7 @@ def _single_index_assignment_type(
     if isinstance(typ, T.TaggedType):
         updated = _single_index_assignment_type(typ.inner, value_type, ctx)
         return (
-            None
-            if updated is None
-            else T.Tagged(updated, *typ.tags, exact=typ.exact)
+            None if updated is None else T.Tagged(updated, *typ.tags, exact=typ.exact)
         )
     if isinstance(typ, T.CollectionType):
         if T.assignable(value_type, typ.base, ctx):
@@ -411,9 +403,7 @@ def _invalid_destructure_arity(
         item_type = T.collection_item_type(subject_type) or T.V("_matched_item")
         for item in pattern.items:
             nested_type = (
-                T.ExactList(item_type)
-                if _is_rest_match_pattern(item)
-                else item_type
+                T.ExactList(item_type) if _is_rest_match_pattern(item) else item_type
             )
             invalid = _invalid_destructure_arity(item, nested_type, env)
             if invalid is not None:
@@ -466,9 +456,7 @@ def _covered_closed_members(
     if isinstance(pattern, OrPatternNode):
         covered: set[Symbol] = set()
         for option in pattern.options:
-            covered.update(
-                _covered_closed_members(option, subject_type, expected, env)
-            )
+            covered.update(_covered_closed_members(option, subject_type, expected, env))
         return tuple(sorted(covered, key=str))
     if not isinstance(pattern, TypePatternNode) or pattern.typ is None:
         return ()
@@ -993,9 +981,7 @@ def _pattern_binding_types(
         """Merge one guaranteed binding into the pattern-local type map."""
         existing = result.get(name)
         result[name] = (
-            typ
-            if existing is None
-            else T.merge_types(existing, typ, env.context)
+            typ if existing is None else T.merge_types(existing, typ, env.context)
         )
 
     if isinstance(pattern, BindingPatternNode):
@@ -1025,9 +1011,7 @@ def _pattern_binding_types(
         item_type = T.collection_item_type(subject_type) or T.V("_matched_item")
         for item in pattern.items:
             nested_type = (
-                T.ExactList(item_type)
-                if _is_rest_match_pattern(item)
-                else item_type
+                T.ExactList(item_type) if _is_rest_match_pattern(item) else item_type
             )
             for name, typ in _pattern_binding_types(item, nested_type, env).items():
                 add(name, typ)

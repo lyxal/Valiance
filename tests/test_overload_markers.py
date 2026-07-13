@@ -1,12 +1,10 @@
 import unittest
-from decimal import Decimal
 from pathlib import Path
 
 from valiance.analysis import Analyser
 from valiance.parsing import parse
 from valiance.runtime import compile_program, dumps, loads, run
-from valiance.runtime_values import LazyList
-
+from valiance.runtime_values import LazyList, RuntimeNumber
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,7 +25,7 @@ class OverloadMarkerIntegrationTests(unittest.TestCase):
 
         self.assertEqual(analyser.diagnostics, [])
         expected = [
-            [Decimal("13"), Decimal("7"), Decimal("4")],
+            [RuntimeNumber("13"), RuntimeNumber("7"), RuntimeNumber("4")],
             ["high", "medium", "low"],
         ]
         programs = (
@@ -50,18 +48,14 @@ $f([1, 2, 3])
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             _materialize(run(compile_program(typed))),
-            [[Decimal("1"), Decimal("2"), Decimal("3")]],
+            [[RuntimeNumber("1"), RuntimeNumber("2"), RuntimeNumber("3")]],
         )
 
         matrix_analyser = Analyser()
-        matrix_analyser.analyse(
-            parse(
-                """
+        matrix_analyser.analyse(parse("""
 $f = fn[T] (values: T atomic +) -> T+ => $values end
 $f([[1, 2], [3, 4]])
-"""
-            )
-        )
+"""))
         self.assertEqual(len(matrix_analyser.diagnostics), 1)
         self.assertIn(
             "no overloads for element 'call' match",
@@ -71,14 +65,10 @@ $f([[1, 2], [3, 4]])
     def test_rank_one_generic_rejects_matrix_at_call_site(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 define[T] rankOneCopy(values: T atomic +) -> T+ => $values end
 [[1, 2], [3, 4]] rankOneCopy
-"""
-            )
-        )
+"""))
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn(

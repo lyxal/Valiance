@@ -3,7 +3,6 @@ import io
 import unittest
 from unittest.mock import patch
 from builtins import RuntimeError as PythonRuntimeError
-from decimal import Decimal
 from itertools import count, islice
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -29,7 +28,13 @@ from valiance.runtime.bytecode import (
     Program,
     ResolvedElementReference,
 )
-from valiance.runtime_values import DictValue, LazyList, ListValue, ObjectValue
+from valiance.runtime_values import (
+    DictValue,
+    LazyList,
+    ListValue,
+    ObjectValue,
+    RuntimeNumber,
+)
 
 
 def execute(source: str, source_file: Path | None = None):
@@ -117,10 +122,7 @@ class RuntimeTests(unittest.TestCase):
             AssertionFailure,
             "expected: 43\nactual:   42",
         ):
-            execute(
-                "import { std.testing }\n"
-                "testing.assertEqual(20 + 22, 43)"
-            )
+            execute("import { std.testing }\n" "testing.assertEqual(20 + 22, 43)")
 
     def test_scalar_list_updates_preserve_fast_ownership_metadata(self):
         """Keep large scalar lists cheap across closures and indexed updates."""
@@ -143,7 +145,7 @@ end
         self.assertIsInstance(tape, ListValue)
         self.assertEqual(tape.runtime_rank, 1)
         self.assertIs(tape._ownership_trivial, True)
-        self.assertEqual(tape[0], Decimal("2"))
+        self.assertEqual(tape[0], RuntimeNumber("2"))
         self.assertEqual(vm.globals["identity"].owned_names, frozenset())
 
     def test_scalar_record_updates_preserve_fast_ownership_metadata(self):
@@ -165,7 +167,7 @@ end
         point = vm.globals["point"]
         self.assertIsInstance(point, DictValue)
         self.assertIs(point._ownership_trivial, True)
-        self.assertEqual(point["x"], Decimal("2"))
+        self.assertEqual(point["x"], RuntimeNumber("2"))
 
     def test_container_updates_use_borrowed_copy_on_write_receivers(self):
         """Mutate unique containers in place without leaking through aliases."""
@@ -193,42 +195,39 @@ $record.x = 9
 
         vm = VirtualMachine(output=lambda _value: None)
         self.assertEqual(vm.run(program), [])
-        self.assertEqual(vm.globals["list"], [Decimal("9"), Decimal("2")])
+        self.assertEqual(vm.globals["list"], [RuntimeNumber("9"), RuntimeNumber("2")])
         self.assertEqual(
             vm.globals["list_alias"],
-            [Decimal("1"), Decimal("2")],
+            [RuntimeNumber("1"), RuntimeNumber("2")],
         )
         self.assertIsNot(vm.globals["list"], vm.globals["list_alias"])
         self.assertEqual(
             vm.globals["record"],
-            {"x": Decimal("9"), "y": Decimal("2")},
+            {"x": RuntimeNumber("9"), "y": RuntimeNumber("2")},
         )
         self.assertEqual(
             vm.globals["record_alias"],
-            {"x": Decimal("1"), "y": Decimal("2")},
+            {"x": RuntimeNumber("1"), "y": RuntimeNumber("2")},
         )
         self.assertIsNot(vm.globals["record"], vm.globals["record_alias"])
 
     def test_deep_recursion_uses_iterative_vm_frames(self):
         """Run recursive Valiance calls beyond Python's recursion limit."""
         self.assertEqual(
-            execute(
-                """
+            execute("""
 $down = @recursive fn (n: Integer) -> Integer =>
   if ($n == 0) => return 0
   this($n - 1)
 end
 $down(5000)
-"""
-            ),
-            [Decimal("0")],
+"""),
+            [RuntimeNumber("0")],
         )
 
     def test_deep_recursive_panic_unwinds_activation_stack(self):
         """Propagate panics through deep iterative activations into handlers."""
         self.assertEqual(
-            execute(
-                """
+            execute("""
 $down = @recursive fn (n: Integer) -> Integer =>
   if ($n == 0) => ValueFault("done") panic
   this($n - 1)
@@ -238,32 +237,31 @@ try =>
 handle ValueFault =>
   42
 end
-"""
-            ),
-            [Decimal("42")],
+"""),
+            [RuntimeNumber("42")],
         )
 
     def test_executes_stack_arithmetic(self):
-        self.assertEqual(execute("*(+(1, 2), 3)"), [Decimal("9")])
-        self.assertEqual(execute("(1 + 2) * (3 + 4)"), [Decimal("21")])
-        self.assertEqual(execute("5 -(2, _)"), [Decimal("-3")])
+        self.assertEqual(execute("*(+(1, 2), 3)"), [RuntimeNumber("9")])
+        self.assertEqual(execute("(1 + 2) * (3 + 4)"), [RuntimeNumber("21")])
+        self.assertEqual(execute("5 -(2, _)"), [RuntimeNumber("-3")])
 
     def test_arithmetic_preserves_arbitrarily_large_integer_precision(self):
         value = "12345678901234567890123456789"
 
         self.assertEqual(
             execute(f"{value} + 2"),
-            [Decimal("12345678901234567890123456791")],
+            [RuntimeNumber("12345678901234567890123456791")],
         )
         self.assertEqual(
             execute(f"{value} - 2"),
-            [Decimal("12345678901234567890123456787")],
+            [RuntimeNumber("12345678901234567890123456787")],
         )
         self.assertEqual(
             execute(f"{value} * 3"),
-            [Decimal("37037036703703703670370370367")],
+            [RuntimeNumber("37037036703703703670370370367")],
         )
-        self.assertEqual(execute(f"{value} / 1"), [Decimal(value)])
+        self.assertEqual(execute(f"{value} / 1"), [RuntimeNumber(value)])
 
     def test_tag_validator_runs_at_runtime(self):
         source = """
@@ -271,7 +269,7 @@ tag #checked as computed
 define #checked(:Number) -> #boolean Number => true end
 1 #checked
 """
-        self.assertEqual(execute(source), [Decimal("1")])
+        self.assertEqual(execute(source), [RuntimeNumber("1")])
 
         program = parse(source)
         analyser = Analyser()
@@ -279,7 +277,7 @@ define #checked(:Number) -> #boolean Number => true end
         if analyser.diagnostics:
             raise AssertionError(analyser.diagnostics)
         bytecode = loads(dumps(compile_program(typed, optimize=False)))
-        self.assertEqual(run(bytecode), [Decimal("1")])
+        self.assertEqual(run(bytecode), [RuntimeNumber("1")])
 
     def test_declared_return_tag_selects_tagged_overload(self):
         output = io.StringIO()
@@ -329,83 +327,75 @@ min $sorted
 
     def test_tag_validator_failure_panics(self):
         with self.assertRaises(RuntimeError):
-            execute(
-                """
+            execute("""
 tag #checked as computed
 define #checked(value: Number) -> #boolean Number => $value 2 == end
 1 #checked
-"""
-            )
+""")
 
     def test_executes_stack_shuffle_copy_and_move(self):
         self.assertEqual(
             execute("1 2 3 4\ncopy(a, b -> a, b, b)"),
             [
-                Decimal("1"),
-                Decimal("2"),
-                Decimal("3"),
-                Decimal("4"),
-                Decimal("3"),
-                Decimal("4"),
-                Decimal("4"),
+                RuntimeNumber("1"),
+                RuntimeNumber("2"),
+                RuntimeNumber("3"),
+                RuntimeNumber("4"),
+                RuntimeNumber("3"),
+                RuntimeNumber("4"),
+                RuntimeNumber("4"),
             ],
         )
         self.assertEqual(
             execute("1 2 3 4\nmove(a, _, b -> a, a, b)"),
             [
-                Decimal("1"),
-                Decimal("3"),
-                Decimal("2"),
-                Decimal("2"),
-                Decimal("4"),
+                RuntimeNumber("1"),
+                RuntimeNumber("3"),
+                RuntimeNumber("2"),
+                RuntimeNumber("2"),
+                RuntimeNumber("4"),
             ],
         )
 
     def test_optional_arguments_use_ecs_overrides_at_runtime(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 define pick(a: Number, b: Number = 2) -> Number => $a $b +
 3 pick(b = 4)
 3 pick(_, 5)
-"""
-            ),
-            [Decimal("7"), Decimal("8")],
+"""),
+            [RuntimeNumber("7"), RuntimeNumber("8")],
         )
 
     def test_vectorises_scalar_overloads_over_lists(self):
         self.assertEqual(
             execute("[1, 2, 3] + [5, 6, 7]"),
-            [[Decimal("6"), Decimal("8"), Decimal("10")]],
+            [[RuntimeNumber("6"), RuntimeNumber("8"), RuntimeNumber("10")]],
         )
         self.assertEqual(
             execute("[1, 2, 3] + 10"),
-            [[Decimal("11"), Decimal("12"), Decimal("13")]],
+            [[RuntimeNumber("11"), RuntimeNumber("12"), RuntimeNumber("13")]],
         )
 
     def test_exact_parameter_executes_as_ordinary_scalar_value(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 $myfun = fn (:Number exact) => double
 $myfun(10)
-"""
-            ),
-            [Decimal("20")],
+"""),
+            [RuntimeNumber("20")],
         )
 
     def test_exact_collection_broadcasts_while_other_parameter_vectorises(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 define keep(xs: Number+ exact, x: Number) -> Number+ => $xs end
 [10, 20, 30] [1, 2] keep
-"""
-            ),
+"""),
             [
                 [
-                    [Decimal("10"), Decimal("20"), Decimal("30")],
-                    [Decimal("10"), Decimal("20"), Decimal("30")],
+                    [RuntimeNumber("10"), RuntimeNumber("20"), RuntimeNumber("30")],
+                    [RuntimeNumber("10"), RuntimeNumber("20"), RuntimeNumber("30")],
                 ]
             ],
         )
@@ -414,20 +404,17 @@ define keep(xs: Number+ exact, x: Number) -> Number+ => $xs end
         output = io.StringIO()
 
         with contextlib.redirect_stdout(output):
-            result = execute(
-                '[1, 2, 3] [4] + extend(0 | "default evaluated" println)'
-            )
+            result = execute('[1, 2, 3] [4] + extend(0 | "default evaluated" println)')
 
         self.assertEqual(
             result,
-            [[Decimal("5"), Decimal("2"), Decimal("3")]],
+            [[RuntimeNumber("5"), RuntimeNumber("2"), RuntimeNumber("3")]],
         )
         self.assertEqual(output.getvalue(), "default evaluated\n")
 
     def test_extend_patterns_select_by_missing_argument_positions(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 [1, 2, 3] [4, 5] + extend =>
   (lhs, _) => $lhs end
   (_, rhs) => $rhs end
@@ -436,18 +423,17 @@ end
   (lhs, _) => $lhs end
   (_, rhs) => $rhs end
 end
-"""
-            ),
+"""),
             [
-                [Decimal("5"), Decimal("7"), Decimal("6")],
-                [Decimal("5"), Decimal("7"), Decimal("12")],
+                [RuntimeNumber("5"), RuntimeNumber("7"), RuntimeNumber("6")],
+                [RuntimeNumber("5"), RuntimeNumber("7"), RuntimeNumber("12")],
             ],
         )
 
     def test_extend_selector_receives_optionals(self):
         self.assertEqual(
             execute("[1, 2, 3] [4, 5] + extend: or"),
-            [[Decimal("5"), Decimal("7"), Decimal("6")]],
+            [[RuntimeNumber("5"), RuntimeNumber("7"), RuntimeNumber("6")]],
         )
 
     def test_extend_applies_to_vectorised_user_functions(self):
@@ -463,7 +449,7 @@ define add(a: Integer, b: Integer) -> Integer => $a $b + end
 
         self.assertEqual(
             run(bytecode),
-            [[Decimal("5"), Decimal("7"), Decimal("3")]],
+            [[RuntimeNumber("5"), RuntimeNumber("7"), RuntimeNumber("3")]],
         )
 
     def test_extend_preserves_lazy_vectorisation(self):
@@ -472,7 +458,7 @@ define add(a: Integer, b: Integer) -> Integer => $a $b + end
         self.assertIsInstance(result, LazyList)
         self.assertEqual(
             list(result),
-            [Decimal("11"), Decimal("22"), Decimal("3")],
+            [RuntimeNumber("11"), RuntimeNumber("22"), RuntimeNumber("3")],
         )
 
     def test_repeats_strings_with_number_on_either_side(self):
@@ -481,8 +467,7 @@ define add(a: Integer, b: Integer) -> Integer => $a $b + end
 
     def test_structural_trait_element_calls_dispatch_to_runtime_shape(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 define[T, U] dotProd(
   left: trait =>
     extend +(:T, :T) -> T
@@ -494,8 +479,7 @@ define[T, U] dotProd(
 end
 
 ["Fizz", "Buzz"] dotProd [0, 1]
-"""
-            ),
+"""),
             ["Buzz"],
         )
 
@@ -503,8 +487,8 @@ end
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, count(Decimal("1"))),
-                    Instruction(OpCode.PUSH_CONST, Decimal("10")),
+                    Instruction(OpCode.PUSH_CONST, count(RuntimeNumber("1"))),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("10")),
                     Instruction(OpCode.LOAD_ELEMENT, "+"),
                     Instruction(OpCode.CALL),
                 ),
@@ -518,7 +502,13 @@ end
         self.assertIsInstance(stack[0], LazyList)
         self.assertEqual(
             list(islice(stack[0], 5)),
-            [Decimal("11"), Decimal("12"), Decimal("13"), Decimal("14"), Decimal("15")],
+            [
+                RuntimeNumber("11"),
+                RuntimeNumber("12"),
+                RuntimeNumber("13"),
+                RuntimeNumber("14"),
+                RuntimeNumber("15"),
+            ],
         )
 
     def test_runtime_list_builtins_accept_lazy_lists_without_forcing_length(self):
@@ -550,7 +540,7 @@ end
 [1, 2, 3, 4, 5] findScalar 3
 """
 
-        self.assertEqual(execute(source), [Decimal("2")])
+        self.assertEqual(execute(source), [RuntimeNumber("2")])
 
     def test_generic_atomic_scalar_search_rejects_non_scalar_shapes(self):
         definition = """
@@ -575,25 +565,29 @@ end
 
     def test_generic_atomic_rank_one_list_executes_with_unmarked_body_type(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 define[T] rankOne(xs: T atomic +) -> T+ => $xs end
 [1, 2, 3] rankOne
-"""
-            ),
-            [[Decimal("1"), Decimal("2"), Decimal("3")]],
+"""),
+            [[RuntimeNumber("1"), RuntimeNumber("2"), RuntimeNumber("3")]],
         )
 
     def test_add_all_extends_top_stack_list_with_items(self):
         self.assertEqual(
             execute("[3, 4] [1, 2] addAll"),
-            [[Decimal("1"), Decimal("2"), Decimal("3"), Decimal("4")]],
+            [
+                [
+                    RuntimeNumber("1"),
+                    RuntimeNumber("2"),
+                    RuntimeNumber("3"),
+                    RuntimeNumber("4"),
+                ]
+            ],
         )
 
     def test_recursive_flatten_handles_rugged_lists(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 $flatten = @recursive fn[T] (list: T~) -> T+ =>
   $flattened: T+ = []
   $list foreach (item) =>
@@ -608,42 +602,38 @@ $flatten = @recursive fn[T] (list: T~) -> T+ =>
 end
 
 $flatten([[1, 2, 3], [[4, 5], [6]], 7])
-"""
-            ),
+"""),
             [
                 [
-                    Decimal("1"),
-                    Decimal("2"),
-                    Decimal("3"),
-                    Decimal("4"),
-                    Decimal("5"),
-                    Decimal("6"),
-                    Decimal("7"),
+                    RuntimeNumber("1"),
+                    RuntimeNumber("2"),
+                    RuntimeNumber("3"),
+                    RuntimeNumber("4"),
+                    RuntimeNumber("5"),
+                    RuntimeNumber("6"),
+                    RuntimeNumber("7"),
                 ]
             ],
         )
 
     def test_result_ok_constructor_and_question_unwrap(self):
-        self.assertEqual(execute("OK(1) ?"), [Decimal("1")])
-        self.assertEqual(execute("OK(1) ?!"), [Decimal("1")])
+        self.assertEqual(execute("OK(1) ?"), [RuntimeNumber("1")])
+        self.assertEqual(execute("OK(1) ?!"), [RuntimeNumber("1")])
 
     def test_builtin_qualified_element_bypasses_user_shadowing(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 variant Maybe =>
   Some => $value: Number end
 end
 *::Some(1)
 ?
-"""
-            ),
-            [Decimal("1")],
+"""),
+            [RuntimeNumber("1")],
         )
 
     def test_question_short_circuits_error_from_current_function(self):
-        stack = execute(
-            """
+        stack = execute("""
 object ParseError => end
 object ParseError as Err => end
 define maybe_double(x: Result[Number, ParseError]) -> Number =>
@@ -652,8 +642,7 @@ define maybe_double(x: Result[Number, ParseError]) -> Number =>
 end
 ParseError
 maybe_double
-"""
-        )
+""")
 
         self.assertEqual(len(stack), 1)
         self.assertIsInstance(stack[0], ObjectValue)
@@ -661,14 +650,12 @@ maybe_double
 
     def test_question_bang_panics_on_result_error(self):
         with self.assertRaises(RuntimeError) as error:
-            execute(
-                """
+            execute("""
 object ParseError => end
 object ParseError as Err => end
 ParseError
 ?!
-"""
-            )
+""")
 
         self.assertIn("UnwrappedResultFault", str(error.exception))
 
@@ -678,16 +665,14 @@ ParseError
         self.assertEqual(len(ok_stack), 1)
         self.assertIsInstance(ok_stack[0], ObjectValue)
         self.assertEqual(ok_stack[0].type_name, "OK")
-        self.assertEqual(ok_stack[0].fields["value"], Decimal("4"))
+        self.assertEqual(ok_stack[0].fields["value"], RuntimeNumber("4"))
 
-        err_stack = execute(
-            """
+        err_stack = execute("""
 object ParseError => end
 object ParseError as Err => end
 ParseError
 &: double
-"""
-        )
+""")
 
         self.assertEqual(len(err_stack), 1)
         self.assertIsInstance(err_stack[0], ObjectValue)
@@ -717,8 +702,6 @@ ParseError
         self.assertIn("stack types: [Unknown+]", message)
         self.assertIn("<main> ip 2: call", message)
 
-
-
     def test_randbit_supports_niladic_and_mapping_calls(self):
         with patch(
             "valiance.std.random.random.getrandbits",
@@ -726,7 +709,7 @@ ParseError
         ):
             self.assertEqual(
                 execute("import {std.random.randbit}\nrandbit"),
-                [Decimal("1")],
+                [RuntimeNumber("1")],
             )
 
         with patch(
@@ -734,12 +717,11 @@ ParseError
             side_effect=(0, 1, 0),
         ):
             [mapped] = execute(
-                "import {std.random.randbit}\n"
-                "range(1, 3) map: randbit"
+                "import {std.random.randbit}\n" "range(1, 3) map: randbit"
             )
             self.assertEqual(
                 list(mapped),
-                [Decimal("0"), Decimal("1"), Decimal("0")],
+                [RuntimeNumber("0"), RuntimeNumber("1"), RuntimeNumber("0")],
             )
 
     def test_all_neighbors_preserves_documented_order_and_edge_behavior(self):
@@ -756,24 +738,29 @@ ParseError
 
         self.assertEqual(
             without_wrapping[0][0],
-            [Decimal("1"), Decimal("2"), Decimal("4"), Decimal("5")],
+            [
+                RuntimeNumber("1"),
+                RuntimeNumber("2"),
+                RuntimeNumber("4"),
+                RuntimeNumber("5"),
+            ],
         )
         self.assertEqual(
             without_wrapping[1][1],
-            [Decimal(str(value)) for value in range(1, 10)],
+            [RuntimeNumber(str(value)) for value in range(1, 10)],
         )
         self.assertEqual(
             with_wrapping[0][0],
             [
-                Decimal("9"),
-                Decimal("7"),
-                Decimal("8"),
-                Decimal("3"),
-                Decimal("1"),
-                Decimal("2"),
-                Decimal("6"),
-                Decimal("4"),
-                Decimal("5"),
+                RuntimeNumber("9"),
+                RuntimeNumber("7"),
+                RuntimeNumber("8"),
+                RuntimeNumber("3"),
+                RuntimeNumber("1"),
+                RuntimeNumber("2"),
+                RuntimeNumber("6"),
+                RuntimeNumber("4"),
+                RuntimeNumber("5"),
             ],
         )
         self.assertTrue(
@@ -803,7 +790,7 @@ ParseError
             (row, column)
             for row, values in enumerate(board)
             for column, value in enumerate(values)
-            if value == Decimal("1")
+            if value == RuntimeNumber("1")
         }
         self.assertEqual(live_cells, {(3, 4), (4, 4), (5, 4)})
         self.assertEqual(len(board), 10)
@@ -816,7 +803,7 @@ ParseError
         self.assertIsInstance(stack[0], LazyList)
         self.assertEqual(
             list(stack[0]),
-            [Decimal("2"), Decimal("4"), Decimal("6")],
+            [RuntimeNumber("2"), RuntimeNumber("4"), RuntimeNumber("6")],
         )
 
     def test_ecs_call_accepts_explicit_function_modifier(self):
@@ -949,7 +936,7 @@ Circle(5) | getArea
 Rectangle(4, 6) | getArea
 """
 
-        self.assertEqual(execute(source), [Decimal("99"), Decimal("99")])
+        self.assertEqual(execute(source), [RuntimeNumber("99"), RuntimeNumber("99")])
 
     def test_union_dispatch_preserves_generic_arguments_in_literals(self):
         output = io.StringIO()
@@ -1011,100 +998,93 @@ define label(x: #right Integer) -> String => "right"
     def test_executes_call_site_checked_builtins(self):
         self.assertEqual(
             execute("1 2 peek: +"),
-            [Decimal("1"), Decimal("2"), Decimal("3")],
+            [RuntimeNumber("1"), RuntimeNumber("2"), RuntimeNumber("3")],
         )
-        self.assertEqual(execute("1 2 3 dip: +"), [Decimal("3"), Decimal("3")])
+        self.assertEqual(
+            execute("1 2 3 dip: +"), [RuntimeNumber("3"), RuntimeNumber("3")]
+        )
         self.assertEqual(
             execute("2 fork: (double, double)"),
-            [Decimal("4"), Decimal("4")],
+            [RuntimeNumber("4"), RuntimeNumber("4")],
         )
         self.assertEqual(
             execute("6 7 (fn (:Number, :Number) => + end) call"),
-            [Decimal("13")],
+            [RuntimeNumber("13")],
         )
         self.assertEqual(
             execute("call(fn (:Number, :Number) => + end, 6, 7)"),
-            [Decimal("13")],
+            [RuntimeNumber("13")],
         )
         self.assertEqual(
             execute("'+ | call(6, 7)"),
-            [Decimal("13")],
+            [RuntimeNumber("13")],
         )
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             self.assertEqual(execute("'+ | call(6, 7) | println"), [])
         self.assertEqual(output.getvalue(), "13\n")
         self.assertEqual(
-            execute(
-                """
+            execute("""
 define choose(n: Number) -> Number => $n 1 +
 define choose(i: Integer) -> String => "int"
 'choose | call[Number](6)
-"""
-            ),
-            [Decimal("7")],
+"""),
+            [RuntimeNumber("7")],
         )
 
     def test_executes_both_for_zero_through_three_input_callables(self):
         self.assertEqual(
             execute("both: fn => 7 end"),
-            [Decimal("7"), Decimal("7")],
+            [RuntimeNumber("7"), RuntimeNumber("7")],
         )
         self.assertEqual(
             execute("1 2 both: double"),
-            [Decimal("2"), Decimal("4")],
+            [RuntimeNumber("2"), RuntimeNumber("4")],
         )
         self.assertEqual(
             execute("1 2 3 4 both: +"),
-            [Decimal("3"), Decimal("7")],
+            [RuntimeNumber("3"), RuntimeNumber("7")],
         )
         self.assertEqual(
-            execute(
-                "1 2 3 4 5 6 "
-                "both: fn (:Number, :Number, :Number) => + + end"
-            ),
-            [Decimal("6"), Decimal("15")],
+            execute("1 2 3 4 5 6 " "both: fn (:Number, :Number, :Number) => + + end"),
+            [RuntimeNumber("6"), RuntimeNumber("15")],
         )
 
     def test_executes_correspond_with_distinct_callable_arities(self):
         self.assertEqual(
             execute("1 2 correspond: (double, squared)"),
-            [Decimal("2"), Decimal("4")],
+            [RuntimeNumber("2"), RuntimeNumber("4")],
         )
         self.assertEqual(
             execute("1 2 3 correspond: (double, +)"),
-            [Decimal("2"), Decimal("5")],
+            [RuntimeNumber("2"), RuntimeNumber("5")],
         )
         self.assertEqual(
             execute(
                 "1 2 3 4 5 correspond: "
                 "(+, fn (:Number, :Number, :Number) => + + end)"
             ),
-            [Decimal("3"), Decimal("12")],
+            [RuntimeNumber("3"), RuntimeNumber("12")],
         )
         self.assertEqual(
             execute("1 correspond: (fn => 9 end, double)"),
-            [Decimal("9"), Decimal("2")],
+            [RuntimeNumber("9"), RuntimeNumber("2")],
         )
 
     def test_both_and_correspond_can_infer_enclosing_function_inputs(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 $f = fn => both: + end
 1 2 3 4 $f()
-"""
-            ),
-            [Decimal("3"), Decimal("7")],
+"""),
+            [RuntimeNumber("3"), RuntimeNumber("7")],
         )
         self.assertEqual(
-            execute(
-                """
+            execute("""
 $f = fn => correspond: (double, +) end
 1 2 3 $f()
-"""
-            ),
-            [Decimal("2"), Decimal("5")],
+"""),
+            [RuntimeNumber("2"), RuntimeNumber("5")],
         )
 
     def test_correspond_serializes_its_call_site_arity_metadata(self):
@@ -1125,21 +1105,19 @@ $f = fn => correspond: (double, +) end
         self.assertEqual(references[0].static_values, (1, 2))
         self.assertEqual(
             run(loads(dumps(program))),
-            [Decimal("2"), Decimal("5")],
+            [RuntimeNumber("2"), RuntimeNumber("5")],
         )
 
     def test_executes_reduce_slash_overload(self):
-        self.assertEqual(execute("[1, 2, 3, 4] /: +"), [Decimal("10")])
+        self.assertEqual(execute("[1, 2, 3, 4] /: +"), [RuntimeNumber("10")])
 
     def test_fork_runtime_passes_suffix_to_shorter_modifier(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 define keep_name(name: String, n: Number) -> String => $name
 "tag" 2 fork: (keep_name, double)
-"""
-            ),
-            ["tag", Decimal("4")],
+"""),
+            ["tag", RuntimeNumber("4")],
         )
 
     def test_compiler_emits_resolved_builtin_element_calls(self):
@@ -1152,7 +1130,7 @@ define keep_name(name: String, n: Number) -> String => $name
 
         self.assertIn(OpCode.CALL_RESOLVED_ELEMENT, ops)
         self.assertNotIn(OpCode.LOAD_ELEMENT, ops)
-        self.assertEqual(run(program), [Decimal("3")])
+        self.assertEqual(run(program), [RuntimeNumber("3")])
 
     def test_checked_cast_emits_runtime_check(self):
         analyser = Analyser()
@@ -1182,15 +1160,13 @@ define keep_name(name: String, n: Number) -> String => $name
 
     def test_none_type_patterns_match_the_runtime_none_value(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 None
 match =>
   as :None => "none"
   _ => "other"
 end
-"""
-            ),
+"""),
             ["none"],
         )
 
@@ -1227,16 +1203,15 @@ end
             execute("[[1, 2], [3, 4]] +[Number+, _] [10, 20]"),
             [
                 [
-                    [Decimal("11"), Decimal("22")],
-                    [Decimal("13"), Decimal("24")],
+                    [RuntimeNumber("11"), RuntimeNumber("22")],
+                    [RuntimeNumber("13"), RuntimeNumber("24")],
                 ]
             ],
         )
 
     def test_minimum_rank_argument_vectorises_to_exact_parameter_at_runtime(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 define exactIn(:Number+) => 1
 define \\rank1 -> Number* => [1, 2]
 define \\rank2 -> Number* => [[1, 2], [3, 4]]
@@ -1244,22 +1219,20 @@ define \\rank3 -> Number* => [[[1], [2]], [[3], [4]]]
 exactIn \\rank1
 exactIn \\rank2
 exactIn \\rank3
-"""
-            ),
+"""),
             [
-                Decimal("1"),
-                [Decimal("1"), Decimal("1")],
+                RuntimeNumber("1"),
+                [RuntimeNumber("1"), RuntimeNumber("1")],
                 [
-                    [Decimal("1"), Decimal("1")],
-                    [Decimal("1"), Decimal("1")],
+                    [RuntimeNumber("1"), RuntimeNumber("1")],
+                    [RuntimeNumber("1"), RuntimeNumber("1")],
                 ],
             ],
         )
 
     def test_empty_list_return_inference_executes_for_all_rank_modes(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 define exactIn(:Number+) => 1
 define minIn(:Number*) => 1
 define ruggedIn(:Number~) => 1
@@ -1283,9 +1256,8 @@ minGen \\min
 rugGen \\exact
 rugGen \\min
 rugGen \\rugged
-"""
-            ),
-            [Decimal("1")] * 14,
+"""),
+            [RuntimeNumber("1")] * 14,
         )
 
     def test_compiler_emits_resolved_user_defined_element_calls(self):
@@ -1302,7 +1274,7 @@ define add_one(n: Number) -> Number => $n 1 +
 
         self.assertIn(OpCode.CALL_RESOLVED_ELEMENT, ops)
         self.assertNotIn(OpCode.LOAD_ELEMENT, ops)
-        self.assertEqual(run(program), [Decimal("42")])
+        self.assertEqual(run(program), [RuntimeNumber("42")])
 
     def test_control_flow_bodies_keep_resolved_element_calls(self):
         source = """
@@ -1335,15 +1307,13 @@ $total
             if instruction.op is OpCode.FOREACH
         )
         foreach_code = foreach_instruction.arg[0]
-        foreach_ops = tuple(
-            instruction.op for instruction in foreach_code.instructions
-        )
+        foreach_ops = tuple(instruction.op for instruction in foreach_code.instructions)
 
         self.assertIn(OpCode.CALL_RESOLVED_ELEMENT, function_ops)
         self.assertNotIn(OpCode.LOAD_ELEMENT, function_ops)
         self.assertIn(OpCode.CALL_RESOLVED_ELEMENT, foreach_ops)
         self.assertNotIn(OpCode.LOAD_ELEMENT, foreach_ops)
-        self.assertEqual(run(program), [Decimal("12")])
+        self.assertEqual(run(program), [RuntimeNumber("12")])
 
     def test_inline_control_flow_keeps_resolved_element_calls(self):
         """Do not redo overload search inside while, assert, or try bodies."""
@@ -1369,7 +1339,7 @@ end
 
         self.assertGreaterEqual(ops.count(OpCode.CALL_RESOLVED_ELEMENT), 6)
         self.assertNotIn(OpCode.LOAD_ELEMENT, ops)
-        self.assertEqual(run(program), [Decimal("0"), Decimal("2")])
+        self.assertEqual(run(program), [RuntimeNumber("0"), RuntimeNumber("2")])
 
         parameterised = Analyser().analyse(
             parse("0 while (< 3) -> (n: Number) => 1 + end")
@@ -1402,7 +1372,7 @@ define same(x, y) => $x $y +
         self.assertEqual(maker.op, OpCode.MAKE_FUNCTION)
         self.assertIsInstance(maker.arg, FunctionSetCode)
         self.assertEqual(len(maker.arg.overloads), 6)
-        self.assertEqual(run(program), [Decimal("3")])
+        self.assertEqual(run(program), [RuntimeNumber("3")])
 
     def test_repeated_defines_merge_user_defined_overloads(self):
         source = """
@@ -1410,7 +1380,7 @@ define triple(n: Number) -> Number => $n * 3
 define triple(s: String) -> String => $s + $s + $s
 triple 15
 """
-        self.assertEqual(execute(source), [Decimal("45")])
+        self.assertEqual(execute(source), [RuntimeNumber("45")])
 
         source = """
 define triple(n: Number) -> Number => $n * 3
@@ -1483,14 +1453,14 @@ end
 
 Mul(Add(Val(2), Val(3)), Val(4)) | asExpr | eval
 """
-        self.assertEqual(execute(source), [Decimal("20")])
+        self.assertEqual(execute(source), [RuntimeNumber("20")])
 
     def test_where_rank_variable_is_available_in_function_body(self):
         source = """
 define rank_of(xs: Number+$n) -> Number => $n
 [[1], [2]] rank_of
 """
-        self.assertEqual(execute(source), [Decimal("2")])
+        self.assertEqual(execute(source), [RuntimeNumber("2")])
 
     def test_where_rank_variable_in_return_type_executes(self):
         source = """
@@ -1499,7 +1469,7 @@ define id_rank(xs: Number+$n) -> Number+$n => $xs
 """
         self.assertEqual(
             _materialize_lists(execute(source)),
-            [[[Decimal("1")], [Decimal("2")]]],
+            [[[RuntimeNumber("1")], [RuntimeNumber("2")]]],
         )
 
     def test_where_computed_variable_is_available_at_runtime(self):
@@ -1508,19 +1478,19 @@ define static_values(x: Number) -> Number, Number
 where ($a = 1.5, $b = and(1, not(0))) => $a $b
 1 static_values
 """
-        self.assertEqual(execute(source), [Decimal("1.5"), Decimal("1")])
+        self.assertEqual(execute(source), [RuntimeNumber("1.5"), RuntimeNumber("1")])
 
     def test_where_rank_function_executes_through_postfix_call(self):
         source = """
 [[1], [2]] (fn (xs: Number+$n) -> Number => $n end) call
 """
-        self.assertEqual(execute(source), [Decimal("2")])
+        self.assertEqual(execute(source), [RuntimeNumber("2")])
 
     def test_where_function_executes_through_explicit_call(self):
         source = """
 call(fn (shape: {Number...}) -> Number where ($n = length $shape) => $n end, {1, 2, 3})
 """
-        self.assertEqual(execute(source), [Decimal("3")])
+        self.assertEqual(execute(source), [RuntimeNumber("3")])
 
     def test_where_function_vectorises_through_explicit_call(self):
         source = """
@@ -1528,7 +1498,7 @@ call(fn (x: Number) -> Number where ($offset = 1) => $x $offset + end, [1, 2])
 """
         self.assertEqual(
             _materialize_lists(execute(source)),
-            [[Decimal("2"), Decimal("3")]],
+            [[RuntimeNumber("2"), RuntimeNumber("3")]],
         )
 
     def test_where_call_site_checked_function_receives_static_values(self):
@@ -1537,7 +1507,7 @@ define shape_len(shape: {Number...}) -> Number
 where ($n = length $shape) => $n
 {1, 2, 3} shape_len
 """
-        self.assertEqual(execute(source), [Decimal("3")])
+        self.assertEqual(execute(source), [RuntimeNumber("3")])
 
     def test_where_introspects_bare_function_signatures_at_call_site(self):
         source = """
@@ -1552,7 +1522,12 @@ fn (x: Number, y: String) -> Number, String => 1 "x" end signature
 """
         self.assertEqual(
             execute(source),
-            [Decimal("2"), Decimal("2"), Decimal("2"), Decimal("2")],
+            [
+                RuntimeNumber("2"),
+                RuntimeNumber("2"),
+                RuntimeNumber("2"),
+                RuntimeNumber("2"),
+            ],
         )
 
     def test_where_variadic_tuple_rank_binding_backtracks_at_runtime(self):
@@ -1560,7 +1535,7 @@ fn (x: Number, y: String) -> Number, String => 1 "x" end signature
 define ranks(xs: {Number+$n..., String+...}) -> Number => $n
 {[1], ["a"]} ranks
 """
-        self.assertEqual(execute(source), [Decimal("1")])
+        self.assertEqual(execute(source), [RuntimeNumber("1")])
 
     def test_where_rank_variable_resolves_in_checked_cast(self):
         source = """
@@ -1569,7 +1544,7 @@ define cast_same(xs: Number+$n) -> Number+$n => $xs as! Number+$n
 """
         self.assertEqual(
             _materialize_lists(execute(source)),
-            [[[Decimal("1")], [Decimal("2")]]],
+            [[[RuntimeNumber("1")], [RuntimeNumber("2")]]],
         )
 
     def test_where_output_rank_resolves_in_call_site_checked_cast(self):
@@ -1580,7 +1555,7 @@ where ($n = length $shape) => [[1]] as! Number+$n
 """
         self.assertEqual(
             _materialize_lists(execute(source)),
-            [[[Decimal("1")]]],
+            [[[RuntimeNumber("1")]]],
         )
 
     def test_executes_string_interpolation(self):
@@ -1607,7 +1582,7 @@ $name = "Valiance"
 
             stack = execute("import { math.[add_one] }\n41 add_one", main)
 
-        self.assertEqual(stack, [Decimal("42")])
+        self.assertEqual(stack, [RuntimeNumber("42")])
 
     def test_executes_component_imported_inside_define(self):
         with TemporaryDirectory() as tmp:
@@ -1629,7 +1604,7 @@ end
                 main,
             )
 
-        self.assertEqual(stack, [Decimal("42")])
+        self.assertEqual(stack, [RuntimeNumber("42")])
 
     def test_executes_component_imported_inside_function_literal(self):
         with TemporaryDirectory() as tmp:
@@ -1650,7 +1625,7 @@ end) call
                 main,
             )
 
-        self.assertEqual(stack, [Decimal("42")])
+        self.assertEqual(stack, [RuntimeNumber("42")])
 
     def test_executes_object_imported_inside_define(self):
         with TemporaryDirectory() as tmp:
@@ -1702,7 +1677,7 @@ end
             )
 
         [value] = stack
-        self.assertEqual(value.value, Decimal("2"))
+        self.assertEqual(value.value, RuntimeNumber("2"))
         self.assertEqual({tag.name for tag in value.tags}, {"checked"})
 
     def test_imported_definition_carries_block_import_runtime_prelude(self):
@@ -1725,7 +1700,7 @@ end
 
             stack = execute("import { wrapper.[apply] }\n41 apply", main)
 
-        self.assertEqual(stack, [Decimal("42")])
+        self.assertEqual(stack, [RuntimeNumber("42")])
 
     def test_foreach_block_import_is_initialized_outside_loop_body(self):
         with TemporaryDirectory() as tmp:
@@ -1794,7 +1769,7 @@ end
                 main,
             )
 
-        self.assertEqual(stack, [Decimal("2"), Decimal("12")])
+        self.assertEqual(stack, [RuntimeNumber("2"), RuntimeNumber("12")])
 
     def test_executes_imported_namespace_definition(self):
         with TemporaryDirectory() as tmp:
@@ -1807,7 +1782,7 @@ end
 
             stack = execute("import { math }\n41 math.add_one", main)
 
-        self.assertEqual(stack, [Decimal("42")])
+        self.assertEqual(stack, [RuntimeNumber("42")])
 
     def test_executes_imported_namespace_object_constructor(self):
         with TemporaryDirectory() as tmp:
@@ -1919,7 +1894,7 @@ Foo(10) Foo::get
                 main,
             )
 
-        self.assertEqual(stack, [Decimal("15"), Decimal("10")])
+        self.assertEqual(stack, [RuntimeNumber("15"), RuntimeNumber("10")])
 
     def test_executes_direct_imported_trait_impl_friendly_element(self):
         with TemporaryDirectory() as tmp:
@@ -1956,58 +1931,50 @@ end
                 main,
             )
 
-        self.assertEqual(stack, [Decimal("42")])
+        self.assertEqual(stack, [RuntimeNumber("42")])
 
     def test_executes_python_backed_standard_library_regex_helpers(self):
-        stack = execute(
-            """
+        stack = execute("""
 import { std.regex }
 "a+" "aaa" regex.matches
 "[0-9]+" "abc123" regex.first
 "[,-]" "a,b-c" regex.split
-"""
-        )
+""")
 
         self.assertEqual(len(stack), 3)
-        self.assertEqual(stack[0], Decimal("1"))
+        self.assertEqual(stack[0], RuntimeNumber("1"))
         self.assertIsInstance(stack[1], ObjectValue)
         self.assertEqual(stack[1].type_name, "Some")
         self.assertEqual(stack[1].fields["value"], "123")
         self.assertEqual(stack[2], ["a", "b", "c"])
 
     def test_executes_python_backed_standard_library_trig_helpers(self):
-        stack = execute(
-            """
+        stack = execute("""
 import { std.trig }
 0 trig.sin
 0 trig.cos
 trig.pi
-"""
-        )
+""")
 
-        self.assertEqual(stack[0], Decimal("0.0"))
-        self.assertEqual(stack[1], Decimal("1.0"))
-        self.assertGreater(stack[2], Decimal("3.14"))
+        self.assertEqual(stack[0], RuntimeNumber("0.0"))
+        self.assertEqual(stack[1], RuntimeNumber("1.0"))
+        self.assertGreater(stack[2], RuntimeNumber("3.14"))
 
     def test_executes_valiance_only_standard_library_module(self):
-        stack = execute(
-            """
+        stack = execute("""
 import { std.arithmetic }
 5 arithmetic.square
 3 arithmetic.cube
-"""
-        )
+""")
 
-        self.assertEqual(stack, [Decimal("25"), Decimal("27")])
+        self.assertEqual(stack, [RuntimeNumber("25"), RuntimeNumber("27")])
 
     def test_executes_mixed_python_and_valiance_standard_library_module(self):
-        stack = execute(
-            """
+        stack = execute("""
 import { std.text }
 "  hi  " text.trim
 "  hi  " text.exclaim
-"""
-        )
+""")
 
         self.assertEqual(stack, ["hi", "hi!"])
 
@@ -2017,25 +1984,21 @@ import { std.text }
 
     def test_executes_variables_and_named_definitions(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 define add_one(n: Number) -> Number => $n 1 +
 $value = 41
 $value add_one
-"""
-            ),
-            [Decimal("42")],
+"""),
+            [RuntimeNumber("42")],
         )
 
     def test_executes_explicitly_typed_variables(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 $value: Number = 41
 $value 1 +
-"""
-            ),
-            [Decimal("42")],
+"""),
+            [RuntimeNumber("42")],
         )
 
     def test_recursive_function_code_binds_this_at_runtime(self):
@@ -2062,29 +2025,24 @@ $value 1 +
 
     def test_tupled_annotation_wraps_element_returns_at_runtime(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 define \\pair -> Number, Number => 1 2
 @@tupled \\pair
-"""
-            ),
-            [(Decimal("1"), Decimal("2"))],
+"""),
+            [(RuntimeNumber("1"), RuntimeNumber("2"))],
         )
 
     def test_commutative_annotation_generates_runtime_wrapper(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 @commutative define choose(left: Number, right: String) -> String => $right
 "ok" 1 choose
-"""
-            ),
+"""),
             ["ok"],
         )
 
     def test_self_annotation_returns_object_friendly_receiver(self):
-        stack = execute(
-            """
+        stack = execute("""
 object Box =>
   $value: Number
   @self define touch => end
@@ -2092,15 +2050,13 @@ end
 Box(7)
 touch
 $.value
-"""
-        )
+""")
 
-        self.assertEqual(stack, [Decimal("7")])
+        self.assertEqual(stack, [RuntimeNumber("7")])
 
     def test_nested_function_closure_keeps_captured_outer_value(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 define makeMultiplier(factor: Number) =>
   fn (:Number) => * $factor
 end
@@ -2108,9 +2064,8 @@ end
 $double = makeMultiplier(2)
 $triple = makeMultiplier(3)
 $double($triple(4))
-"""
-            ),
-            [Decimal("24")],
+"""),
+            [RuntimeNumber("24")],
         )
 
     def test_closure_assignment_does_not_persist_between_calls(self):
@@ -2140,13 +2095,11 @@ $c()
 
     def test_err_type_annotation_synthesizes_runtime_message_element(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 @errType object DivisionByZeroError => end
 DivisionByZeroError("division by zero")
 message
-"""
-            ),
+"""),
             ["division by zero"],
         )
 
@@ -2206,8 +2159,7 @@ message
 
     def test_user_defined_fault_can_be_panicked_and_handled(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 object CustomProblem =>
   $message: String
 end
@@ -2217,8 +2169,7 @@ try =>
 handle CustomProblem =>
   "handled"
 end
-"""
-            ),
+"""),
             ["handled"],
         )
 
@@ -2240,36 +2191,31 @@ safediv(3, 0)
 
     def test_executes_object_default_constructor_and_field_access(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 object Person =>
   $name: String
   $age: Number
 end
 Person("Ada", 36) $.name
-"""
-            ),
+"""),
             ["Ada"],
         )
 
     def test_executes_explicit_object_constructor(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 object Counter =>
   $value: Number = 0
   private $timesIncremented = 0
   define Counter(initialValue: Number) => $self.value = $initialValue
 end
 Counter(7) $.value
-"""
-            ),
-            [Decimal("7")],
+"""),
+            [RuntimeNumber("7")],
         )
 
     def test_explicit_constructor_accumulates_multiple_field_assignments(self):
-        stack = execute(
-            """
+        stack = execute("""
 object Person =>
   $name: String
   $age: Number
@@ -2279,12 +2225,11 @@ object Person =>
   end
 end
 Person("Ada", 36)
-"""
-        )
+""")
 
         [person] = stack
         self.assertIsInstance(person, ObjectValue)
-        self.assertEqual(person.fields, {"name": "Ada", "age": Decimal("36")})
+        self.assertEqual(person.fields, {"name": "Ada", "age": RuntimeNumber("36")})
 
     def test_self_methods_rebind_augmented_field_assignments(self):
         output = io.StringIO()
@@ -2328,28 +2273,25 @@ incCount | println
                 "-> Integer => + 1\n"
                 "addSecond(10, 20)"
             ),
-            [Decimal("21")],
+            [RuntimeNumber("21")],
         )
 
     def test_explicit_constructor_preserves_generic_type_arguments(self):
-        [box] = execute(
-            """
+        [box] = execute("""
 object[T] Box =>
   $value: T
   define Box(value: T) => $self.value = $value
 end
 Box(1)
-"""
-        )
+""")
 
         self.assertIsInstance(box, ObjectValue)
-        self.assertEqual(box.fields, {"value": Decimal("1")})
+        self.assertEqual(box.fields, {"value": RuntimeNumber("1")})
         self.assertEqual(box.type_args, ("Integer",))
 
     def test_overloaded_explicit_constructor_uses_resolved_initializer(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 object Value =>
   $number: Number = 0
   $text: String = ""
@@ -2358,9 +2300,8 @@ object Value =>
 end
 Value(1) $.number
 Value("x") $.text
-"""
-            ),
-            [Decimal("1"), "x"],
+"""),
+            [RuntimeNumber("1"), "x"],
         )
 
     def test_external_element_overrides_object_friendly_element(self):
@@ -2385,8 +2326,7 @@ Foo(10) | Foo::get | println
 
     def test_named_external_element_overrides_object_friendly_element(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 object Foo =>
   $x: Number
   define get => $self.x
@@ -2396,9 +2336,8 @@ define get(f: Foo) => $f.x + 5
 
 Foo(10) get
 Foo(10) Foo::get
-"""
-            ),
-            [Decimal("15"), Decimal("10")],
+"""),
+            [RuntimeNumber("15"), RuntimeNumber("10")],
         )
 
     def test_executes_row_inferred_element_on_nominal_object(self):
@@ -2463,29 +2402,25 @@ println getName $joe
 
     def test_executes_object_field_access_over_lists(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 object Person =>
   $name: String
 end
 [Person("Ada"), Person("Grace")] $.name
-"""
-            ),
+"""),
             [["Ada", "Grace"]],
         )
 
     def test_executes_public_object_field_write_as_reconstruction(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 object Person =>
   public $name: String
 end
 Person("Ada")
 $.name = "Grace"
 $.name
-"""
-            ),
+"""),
             ["Grace"],
         )
 
@@ -2512,8 +2447,7 @@ end
 
     def test_unduplicatable_object_raises_duplication_fault(self):
         with self.assertRaises(RuntimeError) as caught:
-            execute(
-                """
+            execute("""
 object WriteFile =>
   @error("Writeable files cannot be duplicated")
   define dup => end
@@ -2522,8 +2456,7 @@ end
 $file = WriteFile
 $file
 $file
-"""
-            )
+""")
 
         self.assertIn("uncaught panic: DuplicationFault", str(caught.exception))
         self.assertIn("Writeable files cannot be duplicated", str(caught.exception))
@@ -2544,8 +2477,9 @@ end
 \\leak
 """
 
-        with self.assertRaises(RuntimeError) as caught, contextlib.redirect_stdout(
-            output
+        with (
+            self.assertRaises(RuntimeError) as caught,
+            contextlib.redirect_stdout(output),
         ):
             execute(source)
 
@@ -2553,22 +2487,20 @@ end
         self.assertEqual(output.getvalue(), "released\n")
 
     def test_generic_object_runtime_values_keep_type_arguments(self):
-        stack = execute(
-            """
+        stack = execute("""
 object[T] Box =>
   public $value: T
 end
 1
 Box
 $.value = 2
-"""
-        )
+""")
 
         self.assertEqual(len(stack), 1)
         self.assertIsInstance(stack[0], ObjectValue)
         self.assertEqual(stack[0].type_name, "Box")
         self.assertEqual(stack[0].type_args, ("Integer",))
-        self.assertEqual(stack[0].fields["value"], Decimal("2"))
+        self.assertEqual(stack[0].fields["value"], RuntimeNumber("2"))
 
     def test_generic_object_type_arguments_survive_bytecode_round_trip(self):
         source = """
@@ -2601,7 +2533,7 @@ Person("Ada")
         [person] = run(loads(dumps(compile_program(typed, optimize=False))))
 
         self.assertIsInstance(person, ObjectValue)
-        self.assertEqual(person.fields, {"name": "Ada", "age": Decimal("0")})
+        self.assertEqual(person.fields, {"name": "Ada", "age": RuntimeNumber("0")})
 
     def test_function_element_tags_survive_bytecode_round_trip(self):
         source = "eager define log(value: Number) -> => $value println"
@@ -2614,34 +2546,29 @@ Person("Ada")
 
     def test_executes_enum_member_value_access(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 enum[String] TokenType =>
   NUMBER = "Number"
 end
 TokenType.NUMBER.value
-"""
-            ),
+"""),
             ["Number"],
         )
 
     def test_executes_match_on_enum_and_variant_members(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 enum Colour => RED GREEN end
 Colour.GREEN
 match =>
   as :RED => "red"
   as :GREEN => "green"
 end
-"""
-            ),
+"""),
             ["green"],
         )
         self.assertEqual(
-            execute(
-                """
+            execute("""
 variant Maybe =>
   Some => $value: Number end
   None => end
@@ -2651,124 +2578,106 @@ match =>
   as :Some => "some"
   as :None => 0
 end
-"""
-            ),
+"""),
             ["some"],
         )
 
     def test_generic_variant_runtime_values_keep_type_arguments(self):
-        stack = execute(
-            """
+        stack = execute("""
 variant[T] Maybe =>
   Some => $value: T end
   None => end
 end
 1
 Some
-"""
-        )
+""")
 
         self.assertEqual(len(stack), 1)
         self.assertIsInstance(stack[0], ObjectValue)
         self.assertEqual(stack[0].type_name, "Maybe.Some")
         self.assertEqual(stack[0].type_args, ("Integer",))
-        self.assertEqual(stack[0].fields["value"], Decimal("1"))
+        self.assertEqual(stack[0].fields["value"], RuntimeNumber("1"))
 
     def test_executes_match_literal_guard_and_wildcard_patterns(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 10
 match =>
   10 => "The number was 10"
   if > 5 => "The number is bigger than 5"
   _ => "Too small"
 end
-"""
-            ),
+"""),
             ["The number was 10"],
         )
         self.assertEqual(
-            execute(
-                """
+            execute("""
 7
 match =>
   10 => "The number was 10"
   if > 5 => "The number is bigger than 5"
   _ => "Too small"
 end
-"""
-            ),
+"""),
             ["The number is bigger than 5"],
         )
         self.assertEqual(
-            execute(
-                """
+            execute("""
 2
 match =>
   10 => "The number was 10"
   if > 5 => "The number is bigger than 5"
   _ => "Too small"
 end
-"""
-            ),
+"""),
             ["Too small"],
         )
 
     def test_executes_match_list_patterns_with_bindings_and_rests(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 [1, 99, 3]
 match =>
   [1, _, 3] => "shape"
   _ => "no"
 end
-"""
-            ),
+"""),
             ["shape"],
         )
         self.assertEqual(
-            execute(
-                """
+            execute("""
 [1, 99, 3]
 match =>
   [1, $x = _, 3] => "3 items, the middle is ${$x}"
   _ => "no"
 end
-"""
-            ),
+"""),
             ["3 items, the middle is 99"],
         )
         self.assertEqual(
-            execute(
-                """
+            execute("""
 [1, 2, 3, 4, 6]
 match =>
   [1, ..., 3, $y = ..., 6] => "Captured ${$y length} item"
   _ => "no"
 end
-"""
-            ),
+"""),
             ["Captured 1 item"],
         )
 
     def test_executes_match_type_guards_destructure_and_stack_patterns(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 6
 match =>
   as :Number if > 5 => "Type match with guard"
   as y => "Default named type match: ${$y}"
 end
-"""
-            ),
+"""),
             ["Type match with guard"],
         )
         self.assertEqual(
-            execute(
-                """
+            execute("""
 object Pair =>
   $left: Number
   $right: Number
@@ -2778,37 +2687,31 @@ match =>
   as :Pair(param, param) => "Destructured object with ${$param}"
   _ => "no"
 end
-"""
-            ),
+"""),
             ["Destructured object with 5"],
         )
         self.assertEqual(
-            execute(
-                """
+            execute("""
 2 1
 match =>
   1, 2 => "Top of stack was 1 and then 2"
   _, _ => "default case"
 end
-"""
-            ),
+"""),
             ["Top of stack was 1 and then 2"],
         )
         self.assertEqual(
-            execute(
-                """
+            execute("""
 [1, 2, 3] 3
 match =>
   if > 10 || if < 4, [1, 2, 3] => "mixed"
   _, _ => "default"
 end
-"""
-            ),
+"""),
             ["mixed"],
         )
         self.assertEqual(
-            execute(
-                """
+            execute("""
 define classify =>
   match =>
     1, "x" => "hit"
@@ -2816,8 +2719,7 @@ define classify =>
   end
 end
 classify("x", 1)
-"""
-            ),
+"""),
             ["hit"],
         )
 
@@ -2845,28 +2747,26 @@ println
             self.assertEqual(output.getvalue(), expected)
 
     def test_executes_list_tuple_record_and_dict_literals(self):
-        self.assertEqual(execute("[1, 2, 3] length"), [Decimal("3")])
-        self.assertEqual(execute('{1, "two"}'), [(Decimal("1"), "two")])
-        self.assertEqual(execute("record{x: 5}.x"), [Decimal("5")])
-        self.assertEqual(execute('dict{"x": 7}'), [{"x": Decimal("7")}])
+        self.assertEqual(execute("[1, 2, 3] length"), [RuntimeNumber("3")])
+        self.assertEqual(execute('{1, "two"}'), [(RuntimeNumber("1"), "two")])
+        self.assertEqual(execute("record{x: 5}.x"), [RuntimeNumber("5")])
+        self.assertEqual(execute('dict{"x": 7}'), [{"x": RuntimeNumber("7")}])
 
     def test_executes_conditionals_and_loops(self):
-        self.assertEqual(execute("if (true) => 2 else => 3 end"), [Decimal("2")])
+        self.assertEqual(execute("if (true) => 2 else => 3 end"), [RuntimeNumber("2")])
         self.assertEqual(
-            execute(
-                """
+            execute("""
 $n = 3
 while ($n 0 >) =>
   $n = $n 1 -
 end
 $n
-"""
-            ),
-            [Decimal("0")],
+"""),
+            [RuntimeNumber("0")],
         )
         self.assertEqual(
             execute("0 while (< 3) -> (n: Number) => 1 + end"),
-            [Decimal("3")],
+            [RuntimeNumber("3")],
         )
 
     def test_runtime_loop_forms_cycle_explicit_inputs(self):
@@ -2875,7 +2775,7 @@ $n
                 Program(
                     FunctionCode(
                         (
-                            Instruction(OpCode.PUSH_CONST, Decimal("2")),
+                            Instruction(OpCode.PUSH_CONST, RuntimeNumber("2")),
                             Instruction(OpCode.CYCLE_BEGIN, (None, 0)),
                             Instruction(
                                 OpCode.CALL_RESOLVED_ELEMENT,
@@ -2888,18 +2788,16 @@ $n
                     )
                 )
             ),
-            [Decimal("4")],
+            [RuntimeNumber("4")],
         )
         self.assertEqual(
-            execute(
-                """
+            execute("""
 define first_generated(n: Number) -> Number =>
   unfold (< 3) -> (x: Number) => 1 + end | #!infinite | head
 end
 1 first_generated
-"""
-            ),
-            [Decimal("2")],
+"""),
+            [RuntimeNumber("2")],
         )
         self.assertEqual(
             execute("[1, 2] foreach (n) => if ($n 10 >) => break ($n) end end"),
@@ -2919,14 +2817,14 @@ at (list+, item) => $list append $item
 """
         expected = [
             [
-                Decimal("1"),
-                Decimal("2"),
-                Decimal("5"),
+                RuntimeNumber("1"),
+                RuntimeNumber("2"),
+                RuntimeNumber("5"),
             ],
             [
-                Decimal("3"),
-                Decimal("4"),
-                Decimal("6"),
+                RuntimeNumber("3"),
+                RuntimeNumber("4"),
+                RuntimeNumber("6"),
             ],
         ]
 
@@ -2949,14 +2847,14 @@ at (list+, item) => append
             [
                 [
                     [
-                        Decimal("1"),
-                        Decimal("2"),
-                        Decimal("5"),
+                        RuntimeNumber("1"),
+                        RuntimeNumber("2"),
+                        RuntimeNumber("5"),
                     ],
                     [
-                        Decimal("3"),
-                        Decimal("4"),
-                        Decimal("5"),
+                        RuntimeNumber("3"),
+                        RuntimeNumber("4"),
+                        RuntimeNumber("5"),
                     ],
                 ]
             ],
@@ -2964,32 +2862,27 @@ at (list+, item) => append
 
     def test_foreach_and_while_break_return_values(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 [1, 2, 3] foreach (n) =>
   if ($n 2 ==) =>
     break ($n, $n double)
   end
 end
-"""
-            ),
-            [Decimal("2"), Decimal("4")],
+"""),
+            [RuntimeNumber("2"), RuntimeNumber("4")],
         )
         self.assertEqual(
-            execute(
-                """
+            execute("""
 [1] foreach (n) =>
   if (false) =>
     break ($n, $n)
   end
 end
-"""
-            ),
+"""),
             [ObjectValue("None", {}), ObjectValue("None", {})],
         )
         self.assertEqual(
-            execute(
-                """
+            execute("""
 0 while (< 10) -> (n: Number) =>
   if ($n 3 ==) =>
     break ($n)
@@ -2997,9 +2890,8 @@ end
     1 +
   end
 end
-"""
-            ),
-            [Decimal("3")],
+"""),
+            [RuntimeNumber("3")],
         )
 
     def test_typed_recursive_definitions_call_themselves_at_runtime(self):
@@ -3013,20 +2905,26 @@ end
                                 FunctionCode(
                                     (
                                         Instruction(OpCode.LOAD_VAR, "n"),
-                                        Instruction(OpCode.PUSH_CONST, Decimal("0")),
+                                        Instruction(
+                                            OpCode.PUSH_CONST, RuntimeNumber("0")
+                                        ),
                                         Instruction(
                                             OpCode.CALL_RESOLVED_ELEMENT,
                                             ResolvedElementReference(">", 0),
                                         ),
                                         Instruction(OpCode.JUMP_IF_FALSE, 11),
                                         Instruction(OpCode.LOAD_VAR, "n"),
-                                        Instruction(OpCode.PUSH_CONST, Decimal("1")),
+                                        Instruction(
+                                            OpCode.PUSH_CONST, RuntimeNumber("1")
+                                        ),
                                         Instruction(OpCode.LOAD_ELEMENT, "-"),
                                         Instruction(OpCode.CALL),
                                         Instruction(OpCode.LOAD_ELEMENT, "countdown"),
                                         Instruction(OpCode.CALL),
                                         Instruction(OpCode.JUMP, 12),
-                                        Instruction(OpCode.PUSH_CONST, Decimal("0")),
+                                        Instruction(
+                                            OpCode.PUSH_CONST, RuntimeNumber("0")
+                                        ),
                                         Instruction(OpCode.RETURN),
                                     ),
                                     params=("n",),
@@ -3035,7 +2933,7 @@ end
                                 ),
                             ),
                             Instruction(OpCode.STORE_VAR, "countdown"),
-                            Instruction(OpCode.PUSH_CONST, Decimal("3")),
+                            Instruction(OpCode.PUSH_CONST, RuntimeNumber("3")),
                             Instruction(
                                 OpCode.CALL_RESOLVED_ELEMENT,
                                 ResolvedElementReference("countdown", 0),
@@ -3046,80 +2944,78 @@ end
                     )
                 )
             ),
-            [Decimal("0")],
+            [RuntimeNumber("0")],
         )
 
     def test_executes_assert_and_unfold(self):
-        self.assertEqual(execute("assert => true end 5"), [Decimal("5")])
+        self.assertEqual(execute("assert => true end 5"), [RuntimeNumber("5")])
         stack = execute(
             "1 unfold (< 4) -> (n: Number) => $n 1 + end | #!infinite | head"
         )
-        self.assertEqual(stack, [Decimal("2")])
+        self.assertEqual(stack, [RuntimeNumber("2")])
 
     def test_unfold_cycles_state_and_supports_separate_emission(self):
-        explicit = execute(
-            """
+        explicit = execute("""
 0 1 unfold (true) -> (prev: Integer, next: Integer) =>
   +
 end | #!infinite | 7 take
-"""
-        )
+""")
         explicit_prefix = list(explicit[0])
         self.assertEqual(
             explicit_prefix,
             [
-                Decimal("1"),
-                Decimal("2"),
-                Decimal("3"),
-                Decimal("5"),
-                Decimal("8"),
-                Decimal("13"),
-                Decimal("21"),
+                RuntimeNumber("1"),
+                RuntimeNumber("2"),
+                RuntimeNumber("3"),
+                RuntimeNumber("5"),
+                RuntimeNumber("8"),
+                RuntimeNumber("13"),
+                RuntimeNumber("21"),
             ],
         )
 
-        inferred = execute(
-            """
+        inferred = execute("""
 0 1 unfold =>
   +
 end | #!infinite | 7 take
-"""
-        )
+""")
         self.assertEqual(list(inferred[0]), explicit_prefix)
 
-        tagged = execute(
-            """
+        tagged = execute("""
 0 1 unfold =>
   +
 end | 7 take
-"""
-        )
+""")
         self.assertEqual(list(tagged[0]), explicit_prefix)
 
-        separate = execute(
-            """
+        separate = execute("""
 1 unfold (< 10) -> (n: Integer) =>
   $n + 1
   if ($n % 2 == 0) => None
   else => $n Some
   end
 end | #!infinite | 4 take
-"""
-        )
+""")
         self.assertEqual(
             list(separate[0]),
-            [Decimal("1"), Decimal("3"), Decimal("5"), Decimal("7")],
+            [
+                RuntimeNumber("1"),
+                RuntimeNumber("3"),
+                RuntimeNumber("5"),
+                RuntimeNumber("7"),
+            ],
         )
 
     def test_take_accepts_lazy_lists(self):
         stack = execute("1 5 range | 3 take")
         self.assertIsInstance(stack[0], LazyList)
-        self.assertEqual(list(stack[0]), [Decimal("1"), Decimal("2"), Decimal("3")])
+        self.assertEqual(
+            list(stack[0]), [RuntimeNumber("1"), RuntimeNumber("2"), RuntimeNumber("3")]
+        )
 
     def test_executes_try_handle_for_panics(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 try =>
   RuntimeFault("boom") panic
 handle RuntimeFault =>
@@ -3127,15 +3023,13 @@ handle RuntimeFault =>
 handle =>
   "default"
 end
-"""
-            ),
+"""),
             ["handled"],
         )
 
     def test_try_handle_uses_first_matching_handler(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 try =>
   ValueFault("boom") panic
 handle KeyFault =>
@@ -3143,38 +3037,33 @@ handle KeyFault =>
 handle =>
   "default"
 end
-"""
-            ),
+"""),
             ["default"],
         )
 
     def test_out_of_bounds_indexing_raises_catchable_index_fault(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            stack = execute(
-                """
+            stack = execute("""
 try =>
   [1, 2, 3] $[5]
 handle IndexFault =>
   println "Caught IndexFault"
 end
-"""
-            )
+""")
 
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "Caught IndexFault\n")
 
     def test_missing_dictionary_key_raises_catchable_key_fault(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 try =>
   dict{"present": 1} $["missing"]
 handle KeyFault =>
   "handled"
 end
-"""
-            ),
+"""),
             ["handled"],
         )
 
@@ -3228,16 +3117,14 @@ println(triple([1, 2, 3, 4, 5]))
 
     def test_dictionary_index_assignment_inserts_missing_key(self):
         self.assertEqual(
-            execute(
-                '''
+            execute("""
                 dict{"name": "Jeff", "age": 20}
                 $["favColour"] = "Magenta"
-                '''
-            ),
+                """),
             [
                 {
                     "name": "Jeff",
-                    "age": Decimal("20"),
+                    "age": RuntimeNumber("20"),
                     "favColour": "Magenta",
                 }
             ],
@@ -3246,13 +3133,11 @@ println(triple([1, 2, 3, 4, 5]))
     def test_dictionary_printing_quotes_string_keys(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            stack = execute(
-                '''
+            stack = execute("""
                 dict{"name": "Jeff", "age": 20}
                 $["favColour"] = "Magenta"
                 println
-                '''
-            )
+                """)
 
         self.assertEqual(stack, [])
         self.assertEqual(
@@ -3261,36 +3146,43 @@ println(triple([1, 2, 3, 4, 5]))
         )
 
     def test_indexing_lists_slices_dicts_and_spread(self):
-        self.assertEqual(execute("[1, 2, 3] $[1]"), [Decimal("2")])
+        self.assertEqual(execute("[1, 2, 3] $[1]"), [RuntimeNumber("2")])
         self.assertEqual(
             execute("$data = [5, 1, 6, 2, 7]\n$data[2, 4, 1]"),
-            [[Decimal("6"), Decimal("7"), Decimal("1")]],
+            [[RuntimeNumber("6"), RuntimeNumber("7"), RuntimeNumber("1")]],
         )
         self.assertEqual(
             execute("$data = [5, 1, 6, 2, 7]\n$data[1:3]"),
-            [[Decimal("1"), Decimal("6"), Decimal("2")]],
+            [[RuntimeNumber("1"), RuntimeNumber("6"), RuntimeNumber("2")]],
         )
         self.assertEqual(
             execute("[[9, 2, 5], [1, 4, 2]] $[[0, 0]:[1, 1]]"),
-            [[[Decimal("9"), Decimal("2")], [Decimal("1"), Decimal("4")]]],
+            [
+                [
+                    [RuntimeNumber("9"), RuntimeNumber("2")],
+                    [RuntimeNumber("1"), RuntimeNumber("4")],
+                ]
+            ],
         )
         self.assertEqual(execute('dict{"name": "Jeff"} $["name"]'), ["Jeff"])
         self.assertEqual(
             execute("[5, 1, 6, 2, 7] ...$[3, 4]"),
-            [Decimal("2"), Decimal("7")],
+            [RuntimeNumber("2"), RuntimeNumber("7")],
         )
 
     def test_indexing_lazy_lists_uses_absolute_indices(self):
         self.assertEqual(
             execute("range(1, 100) $[0, 1, 2, 3, 4, 5]"),
-            [[
-                Decimal("1"),
-                Decimal("2"),
-                Decimal("3"),
-                Decimal("4"),
-                Decimal("5"),
-                Decimal("6"),
-            ]],
+            [
+                [
+                    RuntimeNumber("1"),
+                    RuntimeNumber("2"),
+                    RuntimeNumber("3"),
+                    RuntimeNumber("4"),
+                    RuntimeNumber("5"),
+                    RuntimeNumber("6"),
+                ]
+            ],
         )
 
     def test_slicing_lazy_lists(self):
@@ -3300,30 +3192,46 @@ println(triple([1, 2, 3, 4, 5]))
         self.assertEqual(
             list(islice(result, 6)),
             [
-                Decimal("1"),
-                Decimal("3"),
-                Decimal("5"),
-                Decimal("7"),
-                Decimal("9"),
-                Decimal("11"),
+                RuntimeNumber("1"),
+                RuntimeNumber("3"),
+                RuntimeNumber("5"),
+                RuntimeNumber("7"),
+                RuntimeNumber("9"),
+                RuntimeNumber("11"),
             ],
         )
 
     def test_slice_assignment_replaces_each_selected_item(self):
         self.assertEqual(
             execute("[1, 2, 3, 4, 5]\n$[1:3] = 4"),
-            [[Decimal("1"), Decimal("4"), Decimal("4"), Decimal("4"), Decimal("5")]],
+            [
+                [
+                    RuntimeNumber("1"),
+                    RuntimeNumber("4"),
+                    RuntimeNumber("4"),
+                    RuntimeNumber("4"),
+                    RuntimeNumber("5"),
+                ]
+            ],
         )
 
     def test_augmented_slice_assignment_updates_each_selected_item(self):
         self.assertEqual(
             execute("[1, 2, 3, 4, 5]\n$[1:3] := + 1"),
-            [[Decimal("1"), Decimal("3"), Decimal("4"), Decimal("5"), Decimal("5")]],
+            [
+                [
+                    RuntimeNumber("1"),
+                    RuntimeNumber("3"),
+                    RuntimeNumber("4"),
+                    RuntimeNumber("5"),
+                    RuntimeNumber("5"),
+                ]
+            ],
         )
 
     def test_lazy_slice_assignment_can_build_fizzbuzz_positions(self):
         [result] = execute(
-            'range(1, 100) map: toString\n'
+            "range(1, 100) map: toString\n"
             '$[2::3] = "Fizz"\n'
             '$[4::5] = "Buzz"\n'
             '$[14::15] = "FizzBuzz"'
@@ -3354,25 +3262,25 @@ println(triple([1, 2, 3, 4, 5]))
     def test_index_augmented_assignment_rebuilds_and_assigns_receiver(self):
         self.assertEqual(
             execute("$data = [1, 2, 3]\n$data[1] := + 3\n$data"),
-            [[Decimal("1"), Decimal("5"), Decimal("3")]],
+            [[RuntimeNumber("1"), RuntimeNumber("5"), RuntimeNumber("3")]],
         )
 
     def test_multiple_assignment_stores_corresponding_values(self):
         self.assertEqual(
             execute("$(a, b, c) = 1 2 3\n$a $b $c"),
-            [Decimal("1"), Decimal("2"), Decimal("3")],
+            [RuntimeNumber("1"), RuntimeNumber("2"), RuntimeNumber("3")],
         )
 
     def test_multiple_assignment_fills_missing_values_from_existing_stack(self):
         self.assertEqual(
             execute("1\n$(a, b, c) = 2 3\n$a $b $c"),
-            [Decimal("1"), Decimal("2"), Decimal("3")],
+            [RuntimeNumber("1"), RuntimeNumber("2"), RuntimeNumber("3")],
         )
 
     def test_indexing_cycles_explicit_parameter_receiver(self):
         self.assertEqual(
             execute("define second(:Number+) -> Number => $[1]\nsecond([4, 9])"),
-            [Decimal("9")],
+            [RuntimeNumber("9")],
         )
 
     def test_runtime_element_errors_show_stack_and_attempted_inputs(self):
@@ -3380,7 +3288,7 @@ println(triple([1, 2, 3, 4, 5]))
             FunctionCode(
                 (
                     Instruction(OpCode.PUSH_CONST, "x"),
-                    Instruction(OpCode.PUSH_CONST, Decimal("1")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("1")),
                     Instruction(OpCode.LOAD_ELEMENT, "-"),
                     Instruction(OpCode.CALL),
                 ),
@@ -3417,7 +3325,7 @@ println(triple([1, 2, 3, 4, 5]))
                         OpCode.MAKE_FUNCTION,
                         FunctionCode((), params=("x",), name="held"),
                     ),
-                    Instruction(OpCode.PUSH_CONST, Decimal("1")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("1")),
                     Instruction(OpCode.CALL),
                 ),
                 name="<main>",
@@ -3444,7 +3352,7 @@ println(triple([1, 2, 3, 4, 5]))
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, Decimal("1")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("1")),
                     Instruction(OpCode.MAKE_FUNCTION, inner),
                     Instruction(OpCode.CALL),
                 ),
@@ -3462,21 +3370,19 @@ println(triple([1, 2, 3, 4, 5]))
         self.assertIn("bad_cast ip 1: check_cast", message)
         self.assertIn("<main> ip 2: call", message)
 
-
     def test_match_binding_shadows_outer_variable_at_runtime(self):
         self.assertEqual(
             execute(
                 '$x = 1\n"abc"\nmatch =>\n'
-                '  as x: String => $x length\n'
-                '  _ => 0\nend'
+                "  as x: String => $x length\n"
+                "  _ => 0\nend"
             ),
             [3],
         )
 
     def test_irrefutable_variant_destructure_is_exhaustive(self):
         self.assertEqual(
-            execute(
-                """
+            execute("""
 variant Maybe =>
   Some => $value: Number end
   None => end
@@ -3486,51 +3392,43 @@ match =>
   as :Some(_) => "some"
   as :None => "none"
 end
-"""
-            ),
+"""),
             ["some"],
         )
-
 
     def test_irrefutable_type_pattern_narrows_a_later_default_branch(self):
         self.assertEqual(
             execute(
                 '$x = (if 0 1 == => 1 else => "s" end)\n'
-                '$x\nmatch =>\n'
-                '  as :Number => 0\n'
-                '  _ => $x length\nend'
+                "$x\nmatch =>\n"
+                "  as :Number => 0\n"
+                "  _ => $x length\nend"
             ),
             [1],
         )
-
 
     def test_wildcard_coordinate_preserves_safe_multi_subject_narrowing(self):
         self.assertEqual(
             execute(
                 '$x = (if 0 1 == => 1 else => "x" end)\n'
                 '$y = (if 1 1 == => 1 else => "y" end)\n'
-                '$x $y\nmatch =>\n'
-                '  _, as :Number => 0\n'
-                '  _, _ => $x length\nend'
+                "$x $y\nmatch =>\n"
+                "  _, as :Number => 0\n"
+                "  _, _ => $x length\nend"
             ),
             [1],
         )
 
-
     def test_match_preserves_source_order_before_a_wildcard_case(self):
         self.assertEqual(
-            execute(
-                '1\nmatch =>\n'
-                '  _ => "first"\n'
-                '  1 => "second"\nend'
-            ),
+            execute("1\nmatch =>\n" '  _ => "first"\n' '  1 => "second"\nend'),
             ["first"],
         )
 
     def test_guarded_untyped_pattern_is_not_reordered_or_dropped(self):
         self.assertEqual(
             execute(
-                '1\nmatch =>\n'
+                "1\nmatch =>\n"
                 '  as x if > 0 => "positive"\n'
                 '  1 => "one"\n'
                 '  _ => "other"\nend'
@@ -3538,11 +3436,10 @@ end
             ["positive"],
         )
 
-
     def test_repeated_match_binding_requires_equal_values(self):
         self.assertEqual(
             execute(
-                '1 2\nmatch =>\n'
+                "1 2\nmatch =>\n"
                 '  $x = _, $x = _ => "same"\n'
                 '  _, _ => "different"\nend'
             ),
@@ -3550,7 +3447,7 @@ end
         )
         self.assertEqual(
             execute(
-                '1 1\nmatch =>\n'
+                "1 1\nmatch =>\n"
                 '  $x = _, $x = _ => "same"\n'
                 '  _, _ => "different"\nend'
             ),

@@ -12,7 +12,6 @@ import builtins as python_builtins
 import operator
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from decimal import MAX_EMAX, MIN_EMIN, Decimal, getcontext, localcontext
 from itertools import chain, cycle, groupby, islice
 from typing import Any
 
@@ -26,6 +25,7 @@ from valiance.runtime_values import (
     is_finite_list_like,
     is_list_like,
     unwrap_runtime_value,
+    RuntimeNumber,
 )
 from valiance.symbols import Symbol
 
@@ -170,8 +170,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
             ("upper", "Callable applied to the upper input group."),
         ),
         returns=(
-            "The lower callable's results followed by the upper callable's "
-            "results."
+            "The lower callable's results followed by the upper callable's " "results."
         ),
         category="Functions",
     ),
@@ -629,15 +628,17 @@ class BuiltinOverload:
         object.__setattr__(
             self,
             "runtime_return_tag_deltas",
-            tuple(
-                (
-                    tuple(tag for tag in return_tags if not tag.absent),
-                    tuple(tag for tag in return_tags if tag.absent),
+            (
+                tuple(
+                    (
+                        tuple(tag for tag in return_tags if not tag.absent),
+                        tuple(tag for tag in return_tags if tag.absent),
+                    )
+                    for return_tags in tags
                 )
-                for return_tags in tags
-            )
-            if any(tags)
-            else (),
+                if any(tags)
+                else ()
+            ),
         )
         object.__setattr__(
             self,
@@ -801,9 +802,9 @@ EAGER_TAG = T.ElementTag(Symbol("Eager"))
 IO_TAG = T.ElementTag(Symbol("IO"))
 
 
-def _truth(value: bool) -> Decimal:
+def _truth(value: bool) -> RuntimeNumber:
     """Compute truth for the built-in catalogue and runtime."""
-    return Decimal(1) if value else Decimal(0)
+    return RuntimeNumber(1) if value else RuntimeNumber(0)
 
 
 def _is_ok_value(value: Any) -> bool:
@@ -856,11 +857,13 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
         return _runtime_assignable(value, typ.inner)
     if isinstance(typ, T.NominalType):
         if typ.name == NUMBER:
-            return isinstance(value, Decimal)
+            return isinstance(value, RuntimeNumber)
         if typ.name == REAL:
-            return isinstance(value, Decimal)
+            return isinstance(value, RuntimeNumber)
         if typ.name == INTEGER:
-            return isinstance(value, Decimal) and value == value.to_integral_value()
+            return (
+                isinstance(value, RuntimeNumber) and value == value.to_integral_value()
+            )
         if typ.name == STRING:
             return isinstance(value, str)
         if typ.name == OK:
@@ -1247,11 +1250,7 @@ def _correspond(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     else:
         lower_arity = _runtime_callable_arity(lower)
         upper_arity = _runtime_callable_arity(upper)
-    if (
-        lower_arity < 0
-        or upper_arity < 0
-        or len(values) != lower_arity + upper_arity
-    ):
+    if lower_arity < 0 or upper_arity < 0 or len(values) != lower_arity + upper_arity:
         raise RuntimeError("invalid correspond call-site arity metadata")
     split = lower_arity
     return (
@@ -1330,115 +1329,12 @@ def _runtime_callable_value(value: Any) -> bool:
 # --------------------------------------------------------------------------
 
 
-_INTEGER_QUANTUM = Decimal(1)
-
-
-def _decimal_addition_precision(left: Decimal, right: Decimal) -> int:
-    """Compute exact addition precision, fast-pathing ordinary integers."""
-    if left.same_quantum(_INTEGER_QUANTUM) and right.same_quantum(_INTEGER_QUANTUM):
-        return max(1, max(left.adjusted(), right.adjusted()) + 2)
-    left_tuple = left.as_tuple()
-    right_tuple = right.as_tuple()
-    left_high = len(left_tuple.digits) + left_tuple.exponent - 1
-    right_high = len(right_tuple.digits) + right_tuple.exponent - 1
-    highest_place = max(left_high, right_high)
-    lowest_place = min(left_tuple.exponent, right_tuple.exponent)
-    return max(1, highest_place - lowest_place + 2)
-
-
-def _decimal_multiplication_precision(left: Decimal, right: Decimal) -> int:
-    """Compute multiplication precision, fast-pathing ordinary integers."""
-    if left.same_quantum(_INTEGER_QUANTUM) and right.same_quantum(_INTEGER_QUANTUM):
-        return max(1, left.adjusted() + right.adjusted() + 2)
-    return max(1, len(left.as_tuple().digits) + len(right.as_tuple().digits))
-
-
-def _decimal_division_precision(left: Decimal, right: Decimal) -> int:
-    """Compute division precision, fast-pathing ordinary integers."""
-    if left.same_quantum(_INTEGER_QUANTUM) and right.same_quantum(_INTEGER_QUANTUM):
-        return max(1, left.adjusted() + right.adjusted() + 2)
-    return max(1, len(left.as_tuple().digits) + len(right.as_tuple().digits))
-
-
-def _decimal_binary(
-    left: Decimal,
-    right: Decimal,
-    operation: Callable[[Decimal, Decimal], Decimal],
-    precision: int,
-) -> Decimal:
-    """Run directly when the active context already satisfies exactness needs."""
-    context = getcontext()
-    if precision <= context.prec:
-        left_adjusted = left.adjusted()
-        right_adjusted = right.adjusted()
-        if (
-            context.Emin <= left_adjusted <= context.Emax
-            and context.Emin <= right_adjusted <= context.Emax
-        ):
-            return operation(left, right)
-    with localcontext() as expanded:
-        expanded.prec = max(expanded.prec, precision)
-        expanded.Emax = MAX_EMAX
-        expanded.Emin = MIN_EMIN
-        return operation(left, right)
-
-
-def _decimal_add(left: Decimal, right: Decimal) -> Decimal:
-    """Compute decimal add for the built-in catalogue and runtime."""
-    return _decimal_binary(
-        left,
-        right,
-        operator.add,
-        _decimal_addition_precision(left, right),
-    )
-
-
-def _decimal_subtract(left: Decimal, right: Decimal) -> Decimal:
-    """Compute decimal subtract for the built-in catalogue and runtime."""
-    return _decimal_binary(
-        left,
-        right,
-        operator.sub,
-        _decimal_addition_precision(left, right),
-    )
-
-
-def _decimal_multiply(left: Decimal, right: Decimal) -> Decimal:
-    """Compute decimal multiply for the built-in catalogue and runtime."""
-    return _decimal_binary(
-        left,
-        right,
-        operator.mul,
-        _decimal_multiplication_precision(left, right),
-    )
-
-
-def _wrapping_mod(a: Decimal, b: Decimal) -> Decimal:
+def _wrapping_mod(a: RuntimeNumber, b: RuntimeNumber) -> RuntimeNumber:
     """Return modulo wrapped to the divisor's sign."""
     remainder = a % b
     if remainder and (remainder < 0) != (b < 0):
         remainder += b
     return remainder
-
-
-def _decimal_remainder(left: Decimal, right: Decimal) -> Decimal:
-    """Compute decimal remainder for the built-in catalogue and runtime."""
-    return _decimal_binary(
-        left,
-        right,
-        _wrapping_mod,
-        _decimal_addition_precision(left, right),
-    )
-
-
-def _decimal_divide(left: Decimal, right: Decimal) -> Decimal:
-    """Compute decimal divide for the built-in catalogue and runtime."""
-    return _decimal_binary(
-        left,
-        right,
-        operator.truediv,
-        _decimal_division_precision(left, right),
-    )
 
 
 @builtin("+", (T.Integer, T.Integer), (T.Integer,))
@@ -1449,8 +1345,6 @@ def _decimal_divide(left: Decimal, right: Decimal) -> Decimal:
 @builtin("+", (T.String, T.String), (T.String,))
 def _plus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `+`, `+`, `+`, `+`, `+`, `+` built-in runtime overloads."""
-    if isinstance(args[0], Decimal):
-        return (_decimal_add(args[0], args[1]),)
     return (args[0] + args[1],)
 
 
@@ -1461,7 +1355,7 @@ def _plus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("-", (T.Number, T.Number), (T.Number,))
 def _minus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `-`, `-`, `-`, `-`, `-` built-in runtime overloads."""
-    return (_decimal_subtract(args[0], args[1]),)
+    return (args[0] - args[1],)
 
 
 @builtin("*", (T.Integer, T.Integer), (T.Integer,))
@@ -1471,7 +1365,7 @@ def _minus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("*", (T.Number, T.Number), (T.Number,))
 def _multiply(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `*`, `*`, `*`, `*`, `*` built-in runtime overloads."""
-    return (_decimal_multiply(args[0], args[1]),)
+    return (args[0] * args[1],)
 
 
 @builtin("*", (T.Integer, T.String), (T.String,))
@@ -1506,7 +1400,7 @@ def _power(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("%", (T.Number, T.Number), (T.Number,))
 def _percent(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `%`, `%`, `%`, `%`, `%` built-in runtime overloads."""
-    return (_decimal_remainder(args[0], args[1]),)
+    return (_wrapping_mod(args[0], args[1]),)
 
 
 @builtin("/", (T.Integer, T.Integer), (T.Real,))
@@ -1516,7 +1410,7 @@ def _percent(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("/", (T.Number, T.Number), (T.Number,))
 def _slash(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `/`, `/`, `/`, `/`, `/` built-in runtime overloads."""
-    return (_decimal_divide(args[0], args[1]),)
+    return (args[0] / args[1],)
 
 
 @builtin(
@@ -1558,14 +1452,14 @@ def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("double", (T.Number,), (T.Number,))
 def _double(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `double` built-in runtime overload."""
-    return (_decimal_multiply(args[0], Decimal(2)),)
+    return (args[0] * 2,)
 
 
 @builtin("squared", (T.Number,), (T.Number,))
 @alias("square")
 def _squared(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `squared` built-in runtime overload."""
-    return (_decimal_multiply(args[0], args[0]),)
+    return (args[0] * args[0],)
 
 
 @builtin(
@@ -1583,7 +1477,7 @@ def _squared(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _inc(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Increase a numeric value by one."""
     del ctx
-    return (args[0] + Decimal(1),)
+    return (args[0] + RuntimeNumber(1),)
 
 
 @builtin(
@@ -1704,13 +1598,13 @@ def _greater_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
 @builtin("true", (), (T.Boolean,))
 def _true(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `true` built-in runtime overload."""
-    return (Decimal(1),)
+    return (RuntimeNumber(1),)
 
 
 @builtin("false", (), (T.Boolean,))
 def _false(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `false` built-in runtime overload."""
-    return (Decimal(0),)
+    return (RuntimeNumber(0),)
 
 
 # --------------------------------------------------------------------------
@@ -1843,7 +1737,7 @@ def _take(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @alias("len")
 def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return the exact length of a finite list or string."""
-    return (Decimal(len(args[0])),)
+    return (RuntimeNumber(len(args[0])),)
 
 
 @builtin("head", (T.ExactList(T.TypeVariable("Item")),), (T.TypeVariable("Item"),))
@@ -1887,7 +1781,7 @@ def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     start, stop = args
     if start != start.to_integral_value() or stop != stop.to_integral_value():
         raise RuntimeError("range bounds must be integral numbers")
-    return (LazyList(Decimal(item) for item in range(int(start), int(stop) + 1)),)
+    return (LazyList(RuntimeNumber(item) for item in range(int(start), int(stop) + 1)),)
 
 
 @builtin(
@@ -1905,7 +1799,7 @@ def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _drop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Drop a non-negative number of leading items from a list or string."""
     del ctx
-    if isinstance(args[0], Decimal):
+    if isinstance(args[0], RuntimeNumber):
         raw_count, values = args
     else:
         values, raw_count = args
@@ -1962,7 +1856,7 @@ def _group_consecutive_string(
 @builtin("sum", (T.ExactList(T.Number),), (T.Number,))
 def _sum(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Add every numeric item in a list, using zero for an empty list."""
-    return (sum(args[0], Decimal(0)),)
+    return (sum(args[0], RuntimeNumber(0)),)
 
 
 @builtin(
@@ -1997,7 +1891,7 @@ def _remove_at(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Reshape a flat finite list into a rectangular two-dimensional list."""
-    if isinstance(args[0], Decimal):
+    if isinstance(args[0], RuntimeNumber):
         raw_rows, raw_columns, values = args
     else:
         values, raw_rows, raw_columns = args
@@ -2093,7 +1987,7 @@ def _parse_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Parse a base-ten integer, returning `None` when parsing fails."""
     del ctx
     try:
-        return (Decimal(int(args[0].strip(), 10)),)
+        return (RuntimeNumber(int(args[0].strip(), 10)),)
     except ValueError:
         return (ObjectValue("None", {}),)
 

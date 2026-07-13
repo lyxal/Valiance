@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import unittest
-from decimal import Decimal
 
 from valiance.analysis.analyser import Analyser
 from valiance.parsing.parser import parse
@@ -28,6 +27,7 @@ from valiance.types import (
     show,
     subtype,
 )
+from valiance.runtime_values import RuntimeNumber as RuntimeNumber
 
 
 def analyse(source: str):
@@ -91,8 +91,6 @@ configKind("default")
 """
 
 
-
-
 OPTIONAL_PAYLOAD_WORKFLOW = """
 define retryDelay(value: Integer?) -> Integer =>
   $value |
@@ -122,8 +120,6 @@ end |
 resultKind(42) |
 resultKind(ValueError("declined"))
 """
-
-
 
 
 TRAIT_FLEET_WORKFLOW = """
@@ -273,8 +269,6 @@ classifySource(Box(1))
 """
 
 
-
-
 class TypeAlgebraCorrectnessTests(unittest.TestCase):
     def test_raw_and_explicit_some_normalize_to_one_present_branch(self):
         self.assertTrue(
@@ -356,7 +350,7 @@ class RuntimeRepresentationAgreementTests(unittest.TestCase):
         def values():
             nonlocal consumed
             consumed += 1
-            yield Decimal("1")
+            yield RuntimeNumber("1")
 
         program = Program(
             FunctionCode(
@@ -394,7 +388,7 @@ end
     def test_raw_optional_payloads_can_be_destructured_without_wrapping(self):
         self.assertEqual(
             execute_both(OPTIONAL_PAYLOAD_WORKFLOW),
-            [Decimal("12"), Decimal("8"), Decimal("0")],
+            [RuntimeNumber("12"), RuntimeNumber("8"), RuntimeNumber("0")],
         )
 
     def test_checked_result_casts_and_err_trait_patterns_agree_at_runtime(self):
@@ -442,7 +436,6 @@ end
             ["some", "none"],
         )
 
-
     def test_user_defined_err_implementations_are_runtime_errors(self):
         self.assertEqual(
             execute_both(USER_ERROR_PIPELINE),
@@ -467,13 +460,11 @@ end
             ["success", "error"],
         )
 
-
     def test_generic_trait_patterns_preserve_implementation_arguments(self):
         self.assertEqual(
             execute_both(GENERIC_TRAIT_WORKFLOW),
             ["right"],
         )
-
 
     def test_transitive_generic_trait_patterns_compose_arguments(self):
         self.assertEqual(
@@ -504,7 +495,7 @@ class RealWorldProgramTests(unittest.TestCase):
     def test_optional_payload_workflow_survives_bytecode_round_trip(self):
         self.assertEqual(
             execute_both(OPTIONAL_PAYLOAD_WORKFLOW),
-            [Decimal("12"), Decimal("8"), Decimal("0")],
+            [RuntimeNumber("12"), RuntimeNumber("8"), RuntimeNumber("0")],
         )
 
     def test_result_validation_gateway_survives_bytecode_round_trip(self):
@@ -531,7 +522,6 @@ class RealWorldProgramTests(unittest.TestCase):
             ["some", "none"],
         )
 
-
     def test_user_error_pipeline_survives_bytecode_round_trip(self):
         self.assertEqual(
             execute_both(USER_ERROR_PIPELINE),
@@ -556,13 +546,11 @@ class RealWorldProgramTests(unittest.TestCase):
             ["success", "error"],
         )
 
-
     def test_generic_trait_workflow_survives_bytecode_round_trip(self):
         self.assertEqual(
             execute_both(GENERIC_TRAIT_WORKFLOW),
             ["right"],
         )
-
 
     def test_transitive_generic_trait_workflow_survives_bytecode_round_trip(self):
         self.assertEqual(
