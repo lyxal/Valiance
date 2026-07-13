@@ -246,9 +246,7 @@ def update_runtime_tags(
             return value
     else:
         removed = {(tag.name, tag.depth) for tag in remove}
-        tags = frozenset(
-            tag for tag in current if (tag.name, tag.depth) not in removed
-        )
+        tags = frozenset(tag for tag in current if (tag.name, tag.depth) not in removed)
         tags = tags.union(tag for tag in add if not tag.absent)
 
     if not tags:
@@ -305,15 +303,137 @@ class PanicSignal(Exception):
         self.value = value
 
 
+ZERO = Decimal(0)
+
+
+class Number:
+    __slots__ = ("real", "imag")
+
+    @staticmethod
+    def _to_decimal(value: object) -> Decimal:
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, int):
+            return Decimal(value)
+        if isinstance(value, str):
+            return Decimal(value)
+        raise TypeError(f"Unsupported numeric value: {value!r}")
+
+    def __init__(self, value: object = 0):
+        if isinstance(value, Number):
+            self.real = value.real
+            self.imag = value.imag
+
+        elif isinstance(value, complex):
+            self.real = self._to_decimal(str(value.real))
+            self.imag = self._to_decimal(str(value.imag))
+
+        elif isinstance(value, tuple) and len(value) == 2:
+            self.real = self._to_decimal(value[0])
+            self.imag = self._to_decimal(value[1])
+
+        else:
+            self.real = self._to_decimal(value)
+            self.imag = ZERO
+
+    def __repr__(self) -> str:
+        if self.imag == ZERO:
+            return f"Number({self.real})"
+        return f"Number({self.real}, {self.imag})"
+
+    def __str__(self) -> str:
+        if self.imag == ZERO:
+            return str(self.real)
+        return f"{self.real}i{self.imag}"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Number):
+            return NotImplemented
+        return self.real == other.real and self.imag == other.imag
+
+    def __add__(self, other: object) -> Number:
+        if not isinstance(other, Number):
+            return NotImplemented
+        return Number((self.real + other.real, self.imag + other.imag))
+
+    def __sub__(self, other: object) -> Number:
+        if not isinstance(other, Number):
+            return NotImplemented
+        return Number((self.real - other.real, self.imag - other.imag))
+
+    def __mul__(self, other: object) -> Number:
+        if not isinstance(other, Number):
+            return NotImplemented
+        return Number(
+            (
+                self.real * other.real - self.imag * other.imag,
+                self.real * other.imag + self.imag * other.real,
+            )
+        )
+
+    def __truediv__(self, other: object) -> Number:
+        if not isinstance(other, Number):
+            return NotImplemented
+        denom = other.real**2 + other.imag**2
+        return Number(
+            (
+                (self.real * other.real + self.imag * other.imag) / denom,
+                (self.imag * other.real - self.real * other.imag) / denom,
+            )
+        )
+
+    def __mod__(self, other: object) -> Number:
+        if not isinstance(other, Number):
+            return NotImplemented
+        if self.imag != ZERO or other.imag != ZERO:
+            raise ValueError("Modulo operation is only defined for real numbers.")
+        return Number(self.real % other.real)
+
+    def __pow__(self, other: object) -> Number:
+        if not isinstance(other, Number):
+            return NotImplemented
+        if self.imag != ZERO or other.imag != ZERO:
+            raise ValueError("Power operation is only defined for real numbers.")
+        return Number(self.real**other.real)
+
+    def __neg__(self) -> Number:
+        return Number((-self.real, -self.imag))
+
+    def __abs__(self) -> Number:
+        return Number((abs(self.real), abs(self.imag)))
+
+    def __bool__(self) -> bool:
+        return self.real != ZERO or self.imag != ZERO
+
+    def __le__(self, other: object) -> bool:
+        if not isinstance(other, Number):
+            return NotImplemented
+        return self.real <= other.real and self.imag <= other.imag
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, Number):
+            return NotImplemented
+        return self.real < other.real and self.imag < other.imag
+
+    def __ge__(self, other: object) -> bool:
+        if not isinstance(other, Number):
+            return NotImplemented
+        return self.real >= other.real and self.imag >= other.imag
+
+    def __gt__(self, other: object) -> bool:
+        if not isinstance(other, Number):
+            return NotImplemented
+        return self.real > other.real and self.imag > other.imag
+
+
 DIAGNOSTIC_LIST_PREVIEW_LIMIT = 100
 
 
 def is_list_like(value: Any) -> bool:
     """Return whether a runtime value behaves like a Valiance list."""
     value = unwrap_runtime_value(value)
-    return (
-        isinstance(value, Iterable)
-        and not isinstance(value, (str, bytes, tuple, Mapping))
+    return isinstance(value, Iterable) and not isinstance(
+        value, (str, bytes, tuple, Mapping)
     )
 
 
