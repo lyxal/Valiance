@@ -25,7 +25,7 @@ from valiance.runtime_values import (
     is_finite_list_like,
     is_list_like,
     unwrap_runtime_value,
-    Number,
+    RuntimeNumber,
 )
 from valiance.symbols import Symbol
 
@@ -802,9 +802,9 @@ EAGER_TAG = T.ElementTag(Symbol("Eager"))
 IO_TAG = T.ElementTag(Symbol("IO"))
 
 
-def _truth(value: bool) -> Number:
+def _truth(value: bool) -> RuntimeNumber:
     """Compute truth for the built-in catalogue and runtime."""
-    return Number(1) if value else Number(0)
+    return RuntimeNumber(1) if value else RuntimeNumber(0)
 
 
 def _is_ok_value(value: Any) -> bool:
@@ -857,11 +857,13 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
         return _runtime_assignable(value, typ.inner)
     if isinstance(typ, T.NominalType):
         if typ.name == NUMBER:
-            return isinstance(value, Number)
+            return isinstance(value, RuntimeNumber)
         if typ.name == REAL:
-            return isinstance(value, Number)
+            return isinstance(value, RuntimeNumber)
         if typ.name == INTEGER:
-            return isinstance(value, Number) and value == value.to_integral_value()
+            return (
+                isinstance(value, RuntimeNumber) and value == value.to_integral_value()
+            )
         if typ.name == STRING:
             return isinstance(value, str)
         if typ.name == OK:
@@ -1327,7 +1329,7 @@ def _runtime_callable_value(value: Any) -> bool:
 # --------------------------------------------------------------------------
 
 
-def _wrapping_mod(a: Number, b: Number) -> Number:
+def _wrapping_mod(a: RuntimeNumber, b: RuntimeNumber) -> RuntimeNumber:
     """Return modulo wrapped to the divisor's sign."""
     remainder = a % b
     if remainder and (remainder < 0) != (b < 0):
@@ -1475,7 +1477,7 @@ def _squared(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _inc(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Increase a numeric value by one."""
     del ctx
-    return (args[0] + Number(1),)
+    return (args[0] + RuntimeNumber(1),)
 
 
 @builtin(
@@ -1596,13 +1598,13 @@ def _greater_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ..
 @builtin("true", (), (T.Boolean,))
 def _true(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `true` built-in runtime overload."""
-    return (Number(1),)
+    return (RuntimeNumber(1),)
 
 
 @builtin("false", (), (T.Boolean,))
 def _false(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `false` built-in runtime overload."""
-    return (Number(0),)
+    return (RuntimeNumber(0),)
 
 
 # --------------------------------------------------------------------------
@@ -1735,7 +1737,7 @@ def _take(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @alias("len")
 def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return the exact length of a finite list or string."""
-    return (Number(len(args[0])),)
+    return (RuntimeNumber(len(args[0])),)
 
 
 @builtin("head", (T.ExactList(T.TypeVariable("Item")),), (T.TypeVariable("Item"),))
@@ -1779,7 +1781,7 @@ def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     start, stop = args
     if start != start.to_integral_value() or stop != stop.to_integral_value():
         raise RuntimeError("range bounds must be integral numbers")
-    return (LazyList(Number(item) for item in range(int(start), int(stop) + 1)),)
+    return (LazyList(RuntimeNumber(item) for item in range(int(start), int(stop) + 1)),)
 
 
 @builtin(
@@ -1797,7 +1799,7 @@ def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _drop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Drop a non-negative number of leading items from a list or string."""
     del ctx
-    if isinstance(args[0], Number):
+    if isinstance(args[0], RuntimeNumber):
         raw_count, values = args
     else:
         values, raw_count = args
@@ -1854,7 +1856,7 @@ def _group_consecutive_string(
 @builtin("sum", (T.ExactList(T.Number),), (T.Number,))
 def _sum(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Add every numeric item in a list, using zero for an empty list."""
-    return (sum(args[0], Number(0)),)
+    return (sum(args[0], RuntimeNumber(0)),)
 
 
 @builtin(
@@ -1889,7 +1891,7 @@ def _remove_at(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Reshape a flat finite list into a rectangular two-dimensional list."""
-    if isinstance(args[0], Number):
+    if isinstance(args[0], RuntimeNumber):
         raw_rows, raw_columns, values = args
     else:
         values, raw_rows, raw_columns = args
@@ -1985,7 +1987,7 @@ def _parse_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Parse a base-ten integer, returning `None` when parsing fails."""
     del ctx
     try:
-        return (Number(int(args[0].strip(), 10)),)
+        return (RuntimeNumber(int(args[0].strip(), 10)),)
     except ValueError:
         return (ObjectValue("None", {}),)
 

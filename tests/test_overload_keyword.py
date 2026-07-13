@@ -5,7 +5,7 @@ from valiance.asts import DefineNode, FunctionNode, OverloadSignature
 from valiance.parsing import ParseError, parse
 from valiance.runtime import compile_program, run
 from valiance.types import OverloadSetType
-from valiance.runtime_values import Number
+from valiance.runtime_values import RuntimeNumber
 
 
 class OverloadKeywordTests(unittest.TestCase):
@@ -81,7 +81,7 @@ sharedSum(["a", "b", "c"])
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
-            run(compile_program(typed, optimize=False)), [Number("6"), "abc"]
+            run(compile_program(typed, optimize=False)), [RuntimeNumber("6"), "abc"]
         )
 
 

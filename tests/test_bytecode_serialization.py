@@ -16,7 +16,7 @@ from valiance.runtime.bytecode import (
     VectorExtensionReference,
 )
 
-from valiance.runtime_values import Number
+from valiance.runtime_values import RuntimeNumber
 
 
 class BytecodeSerializationTests(unittest.TestCase):
@@ -87,7 +87,7 @@ class BytecodeSerializationTests(unittest.TestCase):
     def test_invalid_decimal_payload_raises_bytecode_format_error(self):
         program = Program(
             FunctionCode(
-                (Instruction(OpCode.PUSH_CONST, Number("42")),),
+                (Instruction(OpCode.PUSH_CONST, RuntimeNumber("42")),),
                 name="<main>",
             )
         )
@@ -100,7 +100,7 @@ class BytecodeSerializationTests(unittest.TestCase):
     def test_every_truncation_is_reported_as_a_format_error(self):
         nested = FunctionCode(
             (
-                Instruction(OpCode.PUSH_CONST, Number("123.45")),
+                Instruction(OpCode.PUSH_CONST, RuntimeNumber("123.45")),
                 Instruction(
                     OpCode.MAKE_FUNCTION,
                     FunctionCode(
@@ -204,7 +204,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, Number("42")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("42")),
                     Instruction(OpCode.PUSH_CONST, "answer"),
                     Instruction(OpCode.BUILD_STRING, ("value=", None)),
                     Instruction(OpCode.BUILD_TUPLE, 2),
@@ -232,7 +232,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         self.assertEqual(decoded, program)
 
     def test_serializes_arbitrarily_large_decimal_constants(self):
-        value = Number("99999999999999999999999999999")
+        value = RuntimeNumber("99999999999999999999999999999")
         program = Program(
             FunctionCode(
                 (

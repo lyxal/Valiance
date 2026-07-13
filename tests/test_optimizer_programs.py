@@ -9,7 +9,7 @@ from valiance.analysis import Analyser
 from valiance.parsing import parse
 from valiance.runtime import compile_program, dumps, loads, run
 from valiance.runtime.bytecode import FunctionCode, OpCode, ResolvedElementReference
-from valiance.runtime_values import Number
+from valiance.runtime_values import RuntimeNumber
 
 SAMPLE_DIRECTORY = Path(__file__).parents[1] / "samples" / "optimizations"
 
@@ -39,14 +39,14 @@ class OptimizerProgramTests(unittest.TestCase):
         self.assert_equivalent(
             unoptimized,
             optimized,
-            [Number("825.00")],
+            [RuntimeNumber("825.00")],
         )
         self.assertLess(
             len(optimized.main.instructions),
             len(unoptimized.main.instructions),
         )
         self.assertIn(
-            Number("510"),
+            RuntimeNumber("510"),
             tuple(
                 instruction.arg
                 for instruction in optimized.main.instructions
@@ -60,7 +60,7 @@ class OptimizerProgramTests(unittest.TestCase):
         self.assert_equivalent(
             unoptimized,
             optimized,
-            [Number("59.50")],
+            [RuntimeNumber("59.50")],
         )
         functions = [
             instruction.arg
@@ -81,7 +81,7 @@ class OptimizerProgramTests(unittest.TestCase):
         self.assert_equivalent(
             unoptimized,
             optimized,
-            [Number("1797.00")],
+            [RuntimeNumber("1797.00")],
         )
         self.assertLess(
             len(optimized.main.instructions),
@@ -102,7 +102,7 @@ class OptimizerProgramTests(unittest.TestCase):
         self.assert_equivalent(
             unoptimized,
             optimized,
-            [Number("1540")],
+            [RuntimeNumber("1540")],
         )
         self.assertTrue(
             any(
@@ -123,7 +123,7 @@ class OptimizerProgramTests(unittest.TestCase):
         self.assert_equivalent(
             unoptimized,
             optimized,
-            [Number("950")],
+            [RuntimeNumber("950")],
         )
         self.assertLess(
             len(optimized.main.instructions),

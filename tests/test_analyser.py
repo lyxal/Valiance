@@ -83,7 +83,7 @@ from valiance.types import (
     show,
 )
 from valiance.types.default_types import Boolean
-from valiance.runtime_values import Number as NumberRuntime
+from valiance.runtime_values import RuntimeNumber as NumberRuntime
 
 NUMBER = Symbol("Number")
 REAL = Symbol("Real")

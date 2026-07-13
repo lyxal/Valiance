@@ -17,7 +17,7 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
-from valiance.runtime_values import Number
+from valiance.runtime_values import RuntimeNumber
 from valiance.types import (
     DataTag,
     RuntimeTypePattern,
@@ -199,7 +199,7 @@ class _Writer:
         elif isinstance(value, int):
             self.u8(_INT)
             self.i64(value)
-        elif isinstance(value, Number):
+        elif isinstance(value, RuntimeNumber):
             self.u8(_DECIMAL)
             self.string(str(value))
         elif isinstance(value, str):
@@ -435,7 +435,7 @@ class _Reader:
         if tag == _BOOL:
             return self.bool()
         if tag == _DECIMAL:
-            return Number(self.string())
+            return RuntimeNumber(self.string())
         if tag == _STRING:
             return self.string()
         if tag == _TUPLE:

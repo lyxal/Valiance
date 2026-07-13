@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 from itertools import count
 from typing import cast
 
-from valiance.runtime_values import Number
+from valiance.runtime_values import RuntimeNumber
 import valiance.types as T
 from valiance.asts import (
     AnnotationNode,
@@ -569,7 +569,7 @@ def _number_literal_type(value: str) -> T.Type:
     if "i" in value.lower():
         return T.Number
     try:
-        parsed = Number(value)
+        parsed = RuntimeNumber(value)
     except InvalidOperation:
         return T.Number
     if parsed == parsed.to_integral_value():

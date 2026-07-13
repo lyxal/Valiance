@@ -8,13 +8,13 @@ from typing import Any
 import valiance.types as T
 from valiance.analysis.builtins import RuntimeContext
 from valiance.documentation import element_documentation
-from valiance.runtime_values import Number, ObjectValue
+from valiance.runtime_values import RuntimeNumber, ObjectValue
 from valiance.stdlib_native import stdlib_element
 
 
-def _truth(value: bool) -> Number:
+def _truth(value: bool) -> RuntimeNumber:
     """Compute truth within this subsystem."""
-    return Number(1) if value else Number(0)
+    return RuntimeNumber(1) if value else RuntimeNumber(0)
 
 
 @stdlib_element(

@@ -13,7 +13,7 @@ from valiance.asts import (
 )
 from valiance.parsing import parse
 from valiance.runtime import compile_program, dumps, loads, run
-from valiance.runtime_values import ObjectValue, Number
+from valiance.runtime_values import ObjectValue, RuntimeNumber
 from valiance.symbols import Symbol
 
 PERSON = """
@@ -131,7 +131,7 @@ $person: Person? = Some(Person("Ada", 36))
 $person $->age ?!
 """)
 
-        self.assertEqual(result, [Number("36")])
+        self.assertEqual(result, [RuntimeNumber("36")])
 
     def test_absent_optional_propagates_none(self):
         [result] = execute(PERSON + """
@@ -173,7 +173,7 @@ $person->age = 37
 $person->age ?!
 """)
 
-        self.assertEqual(result, [Number("37")])
+        self.assertEqual(result, [RuntimeNumber("37")])
 
     def test_assignment_through_none_is_cancelled(self):
         [result] = execute(PERSON + """

@@ -10,7 +10,7 @@ from unittest.mock import patch
 from valiance.analysis import Analyser
 from valiance.parsing import parse
 from valiance.runtime import compile_program, run
-from valiance.runtime_values import LazyList, Number
+from valiance.runtime_values import LazyList, RuntimeNumber
 
 
 def execute(source: str):
@@ -94,9 +94,9 @@ end
         self.assertEqual(
             materialize(encoded),
             [
-                (Number("3"), "a"),
-                (Number("2"), "b"),
-                (Number("1"), "c"),
+                (RuntimeNumber("3"), "a"),
+                (RuntimeNumber("2"), "b"),
+                (RuntimeNumber("1"), "c"),
             ],
         )
         self.assertEqual(decoded, "aaabbc")
@@ -125,7 +125,7 @@ define evaluate(expr: String)<Panic[UnwrappedNoneFault]>
 end
 evaluate("3 4 +")
 """
-        self.assertEqual(execute(source), [Number("7")])
+        self.assertEqual(execute(source), [RuntimeNumber("7")])
 
     def test_sum_of_squares_styles(self):
         source = r"""
@@ -134,7 +134,7 @@ define otherSquares(:Number+) -> Number => sum ** 2
 [1, 2, 3] sumOfSquares
 [1, 2, 3] otherSquares
 """
-        self.assertEqual(execute(source), [Number("14"), Number("14")])
+        self.assertEqual(execute(source), [RuntimeNumber("14"), RuntimeNumber("14")])
 
     def test_trapezoidal_rule(self):
         source = r"""
@@ -150,7 +150,7 @@ define trapezoidal(
 end
 trapezoidal(fn (x: Number) => $x * $x end, 0, 1, 2)
 """
-        self.assertEqual(execute(source), [Number("0.375")])
+        self.assertEqual(execute(source), [RuntimeNumber("0.375")])
 
     def test_fibonacci_in_three_styles(self):
         source = r"""
@@ -185,7 +185,7 @@ fibonacci3(8)
 """
         self.assertEqual(
             execute(source),
-            [Number("21"), Number("21"), Number("21")],
+            [RuntimeNumber("21"), RuntimeNumber("21"), RuntimeNumber("21")],
         )
 
     def test_records(self):
@@ -199,10 +199,10 @@ record{x: 3} record.merge record{y: 4}
         self.assertEqual(
             execute(source),
             [
-                Number("1"),
-                Number("3"),
-                {"x": Number("3"), "y": Number("4")},
-                {"x": Number("3"), "y": Number("4")},
+                RuntimeNumber("1"),
+                RuntimeNumber("3"),
+                {"x": RuntimeNumber("3"), "y": RuntimeNumber("4")},
+                {"x": RuntimeNumber("3"), "y": RuntimeNumber("4")},
             ],
         )
 
@@ -227,7 +227,7 @@ $dip = fn (function: Function) =>
 end
 1 2 3 $dip(fn => +)
 """
-        self.assertEqual(execute(source), [Number("3"), Number("3")])
+        self.assertEqual(execute(source), [RuntimeNumber("3"), RuntimeNumber("3")])
 
     def test_trait_can_implement_another_trait_without_repeating_defaults(self):
         source = r"""
@@ -258,7 +258,7 @@ end
 [1, 2, 3, 4, 5] find 3
 [[1, 2, 3], [1, 3, 4], [2, 3, 4]] find [1, 3, 4]
 """
-        self.assertEqual(execute(source), [Number("2"), Number("1")])
+        self.assertEqual(execute(source), [RuntimeNumber("2"), RuntimeNumber("1")])
 
 
 if __name__ == "__main__":

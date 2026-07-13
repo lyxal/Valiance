@@ -93,7 +93,7 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
-from valiance.runtime_values import Number
+from valiance.runtime_values import RuntimeNumber
 from valiance.symbols import Symbol
 from valiance.types import (
     AppliedOverload,
@@ -2108,11 +2108,11 @@ def _compiled_element_extension(
     )
 
 
-def _runtime_rank_values(node: TypedElementNode) -> tuple[Number, ...]:
+def _runtime_rank_values(node: TypedElementNode) -> tuple[RuntimeNumber, ...]:
     """Collect the values for runtime rank during typed-AST bytecode lowering."""
     if node.overload is None or not node.overload.rank_values:
         return ()
-    return tuple(Number(value) for _, value in node.overload.rank_values)
+    return tuple(RuntimeNumber(value) for _, value in node.overload.rank_values)
 
 
 def _resolved_constructor_type_args(
@@ -2176,12 +2176,12 @@ def _literal_expression_value(nodes: tuple[ASTNode, ...]) -> object:
             raise CompileError("object and enum default values must be literal values")
 
 
-def _number(value: str, node: ASTNode) -> Number:
+def _number(value: str, node: ASTNode) -> RuntimeNumber:
     """Compute number during typed-AST bytecode lowering."""
     import decimal
 
     try:
-        return Number(value)
+        return RuntimeNumber(value)
     except decimal.InvalidOperation as exc:
         location = ""
         if node.location is not None:

@@ -30,7 +30,7 @@ from valiance.runtime_values import (
     DictValue,
     LazyList,
     ListValue,
-    Number,
+    RuntimeNumber,
     ObjectRuntimeType,
     ObjectValue,
     PanicSignal,
@@ -141,7 +141,7 @@ _NO_EXTENSION_DEFAULT = object()
 _MISSING_VECTOR_ITEM = object()
 _UNINITIALIZED_OBJECT_FIELD = object()
 _MISSING_NAME = object()
-_SCALAR_RUNTIME_TYPES = (Number, str, int, bool, type(None))
+_SCALAR_RUNTIME_TYPES = (RuntimeNumber, str, int, bool, type(None))
 
 
 @dataclass(slots=True)
@@ -328,9 +328,7 @@ class _Frame:
             arity - stack_count,
         )
         initial_start = self.cycle_stack_remaining - initial_count
-        initial_args = self.cycle_values[
-            initial_start : self.cycle_stack_remaining
-        ]
+        initial_args = self.cycle_values[initial_start : self.cycle_stack_remaining]
         missing = arity - stack_count - initial_count
         if missing and not self.cycle_values:
             raise _StackUnderflow
@@ -624,9 +622,7 @@ class VirtualMachine:
 
     def _drive_frames(self, root: _Activation) -> list[Any]:
         """Drive bytecode activations without nesting Python function calls."""
-        frames: list[tuple[_Activation, _FunctionCallRequest | None]] = [
-            (root, None)
-        ]
+        frames: list[tuple[_Activation, _FunctionCallRequest | None]] = [(root, None)]
         while frames:
             activation, completed_request = frames[-1]
             try:
@@ -752,9 +748,7 @@ class VirtualMachine:
             if function.code.return_tags
             else ranked
         )
-        function_locals = dict(
-            zip(function.code.params, request.args, strict=False)
-        )
+        function_locals = dict(zip(function.code.params, request.args, strict=False))
         function_return_specs = _resolve_static_rank_variables(
             function.code.return_tag_specs, function_locals
         )
@@ -870,9 +864,7 @@ class VirtualMachine:
                 locals=locals_,
                 globals=globals_,
                 cycle_values=cycle_values,
-                cycle_stack_remaining=(
-                    len(cycle_values) if code.cycle_params else 0
-                ),
+                cycle_stack_remaining=(len(cycle_values) if code.cycle_params else 0),
                 retained_locals=retained_locals,
                 is_global_scope=code.name == "<main>",
             ),
@@ -1052,21 +1044,15 @@ class VirtualMachine:
                         case OpCode.BUILD_RECORD:
                             values = _pop_many(frame.stack, len(instruction.arg))
                             frame.stack.append(
-                                DictValue(
-                                    zip(instruction.arg, values, strict=True)
-                                )
+                                DictValue(zip(instruction.arg, values, strict=True))
                             )
                         case OpCode.BUILD_DICT:
                             values = _pop_many(frame.stack, instruction.arg * 2)
                             frame.stack.append(
-                                DictValue(
-                                    zip(values[::2], values[1::2], strict=True)
-                                )
+                                DictValue(zip(values[::2], values[1::2], strict=True))
                             )
                         case OpCode.MAKE_OBJECT_CONSTRUCTOR:
-                            constructor = _object_constructor_reference(
-                                instruction.arg
-                            )
+                            constructor = _object_constructor_reference(instruction.arg)
                             initializer = (
                                 None
                                 if constructor.initializer is None
@@ -1082,9 +1068,7 @@ class VirtualMachine:
                                     constructor.fields,
                                     constructor.required,
                                     dict(constructor.defaults),
-                                    _object_runtime_type(
-                                        constructor.runtime_metadata
-                                    ),
+                                    _object_runtime_type(constructor.runtime_metadata),
                                     initializer,
                                 )
                             )
@@ -1112,9 +1096,7 @@ class VirtualMachine:
                             if stack_count:
                                 del frame.stack[-stack_count:]
                             frame.cycle_index = next_cycle_index
-                            frame.cycle_stack_remaining = (
-                                next_cycle_stack_remaining
-                            )
+                            frame.cycle_stack_remaining = next_cycle_stack_remaining
                             receiver = args[0]
                             if optional_safe:
                                 frame.stack.append(
@@ -1369,9 +1351,8 @@ class VirtualMachine:
         """Release frame locals during VM execution."""
         for name, value in frame.locals.items():
             if (
-                (name in frame.retained_locals or frame.globals.get(name) is not value)
-                and _needs_release(value)
-            ):
+                name in frame.retained_locals or frame.globals.get(name) is not value
+            ) and _needs_release(value):
                 _release_value(value, self)
         frame.locals.clear()
 
@@ -1718,7 +1699,7 @@ class VirtualMachine:
         for index, item in enumerate(iterable):
             args = [item]
             if has_index:
-                args.append(Number(index))
+                args.append(RuntimeNumber(index))
             try:
                 self.call(body, args, isolate_captures=False)
             except _LoopBreak as signal:
@@ -1862,9 +1843,7 @@ class VirtualMachine:
                         direct_leaf = False
                         break
                     try:
-                        overload = value.element.definitions[
-                            reference.overload_index
-                        ]
+                        overload = value.element.definitions[reference.overload_index]
                     except IndexError:
                         direct_leaf = False
                         break
@@ -2479,8 +2458,10 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
             raise RuntimeError(f"invalid runtime type facts {value[8]!r}")
         facts: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
         for fact in value[8]:
-            if not isinstance(fact, tuple) or len(fact) != 3 or not isinstance(
-                fact[0], str
+            if (
+                not isinstance(fact, tuple)
+                or len(fact) != 3
+                or not isinstance(fact[0], str)
             ):
                 raise RuntimeError(f"invalid runtime type fact {fact!r}")
             facts.append(
@@ -2501,9 +2482,7 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
                 or len(supertype) != 2
                 or not isinstance(supertype[0], str)
             ):
-                raise RuntimeError(
-                    f"invalid generic supertype metadata {supertype!r}"
-                )
+                raise RuntimeError(f"invalid generic supertype metadata {supertype!r}")
             supertypes.append(
                 (
                     supertype[0],
@@ -2896,7 +2875,9 @@ def _contains_owned_value(values: tuple[Any, ...]) -> bool:
             if not _dict_ownership_is_trivial(value):
                 return True
             continue
-        if isinstance(value, (ObjectValue, FunctionValue, OverloadedFunctionValue, tuple)):
+        if isinstance(
+            value, (ObjectValue, FunctionValue, OverloadedFunctionValue, tuple)
+        ):
             return True
     return False
 
@@ -2963,18 +2944,17 @@ def _panic_matches(value: Any, type_name: str) -> bool:
     if type_name == "String":
         return isinstance(value, str)
     if type_name == "Integer":
-        return isinstance(value, Number) and value == value.to_integral_value()
+        return isinstance(value, RuntimeNumber) and value == value.to_integral_value()
     if type_name == "Real":
-        return isinstance(value, Number)
+        return isinstance(value, RuntimeNumber)
     if type_name == "Number":
-        return isinstance(value, Number)
+        return isinstance(value, RuntimeNumber)
     return False
 
 
-def _function_overloads(value: FunctionValue | OverloadedFunctionValue) -> tuple[
-    FunctionValue,
-    ...
-]:
+def _function_overloads(
+    value: FunctionValue | OverloadedFunctionValue,
+) -> tuple[FunctionValue, ...]:
     """Collect the overloads for function during VM execution."""
     if isinstance(value, FunctionValue):
         return (value,)
@@ -3047,9 +3027,13 @@ def _runtime_pattern_matches(value: Any, pattern: RuntimeTypePattern) -> bool:
     if pattern.kind == "none":
         return isinstance(value, ObjectValue) and value.type_name == "None"
     if pattern.kind == "tuple":
-        return isinstance(value, tuple) and len(value) == len(pattern.children) and all(
-            _runtime_pattern_matches(item, child)
-            for item, child in zip(value, pattern.children, strict=True)
+        return (
+            isinstance(value, tuple)
+            and len(value) == len(pattern.children)
+            and all(
+                _runtime_pattern_matches(item, child)
+                for item, child in zip(value, pattern.children, strict=True)
+            )
         )
     if pattern.kind == "collection":
         return _runtime_collection_pattern_matches(value, pattern)
@@ -3105,8 +3089,7 @@ def _runtime_value_pattern(value: Any) -> RuntimeTypePattern | None:
             ()
             if runtime_type is None
             else tuple(
-                _runtime_variance(marker)
-                for marker in runtime_type.generic_variances
+                _runtime_variance(marker) for marker in runtime_type.generic_variances
             )
         )
         return RuntimeTypePattern(
@@ -3118,7 +3101,7 @@ def _runtime_value_pattern(value: Any) -> RuntimeTypePattern | None:
             accepted_names=accepted_names,
             variances=variances,
         )
-    if isinstance(value, Number):
+    if isinstance(value, RuntimeNumber):
         name = "Integer" if value == value.to_integral_value() else "Real"
         return RuntimeTypePattern("nominal", name=name, accepted_names=(name,))
     if isinstance(value, str):
@@ -3196,8 +3179,7 @@ def _parse_runtime_type_pattern(
         return RuntimeTypePattern(
             "union",
             children=tuple(
-                _parse_runtime_type_pattern(part, type_facts)
-                for part in union_parts
+                _parse_runtime_type_pattern(part, type_facts) for part in union_parts
             ),
         )
     bracket = text.find("[")
@@ -3342,7 +3324,7 @@ def _runtime_type_name(value: Any) -> str | None:
         if not value.type_args:
             return value.type_name
         return f"{value.type_name}[{', '.join(value.type_args)}]"
-    if isinstance(value, Number):
+    if isinstance(value, RuntimeNumber):
         if value == value.to_integral_value():
             return "Integer"
         return "Real"
@@ -3351,7 +3333,6 @@ def _runtime_type_name(value: Any) -> str | None:
     if isinstance(value, bool):
         return "Boolean"
     return None
-
 
 
 def _dynamic_callable_arity(value: Any) -> int | None:
@@ -3365,10 +3346,15 @@ def _dynamic_callable_arity(value: Any) -> int | None:
         if value.initializer is None:
             return len(value.required)
         initializer = value.initializer
-        overloads = (initializer,) if isinstance(initializer, FunctionValue) else initializer.overloads
+        overloads = (
+            (initializer,)
+            if isinstance(initializer, FunctionValue)
+            else initializer.overloads
+        )
         arities = {max(0, len(overload.code.params) - 1) for overload in overloads}
         return next(iter(arities)) if len(arities) == 1 else None
     return None
+
 
 def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
     """Invoke builtin during VM execution."""
@@ -3548,8 +3534,7 @@ def _call_object_constructor(
     missing = [
         name
         for name in callee.fields
-        if name not in value.fields
-        or value.fields[name] is _UNINITIALIZED_OBJECT_FIELD
+        if name not in value.fields or value.fields[name] is _UNINITIALIZED_OBJECT_FIELD
     ]
     if missing:
         error = RuntimeError(
@@ -3608,9 +3593,7 @@ def _call_resolved_builtin(
 ) -> None:
     """Invoke resolved builtin during VM execution."""
     arity = (
-        arity_override
-        if arity_override is not None
-        else len(overload.signature.params)
+        arity_override if arity_override is not None else len(overload.signature.params)
     )
     try:
         (
@@ -3849,9 +3832,7 @@ def _extract_object_field(receiver: ObjectValue, field: str, vm: VirtualMachine)
     except KeyError as exc:
         raise RuntimeError(f"{receiver.type_name} has no field '{field}'") from exc
     if value is _UNINITIALIZED_OBJECT_FIELD:
-        raise RuntimeError(
-            f"{receiver.type_name} field '{field}' is not initialized"
-        )
+        raise RuntimeError(f"{receiver.type_name} field '{field}' is not initialized")
     retained = _retain_value(value)
     _release_value(receiver, vm)
     return retained
@@ -3877,8 +3858,7 @@ def _try_unwrap(stack: list[Any], vm: VirtualMachine) -> bool:
 def _is_none_result_value(value: Any) -> bool:
     """Return whether the value is none result value."""
     return value is None or (
-        isinstance(value, ObjectValue)
-        and value.type_name.rsplit(".", 1)[-1] == "None"
+        isinstance(value, ObjectValue) and value.type_name.rsplit(".", 1)[-1] == "None"
     )
 
 
@@ -3949,6 +3929,7 @@ def _call_vectorized_resolved_builtin(
             if overload.runtime_return_tags
             else result
         )
+
     try:
         if vectorised_depths or vectorised_target_ranks:
             resolved_depths = _resolve_vectorisation_depths(
@@ -4055,9 +4036,7 @@ def _vectorize_resolved_depths(
         extension,
         stop_at_zero=stop_at_zero,
     )
-    return (
-        LazyList(lazy_items),
-    )
+    return (LazyList(lazy_items),)
 
 
 def _resolve_vectorisation_depths(
@@ -4112,6 +4091,7 @@ def _vectorize_function(
     extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...]:
     """Vectorize function during VM execution."""
+
     def implementation(item_args: tuple[Any, ...], _context: RuntimeContext):
         """Handle implementation during VM execution."""
         return tuple(vm.call(callee, list(item_args)))
@@ -4150,9 +4130,7 @@ def _vectorize_eager(
 
     result_items = []
     for index in range(next(iter(vector_lengths))):
-        item_args = tuple(
-            arg[index] if is_eager_sequence(arg) else arg for arg in args
-        )
+        item_args = tuple(arg[index] if is_eager_sequence(arg) else arg for arg in args)
         result_items.append(_vectorize(overload, item_args, context))
 
     return _transpose_vectorized_items(result_items)
@@ -4174,9 +4152,11 @@ def _vectorize_eager_resolved(
     result_items = []
     for index in range(max(vector_lengths)):
         item_args = tuple(
-            arg[index]
-            if is_eager_sequence(arg) and index < len(arg)
-            else (_MISSING_VECTOR_ITEM if is_eager_sequence(arg) else arg)
+            (
+                arg[index]
+                if is_eager_sequence(arg) and index < len(arg)
+                else (_MISSING_VECTOR_ITEM if is_eager_sequence(arg) else arg)
+            )
             for arg in args
         )
         item_args = _extend_vector_args(item_args, extension, context)
@@ -4212,12 +4192,10 @@ def _vectorize_eager_resolved_depths(
     for index in range(max(vector_lengths)):
         item_args = tuple(
             (
-                arg[index]
-                if index < len(arg)
-                else _MISSING_VECTOR_ITEM
+                (arg[index] if index < len(arg) else _MISSING_VECTOR_ITEM)
+                if depth > 0 and is_eager_sequence(arg)
+                else arg
             )
-            if depth > 0 and is_eager_sequence(arg)
-            else arg
             for arg, depth in zip(args, depths, strict=False)
         )
         item_args = _extend_vector_args(item_args, extension, context)
@@ -4272,9 +4250,7 @@ def _vectorize_lazy_resolved(
         if extension is None and _MISSING_VECTOR_ITEM in items:
             raise RuntimeError("cannot vectorise lists with different lengths")
         item_iter = iter(items)
-        item_args = tuple(
-            next(item_iter) if is_list_like(arg) else arg for arg in args
-        )
+        item_args = tuple(next(item_iter) if is_list_like(arg) else arg for arg in args)
         item_args = _extend_vector_args(item_args, extension, context)
         result = _vectorize_resolved(implementation, item_args, context, extension)
         if len(result) != 1:
@@ -4359,9 +4335,11 @@ def _extend_vector_args(
             )
     elif extension.selector is not None:
         selector_args = tuple(
-            ObjectValue("None", {})
-            if value is _MISSING_VECTOR_ITEM
-            else ObjectValue("Some", {"value": value})
+            (
+                ObjectValue("None", {})
+                if value is _MISSING_VECTOR_ITEM
+                else ObjectValue("Some", {"value": value})
+            )
             for value in args
         )
         vm = cast(VirtualMachine, context.call.__self__)
@@ -4485,11 +4463,11 @@ def _matches_type_pattern(value: Any, pattern: str) -> bool:
     """Return whether the value matches type pattern."""
     value = unwrap_runtime_value(value)
     if pattern == "Integer":
-        return isinstance(value, Number) and value == value.to_integral_value()
+        return isinstance(value, RuntimeNumber) and value == value.to_integral_value()
     if pattern == "Real":
-        return isinstance(value, Number)
+        return isinstance(value, RuntimeNumber)
     if pattern == "Number":
-        return isinstance(value, Number)
+        return isinstance(value, RuntimeNumber)
     if pattern == "String":
         return isinstance(value, str)
     if pattern == "Err":
@@ -4529,15 +4507,13 @@ def _resolve_static_rank_variables(
     """Resolve rank-variable placeholders from validated hidden parameters."""
     if isinstance(spec, RankVariable):
         value = locals_.get(spec.name)
-        if isinstance(value, Number) and value.is_finite():
+        if isinstance(value, RuntimeNumber) and value.is_finite():
             integral = value.to_integral_value()
             if integral == value and 0 < value <= MAX_COMPILE_TIME_RANK:
                 return int(integral)
         if type(value) is int and 0 < value <= MAX_COMPILE_TIME_RANK:
             return value
-        raise RuntimeError(
-            f"invalid bytecode: unresolved rank variable '${spec.name}'"
-        )
+        raise RuntimeError(f"invalid bytecode: unresolved rank variable '${spec.name}'")
     if isinstance(spec, tuple):
         return tuple(_resolve_static_rank_variables(item, locals_) for item in spec)
     return spec
@@ -4560,8 +4536,7 @@ def _matches_cast_type(value: Any, spec: object) -> bool:
         unwrapped = unwrap_runtime_value(value)
         type_facts = (
             unwrapped.runtime_type.type_facts
-            if isinstance(unwrapped, ObjectValue)
-            and unwrapped.runtime_type is not None
+            if isinstance(unwrapped, ObjectValue) and unwrapped.runtime_type is not None
             else ()
         )
 
@@ -4585,8 +4560,12 @@ def _matches_cast_type(value: Any, spec: object) -> bool:
         # Optional and Result success values may use their documented raw
         # representation.  Explicit wrappers retain their inferred type args;
         # raw values are checked directly against the success payload.
-        if name == "Some" and len(expected_args) == 1 and not (
-            isinstance(unwrapped, ObjectValue) and unwrapped.type_name == "Some"
+        if (
+            name == "Some"
+            and len(expected_args) == 1
+            and not (
+                isinstance(unwrapped, ObjectValue) and unwrapped.type_name == "Some"
+            )
         ):
             return (
                 not _is_none_result_value(unwrapped)
@@ -4596,8 +4575,10 @@ def _matches_cast_type(value: Any, spec: object) -> bool:
                     _parse_runtime_type_pattern(expected_args[0], type_facts),
                 )
             )
-        if name == "OK" and len(expected_args) == 1 and not (
-            isinstance(unwrapped, ObjectValue) and unwrapped.type_name == "OK"
+        if (
+            name == "OK"
+            and len(expected_args) == 1
+            and not (isinstance(unwrapped, ObjectValue) and unwrapped.type_name == "OK")
         ):
             return (
                 not _is_error_result_value(unwrapped)
@@ -4635,9 +4616,8 @@ def _matches_cast_type(value: Any, spec: object) -> bool:
         )
         if unwrapped.type_name == name:
             actual_pattern = _runtime_value_pattern(unwrapped)
-            return (
-                actual_pattern is not None
-                and _runtime_pattern_subtype(actual_pattern, target_pattern)
+            return actual_pattern is not None and _runtime_pattern_subtype(
+                actual_pattern, target_pattern
             )
         projection = _runtime_generic_supertype(unwrapped, name)
         if projection is None:
@@ -4664,9 +4644,7 @@ def _matches_cast_type(value: Any, spec: object) -> bool:
                 return False
             name, depth, absent = item
             present = any(
-                str(tag.name) == name
-                and tag.depth == depth
-                and not tag.absent
+                str(tag.name) == name and tag.depth == depth and not tag.absent
                 for tag in actual_tags
             )
             if absent == present:
@@ -4749,8 +4727,7 @@ def _matches_collection_cast(
         return False
     if kind in {"list_exact", "array_exact"}:
         return all(
-            _matches_collection_cast(item, kind, rank - 1, base)
-            for item in value
+            _matches_collection_cast(item, kind, rank - 1, base) for item in value
         )
     if kind in {"list_min", "array_min"}:
         return all(
@@ -4803,8 +4780,7 @@ def _index_value_count(
 ) -> int:
     """Index value count during VM execution."""
     return sum(
-        has_start + has_stop + has_step
-        for _, has_start, has_stop, has_step in spec[0]
+        has_start + has_stop + has_step for _, has_start, has_stop, has_step in spec[0]
     )
 
 
@@ -4874,14 +4850,10 @@ def _set_index(
     """Update index during VM execution."""
     if len(selectors) == 1 and selectors[0][0]:
         _, start, stop, step = selectors[0]
-        return _set_slice_value(
-            receiver, start, stop, step, value, in_place=in_place
-        )
+        return _set_slice_value(receiver, start, stop, step, value, in_place=in_place)
     if len(selectors) != 1:
         raise RuntimeError("indexed assignment requires one non-slice index")
-    return _set_index_path(
-        receiver, selectors[0][1], value, in_place=in_place
-    )
+    return _set_index_path(receiver, selectors[0][1], value, in_place=in_place)
 
 
 def _index_path(receiver: Any, index: Any) -> Any:
@@ -4933,7 +4905,7 @@ def _lazy_index_request(index: Any) -> tuple[int, list[Any]]:
             raise RuntimeError("empty index path is invalid")
         target = index[0]
         tail = list(index[1:])
-    if not isinstance(target, Number):
+    if not isinstance(target, RuntimeNumber):
         raise RuntimeError("lazy list indexing requires a numeric index")
     target_int = _int_index(target)
     if target_int < 0:
@@ -4980,7 +4952,7 @@ def _index_one(receiver: Any, index: Any) -> Any:
                 )
             ) from exc
     if is_list_like(receiver):
-        if not isinstance(index, Number):
+        if not isinstance(index, RuntimeNumber):
             raise RuntimeError("lazy list indexing requires a numeric index")
         target = _int_index(index)
         if target < 0:
@@ -4988,9 +4960,7 @@ def _index_one(receiver: Any, index: Any) -> Any:
         for offset, item in enumerate(receiver):
             if offset == target:
                 return finish(item)
-        raise PanicSignal(
-            _fault_object("IndexFault", _index_fault_message(target))
-        )
+        raise PanicSignal(_fault_object("IndexFault", _index_fault_message(target)))
     raise RuntimeError("value is not indexable")
 
 
@@ -5045,7 +5015,7 @@ def _slice_path(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
         raise RuntimeError("multidimensional slice bounds must have the same rank")
     if not start:
         return receiver
-    step_value = Number(1) if step is None else step
+    step_value = RuntimeNumber(1) if step is None else step
     head = _slice_value(receiver, start[0], stop[0], step_value)
     if len(start) == 1:
         return head
@@ -5085,9 +5055,7 @@ def _set_slice_value(
     if isinstance(receiver, str):
         return _set_string_slice(receiver, start, stop, step, value)
     if is_eager_sequence(receiver):
-        return _set_eager_slice(
-            receiver, start, stop, step, value, in_place=in_place
-        )
+        return _set_eager_slice(receiver, start, stop, step, value, in_place=in_place)
     if is_list_like(receiver):
         return _set_lazy_slice(receiver, start, stop, step, value)
     raise RuntimeError("value is not slice-assignable")
@@ -5303,11 +5271,7 @@ def _set_index_one(
                 )
             )
         normalized_target = _normal_index(target, len(receiver))
-        return (
-            receiver[:normalized_target]
-            + value
-            + receiver[normalized_target + 1 :]
-        )
+        return receiver[:normalized_target] + value + receiver[normalized_target + 1 :]
     if is_eager_sequence(receiver):
         target = _int_index(index)
         if not -len(receiver) <= target < len(receiver):
@@ -5343,7 +5307,7 @@ def _is_path(value: Any) -> bool:
 def _int_index(value: Any) -> int:
     """Find the index for int during VM execution."""
     value = unwrap_runtime_value(value)
-    if isinstance(value, Number) and value == value.to_integral_value():
+    if isinstance(value, RuntimeNumber) and value == value.to_integral_value():
         return int(value)
     if isinstance(value, int):
         return value
@@ -5398,14 +5362,8 @@ def _optional_safe_get_field(
     """Read a member through ``Some`` and propagate ``None``."""
     if is_list_like(receiver):
         if is_eager_sequence(receiver):
-            return [
-                _optional_safe_get_field(item, field, vm)
-                for item in receiver
-            ]
-        return LazyList(
-            _optional_safe_get_field(item, field, vm)
-            for item in receiver
-        )
+            return [_optional_safe_get_field(item, field, vm) for item in receiver]
+        return LazyList(_optional_safe_get_field(item, field, vm) for item in receiver)
 
     kind = _optional_runtime_kind(receiver)
     if kind == "none":
@@ -5450,9 +5408,7 @@ def _get_field(receiver: Any, field: str) -> Any:
         try:
             return receiver.fields[field]
         except KeyError as exc:
-            raise RuntimeError(
-                f"{receiver.type_name} has no field '{field}'"
-            ) from exc
+            raise RuntimeError(f"{receiver.type_name} has no field '{field}'") from exc
     if isinstance(receiver, dict):
         try:
             return receiver[field]
@@ -5579,7 +5535,7 @@ def _format_instruction_arg(arg: object) -> str:
     """Format instruction arg during VM execution."""
     if isinstance(arg, str):
         return repr(arg)
-    if isinstance(arg, Number):
+    if isinstance(arg, RuntimeNumber):
         return _format_value(arg)
     if isinstance(arg, tuple):
         return repr(arg)
@@ -5691,7 +5647,7 @@ def _string_value(value: Any) -> str:
 def _runtime_type_name(value: Any) -> str:
     """Return the canonical name for runtime type during VM execution."""
     value = unwrap_runtime_value(value)
-    if isinstance(value, Number):
+    if isinstance(value, RuntimeNumber):
         return "Integer" if value == value.to_integral_value() else "Real"
     if isinstance(value, str):
         return "String"
@@ -5726,9 +5682,7 @@ def _lift_common_collection_tags(
     ordered = tuple(sorted(common))
     cleaned = [update_runtime_tags(value, remove=ordered) for value in values]
     lifted = tuple(
-        DataTag(tag.name, tag.depth + 1)
-        for tag in ordered
-        if not tag.absent
+        DataTag(tag.name, tag.depth + 1) for tag in ordered if not tag.absent
     )
     return cleaned, lifted
 
@@ -5774,9 +5728,7 @@ def _declared_runtime_tags(typ: Any) -> tuple[DataTag, ...]:
 
 def _apply_cached_runtime_return_tags(
     values: tuple[Any, ...] | list[Any],
-    deltas: tuple[
-        tuple[tuple[DataTag, ...], tuple[DataTag, ...]], ...
-    ],
+    deltas: tuple[tuple[tuple[DataTag, ...], tuple[DataTag, ...]], ...],
 ) -> tuple[Any, ...]:
     """Apply pre-split built-in return tags without hashing metadata per call."""
     if len(values) != len(deltas):
@@ -5873,9 +5825,7 @@ def _canonicalize_runtime_value_tag_contract(
         retained = tuple(
             tag
             for tag in existing
-            if _runtime_variant_parent_is_retained(
-                tag, declared_keys, tag_parents
-            )
+            if _runtime_variant_parent_is_retained(tag, declared_keys, tag_parents)
         )
         return update_runtime_tags(payload, add=(*additions, *retained))
 
@@ -5908,9 +5858,7 @@ def _canonicalize_runtime_value_tag_contract(
             raise RuntimeError("invalid bytecode: malformed intersection tag contract")
         result = value
         for item in spec[1]:
-            result = _canonicalize_runtime_value_tag_contract(
-                result, item, tag_parents
-            )
+            result = _canonicalize_runtime_value_tag_contract(result, item, tag_parents)
         return result
     if kind == "tuple":
         if len(spec) != 2 or not isinstance(spec[1], tuple):
@@ -6005,18 +5953,28 @@ def _runtime_tag_contract_matches(
     if kind == "none":
         return _is_none_result_value(payload)
     if kind == "nominal":
-        return len(spec) == 2 and isinstance(spec[1], str) and _matches_type_pattern(
-            payload, spec[1]
+        return (
+            len(spec) == 2
+            and isinstance(spec[1], str)
+            and _matches_type_pattern(payload, spec[1])
         )
     if kind == "union":
-        return len(spec) == 2 and isinstance(spec[1], tuple) and any(
-            _runtime_tag_contract_matches(value, item, require_tags=require_tags)
-            for item in spec[1]
+        return (
+            len(spec) == 2
+            and isinstance(spec[1], tuple)
+            and any(
+                _runtime_tag_contract_matches(value, item, require_tags=require_tags)
+                for item in spec[1]
+            )
         )
     if kind == "intersection":
-        return len(spec) == 2 and isinstance(spec[1], tuple) and all(
-            _runtime_tag_contract_matches(value, item, require_tags=require_tags)
-            for item in spec[1]
+        return (
+            len(spec) == 2
+            and isinstance(spec[1], tuple)
+            and all(
+                _runtime_tag_contract_matches(value, item, require_tags=require_tags)
+                for item in spec[1]
+            )
         )
     if kind == "tuple":
         return (

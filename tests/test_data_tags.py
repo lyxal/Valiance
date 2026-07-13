@@ -17,7 +17,7 @@ from valiance.types import (
     assignable,
     show,
 )
-from valiance.runtime_values import Number as RuntimeNumber
+from valiance.runtime_values import RuntimeNumber as RuntimeNumber
 
 
 def analyse_source(source: str, *, source_file: Path | None = None):

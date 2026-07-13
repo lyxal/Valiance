@@ -27,7 +27,7 @@ from valiance.types import (
     show,
     subtype,
 )
-from valiance.runtime_values import Number as RuntimeNumber
+from valiance.runtime_values import RuntimeNumber as RuntimeNumber
 
 
 def analyse(source: str):

@@ -4,7 +4,7 @@ from pathlib import Path
 from valiance.analysis import Analyser
 from valiance.parsing import parse
 from valiance.runtime import compile_program, dumps, loads, run
-from valiance.runtime_values import LazyList, Number
+from valiance.runtime_values import LazyList, RuntimeNumber
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,7 +25,7 @@ class OverloadMarkerIntegrationTests(unittest.TestCase):
 
         self.assertEqual(analyser.diagnostics, [])
         expected = [
-            [Number("13"), Number("7"), Number("4")],
+            [RuntimeNumber("13"), RuntimeNumber("7"), RuntimeNumber("4")],
             ["high", "medium", "low"],
         ]
         programs = (
@@ -48,7 +48,7 @@ $f([1, 2, 3])
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             _materialize(run(compile_program(typed))),
-            [[Number("1"), Number("2"), Number("3")]],
+            [[RuntimeNumber("1"), RuntimeNumber("2"), RuntimeNumber("3")]],
         )
 
         matrix_analyser = Analyser()

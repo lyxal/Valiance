@@ -18,7 +18,7 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
-from valiance.runtime_values import Number
+from valiance.runtime_values import RuntimeNumber
 
 
 class OptimizationError(ValueError):
@@ -891,7 +891,7 @@ def _constant_inline_body(
 
 def _is_scalar_constant(value: object) -> bool:
     """Return whether a value has immutable, lifecycle-free runtime semantics."""
-    return value is None or isinstance(value, (int, Number, str))
+    return value is None or isinstance(value, (int, RuntimeNumber, str))
 
 
 def _is_serializable_constant(value: object) -> bool:

@@ -306,7 +306,7 @@ class PanicSignal(Exception):
 ZERO = Decimal(0)
 
 
-class Number:
+class RuntimeNumber:
     __slots__ = ("real", "imag")
 
     @staticmethod
@@ -320,7 +320,7 @@ class Number:
         raise TypeError(f"Unsupported numeric value: {value!r}")
 
     def __init__(self, value: object = 0):
-        if isinstance(value, Number):
+        if isinstance(value, RuntimeNumber):
             self.real = value.real
             self.imag = value.imag
 
@@ -363,87 +363,89 @@ class Number:
         return f"{self.real}i{self.imag}"
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Number):
+        if not isinstance(other, RuntimeNumber):
             return NotImplemented
         return self.real == other.real and self.imag == other.imag
 
-    def __add__(self, other: object) -> Number:
-        if not isinstance(other, Number):
+    def __add__(self, other: object) -> RuntimeNumber:
+        if not isinstance(other, RuntimeNumber):
             return NotImplemented
-        return Number((self.real + other.real, self.imag + other.imag))
+        return RuntimeNumber((self.real + other.real, self.imag + other.imag))
 
-    def __sub__(self, other: object) -> Number:
-        if not isinstance(other, Number):
+    def __sub__(self, other: object) -> RuntimeNumber:
+        if not isinstance(other, RuntimeNumber):
             return NotImplemented
-        return Number((self.real - other.real, self.imag - other.imag))
+        return RuntimeNumber((self.real - other.real, self.imag - other.imag))
 
-    def __mul__(self, other: object) -> Number:
-        if not isinstance(other, Number):
+    def __mul__(self, other: object) -> RuntimeNumber:
+        if not isinstance(other, RuntimeNumber):
             return NotImplemented
-        return Number(
+        return RuntimeNumber(
             (
                 self.real * other.real - self.imag * other.imag,
                 self.real * other.imag + self.imag * other.real,
             )
         )
 
-    def __truediv__(self, other: object) -> Number:
-        if not isinstance(other, Number):
+    def __truediv__(self, other: object) -> RuntimeNumber:
+        if not isinstance(other, RuntimeNumber):
             return NotImplemented
         denom = other.real**2 + other.imag**2
-        return Number(
+        return RuntimeNumber(
             (
                 (self.real * other.real + self.imag * other.imag) / denom,
                 (self.imag * other.real - self.real * other.imag) / denom,
             )
         )
 
-    def __mod__(self, other: object) -> Number:
-        if not isinstance(other, Number):
+    def __mod__(self, other: object) -> RuntimeNumber:
+        if not isinstance(other, RuntimeNumber):
             return NotImplemented
         if self.imag != ZERO or other.imag != ZERO:
             raise ValueError("Modulo operation is only defined for real numbers.")
-        return Number(self.real % other.real)
+        return RuntimeNumber(self.real % other.real)
 
-    def __pow__(self, other: object) -> Number:
-        if not isinstance(other, Number):
+    def __pow__(self, other: object) -> RuntimeNumber:
+        if not isinstance(other, RuntimeNumber):
             return NotImplemented
         if self.imag != ZERO or other.imag != ZERO:
             raise ValueError("Power operation is only defined for real numbers.")
-        return Number(self.real**other.real)
+        return RuntimeNumber(self.real**other.real)
 
-    def __neg__(self) -> Number:
-        return Number((-self.real, -self.imag))
+    def __neg__(self) -> RuntimeNumber:
+        return RuntimeNumber((-self.real, -self.imag))
 
-    def __abs__(self) -> Number:
-        return Number((abs(self.real), abs(self.imag)))
+    def __abs__(self) -> RuntimeNumber:
+        return RuntimeNumber((abs(self.real), abs(self.imag)))
 
     def __bool__(self) -> bool:
         return self.real != ZERO or self.imag != ZERO
 
     def __le__(self, other: object) -> bool:
-        if not isinstance(other, Number):
+        if not isinstance(other, RuntimeNumber):
             return NotImplemented
         return self.real <= other.real and self.imag <= other.imag
 
     def __lt__(self, other: object) -> bool:
-        if not isinstance(other, Number):
+        if not isinstance(other, RuntimeNumber):
             return NotImplemented
         return self.real < other.real and self.imag < other.imag
 
     def __ge__(self, other: object) -> bool:
-        if not isinstance(other, Number):
+        if not isinstance(other, RuntimeNumber):
             return NotImplemented
         return self.real >= other.real and self.imag >= other.imag
 
     def __gt__(self, other: object) -> bool:
-        if not isinstance(other, Number):
+        if not isinstance(other, RuntimeNumber):
             return NotImplemented
         return self.real > other.real and self.imag > other.imag
 
-    def to_integral_value(self) -> Number:
+    def to_integral_value(self) -> RuntimeNumber:
         """Return the integral part of this number."""
-        return Number((self.real.to_integral_value(), self.imag.to_integral_value()))
+        return RuntimeNumber(
+            (self.real.to_integral_value(), self.imag.to_integral_value())
+        )
 
     def is_finite(self) -> bool:
         """Return whether this number is finite."""

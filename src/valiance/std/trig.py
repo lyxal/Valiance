@@ -9,12 +9,12 @@ import valiance.types as T
 from valiance.analysis.builtins import RuntimeContext
 from valiance.documentation import element_documentation
 from valiance.stdlib_native import stdlib_element
-from valiance.runtime_values import Number
+from valiance.runtime_values import RuntimeNumber
 
 
-def _number(value: float) -> Number:
+def _number(value: float) -> RuntimeNumber:
     """Compute number within this subsystem."""
-    return Number(str(value))
+    return RuntimeNumber(str(value))
 
 
 @stdlib_element(

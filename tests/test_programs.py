@@ -17,7 +17,7 @@ from valiance.analysis.analyser import Analyser
 from valiance.parsing.parser import parse
 from valiance.runtime.compiler import compile_program
 from valiance.runtime.vm import run
-from valiance.runtime_values import Number
+from valiance.runtime_values import RuntimeNumber
 
 
 def execute(source: str, source_file: Path | None = None):
@@ -139,37 +139,97 @@ class ProgramTests(unittest.TestCase):
         result = execute("""
             [1, 2, 3, 4] * 2
         """)
-        self.assertEqual(result, [[Number("2"), Number("4"), Number("6"), Number("8")]])
+        self.assertEqual(
+            result,
+            [
+                [
+                    RuntimeNumber("2"),
+                    RuntimeNumber("4"),
+                    RuntimeNumber("6"),
+                    RuntimeNumber("8"),
+                ]
+            ],
+        )
 
     def test_map_double_modifier(self):
         result = execute("""
             [1, 2, 3, 4] map: * 2
         """)
-        self.assertEqual(result, [[Number("2"), Number("4"), Number("6"), Number("8")]])
+        self.assertEqual(
+            result,
+            [
+                [
+                    RuntimeNumber("2"),
+                    RuntimeNumber("4"),
+                    RuntimeNumber("6"),
+                    RuntimeNumber("8"),
+                ]
+            ],
+        )
 
     def test_map_double_inferred_lambda(self):
         result = execute("""
             [1, 2, 3, 4] map fn => * 2
         """)
-        self.assertEqual(result, [[Number("2"), Number("4"), Number("6"), Number("8")]])
+        self.assertEqual(
+            result,
+            [
+                [
+                    RuntimeNumber("2"),
+                    RuntimeNumber("4"),
+                    RuntimeNumber("6"),
+                    RuntimeNumber("8"),
+                ]
+            ],
+        )
 
     def test_map_double_inferred_return_lambda(self):
         result = execute("""
             [1, 2, 3, 4] map fn (:Integer) => * 2
         """)
-        self.assertEqual(result, [[Number("2"), Number("4"), Number("6"), Number("8")]])
+        self.assertEqual(
+            result,
+            [
+                [
+                    RuntimeNumber("2"),
+                    RuntimeNumber("4"),
+                    RuntimeNumber("6"),
+                    RuntimeNumber("8"),
+                ]
+            ],
+        )
 
     def test_map_double_fully_typed_lambda(self):
         result = execute("""
             [1, 2, 3, 4] map fn (:Integer) -> Integer => * 2
         """)
-        self.assertEqual(result, [[Number("2"), Number("4"), Number("6"), Number("8")]])
+        self.assertEqual(
+            result,
+            [
+                [
+                    RuntimeNumber("2"),
+                    RuntimeNumber("4"),
+                    RuntimeNumber("6"),
+                    RuntimeNumber("8"),
+                ]
+            ],
+        )
 
     def test_map_double_the_stack_way(self):
         result = execute("""
             dup [1, 2, 3, 4] | +
         """)
-        self.assertEqual(result, [[Number("2"), Number("4"), Number("6"), Number("8")]])
+        self.assertEqual(
+            result,
+            [
+                [
+                    RuntimeNumber("2"),
+                    RuntimeNumber("4"),
+                    RuntimeNumber("6"),
+                    RuntimeNumber("8"),
+                ]
+            ],
+        )
 
     # The intersection of generics and rank polymorphism
 
@@ -178,28 +238,36 @@ class ProgramTests(unittest.TestCase):
             [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
             fold: +           
         """)
-        self.assertEqual(result, [[Number("12"), Number("15"), Number("18")]])
+        self.assertEqual(
+            result, [[RuntimeNumber("12"), RuntimeNumber("15"), RuntimeNumber("18")]]
+        )
 
     def test_reduce_sum_matrix_inferred_lambda(self):
         result = execute("""
             [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
             fold fn => +           
         """)
-        self.assertEqual(result, [[Number("12"), Number("15"), Number("18")]])
+        self.assertEqual(
+            result, [[RuntimeNumber("12"), RuntimeNumber("15"), RuntimeNumber("18")]]
+        )
 
     def test_reduce_sum_matrix_inferred_return_lambda(self):
         result = execute("""
             [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
             fold fn (:Integer+, :Integer+) => +           
         """)
-        self.assertEqual(result, [[Number("12"), Number("15"), Number("18")]])
+        self.assertEqual(
+            result, [[RuntimeNumber("12"), RuntimeNumber("15"), RuntimeNumber("18")]]
+        )
 
     def test_reduce_sum_matrix_fully_typed_lambda(self):
         result = execute("""
             [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
             fold fn (:Integer+, :Integer+) -> Integer+ => +           
         """)
-        self.assertEqual(result, [[Number("12"), Number("15"), Number("18")]])
+        self.assertEqual(
+            result, [[RuntimeNumber("12"), RuntimeNumber("15"), RuntimeNumber("18")]]
+        )
 
     # Similar to the mapping example, but a little more complex
     def test_even_odd_check_mapped_over_range(self):
@@ -274,7 +342,7 @@ class ProgramTests(unittest.TestCase):
         end
         factorial 5
         """)
-        self.assertEqual(result, [Number("120")])
+        self.assertEqual(result, [RuntimeNumber("120")])
 
     def test_factorial_recursive_as_a_lambda(self):
         result = execute("""
@@ -285,14 +353,14 @@ class ProgramTests(unittest.TestCase):
 
         $factorial(5)
         """)
-        self.assertEqual(result, [Number("120")])
+        self.assertEqual(result, [RuntimeNumber("120")])
 
     def test_factorial_as_fold(self):
         result = execute("""
         define factorial => range(1, _) fold: *
         factorial 5
         """)
-        self.assertEqual(result, [Number("120")])
+        self.assertEqual(result, [RuntimeNumber("120")])
 
     def test_factorial_as_imperative_loop(self):
         result = execute("""
@@ -308,7 +376,7 @@ class ProgramTests(unittest.TestCase):
 
         factorial 5
         """)
-        self.assertEqual(result, [Number("120")])
+        self.assertEqual(result, [RuntimeNumber("120")])
 
     def test_flatten_as_function(self):
         result = execute("""
@@ -331,13 +399,13 @@ class ProgramTests(unittest.TestCase):
             result,
             [
                 [
-                    Number("1"),
-                    Number("2"),
-                    Number("3"),
-                    Number("4"),
-                    Number("5"),
-                    Number("6"),
-                    Number("7"),
+                    RuntimeNumber("1"),
+                    RuntimeNumber("2"),
+                    RuntimeNumber("3"),
+                    RuntimeNumber("4"),
+                    RuntimeNumber("5"),
+                    RuntimeNumber("6"),
+                    RuntimeNumber("7"),
                 ]
             ],
         )

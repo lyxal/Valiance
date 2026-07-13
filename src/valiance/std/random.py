@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 from typing import Any
 
-from valiance.runtime_values import Number
+from valiance.runtime_values import RuntimeNumber
 import valiance.types as T
 from valiance.analysis.builtins import RuntimeContext
 from valiance.documentation import element_documentation
@@ -25,7 +25,7 @@ from valiance.stdlib_native import stdlib_element
 )
 def _randbit(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return one random bit as a Valiance integer value."""
-    return (Number(random.getrandbits(1)),)
+    return (RuntimeNumber(random.getrandbits(1)),)
 
 
 @stdlib_element(
@@ -49,4 +49,4 @@ def _between(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     minimum, maximum = (int(value) for value in args)
     if minimum > maximum:
         raise RuntimeError("between requires minimum <= maximum")
-    return (Number(random.randint(minimum, maximum)),)
+    return (RuntimeNumber(random.randint(minimum, maximum)),)
