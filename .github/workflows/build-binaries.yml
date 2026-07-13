@@ -33,7 +33,12 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Set up Python
-        run: uv python install 3.14
+        run: uv python install 3.13
+
+      - name: Temporarily relax requires-python for Nuitka compatibility
+        shell: bash
+        run: |
+          sed -i.bak 's/requires-python = ">=3.14"/requires-python = ">=3.13"/' pyproject.toml
 
       - name: Install dependencies
         run: uv sync
@@ -54,6 +59,7 @@ jobs:
           uv run --with nuitka python -m nuitka
           --onefile
           --standalone
+          --assume-yes-for-downloads
           --include-package=valiance
           --include-package=valiance.std
           --include-package=prompt_toolkit
@@ -91,4 +97,4 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files:  artifacts/**/*
+          files: artifacts/**/*
