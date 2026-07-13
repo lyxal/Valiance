@@ -47,6 +47,7 @@ from valiance.asts.nodes import (
     NumberLiteralNode,
     ObjectFieldNode,
     ObjectNode,
+    OverloadSignature,
     OrPatternNode,
     RecordLiteralNode,
     RestPatternNode,

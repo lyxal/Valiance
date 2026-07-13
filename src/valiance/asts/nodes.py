@@ -305,6 +305,14 @@ class StackShuffleNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class OverloadSignature:
+    """One explicit signature sharing a following function body."""
+
+    params: tuple[Type, ...] = ()
+    returns: tuple[Type, ...] = ()
+
+
+@dataclass(frozen=True)
 class FunctionNode(ASTNode):
     """A function literal."""
 
@@ -322,6 +330,7 @@ class FunctionNode(ASTNode):
         compare=False,
     )
     generic_constraints: tuple[Type | None, ...] = ()
+    overloads: tuple[OverloadSignature, ...] = ()
 
 
 @dataclass(frozen=True)

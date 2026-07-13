@@ -48,6 +48,7 @@ from valiance.asts import (
     NumberLiteralNode,
     ObjectFieldNode,
     ObjectNode,
+    OverloadSignature,
     OrPatternNode,
     RecordLiteralNode,
     RestPatternNode,
@@ -177,12 +178,18 @@ class Parser:
 
     def _statement(self) -> tuple[ASTNode, ...]:
         """Parse statement from the current token stream."""
+        overloads = self._overload_signatures()
         annotations = self._annotations()
         visibility: Symbol | None = None
         is_multi = False
         eager = False
         if self._match_ident("public", "private"):
             visibility = Symbol(self._previous.value)
+        if overloads and (
+            self._check_ident("import", "tag", "object", "trait", "variant", "enum")
+            or (self._check(TokenKind.OP) and self._current.value.startswith("#"))
+        ):
+            self._error("overload must be followed by define or fn")
         if self._match_ident("import"):
             return (
                 self._import(
@@ -208,6 +215,7 @@ class Parser:
                     visibility,
                     is_multi,
                     eager=eager,
+                    overloads=overloads,
                 ),
             )
         if eager:
@@ -222,7 +230,7 @@ class Parser:
                 ),
             )
         if self._match_ident("fn"):
-            return (self._function(self._previous, annotations),)
+            return (self._function(self._previous, annotations, overloads=overloads),)
         if self._match_ident("if"):
             return (self._if(self._previous),)
         if self._match_ident("assert"):
@@ -248,9 +256,35 @@ class Parser:
         if self._match_ident("const"):
             return self._constant(self._previous)
 
+        if overloads:
+            self._error("overload must be followed by another overload, a comment, whitespace, define, or fn")
         if annotations:
             self._error("annotation must be followed by a declaration")
         return self._chain_until(_LINE_TERMINATORS)
+
+    def _overload_signatures(self) -> tuple[OverloadSignature, ...]:
+        """Parse overload signatures attached to the following define or fn."""
+        overloads: list[OverloadSignature] = []
+        while self._match_ident("overload"):
+            self._expect(TokenKind.LPAREN)
+            params: list[Type] = []
+            returns: list[Type] = []
+            self._skip_newlines()
+            if not self._check(TokenKind.ARROW):
+                while True:
+                    params.append(self._parameter_type())
+                    if not self._match(TokenKind.COMMA):
+                        break
+            self._expect(TokenKind.ARROW)
+            if not self._check(TokenKind.RPAREN):
+                while True:
+                    returns.append(self.parse_type_expression())
+                    if not self._match(TokenKind.COMMA):
+                        break
+            self._expect(TokenKind.RPAREN)
+            overloads.append(OverloadSignature(tuple(params), tuple(returns)))
+            self._skip_newlines()
+        return tuple(overloads)
 
     def _constant(self, start: Token) -> tuple[ASTNode, ...]:
         """Parse constant from the current token stream."""
@@ -540,6 +574,7 @@ class Parser:
         is_multi: bool,
         *,
         eager: bool = False,
+        overloads: tuple[OverloadSignature, ...] = (),
     ) -> DefineNode:
         """Parse define from the current token stream."""
         generics, generic_variances, generic_constraints = self._generic_parameters()
@@ -579,6 +614,7 @@ class Parser:
                 element_tags_explicit=element_tags_explicit,
                 companion_tags_allowed=frozenset(companion_tags_allowed),
                 annotations=annotations,
+                overloads=overloads,
                 location=_loc(start),
             ),
             annotations,
@@ -721,12 +757,21 @@ class Parser:
         owner: Symbol,
     ) -> ObjectFieldNode | DefineNode | TraitRequirementNode:
         """Parse object body item from the current token stream."""
+        overloads = self._overload_signatures()
         annotations = self._annotations()
         visibility: Symbol | None = None
         if self._match_ident("public", "private"):
             visibility = Symbol(self._previous.value)
         if self._match_ident("define"):
-            return self._define(self._previous, annotations, visibility, False)
+            return self._define(
+                self._previous,
+                annotations,
+                visibility,
+                False,
+                overloads=overloads,
+            )
+        if overloads:
+            self._error("overload must be followed by define")
         if self._match_ident("extend"):
             return self._extend(self._previous)
         if annotations:
@@ -804,6 +849,8 @@ class Parser:
         self,
         start: Token,
         annotations: tuple[ASTNode, ...] = (),
+        *,
+        overloads: tuple[OverloadSignature, ...] = (),
     ) -> FunctionNode:
         """Parse function from the current token stream."""
         generics, generic_variances, generic_constraints = self._generic_parameters()
@@ -827,6 +874,7 @@ class Parser:
             annotations=annotations,
             body=self._body(),
             generic_constraints=generic_constraints,
+            overloads=overloads,
             location=_loc(start),
         )
 

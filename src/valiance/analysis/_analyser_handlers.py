@@ -775,9 +775,13 @@ def _function_node(
     if not self._validate_annotations(node.annotations, "fn", node):
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
 
-    function_node = _functions._genericize_function_node(node, node.generics)
+    function_node = (
+        node
+        if node.overloads
+        else _functions._genericize_function_node(node, node.generics)
+    )
     self._validate_function_element_tags(function_node, node)
-    result = self._analyse_function_literal(branch, function_node)
+    result = self._analyse_overloaded_function_literal(branch, function_node, node)
     if result is None:
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
 

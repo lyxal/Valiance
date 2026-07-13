@@ -1634,7 +1634,28 @@ end
 10 doubleAndAdd5 #? 25
 ```
 
-## 11.1. Optional Arguments
+## 11.1. Shared Explicit Overload Bodies
+
+`overload(parameter types -> return types)` attaches an additional explicit
+signature to the next `define` or `fn`. Multiple overload declarations may be
+stacked, with comments and whitespace between them and the declaration. The
+overload signatures contain types only; parameter names and defaults come from
+the following function declaration.
+
+```valiance
+overload(Number+ -> Number)
+overload(String+ -> String)
+define sum(xs) => fold: +
+```
+
+For an otherwise untyped function, these signatures replace ordinary function
+inference and the body is analysed once for each signature. If the following
+function already has declared parameter or return types, its own signature is
+retained and the `overload` signatures are added. Every overload signature must
+have the same parameter count as an explicit parameter list on the following
+function.
+
+## 11.2. Optional Arguments
 
 - Sometimes, it is helpful to have "configuration" style parameters.
 	- For example, you might want `sort(list)` to do normal sorting, and `sort(list, key=function)` to sort by a function
@@ -1668,7 +1689,7 @@ define[T] sort(:T+, key: Function[T -> Comparable] = 'top) -> T+ => ... end
 	- Like with `sort(_, 'negate)`
 	- Otherwise, `'negate` is treated as the thing to sort, which is a compile error.
  
-## 11.2. Overloads and Arity Consistency
+## 11.3. Overloads and Arity Consistency
 
 - All overloads of an element must have the same arity and multiplicity
 	- Compile error if there are overloads with different arities and/or multiplicities

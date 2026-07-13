@@ -1219,10 +1219,11 @@ class Analyser:
             function_node,
             node.annotations,
         )
-        function_node = _functions._genericize_function_node(
-            function_node,
-            node.generics,
-        )
+        if not function_node.overloads:
+            function_node = _functions._genericize_function_node(
+                function_node,
+                node.generics,
+            )
         function_node = replace(
             function_node,
             generics=node.generics,
@@ -1244,7 +1245,7 @@ class Analyser:
             )
         ):
             self.env.define_overload(name, declared_overload)
-        result = self._analyse_function_literal(branch, function_node)
+        result = self._analyse_overloaded_function_literal(branch, function_node, node)
         if result is None:
             return BranchSet((branch.emit(TypedNode(node, None)),))
         function, typed_branch = result
@@ -3880,6 +3881,88 @@ class Analyser:
         if access == "readable" and not write:
             return True
         return receiver_name in self._friendly_owners
+
+    def _overload_function_variants(
+        self,
+        node: FunctionNode,
+        origin: ASTNode,
+    ) -> tuple[FunctionNode, ...] | None:
+        """Expand explicit overload signatures into fully typed function nodes."""
+        if not node.overloads:
+            return (node,)
+
+        source_params = node.params
+        variants: list[FunctionNode] = []
+        has_declared_signature = node.returns is not None or any(
+            param.typ is not None for param in source_params or ()
+        )
+        if has_declared_signature:
+            variants.append(replace(node, overloads=()))
+
+        for signature in node.overloads:
+            if source_params is not None and len(source_params) != len(signature.params):
+                self._diagnose(
+                    "overload signature has "
+                    f"{len(signature.params)} parameter type(s), but the following "
+                    f"function declares {len(source_params)} parameter(s)",
+                    origin,
+                )
+                return None
+            params = tuple(
+                replace(param, typ=typ)
+                for param, typ in zip(source_params, signature.params, strict=True)
+            ) if source_params is not None else tuple(
+                FunctionParam(None, typ) for typ in signature.params
+            )
+            variants.append(
+                replace(
+                    node,
+                    params=params,
+                    returns=signature.returns,
+                    overloads=(),
+                )
+            )
+        return tuple(variants)
+
+    def _analyse_overloaded_function_literal(
+        self,
+        outer: AnalysisBranch,
+        node: FunctionNode,
+        origin: ASTNode,
+    ) -> tuple[FunctionAnalysis, AnalysisBranch] | None:
+        """Analyse every explicitly declared signature against one shared body."""
+        variants = self._overload_function_variants(node, origin)
+        if variants is None:
+            return None
+        if len(variants) == 1 and variants[0] is node:
+            return self._analyse_function_literal(outer, node)
+
+        typings: list[FunctionOverloadTyping] = []
+        for variant in variants:
+            genericized = _functions._genericize_function_node(
+                variant,
+                variant.generics,
+            )
+            result = self._analyse_function_literal(outer, genericized)
+            if result is None:
+                return None
+            analysis, _ = result
+            typings.extend(analysis.overloads)
+
+        overloads = tuple(
+            typing.overload
+            for typing in typings
+            if isinstance(typing.overload, T.Overload)
+        )
+        if len(overloads) != len(typings):
+            self._diagnose("overload signatures must produce concrete function types", origin)
+            return None
+        typ = (
+            T.Fn(overloads[0].params, overloads[0].returns, overloads[0].element_tags)
+            if len(overloads) == 1 and not overloads[0].where_clause
+            else T.Overloads(*overloads)
+        )
+        return FunctionAnalysis(typ, tuple(typings)), outer
 
     def _analyse_function_literal(
         self,

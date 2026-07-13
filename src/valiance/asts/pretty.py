@@ -295,6 +295,7 @@ def _function_node(value: FunctionNode, level: int) -> str:
         "FunctionNode(",
         f"  params={_params_label(value.params)},",
         f"  returns={_types_label(value.returns)},",
+        f"  overloads={value.overloads!r},",
         "  body=[",
     ]
     for node in value.body:
