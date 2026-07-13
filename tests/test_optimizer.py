@@ -6,7 +6,6 @@ import contextlib
 import io
 import unittest
 from dataclasses import dataclass, replace
-from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -89,9 +88,9 @@ $value()
         self.assertIsInstance(custom_function, FunctionCode)
         self.assertEqual(len(custom_function.instructions), 4)
         self.assertIn("<main>", seen)
-        self.assertEqual(run(optimized), [Decimal("1")])
-        self.assertEqual(run(unoptimized), [Decimal("1")])
-        self.assertEqual(run(loads(dumps(optimized))), [Decimal("1")])
+        self.assertEqual(run(optimized), [Number("1")])
+        self.assertEqual(run(unoptimized), [Number("1")])
+        self.assertEqual(run(loads(dumps(optimized))), [Number("1")])
 
     def test_control_flow_targets_are_rewritten_after_removal(self):
         program = Program(
@@ -123,11 +122,8 @@ $value()
         )
         self.assertEqual(run(optimized), ["handled"])
 
-
     def test_pipeline_accepts_whole_program_passes(self):
-        program = Program(
-            FunctionCode((Instruction(OpCode.RETURN),), name="main")
-        )
+        program = Program(FunctionCode((Instruction(OpCode.RETURN),), name="main"))
 
         optimized = OptimizationPipeline((_RenameProgramPass(),)).optimize(program)
 
@@ -219,7 +215,7 @@ define add(left: Number, right: Number) -> Number => + end
             ),
         )
         self.assertEqual(run(optimized), run(unoptimized))
-        self.assertEqual(run(loads(dumps(optimized))), [Decimal("7")])
+        self.assertEqual(run(loads(dumps(optimized))), [Number("7")])
 
     def test_explicit_argument_pass_leaves_nested_cycle_scopes_implicit(self):
         reference = ResolvedElementReference("+", 1)
@@ -276,20 +272,20 @@ define add(left: Number, right: Number) -> Number => + end
         self.assertEqual(
             optimized.main.instructions,
             (
-                Instruction(OpCode.PUSH_CONST, Decimal("14")),
+                Instruction(OpCode.PUSH_CONST, Number("14")),
                 Instruction(OpCode.RETURN),
             ),
         )
-        self.assertEqual(run(loads(dumps(optimized))), [Decimal("14")])
+        self.assertEqual(run(loads(dumps(optimized))), [Number("14")])
 
     def test_constant_folding_collapses_literal_tuple_and_string_builders(self):
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, Decimal("1")),
+                    Instruction(OpCode.PUSH_CONST, Number("1")),
                     Instruction(OpCode.PUSH_CONST, "two"),
                     Instruction(OpCode.BUILD_TUPLE, 2),
-                    Instruction(OpCode.PUSH_CONST, Decimal("3")),
+                    Instruction(OpCode.PUSH_CONST, Number("3")),
                     Instruction(OpCode.BUILD_STRING, ("total=", None)),
                     Instruction(OpCode.RETURN),
                 ),
@@ -297,16 +293,16 @@ define add(left: Number, right: Number) -> Number => + end
             )
         )
 
-        optimized = OptimizationPipeline(
-            (ConstantFoldingOptimizationPass(),)
-        ).optimize(program)
+        optimized = OptimizationPipeline((ConstantFoldingOptimizationPass(),)).optimize(
+            program
+        )
 
         self.assertEqual(
             optimized.main.instructions,
             (
                 Instruction(
                     OpCode.PUSH_CONST,
-                    (Decimal("1"), "two"),
+                    (Number("1"), "two"),
                 ),
                 Instruction(OpCode.PUSH_CONST, "total=3"),
                 Instruction(OpCode.RETURN),
@@ -346,11 +342,11 @@ define \rate -> Number => 0.2 end
             )
         )
         self.assertIn(
-            Instruction(OpCode.PUSH_CONST, Decimal("0.2")),
+            Instruction(OpCode.PUSH_CONST, Number("0.2")),
             optimized.main.instructions,
         )
         self.assertEqual(run(optimized), run(unoptimized))
-        self.assertEqual(run(loads(dumps(optimized))), [Decimal("20.0")])
+        self.assertEqual(run(loads(dumps(optimized))), [Number("20.0")])
 
     def test_small_function_inlining_obeys_bytecode_size_threshold(self):
         source = r"""
@@ -382,9 +378,9 @@ define \rate -> Number => 0.2 end
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, Decimal("99")),
+                    Instruction(OpCode.PUSH_CONST, Number("99")),
                     Instruction(OpCode.POP),
-                    Instruction(OpCode.PUSH_CONST, Decimal("0")),
+                    Instruction(OpCode.PUSH_CONST, Number("0")),
                     Instruction(OpCode.JUMP_IF_FALSE, 6),
                     Instruction(OpCode.PUSH_CONST, "wrong"),
                     Instruction(OpCode.JUMP, 7),
@@ -401,7 +397,7 @@ define \rate -> Number => 0.2 end
 
         self.assertEqual(optimized.main.instructions[0], Instruction(OpCode.JUMP, 3))
         self.assertNotIn(
-            Instruction(OpCode.PUSH_CONST, Decimal("99")),
+            Instruction(OpCode.PUSH_CONST, Number("99")),
             optimized.main.instructions,
         )
         self.assertEqual(run(optimized), ["right"])
@@ -425,22 +421,22 @@ end
         self.assertEqual(
             optimized.main.instructions,
             (
-                Instruction(OpCode.PUSH_CONST, Decimal("10")),
+                Instruction(OpCode.PUSH_CONST, Number("10")),
                 Instruction(OpCode.RETURN),
             ),
         )
         self.assertEqual(run(optimized), run(unoptimized))
-        self.assertEqual(run(loads(dumps(optimized))), [Decimal("10")])
+        self.assertEqual(run(loads(dumps(optimized))), [Number("10")])
 
     def test_constant_folding_respects_rebound_builtin_names(self):
         reference = ResolvedElementReference("+", 0)
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, Decimal("5")),
+                    Instruction(OpCode.PUSH_CONST, Number("5")),
                     Instruction(OpCode.STORE_VAR, "+"),
-                    Instruction(OpCode.PUSH_CONST, Decimal("2")),
-                    Instruction(OpCode.PUSH_CONST, Decimal("3")),
+                    Instruction(OpCode.PUSH_CONST, Number("2")),
+                    Instruction(OpCode.PUSH_CONST, Number("3")),
                     Instruction(OpCode.CALL_RESOLVED_ELEMENT, reference),
                     Instruction(OpCode.RETURN),
                 ),
@@ -448,9 +444,9 @@ end
             )
         )
 
-        optimized = OptimizationPipeline(
-            (ConstantFoldingOptimizationPass(),)
-        ).optimize(program)
+        optimized = OptimizationPipeline((ConstantFoldingOptimizationPass(),)).optimize(
+            program
+        )
 
         self.assertEqual(optimized, program)
 
@@ -462,8 +458,8 @@ end
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, Decimal("10")),
-                    Instruction(OpCode.PUSH_CONST, Decimal("20")),
+                    Instruction(OpCode.PUSH_CONST, Number("10")),
+                    Instruction(OpCode.PUSH_CONST, Number("20")),
                     swap,
                     swap,
                     Instruction(OpCode.RETURN),
@@ -472,9 +468,9 @@ end
             )
         )
 
-        optimized = OptimizationPipeline(
-            (StackShuffleOptimizationPass(),)
-        ).optimize(program)
+        optimized = OptimizationPipeline((StackShuffleOptimizationPass(),)).optimize(
+            program
+        )
 
         self.assertFalse(
             any(
@@ -482,7 +478,7 @@ end
                 for instruction in optimized.main.instructions
             )
         )
-        self.assertEqual(run(optimized), [Decimal("10"), Decimal("20")])
+        self.assertEqual(run(optimized), [Number("10"), Number("20")])
         self.assertEqual(run(loads(dumps(optimized))), run(program))
 
     def test_stack_shuffle_does_not_remove_cycle_backed_identity(self):
@@ -496,9 +492,9 @@ end
             cycle_params=True,
         )
 
-        optimized = OptimizationPipeline(
-            (StackShuffleOptimizationPass(),)
-        ).optimize(Program(function))
+        optimized = OptimizationPipeline((StackShuffleOptimizationPass(),)).optimize(
+            Program(function)
+        )
 
         self.assertEqual(optimized.main.instructions[0].op, OpCode.STACK_SHUFFLE)
         self.assertEqual(
@@ -510,8 +506,8 @@ end
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, Decimal("10")),
-                    Instruction(OpCode.PUSH_CONST, Decimal("20")),
+                    Instruction(OpCode.PUSH_CONST, Number("10")),
+                    Instruction(OpCode.PUSH_CONST, Number("20")),
                     Instruction(
                         OpCode.STACK_SHUFFLE,
                         (
@@ -525,9 +521,9 @@ end
             )
         )
 
-        optimized = OptimizationPipeline(
-            (StackShuffleOptimizationPass(),)
-        ).optimize(program)
+        optimized = OptimizationPipeline((StackShuffleOptimizationPass(),)).optimize(
+            program
+        )
 
         self.assertEqual(
             optimized.main.instructions[2],

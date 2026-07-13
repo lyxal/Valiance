@@ -3,7 +3,6 @@ import subprocess
 import sys
 import textwrap
 import unittest
-from decimal import Decimal
 
 from valiance.runtime import BytecodeFormatError, RuntimeError, dumps, loads, run
 from valiance.runtime.bytecode import (
@@ -16,6 +15,8 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
+
+from valiance.runtime_values import Number
 
 
 class BytecodeSerializationTests(unittest.TestCase):
@@ -86,7 +87,7 @@ class BytecodeSerializationTests(unittest.TestCase):
     def test_invalid_decimal_payload_raises_bytecode_format_error(self):
         program = Program(
             FunctionCode(
-                (Instruction(OpCode.PUSH_CONST, Decimal("42")),),
+                (Instruction(OpCode.PUSH_CONST, Number("42")),),
                 name="<main>",
             )
         )
@@ -99,7 +100,7 @@ class BytecodeSerializationTests(unittest.TestCase):
     def test_every_truncation_is_reported_as_a_format_error(self):
         nested = FunctionCode(
             (
-                Instruction(OpCode.PUSH_CONST, Decimal("123.45")),
+                Instruction(OpCode.PUSH_CONST, Number("123.45")),
                 Instruction(
                     OpCode.MAKE_FUNCTION,
                     FunctionCode(
@@ -144,8 +145,7 @@ class BytecodeSerializationTests(unittest.TestCase):
 
     def test_invalid_jump_targets_are_rejected_without_hanging(self):
         root = os.path.dirname(os.path.dirname(__file__))
-        script = textwrap.dedent(
-            """
+        script = textwrap.dedent("""
             from valiance.runtime import RuntimeError, run
             from valiance.runtime.bytecode import FunctionCode, Instruction, OpCode, Program
 
@@ -160,8 +160,7 @@ class BytecodeSerializationTests(unittest.TestCase):
                         raise
                 else:
                     raise AssertionError(f"jump target {target} was accepted")
-            """
-        )
+            """)
         env = os.environ.copy()
         env["PYTHONPATH"] = os.path.join(root, "src")
 
@@ -205,7 +204,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, Decimal("42")),
+                    Instruction(OpCode.PUSH_CONST, Number("42")),
                     Instruction(OpCode.PUSH_CONST, "answer"),
                     Instruction(OpCode.BUILD_STRING, ("value=", None)),
                     Instruction(OpCode.BUILD_TUPLE, 2),
@@ -233,7 +232,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         self.assertEqual(decoded, program)
 
     def test_serializes_arbitrarily_large_decimal_constants(self):
-        value = Decimal("99999999999999999999999999999")
+        value = Number("99999999999999999999999999999")
         program = Program(
             FunctionCode(
                 (
@@ -266,7 +265,6 @@ class BytecodeSerializationTests(unittest.TestCase):
         )
 
         self.assertEqual(loads(dumps(program)), program)
-
 
     def test_serializes_function_parameter_collection_ranks(self):
         function = FunctionCode(

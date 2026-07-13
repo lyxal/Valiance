@@ -1,5 +1,4 @@
 import unittest
-from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -84,6 +83,7 @@ from valiance.types import (
     show,
 )
 from valiance.types.default_types import Boolean
+from valiance.runtime_values import Number as NumberRuntime
 
 NUMBER = Symbol("Number")
 REAL = Symbol("Real")
@@ -154,9 +154,7 @@ class AnalyserTests(unittest.TestCase):
 
     def test_stack_shuffle_copy_rejects_uncopyable_object(self):
         analyser = Analyser()
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 object WriteFile =>
   @error("Writeable files cannot be duplicated")
   define dup => end
@@ -164,9 +162,7 @@ end
 
 WriteFile
 copy(file -> file)
-"""
-            )
-        )
+"""))
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("cannot copy value of type WriteFile", analyser.diagnostics[0])
@@ -177,9 +173,7 @@ copy(file -> file)
 
     def test_stack_shuffle_move_rejects_uncopyable_repeated_output(self):
         analyser = Analyser()
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 object WriteFile =>
   @error("Writeable files cannot be duplicated")
   define dup => end
@@ -187,9 +181,7 @@ end
 
 WriteFile
 move(file -> file, file)
-"""
-            )
-        )
+"""))
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("cannot copy value of type WriteFile", analyser.diagnostics[0])
@@ -301,9 +293,7 @@ move(file -> file, file)
 
         nested = Analyser()
         nested.analyse(
-            parse(
-                "define use(f: Function[Number -> Number]<Missing>) -> => end"
-            )
+            parse("define use(f: Function[Number -> Number]<Missing>) -> => end")
         )
 
         self.assertIn("undeclared element tag 'Missing'", absent.diagnostics[-1])
@@ -313,9 +303,7 @@ move(file -> file, file)
         analyser = Analyser()
 
         analyser.analyse(
-            parse(
-                "define log(value: Number)<IO, !Eager> -> => $value println"
-            )
+            parse("define log(value: Number)<IO, !Eager> -> => $value println")
         )
 
         self.assertIn("required to be absent", analyser.diagnostics[-1])
@@ -323,8 +311,7 @@ move(file -> file, file)
         parameterized = Analyser()
         parameterized.analyse(
             parse(
-                "define fail(error: Fault)<!Panic[RuntimeFault]> -> => "
-                "$error panic"
+                "define fail(error: Fault)<!Panic[RuntimeFault]> -> => " "$error panic"
             )
         )
 
@@ -335,8 +322,7 @@ move(file -> file, file)
 
     def test_nested_calls_propagate_element_tags(self):
         sources = (
-            "define f(x: Number) -> Number => "
-            "if true => $x println 1 else => 1 end",
+            "define f(x: Number) -> Number => " "if true => $x println 1 else => 1 end",
             "define \\f => [1 println 1, 2]",
             'define \\f => "${1 println 2}"',
         )
@@ -361,8 +347,7 @@ move(file -> file, file)
 
         typed = analyser.analyse(
             parse(
-                "define fail(error: RuntimeFault)<Panic[Fault]> -> => "
-                "$error panic"
+                "define fail(error: RuntimeFault)<Panic[Fault]> -> => " "$error panic"
             )
         )
 
@@ -382,30 +367,22 @@ move(file -> file, file)
     def test_data_element_tag_disjoints_reject_effectful_use(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 tag #infinite as constructed
 tag #infinite disjoint Eager
 [1, 2] | #infinite | println
-"""
-            )
-        )
+"""))
 
         self.assertIn("cannot be used by an element", analyser.diagnostics[-1])
 
     def test_data_element_tag_disjoints_reject_effectful_use_in_function(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 tag #infinite as constructed
 tag #infinite disjoint Eager
 define \\f => [1, 2] | #infinite | println
-"""
-            )
-        )
+"""))
 
         self.assertIn("cannot be used by an element", analyser.diagnostics[-1])
 
@@ -419,16 +396,12 @@ define \\f => [1, 2] | #infinite | println
     def test_element_tag_disjoint_rules_reject_simultaneous_tags(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 tag Read as property
 tag Write as property
 tag Read disjoint Write
 define \\f<Read, Write> => 1
-"""
-            )
-        )
+"""))
 
         self.assertIn("cannot both apply", analyser.diagnostics[-1])
 
@@ -531,14 +504,10 @@ define \\f<Read, Write> => 1
     def test_exact_function_parameter_is_visible_in_type_but_not_body(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 $myfun = fn (:Number exact) => double
 $myfun(10)
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(show(typed[0].typ), "Function[Number exact -> Number]")
@@ -547,16 +516,12 @@ $myfun(10)
     def test_call_policy_markers_are_erased_from_value_returns_and_casts(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 fn () -> Number atomic => 1
 fn () -> Number exact => 1
 1 as Number atomic
 1 as Number exact
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(show(typed[0].typ), "Function[ -> Number]")
@@ -567,14 +532,10 @@ fn () -> Number exact => 1
     def test_atomic_marker_is_visible_in_signature_but_not_function_body(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 define[T] rankOne(xs: T atomic +) -> T+ => $xs end
 [1, 2, 3] rankOne
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         definition = typed[0]
@@ -592,14 +553,10 @@ define[T] rankOne(xs: T atomic +) -> T+ => $xs end
     def test_atomic_requirement_is_retained_across_generic_forwarding(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 define[T] rankOne(xs: T atomic +) -> T+ => $xs end
 define[U] forward(xs: U atomic +) -> U+ => $xs rankOne end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         definition = typed[1]
@@ -616,14 +573,10 @@ define[U] forward(xs: U atomic +) -> U+ => $xs rankOne end
     def test_unmarked_generic_cannot_forward_to_atomic_parameter(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 define[T] rankOne(xs: T atomic +) -> T+ => $xs end
 define[U] unsafeForward(xs: U+) -> U+ => $xs rankOne end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn(
@@ -634,14 +587,10 @@ define[U] unsafeForward(xs: U+) -> U+ => $xs rankOne end
     def test_atomic_collection_marker_rejects_higher_rank_argument(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 define[T] rankOne(xs: T atomic +) -> T+ => $xs end
 [[1, 2], [3, 4]] rankOne
-"""
-            )
-        )
+"""))
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn(
@@ -652,14 +601,10 @@ define[T] rankOne(xs: T atomic +) -> T+ => $xs end
     def test_exact_function_parameter_rejects_higher_rank_argument(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 $myfun = fn (:Number exact) => double
 $myfun([1, 2, 3])
-"""
-            )
-        )
+"""))
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("no overloads for element 'call' match", analyser.diagnostics[0])
@@ -667,29 +612,21 @@ $myfun([1, 2, 3])
     def test_exact_parameter_preserves_rank_variable_solving(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 define rank(xs: Number+$n exact) -> Number => $n end
 [[1], [2]] rank
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, Number)
         self.assertEqual(typed[-1].overload.rank_values, (("n", 2),))
 
     def test_minimum_rank_argument_adapts_to_exact_collection_parameter(self):
-        typed = analyse(
-            parse(
-                """
+        typed = analyse(parse("""
 define exactIn(:Number+) => 1
 define \\min -> Number* => []
 exactIn \\min
-"""
-            )
-        )
+"""))
 
         self.assertEqual(typed[-1].overload.vectorised_depths, (0,))
         self.assertEqual(typed[-1].overload.vectorised_target_ranks, (1,))
@@ -697,15 +634,11 @@ exactIn \\min
     def test_empty_return_list_is_inferred_from_explicit_return_type(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 define \\exact -> Number+ => []
 define \\minimum -> Number* => []
 define \\rugged -> Number~ => []
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(len(typed), 3)
@@ -727,23 +660,16 @@ define \\rugged -> Number~ => []
 
         self.assertEqual(
             analyser.diagnostics,
-            [
-                "1:18: extend default must be compatible with every "
-                "element parameter"
-            ],
+            ["1:18: extend default must be compatible with every " "element parameter"],
         )
 
     def test_extend_selector_arity_must_match_target(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 define choose(a: Integer?) -> Integer? => $a end
 [1, 2] [3] + extend: choose
-"""
-            )
-        )
+"""))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -805,18 +731,14 @@ define choose(a: Integer?) -> Integer? => $a end
     def test_invalid_modifier_body_fails_containing_function_analysis(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
                 define discrim(:Integer, :Integer, :Integer) -> Integer =>
                   copy(a, b, c -> a, c)
                   * * 4
                   dip: (^^ 2)
                   -
                 end
-                """
-            )
-        )
+                """))
 
         self.assertEqual(analyser.diagnostics, ["5:25: unknown element '^^'"])
 
@@ -972,18 +894,14 @@ define choose(a: Integer?) -> Integer? => $a end
     def test_object_declaration_registers_constructor_fields_and_friendly_element(self):
         analyser = Analyser(Environment())
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 object Person =>
   $name: String
   $age: Number
   define label -> String => $self.name
 end
 Person("Ada", 36) $.name
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(analyser.env.lookup_attribute(Symbol("Person"), NAME), String)
@@ -996,18 +914,14 @@ Person("Ada", 36) $.name
     def test_explicit_object_constructor_replaces_synthesized_constructor(self):
         analyser = Analyser(Environment())
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 object Counter =>
   $value: Number = 0
   private $timesIncremented = 0
   define Counter(initialValue: Number) => $self.value = $initialValue
 end
 Counter(7)
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         [constructor] = analyser.env.overloads_for(Symbol("Counter"))
@@ -1018,9 +932,7 @@ Counter(7)
     def test_explicit_constructor_requires_all_non_default_fields_on_every_path(self):
         analyser = Analyser(Environment())
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 object Person =>
   $name: String
   $age: Number
@@ -1029,54 +941,40 @@ object Person =>
     if ($includeAge) => $self.age = 1 end
   end
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(
             analyser.diagnostics,
-            [
-                "5:3: constructor 'Person' does not initialize field(s): age"
-            ],
+            ["5:3: constructor 'Person' does not initialize field(s): age"],
         )
         self.assertEqual(analyser.env.overloads_for(Symbol("Person")), ())
 
     def test_augmented_field_write_does_not_initialize_required_constructor_field(self):
         analyser = Analyser(Environment())
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 object Counter =>
   $value: Number
   define Counter => $self.value := + 1
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(
             analyser.diagnostics,
-            [
-                "4:3: constructor 'Counter' does not initialize field(s): value"
-            ],
+            ["4:3: constructor 'Counter' does not initialize field(s): value"],
         )
         self.assertEqual(analyser.env.overloads_for(Symbol("Counter")), ())
 
     def test_explicit_constructor_arity_mismatch_is_a_diagnostic(self):
         analyser = Analyser(Environment())
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 object Person =>
   $name: String = "unknown"
   define Person => end
   define Person(name: String) => $self.name = $name
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -1091,16 +989,12 @@ end
     def test_object_mustcall_methods_must_exist(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 @mustcall(all = ["commit"])
 object Tx =>
   define rollback => end
 end
-"""
-            )
-        )
+"""))
 
         self.assertIsNone(typed[0].typ)
         self.assertTrue(
@@ -1112,48 +1006,36 @@ end
 
     def test_object_member_access_levels_are_enforced(self):
         private_read = Analyser(Environment())
-        private_read.analyse(
-            parse(
-                """
+        private_read.analyse(parse("""
 object Secret =>
   private $code: String
 end
 Secret("x") $.code
-"""
-            )
-        )
+"""))
         self.assertEqual(
             private_read.diagnostics,
             ["5:13: type Secret has no known field 'code'"],
         )
 
         readable_write = Analyser(Environment())
-        readable_write.analyse(
-            parse(
-                """
+        readable_write.analyse(parse("""
 object Person =>
   $name: String
 end
 Person("Ada") | $.name = "Grace"
-"""
-            )
-        )
+"""))
         self.assertEqual(
             readable_write.diagnostics,
             ["5:17: type Person has no writable field 'name'"],
         )
 
         public_write = Analyser(Environment())
-        typed = public_write.analyse(
-            parse(
-                """
+        typed = public_write.analyse(parse("""
 object Person =>
   public $name: String
 end
 Person("Ada") | $.name = "Grace"
-"""
-            )
-        )
+"""))
         self.assertEqual(public_write.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Person")))
 
@@ -1162,18 +1044,14 @@ Person("Ada") | $.name = "Grace"
     ):
         analyser = Analyser(Environment())
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 object Secret =>
   private $code: String
   $label: String
   define reveal -> String => $self.code
   define relabel(label: String) -> Secret => $self.label = $label
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertTrue(analyser.env.overloads_for(Symbol("Secret::reveal")))
@@ -1183,9 +1061,7 @@ end
         env = Environment()
         analyser = Analyser(env)
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 trait Shape => extend area -> Number end
 object Circle =>
   $radius: Number
@@ -1195,9 +1071,7 @@ variant Maybe =>
   Some => $value: Number end
   None => end
 end
-"""
-            )
-        )
+"""))
 
         self.assertTrue(env.context.implements(Symbol("Circle"), Symbol("Shape")))
         self.assertEqual(
@@ -1212,9 +1086,7 @@ end
     def test_variant_member_elements_implement_and_publish_extend_interface(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 variant Shape =>
   extend getArea -> Number
   Circle =>
@@ -1227,40 +1099,27 @@ variant Shape =>
     define getArea => $self.width * $self.height
   end
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         overloads = analyser.env.overloads_for(Symbol("getArea"))
         self.assertEqual(len(overloads), 2)
         self.assertTrue(
-            all(
-                overload.params == (N(Symbol("Shape")),)
-                for overload in overloads
-            )
+            all(overload.params == (N(Symbol("Shape")),) for overload in overloads)
         )
         self.assertTrue(all(overload.is_multi for overload in overloads))
-        self.assertTrue(
-            analyser.env.overloads_for(Symbol("Shape.Circle::getArea"))
-        )
-        self.assertTrue(
-            analyser.env.overloads_for(Symbol("Shape.Rectangle::getArea"))
-        )
+        self.assertTrue(analyser.env.overloads_for(Symbol("Shape.Circle::getArea")))
+        self.assertTrue(analyser.env.overloads_for(Symbol("Shape.Rectangle::getArea")))
 
     def test_variant_member_must_implement_every_extend_declaration(self):
         analyser = Analyser(Environment())
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 variant Shape =>
   extend getArea -> Number
   Circle => $radius: Number end
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn(
@@ -1271,18 +1130,14 @@ end
     def test_generic_variant_constructor_preserves_type_argument(self):
         analyser = Analyser(Environment())
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 variant[T] Maybe =>
   Some => $value: T end
   None => end
 end
 1
 Some
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Maybe"), Integer))
@@ -1291,9 +1146,7 @@ Some
         env = Environment()
         analyser = Analyser(env)
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 trait Vehicle => end
 object Car => end
 object Car as Vehicle => end
@@ -1304,9 +1157,7 @@ define accept(box: Box[Vehicle]) -> Box[Vehicle] => $box end
 Car
 Box
 accept
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
@@ -1342,15 +1193,11 @@ accept
         env = Environment()
         analyser = Analyser(env)
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 trait Vehicle => end
 object[T: any Vehicle] Source => $value: T end
 object[T: above Vehicle] Sink => $consume: Function[T ->] end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
@@ -1365,9 +1212,7 @@ object[T: above Vehicle] Sink => $consume: Function[T ->] end
     def test_generic_object_field_access_substitutes_receiver_argument(self):
         analyser = Analyser(Environment())
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 object Car => end
 object[T] Box =>
   $value: T
@@ -1375,9 +1220,7 @@ end
 Car
 Box
 $.value
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Car")))
@@ -1385,9 +1228,7 @@ $.value
     def test_labelled_generic_upper_bound_rejects_supertype_solution(self):
         analyser = Analyser(Environment())
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 trait Vehicle => end
 object Car => end
 object Car as Vehicle => end
@@ -1395,9 +1236,7 @@ define \\asVehicle -> Vehicle => Car end
 define[T: any Car] accept(value: T) -> T => $value end
 \\asVehicle
 accept
-"""
-            )
-        )
+"""))
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn(
@@ -1408,9 +1247,7 @@ accept
     def test_labelled_generic_lower_bound_accepts_supertype_solution(self):
         analyser = Analyser(Environment())
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 trait Vehicle => end
 object Car => end
 object Car as Vehicle => end
@@ -1418,9 +1255,7 @@ define \\asVehicle -> Vehicle => Car end
 define[T: above Car] accept(value: T) -> T => $value end
 \\asVehicle
 accept
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Vehicle")))
@@ -1428,9 +1263,7 @@ accept
     def test_invariant_generic_object_rejects_substituted_supertype_argument(self):
         analyser = Analyser(Environment())
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 trait Vehicle => end
 object Car => end
 object Car as Vehicle => end
@@ -1441,9 +1274,7 @@ define accept(cell: Cell[Vehicle]) -> Cell[Vehicle] => $cell end
 Car
 Cell
 accept
-"""
-            )
-        )
+"""))
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn(
@@ -1454,9 +1285,7 @@ accept
     def test_anonymous_trait_function_parameter_is_structural(self):
         analyser = Analyser(Environment())
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 object Car => end
 define combine(left: Car, right: Car) -> Car => $left
 define[T] keep(
@@ -1468,9 +1297,7 @@ Car
 keep
 "not a car"
 keep
-"""
-            )
-        )
+"""))
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("no overloads for element 'keep'", analyser.diagnostics[0])
@@ -1478,9 +1305,7 @@ keep
     def test_anonymous_trait_collection_parameter_solves_item_type(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 define[T] sum(
   :trait[T] =>
     extend +(:T, :T) -> T
@@ -1488,9 +1313,7 @@ define[T] sum(
 ) -> T => fold: +
 [1, 2, 3]
 sum
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Integer")))
@@ -1498,9 +1321,7 @@ sum
     def test_anonymous_trait_requirement_contributes_generic_constraints(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 define[T, U] dotProd(
   left: trait =>
     extend +(:T, :T) -> T
@@ -1512,9 +1333,7 @@ define[T, U] dotProd(
 end
 
 [1, 2, 3] dotProd [4, 5, 6]
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Integer")))
@@ -1532,18 +1351,14 @@ end
     def test_match_on_enum_requires_all_members_without_default(self):
         analyser = Analyser(Environment())
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 enum Colour => RED GREEN BLUE end
 Colour.RED
 match =>
   as :RED => "red"
   as :GREEN => "green"
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -1553,9 +1368,7 @@ end
     def test_match_on_variant_is_exhaustive_by_member_cases(self):
         analyser = Analyser(Environment())
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 variant Maybe =>
   Some => $value: Number end
   None => end
@@ -1565,9 +1378,7 @@ match =>
   as :Some => "some"
   as :None => "none"
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, String)
@@ -1587,9 +1398,7 @@ end
 
     def test_generic_function_literal_uses_explicit_row_constraint(self):
         analyser = Analyser()
-        [typed] = analyser.analyse(
-            parse("fn[T, U] (x: T(.bar: U)) -> U => $x.bar")
-        )
+        [typed] = analyser.analyse(parse("fn[T, U] (x: T(.bar: U)) -> U => $x.bar"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
@@ -1602,18 +1411,12 @@ end
 
     def test_match_infers_missing_inputs_from_multiple_patterns(self):
         typ = analyse_function(
-            FunctionNode(
-                body=tuple(
-                    parse(
-                        """
+            FunctionNode(body=tuple(parse("""
 match =>
   1, "x" => "hit"
   _, _ => "miss"
 end
-"""
-                    )
-                )
-            ),
+"""))),
             Environment(),
         )
 
@@ -1622,17 +1425,13 @@ end
     def test_match_requires_cases_to_have_same_arity(self):
         analyser = Analyser(Environment())
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 1 2
 match =>
   1, 2 => "two"
   _ => "one"
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -1640,17 +1439,13 @@ end
         )
 
     def test_result_question_unwraps_success_type(self):
-        typed = analyse(
-            parse(
-                """
+        typed = analyse(parse("""
 object ParseError => end
 object ParseError as Err => end
 define unwrap(x: Result[Number, ParseError]) -> Number =>
   $x ?
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(
             typed[-1].typ,
@@ -1744,14 +1539,10 @@ end
     def test_top_level_assignment_is_not_captured_by_define(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 $x = 5
 define timesFive(y: Number) -> Number => $x $y *
-"""
-            )
-        )
+"""))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -1857,7 +1648,7 @@ define id_rank(xs: Number+$n) -> Number+$n => $xs
         self.assertEqual(typed[-1].overload.runtime_static_values[0], 0)
         self.assertEqual(
             typed[-1].overload.runtime_static_values[-1],
-            Decimal("2"),
+            NumberRuntime("2"),
         )
 
     def test_where_clause_rejects_namespaced_static_operation(self):
@@ -1992,8 +1783,7 @@ define invalid_static(xs: Number+$n) -> String where ($n double ?) => "bad"
 
         self.assertTrue(
             any(
-                "invalid where clause: operation 'double' is not allowed"
-                in diagnostic
+                "invalid where clause: operation 'double' is not allowed" in diagnostic
                 for diagnostic in analyser.diagnostics
             )
         )
@@ -2017,14 +1807,10 @@ define rank_case(xs: Number+) -> String => "vector"
         analyser = Analyser()
         branches = analyser.analyse_block(
             BranchSet((AnalysisBranch(),)),
-            tuple(
-                parse(
-                    """
+            tuple(parse("""
 define ranks(xs: {Number+$n..., String+...}) -> Number => $n
 {[1], [\"a\"]} ranks
-"""
-                )
-            ),
+""")),
         )
 
         self.assertEqual(analyser.diagnostics, [])
@@ -2070,8 +1856,7 @@ define collision(: Number) -> Number where ($_0 = 1) => $_0
 
         self.assertTrue(
             any(
-                "static variable '$_0' uses a reserved generated name"
-                in diagnostic
+                "static variable '$_0' uses a reserved generated name" in diagnostic
                 for diagnostic in analyser.diagnostics
             )
         )
@@ -2132,8 +1917,7 @@ define conflict(n: Number+$n) -> Number => 1
 
         self.assertTrue(
             any(
-                "parameter name(s) conflict with rank variable(s): $n"
-                in diagnostic
+                "parameter name(s) conflict with rank variable(s): $n" in diagnostic
                 for diagnostic in analyser.diagnostics
             )
         )
@@ -2326,17 +2110,13 @@ fn (x: Number, y: String) -> Number => 1 end arity_rank
     def test_explicit_function_rejects_undefined_named_parameter_read(self):
         analyser = Analyser(Environment())
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 object Foo =>
   $x: Number
 end
 
 define get(:Foo) => $f.x + 5
-"""
-            )
-        )
+"""))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -2714,9 +2494,7 @@ getName $joe
                     definition.attribute_type(Symbol("message")),
                     String,
                 )
-                self.assertTrue(
-                    assignable(fault_type, N(Symbol("Fault")), env.context)
-                )
+                self.assertTrue(assignable(fault_type, N(Symbol("Fault")), env.context))
 
                 [constructor] = env.overloads_for(fault_name)
                 self.assertEqual(constructor.params, (String,))
@@ -2749,17 +2527,13 @@ getName $joe
 
     def test_try_handler_type_must_implement_fault(self):
         analyser = Analyser()
-        analyser.analyse(
-            parse(
-                '''
+        analyser.analyse(parse("""
 try =>
   RuntimeFault("boom") panic
 handle String =>
   "not a fault"
 end
-'''
-            )
-        )
+"""))
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn(
@@ -2769,17 +2543,13 @@ end
 
     def test_try_handler_type_must_be_a_concrete_fault_type(self):
         analyser = Analyser()
-        analyser.analyse(
-            parse(
-                '''
+        analyser.analyse(parse("""
 try =>
   ValueFault("boom") panic
 handle Fault =>
   "not concrete"
 end
-'''
-            )
-        )
+"""))
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn(
@@ -2790,15 +2560,11 @@ end
     def test_err_type_variant_marks_members_and_parent_as_err(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 @errType variant DBError =>
   ConnectionClosedError => end
 end
-"""
-            )
-        )
+"""))
 
         self.assertTrue(
             assignable(N(Symbol("DBError")), N(Symbol("Err")), analyser.env.context)
@@ -2889,14 +2655,10 @@ end
         analyser = Analyser()
         branches = analyser.analyse_block(
             BranchSet((AnalysisBranch(stack=TypeStack((Number,))),)),
-            tuple(
-                parse(
-                    """
+            tuple(parse("""
 define pick(a: Number, b: Number = 2) -> Number => $a $b +
 pick
-"""
-                )
-            ),
+""")),
         )
 
         self.assertFalse(branches)
@@ -2913,14 +2675,10 @@ pick
         analyser = Analyser()
         branches = analyser.analyse_block(
             BranchSet((AnalysisBranch(stack=TypeStack((Number,))),)),
-            tuple(
-                parse(
-                    """
+            tuple(parse("""
 define pick(a: Number, b: Number = 2) -> Number => $a $b +
 pick(b = 3)
-"""
-                )
-            ),
+""")),
         )
 
         self.assertEqual(analyser.diagnostics, [])
@@ -2930,14 +2688,10 @@ pick(b = 3)
         analyser = Analyser()
         branches = analyser.analyse_block(
             BranchSet((AnalysisBranch(stack=TypeStack((Number,))),)),
-            tuple(
-                parse(
-                    """
+            tuple(parse("""
 define pick(a: Number, b: Number = 2) -> Number => $a $b +
 pick(_, 4)
-"""
-                )
-            ),
+""")),
         )
 
         self.assertEqual(analyser.diagnostics, [])
@@ -3048,11 +2802,7 @@ pick(_, 4)
                     ),
                 )
             ),
-            tuple(
-                parse(
-                    "both: fn (:Number, :Number, :Number) => + + end"
-                )
-            ),
+            tuple(parse("both: fn (:Number, :Number, :Number) => + + end")),
         )
         both_branch = next(iter(both))
         self.assertEqual(both_branch.stack, TypeStack((Number, Number)))
@@ -3061,13 +2811,7 @@ pick(_, 4)
         self.assertEqual(both_node.overload.runtime_static_values, (3,))
 
         correspond = analyser.analyse_block(
-            BranchSet(
-                (
-                    AnalysisBranch(
-                        stack=TypeStack((Number, String, String))
-                    ),
-                )
-            ),
+            BranchSet((AnalysisBranch(stack=TypeStack((Number, String, String))),)),
             tuple(parse("correspond: (double, +)")),
         )
         correspond_branch = next(iter(correspond))
@@ -3086,9 +2830,7 @@ pick(_, 4)
         analyser = Analyser()
 
         branches = analyser.analyse_block(
-            BranchSet(
-                (AnalysisBranch(stack=TypeStack((Number, String))),)
-            ),
+            BranchSet((AnalysisBranch(stack=TypeStack((Number, String))),)),
             tuple(parse("both: double")),
         )
 
@@ -3128,16 +2870,12 @@ pick(_, 4)
     def test_fully_typed_definition_can_call_itself(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 define countdown(n: Number) -> Number =>
   if ($n 0 >) => $n 1 - countdown else => 0 end
 end
 3 countdown
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
 
@@ -3258,14 +2996,10 @@ end
     def test_declared_return_tag_guarantees_untagged_body_value(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 tag #sorted as computed
 define sort(:Number+) -> #sorted Number+ => top
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         [overload] = analyser.env.overloads_for(Symbol("sort"))
@@ -3287,17 +3021,13 @@ define sort(:Number+) -> #sorted Number+ => top
         analyser = Analyser()
         [branch] = analyser.analyse_block(
             BranchSet((AnalysisBranch(),)),
-            tuple(
-                parse(
-                    """
+            tuple(parse("""
 tag #sorted as computed
 #sorted: + =>
   (#sorted Number, Number) -> #sorted Number
 end
 1 #sorted | 2 +
-"""
-                )
-            ),
+""")),
         )
 
         self.assertEqual(branch.stack, TypeStack((Tagged(Number, "sorted"),)))
@@ -3308,15 +3038,11 @@ end
         analyser = Analyser()
         [branch] = analyser.analyse_block(
             BranchSet((AnalysisBranch(),)),
-            tuple(
-                parse(
-                    """
+            tuple(parse("""
 tag #checked as computed
 define #checked(:Number) -> #boolean Number => true end
 1 #checked
-"""
-                )
-            ),
+""")),
         )
 
         self.assertEqual(branch.stack, TypeStack((Tagged(Integer, "checked"),)))
@@ -3327,15 +3053,11 @@ define #checked(:Number) -> #boolean Number => true end
         analyser = Analyser()
         analyser.analyse_block(
             BranchSet((AnalysisBranch(),)),
-            tuple(
-                parse(
-                    """
+            tuple(parse("""
 tag #checked as computed
 define #checked(:Number) -> #boolean Number => false end
 1 #checked
-"""
-                )
-            ),
+""")),
         )
 
         self.assertIn("statically false", analyser.diagnostics[-1])
@@ -3344,15 +3066,11 @@ define #checked(:Number) -> #boolean Number => false end
         analyser = Analyser()
         branches = analyser.analyse_block(
             BranchSet((AnalysisBranch(),)),
-            tuple(
-                parse(
-                    """
+            tuple(parse("""
 tag #checked as computed
 define #checked(:String) -> #boolean Number => true end
 1 #checked
-"""
-                )
-            ),
+""")),
         )
 
         self.assertEqual(len(branches), 1)
@@ -3403,16 +3121,12 @@ public define #sorted normalize(value: Number) -> Number => $value
     def test_disjoint_data_tags_are_rejected_when_declared_together(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 tag #left as computed
 tag #right as computed
 tag #left disjoint #right
 define f(value: #left #right Number) -> Number => $value
-"""
-            )
-        )
+"""))
 
         self.assertIn("cannot both apply", analyser.diagnostics[-1])
 
@@ -3595,9 +3309,7 @@ define f(value: #left #right Number) -> Number => $value
         analyser = Analyser()
 
         analyser.analyse(
-            parse(
-                "define onlySecond(a: Number+, b: Number+) => length $b"
-            )
+            parse("define onlySecond(a: Number+, b: Number+) => length $b")
         )
 
         overload = analyser.env.overloads_for(Symbol("onlySecond"))[0]
@@ -3645,9 +3357,7 @@ define f(value: #left #right Number) -> Number => $value
             show(overload.params[0]),
             "#!infinite Number+",
         )
-        self.assertIn(
-            "no overloads for element 'conditional'", analyser.diagnostics[0]
-        )
+        self.assertIn("no overloads for element 'conditional'", analyser.diagnostics[0])
 
     def test_negative_tag_requirement_propagates_through_for_item(self):
         analyser = Analyser()
@@ -3785,17 +3495,13 @@ define f(value: #left #right Number) -> Number => $value
     def test_sum_accumulator_widens_from_integer_initializer(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 define sum =>
   $res = 0
   foreach (item) => $res := + $item
   $res
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[0].typ, Fn((C(ListExactType, Number),), (Number,)))
@@ -3828,18 +3534,14 @@ end
     def test_analyses_assert_while_and_unfold(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 $n = 1
 assert => $n 0 > end
 while ($n 3 <) =>
   $n = $n 1 +
 end
 $n
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, Integer)
@@ -3858,15 +3560,11 @@ $n
 
     def test_at_binds_named_levels_and_tracks_stop_ranks(self):
         analyser = Analyser()
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 [[1, 2], [3, 4]]
 [5, 6]
 at (list+, item) => $list append $item
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertIsInstance(typed[-1], TypedAtNode)
@@ -3888,17 +3586,13 @@ at (list+, item) => $list append $item
 
     def test_unfold_rejects_more_than_state_plus_emission(self):
         analyser = Analyser()
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 1 unfold -> (n: Integer) =>
   $n
   dup
   dup
 end
-"""
-            )
-        )
+"""))
 
         self.assertIn(
             "2:3: unfold body may not produce more than state arity plus one value",
@@ -4065,18 +3759,14 @@ end
             main = root / "main.vlnc"
 
             analyser = Analyser(source_file=main)
-            analyser.analyse(
-                parse(
-                    """
+            analyser.analyse(parse("""
 if true =>
   import { helper.[bump] }
   1 bump
 else =>
   2 bump
 end
-"""
-                )
-            )
+"""))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -4127,17 +3817,13 @@ end
             main = root / "main.vlnc"
 
             analyser = Analyser(source_file=main)
-            analyser.analyse(
-                parse(
-                    """
+            analyser.analyse(parse("""
 if true =>
   import { tags.#local }
   1 #local
 else => 2
 end
-"""
-                )
-            )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertIsNone(analyser.env.lookup_tag(Symbol("local")))
@@ -4427,9 +4113,7 @@ class NeverDiagnosticRecoveryTests(unittest.TestCase):
     def test_never_condition_is_terminal_not_a_boolean_mismatch(self):
         analyser = self._analyser_with_halt()
 
-        typed = analyser.analyse(
-            parse("if halt => 1 else => 2 end missing")
-        )
+        typed = analyser.analyse(parse("if halt => 1 else => 2 end missing"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(len(typed), 1)
@@ -4552,10 +4236,7 @@ class SmartDiagnosticTests(unittest.TestCase):
 
         self.assertEqual(
             analyser.diagnostics,
-            [
-                "2:1: undefined variable 'countre'\n"
-                "did you mean '$counter'?"
-            ],
+            ["2:1: undefined variable 'countre'\n" "did you mean '$counter'?"],
         )
 
     def test_overload_formatting_right_aligns_partial_parameter_names(self):
@@ -4698,16 +4379,12 @@ class SmartDiagnosticTests(unittest.TestCase):
     def test_code_after_explicit_return_is_linted_as_unreachable(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 fn -> Number =>
   return 1
   2
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
@@ -4727,17 +4404,13 @@ end
     def test_match_case_after_default_is_linted_as_unreachable(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse(
-                """
+        typed = analyser.analyse(parse("""
 1
 match =>
   _ => "first"
   1 => "second"
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
@@ -4756,18 +4429,14 @@ end
     def test_duplicate_literal_match_case_is_linted(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 1
 match =>
   1 => "first"
   1 => "second"
   _ => "other"
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
@@ -4785,17 +4454,13 @@ end
     def test_duplicate_literal_match_alternative_is_linted(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 1
 match =>
   1 || 1 => "one"
   _ => "other"
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
@@ -4815,18 +4480,14 @@ end
     def test_repeated_guard_match_cases_are_not_assumed_redundant(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 1
 match =>
   if > 0 => "positive"
   if > 0 => "also"
   _ => "other"
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(analyser.lints, [])
@@ -4836,10 +4497,7 @@ end
         analyser = Analyser()
 
         analyser.analyse(
-            parse(
-                '1\nmatch =>\n  as x if > 0 => "positive"\n'
-                '  _ => "other"\nend'
-            )
+            parse('1\nmatch =>\n  as x if > 0 => "positive"\n' '  _ => "other"\nend')
         )
 
         self.assertEqual(analyser.diagnostics, [])
@@ -4849,9 +4507,7 @@ end
     def test_guarded_named_match_pattern_is_not_exhaustive_by_itself(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse('1\nmatch =>\n  as x if > 0 => "positive"\nend')
-        )
+        analyser.analyse(parse('1\nmatch =>\n  as x if > 0 => "positive"\nend'))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -4863,10 +4519,7 @@ end
         analyser = Analyser()
 
         analyser.analyse(
-            parse(
-                '1\nmatch =>\n  as x(field) => "structured"\n'
-                '  _ => "other"\nend'
-            )
+            parse('1\nmatch =>\n  as x(field) => "structured"\n' '  _ => "other"\nend')
         )
 
         self.assertEqual(analyser.diagnostics, [])
@@ -4876,9 +4529,7 @@ end
     def test_destructuring_named_match_pattern_is_not_exhaustive_by_itself(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse('1\nmatch =>\n  as x(field) => "structured"\nend')
-        )
+        analyser.analyse(parse('1\nmatch =>\n  as x(field) => "structured"\nend'))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -4886,13 +4537,10 @@ end
         )
         self.assertEqual(analyser.lints, [])
 
-
     def test_guarded_variant_member_does_not_make_match_exhaustive(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 variant Maybe =>
   Some => $value: Number end
   None => end
@@ -4902,9 +4550,7 @@ match =>
   as :Some if 0 1 == => "impossible"
   as :None => "none"
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -4914,9 +4560,7 @@ end
     def test_restrictive_variant_destructure_does_not_make_match_exhaustive(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 variant Maybe =>
   Some => $value: Number end
   None => end
@@ -4926,9 +4570,7 @@ match =>
   as :Some(1) => "one"
   as :None => "none"
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -4938,9 +4580,7 @@ end
     def test_type_pattern_destructuring_arity_is_checked(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                """
+        analyser.analyse(parse("""
 variant Maybe =>
   Some => $value: Number end
   None => end
@@ -4950,9 +4590,7 @@ match =>
   as :Some(_, _) => "two"
   as :None => "none"
 end
-"""
-            )
-        )
+"""))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -4974,10 +4612,7 @@ end
         analyser = Analyser()
 
         analyser.analyse(
-            parse(
-                '1\nmatch =>\n  1 || _ => "first"\n'
-                '  2 => "second"\nend'
-            )
+            parse('1\nmatch =>\n  1 || _ => "first"\n' '  2 => "second"\nend')
         )
 
         self.assertEqual(analyser.diagnostics, [])
@@ -4989,12 +4624,7 @@ end
     def test_or_pattern_requires_the_same_bindings_in_every_alternative(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                "1\nmatch =>\n  1 || $x = _ => $x\n"
-                "  _ => 0\nend"
-            )
-        )
+        analyser.analyse(parse("1\nmatch =>\n  1 || $x = _ => $x\n" "  _ => 0\nend"))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -5010,8 +4640,8 @@ end
         analyser.analyse(
             parse(
                 '"s"\nmatch =>\n'
-                '  as x: Number if 1 1 == || as x: String => $x + 1\n'
-                '  _ => 0\nend'
+                "  as x: Number if 1 1 == || as x: String => $x + 1\n"
+                "  _ => 0\nend"
             )
         )
 
@@ -5025,14 +4655,13 @@ end
         typed = analyser.analyse(
             parse(
                 '$x = 1\n"abc"\nmatch =>\n'
-                '  as x: String => $x length\n'
-                '  _ => 0\nend'
+                "  as x: String => $x length\n"
+                "  _ => 0\nend"
             )
         )
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, Integer)
-
 
     def test_guarded_type_pattern_does_not_narrow_the_default_branch(self):
         analyser = Analyser()
@@ -5040,9 +4669,9 @@ end
         analyser.analyse(
             parse(
                 '$x = (if 1 1 == => 1 else => "s" end)\n'
-                '$x\nmatch =>\n'
-                '  as :Number if 0 1 == => 0\n'
-                '  _ => $x length\nend'
+                "$x\nmatch =>\n"
+                "  as :Number if 0 1 == => 0\n"
+                "  _ => $x length\nend"
             )
         )
 
@@ -5056,9 +4685,9 @@ end
         analyser.analyse(
             parse(
                 '$x = (if 1 1 == => 2 else => "s" end)\n'
-                '$x\nmatch =>\n'
-                '  1 => 0\n'
-                '  _ => $x length\nend'
+                "$x\nmatch =>\n"
+                "  1 => 0\n"
+                "  _ => $x length\nend"
             )
         )
 
@@ -5066,15 +4695,14 @@ end
         self.assertIn("no overloads for element 'length'", analyser.diagnostics[0])
         self.assertIn("Integer | String", analyser.diagnostics[0])
 
-
     def test_catchall_or_pattern_does_not_narrow_to_only_its_typed_arm(self):
         analyser = Analyser()
 
         analyser.analyse(
             parse(
                 '$x = (if 0 1 == => 1 else => "s" end)\n'
-                '$x\nmatch =>\n'
-                '  1 || _ => $x + 1\nend'
+                "$x\nmatch =>\n"
+                "  1 || _ => $x + 1\nend"
             )
         )
 
@@ -5087,16 +4715,13 @@ end
 
         analyser.analyse(
             parse(
-                '$x = [1, "s"]\n$x\nmatch =>\n'
-                '  [1, _] => $x sum\n'
-                '  _ => 0\nend'
+                '$x = [1, "s"]\n$x\nmatch =>\n' "  [1, _] => $x sum\n" "  _ => 0\nend"
             )
         )
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("no overloads for element 'sum'", analyser.diagnostics[0])
         self.assertIn("String", analyser.diagnostics[0])
-
 
     def test_correlated_match_case_does_not_narrow_each_subject_independently(self):
         analyser = Analyser()
@@ -5105,9 +4730,9 @@ end
             parse(
                 '$x = (if 1 1 == => 1 else => "x" end)\n'
                 '$y = (if 0 1 == => 1 else => "y" end)\n'
-                '$x $y\nmatch =>\n'
-                '  as :Number, as :Number => 0\n'
-                '  _, _ => $x length\nend'
+                "$x $y\nmatch =>\n"
+                "  as :Number, as :Number => 0\n"
+                "  _, _ => $x length\nend"
             )
         )
 
@@ -5122,25 +4747,19 @@ end
             parse(
                 '$x = (if 0 1 == => 1 else => "x" end)\n'
                 '$y = (if 1 1 == => 1 else => "y" end)\n'
-                '$x $y\nmatch =>\n'
-                '  _, as :Number => 0\n'
-                '  _, _ => $x length\nend'
+                "$x $y\nmatch =>\n"
+                "  _, as :Number => 0\n"
+                "  _, _ => $x length\nend"
             )
         )
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, Integer)
 
-
     def test_repeated_case_binding_is_not_an_exhaustive_catchall(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                '1 2\nmatch =>\n'
-                '  $x = _, $x = _ => "same"\nend'
-            )
-        )
+        analyser.analyse(parse("1 2\nmatch =>\n" '  $x = _, $x = _ => "same"\nend'))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -5150,9 +4769,7 @@ end
     def test_repeated_destructure_binding_does_not_cover_a_variant_member(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                '''variant Pairish =>
+        analyser.analyse(parse("""variant Pairish =>
   Pair =>
     $left: Number
     $right: Number
@@ -5162,16 +4779,11 @@ Pair(1, 2)
 match =>
   as :Pair(x, x) => "same"
 end
-'''
-            )
-        )
+"""))
 
         self.assertEqual(
             analyser.diagnostics,
-            [
-                "8:1: non-exhaustive match for Pairish; missing cases: "
-                "Pairish.Pair"
-            ],
+            ["8:1: non-exhaustive match for Pairish; missing cases: " "Pairish.Pair"],
         )
 
     def test_repeated_binding_does_not_hide_a_fallback_case(self):
@@ -5179,7 +4791,7 @@ end
 
         analyser.analyse(
             parse(
-                '1 2\nmatch =>\n'
+                "1 2\nmatch =>\n"
                 '  $x = _, $x = _ => "same"\n'
                 '  _, _ => "different"\nend'
             )

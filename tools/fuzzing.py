@@ -12,7 +12,6 @@ import hashlib
 import random
 from collections.abc import Callable
 from dataclasses import dataclass
-from decimal import Decimal
 from itertools import permutations
 from pathlib import Path
 from typing import Any
@@ -45,7 +44,7 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
-from valiance.runtime_values import TaggedValue
+from valiance.runtime_values import TaggedValue, Number as RuntimeNumber
 from valiance.symbols import Symbol
 from valiance.types import (
     AnonymousTrait,
@@ -415,10 +414,10 @@ def _fuzz_parser_depth(
         raise _GeneratedCaseFailure(source, exc) from exc
 
 
-def _arith_tree(rng: random.Random, depth: int) -> tuple[str, Decimal]:
+def _arith_tree(rng: random.Random, depth: int) -> tuple[str, RuntimeNumber]:
     if depth <= 0 or rng.random() < 0.35:
         value = rng.randint(-50, 50)
-        return str(value), Decimal(value)
+        return str(value), RuntimeNumber(value)
 
     left_source, left = _arith_tree(rng, depth - 1)
     right_source, right = _arith_tree(rng, depth - 1)
@@ -473,9 +472,9 @@ def _program_case(rng: random.Random, max_depth: int) -> _ProgramCase:
         right = rng.randint(-100, 100)
         operator = rng.choice(("+", "-", "*"))
         expected = {
-            "+": Decimal(left + right),
-            "-": Decimal(left - right),
-            "*": Decimal(left * right),
+            "+": RuntimeNumber(left + right),
+            "-": RuntimeNumber(left - right),
+            "*": RuntimeNumber(left * right),
         }[operator]
         return _ProgramCase(
             "define calculate(x: Number, y: Number) -> Number => "
@@ -497,7 +496,7 @@ def _program_case(rng: random.Random, max_depth: int) -> _ProgramCase:
         for item in values:
             left, right = (item, scalar) if vector_first else (scalar, item)
             expected_values.append(
-                Decimal(
+                RuntimeNumber(
                     {
                         "+": left + right,
                         "-": left - right,
@@ -515,11 +514,11 @@ def _program_case(rng: random.Random, max_depth: int) -> _ProgramCase:
         prefix = " ".join(map(str, values))
         source = f"{prefix} both: {callable_source}".strip()
         if arity == 0:
-            expected = [Decimal(niladic), Decimal(niladic)]
+            expected = [RuntimeNumber(niladic), RuntimeNumber(niladic)]
         else:
             expected = [
-                Decimal(sum(values[:arity])),
-                Decimal(sum(values[arity:])),
+                RuntimeNumber(sum(values[:arity])),
+                RuntimeNumber(sum(values[arity:])),
             ]
         return _ProgramCase(source, expected)
 
@@ -541,12 +540,12 @@ def _program_case(rng: random.Random, max_depth: int) -> _ProgramCase:
         lower_values = values[:lower_arity]
         upper_values = values[lower_arity:]
         expected = [
-            Decimal(sum(lower_values))
+            RuntimeNumber(sum(lower_values))
             if lower_arity
-            else Decimal(lower_niladic),
-            Decimal(sum(upper_values))
+            else RuntimeNumber(lower_niladic),
+            RuntimeNumber(sum(upper_values))
             if upper_arity
-            else Decimal(upper_niladic),
+            else RuntimeNumber(upper_niladic),
         ]
         return _ProgramCase(source, expected)
 
@@ -559,7 +558,7 @@ def _program_case(rng: random.Random, max_depth: int) -> _ProgramCase:
     ) + "]"
     return _ProgramCase(
         f"{literal} + {scalar}",
-        [[[Decimal(item + scalar) for item in row] for row in rows]],
+        [[[RuntimeNumber(item + scalar) for item in row] for row in rows]],
     )
 
 
@@ -600,10 +599,10 @@ def _random_string(rng: random.Random, maximum: int = 16) -> str:
     return "".join(rng.choice(alphabet) for _ in range(rng.randint(0, maximum)))
 
 
-def _random_decimal(rng: random.Random) -> Decimal:
+def _random_decimal(rng: random.Random) -> RuntimeNumber:
     coefficient = rng.randint(-(10**30), 10**30)
     exponent = rng.randint(-20, 20)
-    return Decimal(coefficient).scaleb(exponent)
+    return RuntimeNumber(coefficient).scaleb(exponent)
 
 
 def _random_tag(rng: random.Random) -> DataTag:
@@ -860,12 +859,12 @@ def _fuzz_optimizer(
     factor = rng.randint(1, 12)
 
     if mode == 4:
-        condition = Decimal(rng.randrange(2))
+        condition = RuntimeNumber(rng.randrange(2))
         expected = "enabled" if condition else "disabled"
         program = Program(
             FunctionCode(
                 (
-                    Instruction(OpCode.PUSH_CONST, Decimal("999")),
+                    Instruction(OpCode.PUSH_CONST, RuntimeNumber("999")),
                     Instruction(OpCode.POP),
                     Instruction(OpCode.PUSH_CONST, condition),
                     Instruction(OpCode.JUMP_IF_FALSE, 6),
@@ -887,7 +886,7 @@ def _fuzz_optimizer(
                     "optimised peephole bytecode changed after round trip"
                 )
             if any(
-                instruction == Instruction(OpCode.PUSH_CONST, Decimal("999"))
+                instruction == Instruction(OpCode.PUSH_CONST, RuntimeNumber("999"))
                 for instruction in optimized.main.instructions
             ):
                 raise AssertionError("dead scalar push survived peephole optimisation")
@@ -908,7 +907,7 @@ def _fuzz_optimizer(
             f"{left} {right} combine"
         )
     elif mode == 2:
-        rate = Decimal(rng.randint(1, 25)) / Decimal(10)
+        rate = RuntimeNumber(rng.randint(1, 25)) / RuntimeNumber(10)
         source = (
             f"define \\rate -> Number => {rate} end\n"
             f"{factor} \\rate *"
@@ -2220,7 +2219,7 @@ def _fuzz_match_safety(
     mode = rng.randrange(19)
     if mode == 0:
         source = "1\nmatch =>\n  $x = _ => $x\nend"
-        expected = [Decimal("1")]
+        expected = [RuntimeNumber("1")]
         case = ("binding-catchall",)
     elif mode == 1:
         source = '1\nmatch =>\n  1 || _ => "first"\nend'
@@ -2647,7 +2646,7 @@ delay({value})
             typed = analyser.analyse(parse(source))
             if analyser.diagnostics:
                 raise AssertionError(analyser.diagnostics)
-            if run(compile_program(typed)) != [Decimal(value + 1)]:
+            if run(compile_program(typed)) != [RuntimeNumber(value + 1)]:
                 raise AssertionError("raw Some payload was not destructured")
         elif mode == 9:
             argument = rng.choice(
@@ -2887,7 +2886,7 @@ def _fuzz_data_tags(
                 raise AssertionError(analyser.diagnostics)
         elif mode == 3:
             index = rng.randint(0, 2)
-            expected = Decimal((index + 1) * 10)
+            expected = RuntimeNumber((index + 1) * 10)
             source = (
                 "tag #km as unit\n"
                 f"$index = {index} #km\n"
