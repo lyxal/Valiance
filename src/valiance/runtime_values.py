@@ -332,6 +332,22 @@ class Number:
             self.real = self._to_decimal(value[0])
             self.imag = self._to_decimal(value[1])
 
+        elif isinstance(value, str):
+            if "i" in value.lower():
+                parts = value.lower().split("i")
+                if len(parts) == 2:
+                    self.real = self._to_decimal(parts[0]) if parts[0] else ZERO
+                    self.imag = self._to_decimal(parts[1]) if parts[1] else ZERO
+                else:
+                    raise ValueError(f"Invalid complex number string: {value}")
+            else:
+                self.real = self._to_decimal(value)
+                self.imag = ZERO
+
+        elif isinstance(value, (int, float, Decimal)):
+            self.real = self._to_decimal(value)
+            self.imag = ZERO
+
         else:
             self.real = self._to_decimal(value)
             self.imag = ZERO

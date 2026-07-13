@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from itertools import count
 from typing import cast
 
+from valiance.runtime_values import Number
 import valiance.types as T
 from valiance.asts import (
     AnnotationNode,
@@ -254,7 +255,7 @@ def _literal_branch_results(
         variables = _merge_list_item_variables(
             branch.variables,
             combo,
-                ctx,
+            ctx,
         )
         element_tags = frozenset(
             tag for item in combo for tag in item.branch.element_tags
@@ -268,13 +269,15 @@ def _literal_branch_results(
                 stack=_pop_stack(branch.stack, consumed).push(typ),
                 inputs=inputs,
                 variables=variables,
-            ).emit(
+            )
+            .emit(
                 TypedLiteralNode(
                     node,
                     typ,
                     tuple(item.typed_body for item in combo),
                 )
-            ).with_element_tags(element_tags)
+            )
+            .with_element_tags(element_tags)
             .with_data_element_uses(data_element_uses)
         )
     return _core.BranchSet.collect(results)
@@ -330,9 +333,11 @@ def _merge_branch_inputs(
     if len(left) != len(right):
         return None
     return tuple(
-        left_item
-        if T.same(left_item, right_item)
-        else T.merge_types(left_item, right_item, ctx)
+        (
+            left_item
+            if T.same(left_item, right_item)
+            else T.merge_types(left_item, right_item, ctx)
+        )
         for left_item, right_item in zip(left, right, strict=True)
     )
 
@@ -564,7 +569,7 @@ def _number_literal_type(value: str) -> T.Type:
     if "i" in value.lower():
         return T.Number
     try:
-        parsed = Decimal(value)
+        parsed = Number(value)
     except InvalidOperation:
         return T.Number
     if parsed == parsed.to_integral_value():
@@ -639,9 +644,7 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
         return TypedLiteralNode(
             typed_node.node,
             typ,
-            tuple(
-                _refine_typed_body(item, old, new) for item in typed_node.items
-            ),
+            tuple(_refine_typed_body(item, old, new) for item in typed_node.items),
         )
     if isinstance(typed_node, TypedTagApplicationNode):
         return TypedTagApplicationNode(
