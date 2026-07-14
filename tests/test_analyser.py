@@ -16,7 +16,7 @@ from valiance.analysis import (
 )
 from valiance.analysis.analyser import _branch_argument_substitution
 from valiance.analysis.annotations import AnnotationSpec, register_annotation
-from valiance.analysis.builtins import (
+from valiance.elements.builtins import (
     BUILTIN_ELEMENTS,
     BUILTIN_ERROR_TYPES,
     BUILTIN_FAULT_TYPES,
@@ -45,9 +45,9 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedTagApplicationNode,
 )
-from valiance.modules import ModuleLoader
+from valiance.modules_system.modules import ModuleLoader
 from valiance.parsing import parse
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 from valiance.types import (
     AppliedElement,
     C,
@@ -83,7 +83,7 @@ from valiance.types import (
     show,
 )
 from valiance.types.default_types import Boolean
-from valiance.runtime_values import RuntimeNumber as NumberRuntime
+from valiance.runtime.runtime_values import RuntimeNumber as NumberRuntime
 
 NUMBER = Symbol("Number")
 REAL = Symbol("Real")

@@ -27,7 +27,7 @@ from valiance.asts import (
     WildcardPatternNode,
 )
 from valiance.asts.nodes import GetVariableNode
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 from valiance.types.relations import merge_stacks
 
 from . import analyser as _core

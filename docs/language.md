@@ -4945,4 +4945,5 @@ The count must be a non-negative integer known during analysis. It may be a
 literal or a numeric static variable produced by the containing function's
 `where` clause. Static values may depend on concrete call-site function
 introspection, so call-site checked functions can use expressions such as
-`$n = max($f.arity, $g.arity)`. Runtime variables are rejected.
+`$n = max($f.arity, $g.arity)`. Runtime variables are rejected because they
+would make the stack shape unreliable.

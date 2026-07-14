@@ -1,52 +1,45 @@
-"""Bytecode compiler and interpreter for executable Valiance programs."""
+"""Lazy public API for Valiance bytecode compilation and execution."""
 
 from __future__ import annotations
 
-from valiance.runtime.bytecode import FunctionCode, Instruction, OpCode, Program
-from valiance.runtime.compiler import CompileError, compile_program
-from valiance.runtime.optimizer import (
-    DEFAULT_OPTIMIZATION_PIPELINE,
-    BytecodePeepholeOptimizationPass,
-    ConstantFoldingOptimizationPass,
-    ControlFlowOptimizationPass,
-    ExplicitArgumentOptimizationPass,
-    FunctionOptimizationPass,
-    OptimizationError,
-    OptimizationPass,
-    OptimizationPipeline,
-    SmallFunctionInliningPass,
-    StackShuffleOptimizationPass,
-    optimize_program,
-)
-from valiance.runtime.serialization import BytecodeFormatError, dumps, loads
-from valiance.runtime.vm import AssertionFailure, RuntimeError, VirtualMachine, run
-from valiance.runtime_values import LazyList
+from importlib import import_module
 
-__all__ = [
-    "AssertionFailure",
-    "BytecodeFormatError",
-    "BytecodePeepholeOptimizationPass",
-    "CompileError",
-    "ConstantFoldingOptimizationPass",
-    "ControlFlowOptimizationPass",
-    "ExplicitArgumentOptimizationPass",
-    "DEFAULT_OPTIMIZATION_PIPELINE",
-    "FunctionCode",
-    "FunctionOptimizationPass",
-    "Instruction",
-    "LazyList",
-    "OpCode",
-    "OptimizationError",
-    "OptimizationPass",
-    "OptimizationPipeline",
-    "Program",
-    "RuntimeError",
-    "SmallFunctionInliningPass",
-    "StackShuffleOptimizationPass",
-    "VirtualMachine",
-    "compile_program",
-    "dumps",
-    "loads",
-    "optimize_program",
-    "run",
-]
+_EXPORT_MODULES = {
+    "FunctionCode": "valiance.runtime.bytecode",
+    "Instruction": "valiance.runtime.bytecode",
+    "OpCode": "valiance.runtime.bytecode",
+    "Program": "valiance.runtime.bytecode",
+    "CompileError": "valiance.runtime.compiler",
+    "compile_program": "valiance.runtime.compiler",
+    "DEFAULT_OPTIMIZATION_PIPELINE": "valiance.runtime.optimizer",
+    "BytecodePeepholeOptimizationPass": "valiance.runtime.optimizer",
+    "ConstantFoldingOptimizationPass": "valiance.runtime.optimizer",
+    "ControlFlowOptimizationPass": "valiance.runtime.optimizer",
+    "ExplicitArgumentOptimizationPass": "valiance.runtime.optimizer",
+    "FunctionOptimizationPass": "valiance.runtime.optimizer",
+    "OptimizationError": "valiance.runtime.optimizer",
+    "OptimizationPass": "valiance.runtime.optimizer",
+    "OptimizationPipeline": "valiance.runtime.optimizer",
+    "SmallFunctionInliningPass": "valiance.runtime.optimizer",
+    "StackShuffleOptimizationPass": "valiance.runtime.optimizer",
+    "optimize_program": "valiance.runtime.optimizer",
+    "BytecodeFormatError": "valiance.runtime.serialization",
+    "dumps": "valiance.runtime.serialization",
+    "loads": "valiance.runtime.serialization",
+    "AssertionFailure": "valiance.runtime.vm",
+    "RuntimeError": "valiance.runtime.vm",
+    "VirtualMachine": "valiance.runtime.vm",
+    "run": "valiance.runtime.vm",
+    "LazyList": "valiance.runtime.runtime_values",
+}
+
+
+def __getattr__(name: str):
+    """Import one public runtime symbol only when requested."""
+    module_name = _EXPORT_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(name)
+    return getattr(import_module(module_name), name)
+
+
+__all__ = sorted(_EXPORT_MODULES)

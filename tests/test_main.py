@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from valiance.diagnostics import Diagnostic, SourceLocation, render
+from valiance.analysis.diagnostics import Diagnostic, SourceLocation, render
 from valiance.main import main
 
 

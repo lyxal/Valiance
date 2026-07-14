@@ -9,7 +9,7 @@ from valiance.analysis import Analyser
 from valiance.parsing import parse
 from valiance.runtime import compile_program, dumps, loads, run
 from valiance.runtime.bytecode import FunctionCode, OpCode, ResolvedElementReference
-from valiance.runtime_values import RuntimeNumber
+from valiance.runtime.runtime_values import RuntimeNumber
 
 SAMPLE_DIRECTORY = Path(__file__).parents[1] / "samples" / "optimizations"
 

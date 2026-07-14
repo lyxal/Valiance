@@ -6,10 +6,10 @@ import re
 from typing import Any
 
 import valiance.types as T
-from valiance.analysis.builtins import RuntimeContext
-from valiance.documentation import element_documentation
-from valiance.runtime_values import RuntimeNumber, ObjectValue
-from valiance.stdlib_native import stdlib_element
+from valiance.elements.builtins import RuntimeContext
+from valiance.elements.documentation import element_documentation
+from valiance.runtime.runtime_values import RuntimeNumber, ObjectValue
+from valiance.elements.stdlib_native import stdlib_element
 
 
 def _truth(value: bool) -> RuntimeNumber:

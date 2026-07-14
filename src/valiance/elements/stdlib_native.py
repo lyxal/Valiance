@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import valiance.types as T
-from valiance.analysis.builtins import BuiltinElement, BuiltinOverload, RuntimeContext
-from valiance.documentation import ElementDocumentation
+from valiance.elements.builtins import BuiltinElement, BuiltinOverload, RuntimeContext
+from valiance.elements.documentation import ElementDocumentation
 from valiance.asts import (
     DefineNode,
     ElementNode,
@@ -22,7 +22,7 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedNode,
 )
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 
 NativeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
 
@@ -89,7 +89,7 @@ def native_module_exports(module_name: str) -> object | None:
     functions = _native_functions(module_name)
     if functions is None:
         return None
-    from valiance.modules import ModuleExports
+    from valiance.modules_system.modules import ModuleExports
 
     return ModuleExports(
         f"std.{module_name}",
@@ -124,7 +124,7 @@ def native_stdlib_functions() -> dict[str, tuple[NativeFunction, ...]]:
 
 def _module_definition(module_name: str, function: NativeFunction):
     """Build the definition for module for native standard-library registration."""
-    from valiance.modules import ModuleDefinition
+    from valiance.modules_system.modules import ModuleDefinition
 
     return ModuleDefinition(
         function.name,

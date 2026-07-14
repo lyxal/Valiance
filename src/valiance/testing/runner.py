@@ -18,7 +18,7 @@ from valiance.runtime import (
     VirtualMachine,
     compile_program,
 )
-from valiance.runtime_values import ObjectValue, format_runtime_value
+from valiance.runtime.runtime_values import ObjectValue, format_runtime_value
 
 
 class TestCommandError(Exception):

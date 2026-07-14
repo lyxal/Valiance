@@ -6,7 +6,7 @@ from typing import cast
 
 import valiance.types as T
 from valiance.asts import StackShuffleNode
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 
 from ..contexts import NodeLintContext
 from ..models import LintRewrite, RewriteKind, finding

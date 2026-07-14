@@ -10,16 +10,16 @@ from importlib import resources
 from typing import Sequence
 
 import valiance.types as T
-from valiance.analysis.builtins import BUILTIN_ELEMENTS, BuiltinElement
+from valiance.elements.builtins import BUILTIN_ELEMENTS, BuiltinElement
 from valiance.asts import DefineNode
-from valiance.documentation import (
+from valiance.elements.documentation import (
     DocumentationExample,
     ElementDocumentation,
     ParameterDocumentation,
 )
 from valiance.parsing import parse
 from valiance.source_tools import DefinitionReference, extract_documented_defines
-from valiance.stdlib_native import NativeFunction, native_stdlib_functions
+from valiance.elements.stdlib_native import NativeFunction, native_stdlib_functions
 
 REFERENCE_SCHEMA_VERSION = 1
 

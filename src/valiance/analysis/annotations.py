@@ -23,7 +23,7 @@ from valiance.asts import (
     TypedElementNode,
     TypedNode,
 )
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 from valiance.types.default_types import String
 
 AnnotationValidator = Callable[[AnnotationNode, str, ASTNode], tuple[str, ...]]

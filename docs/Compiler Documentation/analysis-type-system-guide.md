@@ -42,7 +42,7 @@ For an approachable explanation before this exhaustive reference, read
   model, and automatically discovered built-in rule modules. New lint rules
   should be added here without modifying analyser handlers.
 
-- `src/valiance/analysis/builtins.py`
+- `src/valiance/elements/builtins.py`
   Declares the default element environment and runtime implementations for
   built-ins.
 
@@ -236,7 +236,7 @@ structure body. Imports and relation facts added to a lexical child are visible
 within that body and its descendants, but cannot leak to a sibling body or its
 parent.
 
-Built-ins should be added in `src/valiance/analysis/builtins.py`. Prefer readable
+Built-ins should be added in `src/valiance/elements/builtins.py`. Prefer readable
 type builders:
 
 ```python

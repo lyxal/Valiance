@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
 from typing import Any
 
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 
 
 class Specificity(IntEnum):

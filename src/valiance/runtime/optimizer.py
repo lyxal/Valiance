@@ -18,7 +18,7 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
-from valiance.runtime_values import RuntimeNumber
+from valiance.runtime.runtime_values import RuntimeNumber
 
 
 class OptimizationError(ValueError):
@@ -324,7 +324,9 @@ class SmallFunctionInliningPass(FunctionOptimizationPass):
 @dataclass(frozen=True, slots=True)
 class PopNOptimizationPass(FunctionOptimizationPass):
     """Combine adjacent scalar and counted pops into one POP_N instruction."""
+
     name: str = "pop-n"
+
     def optimize_function(self, function: FunctionCode) -> FunctionCode:
         """Collapse each adjacent pop run while preserving branch targets."""
         instructions = function.instructions
@@ -332,17 +334,39 @@ class PopNOptimizationPass(FunctionOptimizationPass):
         index = 0
         while index < len(instructions):
             if instructions[index].op not in {OpCode.POP, OpCode.POP_N}:
-                index += 1; continue
-            start = index; count = 0
+                index += 1
+                continue
+            start = index
+            count = 0
             while index < len(instructions):
                 current = instructions[index]
-                if current.op is OpCode.POP: count += 1
-                elif current.op is OpCode.POP_N and isinstance(current.arg, int) and not isinstance(current.arg, bool) and current.arg >= 0: count += current.arg
-                else: break
+                if current.op is OpCode.POP:
+                    count += 1
+                elif (
+                    current.op is OpCode.POP_N
+                    and isinstance(current.arg, int)
+                    and not isinstance(current.arg, bool)
+                    and current.arg >= 0
+                ):
+                    count += current.arg
+                else:
+                    break
                 index += 1
             if index - start > 1 or instructions[start].op is OpCode.POP:
-                replacements.append(_Replacement(start, index-start, () if count == 0 else (Instruction(OpCode.POP_N,count),)))
-        return function if not replacements else replace(function, instructions=_rewrite_ranges(instructions,replacements))
+                replacement = (
+                    ()
+                    if count == 0
+                    else (Instruction(OpCode.POP_N, count),)
+                )
+                replacements.append(
+                    _Replacement(start, index - start, replacement)
+                )
+        if not replacements:
+            return function
+        return replace(
+            function,
+            instructions=_rewrite_ranges(instructions, replacements),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -694,7 +718,7 @@ def _fold_resolved_call(
     if not _simple_resolved_reference(reference):
         return None
 
-    from valiance.analysis.builtins import RuntimeContext, runtime_elements
+    from valiance.elements.builtins import RuntimeContext, runtime_elements
 
     element = runtime_elements().get(reference.name)
     if element is None or not 0 <= reference.overload_index < len(element.definitions):
@@ -794,7 +818,7 @@ def _fold_string_builder(
     if not all(_is_scalar_constant(value) for value in values):
         return None
 
-    from valiance.runtime_values import format_runtime_value
+    from valiance.runtime.runtime_values import format_runtime_value
 
     value_iter = iter(values)
     pieces = [
@@ -842,7 +866,7 @@ def _resolved_builtin_shape(value: object) -> tuple[int, int, bool] | None:
     if not _simple_resolved_reference(value):
         return None
 
-    from valiance.analysis.builtins import runtime_elements
+    from valiance.elements.builtins import runtime_elements
 
     element = runtime_elements().get(value.name)
     if element is None or not 0 <= value.overload_index < len(element.definitions):

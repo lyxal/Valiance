@@ -1,7 +1,7 @@
 import unittest
 from itertools import permutations
 
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 from valiance.types import (
     AnonymousTrait,
     AnonymousTraitRequirement,

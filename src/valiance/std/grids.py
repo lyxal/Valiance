@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 import valiance.types as T
-from valiance.analysis.builtins import RuntimeContext
-from valiance.documentation import element_documentation
-from valiance.stdlib_native import stdlib_element
+from valiance.elements.builtins import RuntimeContext
+from valiance.elements.documentation import element_documentation
+from valiance.elements.stdlib_native import stdlib_element
 
 
 @stdlib_element(

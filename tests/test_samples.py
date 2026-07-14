@@ -6,7 +6,7 @@ from pathlib import Path
 from valiance.analysis import Analyser
 from valiance.parsing import parse
 from valiance.runtime import compile_program, dumps, loads, run
-from valiance.runtime_values import LazyList
+from valiance.runtime.runtime_values import LazyList
 
 
 ROOT = Path(__file__).resolve().parents[1]

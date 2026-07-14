@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from valiance.analysis import Analyser
-from valiance.analysis.builtins import BUILTIN_ERROR_TYPES, BUILTIN_FAULT_TYPES
+from valiance.elements.builtins import BUILTIN_ERROR_TYPES, BUILTIN_FAULT_TYPES
 from valiance.parsing import parse
 from valiance.runtime import (
     AssertionFailure,
@@ -28,7 +28,7 @@ from valiance.runtime.bytecode import (
     Program,
     ResolvedElementReference,
 )
-from valiance.runtime_values import (
+from valiance.runtime.runtime_values import (
     DictValue,
     LazyList,
     ListValue,

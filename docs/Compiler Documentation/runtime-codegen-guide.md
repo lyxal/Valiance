@@ -148,7 +148,7 @@ collection-valued stopped parameter is not automatically vectorised again.
 - Runtime call errors should include the stack, stack types, and attempted input
   shapes.
 
-`src/valiance/runtime_values.py`
+`src/valiance/runtime/runtime_values.py`
 
 - Defines shared runtime-value helpers used by built-ins, the VM, and the CLI.
 - `LazyList` wraps an iterable that should behave like a Valiance list without
@@ -180,7 +180,7 @@ collection-valued stopped parameter is not automatically vectorised again.
 - Bump the magic/version marker again if function or program metadata changes
   incompatibly.
 
-`src/valiance/analysis/builtins.py`
+`src/valiance/elements/builtins.py`
 
 - This is the shared built-in catalogue for static analysis and runtime.
 - `BuiltinElement` groups all overloads for one element name.
@@ -192,7 +192,7 @@ collection-valued stopped parameter is not automatically vectorised again.
 - `default_environment()` publishes static overloads to the analyser.
 - `runtime_elements()` publishes runtime-capable built-ins to the VM.
 
-`src/valiance/stdlib_native.py`
+`src/valiance/elements/stdlib_native.py`
 
 - Declares Python-backed standard-library functions without making them
   globally available built-ins.
@@ -207,7 +207,7 @@ collection-valued stopped parameter is not automatically vectorised again.
 - `runtime_stdlib_elements()` publishes native stdlib hooks to the VM runtime
   globals so imported wrapper functions can execute.
 
-`src/valiance/reference_docs.py` reads those metadata fields plus `#??` blocks
+`src/valiance/elements/reference_docs.py` reads those metadata fields plus `#??` blocks
 from packaged Valiance stdlib sources. It produces HTML, Markdown, and versioned
 JSON without adding documentation payloads to bytecode.
 
@@ -372,7 +372,7 @@ When dispatch fails, keep enough information to debug:
 
 ## Adding a Built-In Element
 
-Add new built-ins in `src/valiance/analysis/builtins.py`, using the
+Add new built-ins in `src/valiance/elements/builtins.py`, using the
 `@builtin(...)` decorator. There is no `Symbol` constant to add and no tuple
 to hand-edit. `BUILTIN_ELEMENTS` still exists as a module-level export for
 callers that want the full catalogue directly, but it is derived from the

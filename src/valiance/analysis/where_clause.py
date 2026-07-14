@@ -7,7 +7,7 @@ from decimal import DecimalException
 from enum import Enum, auto
 from typing import Mapping
 
-from valiance.runtime_values import RuntimeNumber
+from valiance.runtime.runtime_values import RuntimeNumber
 import valiance.types as T
 from valiance.asts import (
     ASTNode,
@@ -18,7 +18,7 @@ from valiance.asts import (
     SetVariableNode,
     TypeLiteralNode,
 )
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 
 # Ranks become bytecode metadata and can drive nested runtime traversal.  Keeping
 # the bound finite prevents a tiny source expression from manufacturing

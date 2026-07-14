@@ -6,10 +6,10 @@ import math
 from typing import Any
 
 import valiance.types as T
-from valiance.analysis.builtins import RuntimeContext
-from valiance.documentation import element_documentation
-from valiance.stdlib_native import stdlib_element
-from valiance.runtime_values import RuntimeNumber
+from valiance.elements.builtins import RuntimeContext
+from valiance.elements.documentation import element_documentation
+from valiance.elements.stdlib_native import stdlib_element
+from valiance.runtime.runtime_values import RuntimeNumber
 
 
 def _number(value: float) -> RuntimeNumber:

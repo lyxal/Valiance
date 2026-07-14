@@ -34,7 +34,7 @@ from valiance.asts.nodes import (
     TypedNode,
     TypeLiteralNode,
 )
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 from valiance.types import Type
 
 

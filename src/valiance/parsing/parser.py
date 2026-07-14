@@ -75,7 +75,7 @@ from valiance.asts import (
     WhileNode,
     WildcardPatternNode,
 )
-from valiance.diagnostics import DiagnosticError
+from valiance.analysis.diagnostics import DiagnosticError
 from valiance.parsing.lexer import Token, TokenKind, lex
 from valiance.types import (
     AnonymousTrait,
@@ -1571,7 +1571,9 @@ class Parser:
                 except ValueError:
                     self._error("pop_n count must be a compile-time integer")
                 if str(value) != count.value or value < 0:
-                    self._error("pop_n count must be a non-negative compile-time integer")
+                    self._error(
+                        "pop_n count must be a non-negative compile-time integer"
+                    )
             elif self._match(TokenKind.DOLLAR):
                 value = self._symbol("expected static variable name")
             else:

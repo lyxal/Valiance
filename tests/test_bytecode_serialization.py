@@ -16,7 +16,7 @@ from valiance.runtime.bytecode import (
     VectorExtensionReference,
 )
 
-from valiance.runtime_values import RuntimeNumber
+from valiance.runtime.runtime_values import RuntimeNumber
 
 
 class BytecodeSerializationTests(unittest.TestCase):

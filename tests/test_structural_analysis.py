@@ -2,7 +2,7 @@ import unittest
 
 from valiance.analysis import Analyser
 from valiance.parsing import parse
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 from valiance.types import N
 
 

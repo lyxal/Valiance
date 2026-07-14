@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from valiance.reference_docs import (
+from valiance.elements.reference_docs import (
     collect_builtin_references,
     collect_language_references,
     collect_stdlib_references,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 from valiance.types.context import Context, TagKind, Variance
 from valiance.types.nodes import (
     FunctionType,

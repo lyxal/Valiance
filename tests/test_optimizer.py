@@ -37,7 +37,7 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
-from valiance.runtime_values import RuntimeNumber
+from valiance.runtime.runtime_values import RuntimeNumber
 
 
 @dataclass

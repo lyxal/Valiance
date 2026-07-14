@@ -44,8 +44,8 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
-from valiance.runtime_values import TaggedValue, RuntimeNumber as RuntimeNumber
-from valiance.symbols import Symbol
+from valiance.runtime.runtime_values import TaggedValue, RuntimeNumber as RuntimeNumber
+from valiance.types.symbols import Symbol
 from valiance.types import (
     AnonymousTrait,
     AnonymousTraitRequirement,

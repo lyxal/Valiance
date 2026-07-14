@@ -58,8 +58,8 @@ from valiance.asts.nodes import (
     SetVariablesNode,
     WhileNode,
 )
-from valiance.modules import ModuleLoadError, import_environment_facts, import_objects
-from valiance.symbols import Symbol
+from valiance.modules_system.modules import ModuleLoadError, import_environment_facts, import_objects
+from valiance.types.symbols import Symbol
 from valiance.types.default_types import Boolean
 from valiance.types.relations import merge_stacks
 
@@ -861,15 +861,26 @@ def _cast_node(
 
 
 @_core.register(PopNNode)
-def _pop_n_node(self: _core.Analyser, node: PopNNode, branch: _core.AnalysisBranch) -> _core.BranchSet:
+def _pop_n_node(
+    self: _core.Analyser,
+    node: PopNNode,
+    branch: _core.AnalysisBranch,
+) -> _core.BranchSet:
     """Pop a compile-time fixed count while preserving input inference."""
     if not isinstance(node.count, int):
-        self._diagnose(f"pop_n count '${node.count}' is not compile-time known", node)
+        self._diagnose(
+            f"pop_n count '${node.count}' is not compile-time known",
+            node,
+        )
         return _core.BranchSet()
     params = tuple(T.V(f"_pop_n_{index}") for index in range(node.count))
     sourced = branch.source_arguments(params)
     if sourced is None:
-        self._diagnose(f"stack underflow for pop_n({node.count}); expected {node.count} value(s)", node)
+        self._diagnose(
+            f"stack underflow for pop_n({node.count}); "
+            f"expected {node.count} value(s)",
+            node,
+        )
         return _core.BranchSet()
     _args, popped = sourced
     return _core.BranchSet((popped.emit(TypedNode(node)),))

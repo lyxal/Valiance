@@ -21,7 +21,7 @@ from valiance.asts import (
     UnfoldNode,
     WhileNode,
 )
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 
 _SELF = Symbol("self")
 

@@ -92,8 +92,8 @@ from valiance.asts.nodes import (
     WildcardPatternNode,
 )
 from valiance.asts.pretty import pretty_ast
-from valiance.asts.source import typed_source
-from valiance.symbols import Symbol
+from valiance.source_tools.source import typed_source
+from valiance.types.symbols import Symbol
 
 __all__ = [
     "ASTNode",

@@ -12,11 +12,11 @@ from urllib.parse import unquote, urlparse
 import valiance.types as T
 from valiance.analysis import Analyser
 from valiance.asts import ASTNode, DefineNode
-from valiance.diagnostics import DiagnosticError
+from valiance.analysis.diagnostics import DiagnosticError
 from valiance.parsing import LexError, ParseError, parse
 from valiance.repl import completion_prefix, default_completion_items
 from valiance.source_tools import extract_documented_defines
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 
 _WORD = re.compile(
     r"(?:\*::|[$#\\])?[A-Za-z_][A-Za-z0-9_:]*|[+\-*%!?=/< >~&^]+".replace(" ", "")

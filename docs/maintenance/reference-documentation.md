@@ -36,7 +36,7 @@ form rather than scraping HTML.
 
 ## Documentation metadata
 
-Shared immutable metadata types live in `src/valiance/documentation.py`:
+Shared immutable metadata types live in `src/valiance/elements/documentation.py`:
 
 - `ElementDocumentation` describes one logical element across all overloads.
 - `ParameterDocumentation` describes one logical input.
@@ -132,7 +132,7 @@ undocumented definition is simply omitted from `vln docs` output.
 
 ## Collector and renderers
 
-`src/valiance/reference_docs.py` owns the generated catalogue:
+`src/valiance/elements/reference_docs.py` owns the generated catalogue:
 
 - `collect_builtin_references()` groups aliases and renders every overload.
 - `collect_stdlib_references()` combines native and Valiance-defined exports.

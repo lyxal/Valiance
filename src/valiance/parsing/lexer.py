@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from valiance.diagnostics import DiagnosticError
+from valiance.analysis.diagnostics import DiagnosticError
 
 
 class TokenKind(StrEnum):

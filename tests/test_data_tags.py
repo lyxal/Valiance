@@ -8,7 +8,7 @@ from pathlib import Path
 from valiance.analysis import Analyser
 from valiance.parsing import parse, parse_type
 from valiance.runtime import RuntimeError, compile_program, dumps, loads, run
-from valiance.runtime_values import TaggedValue
+from valiance.runtime.runtime_values import TaggedValue
 from valiance.types import (
     ExactTags,
     Integer,
@@ -17,7 +17,7 @@ from valiance.types import (
     assignable,
     show,
 )
-from valiance.runtime_values import RuntimeNumber as RuntimeNumber
+from valiance.runtime.runtime_values import RuntimeNumber as RuntimeNumber
 
 
 def analyse_source(source: str, *, source_file: Path | None = None):

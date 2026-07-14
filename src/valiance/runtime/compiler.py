@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NoReturn
 
-from valiance import where_clause as static_where
-from valiance.analysis.builtins import BUILTIN_ELEMENTS, runtime_elements
+import valiance.analysis.where_clause as static_where
+from valiance.elements.builtins import BUILTIN_ELEMENTS, runtime_elements
 from valiance.asts import (
     AnnotationNode,
     ArrayLiteralNode,
@@ -79,7 +79,7 @@ from valiance.asts import (
     WhileNode,
     WildcardPatternNode,
 )
-from valiance.object_constructors import (
+from valiance.asts.object_constructors import (
     constructor_definitions,
     prepare_constructor_body,
 )
@@ -94,8 +94,8 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
-from valiance.runtime_values import RuntimeNumber
-from valiance.symbols import Symbol
+from valiance.runtime.runtime_values import RuntimeNumber
+from valiance.types.symbols import Symbol
 from valiance.types import (
     AppliedOverload,
     ArrayExactType,
@@ -2012,7 +2012,9 @@ def _resolved_element_reference(
         if len(node.overload.params) != declared_arity:
             hidden_count = len(static_values) if element is None else 0
             arity_override = len(node.overload.params) + hidden_count
-            consumed_override = node.overload.runtime_consumed_count + hidden_count
+            consumed_override = (
+                node.overload.runtime_consumed_count + hidden_count
+            )
     return ResolvedElementReference(
         runtime_name,
         node.overload_index,

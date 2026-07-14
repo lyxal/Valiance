@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 import valiance.types as T
-from valiance.analysis.builtins import RuntimeContext
-from valiance.documentation import element_documentation
+from valiance.elements.builtins import RuntimeContext
+from valiance.elements.documentation import element_documentation
 from valiance.runtime.vm import AssertionFailure
-from valiance.runtime_values import PanicSignal
-from valiance.stdlib_native import stdlib_element
+from valiance.runtime.runtime_values import PanicSignal
+from valiance.elements.stdlib_native import stdlib_element
 
 _VALUE = T.V("Value")
 

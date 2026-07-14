@@ -10,7 +10,7 @@ from functools import lru_cache
 from itertools import islice, zip_longest
 from typing import Any, cast
 
-from valiance.analysis.builtins import (
+from valiance.elements.builtins import (
     BuiltinElement,
     BuiltinOverload,
     RuntimeContext,
@@ -25,7 +25,7 @@ from valiance.runtime.bytecode import (
     ResolvedElementReference,
     VectorExtensionReference,
 )
-from valiance.runtime_values import (
+from valiance.runtime.runtime_values import (
     DIAGNOSTIC_LIST_PREVIEW_LIMIT,
     DictValue,
     LazyList,
@@ -44,8 +44,8 @@ from valiance.runtime_values import (
     update_runtime_tags,
     with_runtime_collection_rank,
 )
-from valiance.stdlib_native import runtime_stdlib_elements
-from valiance.where_clause import MAX_COMPILE_TIME_RANK
+from valiance.elements.stdlib_native import runtime_stdlib_elements
+from valiance.analysis.where_clause import MAX_COMPILE_TIME_RANK
 from valiance.types import (
     AtomicType,
     CollectionType,
@@ -1307,7 +1307,9 @@ class VirtualMachine:
                         case OpCode.POP:
                             _release_value(_pop(frame.stack, "pop"), self)
                         case OpCode.POP_N:
-                            count = _resolve_pop_count(instruction.arg, frame.locals)
+                            count = _resolve_pop_count(
+                                instruction.arg, frame.locals
+                            )
                             for value in _pop_many(frame.stack, count):
                                 _release_value(value, self)
                         case OpCode.RETURN:
@@ -1379,8 +1381,6 @@ class VirtualMachine:
         frame: _Frame,
         *,
         return_tag_specs: tuple[object, ...] = (),
-        arity_override: int | None = None,
-        consumed_override: int | None = None,
     ) -> _FunctionCallRequest | None:
         """Invoke stack top or suspend for a user-function activation."""
         callee = _pop(frame.stack, "call")
@@ -1735,7 +1735,11 @@ class VirtualMachine:
         consumed_override: int | None = None,
     ) -> _FunctionCallRequest | None:
         """Invoke or suspend a user function during VM execution."""
-        arity = arity_override if arity_override is not None else len(callee.code.params)
+        arity = (
+            arity_override
+            if arity_override is not None
+            else len(callee.code.params)
+        )
         try:
             (
                 args,
@@ -4515,7 +4519,7 @@ def _matches_type_pattern(value: Any, pattern: str) -> bool:
     )
 
 
-def _resolve_pop_count(spec: object, locals_: dict[str, Any]) -> int:
+def _resolve_pop_count(spec: object, locals_: dict[str, object]) -> int:
     """Resolve a validated literal or hidden static pop count."""
     value = spec
     if (
@@ -4525,10 +4529,16 @@ def _resolve_pop_count(spec: object, locals_: dict[str, Any]) -> int:
         and isinstance(spec[1], str)
     ):
         value = locals_.get(spec[1])
-    if isinstance(value, RuntimeNumber) and value.is_finite() and value.is_integer():
+    if (
+        isinstance(value, RuntimeNumber)
+        and value.is_finite()
+        and value.is_integer()
+    ):
         value = int(str(value))
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise RuntimeError("invalid bytecode: POP_N count is not a non-negative integer")
+        raise RuntimeError(
+            "invalid bytecode: POP_N count is not a non-negative integer"
+        )
     return value
 
 

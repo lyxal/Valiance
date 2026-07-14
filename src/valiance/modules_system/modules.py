@@ -18,8 +18,8 @@ from valiance.asts import (
     TypedFunctionNode,
 )
 from valiance.asts.nodes import TypedNode
-from valiance.object_constructors import constructor_definitions
-from valiance.packages import (
+from valiance.asts.object_constructors import constructor_definitions
+from valiance.modules_system.packages import (
     PackageError,
     dependency_install_root,
     find_project_root,
@@ -101,8 +101,8 @@ class ModuleLoader:
             source = source_file.read_text(encoding="utf-8")
             program = parse(source)
             from valiance.analysis import Analyser
-            from valiance.analysis.builtins import default_environment
-            from valiance.stdlib_native import install_native_stdlib
+            from valiance.elements.builtins import default_environment
+            from valiance.elements.stdlib_native import install_native_stdlib
 
             env = None
             if path.parts and path.parts[0] == "std":
@@ -150,14 +150,14 @@ class ModuleLoader:
             return self._resolve_dependency(path, current_file=current_file)
         if path.parts and path.parts[0] == "std":
             if self.std_root is None:
-                root = Path(__file__).parent / "std"
+                root = Path(__file__).parent.parent / "std"
             else:
                 root = self.std_root
             return _source_path(root, path.parts[1:])
         if path.root is None and len(path.parts) == 1:
             native_exports = _native_std_exports(path)
             if native_exports is not None:
-                root = Path(__file__).parent / "std"
+                root = Path(__file__).parent.parent / "std"
                 return _source_path(root, path.parts)
         if path.root == Symbol("root"):
             root = _project_root(current_file)
@@ -606,7 +606,7 @@ def _native_std_exports(path: ImportPath) -> ModuleExports | None:
         module_name = path.parts[0]
     else:
         return None
-    from valiance.stdlib_native import native_module_exports
+    from valiance.elements.stdlib_native import native_module_exports
 
     exports = native_module_exports(module_name)
     if isinstance(exports, ModuleExports):

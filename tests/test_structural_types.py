@@ -1,7 +1,7 @@
 import unittest
 
 from valiance.parsing import parse_type
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 from valiance.types import (
     AnonymousTrait,
     AnonymousTraitRequirement,

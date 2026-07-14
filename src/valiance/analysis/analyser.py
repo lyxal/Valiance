@@ -23,8 +23,8 @@ from typing import cast
 
 import valiance.analysis.annotations as annotation_hooks
 import valiance.types as T
-from valiance import where_clause as static_where
-from valiance.analysis.builtins import default_environment
+import valiance.analysis.where_clause as static_where
+from valiance.elements.builtins import default_environment
 from valiance.analysis.lints import (
     DEFAULT_REGISTRY as DEFAULT_LINT_REGISTRY,
     BlockLintContext,
@@ -73,13 +73,13 @@ from valiance.asts import (
     VariantMemberNode,
 )
 from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
-from valiance.modules import ModuleLoader, ModuleLoadError, import_definitions
-from valiance.object_constructors import (
+from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
+from valiance.asts.object_constructors import (
     constructor_definitions,
     definitely_initialized_fields,
     prepare_constructor_body,
 )
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 from valiance.types.default_types import Boolean
 
 from . import _analyser_calls as _calls
@@ -4388,7 +4388,10 @@ class Analyser:
 
 
 
-def _resolve_pop_n_static_counts(node: ASTNode, values: dict[str, int]) -> ASTNode:
+def _resolve_pop_n_static_counts(
+    node: ASTNode,
+    values: dict[str, int],
+) -> ASTNode:
     """Replace static pop counts throughout one deferred function body."""
     if isinstance(node, PopNNode):
         if isinstance(node.count, int):
@@ -4409,7 +4412,8 @@ def _resolve_pop_n_static_counts(node: ASTNode, values: dict[str, int]) -> ASTNo
         elif isinstance(value, tuple):
             replaced = tuple(
                 _resolve_pop_n_static_counts(item, values)
-                if isinstance(item, ASTNode) else item
+                if isinstance(item, ASTNode)
+                else item
                 for item in value
             )
             if replaced != value:

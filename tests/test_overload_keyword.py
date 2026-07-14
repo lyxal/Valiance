@@ -5,7 +5,7 @@ from valiance.asts import DefineNode, FunctionNode, OverloadSignature
 from valiance.parsing import ParseError, parse
 from valiance.runtime import compile_program, run
 from valiance.types import OverloadSetType
-from valiance.runtime_values import RuntimeNumber
+from valiance.runtime.runtime_values import RuntimeNumber
 
 
 class OverloadKeywordTests(unittest.TestCase):

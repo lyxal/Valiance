@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 from itertools import count
 from typing import cast
 
-from valiance.runtime_values import RuntimeNumber
+from valiance.runtime.runtime_values import RuntimeNumber
 import valiance.types as T
 from valiance.asts import (
     AnnotationNode,
@@ -34,7 +34,7 @@ from valiance.asts import (
     TypedTagApplicationNode,
     TypedUnfoldNode,
 )
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 
 from . import analyser as _core
 from . import _analyser_functions as _functions

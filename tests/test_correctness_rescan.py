@@ -9,8 +9,8 @@ from valiance.parsing.parser import parse
 from valiance.runtime import RuntimeError as ValianceRuntimeError
 from valiance.runtime import compile_program, dumps, loads, run
 from valiance.runtime.bytecode import FunctionCode, Instruction, OpCode, Program
-from valiance.runtime_values import LazyList
-from valiance.symbols import Symbol
+from valiance.runtime.runtime_values import LazyList
+from valiance.types.symbols import Symbol
 from valiance.types import (
     Integer,
     N,
@@ -27,7 +27,7 @@ from valiance.types import (
     show,
     subtype,
 )
-from valiance.runtime_values import RuntimeNumber as RuntimeNumber
+from valiance.runtime.runtime_values import RuntimeNumber as RuntimeNumber
 
 
 def analyse(source: str):

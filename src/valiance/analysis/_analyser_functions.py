@@ -8,7 +8,7 @@ from typing import cast
 
 import valiance.analysis.annotations as annotation_hooks
 import valiance.types as T
-from valiance import where_clause as static_where
+import valiance.analysis.where_clause as static_where
 from valiance.asts import (
     ASTNode,
     CallArgument,
@@ -28,7 +28,7 @@ from valiance.asts.nodes import (
     SetVariableNode,
     SetVariablesNode,
 )
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 
 from . import analyser as _core
 from . import _analyser_calls as _calls

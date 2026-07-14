@@ -177,7 +177,7 @@ resolved.
 
 ### Runtime values
 
-`src/valiance/runtime_values.py` defines values shared across the VM, built-ins,
+`src/valiance/runtime/runtime_values.py` defines values shared across the VM, built-ins,
 and CLI formatting. Keep equality, ownership, tags, ranks, and display rules in
 shared helpers so different output paths do not disagree.
 

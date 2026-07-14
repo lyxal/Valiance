@@ -17,7 +17,7 @@ from valiance.asts import (
     TypePatternNode,
     WildcardPatternNode,
 )
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 
 from ..contexts import MatchLintContext
 from ..models import LintFinding, LintRewrite, RewriteKind, finding

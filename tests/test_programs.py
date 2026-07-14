@@ -17,7 +17,7 @@ from valiance.analysis.analyser import Analyser
 from valiance.parsing.parser import parse
 from valiance.runtime.compiler import compile_program
 from valiance.runtime.vm import run
-from valiance.runtime_values import RuntimeNumber
+from valiance.runtime.runtime_values import RuntimeNumber
 
 
 def execute(source: str, source_file: Path | None = None):

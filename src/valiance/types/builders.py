@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 from valiance.types.nodes import (
     AnonymousTraitRequirement,
     AnonymousTraitType,

@@ -13,8 +13,8 @@ from typing import Any
 import valiance.types as T
 from valiance.analysis import Analyser, AnalysisBranch, BranchSet, InputMode
 from valiance.asts import pretty_ast, typed_source
-from valiance.diagnostics import from_exception, from_message, render, should_color
-from valiance.packages import (
+from valiance.analysis.diagnostics import from_exception, from_message, render, should_color
+from valiance.modules_system.packages import (
     PackageError,
     add_dependency,
     init_project,
@@ -26,7 +26,7 @@ from valiance.packages import (
 )
 from valiance.parsing import LexError, ParseError, Parser, lex
 from valiance.repl import ReplCompletion, create_repl_frontend
-from valiance.reference_docs import (
+from valiance.elements.reference_docs import (
     DocumentationError,
     collect_language_references,
     render_language_reference,
@@ -41,7 +41,7 @@ from valiance.runtime import (
     loads,
     run,
 )
-from valiance.runtime_values import DIAGNOSTIC_LIST_PREVIEW_LIMIT, format_runtime_value
+from valiance.runtime.runtime_values import DIAGNOSTIC_LIST_PREVIEW_LIMIT, format_runtime_value
 from valiance.source_tools import (
     DEFAULT_REFERENCE_FILENAME,
     add_missing_docstrings,
@@ -50,7 +50,7 @@ from valiance.source_tools import (
     project_source_files,
     render_html_reference,
 )
-from valiance.testing import TestCommandError, run_test_command
+from valiance.testing.runner import TestCommandError, run_test_command
 
 DEFAULT_BYTECODE_FILENAME = "out.vbc"
 DEFAULT_BYTECODE_SUFFIX = ".vbc"

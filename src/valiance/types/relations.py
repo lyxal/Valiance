@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from itertools import product
 
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 from valiance.types.builders import (
     ERR,
     OK,

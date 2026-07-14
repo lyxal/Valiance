@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from valiance.symbols import Symbol
+from valiance.types.symbols import Symbol
 from valiance.types import (
     AppliedOverload,
     DataTag,

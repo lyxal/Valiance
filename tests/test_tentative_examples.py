@@ -10,7 +10,7 @@ from unittest.mock import patch
 from valiance.analysis import Analyser
 from valiance.parsing import parse
 from valiance.runtime import compile_program, run
-from valiance.runtime_values import LazyList, RuntimeNumber
+from valiance.runtime.runtime_values import LazyList, RuntimeNumber
 
 
 def execute(source: str):
