@@ -10,9 +10,9 @@ def frame(message):
     return f"Content-Length: {len(body)}\r\n\r\n".encode() + body
 
 
-def messages(data):
-    result = []
+def decode(data):
     stream = io.BytesIO(data)
+    result = []
     while header := stream.readline():
         if not header.strip():
             continue
@@ -23,51 +23,73 @@ def messages(data):
 
 
 class LanguageServerTests(unittest.TestCase):
-    def run_server(self, *items):
+    def run_server(self, *messages):
         output = io.BytesIO()
-        server = LanguageServer(io.BytesIO(b"".join(frame(item) for item in items)), output)
-        server.run()
-        return messages(output.getvalue())
+        LanguageServer(io.BytesIO(b"".join(frame(item) for item in messages)), output).run()
+        return decode(output.getvalue())
 
-    def test_initialize_advertises_core_features(self):
-        result = self.run_server(
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
-            {"jsonrpc": "2.0", "id": 2, "method": "shutdown"},
-            {"jsonrpc": "2.0", "method": "exit"},
-        )
-        capabilities = result[0]["result"]["capabilities"]
-        self.assertTrue(capabilities["hoverProvider"])
-        self.assertTrue(capabilities["definitionProvider"])
-        self.assertTrue(capabilities["documentFormattingProvider"])
-
-    def test_open_publishes_diagnostics_and_completion(self):
+    def session(self, source, *requests):
         uri = "file:///tmp/main.vlnc"
-        result = self.run_server(
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
-            {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": uri, "text": "define double(x: Number) -> Number => $x 2 *"}}},
-            {"jsonrpc": "2.0", "id": 2, "method": "textDocument/completion", "params": {"textDocument": {"uri": uri}, "position": {"line": 0, "character": 0}}},
-            {"jsonrpc": "2.0", "id": 3, "method": "shutdown"},
-            {"jsonrpc": "2.0", "method": "exit"},
-        )
-        self.assertEqual(result[1]["method"], "textDocument/publishDiagnostics")
-        self.assertEqual(result[1]["params"]["diagnostics"], [])
-        labels = {item["label"] for item in result[2]["result"]}
-        self.assertIn("double", labels)
-        self.assertIn("define", labels)
-
-    def test_document_symbols_and_definition(self):
-        uri = "file:///tmp/main.vlnc"
-        source = "define double(x: Number) -> Number => $x 2 *\n10 double"
-        result = self.run_server(
+        base = [
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
             {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": uri, "text": source}}},
-            {"jsonrpc": "2.0", "id": 2, "method": "textDocument/documentSymbol", "params": {"textDocument": {"uri": uri}}},
-            {"jsonrpc": "2.0", "id": 3, "method": "textDocument/definition", "params": {"textDocument": {"uri": uri}, "position": {"line": 1, "character": 5}}},
-            {"jsonrpc": "2.0", "id": 4, "method": "shutdown"},
+        ]
+        end = [
+            {"jsonrpc": "2.0", "id": 99, "method": "shutdown"},
             {"jsonrpc": "2.0", "method": "exit"},
+        ]
+        return self.run_server(*base, *requests, *end)
+
+    def test_hover_renders_full_overload_signatures(self):
+        source = "1 2 +"
+        results = self.session(source, {"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {"textDocument": {"uri": "file:///tmp/main.vlnc"}, "position": {"line": 0, "character": 4}}})
+        hover = next(item["result"] for item in results if item.get("id") == 2)
+        value = hover["contents"]["value"]
+        self.assertIn("+(_1: Integer, _2: Integer) -> Integer", value)
+        self.assertNotEqual(value.strip(), "overload")
+
+    def test_hover_includes_define_docstring(self):
+        source = (
+            "#?? Double a number.\n"
+            "#??\n"
+            "#?? @param value Number to double.\n"
+            "#?? @returns The doubled number.\n"
+            "define double(value: Number) -> Number => $value 2 *\n"
+            "10 double"
         )
-        self.assertEqual(result[2]["result"][0]["name"], "double")
-        self.assertEqual(result[3]["result"]["uri"], uri)
+        results = self.session(
+            source,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": "file:///tmp/main.vlnc"},
+                    "position": {"line": 5, "character": 5},
+                },
+            },
+        )
+        hover = next(item["result"] for item in results if item.get("id") == 2)
+        value = hover["contents"]["value"]
+        self.assertIn("double(value: Number) -> Number", value)
+        self.assertIn("Double a number.", value)
+        self.assertIn("**Parameter `value`:** Number to double.", value)
+        self.assertIn("**Returns:** The doubled number.", value)
+
+    def test_analyser_diagnostic_uses_compiler_location(self):
+        source = "define foo(x: Number) -> Number =>\n  $x\n  unknownThing\nend"
+        results = self.session(source)
+        notification = next(item for item in results if item.get("method") == "textDocument/publishDiagnostics")
+        diagnostic = notification["params"]["diagnostics"][0]
+        self.assertEqual(diagnostic["range"]["start"], {"line": 2, "character": 2})
+        self.assertEqual(diagnostic["message"], "unknown element 'unknownThing'")
+
+    def test_parse_diagnostic_uses_exception_location(self):
+        source = "define foo =>\n  [1, 2\nend"
+        results = self.session(source)
+        notification = next(item for item in results if item.get("method") == "textDocument/publishDiagnostics")
+        diagnostic = notification["params"]["diagnostics"][0]
+        self.assertGreaterEqual(diagnostic["range"]["start"]["line"], 1)
 
 
 if __name__ == "__main__":

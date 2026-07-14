@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from valiance.asts.nodes import (
@@ -22,7 +22,7 @@ from valiance.asts.nodes import (
     TypedFunctionNode,
     TypedNode,
 )
-from valiance.types import FunctionType, OverloadSetType, TaggedType, Type, normalize, same, show
+from valiance.types import FunctionType, Type, normalize, show
 
 
 @dataclass
@@ -45,14 +45,10 @@ class _SourceTypeVariables:
 def typed_source(
     value: Sequence[ASTNode | TypedNode],
     source: str | None = None,
-    *,
-    add_inferred_overloads: bool = True,
 ) -> str:
     """Render an analysed program as source with available type annotations."""
     if source is not None:
-        rendered = _annotate_original_source(
-            value, source, add_inferred_overloads=add_inferred_overloads
-        )
+        rendered = _annotate_original_source(value, source)
         if rendered is not None:
             return rendered
     return "\n".join(_typed_node_source(node) for node in value)
@@ -118,11 +114,7 @@ def _function_signature(
         param_clause = ""
     else:
         param_clause = f"({_params_source(node.params, params, variables)})"
-    return (
-        param_clause
-        + _element_tags_source(typ.element_tags, variables)
-        + _return_clause(returns, variables, niladic=not params)
-    )
+    return param_clause + _return_clause(returns, variables)
 
 
 def _params_source(
@@ -147,28 +139,13 @@ def _params_source(
 def _return_clause(
     returns: tuple[Type, ...],
     variables: _SourceTypeVariables,
-    *,
-    niladic: bool = False,
 ) -> str:
     """Compute return clause while reconstructing Valiance source."""
-    rendered_returns = returns
-    if niladic and len(returns) == 1 and show(returns[0]) == "Never":
-        rendered_returns = ()
-    if not rendered_returns:
+    if not returns:
         return " ->"
     return " -> " + ", ".join(
-        show(ret, type_variable_name=variables) for ret in rendered_returns
+        show(ret, type_variable_name=variables) for ret in returns
     )
-
-
-def _element_tags_source(tags, variables: _SourceTypeVariables) -> str:
-    """Render a source-level element-tag contract for a function signature."""
-    if not tags:
-        return ""
-    rendered = show(
-        FunctionType((), (), frozenset(tags)), type_variable_name=variables
-    )
-    return rendered[rendered.index("<") :]
 
 
 @dataclass(frozen=True)
@@ -181,8 +158,6 @@ class _Replacement:
 def _annotate_original_source(
     value: Sequence[ASTNode | TypedNode],
     source: str,
-    *,
-    add_inferred_overloads: bool,
 ) -> str | None:
     """Compute annotate original source while reconstructing Valiance source."""
     from valiance.parsing.lexer import lex
@@ -193,19 +168,7 @@ def _annotate_original_source(
         return None
     replacements: list[_Replacement] = []
     for node in value:
-        replacements.extend(
-            _function_replacements(
-                node, source, tokens, add_inferred_overloads=add_inferred_overloads
-            )
-        )
-    by_span: dict[tuple[int, int], set[str]] = {}
-    for replacement in replacements:
-        by_span.setdefault((replacement.start, replacement.end), set()).add(replacement.text)
-    replacements = [
-        _Replacement(start, end, next(iter(texts)))
-        for (start, end), texts in by_span.items()
-        if len(texts) == 1
-    ]
+        replacements.extend(_function_replacements(node, source, tokens))
     if not replacements:
         return source
     replacements.sort(key=lambda item: item.start, reverse=True)
@@ -227,31 +190,16 @@ def _function_replacements(
     node: ASTNode | TypedNode,
     source: str,
     tokens: Sequence[Any],
-    *,
-    add_inferred_overloads: bool,
 ) -> list[_Replacement]:
     """Compute function replacements while reconstructing Valiance source."""
     replacements: list[_Replacement] = []
     if isinstance(node, TypedFunctionNode):
-        replacements.extend(
-            _signature_replacements(
-                node, source, tokens, add_inferred_overloads=add_inferred_overloads
-            )
-        )
+        replacements.extend(_signature_replacements(node, source, tokens))
         for overload in node.overloads:
             for child in overload.body:
-                replacements.extend(
-                    _function_replacements(
-                        child, source, tokens,
-                        add_inferred_overloads=add_inferred_overloads,
-                    )
-                )
+                replacements.extend(_function_replacements(child, source, tokens))
         return replacements
     if isinstance(node, TypedNode):
-        if isinstance(node.node, SetVariableNode):
-            replacement = _variable_type_replacement(node, source, tokens)
-            if replacement is not None:
-                replacements.append(replacement)
         node = node.node
     replacements.extend(_raw_function_replacements(node, source, tokens))
     return replacements
@@ -276,31 +224,10 @@ def _raw_function_replacements(
     return replacements
 
 
-def _variable_type_replacement(
-    node: TypedNode, source: str, tokens: Sequence[Any]
-) -> _Replacement | None:
-    """Insert an inferred type on a simple, previously untyped assignment."""
-    from valiance.parsing.lexer import TokenKind
-    ast = node.node
-    if not isinstance(ast, SetVariableNode) or ast.declared_type is not None or node.typ is None or ast.location is None:
-        return None
-    start = ast.location.offset
-    assign_index = next((i for i, token in enumerate(tokens) if token.offset >= start and token.kind is TokenKind.ASSIGN), None)
-    if assign_index is None:
-        return None
-    name_token = next((token for token in tokens if start <= token.offset < tokens[assign_index].offset and token.kind is TokenKind.IDENT and token.value == str(ast.name)), None)
-    if name_token is None:
-        return None
-    insert_at = name_token.offset + len(name_token.raw or name_token.value)
-    return _Replacement(insert_at, insert_at, f": {show(node.typ, type_variable_name=_source_type_variables(()))}")
-
-
 def _signature_replacements(
     node: TypedFunctionNode,
     source: str,
     tokens: Sequence[Any],
-    *,
-    add_inferred_overloads: bool,
 ) -> list[_Replacement]:
     """Compute signature replacements while reconstructing Valiance source."""
     from valiance.parsing.lexer import TokenKind
@@ -313,42 +240,7 @@ def _signature_replacements(
     else:
         return []
     typ = normalize(node.typ) if node.typ is not None else None
-    if function.location is None:
-        return []
-    if add_inferred_overloads and isinstance(ast, DefineNode) and isinstance(typ, OverloadSetType):
-        if function.overloads:
-            return []
-        line_start = source.rfind("\n", 0, ast.location.offset) + 1
-        indent = source[line_start:ast.location.offset]
-        indent = indent[: len(indent) - len(indent.lstrip(" \t"))]
-        variables = _source_type_variables(ast.generics)
-        overload_params = tuple(
-            _overload_params_with_negative_requirements(overload, typing.body)
-            for overload, typing in zip(typ.overloads, node.overloads, strict=True)
-        )
-        declarations = "".join(
-            f"{indent}overload("
-            + ", ".join(
-                show(param, type_variable_name=variables) for param in params
-            )
-            + " -> "
-            + ", ".join(
-                show(ret, type_variable_name=variables)
-                for ret in (
-                    ()
-                    if not overload.params
-                    and len(overload.returns) == 1
-                    and show(overload.returns[0]) == "Never"
-                    else overload.returns
-                )
-            )
-            + ")\n"
-            for overload, params in zip(
-                typ.overloads, overload_params, strict=True
-            )
-        )
-        return [_Replacement(line_start, line_start, declarations)]
-    if not isinstance(typ, FunctionType):
+    if not isinstance(typ, FunctionType) or function.location is None:
         return []
 
     params = typ.params or ()
@@ -357,8 +249,7 @@ def _signature_replacements(
     variables = _source_type_variables(declared_generics)
     replace_params = _needs_parameter_annotations(function, params)
     replace_returns = function.returns is None
-    replace_tags = bool(typ.element_tags) and not function.element_tags_explicit
-    if not replace_params and not replace_returns and not replace_tags:
+    if not replace_params and not replace_returns:
         return []
 
     start = function.location.offset
@@ -381,7 +272,6 @@ def _signature_replacements(
     )
     return_insert = _return_insert_token(tokens, start, fat_arrow_index)
     return_insert_start = _leading_whitespace_start(source, return_insert.offset)
-    tag_text = _element_tags_source(typ.element_tags, variables) if replace_tags else ""
 
     if not replace_returns:
         if replace_params and param_span is None:
@@ -393,19 +283,16 @@ def _signature_replacements(
                     tokens[arrow_index].offset,
                 )
             replacements.append(_Replacement(insert_at, insert_at, param_text))
-        if replace_tags:
-            tag_insert = _leading_whitespace_start(source, tokens[arrow_index].offset) if arrow_index is not None else return_insert_start
-            replacements.append(_Replacement(tag_insert, tag_insert, tag_text))
         return replacements
 
     prefix = param_text if replace_params and param_span is None else ""
-    return_text = _return_clause(returns, variables, niladic=not params)
+    return_text = _return_clause(returns, variables)
     if arrow_index is None:
         replacements.append(
             _Replacement(
                 return_insert_start,
                 return_insert.offset,
-                f"{prefix}{tag_text}{return_text} ",
+                f"{prefix}{return_text} ",
             )
         )
     else:
@@ -414,51 +301,10 @@ def _signature_replacements(
             _Replacement(
                 return_start,
                 return_insert.offset,
-                f"{prefix}{tag_text}{return_text} ",
+                f"{prefix}{return_text} ",
             )
         )
     return replacements
-
-
-def _overload_params_with_negative_requirements(
-    overload: Any,
-    body: Sequence[TypedNode],
-) -> tuple[Type, ...]:
-    """Restore inferred absent-tag constraints used by an overload body."""
-    candidates = tuple(_negative_parameter_requirements(body))
-    rendered: list[Type] = []
-    for param in overload.params:
-        replacement = next(
-            (
-                candidate
-                for candidate in candidates
-                if isinstance(candidate, TaggedType)
-                and any(tag.absent for tag in candidate.tags)
-                and same(normalize(candidate.inner), normalize(param))
-            ),
-            None,
-        )
-        rendered.append(replacement or param)
-    return tuple(rendered)
-
-
-def _negative_parameter_requirements(value: Any):
-    """Yield absent-tag parameter requirements retained on typed calls."""
-    if isinstance(value, TypedNode):
-        applied = getattr(value, "overload", None)
-        if applied is not None:
-            for param in applied.params:
-                if _has_negative_data_tag(param):
-                    yield param
-        value = value.node
-    if is_dataclass(value):
-        for descriptor in fields(value):
-            yield from _negative_parameter_requirements(
-                getattr(value, descriptor.name)
-            )
-    elif isinstance(value, (tuple, list)):
-        for item in value:
-            yield from _negative_parameter_requirements(item)
 
 
 def _needs_parameter_annotations(
@@ -468,27 +314,7 @@ def _needs_parameter_annotations(
     """Return the Boolean result of needs parameter annotations while reconstructing Valiance source."""
     if function.params is None:
         return bool(inferred_params)
-    for index, param in enumerate(function.params):
-        if param.typ is None:
-            return True
-        if index < len(inferred_params) and _has_negative_data_tag(inferred_params[index]) and not same(param.typ, inferred_params[index]):
-            return True
-    return False
-
-
-def _has_negative_data_tag(typ: Type) -> bool:
-    """Return whether a type tree contains an absent data-tag requirement."""
-    if isinstance(typ, TaggedType) and any(tag.absent for tag in typ.tags):
-        return True
-    if not is_dataclass(typ):
-        return False
-    for descriptor in fields(typ):
-        value = getattr(typ, descriptor.name)
-        if isinstance(value, Type) and _has_negative_data_tag(value):
-            return True
-        if isinstance(value, tuple) and any(isinstance(item, Type) and _has_negative_data_tag(item) for item in value):
-            return True
-    return False
+    return any(param.typ is None for param in function.params)
 
 
 def _source_type_variables(

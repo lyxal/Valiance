@@ -205,22 +205,6 @@ class MainTests(unittest.TestCase):
             source.replace("\\value =>", "\\value -> =>") + "\n",
         )
 
-    def test_main_tidy_adds_negative_tags_to_generated_overloads(self):
-        output = io.StringIO()
-
-        with contextlib.redirect_stdout(output):
-            exit_code = main(
-                ["tidy", "--code", "define foo(xs) => length", "--stdout"]
-            )
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(
-            output.getvalue(),
-            "overload(#!infinite @1+ -> Integer)\n"
-            "overload(String -> Integer)\n"
-            "define foo(xs) => length\n",
-        )
-
     def test_main_tidy_renders_inferred_parameter_as_anonymous_generic(self):
         output = io.StringIO()
 
