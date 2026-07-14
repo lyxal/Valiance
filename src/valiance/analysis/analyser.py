@@ -12,6 +12,7 @@ from dataclasses import (
     dataclass,
     field,
     fields,
+    is_dataclass,
     replace,
 )
 from enum import Enum, auto
@@ -52,6 +53,7 @@ from valiance.asts import (
     MatchPatternNode,
     ObjectNode,
     OrPatternNode,
+    PopNNode,
     SourceLocation,
     TraitRequirementNode,
     TryHandlerNode,
@@ -4155,6 +4157,7 @@ class Analyser:
         rank_values: dict[str, int] | None = None,
         type_values: dict[str, T.Type] | None = None,
         where_evaluated: bool = False,
+        static_values: dict[str, int] | None = None,
     ) -> FunctionAnalysis | None:
         """Analyse a deferred function using call-site static bindings."""
         typed_node = cast(
@@ -4181,7 +4184,10 @@ class Analyser:
             return None
         call_site_node = FunctionNode(
             params=substituted_params,
-            body=typed_node.body,
+            body=tuple(
+                _resolve_pop_n_static_counts(item, static_values or {})
+                for item in typed_node.body
+            ),
             returns=typed_node.returns,
             where_clause=() if where_evaluated else typed_node.where_clause,
             element_tags=typed_node.element_tags,
@@ -4380,6 +4386,35 @@ class Analyser:
         self.lints.clear()
         self.lint_findings.clear()
 
+
+
+def _resolve_pop_n_static_counts(node: ASTNode, values: dict[str, int]) -> ASTNode:
+    """Replace static pop counts throughout one deferred function body."""
+    if isinstance(node, PopNNode):
+        if isinstance(node.count, int):
+            return node
+        value = values.get(node.count.text)
+        return node if value is None else replace(node, count=value)
+    if isinstance(node, FunctionNode) or not is_dataclass(node):
+        return node
+    changes: dict[str, object] = {}
+    for field_info in fields(node):
+        if field_info.name == "location":
+            continue
+        value = getattr(node, field_info.name)
+        if isinstance(value, ASTNode):
+            replacement = _resolve_pop_n_static_counts(value, values)
+            if replacement is not value:
+                changes[field_info.name] = replacement
+        elif isinstance(value, tuple):
+            replaced = tuple(
+                _resolve_pop_n_static_counts(item, values)
+                if isinstance(item, ASTNode) else item
+                for item in value
+            )
+            if replaced != value:
+                changes[field_info.name] = replaced
+    return replace(node, **changes) if changes else node
 
 
 def analyse(

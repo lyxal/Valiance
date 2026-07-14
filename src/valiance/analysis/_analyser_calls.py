@@ -1409,6 +1409,19 @@ def _apply_call_site_checked_overload(
         if where_result is None:
             continue
         rank_values = dict(where_result.rank_values)
+        static_names = static_where.static_parameter_names(
+            params=static_source.params,
+            returns=static_source.returns,
+            param_names=static_source.param_names,
+            clause=static_source.where_clause,
+        )
+        static_values = {
+            name: int(str(value))
+            for name, value in zip(
+                static_names, where_result.runtime_values, strict=True
+            )
+            if value.is_integer() and int(str(value)) >= 0
+        }
         specialized_source = _substitute_overload_ranks(
             static_source, rank_values
         )
@@ -1433,6 +1446,7 @@ def _apply_call_site_checked_overload(
                 rank_values=rank_values,
                 type_values=preliminary_substitution,
                 where_evaluated=True,
+                static_values=static_values,
             )
             if concrete is None or len(concrete.params) < len(args):
                 continue
@@ -1550,6 +1564,7 @@ def _call_site_checked_overload_signature(
     rank_values: dict[str, int] | None = None,
     type_values: dict[str, T.Type] | None = None,
     where_evaluated: bool = False,
+    static_values: dict[str, int] | None = None,
 ) -> T.Overload | None:
     """Build the signature for call site checked overload during static analysis."""
     if callable(overload.call_site_body):
@@ -1652,6 +1667,7 @@ def _call_site_checked_overload_signature(
             rank_values=rank_values,
             type_values=type_values,
             where_evaluated=where_evaluated,
+            static_values=static_values,
         )
         if analysis is None:
             return None

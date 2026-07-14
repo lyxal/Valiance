@@ -24,6 +24,7 @@ from valiance.asts import (
     ListLiteralNode,
     NumberLiteralNode,
     ObjectNode,
+    PopNNode,
     RecordLiteralNode,
     ReturnNode,
     StackShuffleNode,
@@ -857,6 +858,21 @@ def _cast_node(
     return _core.BranchSet(
         (branch.with_stack(stack).emit(TypedNode(node, flowed_target)),)
     )
+
+
+@_core.register(PopNNode)
+def _pop_n_node(self: _core.Analyser, node: PopNNode, branch: _core.AnalysisBranch) -> _core.BranchSet:
+    """Pop a compile-time fixed count while preserving input inference."""
+    if not isinstance(node.count, int):
+        self._diagnose(f"pop_n count '${node.count}' is not compile-time known", node)
+        return _core.BranchSet()
+    params = tuple(T.V(f"_pop_n_{index}") for index in range(node.count))
+    sourced = branch.source_arguments(params)
+    if sourced is None:
+        self._diagnose(f"stack underflow for pop_n({node.count}); expected {node.count} value(s)", node)
+        return _core.BranchSet()
+    _args, popped = sourced
+    return _core.BranchSet((popped.emit(TypedNode(node)),))
 
 
 @_core.register(StackShuffleNode)

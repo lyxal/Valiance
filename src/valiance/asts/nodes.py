@@ -296,6 +296,13 @@ class CastNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class PopNNode(ASTNode):
+    """Discard a statically known number of values from the stack."""
+
+    count: int | Symbol
+
+
+@dataclass(frozen=True)
 class StackShuffleNode(ASTNode):
     """Copy or move labelled values from the top stack segment."""
 

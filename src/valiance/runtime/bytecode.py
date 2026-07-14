@@ -54,6 +54,7 @@ class OpCode(Enum):
     LOOP_BREAK = "loop_break"
     RETURN_SIGNAL = "return_signal"
     POP = "pop"
+    POP_N = "pop_n"
     RETURN = "return"
 
 

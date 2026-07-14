@@ -49,6 +49,7 @@ from valiance.asts import (
     ObjectFieldNode,
     ObjectNode,
     OverloadSignature,
+    PopNNode,
     OrPatternNode,
     RecordLiteralNode,
     RestPatternNode,
@@ -1560,6 +1561,23 @@ class Parser:
             )
         if self._check_ident("copy", "move") and self._peek(1).kind is TokenKind.LPAREN:
             return _ChainPiece((self._stack_shuffle(),), True)
+        if self._check_ident("pop_n") and self._peek(1).kind is TokenKind.LPAREN:
+            start = self._advance()
+            self._expect(TokenKind.LPAREN)
+            if self._match(TokenKind.NUMBER):
+                count = self._previous
+                try:
+                    value: int | Symbol = int(count.value)
+                except ValueError:
+                    self._error("pop_n count must be a compile-time integer")
+                if str(value) != count.value or value < 0:
+                    self._error("pop_n count must be a non-negative compile-time integer")
+            elif self._match(TokenKind.DOLLAR):
+                value = self._symbol("expected static variable name")
+            else:
+                self._error("pop_n count must be a number or static variable")
+            self._expect(TokenKind.RPAREN)
+            return _ChainPiece((PopNNode(value, location=_loc(start)),), True)
         if self._match(TokenKind.IDENT, TokenKind.OP):
             token = self._previous
             if token.value.startswith("#"):

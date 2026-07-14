@@ -42,6 +42,7 @@ from valiance.asts import (
     MatchPatternNode,
     NumberLiteralNode,
     ObjectNode,
+    PopNNode,
     OrPatternNode,
     RecordLiteralNode,
     RestPatternNode,
@@ -540,6 +541,13 @@ class _Compiler:
                     OpCode.CANONICALIZE_TAGS,
                     _runtime_tag_contract_spec(contract_type),
                 )
+            case PopNNode(count):
+                operand: object = (
+                    count if isinstance(count, int) else ("static", count.text)
+                )
+                if operand != 0:
+                    self.emit(OpCode.SOURCE_ARGS, operand)
+                    self.emit(OpCode.POP_N, operand)
             case StackShuffleNode():
                 self.emit(OpCode.STACK_SHUFFLE, _stack_shuffle_spec(node))
             case FunctionNode():
@@ -1995,14 +2003,16 @@ def _resolved_element_reference(
     )
     arity_override = None
     consumed_override = None
-    if (
-        element is not None
-        and node.overload is not None
-        and len(node.overload.params)
-        != len(element.definitions[node.overload_index].signature.params)
-    ):
-        arity_override = len(node.overload.params)
-        consumed_override = node.overload.runtime_consumed_count
+    if node.overload is not None:
+        declared_arity = (
+            len(element.definitions[node.overload_index].signature.params)
+            if element is not None
+            else len(node.overload.overload.params)
+        )
+        if len(node.overload.params) != declared_arity:
+            hidden_count = len(static_values) if element is None else 0
+            arity_override = len(node.overload.params) + hidden_count
+            consumed_override = node.overload.runtime_consumed_count + hidden_count
     return ResolvedElementReference(
         runtime_name,
         node.overload_index,

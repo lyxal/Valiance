@@ -4937,3 +4937,12 @@ end
 ```
 
 - Here, the type cast safely constructs a `Point`. There's no blind reliance on `as!`
+
+### 5.1. Statically counted popping
+
+`pop_n(Number)` discards exactly `Number` values from the top of the stack.
+The count must be a non-negative integer known during analysis. It may be a
+literal or a numeric static variable produced by the containing function's
+`where` clause. Static values may depend on concrete call-site function
+introspection, so call-site checked functions can use expressions such as
+`$n = max($f.arity, $g.arity)`. Runtime variables are rejected.

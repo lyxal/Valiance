@@ -322,6 +322,30 @@ class SmallFunctionInliningPass(FunctionOptimizationPass):
 
 
 @dataclass(frozen=True, slots=True)
+class PopNOptimizationPass(FunctionOptimizationPass):
+    """Combine adjacent scalar and counted pops into one POP_N instruction."""
+    name: str = "pop-n"
+    def optimize_function(self, function: FunctionCode) -> FunctionCode:
+        """Collapse each adjacent pop run while preserving branch targets."""
+        instructions = function.instructions
+        replacements: list[_Replacement] = []
+        index = 0
+        while index < len(instructions):
+            if instructions[index].op not in {OpCode.POP, OpCode.POP_N}:
+                index += 1; continue
+            start = index; count = 0
+            while index < len(instructions):
+                current = instructions[index]
+                if current.op is OpCode.POP: count += 1
+                elif current.op is OpCode.POP_N and isinstance(current.arg, int) and not isinstance(current.arg, bool) and current.arg >= 0: count += current.arg
+                else: break
+                index += 1
+            if index - start > 1 or instructions[start].op is OpCode.POP:
+                replacements.append(_Replacement(start, index-start, () if count == 0 else (Instruction(OpCode.POP_N,count),)))
+        return function if not replacements else replace(function, instructions=_rewrite_ranges(instructions,replacements))
+
+
+@dataclass(frozen=True, slots=True)
 class BytecodePeepholeOptimizationPass(FunctionOptimizationPass):
     """Apply local bytecode simplifications independent of source syntax."""
 
@@ -528,6 +552,7 @@ DEFAULT_OPTIMIZATION_PIPELINE = OptimizationPipeline(
         SmallFunctionInliningPass(),
         ConstantFoldingOptimizationPass(),
         BytecodePeepholeOptimizationPass(),
+        PopNOptimizationPass(),
         StackShuffleOptimizationPass(),
         ControlFlowOptimizationPass(),
     )

@@ -1259,7 +1259,7 @@ class VirtualMachine:
                         case OpCode.SOURCE_ARGS:
                             args = _source_args(
                                 frame,
-                                instruction.arg,
+                                _resolve_pop_count(instruction.arg, frame.locals),
                                 "argument source",
                             )
                             frame.stack.extend(args)
@@ -1306,6 +1306,10 @@ class VirtualMachine:
                             _stack_shuffle(frame, instruction.arg, self)
                         case OpCode.POP:
                             _release_value(_pop(frame.stack, "pop"), self)
+                        case OpCode.POP_N:
+                            count = _resolve_pop_count(instruction.arg, frame.locals)
+                            for value in _pop_many(frame.stack, count):
+                                _release_value(value, self)
                         case OpCode.RETURN:
                             result = frame.stack
                             frame.stack = []
@@ -1375,6 +1379,8 @@ class VirtualMachine:
         frame: _Frame,
         *,
         return_tag_specs: tuple[object, ...] = (),
+        arity_override: int | None = None,
+        consumed_override: int | None = None,
     ) -> _FunctionCallRequest | None:
         """Invoke stack top or suspend for a user-function activation."""
         callee = _pop(frame.stack, "call")
@@ -1567,6 +1573,8 @@ class VirtualMachine:
             extension_reference=reference.extension,
             return_tags=reference.return_tags,
             return_tag_specs=reference.return_tag_specs,
+            arity_override=reference.arity_override,
+            consumed_override=reference.consumed_override,
         )
 
     def _call_resolved_overloaded_function(
@@ -1723,9 +1731,11 @@ class VirtualMachine:
         extension_reference: VectorExtensionReference | None = None,
         return_tags: tuple[tuple[DataTag, ...], ...] = (),
         return_tag_specs: tuple[object, ...] = (),
+        arity_override: int | None = None,
+        consumed_override: int | None = None,
     ) -> _FunctionCallRequest | None:
         """Invoke or suspend a user function during VM execution."""
-        arity = len(callee.code.params)
+        arity = arity_override if arity_override is not None else len(callee.code.params)
         try:
             (
                 args,
@@ -1741,8 +1751,13 @@ class VirtualMachine:
                     [f"{arity} argument(s)"],
                 )
             ) from exc
-        if stack_count:
-            del frame.stack[-stack_count:]
+        consumed_count = (
+            min(consumed_override, stack_count)
+            if consumed_override is not None
+            else stack_count
+        )
+        if consumed_count:
+            del frame.stack[-consumed_count:]
         frame.cycle_index = next_cycle_index
         frame.cycle_stack_remaining = next_cycle_stack_remaining
         if vectorised:
@@ -4498,6 +4513,23 @@ def _matches_type_pattern(value: Any, pattern: str) -> bool:
     return isinstance(member_name, str) and (
         member_name == pattern or f"{value.type_name}.{member_name}" == pattern
     )
+
+
+def _resolve_pop_count(spec: object, locals_: dict[str, Any]) -> int:
+    """Resolve a validated literal or hidden static pop count."""
+    value = spec
+    if (
+        isinstance(spec, tuple)
+        and len(spec) == 2
+        and spec[0] == "static"
+        and isinstance(spec[1], str)
+    ):
+        value = locals_.get(spec[1])
+    if isinstance(value, RuntimeNumber) and value.is_finite() and value.is_integer():
+        value = int(str(value))
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise RuntimeError("invalid bytecode: POP_N count is not a non-negative integer")
+    return value
 
 
 def _resolve_static_rank_variables(
