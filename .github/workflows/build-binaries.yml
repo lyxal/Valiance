@@ -3,7 +3,7 @@ name: Build Binaries
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 jobs:
@@ -50,7 +50,7 @@ jobs:
             ~/.cache/Nuitka
             ~/AppData/Local/Nuitka/Nuitka/Cache
             ~/Library/Caches/Nuitka
-          key: nuitka-${{ matrix.os }}-${{ hashFiles('uv.lock', 'src/**/*.py') }}
+          key: nuitka-${{ matrix.os }}-${{ hashFiles('uv.lock', 'src/**/*.py', 'valiance_cli.py') }}
           restore-keys: |
             nuitka-${{ matrix.os }}-
 
@@ -67,9 +67,9 @@ jobs:
           --noinclude-data-files=*.py
           --output-filename=${{ matrix.output }}
           --output-dir=dist
-          src/valiance/main.py
+          valiance_cli.py
 
-      - name: Smoke test stdlib discovery
+      - name: Smoke test language-reference generation
         shell: bash
         run: |
           ./dist/${{ matrix.output }} docs --language --format json -o /tmp/lang-ref.json
@@ -89,6 +89,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
+
     steps:
       - uses: actions/download-artifact@v4
         with:
