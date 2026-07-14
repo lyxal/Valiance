@@ -166,8 +166,7 @@ def _element_tags_source(tags, variables: _SourceTypeVariables) -> str:
     if not tags:
         return ""
     rendered = show(
-        FunctionType((), (), frozenset(tags)),
-        type_variable_name=variables,
+        FunctionType((), (), frozenset(tags)), type_variable_name=variables
     )
     return rendered[rendered.index("<") :]
 
@@ -199,13 +198,9 @@ def _annotate_original_source(
                 node, source, tokens, add_inferred_overloads=add_inferred_overloads
             )
         )
-    # Analysis branches can retain the same source node more than once. Keep a
-    # replacement only when every branch agrees on the text to insert.
     by_span: dict[tuple[int, int], set[str]] = {}
     for replacement in replacements:
-        by_span.setdefault((replacement.start, replacement.end), set()).add(
-            replacement.text
-        )
+        by_span.setdefault((replacement.start, replacement.end), set()).add(replacement.text)
     replacements = [
         _Replacement(start, end, next(iter(texts)))
         for (start, end), texts in by_span.items()
@@ -247,9 +242,7 @@ def _function_replacements(
             for child in overload.body:
                 replacements.extend(
                     _function_replacements(
-                        child,
-                        source,
-                        tokens,
+                        child, source, tokens,
                         add_inferred_overloads=add_inferred_overloads,
                     )
                 )
@@ -284,51 +277,22 @@ def _raw_function_replacements(
 
 
 def _variable_type_replacement(
-    node: TypedNode,
-    source: str,
-    tokens: Sequence[Any],
+    node: TypedNode, source: str, tokens: Sequence[Any]
 ) -> _Replacement | None:
     """Insert an inferred type on a simple, previously untyped assignment."""
     from valiance.parsing.lexer import TokenKind
-
     ast = node.node
-    if (
-        not isinstance(ast, SetVariableNode)
-        or ast.declared_type is not None
-        or node.typ is None
-        or ast.location is None
-    ):
+    if not isinstance(ast, SetVariableNode) or ast.declared_type is not None or node.typ is None or ast.location is None:
         return None
     start = ast.location.offset
-    assign_index = next(
-        (
-            index
-            for index, token in enumerate(tokens)
-            if token.offset >= start and token.kind is TokenKind.ASSIGN
-        ),
-        None,
-    )
+    assign_index = next((i for i, token in enumerate(tokens) if token.offset >= start and token.kind is TokenKind.ASSIGN), None)
     if assign_index is None:
         return None
-    name_token = next(
-        (
-            token
-            for token in tokens
-            if start <= token.offset < tokens[assign_index].offset
-            and token.kind is TokenKind.IDENT
-            and token.value == str(ast.name)
-        ),
-        None,
-    )
+    name_token = next((token for token in tokens if start <= token.offset < tokens[assign_index].offset and token.kind is TokenKind.IDENT and token.value == str(ast.name)), None)
     if name_token is None:
         return None
     insert_at = name_token.offset + len(name_token.raw or name_token.value)
-    variables = _source_type_variables(())
-    return _Replacement(
-        insert_at,
-        insert_at,
-        f": {show(node.typ, type_variable_name=variables)}",
-    )
+    return _Replacement(insert_at, insert_at, f": {show(node.typ, type_variable_name=_source_type_variables(()))}")
 
 
 def _signature_replacements(
@@ -351,11 +315,7 @@ def _signature_replacements(
     typ = normalize(node.typ) if node.typ is not None else None
     if function.location is None:
         return []
-    if (
-        add_inferred_overloads
-        and isinstance(ast, DefineNode)
-        and isinstance(typ, OverloadSetType)
-    ):
+    if add_inferred_overloads and isinstance(ast, DefineNode) and isinstance(typ, OverloadSetType):
         if function.overloads:
             return []
         line_start = source.rfind("\n", 0, ast.location.offset) + 1
@@ -366,46 +326,10 @@ def _signature_replacements(
             f"{indent}overload("
             + ", ".join(show(param, type_variable_name=variables) for param in overload.params)
             + " -> "
-            + ", ".join(
-                show(ret, type_variable_name=variables)
-                for ret in (
-                    ()
-                    if not overload.params
-                    and len(overload.returns) == 1
-                    and show(overload.returns[0]) == "Never"
-                    else overload.returns
-                )
-            )
-            + ")\n"
-            for overload in typ.overloads
+            + ", ".join(show(ret, type_variable_name=variables) for ret in (() if not overload.params and len(overload.returns) == 1 and show(overload.returns[0]) == "Never" else overload.returns))
+            + ")\n" for overload in typ.overloads
         )
-        replacements = [_Replacement(line_start, line_start, declarations)]
-        inferred_tags = frozenset(
-            tag for overload in typ.overloads for tag in overload.element_tags
-        )
-        if inferred_tags and not function.element_tags_explicit:
-            fat_arrow_index = _function_fat_arrow_index(tokens, function.location.offset)
-            if fat_arrow_index is not None:
-                arrow_index = _last_token_index(
-                    tokens,
-                    TokenKind.ARROW,
-                    function.location.offset,
-                    tokens[fat_arrow_index].offset,
-                )
-                insert_token = (
-                    tokens[arrow_index]
-                    if arrow_index is not None
-                    else tokens[fat_arrow_index]
-                )
-                insert_at = _leading_whitespace_start(source, insert_token.offset)
-                replacements.append(
-                    _Replacement(
-                        insert_at,
-                        insert_at,
-                        _element_tags_source(inferred_tags, variables),
-                    )
-                )
-        return replacements
+        return [_Replacement(line_start, line_start, declarations)]
     if not isinstance(typ, FunctionType):
         return []
 
@@ -452,11 +376,7 @@ def _signature_replacements(
                 )
             replacements.append(_Replacement(insert_at, insert_at, param_text))
         if replace_tags:
-            tag_insert = (
-                _leading_whitespace_start(source, tokens[arrow_index].offset)
-                if arrow_index is not None
-                else return_insert_start
-            )
+            tag_insert = _leading_whitespace_start(source, tokens[arrow_index].offset) if arrow_index is not None else return_insert_start
             replacements.append(_Replacement(tag_insert, tag_insert, tag_text))
         return replacements
 
@@ -492,11 +412,7 @@ def _needs_parameter_annotations(
     for index, param in enumerate(function.params):
         if param.typ is None:
             return True
-        if (
-            index < len(inferred_params)
-            and _has_negative_data_tag(inferred_params[index])
-            and not same(param.typ, inferred_params[index])
-        ):
+        if index < len(inferred_params) and _has_negative_data_tag(inferred_params[index]) and not same(param.typ, inferred_params[index]):
             return True
     return False
 
@@ -511,10 +427,7 @@ def _has_negative_data_tag(typ: Type) -> bool:
         value = getattr(typ, descriptor.name)
         if isinstance(value, Type) and _has_negative_data_tag(value):
             return True
-        if isinstance(value, tuple) and any(
-            isinstance(item, Type) and _has_negative_data_tag(item)
-            for item in value
-        ):
+        if isinstance(value, tuple) and any(isinstance(item, Type) and _has_negative_data_tag(item) for item in value):
             return True
     return False
 

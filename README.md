@@ -155,6 +155,17 @@ vln run --code "1 2 +"
 Inline `run --code` snippets print the final stack automatically when the code
 does not print anything itself.
 
+Use the built-in Language Server Protocol server from any editor that can
+launch a stdio language server:
+
+```text
+vln lsp
+```
+
+It provides diagnostics, completion, hover information, local definition
+navigation, document symbols, and formatting. See
+[docs/language-server.md](docs/language-server.md) for setup details.
+
 Inspect compiler stages:
 
 ```powershell
@@ -162,7 +173,7 @@ vln parse samples/strings.vlnc
 vln analyse samples/strings.vlnc
 ```
 
-Rewrite source with inferred type annotations, overload declarations, documentation stubs, and consistent
+Rewrite source with inferred signatures, documentation stubs, and consistent
 two-space indentation:
 
 ```powershell
