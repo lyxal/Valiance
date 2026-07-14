@@ -205,6 +205,105 @@ class MainTests(unittest.TestCase):
             source.replace("\\value =>", "\\value -> =>") + "\n",
         )
 
+    def test_main_tidy_defaults_to_types_and_format(self):
+        output = io.StringIO()
+        source = "define choose(n) =>\n$n\nend"
+
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["tidy", "--code", source, "--stdout"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            output.getvalue(),
+            "define choose(n: @1) -> @1 =>\n  $n\nend\n",
+        )
+
+    def test_main_tidy_adds_inferred_variable_annotations(self):
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["tidy", "--code", "$answer = 42", "--stdout"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), "$answer: Integer = 42\n")
+
+    def test_main_tidy_adds_inferred_define_overloads(self):
+        output = io.StringIO()
+        source = "define twice(x) => $x 2 *"
+
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["tidy", "--code", source, "--stdout"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            output.getvalue(),
+            "overload(Integer -> Integer)\n"
+            "overload(Number -> Number)\n"
+            "overload(Real -> Real)\n"
+            "overload(String -> String)\n"
+            "define twice(x) => $x 2 *\n",
+        )
+
+    def test_main_tidy_adds_inferred_negative_data_tag_requirements(self):
+        output = io.StringIO()
+        source = "define foo(xs: Number+) -> Integer => length"
+
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["tidy", "--code", source, "--stdout"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            output.getvalue(),
+            "define foo(xs: #!infinite Number+) -> Integer => length\n",
+        )
+
+    def test_main_tidy_preserves_existing_negative_data_tag_requirement(self):
+        output = io.StringIO()
+        source = "define foo(xs: #!infinite Number+) -> Integer => length"
+
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["tidy", "--code", source, "--stdout"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), source + "\n")
+
+    def test_main_tidy_omits_never_for_niladic_return(self):
+        output = io.StringIO()
+        source = 'define \\fail => panic(RuntimeFault("x"))'
+
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["tidy", "--code", source, "--stdout"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            output.getvalue(),
+            'define \\fail<Panic[RuntimeFault]> -> => '
+            'panic(RuntimeFault("x"))\n',
+        )
+
+    def test_main_tidy_adds_inferred_element_tags(self):
+        output = io.StringIO()
+        source = "define show(value: String) -> => println($value)"
+
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["tidy", "--code", source, "--stdout"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            output.getvalue(),
+            "define show(value: String)<Eager, IO> -> => println($value)\n",
+        )
+
+    def test_main_tidy_preserves_explicit_element_tag_contract(self):
+        output = io.StringIO()
+        source = "define show(value: String)<IO> -> => println($value)"
+
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["tidy", "--code", source, "--stdout"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), source + "\n")
+
     def test_main_tidy_renders_inferred_parameter_as_anonymous_generic(self):
         output = io.StringIO()
 

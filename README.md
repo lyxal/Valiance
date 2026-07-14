@@ -162,7 +162,7 @@ vln parse samples/strings.vlnc
 vln analyse samples/strings.vlnc
 ```
 
-Rewrite source with inferred signatures, documentation stubs, and consistent
+Rewrite source with inferred type annotations, overload declarations, documentation stubs, and consistent
 two-space indentation:
 
 ```powershell
