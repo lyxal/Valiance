@@ -322,12 +322,30 @@ def _signature_replacements(
         indent = source[line_start:ast.location.offset]
         indent = indent[: len(indent) - len(indent.lstrip(" \t"))]
         variables = _source_type_variables(ast.generics)
+        overload_params = tuple(
+            _overload_params_with_negative_requirements(overload, typing.body)
+            for overload, typing in zip(typ.overloads, node.overloads, strict=True)
+        )
         declarations = "".join(
             f"{indent}overload("
-            + ", ".join(show(param, type_variable_name=variables) for param in overload.params)
+            + ", ".join(
+                show(param, type_variable_name=variables) for param in params
+            )
             + " -> "
-            + ", ".join(show(ret, type_variable_name=variables) for ret in (() if not overload.params and len(overload.returns) == 1 and show(overload.returns[0]) == "Never" else overload.returns))
-            + ")\n" for overload in typ.overloads
+            + ", ".join(
+                show(ret, type_variable_name=variables)
+                for ret in (
+                    ()
+                    if not overload.params
+                    and len(overload.returns) == 1
+                    and show(overload.returns[0]) == "Never"
+                    else overload.returns
+                )
+            )
+            + ")\n"
+            for overload, params in zip(
+                typ.overloads, overload_params, strict=True
+            )
         )
         return [_Replacement(line_start, line_start, declarations)]
     if not isinstance(typ, FunctionType):
@@ -400,6 +418,47 @@ def _signature_replacements(
             )
         )
     return replacements
+
+
+def _overload_params_with_negative_requirements(
+    overload: Any,
+    body: Sequence[TypedNode],
+) -> tuple[Type, ...]:
+    """Restore inferred absent-tag constraints used by an overload body."""
+    candidates = tuple(_negative_parameter_requirements(body))
+    rendered: list[Type] = []
+    for param in overload.params:
+        replacement = next(
+            (
+                candidate
+                for candidate in candidates
+                if isinstance(candidate, TaggedType)
+                and any(tag.absent for tag in candidate.tags)
+                and same(normalize(candidate.inner), normalize(param))
+            ),
+            None,
+        )
+        rendered.append(replacement or param)
+    return tuple(rendered)
+
+
+def _negative_parameter_requirements(value: Any):
+    """Yield absent-tag parameter requirements retained on typed calls."""
+    if isinstance(value, TypedNode):
+        applied = getattr(value, "overload", None)
+        if applied is not None:
+            for param in applied.params:
+                if _has_negative_data_tag(param):
+                    yield param
+        value = value.node
+    if is_dataclass(value):
+        for descriptor in fields(value):
+            yield from _negative_parameter_requirements(
+                getattr(value, descriptor.name)
+            )
+    elif isinstance(value, (tuple, list)):
+        for item in value:
+            yield from _negative_parameter_requirements(item)
 
 
 def _needs_parameter_annotations(
