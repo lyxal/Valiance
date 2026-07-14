@@ -76,28 +76,33 @@ _ACTIONS = (
     | _LSP_ACTIONS
 )
 
-HELP = """usage: valiance
-       valiance <file> [-o <file>]
-       valiance compile [<entry>] [-o <file>] [--no-optimize]
-       valiance compile --file <file> [-o <file>]
-       valiance compile -c <code> [-o <file>]
-       valiance run [<entry>] [--no-optimize]
-       valiance run --file <file>
-       valiance run -c <code>
-       valiance exec [<entry>]
-       valiance exec --file <file>
-       valiance test [<selector-or-path> ...] [options]
-       valiance lsp
-       valiance parse <file>
-       valiance analyse <file>
-       valiance tidy [<file>] [--types] [--docstrings] [--format]
-       valiance docs [<file>] [-o <file>]
-       valiance docs --language [--format html|markdown|json] [-o <file>]
-       valiance install
-       valiance init [directory]
-       valiance add <package-or-source> <version> [as <name>]
-       valiance remove <name>
-       valiance upgrade <name> <version>
+DEFAULT_PROG = "valiance"
+
+
+def _help_text(prog: str) -> str:
+    """Render the top-level usage/help text for the given program name."""
+    return f"""usage: {prog}
+       {prog} <file> [-o <file>]
+       {prog} compile [<entry>] [-o <file>] [--no-optimize]
+       {prog} compile --file <file> [-o <file>]
+       {prog} compile -c <code> [-o <file>]
+       {prog} run [<entry>] [--no-optimize]
+       {prog} run --file <file>
+       {prog} run -c <code>
+       {prog} exec [<entry>]
+       {prog} exec --file <file>
+       {prog} test [<selector-or-path> ...] [options]
+       {prog} lsp
+       {prog} parse <file>
+       {prog} analyse <file>
+       {prog} tidy [<file>] [--types] [--docstrings] [--format]
+       {prog} docs [<file>] [-o <file>]
+       {prog} docs --language [--format html|markdown|json] [-o <file>]
+       {prog} install
+       {prog} init [directory]
+       {prog} add <package-or-source> <version> [as <name>]
+       {prog} remove <name>
+       {prog} upgrade <name> <version>
 
 actions:
   <no action>        start the REPL
@@ -147,15 +152,15 @@ repl commands:
 """
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, prog: str = DEFAULT_PROG) -> int:
     """Parse command-line arguments and dispatch the requested Valiance action."""
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
         return _run_repl()
 
-    parsed = _parse_args(args)
+    parsed = _parse_args(args, prog=prog)
     if parsed is None:
-        print(HELP)
+        print(_help_text(prog))
         return 2
 
     if parsed.action == "lsp":
@@ -233,7 +238,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
 
-def _parse_args(args: list[str]) -> argparse.Namespace | None:
+def main_vln(argv: Sequence[str] | None = None) -> int:
+    """Entry point for the `vln` console script alias of `valiance`."""
+    return main(argv, prog="vln")
+
+
+def _parse_args(args: list[str], *, prog: str = DEFAULT_PROG) -> argparse.Namespace | None:
     """Parse args for CLI and REPL orchestration."""
     action = "compile"
     explicit_action: str | None = None
@@ -248,14 +258,14 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
             return None
         return argparse.Namespace(action="lsp")
     if explicit_action == "test":
-        return _parse_test_args(args)
+        return _parse_test_args(args, prog=prog)
     if explicit_action in {"tidy", "annotate"}:
-        return _parse_tidy_args(explicit_action, args)
+        return _parse_tidy_args(explicit_action, args, prog=prog)
     if explicit_action == "docs":
-        return _parse_docs_args(args)
+        return _parse_docs_args(args, prog=prog)
 
     parser = argparse.ArgumentParser(
-        prog="valiance",
+        prog=prog,
         add_help=False,
     )
     parser.add_argument("-c", "--code")
@@ -406,9 +416,11 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
 def _parse_tidy_args(
     action: str,
     args: list[str],
+    *,
+    prog: str = DEFAULT_PROG,
 ) -> argparse.Namespace | None:
     """Parse tidy args for CLI and REPL orchestration."""
-    parser = argparse.ArgumentParser(prog=f"valiance {action}", add_help=False)
+    parser = argparse.ArgumentParser(prog=f"{prog} {action}", add_help=False)
     parser.add_argument("-c", "--code")
     parser.add_argument("--file", dest="explicit_source_file")
     parser.add_argument("--types", dest="tidy_types", action="store_true")
@@ -442,14 +454,14 @@ def _parse_tidy_args(
     if action == "annotate":
         if parsed.tidy_docstrings or parsed.tidy_format:
             print(
-                "error: use `vln tidy` to combine annotations with other rewrites",
+                f"error: use `{prog} tidy` to combine annotations with other rewrites",
                 file=sys.stderr,
             )
             return None
         if parsed.project_mode:
             print(
-                "error: legacy annotate requires a file or --code; use `vln tidy` "
-                "for a whole project",
+                "error: legacy annotate requires a file or --code; use "
+                f"`{prog} tidy` for a whole project",
                 file=sys.stderr,
             )
             return None
@@ -468,9 +480,13 @@ def _parse_tidy_args(
     return parsed
 
 
-def _parse_docs_args(args: list[str]) -> argparse.Namespace | None:
+def _parse_docs_args(
+    args: list[str],
+    *,
+    prog: str = DEFAULT_PROG,
+) -> argparse.Namespace | None:
     """Parse docs args for CLI and REPL orchestration."""
-    parser = argparse.ArgumentParser(prog="valiance docs", add_help=False)
+    parser = argparse.ArgumentParser(prog=f"{prog} docs", add_help=False)
     parser.add_argument("-c", "--code")
     parser.add_argument("--file", dest="explicit_source_file")
     parser.add_argument("-o", "--output")
@@ -523,9 +539,13 @@ def _parse_docs_args(args: list[str]) -> argparse.Namespace | None:
     return parsed
 
 
-def _parse_test_args(args: list[str]) -> argparse.Namespace | None:
+def _parse_test_args(
+    args: list[str],
+    *,
+    prog: str = DEFAULT_PROG,
+) -> argparse.Namespace | None:
     """Parse test args for CLI and REPL orchestration."""
-    parser = argparse.ArgumentParser(prog="valiance test", add_help=False)
+    parser = argparse.ArgumentParser(prog=f"{prog} test", add_help=False)
     parser.add_argument("--filter", dest="test_filter")
     parser.add_argument("--list", dest="test_list", action="store_true")
     parser.add_argument("--flat", dest="test_flat", action="store_true")

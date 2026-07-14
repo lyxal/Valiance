@@ -14,7 +14,7 @@ dev = [
 
 [project.scripts]
 valiance = "valiance.main:main"
-vln = "valiance.main:main"
+vln = "valiance.main:main_vln"
 
 [build-system]
 requires = ["hatchling"]
