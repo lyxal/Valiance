@@ -66,12 +66,14 @@ _SOURCE_TOOL_ACTIONS = {"tidy", "annotate", "docs"}
 _BYTECODE_ACTIONS = {"exec"}
 _PACKAGE_ACTIONS = {"init", "install", "add", "remove", "upgrade"}
 _TEST_ACTIONS = {"test"}
+_LSP_ACTIONS = {"lsp"}
 _ACTIONS = (
     _SOURCE_ACTIONS
     | _SOURCE_TOOL_ACTIONS
     | _BYTECODE_ACTIONS
     | _PACKAGE_ACTIONS
     | _TEST_ACTIONS
+    | _LSP_ACTIONS
 )
 
 HELP = """usage: valiance
@@ -85,6 +87,7 @@ HELP = """usage: valiance
        valiance exec [<entry>]
        valiance exec --file <file>
        valiance test [<selector-or-path> ...] [options]
+       valiance lsp
        valiance parse <file>
        valiance analyse <file>
        valiance tidy [<file>] [--types] [--docstrings] [--format]
@@ -102,6 +105,7 @@ actions:
   run                 run the current project's main or named entry
   exec                execute existing project bytecode without compiling
   test                discover and run tests under the project's tests directory
+  lsp                 start the Language Server Protocol server over stdio
   parse               print the parsed AST
   analyse             print the typed AST
   tidy                rewrite one file or every project source file
@@ -154,6 +158,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(HELP)
         return 2
 
+    if parsed.action == "lsp":
+        from valiance.lsp import run_language_server
+
+        return run_language_server()
     if parsed.action == "exec":
         bytecode_file = parsed.bytecode_file
         if bytecode_file is None:
@@ -235,6 +243,11 @@ def _parse_args(args: list[str]) -> argparse.Namespace | None:
         action = "analyse" if args[0] == "analyze" else args[0]
         args = args[1:]
 
+    if explicit_action == "lsp":
+        if args:
+            print("error: lsp does not accept arguments", file=sys.stderr)
+            return None
+        return argparse.Namespace(action="lsp")
     if explicit_action == "test":
         return _parse_test_args(args)
     if explicit_action in {"tidy", "annotate"}:
@@ -447,6 +460,7 @@ def _parse_tidy_args(
         parsed.tidy_types or parsed.tidy_docstrings or parsed.tidy_format
     ):
         parsed.tidy_types = True
+        parsed.tidy_format = True
 
     if parsed.code is not None:
         parsed.tidy_stdout = True
@@ -911,6 +925,7 @@ def _run_tidy_command(parsed: argparse.Namespace) -> int:
                 add_types=parsed.tidy_types,
                 add_docstrings=parsed.tidy_docstrings,
                 apply_format=parsed.tidy_format,
+                add_inferred_overloads=parsed.action == "tidy",
             )
         except (LexError, ParseError, OSError) as exc:
             _print_exception_diagnostic(exc, source=parsed.code)
@@ -932,6 +947,7 @@ def _run_tidy_command(parsed: argparse.Namespace) -> int:
                 add_types=parsed.tidy_types,
                 add_docstrings=parsed.tidy_docstrings,
                 apply_format=parsed.tidy_format,
+                add_inferred_overloads=parsed.action == "tidy",
             )
         except (LexError, ParseError, OSError) as exc:
             _print_exception_diagnostic(exc, source=source, source_file=source_file)
@@ -973,6 +989,7 @@ def _tidy_source(
     add_types: bool,
     add_docstrings: bool,
     apply_format: bool,
+    add_inferred_overloads: bool,
 ) -> str:
     """Compute tidy source for CLI and REPL orchestration."""
     program = Parser(lex(source)).parse_program()
@@ -981,7 +998,9 @@ def _tidy_source(
         analyser = Analyser(source_file=source_file)
         typed = analyser.analyse(program)
         _print_analyser_messages(analyser, source, source_file)
-        rendered = _safe_typed_source(typed, source)
+        rendered = _safe_typed_source(
+            typed, source, add_inferred_overloads=add_inferred_overloads
+        )
     if add_docstrings:
         rendered = add_missing_docstrings(rendered)
     if apply_format:
@@ -1118,9 +1137,13 @@ def _run_language_docs_command(parsed: argparse.Namespace) -> int:
     return 0
 
 
-def _safe_typed_source(typed, source: str) -> str:
+def _safe_typed_source(
+    typed, source: str, *, add_inferred_overloads: bool = True
+) -> str:
     """Compute safe typed source for CLI and REPL orchestration."""
-    rendered = typed_source(typed, source)
+    rendered = typed_source(
+        typed, source, add_inferred_overloads=add_inferred_overloads
+    )
     try:
         Parser(lex(rendered)).parse_program()
     except (LexError, ParseError):
