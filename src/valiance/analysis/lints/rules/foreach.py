@@ -12,9 +12,12 @@ from valiance.asts import (
     FunctionNode,
     SetVariableNode,
     SetVariablesNode,
+    TypedElementNode,
     TypedForNode,
     TypedNode,
 )
+
+from valiance.elements.builtins import BUILTIN_ELEMENTS
 
 from ..contexts import NodeLintContext
 from ..models import finding
@@ -154,8 +157,30 @@ def _has_element_tags(nodes: tuple[ASTNode | TypedNode, ...]) -> bool:
 
 def _all_calls_vectorise(nodes: tuple[ASTNode | TypedNode, ...]) -> bool:
     """Return whether every body call permits collection vectorisation."""
-    calls = tuple(_applied_overloads(nodes))
-    return bool(calls) and all(
-        all(not isinstance(T.normalize(param), T.ExactType) for param in applied.overload.params)
-        for applied in calls
+    calls = tuple(_walk_typed(nodes))
+    applied_calls = tuple(
+        typed
+        for typed in calls
+        if isinstance(getattr(typed, "overload", None), T.AppliedOverload)
     )
+    return bool(applied_calls) and all(_call_permits_vectorisation(call) for call in applied_calls)
+
+
+def _call_permits_vectorisation(typed: TypedNode) -> bool:
+    """Return whether one resolved call can vectorise over a lifted argument."""
+    applied = getattr(typed, "overload", None)
+    if not isinstance(applied, T.AppliedOverload):
+        return False
+    if any(isinstance(T.normalize(param), T.ExactType) for param in applied.overload.params):
+        return False
+    if not isinstance(typed, TypedElementNode) or typed.overload_index is None:
+        return True
+
+    name = typed.runtime_name or getattr(typed.node, "name", None)
+    for element in BUILTIN_ELEMENTS:
+        if element.name != name:
+            continue
+        if typed.overload_index >= len(element.definitions):
+            return False
+        return element.definitions[typed.overload_index].vectorisable
+    return True

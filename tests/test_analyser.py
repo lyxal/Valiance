@@ -4822,6 +4822,13 @@ class ForeachRefactoringLintTests(unittest.TestCase):
         self.assertIn("prefer vectorisation", analyser.lints[0])
         self.assertIn("prefer fold", analyser.lints[1])
 
+    def test_length_foreach_suggests_map_not_vectorisation(self):
+        analyser = self._analyse(
+            "[[1], [2], [3], [4]] foreach (n) => length $n end"
+        )
+        self.assertIn("prefer map", analyser.lints[0])
+        self.assertNotIn("prefer vectorisation", analyser.lints[0])
+
     def test_stateless_foreach_suggests_map_for_non_vectorising_body(self):
         analyser = self._analyse(
             "define first(xs: Number+ exact) -> Number => $xs $[0] end\n"
