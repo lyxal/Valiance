@@ -1,6 +1,8 @@
 import asyncio
 import contextlib
 import io
+import tempfile
+from pathlib import Path
 import unittest
 
 from valiance import repl as repl_module
@@ -109,6 +111,94 @@ class ReplFrontendTests(unittest.TestCase):
         by_text = {item.text: item.meta for item in session.completion_items()}
         self.assertEqual(by_text["$count"], "variable: Integer")
         self.assertEqual(by_text["increment"], "element")
+
+    def test_enhanced_frontend_declares_repl_as_its_default_mode(self):
+        source = Path(repl_module.__file__).read_text(encoding="utf-8")
+        self.assertIn('self._mode = "repl"', source)
+        self.assertIn('self._last_submitted_source = ""', source)
+
+    def test_enhanced_editor_restores_last_program_after_running(self):
+        class FakePromptSession:
+            def __init__(self):
+                self.defaults = []
+                self.answers = iter(("1 2 +", "1 2 3 + +"))
+
+            def prompt(self, *args, **kwargs):
+                self.defaults.append(kwargs["default"])
+                return next(self.answers)
+
+        frontend = repl_module._PromptToolkitFrontend.__new__(
+            repl_module._PromptToolkitFrontend
+        )
+        frontend._session = FakePromptSession()
+        frontend._editor_source = ""
+        frontend._mode = "scratch"
+
+        self.assertEqual(frontend.read(1), "1 2 +")
+        self.assertEqual(frontend.read(2), "1 2 3 + +")
+        self.assertEqual(frontend._session.defaults, ["", "1 2 +"])
+
+    def test_enhanced_editor_does_not_replace_program_with_command(self):
+        class FakePromptSession:
+            def prompt(self, *args, **kwargs):
+                return ":help"
+
+        frontend = repl_module._PromptToolkitFrontend.__new__(
+            repl_module._PromptToolkitFrontend
+        )
+        frontend._session = FakePromptSession()
+        frontend._editor_source = "1 2 +"
+        frontend._mode = "scratch"
+
+        self.assertEqual(frontend.read(2), ":help")
+        self.assertEqual(frontend._editor_source, "1 2 +")
+
+    def test_enhanced_editor_modes_share_and_restore_scratch_source(self):
+        class FakePromptSession:
+            def __init__(self):
+                self.defaults = []
+                self.answers = iter(("define answer -> Number => 42", "answer"))
+
+            def prompt(self, *args, **kwargs):
+                self.defaults.append(kwargs["default"])
+                return next(self.answers)
+
+        frontend = repl_module._PromptToolkitFrontend.__new__(
+            repl_module._PromptToolkitFrontend
+        )
+        frontend._session = FakePromptSession()
+        frontend._editor_source = ""
+        frontend._mode = "scratch"
+
+        self.assertEqual(frontend.read(1), "define answer -> Number => 42")
+        self.assertTrue(frontend.set_mode("repl"))
+        self.assertEqual(frontend.read(2), "answer")
+        self.assertTrue(frontend.set_mode("scratch"))
+        self.assertEqual(frontend._editor_source, "define answer -> Number => 42")
+        self.assertEqual(frontend._session.defaults, ["", ""])
+
+    def test_enhanced_editor_saves_scratchpad_with_vlnc_extension(self):
+        class FakePromptSession:
+            def __init__(self, path):
+                self.path = path
+
+            def prompt(self, message, **kwargs):
+                self.message = message
+                return self.path
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = str(Path(directory) / "experiment")
+            frontend = repl_module._PromptToolkitFrontend.__new__(
+                repl_module._PromptToolkitFrontend
+            )
+            frontend._session = FakePromptSession(destination)
+            frontend._editor_source = "1 2 +"
+
+            saved = frontend.save_scratchpad()
+
+            self.assertEqual(saved, destination + ".vlnc")
+            self.assertEqual(Path(saved).read_text(encoding="utf-8"), "1 2 +\n")
+            self.assertEqual(frontend._session.message, "Save scratchpad as: ")
 
     def test_type_preview_does_not_add_definitions_to_the_session(self):
         session = _ReplSession()

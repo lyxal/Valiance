@@ -680,6 +680,16 @@ def _run_repl() -> int:
             print()
             return 130
         source = source.strip()
+        if source == ":__mode_switched__":
+            continue
+        if source == ":__save_scratchpad__":
+            try:
+                saved = frontend.save_scratchpad()
+            except OSError as exc:
+                print(f"Could not save scratchpad: {exc}", file=sys.stderr)
+            else:
+                print(f"Saved scratchpad: {saved}" if saved else "Save cancelled.")
+            continue
         if not source:
             continue
         if source in {":quit", ":q", "quit", "exit"}:
@@ -693,6 +703,13 @@ def _run_repl() -> int:
             continue
         if source in {":help", ":h", "help"}:
             _print_repl_help(color=color, fancy=frontend.fancy)
+            continue
+        if source in {":repl", ":scratch"}:
+            mode = source.removeprefix(":")
+            if frontend.set_mode(mode):
+                print(f"Switched to {mode} mode.")
+            else:
+                print("Scratch mode requires an enhanced interactive terminal.")
             continue
         if source in {":clear", ":c", "clear"}:
             print("\033[2J\033[H", end="")
@@ -714,9 +731,10 @@ def _print_repl_banner(*, color: bool, fancy: bool = False) -> None:
     print(_repl_style("-------------", _ANSI_DIM, color))
     if fancy:
         print(
-            "Enhanced editing enabled: highlighting, completion, and live type hints."
+            "One-line REPL ready. Press Ctrl-R to open the shared scratch editor."
         )
-    print("State persists between lines. Type :help, :reset, or :quit.")
+    print("State persists between lines. Entries may span multiple lines.")
+    print("Type :help, :reset, or :quit.")
 
 
 def _print_repl_help(*, color: bool, fancy: bool = False) -> None:
@@ -725,16 +743,25 @@ def _print_repl_help(*, color: bool, fancy: bool = False) -> None:
     print("  :help   show this message")
     print("  :reset  clear stack, variables, definitions, and imports")
     print("  :type   show stack types without executing source: :type <source>")
-    print("  :clear  clear the terminal")
+    print("  :clear    clear the terminal")
+    print("  :repl     switch to one-line REPL mode")
+    print("  :scratch  switch to the persistent scratch editor")
     print("  :quit   exit the REPL")
     if fancy:
         print()
         print("Enhanced editing")
+        print("  Ctrl-R            switch modes; changed scratch source runs before REPL")
+        print("  Enter             newline in scratch; run in REPL mode")
+        print("  Ctrl-Enter / F5   run and retain the complete scratch program")
+        print("  Ctrl-Backspace    clear the current input buffer")
+        print("  Ctrl-S            save the scratchpad to a .vlnc file")
+        print("  Ctrl-T / F2       toggle live type hints")
         print("  Tab / Ctrl-Space  show completions")
-        print("  F2                toggle live type hints")
-        print("  Right arrow        accept an inline history suggestion")
+        print("  Right arrow       accept an inline history suggestion")
     print()
-    print("Enter one Valiance expression or statement per line.")
+    print("Both modes share one stack, variables, definitions, and imports.")
+    print("The scratch program remains available when you switch away and back.")
+    print("Leaving a changed scratchpad runs it first, publishing its definitions.")
 
 
 def _repl_prompt(line_number: int, *, color: bool) -> str:

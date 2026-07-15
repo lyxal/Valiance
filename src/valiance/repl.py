@@ -116,7 +116,13 @@ class ReplFrontend(Protocol):
     fancy: bool
 
     def read(self, line_number: int) -> str:
-        """Read one source line, raising EOFError or KeyboardInterrupt normally."""
+        """Read one source entry, raising EOFError or KeyboardInterrupt normally."""
+
+    def set_mode(self, mode: str) -> bool:
+        """Select ``repl`` or ``scratch`` mode when the frontend supports both."""
+
+    def save_scratchpad(self) -> str | None:
+        """Save scratch source and return its path, or return ``None``."""
 
 
 @dataclass(slots=True)
@@ -129,6 +135,14 @@ class PlainReplFrontend:
     def read(self, line_number: int) -> str:
         """Read one source entry from the portable plain-text REPL."""
         return input(self.prompt(line_number))
+
+    def set_mode(self, mode: str) -> bool:
+        """Report that the portable frontend only provides one-line REPL mode."""
+        return mode == "repl"
+
+    def save_scratchpad(self) -> str | None:
+        """Report that the portable frontend has no scratch buffer to save."""
+        return None
 
 
 def create_repl_frontend(
@@ -319,19 +333,66 @@ class _PromptToolkitFrontend:
         """Initialize this prompt toolkit frontend."""
         from prompt_toolkit import PromptSession
         from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+        from prompt_toolkit.filters import Condition
         from prompt_toolkit.history import InMemoryHistory
         from prompt_toolkit.key_binding import KeyBindings
         from prompt_toolkit.styles import Style
 
         self._type_hint_provider = type_hint_provider
         self._type_hints_enabled = True
+        self._editor_source = ""
+        self._last_submitted_source = ""
+        self._mode = "repl"
         bindings = KeyBindings()
 
+        @bindings.add("c-t")
         @bindings.add("f2")
         def _toggle_type_hints(event) -> None:
-            """Update toggle type hints state for interactive terminal presentation."""
+            """Toggle live type information."""
             self._type_hints_enabled = not self._type_hints_enabled
             event.app.invalidate()
+
+        @bindings.add("c-j")
+        @bindings.add("f5")
+        def _submit(event) -> None:
+            """Run the scratch buffer; Ctrl-Enter is commonly encoded as Ctrl-J."""
+            if self._mode == "scratch":
+                event.current_buffer.validate_and_handle()
+
+        @bindings.add("c-r")
+        def _switch_mode(event) -> None:
+            """Toggle modes, submitting changed scratch source before entering REPL."""
+            if self._mode == "scratch":
+                source = event.current_buffer.text
+                self._editor_source = source
+                self._mode = "repl"
+                if source.strip() and source != self._last_submitted_source:
+                    # Submit the changed scratch program through the ordinary REPL
+                    # pipeline.  Its definitions, variables, imports, and stack
+                    # effects therefore become available in one-line mode.
+                    event.current_buffer.validate_and_handle()
+                    return
+            else:
+                self._mode = "scratch"
+            event.current_buffer.text = ":__mode_switched__"
+            event.current_buffer.cursor_position = len(event.current_buffer.text)
+            event.current_buffer.validate_and_handle()
+
+        @bindings.add("c-w")
+        def _clear_buffer(event) -> None:
+            """Clear the current input; many terminals encode Ctrl-Backspace as Ctrl-W."""
+            event.current_buffer.text = ""
+            event.current_buffer.cursor_position = 0
+
+        @bindings.add("c-s")
+        def _save(event) -> None:
+            """Leave the editor briefly so the scratchpad can be saved."""
+            if self._mode != "scratch":
+                return
+            self._editor_source = event.current_buffer.text
+            event.current_buffer.text = ":__save_scratchpad__"
+            event.current_buffer.cursor_position = len(event.current_buffer.text)
+            event.current_buffer.validate_and_handle()
 
         @bindings.add("c-space")
         def _complete(event) -> None:
@@ -369,18 +430,66 @@ class _PromptToolkitFrontend:
                 }
             ),
             reserve_space_for_menu=6,
+            multiline=Condition(lambda: self._mode == "scratch"),
         )
 
     def read(self, line_number: int) -> str:
-        """Read one source entry using the interactive prompt-toolkit frontend."""
-        return self._session.prompt(
-            [("class:prompt", f"vln:{line_number}> ")],
+        """Edit and run a persistent scratch program.
+
+        After execution the previous program is restored into the next editor
+        buffer, so results can be inspected and the same source can immediately
+        be changed and rerun.  F3 starts a fresh scratch program; compiler and
+        runtime state remain governed by the ordinary REPL commands.
+        """
+        prompt_mode = self._mode
+        label = "scratch" if prompt_mode == "scratch" else "repl"
+        default = self._editor_source if prompt_mode == "scratch" else ""
+        source = self._session.prompt(
+            [("class:prompt", f"{label}:{line_number}> ")],
+            default=default,
             bottom_toolbar=self._bottom_toolbar,
+            prompt_continuation=self._continuation_prompt,
         )
+        if (
+            prompt_mode == "scratch"
+            and source.strip()
+            and not source.lstrip().startswith(":")
+        ):
+            self._editor_source = source
+            self._last_submitted_source = source
+        return source
+
+    def set_mode(self, mode: str) -> bool:
+        """Switch between the one-line REPL and persistent scratch editor."""
+        if mode not in {"repl", "scratch"}:
+            return False
+        self._mode = mode
+        return True
+
+    def save_scratchpad(self) -> str | None:
+        """Prompt for a ``.vlnc`` path and write the retained scratch source."""
+        raw_path = self._session.prompt("Save scratchpad as: ").strip()
+        if not raw_path:
+            return None
+        path = os.path.expanduser(raw_path)
+        if not path.lower().endswith(".vlnc"):
+            path += ".vlnc"
+        with open(path, "w", encoding="utf-8") as target:
+            target.write(self._editor_source)
+            if self._editor_source and not self._editor_source.endswith("\n"):
+                target.write("\n")
+        return path
+
+    @staticmethod
+    def _continuation_prompt(width: int, line_number: int, is_soft_wrap: bool) -> str:
+        """Render a visible prompt for physical lines after the first."""
+        if is_soft_wrap:
+            return " " * width
+        return "... ".rjust(width)
 
     def _bottom_toolbar(self):
         """Handle bottom toolbar for interactive terminal presentation."""
-        controls = "F2 types · Tab/Ctrl-Space complete · history suggestions"
+        controls = f"{self._mode} · Ctrl-R switch · Ctrl-Enter/F5 run · Ctrl-S save · Ctrl-T/F2 types"
         if not self._type_hints_enabled:
             return [("class:bottom-toolbar", f" types off · {controls}")]
         source = self._session.default_buffer.text.strip()
