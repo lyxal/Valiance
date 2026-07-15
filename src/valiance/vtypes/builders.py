@@ -924,7 +924,7 @@ def _show_element_tag(
 
 def _show_tag(tag: DataTag) -> str:
     """Format tag for type construction and display."""
-    prefix = "#!" if tag.absent else "#"
+    prefix = "#-" if tag.absent else "#"
     depth = "+" * tag.depth
     return f"{prefix}{tag.name}{depth}"
 

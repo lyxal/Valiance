@@ -696,7 +696,7 @@ ParseError
         message = str(error.exception)
         self.assertIn("cannot call element 'length'", message)
         self.assertIn("attempted input shapes:", message)
-        self.assertIn("(#!infinite Item+)", message)
+        self.assertIn("(#-infinite Item+)", message)
         self.assertIn("stack: [[1, 2, 3, 4, 5", message)
         self.assertIn("100, ...]]", message)
         self.assertIn("stack types: [Unknown+]", message)
@@ -2793,7 +2793,7 @@ $n
         self.assertEqual(
             execute("""
 define first_generated(n: Number) -> Number =>
-  unfold (< 3) -> (x: Number) => 1 + end | #!infinite | head
+  unfold (< 3) -> (x: Number) => 1 + end | #-infinite | head
 end
 1 first_generated
 """),
@@ -2950,7 +2950,7 @@ end
     def test_executes_assert_and_unfold(self):
         self.assertEqual(execute("assert => true end 5"), [RuntimeNumber("5")])
         stack = execute(
-            "1 unfold (< 4) -> (n: Number) => $n 1 + end | #!infinite | head"
+            "1 unfold (< 4) -> (n: Number) => $n 1 + end | #-infinite | head"
         )
         self.assertEqual(stack, [RuntimeNumber("2")])
 
@@ -2958,7 +2958,7 @@ end
         explicit = execute("""
 0 1 unfold (true) -> (prev: Integer, next: Integer) =>
   +
-end | #!infinite | 7 take
+end | #-infinite | 7 take
 """)
         explicit_prefix = list(explicit[0])
         self.assertEqual(
@@ -2977,7 +2977,7 @@ end | #!infinite | 7 take
         inferred = execute("""
 0 1 unfold =>
   +
-end | #!infinite | 7 take
+end | #-infinite | 7 take
 """)
         self.assertEqual(list(inferred[0]), explicit_prefix)
 
@@ -2994,7 +2994,7 @@ end | 7 take
   if ($n % 2 == 0) => None
   else => $n Some
   end
-end | #!infinite | 4 take
+end | #-infinite | 4 take
 """)
         self.assertEqual(
             list(separate[0]),

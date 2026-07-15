@@ -253,7 +253,7 @@ tag #sorted disjoint #unsorted
     def test_nested_present_and_absent_tag_conflict_is_rejected(self):
         analyser, _ = analyse_source("""
 tag #checked as computed
-define invalid(value: Result[#checked #!checked Number, String]) -> Number => 0 end
+define invalid(value: Result[#checked #-checked Number, String]) -> Number => 0 end
 """)
         self.assertIn("cannot be both present and absent", diagnostics_text(analyser))
 
@@ -536,11 +536,11 @@ define first(value: Number+) -> Number => $value $[0] end
     def test_explicit_absent_return_removes_constructed_tag(self):
         source = """
 tag #stream as constructed
-define materialize(value: #stream Number+) -> #!stream Number+ => $value end
+define materialize(value: #stream Number+) -> #-stream Number+ => $value end
 #stream [1, 2, 3] | materialize
 """
         typed, outputs = execute_all_modes(source)
-        self.assertEqual(show(typed[-1].typ), "#!stream Number+")
+        self.assertEqual(show(typed[-1].typ), "#-stream Number+")
         for output in outputs:
             self.assertEqual(
                 output,

@@ -145,7 +145,7 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
 
     if isinstance(target, TaggedType):
         # Resolve tag requirements before allowing erasable source tags to be
-        # forgotten. Otherwise ``#a T`` could satisfy ``#!a T`` or ``[] T``
+        # forgotten. Otherwise ``#a T`` could satisfy ``#-a T`` or ``[] T``
         # by erasing the very evidence the target is checking.
         actual_tags = source.tags if isinstance(source, TaggedType) else frozenset()
         inner = source.inner if isinstance(source, TaggedType) else source

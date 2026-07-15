@@ -3233,7 +3233,7 @@ def _tag_from_token(token: Token) -> DataTag:
     if not value.startswith("#"):
         raise ParseError("expected data tag", line=token.line, column=token.column)
     raw = value[1:]
-    absent = raw.startswith(("!", "-"))
+    absent = raw.startswith("-")
     if absent:
         raw = raw[1:]
     name, _, suffix = raw.partition("+")

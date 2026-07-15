@@ -2290,7 +2290,7 @@ def _remove_data_tag(typ: T.Type, tag: T.DataTag) -> T.Type | None:
 
 def _show_tag(tag: T.DataTag) -> str:
     """Format tag during static analysis."""
-    prefix = "#!" if tag.absent else "#"
+    prefix = "#-" if tag.absent else "#"
     depth = "+" * tag.depth
     return f"{prefix}{tag.name}{depth}"
 

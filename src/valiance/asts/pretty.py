@@ -393,7 +393,7 @@ def _location_label(node: ASTNode) -> str:
 
 def _tag_label(node: TagApplicationNode) -> str:
     """Compute tag label for AST diagnostic output."""
-    prefix = "#!" if node.tag.absent else "#"
+    prefix = "#-" if node.tag.absent else "#"
     depth = "+" * node.tag.depth
     return f"{prefix}{node.tag.name}{depth}"
 

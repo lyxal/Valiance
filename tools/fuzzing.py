@@ -257,7 +257,7 @@ def _random_source(rng: random.Random, maximum: int) -> str:
         "++",
         "?",
         "#tag",
-        "#!absent",
+        "#-absent",
         "#? comment",
         "#/",
         "/#",
@@ -3264,7 +3264,7 @@ define first(value: Number+) -> Number => $value $[0] end
         elif mode == 24:
             source = """
 tag #stream as constructed
-define materialize(value: #stream Number+) -> #!stream Number+ => $value end
+define materialize(value: #stream Number+) -> #-stream Number+ => $value end
 #stream [1, 2, 3] | materialize
 """
             case = ("constructed-explicit-absence", source)

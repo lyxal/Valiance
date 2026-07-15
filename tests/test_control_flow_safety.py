@@ -194,7 +194,7 @@ at (row+, item) => append
             execute("""
 1 unfold (true) -> (n: Integer) =>
   RuntimeFault("transition failed") panic
-end | #!infinite | first
+end | #-infinite | first
 """)
         self.assertIn("transition failed", str(caught.exception))
 

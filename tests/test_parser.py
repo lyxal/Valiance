@@ -106,12 +106,16 @@ class LexerTests(unittest.TestCase):
 
         self.assertEqual(tokens[0].value, "3i")
 
+    def test_rejects_bang_data_tag_alias(self):
+        with self.assertRaises(LexError):
+            lex("#!infinite")
+
     def test_lexes_data_tags_as_one_token(self):
-        tokens = lex("#sorted #!infinite #infinite++")
+        tokens = lex("#sorted #-infinite #infinite++")
 
         self.assertEqual(
             [token.value for token in tokens[:-1]],
-            ["#sorted", " ", "#!infinite", " ", "#infinite++"],
+            ["#sorted", " ", "#-infinite", " ", "#infinite++"],
         )
 
     def test_unterminated_string_is_error(self):
@@ -1372,7 +1376,7 @@ end
         )
         self.assertTrue(
             same(
-                parse_type("#!infinite Number+"),
+                parse_type("#-infinite Number+"),
                 Tagged(C(ListExactType, Number), DataTag("infinite", absent=True)),
             )
         )

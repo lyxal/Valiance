@@ -3314,7 +3314,7 @@ define f(value: #left #right Number) -> Number => $value
         overload = analyser.env.overloads_for(Symbol("onlySecond"))[0]
         self.assertEqual(
             tuple(show(param) for param in overload.params),
-            ("Number+", "#!infinite Number+"),
+            ("Number+", "#-infinite Number+"),
         )
 
     def test_negative_tag_requirement_propagates_through_local_variable(self):
@@ -3333,7 +3333,7 @@ define f(value: #left #right Number) -> Number => $value
         overload = analyser.env.overloads_for(Symbol("remingle"))[0]
         self.assertEqual(
             show(overload.params[0]),
-            "#!infinite Number+",
+            "#-infinite Number+",
         )
         self.assertIn("no overloads for element 'remingle'", analyser.diagnostics[0])
 
@@ -3354,7 +3354,7 @@ define f(value: #left #right Number) -> Number => $value
         overload = analyser.env.overloads_for(Symbol("conditional"))[0]
         self.assertEqual(
             show(overload.params[0]),
-            "#!infinite Number+",
+            "#-infinite Number+",
         )
         self.assertIn("no overloads for element 'conditional'", analyser.diagnostics[0])
 
@@ -3372,7 +3372,7 @@ define f(value: #left #right Number) -> Number => $value
         )
 
         overload = analyser.env.overloads_for(Symbol("insideAForLoop"))[0]
-        self.assertEqual(show(overload.params[0]), "#!infinite+ Number+2")
+        self.assertEqual(show(overload.params[0]), "#-infinite+ Number+2")
 
     def test_negative_tag_requirement_propagates_through_list_selection(self):
         analyser = Analyser()
@@ -3388,7 +3388,7 @@ define f(value: #left #right Number) -> Number => $value
         )
 
         overload = analyser.env.overloads_for(Symbol("selectionFromList"))[0]
-        self.assertEqual(show(overload.params[0]), "#!infinite Number+")
+        self.assertEqual(show(overload.params[0]), "#-infinite Number+")
         self.assertIn(
             "no overloads for element 'selectionFromList'",
             analyser.diagnostics[0],
@@ -3428,7 +3428,7 @@ define f(value: #left #right Number) -> Number => $value
         overload = analyser.env.overloads_for(Symbol("closures"))[0]
         self.assertEqual(
             show(overload.params[0]),
-            "#!infinite Number+",
+            "#-infinite Number+",
         )
         self.assertIn("no overloads for element 'closures'", analyser.diagnostics[0])
 
@@ -3444,7 +3444,7 @@ define f(value: #left #right Number) -> Number => $value
                 "1:25: no overloads for element 'length' match stack [#infinite "
                 "Integer+]\navailable overloads:\n"
                 "  - length(String) -> Integer\n"
-                "  - length(#!infinite Item+) -> Integer"
+                "  - length(#-infinite Item+) -> Integer"
             ],
         )
 
