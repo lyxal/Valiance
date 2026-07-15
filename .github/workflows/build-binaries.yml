@@ -12,14 +12,14 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            output: valiance
-            asset: valiance-linux
+            os_tag: linux
+            ext: ""
           - os: macos-latest
-            output: valiance
-            asset: valiance-macos
+            os_tag: macos
+            ext: ""
           - os: windows-latest
-            output: valiance.exe
-            asset: valiance-windows.exe
+            os_tag: windows
+            ext: ".exe"
 
     runs-on: ${{ matrix.os }}
 
@@ -50,11 +50,11 @@ jobs:
             ~/.cache/Nuitka
             ~/AppData/Local/Nuitka/Nuitka/Cache
             ~/Library/Caches/Nuitka
-          key: nuitka-${{ matrix.os }}-${{ hashFiles('uv.lock', 'src/**/*.py', 'valiance_cli.py') }}
+          key: nuitka-${{ matrix.os }}-${{ hashFiles('uv.lock', 'src/**/*.py') }}
           restore-keys: |
             nuitka-${{ matrix.os }}-
 
-      - name: Build with Nuitka
+      - name: Build src/valiance/main.py with Nuitka
         run: >
           uv run --with nuitka python -m nuitka
           --onefile
@@ -65,25 +65,32 @@ jobs:
           --include-package=prompt_toolkit
           --include-data-dir=src/valiance/std=valiance/std
           --noinclude-data-files=*.py
-          --output-filename=${{ matrix.output }}
+          --output-filename=valiance${{ matrix.ext }}
           --output-dir=dist
-          valiance_cli.py
+          src/valiance/main.py
 
-      - name: Smoke test language-reference generation
+      - name: Name the platform release binary
         shell: bash
         run: |
-          ./dist/${{ matrix.output }} docs --language --format json -o /tmp/lang-ref.json
-          test -s /tmp/lang-ref.json
+          cp dist/valiance${{ matrix.ext }} dist/valiance-${{ matrix.os_tag }}${{ matrix.ext }}
 
-      - name: Rename artifact
+      - name: Smoke test both installed command names
         shell: bash
-        run: cp dist/${{ matrix.output }} dist/${{ matrix.asset }}
+        run: |
+          cp dist/valiance${{ matrix.ext }} dist/vln${{ matrix.ext }}
+          ./dist/valiance${{ matrix.ext }} --help > valiance-help.txt || test $? -eq 2
+          ./dist/vln${{ matrix.ext }} --help > vln-help.txt || test $? -eq 2
+          grep -q '^usage: valiance' valiance-help.txt
+          grep -q '^usage: vln' vln-help.txt
+          ./dist/valiance${{ matrix.ext }} docs --language --format json -o /tmp/lang-ref.json
+          test -s /tmp/lang-ref.json
+          rm dist/vln${{ matrix.ext }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset }}
-          path: dist/${{ matrix.asset }}
+          name: valiance-${{ matrix.os_tag }}${{ matrix.ext }}
+          path: dist/valiance-${{ matrix.os_tag }}${{ matrix.ext }}
 
   release:
     needs: build

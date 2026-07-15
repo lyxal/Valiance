@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import os
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -152,8 +153,9 @@ repl commands:
 """
 
 
-def main(argv: Sequence[str] | None = None, prog: str = DEFAULT_PROG) -> int:
+def _run(vln_mode: bool, argv: Sequence[str] | None = None) -> int:
     """Parse command-line arguments and dispatch the requested Valiance action."""
+    prog = "vln" if vln_mode else DEFAULT_PROG
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
         return _run_repl()
@@ -238,9 +240,20 @@ def main(argv: Sequence[str] | None = None, prog: str = DEFAULT_PROG) -> int:
     )
 
 
+def main(argv: Sequence[str] | None = None) -> int:
+    """Entry point for the `valiance` console script."""
+    return _run(vln_mode=False, argv=argv)
+
+
 def main_vln(argv: Sequence[str] | None = None) -> int:
     """Entry point for the `vln` console script alias of `valiance`."""
-    return main(argv, prog="vln")
+    return _run(vln_mode=True, argv=argv)
+
+
+def cli_entry() -> int:
+    """Dispatch a directly executed or compiled binary by its invoked name."""
+    invoked_as = os.path.basename(sys.argv[0]).lower()
+    return _run(vln_mode=invoked_as.startswith("vln"))
 
 
 def _parse_args(args: list[str], *, prog: str = DEFAULT_PROG) -> argparse.Namespace | None:
@@ -1425,4 +1438,4 @@ def _format_value(value: Any, *, preview_limit: int | None = None) -> str:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(cli_entry())
