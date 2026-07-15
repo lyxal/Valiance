@@ -178,3 +178,75 @@ class BuiltinLintRuleTests(unittest.TestCase):
             env=Analyser().env,
         )
         self.assertEqual(while_can_be_foreach(context)[0].code, "while-can-be-foreach")
+
+
+class ProjectLintConfigurationTests(unittest.TestCase):
+    """Verify project-wide lint policy loaded from valiance.toml."""
+
+    def _project(self, lint_table: str, source: str):
+        """Create and analyse a temporary project with one source file."""
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        temporary = TemporaryDirectory()
+        root = Path(temporary.name)
+        (root / "valiance.toml").write_text(
+            "[project]\nname = \"lint-test\"\nversion = \"0.1.0\"\n\n"
+            "[entries]\nmain = \"src/main.vlnc\"\n\n"
+            f"[lints]\n{lint_table}\n\n"
+            "[dependencies]\n",
+            encoding="utf-8",
+        )
+        source_file = root / "src" / "main.vlnc"
+        source_file.parent.mkdir()
+        source_file.write_text(source, encoding="utf-8")
+        analyser = Analyser(source_file=source_file)
+        analyser.analyse(parse(source))
+        return temporary, analyser
+
+    def test_project_can_disable_specific_lints(self) -> None:
+        """The disable array suppresses only named lint codes project-wide."""
+        temporary, analyser = self._project(
+            'enabled = true\ndisable = ["prefer-sum"]',
+            "$total = 0\n[1, 2] foreach (n) => $total := + $n end\n1 as Integer",
+        )
+        self.addCleanup(temporary.cleanup)
+        codes = [item.code for item in analyser.lint_findings]
+        self.assertNotIn("prefer-sum", codes)
+        self.assertIn("redundant-cast", codes)
+
+    def test_project_can_disable_all_lints(self) -> None:
+        """Setting enabled=false suppresses all project lint findings."""
+        temporary, analyser = self._project(
+            "enabled = false\ndisable = []",
+            "$total = 0\n[1, 2] foreach (n) => $total := + $n end\n1 as Integer",
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(analyser.lint_findings, [])
+
+    def test_source_suppression_layers_on_project_policy(self) -> None:
+        """Node suppression can disable another lint after project configuration."""
+        temporary, analyser = self._project(
+            'enabled = true\ndisable = ["prefer-sum"]',
+            '@lintOff("redundant-cast")\n1 as Integer',
+        )
+        self.addCleanup(temporary.cleanup)
+        self.assertEqual(analyser.lint_findings, [])
+
+    def test_manifest_rejects_unknown_lint_codes(self) -> None:
+        """Project policy reports misspelled lint codes while loading the manifest."""
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from valiance.modules_system.packages import PackageError, load_manifest
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "valiance.toml").write_text(
+                "[project]\nname = \"x\"\n\n[entries]\n\n"
+                "[lints]\ndisable = [\"prefer-fodl\"]\n\n"
+                "[dependencies]\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(PackageError, "unknown lint code"):
+                load_manifest(root)

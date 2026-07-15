@@ -47,6 +47,14 @@ class Dependency:
 
 
 @dataclass(frozen=True)
+class LintSettings:
+    """Project-wide lint policy loaded from ``valiance.toml``."""
+
+    enabled: bool = True
+    disabled: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Manifest:
     """A parsed Valiance project manifest."""
 
@@ -54,6 +62,7 @@ class Manifest:
     project: dict[str, object]
     entries: dict[str, str]
     dependencies: tuple[Dependency, ...]
+    lints: LintSettings = LintSettings()
 
     @property
     def path(self) -> Path:
@@ -92,12 +101,33 @@ def load_manifest(root: Path) -> Manifest:
     project = data.get("project", {})
     entries = data.get("entries", {})
     dependencies = data.get("dependencies", {})
+    lints = data.get("lints", {})
     if not isinstance(project, dict):
         raise PackageError("[project] must be a table")
     if not isinstance(entries, dict):
         raise PackageError("[entries] must be a table")
     if not isinstance(dependencies, dict):
         raise PackageError("[dependencies] must be a table")
+    if not isinstance(lints, dict):
+        raise PackageError("[lints] must be a table")
+    unknown_lint_keys = set(lints) - {"enabled", "disable"}
+    if unknown_lint_keys:
+        names = ", ".join(sorted(map(str, unknown_lint_keys)))
+        raise PackageError(f"unknown [lints] setting(s): {names}")
+    lint_enabled = lints.get("enabled", True)
+    lint_disabled = lints.get("disable", [])
+    if not isinstance(lint_enabled, bool):
+        raise PackageError("[lints].enabled must be a boolean")
+    if not isinstance(lint_disabled, list) or not all(
+        isinstance(code, str) for code in lint_disabled
+    ):
+        raise PackageError("[lints].disable must be an array of lint-code strings")
+    from valiance.analysis.lints import KNOWN_LINT_CODES
+
+    unknown_codes = sorted(set(lint_disabled) - KNOWN_LINT_CODES)
+    if unknown_codes:
+        rendered = ", ".join(repr(code) for code in unknown_codes)
+        raise PackageError(f"unknown lint code(s) in [lints].disable: {rendered}")
 
     parsed_entries: dict[str, str] = {}
     for entry_name, entry_path in entries.items():
@@ -112,6 +142,7 @@ def load_manifest(root: Path) -> Manifest:
         dict(project),
         parsed_entries,
         tuple(_parse_dependency(name, value) for name, value in dependencies.items()),
+        LintSettings(lint_enabled, tuple(dict.fromkeys(lint_disabled))),
     )
 
 
@@ -169,6 +200,10 @@ def init_project(
                 "",
                 "[entries]",
                 'main = "src/main.vlnc"',
+                "",
+                "[lints]",
+                "enabled = true",
+                "disable = []",
                 "",
                 "[dependencies]",
                 "",
@@ -260,6 +295,7 @@ def add_dependency(
         manifest.project,
         manifest.entries,
         dependencies + (dependency,),
+        manifest.lints,
     )
     write_manifest(updated)
     install(manifest.root)
@@ -273,7 +309,7 @@ def remove_dependency(name: str, *, start: Path | None = None) -> Manifest:
     dependencies = _without_dependency(manifest.dependencies, name)
     if len(dependencies) == len(manifest.dependencies):
         raise PackageError(f"dependency {name!r} is not declared")
-    updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies)
+    updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies, manifest.lints)
     write_manifest(updated)
     install(manifest.root)
     unused_dir = manifest.root / ".vln" / name
@@ -308,7 +344,7 @@ def upgrade_dependency(
         updated_dependency if dependency.local_name == name else dependency
         for dependency in manifest.dependencies
     )
-    updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies)
+    updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies, manifest.lints)
     write_manifest(updated)
     install(manifest.root)
     return updated
@@ -323,6 +359,10 @@ def write_manifest(manifest: Manifest) -> None:
     lines.append("[entries]")
     for name, path in manifest.entries.items():
         lines.append(f"{name} = {_toml_value(path)}")
+    lines.append("")
+    lines.append("[lints]")
+    lines.append(f"enabled = {_toml_value(manifest.lints.enabled)}")
+    lines.append(f"disable = {_toml_value(list(manifest.lints.disabled))}")
     lines.append("")
     lines.append("[dependencies]")
     for dependency in sorted(manifest.dependencies, key=lambda item: item.local_name):

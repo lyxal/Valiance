@@ -4969,3 +4969,25 @@ literal or a numeric static variable produced by the containing function's
 introspection, so call-site checked functions can use expressions such as
 `$n = max($f.arity, $g.arity)`. Runtime variables are rejected because they
 would make the stack shape unreliable.
+
+### Project-wide lint configuration
+
+When a source file belongs to a project, the analyser reads the nearest
+`valiance.toml`. The optional `[lints]` table controls lint findings for every
+source file in that project:
+
+```toml
+[lints]
+enabled = true
+disable = ["prefer-fold", "constant-never-reassigned"]
+```
+
+- `enabled` defaults to `true`. Set it to `false` to disable all project lints.
+- `disable` defaults to an empty array and names individual stable lint codes to
+  suppress project-wide.
+- Unknown settings, invalid value types, and unknown lint codes are manifest
+  errors rather than being silently ignored.
+
+Source-level `@lintOff` and `@lintFileOff` directives layer on top of the project
+policy and can suppress additional findings. A source directive cannot re-enable
+a lint disabled by the project manifest.

@@ -978,6 +978,9 @@ class Analyser:
         self.warnings: list[str] = []
         self.lints: list[str] = []
         self.lint_findings: list[LintFinding] = []
+        self.project_lints_enabled = True
+        self.project_disabled_lint_codes: frozenset[str] = frozenset()
+        self._load_project_lint_settings()
         self.disabled_lint_codes: set[str] | None = set()
         self.attempted_lint_codes: set[str] = set()
         self.file_lint_suppressions: dict[str, ASTNode] = {}
@@ -986,9 +989,25 @@ class Analyser:
             tuple[int, Symbol, Symbol]
         ] = set()
 
+    def _load_project_lint_settings(self) -> None:
+        """Load project-wide lint policy from the nearest ``valiance.toml``."""
+        from valiance.modules_system.packages import find_project_root, load_manifest
+
+        start = self.source_file or Path.cwd()
+        root = find_project_root(start)
+        if root is None:
+            return
+        settings = load_manifest(root).lints
+        self.project_lints_enabled = settings.enabled
+        self.project_disabled_lint_codes = frozenset(settings.disabled)
+
     def analyse(self, program: list[ASTNode]) -> list[TypedNode]:
         """Analyse a top-level sequence into typed nodes."""
-        self.disabled_lint_codes = set()
+        self.disabled_lint_codes = (
+            set(self.project_disabled_lint_codes)
+            if self.project_lints_enabled
+            else None
+        )
         for node in program:
             if isinstance(node, FileLintSuppressionNode):
                 if node.codes:
@@ -1084,6 +1103,13 @@ class Analyser:
             _prelude=self._prelude,
         )
         child._friendly_owners = self._friendly_owners
+        child.project_lints_enabled = self.project_lints_enabled
+        child.project_disabled_lint_codes = self.project_disabled_lint_codes
+        child.disabled_lint_codes = (
+            None
+            if self.disabled_lint_codes is None
+            else set(self.disabled_lint_codes)
+        )
         return child
 
     def require_stack_top_assignable(
