@@ -397,6 +397,16 @@ def _if_node(
                     condition=condition_body,
                     then_branch=left.typed_body[len(body_input.typed_body) :],
                     else_branch=right.typed_body[len(body_input.typed_body) :],
+                    then_padding=(
+                        0
+                        if left.terminal or right.terminal
+                        else max(len(right.stack) - len(left.stack), 0)
+                    ),
+                    else_padding=(
+                        0
+                        if left.terminal or right.terminal
+                        else max(len(left.stack) - len(right.stack), 0)
+                    ),
                 )
                 outputs.append(
                     base.with_stack(stack).with_variables(variables).emit(typed_if)

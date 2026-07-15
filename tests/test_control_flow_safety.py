@@ -45,7 +45,7 @@ if false =>
 else =>
 end
 """)
-        self.assertEqual(stack, [RuntimeNumber("99")])
+        self.assertEqual(stack, [RuntimeNumber("99"), None, None])
 
     def test_if_unselected_branch_does_not_run_or_leak_output(self):
         output = io.StringIO()

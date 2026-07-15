@@ -682,6 +682,8 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             _refine_typed_body(typed_node.condition, old, new),
             _refine_typed_body(typed_node.then_branch, old, new),
             _refine_typed_body(typed_node.else_branch, old, new),
+            typed_node.then_padding,
+            typed_node.else_padding,
         )
     if isinstance(typed_node, TypedUnfoldNode):
         function = typed_node.function

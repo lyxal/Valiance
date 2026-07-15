@@ -81,11 +81,13 @@ class TypedTagApplicationNode(TypedNode):
 
 @dataclass(frozen=True, slots=True)
 class TypedIfNode(TypedNode):
-    """A typed conditional retaining the analysed condition and branches."""
+    """A typed conditional retaining analysed branches and runtime padding."""
 
     condition: tuple[TypedNode, ...] = ()
     then_branch: tuple[TypedNode, ...] = ()
     else_branch: tuple[TypedNode, ...] = ()
+    then_padding: int = 0
+    else_padding: int = 0
 
 
 @dataclass(frozen=True, slots=True)

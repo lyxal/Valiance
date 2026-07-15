@@ -102,6 +102,32 @@ $board
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_if_else_materializes_missing_branch_values_as_none(self):
+        """Pad a shorter conditional branch to its analysed stack shape."""
+        source = """99
+if (false) =>
+  1 2
+else =>
+end
+"""
+        self.assertEqual(execute(source), [RuntimeNumber("99"), None, None])
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        restored = loads(dumps(compile_program(typed)))
+        self.assertEqual(
+            VirtualMachine().run(restored),
+            [RuntimeNumber("99"), None, None],
+        )
+
+    def test_if_else_does_not_pad_the_longer_branch(self):
+        """Leave the selected branch values intact when it has full arity."""
+        self.assertEqual(
+            execute("if (true) => 1 2 else => end"),
+            [RuntimeNumber("1"), RuntimeNumber("2")],
+        )
+
     def test_assert_else_returns_assert_error(self):
         [value] = execute('assert => false else => "wrong value" end')
         self.assertIsInstance(value, ObjectValue)

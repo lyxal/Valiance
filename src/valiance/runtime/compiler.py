@@ -923,10 +923,16 @@ class _Compiler:
         self.expression(condition)
         jump_to_else = self.emit(OpCode.JUMP_IF_FALSE, None)
         self.expression(then_branch)
+        if isinstance(typed_node, TypedIfNode):
+            for _ in range(typed_node.then_padding):
+                self.emit(OpCode.PUSH_CONST, None)
         jump_to_end = self.emit(OpCode.JUMP, None)
         else_start = len(self.instructions)
         self.patch(jump_to_else, else_start)
         self.expression(else_branch)
+        if isinstance(typed_node, TypedIfNode):
+            for _ in range(typed_node.else_padding):
+                self.emit(OpCode.PUSH_CONST, None)
         self.patch(jump_to_end, len(self.instructions))
 
     def assert_node(self, node: AssertNode, typed_node: TypedNode | None) -> None:
