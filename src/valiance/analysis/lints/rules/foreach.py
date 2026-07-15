@@ -10,6 +10,7 @@ from valiance.asts import (
     ASTNode,
     ForNode,
     FunctionNode,
+    GetVariableNode,
     SetVariableNode,
     SetVariablesNode,
     TypedElementNode,
@@ -65,24 +66,32 @@ def lint_stateless_foreach(context: NodeLintContext):
 
 
 def lint_stateless_foreach_as_fold(context: NodeLintContext):
-    """Prefer fold for effect-free foreach loops without shared mutable state."""
+    """Prefer fold when one accumulator is updated from each loop item."""
     node = context.node
     if not isinstance(node, ForNode):
         return ()
 
     outer_names = frozenset(context.branch.variables.visible_names())
-    if _writes_outer_variable(node.body, outer_names):
+    assignments = tuple(
+        child
+        for child in node.body
+        if isinstance(child, SetVariableNode) and child.name in outer_names
+    )
+    if len(assignments) != 1:
+        return ()
+    if not _reads_variable(node.body, node.variable):
         return ()
 
     typed_loops = tuple(_typed_loops(context.outputs))
     if not typed_loops or any(_has_element_tags(loop.body) for loop in typed_loops):
         return ()
 
+    accumulator = assignments[0].name
     return (
         finding(
             "prefer-fold",
-            "foreach loop does not modify an outer variable and its body has no "
-            "element tags; prefer fold because the loop does not require shared state",
+            f"foreach loop updates only '${accumulator}' from the loop item and "
+            "its body has no element tags; prefer fold for this accumulation",
             node,
         ),
     )
@@ -114,6 +123,21 @@ def _writes_outer_variable(nodes: tuple[ASTNode, ...], outer_names: frozenset) -
                 value = getattr(node, field.name)
                 nested = _ast_nodes(value)
                 if nested and _writes_outer_variable(nested, outer_names):
+                    return True
+    return False
+
+
+def _reads_variable(nodes: tuple[ASTNode, ...], name: object) -> bool:
+    """Return whether executable loop code reads ``name`` outside nested functions."""
+    for node in nodes:
+        if isinstance(node, FunctionNode):
+            continue
+        if isinstance(node, GetVariableNode) and node.name == name:
+            return True
+        if is_dataclass(node):
+            for field in fields(node):
+                nested = _ast_nodes(getattr(node, field.name))
+                if nested and _reads_variable(nested, name):
                     return True
     return False
 

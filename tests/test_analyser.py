@@ -4817,10 +4817,9 @@ class ForeachRefactoringLintTests(unittest.TestCase):
         analyser = self._analyse("[1, 2, 3] foreach (n) => $n 1 + end")
         self.assertEqual(
             [finding.code for finding in analyser.lint_findings],
-            ["prefer-vectorisation-or-map", "prefer-fold"],
+            ["prefer-vectorisation-or-map"],
         )
         self.assertIn("prefer vectorisation", analyser.lints[0])
-        self.assertIn("prefer fold", analyser.lints[1])
 
     def test_length_foreach_suggests_map_not_vectorisation(self):
         analyser = self._analyse(
@@ -4836,10 +4835,9 @@ class ForeachRefactoringLintTests(unittest.TestCase):
         )
         self.assertEqual(
             [finding.code for finding in analyser.lint_findings],
-            ["prefer-vectorisation-or-map", "prefer-fold"],
+            ["prefer-vectorisation-or-map"],
         )
         self.assertIn("prefer map", analyser.lints[0])
-        self.assertIn("prefer fold", analyser.lints[1])
 
     def test_foreach_mutating_outer_variable_is_not_linted(self):
         analyser = self._analyse(
@@ -4847,7 +4845,27 @@ class ForeachRefactoringLintTests(unittest.TestCase):
         )
         codes = [finding.code for finding in analyser.lint_findings]
         self.assertNotIn("prefer-vectorisation-or-map", codes)
+        self.assertIn("prefer-fold", codes)
+        self.assertIn("prefer fold", analyser.lints[0])
+
+    def test_foreach_modifying_two_outer_variables_does_not_suggest_fold(self):
+        analyser = self._analyse(
+            "$left = 0\n$right = 0\n"
+            "[1, 2, 3] foreach (n) => "
+            "$left := + $n | $right := + $n end"
+        )
+        codes = [finding.code for finding in analyser.lint_findings]
+        self.assertNotIn("prefer-vectorisation-or-map", codes)
         self.assertNotIn("prefer-fold", codes)
+
+    def test_foreach_update_unrelated_to_loop_item_does_not_suggest_fold(self):
+        analyser = self._analyse(
+            "$total = 0\n[1, 2, 3] foreach (n) => $total := + 1 end"
+        )
+        self.assertNotIn(
+            "prefer-fold",
+            [finding.code for finding in analyser.lint_findings],
+        )
 
     def test_foreach_with_element_tags_is_not_linted(self):
         analyser = self._analyse("[1, 2, 3] foreach (n) => println($n) end")
