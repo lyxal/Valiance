@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import cast
 
 import valiance.analysis.annotations as annotation_hooks
+from valiance.analysis.lints import KNOWN_LINT_CODES, finding
 import valiance.vtypes as T
 from valiance.asts import (
     AnnotationNode,
@@ -83,9 +84,20 @@ def _file_lint_suppression(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Apply a file-scoped lint suppression without emitting runtime code."""
+    unknown = tuple(code for code in node.codes if code not in KNOWN_LINT_CODES)
+    for code in unknown:
+        self._record_lint_finding(
+            finding(
+                "unknown-lint-code",
+                f"unknown lint code '{code}' in @lintFileOff",
+                node,
+            )
+        )
+    known = tuple(code for code in node.codes if code in KNOWN_LINT_CODES)
     if node.codes:
         if self.disabled_lint_codes is not None:
-            self.disabled_lint_codes.update(node.codes)
+            self.disabled_lint_codes.update(known)
+        self.file_lint_suppressions.update({code: node for code in known})
     else:
         self.disabled_lint_codes = None
     return _core.BranchSet((branch,))
@@ -98,10 +110,16 @@ def _lint_suppression(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse one statement and discard its selected lint findings."""
+    unknown = tuple(code for code in node.codes if code not in KNOWN_LINT_CODES)
+    for code in unknown:
+        self._record_lint_finding(
+            finding("unknown-lint-code", f"unknown lint code '{code}' in @lintOff", node)
+        )
     finding_count = len(self.lint_findings)
     outputs = self.analyse_from(branch, node.body)
     new_findings = self.lint_findings[finding_count:]
-    suppressed = set(node.codes)
+    produced = {item.code for item in new_findings}
+    suppressed = {code for code in node.codes if code in KNOWN_LINT_CODES}
     kept = (
         ()
         if not node.codes
@@ -110,6 +128,14 @@ def _lint_suppression(
     del self.lint_findings[finding_count:]
     del self.lints[finding_count:]
     self._extend_lint_findings(kept)
+    for code in sorted(suppressed - produced):
+        self._record_lint_finding(
+            finding(
+                "unused-lint-suppression",
+                f"lint suppression for '{code}' is unused",
+                node,
+            )
+        )
     return outputs
 
 

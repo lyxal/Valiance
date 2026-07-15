@@ -291,3 +291,27 @@ emission. A safe progression is:
 Enabling optimisation must never change which diagnostics are reported. The
 current bytecode optimiser intentionally does not consume lint messages or
 `replacement` display text.
+
+## Additional built-in guidance
+
+The default registry also includes conservative rules for common source idioms:
+
+- `unused-loop-index` removes an unread `foreach` index binding.
+- `constant-never-reassigned` recommends `const` for a binding written once.
+- `captured-write-not-persistent` explains closure capture write semantics.
+- `prefer-sum` recognises a single additive accumulator and takes precedence
+  over the more general `prefer-fold` rule.
+- `prefer-filter` recognises the narrow conditional unchanged-item collection
+  shape.
+- `explicit-map-can-vectorise` recommends direct vectorisation only when every
+  selected mapped element overload permits it and has no element tags.
+- `prefer-match` recognises repeated literal equality tests over one variable.
+- `while-can-be-foreach` recognises only the index/length/increment traversal
+  shape.
+- `unknown-lint-code` reports misspelled codes in `@lintOff` and
+  `@lintFileOff`.
+- `unused-lint-suppression` reports stale specific suppressions. Blanket
+  suppressions do not produce this finding.
+
+These rules deliberately prefer false negatives to speculative rewrites. They
+remain advisory and can be suppressed using the ordinary lint directives.

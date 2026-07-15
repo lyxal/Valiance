@@ -4845,8 +4845,8 @@ class ForeachRefactoringLintTests(unittest.TestCase):
         )
         codes = [finding.code for finding in analyser.lint_findings]
         self.assertNotIn("prefer-vectorisation-or-map", codes)
-        self.assertIn("prefer-fold", codes)
-        self.assertIn("prefer fold", analyser.lints[0])
+        self.assertIn("prefer-sum", codes)
+        self.assertNotIn("prefer-fold", codes)
 
     def test_foreach_modifying_two_outer_variables_does_not_suggest_fold(self):
         analyser = self._analyse(

@@ -9,6 +9,7 @@ import valiance.vtypes as T
 from valiance.asts import (
     ASTNode,
     BreakNode,
+    ElementNode,
     ForNode,
     FunctionNode,
     GetVariableNode,
@@ -21,6 +22,7 @@ from valiance.asts import (
 )
 
 from valiance.elements.builtins import BUILTIN_ELEMENTS
+from valiance.vtypes.symbols import Symbol
 
 from ..contexts import NodeLintContext
 from ..models import finding
@@ -83,6 +85,8 @@ def lint_stateless_foreach_as_fold(context: NodeLintContext):
         for child in node.body
         if isinstance(child, SetVariableNode) and child.name in outer_names
     )
+    if _is_simple_sum(node, assignments):
+        return ()
     if len(assignments) != 1:
         return ()
     if not _reads_variable(node.body, node.variable):
@@ -100,6 +104,22 @@ def lint_stateless_foreach_as_fold(context: NodeLintContext):
             "its body has no element tags; prefer fold for this accumulation",
             node,
         ),
+    )
+
+
+def _is_simple_sum(
+    node: ForNode,
+    assignments: tuple[SetVariableNode, ...],
+) -> bool:
+    """Return whether the loop is handled by the more specific prefer-sum lint."""
+    return (
+        len(assignments) == 1
+        and sum(
+            isinstance(item, ElementNode) and item.name == Symbol("+")
+            for item in node.body
+        ) == 1
+        and _reads_variable(node.body, node.variable)
+        and _reads_variable(node.body, assignments[0].name)
     )
 
 

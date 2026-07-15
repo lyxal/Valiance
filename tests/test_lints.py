@@ -57,3 +57,124 @@ class LintRegistryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class BuiltinLintRuleTests(unittest.TestCase):
+    """Exercise the conservative built-in lint patterns and suppression checks."""
+
+    def _codes(self, source: str) -> list[str]:
+        """Analyse source and return stable lint codes."""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        return [item.code for item in analyser.lint_findings]
+
+    def test_unused_foreach_index(self) -> None:
+        """An unread index binding is removable."""
+        self.assertIn(
+            "unused-loop-index",
+            self._codes("[1, 2] foreach (n, index) => $n 1 + end"),
+        )
+
+    def test_mutable_binding_written_once_can_be_const(self) -> None:
+        """A binding with one write and a later read can be constant."""
+        self.assertIn("constant-never-reassigned", self._codes("$x = 1\n$x 2 +"))
+
+    def test_captured_write_warns_that_state_is_not_persistent(self) -> None:
+        """Closure-local writes to captures have surprising persistence semantics."""
+        self.assertIn(
+            "captured-write-not-persistent",
+            self._codes("fn =>\n  $x = 1\n  fn => $x := + 1 end\nend"),
+        )
+
+    def test_additive_accumulator_prefers_sum_over_fold(self) -> None:
+        """The sum-specific lint wins over generic fold guidance."""
+        codes = self._codes(
+            "$total = 0\n[1, 2, 3] foreach (n) => $total := + $n end"
+        )
+        self.assertIn("prefer-sum", codes)
+        self.assertNotIn("prefer-fold", codes)
+
+    def test_vectorising_map_prefers_direct_vectorisation(self) -> None:
+        """A map containing a pervasive arithmetic call can vectorise directly."""
+        self.assertIn(
+            "explicit-map-can-vectorise",
+            self._codes("[1, 2, 3] map: + 1"),
+        )
+
+    def test_repeated_literal_equality_chain_prefers_match(self) -> None:
+        """An else-if chain over one subject is match-shaped."""
+        self.assertIn(
+            "prefer-match",
+            self._codes(
+                "$x = 1\n"
+                "if ($x 1 ==) => 1 "
+                "else if ($x 2 ==) => 2 else => 3 end"
+            ),
+        )
+
+    def test_unknown_suppression_code_is_reported(self) -> None:
+        """Misspelled lint codes do not silently suppress nothing."""
+        self.assertIn(
+            "unknown-lint-code",
+            self._codes(
+                '@lintOff("prefer-fodl")\n[1, 2] foreach (n) => $n 1 + end'
+            ),
+        )
+
+    def test_unused_specific_suppression_is_reported(self) -> None:
+        """Stale specific suppressions remain visible."""
+        self.assertIn(
+            "unused-lint-suppression",
+            self._codes(
+                '@lintOff("prefer-fold")\n[1, 2] foreach (n) => $n 1 + end'
+            ),
+        )
+
+    def test_prefer_filter_rule_matches_conditional_collection_shape(self) -> None:
+        """The filter lint recognises only the narrow unchanged-item pattern."""
+        from valiance.analysis import AnalysisBranch, BranchSet
+        from valiance.analysis.lints.rules.idioms import prefer_filter
+        from valiance.asts import ElementNode, ForNode, GetVariableNode, IfNode
+        from valiance.vtypes.symbols import Symbol
+
+        loop = ForNode(
+            Symbol("n"),
+            body=(
+                IfNode(
+                    condition=(GetVariableNode(Symbol("n")),),
+                    then_branch=(
+                        GetVariableNode(Symbol("n")),
+                        ElementNode(Symbol("append")),
+                    ),
+                ),
+            ),
+        )
+        context = NodeLintContext(
+            node=loop,
+            branch=AnalysisBranch(),
+            outputs=BranchSet((AnalysisBranch(),)),
+            env=Analyser().env,
+        )
+        self.assertEqual(prefer_filter(context)[0].code, "prefer-filter")
+
+    def test_while_traversal_rule_matches_index_pattern(self) -> None:
+        """The foreach suggestion requires length, indexing, and increment shapes."""
+        from valiance.analysis import AnalysisBranch, BranchSet
+        from valiance.analysis.lints.rules.idioms import while_can_be_foreach
+        from valiance.asts import ElementNode, GetVariableNode, IndexAccessNode, WhileNode
+        from valiance.vtypes.symbols import Symbol
+
+        loop = WhileNode(
+            condition=(
+                GetVariableNode(Symbol("i")),
+                GetVariableNode(Symbol("xs")),
+                ElementNode(Symbol("length")),
+            ),
+            body=(IndexAccessNode(), ElementNode(Symbol("inc"))),
+        )
+        context = NodeLintContext(
+            node=loop,
+            branch=AnalysisBranch(),
+            outputs=BranchSet((AnalysisBranch(),)),
+            env=Analyser().env,
+        )
+        self.assertEqual(while_can_be_foreach(context)[0].code, "while-can-be-foreach")

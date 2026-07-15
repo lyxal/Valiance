@@ -10,12 +10,40 @@ from .models import LintFinding, LintRewrite, RewriteKind, finding
 from .registry import LintRegistry
 from .rules import load_rules
 
+
+KNOWN_LINT_CODES = frozenset(
+    {
+        "captured-write-not-persistent",
+        "constant-never-reassigned",
+        "duplicate-match-case",
+        "duplicate-pattern-alternative",
+        "explicit-map-can-vectorise",
+        "no-op-copy",
+        "no-op-move",
+        "prefer-filter",
+        "prefer-fold",
+        "prefer-match",
+        "prefer-sum",
+        "prefer-vectorisation-or-map",
+        "redundant-cast",
+        "redundant-checked-cast",
+        "safe-checked-cast",
+        "unknown-lint-code",
+        "unreachable-code",
+        "unreachable-match-case",
+        "unused-lint-suppression",
+        "unused-loop-index",
+        "while-can-be-foreach",
+    }
+)
+
 DEFAULT_REGISTRY = LintRegistry()
 load_rules(DEFAULT_REGISTRY)
 
 __all__ = [
     "BlockLintContext",
     "DEFAULT_REGISTRY",
+    "KNOWN_LINT_CODES",
     "LintFinding",
     "LintRegistry",
     "LintRewrite",

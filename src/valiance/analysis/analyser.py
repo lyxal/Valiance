@@ -41,6 +41,7 @@ from valiance.asts import (
     ElementExtension,
     ElementNode,
     EnumMemberNode,
+    FileLintSuppressionNode,
     FunctionNode,
     FunctionOverloadTyping,
     FunctionParam,
@@ -978,6 +979,8 @@ class Analyser:
         self.lints: list[str] = []
         self.lint_findings: list[LintFinding] = []
         self.disabled_lint_codes: set[str] | None = set()
+        self.attempted_lint_codes: set[str] = set()
+        self.file_lint_suppressions: dict[str, ASTNode] = {}
         self._friendly_owners: tuple[Symbol, ...] = ()
         self._reported_data_element_disjoints: set[
             tuple[int, Symbol, Symbol]
@@ -986,11 +989,30 @@ class Analyser:
     def analyse(self, program: list[ASTNode]) -> list[TypedNode]:
         """Analyse a top-level sequence into typed nodes."""
         self.disabled_lint_codes = set()
+        for node in program:
+            if isinstance(node, FileLintSuppressionNode):
+                if node.codes:
+                    self.disabled_lint_codes.update(node.codes)
+                else:
+                    self.disabled_lint_codes = None
+                    break
+        self.attempted_lint_codes.clear()
+        self.file_lint_suppressions.clear()
         if self._owns_prelude:
             self._prelude.nodes.clear()
             self._prelude.bindings.clear()
         initial = BranchSet((AnalysisBranch(input_mode=InputMode.TOP_LEVEL),))
         final = self.analyse_block(initial, tuple(program))
+        for code, directive in self.file_lint_suppressions.items():
+            if code not in self.attempted_lint_codes:
+                self._record_lint_finding(
+                    LintFinding(
+                        code="unused-lint-suppression",
+                        message=f"file lint suppression for '{code}' is unused",
+                        location=directive.location,
+                        node=directive,
+                    )
+                )
         if len(final) != 1:
             return [TypedNode(node, None) for node in program]
         return [*self._prelude.nodes, *next(iter(final)).typed_body]
@@ -4373,6 +4395,7 @@ class Analyser:
 
     def _record_lint_finding(self, finding: LintFinding) -> None:
         """Append one structured finding while preserving the string API."""
+        self.attempted_lint_codes.add(finding.code)
         if self.disabled_lint_codes is None or finding.code in self.disabled_lint_codes:
             return
         if finding in self.lint_findings:
