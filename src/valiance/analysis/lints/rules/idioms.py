@@ -7,6 +7,7 @@ from dataclasses import fields, is_dataclass
 import valiance.vtypes as T
 from valiance.asts import (
     ASTNode,
+    BreakNode,
     ElementNode,
     ForNode,
     FunctionNode,
@@ -14,6 +15,7 @@ from valiance.asts import (
     IfNode,
     IndexAccessNode,
     NumberLiteralNode,
+    ReturnNode,
     SetVariableNode,
     TypedElementNode,
     TypedNode,
@@ -39,7 +41,11 @@ def register(registry: LintRegistry) -> None:
 def prefer_sum(context: NodeLintContext):
     """Recognise a single numeric accumulator updated by addition."""
     node = context.node
-    if not isinstance(node, ForNode) or not _simple_sum_body(node):
+    if (
+        not isinstance(node, ForNode)
+        or _contains_loop_exit(node.body)
+        or not _simple_sum_body(node)
+    ):
         return ()
     return (
         finding(
@@ -53,7 +59,11 @@ def prefer_sum(context: NodeLintContext):
 def prefer_filter(context: NodeLintContext):
     """Recognise a conditional collection of the unchanged loop item."""
     node = context.node
-    if not isinstance(node, ForNode) or len(node.body) != 1:
+    if (
+        not isinstance(node, ForNode)
+        or _contains_loop_exit(node.body)
+        or len(node.body) != 1
+    ):
         return ()
     conditional = node.body[0]
     if not isinstance(conditional, IfNode) or conditional.else_branch:
@@ -162,6 +172,23 @@ def while_can_be_foreach(context: NodeLintContext):
             node,
         ),
     )
+
+
+def _contains_loop_exit(values: object) -> bool:
+    """Return whether AST content exits its containing loop or function."""
+    if isinstance(values, FunctionNode):
+        return False
+    if isinstance(values, (BreakNode, ReturnNode)):
+        return True
+    if isinstance(values, ASTNode) and is_dataclass(values):
+        return any(
+            _contains_loop_exit(getattr(values, field.name))
+            for field in fields(values)
+            if field.name != "location"
+        )
+    if isinstance(values, (tuple, list)):
+        return any(_contains_loop_exit(value) for value in values)
+    return False
 
 
 def _simple_sum_body(node: ForNode) -> bool:

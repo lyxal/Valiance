@@ -74,6 +74,21 @@ class BuiltinLintRuleTests(unittest.TestCase):
             self._codes("[1, 2] foreach (n, index) => $n 1 + end"),
         )
 
+
+    def test_augmented_assignment_is_not_treated_as_single_assignment(self) -> None:
+        """An accumulator update is inherently a reassignment, even before break."""
+        source = (
+            "$total = 0\n"
+            "[1, 2, 3, 4] foreach (n) =>\n"
+            "  $total := + $n\n"
+            "  break\n"
+            "end\n"
+            "println $total"
+        )
+        codes = self._codes(source)
+        self.assertNotIn("constant-never-reassigned", codes)
+        self.assertNotIn("prefer-sum", codes)
+
     def test_mutable_binding_written_once_can_be_const(self) -> None:
         """A binding with one write and a later read can be constant."""
         self.assertIn("constant-never-reassigned", self._codes("$x = 1\n$x 2 +"))

@@ -63,7 +63,10 @@ def captured_variable_write(context: NodeLintContext):
 def constants_never_reassigned(context: BlockLintContext):
     """Suggest const for a mutable binding written exactly once in this block."""
     candidates = tuple(
-        write for node in context.nodes for write in _direct_writes(node)
+        write
+        for index, node in enumerate(context.nodes)
+        for write in _direct_writes(node)
+        if not _reads_name(context.nodes[:index], write.name)
     )
     all_writes = tuple(_nested_writes(context.nodes))
     findings = []
