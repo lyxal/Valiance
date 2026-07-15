@@ -4805,3 +4805,45 @@ end
 
 if __name__ == "__main__":
     unittest.main()
+
+class ForeachRefactoringLintTests(unittest.TestCase):
+    def _analyse(self, source: str):
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        return analyser
+
+    def test_stateless_foreach_suggests_vectorisation(self):
+        analyser = self._analyse("[1, 2, 3] foreach (n) => $n 1 + end")
+        self.assertEqual(
+            [finding.code for finding in analyser.lint_findings],
+            ["prefer-vectorisation-or-map"],
+        )
+        self.assertIn("prefer vectorisation", analyser.lints[0])
+
+    def test_stateless_foreach_suggests_map_for_non_vectorising_body(self):
+        analyser = self._analyse(
+            "define first(xs: Number+ exact) -> Number => $xs $[0] end\n"
+            "[[1], [2], [3]] foreach (xs) => first($xs) end"
+        )
+        self.assertEqual(
+            [finding.code for finding in analyser.lint_findings],
+            ["prefer-vectorisation-or-map"],
+        )
+        self.assertIn("prefer map", analyser.lints[0])
+
+    def test_foreach_mutating_outer_variable_is_not_linted(self):
+        analyser = self._analyse(
+            "$total = 0\n[1, 2, 3] foreach (n) => $total := + $n end"
+        )
+        self.assertNotIn(
+            "prefer-vectorisation-or-map",
+            [finding.code for finding in analyser.lint_findings],
+        )
+
+    def test_foreach_with_element_tags_is_not_linted(self):
+        analyser = self._analyse("[1, 2, 3] foreach (n) => println($n) end")
+        self.assertNotIn(
+            "prefer-vectorisation-or-map",
+            [finding.code for finding in analyser.lint_findings],
+        )
