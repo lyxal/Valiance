@@ -8,9 +8,11 @@ from typing import Any
 import valiance.vtypes as T
 from valiance.asts import (
     ASTNode,
+    BreakNode,
     ForNode,
     FunctionNode,
     GetVariableNode,
+    ReturnNode,
     SetVariableNode,
     SetVariablesNode,
     TypedElementNode,
@@ -35,6 +37,8 @@ def lint_stateless_foreach(context: NodeLintContext):
     """Prefer vectorisation or map for effect-free, stateless foreach loops."""
     node = context.node
     if not isinstance(node, ForNode):
+        return ()
+    if _contains_loop_exit(node.body):
         return ()
 
     outer_names = frozenset(context.branch.variables.visible_names())
@@ -69,6 +73,8 @@ def lint_stateless_foreach_as_fold(context: NodeLintContext):
     """Prefer fold when one accumulator is updated from each loop item."""
     node = context.node
     if not isinstance(node, ForNode):
+        return ()
+    if _contains_loop_exit(node.body):
         return ()
 
     outer_names = frozenset(context.branch.variables.visible_names())
@@ -123,6 +129,22 @@ def _writes_outer_variable(nodes: tuple[ASTNode, ...], outer_names: frozenset) -
                 value = getattr(node, field.name)
                 nested = _ast_nodes(value)
                 if nested and _writes_outer_variable(nested, outer_names):
+                    return True
+    return False
+
+
+def _contains_loop_exit(nodes: tuple[ASTNode, ...]) -> bool:
+    """Return whether executable loop code contains a break or return."""
+    for node in nodes:
+        if isinstance(node, FunctionNode):
+            # A return or break in a merely-created closure does not exit this loop.
+            continue
+        if isinstance(node, (BreakNode, ReturnNode)):
+            return True
+        if is_dataclass(node):
+            for field in fields(node):
+                nested = _ast_nodes(getattr(node, field.name))
+                if nested and _contains_loop_exit(nested):
                     return True
     return False
 

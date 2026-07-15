@@ -4867,6 +4867,35 @@ class ForeachRefactoringLintTests(unittest.TestCase):
             [finding.code for finding in analyser.lint_findings],
         )
 
+    def test_stateless_foreach_with_break_is_not_linted(self):
+        analyser = self._analyse(
+            "[1, 2, 3] foreach (n) => if ($n 2 ==) => break $n end end"
+        )
+        codes = [finding.code for finding in analyser.lint_findings]
+        self.assertNotIn("prefer-vectorisation-or-map", codes)
+        self.assertNotIn("prefer-fold", codes)
+
+    def test_accumulating_foreach_with_break_is_not_linted(self):
+        analyser = self._analyse(
+            "$total = 0\n"
+            "[1, 2, 3] foreach (n) => "
+            "$total := + $n | if ($n 2 ==) => break end end"
+        )
+        codes = [finding.code for finding in analyser.lint_findings]
+        self.assertNotIn("prefer-vectorisation-or-map", codes)
+        self.assertNotIn("prefer-fold", codes)
+
+    def test_foreach_with_return_is_not_linted(self):
+        analyser = self._analyse(
+            "define firstPositive(xs: Number+) -> Number =>\n"
+            "  $xs foreach (n) => if ($n 0 >) => return $n end end\n"
+            "  0\n"
+            "end"
+        )
+        codes = [finding.code for finding in analyser.lint_findings]
+        self.assertNotIn("prefer-vectorisation-or-map", codes)
+        self.assertNotIn("prefer-fold", codes)
+
     def test_foreach_with_element_tags_is_not_linted(self):
         analyser = self._analyse("[1, 2, 3] foreach (n) => println($n) end")
         codes = [finding.code for finding in analyser.lint_findings]
