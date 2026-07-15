@@ -4817,9 +4817,10 @@ class ForeachRefactoringLintTests(unittest.TestCase):
         analyser = self._analyse("[1, 2, 3] foreach (n) => $n 1 + end")
         self.assertEqual(
             [finding.code for finding in analyser.lint_findings],
-            ["prefer-vectorisation-or-map"],
+            ["prefer-vectorisation-or-map", "prefer-fold"],
         )
         self.assertIn("prefer vectorisation", analyser.lints[0])
+        self.assertIn("prefer fold", analyser.lints[1])
 
     def test_stateless_foreach_suggests_map_for_non_vectorising_body(self):
         analyser = self._analyse(
@@ -4828,22 +4829,21 @@ class ForeachRefactoringLintTests(unittest.TestCase):
         )
         self.assertEqual(
             [finding.code for finding in analyser.lint_findings],
-            ["prefer-vectorisation-or-map"],
+            ["prefer-vectorisation-or-map", "prefer-fold"],
         )
         self.assertIn("prefer map", analyser.lints[0])
+        self.assertIn("prefer fold", analyser.lints[1])
 
     def test_foreach_mutating_outer_variable_is_not_linted(self):
         analyser = self._analyse(
             "$total = 0\n[1, 2, 3] foreach (n) => $total := + $n end"
         )
-        self.assertNotIn(
-            "prefer-vectorisation-or-map",
-            [finding.code for finding in analyser.lint_findings],
-        )
+        codes = [finding.code for finding in analyser.lint_findings]
+        self.assertNotIn("prefer-vectorisation-or-map", codes)
+        self.assertNotIn("prefer-fold", codes)
 
     def test_foreach_with_element_tags_is_not_linted(self):
         analyser = self._analyse("[1, 2, 3] foreach (n) => println($n) end")
-        self.assertNotIn(
-            "prefer-vectorisation-or-map",
-            [finding.code for finding in analyser.lint_findings],
-        )
+        codes = [finding.code for finding in analyser.lint_findings]
+        self.assertNotIn("prefer-vectorisation-or-map", codes)
+        self.assertNotIn("prefer-fold", codes)

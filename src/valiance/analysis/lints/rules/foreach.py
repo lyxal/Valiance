@@ -24,6 +24,7 @@ from ..registry import LintRegistry
 def register(registry: LintRegistry) -> None:
     """Register foreach refactoring guidance with a lint registry."""
     registry.register_node(ForNode, lint_stateless_foreach)
+    registry.register_node(ForNode, lint_stateless_foreach_as_fold)
 
 
 def lint_stateless_foreach(context: NodeLintContext):
@@ -55,6 +56,30 @@ def lint_stateless_foreach(context: NodeLintContext):
             "prefer-vectorisation-or-map",
             "foreach loop does not modify an outer variable and its body has no "
             f"element tags; prefer {recommendation} because {reason}",
+            node,
+        ),
+    )
+
+
+def lint_stateless_foreach_as_fold(context: NodeLintContext):
+    """Prefer fold for effect-free foreach loops without shared mutable state."""
+    node = context.node
+    if not isinstance(node, ForNode):
+        return ()
+
+    outer_names = frozenset(context.branch.variables.visible_names())
+    if _writes_outer_variable(node.body, outer_names):
+        return ()
+
+    typed_loops = tuple(_typed_loops(context.outputs))
+    if not typed_loops or any(_has_element_tags(loop.body) for loop in typed_loops):
+        return ()
+
+    return (
+        finding(
+            "prefer-fold",
+            "foreach loop does not modify an outer variable and its body has no "
+            "element tags; prefer fold because the loop does not require shared state",
             node,
         ),
     )
