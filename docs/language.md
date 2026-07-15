@@ -1576,7 +1576,7 @@ end
 
   * Although an `unfold` may terminate, it is not always possible to determine this statically.
   * All lists produced by `unfold` are therefore marked infinite for safety.
-  * `#!infinite` can be used to remove the tag when appropriate.
+  * `#-infinite` can be used to remove the tag when appropriate.
 
 ## 10.8. `at`
 
@@ -2433,12 +2433,12 @@ tag #<name> as <category>
 ```
 
 - The tag is then attached to the value. For example, `[1, 2, 3] #sorted` is a `#sorted Number+`.
-- Tags can also be removed from a value using `#!<name>` or the equivalent `#-<name>` spelling. Attempting to remove a tag from a value that does not have that tag is a compile error.
+- Tags can also be removed from a value using `#-<name>` or the equivalent `#-<name>` spelling. Attempting to remove a tag from a value that does not have that tag is a compile error.
 
 ## 17.1. Constructed Tags
 - Constructed tags represent properties of data that are a consequence of how that data is constructed. For example, an infinite list can only be infinite if it is constructed that way.
 - Constructed tags are sticky across ordinary operations and generic flow. A constructed-like tag guaranteed on any input is carried to every output whose rank is high enough, without requiring a tag overlay.
-- A constructed tag is removed only by an explicit absence contract such as `#!infinite`, direct `#!infinite`/`#-infinite` removal, an exact return tag set that excludes it, or omission from that tag's own overlay return contract. Computed tags remain non-sticky.
+- A constructed tag is removed only by an explicit absence contract such as `#-infinite`, direct `#-infinite`/`#-infinite` removal, an exact return tag set that excludes it, or omission from that tag's own overlay return contract. Computed tags remain non-sticky.
 - If a tagged input has effective rank `n`, the output carries the tag at depth `(output rank - 1)` when the output rank is at least `n`. For a tag at depth `d` on a rank-`r` input, its effective rank is `max(r - d, 0)`. If the output rank is lower, the tag is not carried.
 - Runtime evidence follows the same rule through built-ins, user functions, casts, optimization, and serialized bytecode. Recursive return and cast contracts remove only evidence that their explicit tag policy excludes.
 - For example, `#infinite [1, 2, 3] + 4` has type `#infinite Integer+`; no overlay is required for the constructed tag to survive the vectorized addition.
@@ -2451,7 +2451,7 @@ tag #<name> as <category>
 - However, this can lead to situations where a unit number is used in a situation where it doesn't make semantic sense.
 - For example, indexing a list by a distance doesn't really make that much sense.
 - Unit tags are constructed tags with an extra rule: a unit-tagged value cannot be passed where that unit tag is not expected.
-- Operations that consume a plain scalar, including collection indexing, therefore reject unit-tagged values. The unit must be explicitly removed with `#!unit` or `#-unit` when discarding it is intentional.
+- Operations that consume a plain scalar, including collection indexing, therefore reject unit-tagged values. The unit must be explicitly removed with `#-unit` or `#-unit` when discarding it is intentional.
 - A matching unit-tag overlay is an explicit permission for an otherwise plain implementation to consume that unit. Only the overlay's own unit is erased for underlying overload selection; unrelated units remain protected.
 - Once an operation is permitted to consume a unit-tagged value, the unit follows the same sticky rank/depth rules as any constructed tag unless explicitly removed.
 
@@ -2498,10 +2498,10 @@ end
 ## 17.5. Expecting Tags in Parameters
 
 - To signify that a parameter expects data to have a certain tag, simply add that tag as part of the type.
-- However, to signify that a parameter must have an absence of a certain tag, the tag must start with `#!` instead of `#`.
+- However, to signify that a parameter must have an absence of a certain tag, the tag must start with `#-` instead of `#`.
 - When a tag is expected, a parameter is only matched if the argument has that expected tag. The argument can have any other number of tags, so long as it has the specified tag.
 - However, it may be desirable to disallow this flexibility. Wrapping the set of data tags in `[]` in a parameter type requires the compile-time present-tag set to be exactly that set. An argument with any additional or missing present tags will not match. `[] T` therefore requires an exact empty tag set.
-- Absence requirements are checked before erasable computed or constructed tags are forgotten, so a present `#tag` can never satisfy `#!tag` by implicit tag loss.
+- Absence requirements are checked before erasable computed or constructed tags are forgotten, so a present `#tag` can never satisfy `#-tag` by implicit tag loss.
 - Example:
 
 ```
@@ -2511,7 +2511,7 @@ define foo(:#someTag Number) => ...
 define baz(:[#someTag] Number) => ...
 #? baz cannot accept a `#someTag #otherTag Number`
 
-def bar(:#!someTag Number) => ...
+def bar(:#-someTag Number) => ...
 #? bar will not accept a `#someTag #otherTag Number`, but will accept an `#otherTag Number`
 ```
 
@@ -2547,7 +2547,7 @@ tag #A disjoint #B
 
 ```
 define +(:#sorted Number+, :Number) -> #sorted Number+ =>
-  dip: #!sorted #? To avoid infinite recursion
+  dip: #-sorted #? To avoid infinite recursion
   +
   #sorted
 end
@@ -2763,7 +2763,7 @@ tag #data disjoint element
 tag #infinite disjoint Eager
 unfold (...) => ... end println #? Compile Error!
 #? The #infinite from the unfold would need to be removed
-#? with #!infinite
+#? with #-infinite
 ```
 
 # 19. Annotations

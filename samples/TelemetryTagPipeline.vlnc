@@ -11,7 +11,7 @@ end
 
 define window(readings: Number+) -> Number++ => [$readings] end
 define head(readings: Number+) -> Number => $readings $[0] end
-define archive(readings: #live Number+) -> #!live Number+ => $readings end
+define archive(readings: #live Number+) -> #-live Number+ => $readings end
 
 #ms: + =>
   (#ms Number, Number) -> #ms Number

@@ -55,10 +55,10 @@ aligned for higher-arity and multiple-return calls.
 Automatic constructed flow is suppressed only by one of these explicit rules:
 
 - the output rank is lower than the effective tagged input rank;
-- the return contract contains `#!tag`;
+- the return contract contains `#-tag`;
 - an exact return tag set excludes the tag;
 - the tag's own overlay omits it from that overlay's return contract;
-- the value is explicitly untagged with `#!tag` or `#-tag`.
+- the value is explicitly untagged with `#-tag` or `#-tag`.
 
 Computed tags remain non-sticky.
 

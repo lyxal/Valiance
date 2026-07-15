@@ -8,7 +8,7 @@ tag #km as unit
 define[T] identity(value: T) -> T => $value end
 define batch(value: Number+) -> Number++ => [$value] end
 define first(value: Number+) -> Number => $value $[0] end
-define materialize(value: #infinite Number+) -> #!infinite Number+ => $value end
+define materialize(value: #infinite Number+) -> #-infinite Number+ => $value end
 
 #km: + =>
   (#km Number, Number) -> #km Number

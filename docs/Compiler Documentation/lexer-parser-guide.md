@@ -87,7 +87,7 @@ Important token rules:
   a following `define` and field parsing live in `source_tools.py`, not in the
   language parser.
 - `#/ ... /#` is a nested multiline comment.
-- A bare `#name`, `#!name`, `#-name`, or `#name++` is emitted as one `OP` token for data
+- A bare `#name`, `#-name`, `#-name`, or `#name++` is emitted as one `OP` token for data
   tags.
 - `"` starts a string. Strings may contain literal newlines. Escaped `"`, `\`,
   and `$` are unescaped; other backslash sequences are preserved with the
@@ -253,7 +253,7 @@ you are changing. Most regressions here look like elements in the wrong order.
 - Quick functions: `'chain`
 - Control-flow nodes in expression position
 - `break` and `return`
-- Data-tag application: `#tag`, plus removal via `#!tag` or its `#-tag` alias
+- Data-tag application: `#tag`, plus removal via `#-tag` or its `#-tag` alias
 - Elements, element call syntax, niladic element names, and `:` modifiers
 - Function annotations such as `@recursive fn ...`
 - Element annotations such as `@@tupled foo`
@@ -496,7 +496,7 @@ The type parser currently supports:
 - Mixed rank postfixes are rejected unless the outer marker is a direct
   superset, such as `T+* == T**`. Optional postfixes are a barrier, so
   `T+?+` and `T+?*` are valid.
-- Data-tagged types: `#sorted Number+`, `#!infinite Number+`
+- Data-tagged types: `#sorted Number+`, `#-infinite Number+`
 - Function element tags after function types:
   `Function[Number -> ]<Eager, !Panic[String]>`
 - Anonymous structural traits:
@@ -630,7 +630,7 @@ Supported forms:
 
 ```text
 #sorted
-#!infinite
+#-infinite
 #tag+
 #tag++
 #tag+3
@@ -639,7 +639,7 @@ Supported forms:
 A tag in expression position becomes `TagApplicationNode`. A tag before a type
 becomes a `Tagged(...)` type.
 
-`#!tag` represents tag removal or absence, depending on whether it appears in
+`#-tag` represents tag removal or absence, depending on whether it appears in
 expression or type position. The parser only records the syntax. Analysis
 decides what it means for the current stack/type context.
 
