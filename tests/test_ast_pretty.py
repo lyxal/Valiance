@@ -8,8 +8,8 @@ from valiance.asts import (
     TypedNode,
     pretty_ast,
 )
-from valiance.types.symbols import Symbol
-from valiance.types import Number
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes import Number
 
 FOO = Symbol("foo")
 

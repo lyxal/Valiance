@@ -95,8 +95,8 @@ from valiance.runtime.bytecode import (
     VectorExtensionReference,
 )
 from valiance.runtime.runtime_values import RuntimeNumber
-from valiance.types.symbols import Symbol
-from valiance.types import (
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes import (
     AppliedOverload,
     ArrayExactType,
     ArrayMinType,
@@ -2280,7 +2280,7 @@ def _compile_guard(condition: tuple[ASTNode, ...]) -> FunctionCode:
 
 def _type_pattern_name(typ: object) -> str:
     """Return the canonical name for type pattern during typed-AST bytecode lowering."""
-    from valiance.types import NominalType, NoneTypeNode, normalize
+    from valiance.vtypes import NominalType, NoneTypeNode, normalize
 
     typ = normalize(typ)
     if isinstance(typ, NoneTypeNode):
@@ -2292,7 +2292,7 @@ def _type_pattern_name(typ: object) -> str:
 
 def _runtime_tag_contract_spec(typ: Type) -> object:
     """Compile the structural tag contract needed to canonicalize a value."""
-    from valiance.types import VarType
+    from valiance.vtypes import VarType
 
     typ = normalize(typ)
     if isinstance(typ, TaggedType):
@@ -2337,7 +2337,7 @@ def _runtime_tag_contract_spec(typ: Type) -> object:
 
 def _cast_type_spec(typ: Type) -> object:
     """Compute cast type spec during typed-AST bytecode lowering."""
-    from valiance.types import VarType
+    from valiance.vtypes import VarType
 
     typ = normalize(typ)
     if isinstance(typ, NoneTypeNode):

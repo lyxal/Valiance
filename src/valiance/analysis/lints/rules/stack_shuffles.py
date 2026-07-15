@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import cast
 
-import valiance.types as T
+import valiance.vtypes as T
 from valiance.asts import StackShuffleNode
-from valiance.types.symbols import Symbol
+from valiance.vtypes.symbols import Symbol
 
 from ..contexts import NodeLintContext
 from ..models import LintRewrite, RewriteKind, finding

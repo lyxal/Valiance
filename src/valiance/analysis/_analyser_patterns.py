@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import replace
 
-import valiance.types as T
+import valiance.vtypes as T
 from valiance.asts import (
     ASTNode,
     BindingPatternNode,
@@ -27,8 +27,8 @@ from valiance.asts import (
     WildcardPatternNode,
 )
 from valiance.asts.nodes import GetVariableNode
-from valiance.types.symbols import Symbol
-from valiance.types.relations import merge_stacks
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.relations import merge_stacks
 
 from . import analyser as _core
 from . import _analyser_functions as _functions

@@ -93,7 +93,7 @@ from valiance.asts.nodes import (
 )
 from valiance.asts.pretty import pretty_ast
 from valiance.source_tools.source import typed_source
-from valiance.types.symbols import Symbol
+from valiance.vtypes.symbols import Symbol
 
 __all__ = [
     "ASTNode",

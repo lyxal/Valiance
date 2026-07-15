@@ -4,7 +4,7 @@ from valiance.analysis import Analyser
 from valiance.asts import DefineNode, FunctionNode, OverloadSignature
 from valiance.parsing import ParseError, parse
 from valiance.runtime import compile_program, run
-from valiance.types import OverloadSetType
+from valiance.vtypes import OverloadSetType
 from valiance.runtime.runtime_values import RuntimeNumber
 
 

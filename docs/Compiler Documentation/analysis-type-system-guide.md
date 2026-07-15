@@ -52,22 +52,22 @@ For an approachable explanation before this exhaustive reference, read
   future plugin loading should call the same `register_annotation(...)` hook
   rather than adding annotation names directly to the analyser.
 
-- `src/valiance/types/nodes.py`
+- `src/valiance/vtypes/nodes.py`
   Defines the type model dataclasses.
 
-- `src/valiance/types/builders.py`
+- `src/valiance/vtypes/builders.py`
   Provides type constructors, normalization, display formatting, and readable
   helpers such as `ExactList`, `TypeVariable`, `WithTag`, and `WithoutTag`.
 
-- `src/valiance/types/relations.py`
+- `src/valiance/vtypes/relations.py`
   Owns assignability, subtyping, generic solving, overload resolution,
   vectorisation typing, collection item typing, and stack merging.
 
-- `src/valiance/types/environment.py`
+- `src/valiance/vtypes/environment.py`
   Stores non-branch-dependent facts: overloads, object definitions, attributes,
   traits, variants, and tag declarations.
 
-- `src/valiance/types/context.py`
+- `src/valiance/vtypes/context.py`
   Stores type relationship facts used by relation checks.
 
 - `src/valiance/asts/nodes.py`

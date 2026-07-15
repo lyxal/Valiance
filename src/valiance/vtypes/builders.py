@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from valiance.types.symbols import Symbol
-from valiance.types.nodes import (
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.nodes import (
     AnonymousTraitRequirement,
     AnonymousTraitType,
     ArrayExactType,
@@ -398,7 +398,9 @@ def _normalize_optional_union(items: set[Type]) -> Type | None:
     for item in items:
         if isinstance(item, NoneTypeNode):
             saw_none = True
-        elif isinstance(item, NominalType) and item.name == SOME and len(item.args) == 1:
+        elif (
+            isinstance(item, NominalType) and item.name == SOME and len(item.args) == 1
+        ):
             payloads.append(item.args[0])
             saw_some = True
         else:
@@ -448,9 +450,7 @@ def _normalize_result_union(items: set[Type]) -> Type | None:
 def _normalize_numeric_intersection(items: set[Type]) -> set[Type]:
     """Remove numeric supertypes made redundant by narrower intersections."""
     names = {
-        item.name
-        for item in items
-        if isinstance(item, NominalType) and not item.args
+        item.name for item in items if isinstance(item, NominalType) and not item.args
     }
     remove: set[Type] = set()
     if INTEGER in names:
@@ -473,9 +473,7 @@ def _normalize_numeric_intersection(items: set[Type]) -> set[Type]:
 def _normalize_numeric_union(items: set[Type]) -> set[Type]:
     """Normalize numeric union for type construction and display."""
     names = {
-        item.name
-        for item in items
-        if isinstance(item, NominalType) and not item.args
+        item.name for item in items if isinstance(item, NominalType) and not item.args
     }
     remove: set[Type] = set()
     if NUMBER in names:
@@ -608,9 +606,7 @@ def _alpha_canonicalize(
         params = (
             None
             if t.params is None
-            else tuple(
-                _alpha_canonicalize(param, scope, depth) for param in t.params
-            )
+            else tuple(_alpha_canonicalize(param, scope, depth) for param in t.params)
         )
         returns = (
             None
@@ -745,20 +741,20 @@ def _show(
         return f"{t.name}[{args}]"
     if isinstance(t, UnionType):
         items = (
-            _show(item, type_variable_name, bound)
-            for item in sorted(t.items, key=repr)
+            _show(item, type_variable_name, bound) for item in sorted(t.items, key=repr)
         )
         return " | ".join(sorted(items))
     if isinstance(t, IntersectionType):
         items = (
-            _show(item, type_variable_name, bound)
-            for item in sorted(t.items, key=repr)
+            _show(item, type_variable_name, bound) for item in sorted(t.items, key=repr)
         )
         return " & ".join(sorted(items))
     if isinstance(t, TupleType):
-        return "{" + ", ".join(
-            _show(param, type_variable_name, bound) for param in t.params
-        ) + "}"
+        return (
+            "{"
+            + ", ".join(_show(param, type_variable_name, bound) for param in t.params)
+            + "}"
+        )
     if isinstance(t, VariadicTupleType):
         return (
             "{"
@@ -801,9 +797,7 @@ def _show(
         params = ", ".join(
             _show(param, type_variable_name, bound) for param in t.params
         )
-        returns = ", ".join(
-            _show(ret, type_variable_name, bound) for ret in t.returns
-        )
+        returns = ", ".join(_show(ret, type_variable_name, bound) for ret in t.returns)
         return _show_function_with_tags(
             f"Function[{params} -> {returns}]",
             t.element_tags,
@@ -877,12 +871,10 @@ def _show_overload(
         constraint.name for constraint in overload.generic_constraints
     )
     params = ", ".join(
-        _show(param, type_variable_name, overload_bound)
-        for param in overload.params
+        _show(param, type_variable_name, overload_bound) for param in overload.params
     )
     returns = ", ".join(
-        _show(ret, type_variable_name, overload_bound)
-        for ret in overload.returns
+        _show(ret, type_variable_name, overload_bound) for ret in overload.returns
     )
     return f"Function[{params} -> {returns}]"
 
@@ -926,9 +918,7 @@ def _show_element_tag(
     prefix = "!" if tag.absent else ""
     if not tag.args:
         return f"{prefix}{tag.name}"
-    args = ", ".join(
-        _show(arg, type_variable_name, bound) for arg in tag.args
-    )
+    args = ", ".join(_show(arg, type_variable_name, bound) for arg in tag.args)
     return f"{prefix}{tag.name}[{args}]"
 
 

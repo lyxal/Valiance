@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
-from valiance.types.symbols import Symbol
-from valiance.types.context import Context, TagKind, Variance
-from valiance.types.nodes import (
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.context import Context, TagKind, Variance
+from valiance.vtypes.nodes import (
     FunctionType,
     GenericConstraint,
     NeverType,
@@ -17,7 +17,7 @@ from valiance.types.nodes import (
     Type,
     VariadicTupleType,
 )
-from valiance.types.stack import StackApplication, TypeStack
+from valiance.vtypes.stack import StackApplication, TypeStack
 
 
 class EnvironmentApplyResult:
@@ -94,6 +94,7 @@ class ObjectDefinition:
             if attribute.name == name:
                 return attribute
         return None
+
 
 @dataclass(frozen=True)
 class TraitRequirement:
@@ -227,9 +228,7 @@ class Environment:
     tag_validator_static_results: dict[Symbol, dict[int, bool]] = field(
         default_factory=dict[Symbol, dict[int, bool]]
     )
-    runtime_names: dict[Symbol, Symbol] = field(
-        default_factory=dict[Symbol, Symbol]
-    )
+    runtime_names: dict[Symbol, Symbol] = field(default_factory=dict[Symbol, Symbol])
 
     def child_scope(self) -> Environment:
         """Return a child frame that can read this environment."""
@@ -465,9 +464,7 @@ class Environment:
         overload_index = len(candidates)
         candidates.append(overload)
         if object_friendly:
-            self.object_friendly_overloads.setdefault(name, set()).add(
-                overload_index
-            )
+            self.object_friendly_overloads.setdefault(name, set()).add(overload_index)
         self.context.define_structural_overload(name, overload)
 
     def overload_is_object_friendly(self, name: Symbol, index: int) -> bool:
@@ -802,8 +799,6 @@ def _is_call_site_checked_type(typ: Type) -> bool:
     if isinstance(typ, VariadicTupleType):
         return True
     return False
-
-
 
 
 def _tag_symbol(name: str | Symbol) -> Symbol:

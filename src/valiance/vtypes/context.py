@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
-from valiance.types.symbols import Symbol
-from valiance.types.nodes import Overload, Variance
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.nodes import Overload, Variance
 
 
 class TagKind(Enum):
@@ -30,9 +30,7 @@ class Context:
     trait_parents: dict[Symbol, set[Symbol]] = field(
         default_factory=dict[Symbol, set[Symbol]]
     )
-    variant_members: dict[Symbol, Symbol] = field(
-        default_factory=dict[Symbol, Symbol]
-    )
+    variant_members: dict[Symbol, Symbol] = field(default_factory=dict[Symbol, Symbol])
     data_tags: dict[Symbol, TagKind] = field(default_factory=dict[Symbol, TagKind])
     tag_parents: dict[Symbol, Symbol] = field(default_factory=dict[Symbol, Symbol])
     disjoint_tags: dict[Symbol, set[Symbol]] = field(

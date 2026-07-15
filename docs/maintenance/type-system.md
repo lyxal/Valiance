@@ -1690,7 +1690,7 @@ question.
 
 ### Adding a new type node
 
-1. Add an immutable node in `types/nodes.py`.
+1. Add an immutable node in `vtypes/nodes.py`.
 2. Add a readable builder if source or built-ins will construct it.
 3. Define normalization and display.
 4. Decide its behaviour in `same`, `subtype`, `assignable`, `compatible`,
@@ -1792,10 +1792,10 @@ For any typed decision that is serialized into bytecode.
 
 A productive first pass is:
 
-1. `types/nodes.py` — learn the vocabulary.
-2. `types/builders.py` — learn canonical construction and display.
-3. `types/context.py` — learn relationship facts.
-4. `types/relations.py`: `subtype`, `assignable`, `_solve`, `_combine`,
+1. `vtypes/nodes.py` — learn the vocabulary.
+2. `vtypes/builders.py` — learn canonical construction and display.
+3. `vtypes/context.py` — learn relationship facts.
+4. `vtypes/relations.py`: `subtype`, `assignable`, `_solve`, `_combine`,
    `compatible`, `_match_specificity`, `try_apply_overload`.
 5. `analysis/analyser.py`: `AnalysisBranch`, `BranchSet`, `analyse_block`,
    `source_arguments`, and the orchestration methods.
@@ -1803,7 +1803,7 @@ A productive first pass is:
    `_analyser_calls.py` — follow one node from dispatch through candidate
    selection and overload application; consult `_analyser_patterns.py` or
    `_analyser_utils.py` for the corresponding helper family.
-7. `types/environment.py` — connect names/declarations to the relation context.
+7. `vtypes/environment.py` — connect names/declarations to the relation context.
 8. Focused tests in `tests/test_types.py` and `tests/test_analyser.py`.
 
 Read one end-to-end example with a debugger or temporary assertions. Do not try

@@ -34,8 +34,8 @@ from valiance.asts.nodes import (
     TypedNode,
     TypeLiteralNode,
 )
-from valiance.types.symbols import Symbol
-from valiance.types import Type
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes import Type
 
 
 def pretty_ast(value: ASTNode | TypedNode | Sequence[ASTNode | TypedNode]) -> str:

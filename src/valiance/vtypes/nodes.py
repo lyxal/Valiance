@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
 from typing import Any
 
-from valiance.types.symbols import Symbol
+from valiance.vtypes.symbols import Symbol
 
 
 class Specificity(IntEnum):
@@ -38,7 +38,7 @@ class Type:
 
     def __str__(self) -> str:
         """Render the type using the compact display syntax."""
-        from valiance.types.builders import show
+        from valiance.vtypes.builders import show
 
         return show(self)
 

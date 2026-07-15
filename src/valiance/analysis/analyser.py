@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import cast
 
 import valiance.analysis.annotations as annotation_hooks
-import valiance.types as T
+import valiance.vtypes as T
 import valiance.analysis.where_clause as static_where
 from valiance.elements.builtins import default_environment
 from valiance.analysis.lints import (
@@ -79,8 +79,8 @@ from valiance.asts.object_constructors import (
     definitely_initialized_fields,
     prepare_constructor_body,
 )
-from valiance.types.symbols import Symbol
-from valiance.types.default_types import Boolean
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.default_types import Boolean
 
 from . import _analyser_calls as _calls
 from . import _analyser_functions as _functions

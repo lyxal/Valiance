@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from valiance.types import DataTag, UnionDispatchBranch
+from valiance.vtypes import DataTag, UnionDispatchBranch
 
 
 class OpCode(Enum):

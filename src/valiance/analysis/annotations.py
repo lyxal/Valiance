@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from itertools import permutations
 
-import valiance.types as T
+import valiance.vtypes as T
 from valiance.asts import (
     AnnotationNode,
     ASTNode,
@@ -23,8 +23,8 @@ from valiance.asts import (
     TypedElementNode,
     TypedNode,
 )
-from valiance.types.symbols import Symbol
-from valiance.types.default_types import String
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.default_types import String
 
 AnnotationValidator = Callable[[AnnotationNode, str, ASTNode], tuple[str, ...]]
 FunctionTransform = Callable[[FunctionNode, tuple[AnnotationNode, ...]], FunctionNode]
@@ -140,8 +140,7 @@ def annotation_nodes(annotations: tuple[ASTNode, ...]) -> tuple[AnnotationNode, 
 def has_annotation(annotations: tuple[ASTNode, ...], name: str) -> bool:
     """Return whether the annotations helper has annotation."""
     return any(
-        annotation.name.text == name
-        for annotation in annotation_nodes(annotations)
+        annotation.name.text == name for annotation in annotation_nodes(annotations)
     )
 
 
@@ -214,9 +213,11 @@ def commutative_overloads(overload: T.Overload) -> tuple[T.Overload, ...]:
                 overload.element_tags,
                 overload.annotation_error,
                 overload.annotation_warning,
-                tuple(overload.param_defaults[index] for index in order)
-                if overload.param_defaults
-                else (),
+                (
+                    tuple(overload.param_defaults[index] for index in order)
+                    if overload.param_defaults
+                    else ()
+                ),
             )
         )
     return tuple(generated)

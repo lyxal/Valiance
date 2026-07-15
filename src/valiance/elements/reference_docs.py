@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from importlib import resources
 from typing import Sequence
 
-import valiance.types as T
+import valiance.vtypes as T
 from valiance.elements.builtins import BUILTIN_ELEMENTS, BuiltinElement
 from valiance.asts import DefineNode
 from valiance.elements.documentation import (

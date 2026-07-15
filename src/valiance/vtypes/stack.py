@@ -6,10 +6,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from valiance.types.nodes import Overload, Specificity, Type
+from valiance.vtypes.nodes import Overload, Specificity, Type
 
 if TYPE_CHECKING:
-    from valiance.types.context import Context
+    from valiance.vtypes.context import Context
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,7 @@ class TypeStack:
         infer_missing: bool = False,
     ) -> StackApplication | None:
         """Choose and apply one overload candidate to this stack."""
-        from valiance.types.relations import apply_overloads_to_stack
+        from valiance.vtypes.relations import apply_overloads_to_stack
 
         return apply_overloads_to_stack(
             overloads,
@@ -71,7 +71,7 @@ class TypeStack:
         infer_missing: bool = False,
     ) -> StackApplication | None:
         """Apply one known overload candidate to this stack."""
-        from valiance.types.relations import apply_overload_to_stack
+        from valiance.vtypes.relations import apply_overload_to_stack
 
         return apply_overload_to_stack(
             overload,
@@ -86,7 +86,7 @@ class TypeStack:
         ctx: Context | None = None,
     ) -> TypeStack:
         """Merge this stack with another branch stack."""
-        from valiance.types.relations import merge_stacks
+        from valiance.vtypes.relations import merge_stacks
 
         return merge_stacks(self, other, ctx)
 

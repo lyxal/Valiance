@@ -53,7 +53,7 @@ from valiance.asts import (
     WildcardPatternNode,
 )
 from valiance.parsing import LexError, ParseError, lex, parse, parse_type
-from valiance.types import (
+from valiance.vtypes import (
     AnonymousTraitType,
     Atomic,
     C,

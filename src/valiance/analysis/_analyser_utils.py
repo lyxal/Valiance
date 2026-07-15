@@ -9,7 +9,7 @@ from itertools import count
 from typing import cast
 
 from valiance.runtime.runtime_values import RuntimeNumber
-import valiance.types as T
+import valiance.vtypes as T
 from valiance.asts import (
     AnnotationNode,
     ASTNode,
@@ -34,7 +34,7 @@ from valiance.asts import (
     TypedTagApplicationNode,
     TypedUnfoldNode,
 )
-from valiance.types.symbols import Symbol
+from valiance.vtypes.symbols import Symbol
 
 from . import analyser as _core
 from . import _analyser_functions as _functions

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import valiance.types as T
+import valiance.vtypes as T
 from valiance.elements.builtins import BuiltinElement, BuiltinOverload, RuntimeContext
 from valiance.elements.documentation import ElementDocumentation
 from valiance.asts import (
@@ -22,7 +22,7 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedNode,
 )
-from valiance.types.symbols import Symbol
+from valiance.vtypes.symbols import Symbol
 
 NativeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
 

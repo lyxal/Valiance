@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import cast
 
 import valiance.analysis.annotations as annotation_hooks
-import valiance.types as T
+import valiance.vtypes as T
 from valiance.asts import (
     AnnotationNode,
     ArrayLiteralNode,
@@ -58,10 +58,14 @@ from valiance.asts.nodes import (
     SetVariablesNode,
     WhileNode,
 )
-from valiance.modules_system.modules import ModuleLoadError, import_environment_facts, import_objects
-from valiance.types.symbols import Symbol
-from valiance.types.default_types import Boolean
-from valiance.types.relations import merge_stacks
+from valiance.modules_system.modules import (
+    ModuleLoadError,
+    import_environment_facts,
+    import_objects,
+)
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.default_types import Boolean
+from valiance.vtypes.relations import merge_stacks
 
 from . import analyser as _core
 from . import _analyser_functions as _functions
@@ -319,11 +323,7 @@ def _set_variables_node(
         variables = write.variables
 
     return _core.BranchSet(
-        (
-            branch.with_variables(variables)
-            .pop(available)
-            .emit(TypedNode(node, None)),
-        )
+        (branch.with_variables(variables).pop(available).emit(TypedNode(node, None)),)
     )
 
 
@@ -377,11 +377,13 @@ def _if_node(
                     continue
 
                 stack = merge_stacks(left.stack, right.stack, self.env.context)
-                base = replace(
-                    _calls._refine_branch_like(branch, left),
-                    inputs=left.inputs,
-                ).with_element_tags(right.element_tags).with_data_element_uses(
-                    right.data_element_uses
+                base = (
+                    replace(
+                        _calls._refine_branch_like(branch, left),
+                        inputs=left.inputs,
+                    )
+                    .with_element_tags(right.element_tags)
+                    .with_data_element_uses(right.data_element_uses)
                 )
                 variables = left.variables.merge_against(
                     right.variables,
@@ -469,13 +471,17 @@ def _assert_node(
             node.else_branch,
         ),
     )
-    success = replace(
-        success,
-        typed_body=(*success.typed_body[:-1], typed_assert),
-    ).with_element_tags(
-        tag for output in else_outputs for tag in output.element_tags
-    ).with_data_element_uses(
-        use for output in else_outputs for use in output.data_element_uses
+    success = (
+        replace(
+            success,
+            typed_body=(*success.typed_body[:-1], typed_assert),
+        )
+        .with_element_tags(
+            tag for output in else_outputs for tag in output.element_tags
+        )
+        .with_data_element_uses(
+            use for output in else_outputs for use in output.data_element_uses
+        )
     )
     error_types = tuple(_utils._top_or_none(output.stack) for output in else_outputs)
     error_type = T.U(*error_types) if error_types else T.NoneType()
@@ -666,9 +672,7 @@ def _at_node(
 ) -> _core.BranchSet:
     """Analyse a `AtNode` node and return the surviving branches."""
     arity = len(node.levels)
-    source_hints = tuple(
-        T.V(f"_at_{branch.origin}_{index}") for index in range(arity)
-    )
+    source_hints = tuple(T.V(f"_at_{branch.origin}_{index}") for index in range(arity))
     sourced = branch.source_arguments(source_hints)
     if sourced is None:
         self._diagnose(
@@ -893,9 +897,7 @@ def _stack_shuffle_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse a `StackShuffleNode` node and return the surviving branches."""
-    params = tuple(
-        T.V(f"_shuffle_{index}") for index, _ in enumerate(node.prestack)
-    )
+    params = tuple(T.V(f"_shuffle_{index}") for index, _ in enumerate(node.prestack))
     sourced = branch.source_arguments(params)
     if sourced is None:
         self._diagnose(
@@ -934,9 +936,7 @@ def _stack_shuffle_node(
         stack = branch.stack.push(*post_types)
     else:
         kept = tuple(
-            typ
-            for label, typ in zip(node.prestack, args, strict=True)
-            if label is None
+            typ for label, typ in zip(node.prestack, args, strict=True) if label is None
         )
         stack = popped.stack.push(*kept, *post_types)
 
@@ -1310,9 +1310,7 @@ def _list_literal_type(items: tuple[T.Type, ...]) -> T.Type:
     base = T.normalize(T.U(*items))
     if not isinstance(base, T.TaggedType):
         return T.C(T.ListExactType, base)
-    lifted = tuple(
-        T.DataTag(tag.name, tag.depth + 1, tag.absent) for tag in base.tags
-    )
+    lifted = tuple(T.DataTag(tag.name, tag.depth + 1, tag.absent) for tag in base.tags)
     return T.Tagged(
         T.C(T.ListExactType, base.inner),
         *lifted,
@@ -1492,9 +1490,7 @@ def _for_node(
                 source.name, iterable_type, refined_iterable
             )
         else:
-            branch = branch.refine_input_requirement(
-                iterable_type, refined_iterable
-            )
+            branch = branch.refine_input_requirement(iterable_type, refined_iterable)
             body_branch = body_branch.refine_input_requirement(
                 iterable_type, refined_iterable
             )
@@ -1511,8 +1507,7 @@ def _for_node(
     ):
         body_branch = body_branch.refine_type(item_type, refined_item_type)
         body_outputs = _core.BranchSet.collect(
-            output.refine_type(item_type, refined_item_type)
-            for output in body_outputs
+            output.refine_type(item_type, refined_item_type) for output in body_outputs
         )
 
     break_types = tuple(
@@ -1649,7 +1644,9 @@ def _unfold_node(
         results.append(
             candidate.branch.with_element_tags(
                 (*candidate.applied.element_tags, *condition_element_tags)
-            ).push(list_type).emit(
+            )
+            .push(list_type)
+            .emit(
                 TypedUnfoldNode(
                     node,
                     list_type,
@@ -1886,9 +1883,7 @@ def _tag_application_node(
         added_tags = tuple(added)
         disjoint_names: set[Symbol] = set()
         for added_tag in added_tags:
-            disjoint_names.update(
-                self.env.context.tag_disjoints(added_tag.name)
-            )
+            disjoint_names.update(self.env.context.tag_disjoints(added_tag.name))
         removed_tags = _runtime_tag_removal_closure(
             (
                 T.DataTag(str(name), node.tag.depth)
@@ -1942,8 +1937,7 @@ def _tag_application_node(
             selected = validator_overloads[selected_index]
             if not _calls._validator_overload_ok(selected, self.env.context):
                 self._diagnose(
-                    f"tag validator '{validator_name}' must return "
-                    "#boolean Number",
+                    f"tag validator '{validator_name}' must return " "#boolean Number",
                     node,
                 )
                 return _core.BranchSet((branch.emit(TypedNode(node, None)),))

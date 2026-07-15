@@ -22,7 +22,7 @@ from valiance.asts.nodes import (
     TypedFunctionNode,
     TypedNode,
 )
-from valiance.types import FunctionType, Type, normalize, show
+from valiance.vtypes import FunctionType, Type, normalize, show
 
 
 @dataclass

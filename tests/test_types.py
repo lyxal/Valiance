@@ -1,8 +1,8 @@
 import unittest
 from itertools import permutations
 
-from valiance.types.symbols import Symbol
-from valiance.types import (
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes import (
     AnonymousTrait,
     AnonymousTraitRequirement,
     Atomic,

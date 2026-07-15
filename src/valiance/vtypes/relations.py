@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from itertools import product
 
-from valiance.types.symbols import Symbol
-from valiance.types.builders import (
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.builders import (
     ERR,
     OK,
     RESULT,
@@ -25,8 +25,8 @@ from valiance.types.builders import (
     same,
     show,
 )
-from valiance.types.context import Context, Variance
-from valiance.types.nodes import (
+from valiance.vtypes.context import Context, Variance
+from valiance.vtypes.nodes import (
     AnonymousTraitRequirement,
     AnonymousTraitType,
     AppliedOverload,
@@ -64,7 +64,7 @@ from valiance.types.nodes import (
     VariadicTupleType,
     VarType,
 )
-from valiance.types.stack import StackApplication, TypeStack
+from valiance.vtypes.stack import StackApplication, TypeStack
 
 CollectionClass = type[CollectionType]
 BOOLEAN = Symbol("Boolean")

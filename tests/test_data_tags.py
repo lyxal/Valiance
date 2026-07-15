@@ -9,7 +9,7 @@ from valiance.analysis import Analyser
 from valiance.parsing import parse, parse_type
 from valiance.runtime import RuntimeError, compile_program, dumps, loads, run
 from valiance.runtime.runtime_values import TaggedValue
-from valiance.types import (
+from valiance.vtypes import (
     ExactTags,
     Integer,
     Number,

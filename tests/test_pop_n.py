@@ -11,7 +11,7 @@ from valiance.runtime import compile_program, dumps, loads, run
 from valiance.runtime.bytecode import FunctionCode, Instruction, OpCode, Program
 from valiance.runtime.optimizer import PopNOptimizationPass
 from valiance.runtime.runtime_values import RuntimeNumber
-from valiance.types.symbols import Symbol
+from valiance.vtypes.symbols import Symbol
 
 
 class PopNTests(unittest.TestCase):

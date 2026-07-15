@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from valiance.types.builders import (
+from valiance.vtypes.builders import (
     AnonymousTrait,
     AtLeastArray,
     AtLeastList,
@@ -38,9 +38,9 @@ from valiance.types.builders import (
     same,
     show,
 )
-from valiance.types.context import Context, TagKind, Variance
-from valiance.types.default_types import Boolean, Integer, Number, Real, String
-from valiance.types.environment import (
+from valiance.vtypes.context import Context, TagKind, Variance
+from valiance.vtypes.default_types import Boolean, Integer, Number, Real, String
+from valiance.vtypes.environment import (
     AppliedElement,
     ConstructorDefinition,
     DataTagDefinition,
@@ -59,7 +59,7 @@ from valiance.types.environment import (
     UnknownElement,
     VariantDefinition,
 )
-from valiance.types.nodes import (
+from valiance.vtypes.nodes import (
     AnonymousTraitRequirement,
     AnonymousTraitType,
     AppliedOverload,
@@ -100,7 +100,7 @@ from valiance.types.nodes import (
     VariadicTupleType,
     VarType,
 )
-from valiance.types.relations import (
+from valiance.vtypes.relations import (
     _combine_all,
     _match_specificity,
     _solve,
@@ -119,7 +119,7 @@ from valiance.types.relations import (
     union_dispatched_callable_plan,
     try_apply_overload,
 )
-from valiance.types.stack import StackApplication, TypeStack
+from valiance.vtypes.stack import StackApplication, TypeStack
 
 __all__ = [
     "AppliedOverload",

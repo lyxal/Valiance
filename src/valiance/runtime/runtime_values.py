@@ -10,7 +10,7 @@ from itertools import islice
 import json
 from typing import Any
 
-from valiance.types import DataTag
+from valiance.vtypes import DataTag
 
 
 @dataclass

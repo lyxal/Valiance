@@ -10,8 +10,8 @@ from valiance.runtime import RuntimeError as ValianceRuntimeError
 from valiance.runtime import compile_program, dumps, loads, run
 from valiance.runtime.bytecode import FunctionCode, Instruction, OpCode, Program
 from valiance.runtime.runtime_values import LazyList
-from valiance.types.symbols import Symbol
-from valiance.types import (
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes import (
     Integer,
     N,
     Number,
@@ -279,7 +279,7 @@ class TypeAlgebraCorrectnessTests(unittest.TestCase):
         )
 
     def test_optional_join_is_associative_with_explicit_some_values(self):
-        from valiance.types import NoneType
+        from valiance.vtypes import NoneType
 
         left = merge_types(merge_types(NoneType(), Integer), Some(String))
         right = merge_types(NoneType(), merge_types(Integer, Some(String)))

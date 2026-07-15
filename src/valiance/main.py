@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-import valiance.types as T
+import valiance.vtypes as T
 from valiance.analysis import Analyser, AnalysisBranch, BranchSet, InputMode
 from valiance.asts import pretty_ast, typed_source
 from valiance.analysis.diagnostics import from_exception, from_message, render, should_color

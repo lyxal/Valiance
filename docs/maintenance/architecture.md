@@ -97,9 +97,9 @@ analysis facts without coupling diagnostics to compilation. See
 
 ### Environment and context
 
-`src/valiance/types/environment.py` stores global declarations: element
+`src/valiance/vtypes/environment.py` stores global declarations: element
 overloads, objects, traits, variants, tags, attributes, and constructors.
-`src/valiance/types/context.py` stores type-relationship facts used by relation
+`src/valiance/vtypes/context.py` stores type-relationship facts used by relation
 checks.
 
 Local variable facts belong to `BranchVariables`. Putting them in the global
@@ -108,9 +108,9 @@ one another.
 
 ### Type relations
 
-`src/valiance/types/relations.py` owns assignability, generic solving,
+`src/valiance/vtypes/relations.py` owns assignability, generic solving,
 vectorisation, overload application, specificity, union dispatch, and related
-operations. `types/builders.py` owns constructors, normalisation, and readable
+operations. `vtypes/builders.py` owns constructors, normalisation, and readable
 type formatting.
 
 When a type-system problem appears, first identify whether it is:

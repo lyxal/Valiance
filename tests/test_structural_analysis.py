@@ -2,8 +2,8 @@ import unittest
 
 from valiance.analysis import Analyser
 from valiance.parsing import parse
-from valiance.types.symbols import Symbol
-from valiance.types import N
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes import N
 
 
 class StructuralTypeAnalysisTests(unittest.TestCase):

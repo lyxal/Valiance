@@ -9,14 +9,14 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import unquote, urlparse
 
-import valiance.types as T
+import valiance.vtypes as T
 from valiance.analysis import Analyser
 from valiance.asts import ASTNode, DefineNode
 from valiance.analysis.diagnostics import DiagnosticError
 from valiance.parsing import LexError, ParseError, parse
 from valiance.repl import completion_prefix, default_completion_items
 from valiance.source_tools import extract_documented_defines
-from valiance.types.symbols import Symbol
+from valiance.vtypes.symbols import Symbol
 
 _WORD = re.compile(
     r"(?:\*::|[$#\\])?[A-Za-z_][A-Za-z0-9_:]*|[+\-*%!?=/< >~&^]+".replace(" ", "")
@@ -110,7 +110,9 @@ class LanguageServer:
             self.documents.pop(uri, None)
             self.analysers.pop(uri, None)
             self.programs.pop(uri, None)
-            self._notify("textDocument/publishDiagnostics", {"uri": uri, "diagnostics": []})
+            self._notify(
+                "textDocument/publishDiagnostics", {"uri": uri, "diagnostics": []}
+            )
             return None
         if method == "textDocument/completion":
             return self._completion(params)
@@ -126,7 +128,11 @@ class LanguageServer:
             uri = params["textDocument"]["uri"]
             source = self.documents.get(uri, "")
             formatted = format_source(source, indent_width=2)
-            return [] if formatted == source else [{"range": _whole_range(source), "newText": formatted}]
+            return (
+                []
+                if formatted == source
+                else [{"range": _whole_range(source), "newText": formatted}]
+            )
         return NotImplemented
 
     def _analyse(self, uri: str) -> None:
@@ -139,29 +145,51 @@ class LanguageServer:
             analyser.analyse(program)
             self.programs[uri] = program
             self.analysers[uri] = analyser
-            diagnostics.extend(_message_diagnostic(item, 1) for item in analyser.diagnostics)
-            diagnostics.extend(_message_diagnostic(item, 2) for item in analyser.warnings)
-            diagnostics.extend(_lint_diagnostic(item) for item in analyser.lint_findings)
+            diagnostics.extend(
+                _message_diagnostic(item, 1) for item in analyser.diagnostics
+            )
+            diagnostics.extend(
+                _message_diagnostic(item, 2) for item in analyser.warnings
+            )
+            diagnostics.extend(
+                _lint_diagnostic(item) for item in analyser.lint_findings
+            )
         except (LexError, ParseError, DiagnosticError) as exc:
             diagnostics.append(_exception_diagnostic(exc))
             self.programs.pop(uri, None)
             self.analysers.pop(uri, None)
-        self._notify("textDocument/publishDiagnostics", {"uri": uri, "diagnostics": diagnostics})
+        self._notify(
+            "textDocument/publishDiagnostics", {"uri": uri, "diagnostics": diagnostics}
+        )
 
     def _completion(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         """Return keywords, types, declarations, tags, and elements."""
         uri = params["textDocument"]["uri"]
         source = self.documents.get(uri, "")
         prefix = completion_prefix(source[: _offset(source, params["position"])])
-        items = {item.text: item.meta for item in default_completion_items() if not item.text.startswith(":")}
+        items = {
+            item.text: item.meta
+            for item in default_completion_items()
+            if not item.text.startswith(":")
+        }
         analyser = self.analysers.get(uri)
         if analyser:
             env = analyser.env
             while env is not None:
                 for name in env.overloads:
                     overloads = env.overloads_for(name)
-                    items.setdefault(name.text, "\n".join(_overload_signature(name.text, item) for item in overloads))
-                for collection, kind in ((env.objects, "object"), (env.traits, "trait"), (env.variants, "variant"), (env.enums, "enum")):
+                    items.setdefault(
+                        name.text,
+                        "\n".join(
+                            _overload_signature(name.text, item) for item in overloads
+                        ),
+                    )
+                for collection, kind in (
+                    (env.objects, "object"),
+                    (env.traits, "trait"),
+                    (env.variants, "variant"),
+                    (env.enums, "enum"),
+                ):
                     for name in collection:
                         items.setdefault(name.text, kind)
                 for name in env.data_tags:
@@ -207,8 +235,17 @@ class LanguageServer:
             return None
         target = word.lstrip("$#\\")
         for node in self.programs.get(uri, []):
-            if isinstance(node, DefineNode) and str(node.name) == target and node.location:
-                return {"uri": uri, "range": _location_range(node.location.line, node.location.column, len(target))}
+            if (
+                isinstance(node, DefineNode)
+                and str(node.name) == target
+                and node.location
+            ):
+                return {
+                    "uri": uri,
+                    "range": _location_range(
+                        node.location.line, node.location.column, len(target)
+                    ),
+                }
         return None
 
     def _document_symbols(self, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -217,8 +254,17 @@ class LanguageServer:
         result = []
         for node in self.programs.get(uri, []):
             if isinstance(node, DefineNode) and node.location:
-                rng = _location_range(node.location.line, node.location.column, len(str(node.name)))
-                result.append({"name": str(node.name), "kind": 12, "range": rng, "selectionRange": rng})
+                rng = _location_range(
+                    node.location.line, node.location.column, len(str(node.name))
+                )
+                result.append(
+                    {
+                        "name": str(node.name),
+                        "kind": 12,
+                        "range": rng,
+                        "selectionRange": rng,
+                    }
+                )
         return result
 
     def _read_message(self) -> dict[str, Any] | None:
@@ -233,7 +279,9 @@ class LanguageServer:
             name, _, value = line.decode("ascii").partition(":")
             headers[name.lower()] = value.strip()
         length = int(headers.get("content-length", "0"))
-        return json.loads(self.reader.read(length).decode("utf-8")) if length > 0 else None
+        return (
+            json.loads(self.reader.read(length).decode("utf-8")) if length > 0 else None
+        )
 
     def _write(self, payload: dict[str, Any]) -> None:
         """Write one Content-Length framed JSON-RPC message."""
@@ -247,14 +295,22 @@ class LanguageServer:
 
     def _error(self, request_id: Any, code: int, message: str) -> None:
         """Write a JSON-RPC error response."""
-        self._write({"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}})
+        self._write(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": code, "message": message},
+            }
+        )
 
     def _notify(self, method: str, params: dict[str, Any]) -> None:
         """Write a JSON-RPC notification."""
         self._write({"jsonrpc": "2.0", "method": method, "params": params})
 
 
-def run_language_server(reader: BinaryIO | None = None, writer: BinaryIO | None = None) -> int:
+def run_language_server(
+    reader: BinaryIO | None = None, writer: BinaryIO | None = None
+) -> int:
     """Run the Valiance language server over binary standard input/output."""
     return LanguageServer(reader or sys.stdin.buffer, writer or sys.stdout.buffer).run()
 
@@ -263,7 +319,11 @@ def _overload_signature(name: str, overload: T.Overload) -> str:
     """Render an overload as useful Valiance source rather than ``Overload``."""
     params = []
     for index, typ in enumerate(overload.params):
-        label = str(overload.param_names[index]) if index < len(overload.param_names) else f"_{index + 1}"
+        label = (
+            str(overload.param_names[index])
+            if index < len(overload.param_names)
+            else f"_{index + 1}"
+        )
         params.append(f"{label}: {T.show(typ)}")
     returns = ", ".join(T.show(item) for item in overload.returns)
     tags = T.show(T.Fn((), (), overload.element_tags)) if overload.element_tags else ""
@@ -331,25 +391,45 @@ def _word_range(source: str, position: dict[str, int]) -> dict[str, Any] | None:
     line_start = source.rfind("\n", 0, offset) + 1
     for match in _WORD.finditer(source):
         if match.start() <= offset <= match.end():
-            return {"start": {"line": line, "character": match.start() - line_start}, "end": {"line": line, "character": match.end() - line_start}}
+            return {
+                "start": {"line": line, "character": match.start() - line_start},
+                "end": {"line": line, "character": match.end() - line_start},
+            }
     return None
 
 
 def _whole_range(source: str) -> dict[str, Any]:
     """Return an LSP range spanning a complete document."""
     lines = source.splitlines()
-    return {"start": {"line": 0, "character": 0}, "end": {"line": max(len(lines) - 1, 0), "character": len(lines[-1]) if lines else 0}}
+    return {
+        "start": {"line": 0, "character": 0},
+        "end": {
+            "line": max(len(lines) - 1, 0),
+            "character": len(lines[-1]) if lines else 0,
+        },
+    }
 
 
 def _location_range(line: int, column: int, length: int = 1) -> dict[str, Any]:
     """Convert one-based compiler coordinates to an LSP range."""
     start = {"line": max(line - 1, 0), "character": max(column - 1, 0)}
-    return {"start": start, "end": {"line": start["line"], "character": start["character"] + max(length, 1)}}
+    return {
+        "start": start,
+        "end": {
+            "line": start["line"],
+            "character": start["character"] + max(length, 1),
+        },
+    }
 
 
 def _exception_diagnostic(exc: DiagnosticError) -> dict[str, Any]:
     """Convert a parser or lexer exception to an LSP diagnostic."""
-    return {"range": _location_range(exc.line or 1, exc.column or 1), "severity": 1, "source": "valiance", "message": str(exc)}
+    return {
+        "range": _location_range(exc.line or 1, exc.column or 1),
+        "severity": 1,
+        "source": "valiance",
+        "message": str(exc),
+    }
 
 
 def _message_diagnostic(message: str, severity: int) -> dict[str, Any]:
@@ -366,4 +446,12 @@ def _message_diagnostic(message: str, severity: int) -> dict[str, Any]:
 def _lint_diagnostic(finding: Any) -> dict[str, Any]:
     """Convert a structured analyser lint to an LSP diagnostic."""
     location = getattr(finding, "location", None)
-    return {"range": _location_range(getattr(location, "line", 1), getattr(location, "column", 1)), "severity": 3, "source": "valiance", "code": getattr(finding, "code", None), "message": getattr(finding, "message", str(finding))}
+    return {
+        "range": _location_range(
+            getattr(location, "line", 1), getattr(location, "column", 1)
+        ),
+        "severity": 3,
+        "source": "valiance",
+        "code": getattr(finding, "code", None),
+        "message": getattr(finding, "message", str(finding)),
+    }

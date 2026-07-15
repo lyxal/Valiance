@@ -47,8 +47,8 @@ from valiance.asts import (
 )
 from valiance.modules_system.modules import ModuleLoader
 from valiance.parsing import parse
-from valiance.types.symbols import Symbol
-from valiance.types import (
+from valiance.vtypes.symbols import Symbol
+from valiance.vtypes import (
     AppliedElement,
     C,
     DataTag,
@@ -82,7 +82,7 @@ from valiance.types import (
     optional,
     show,
 )
-from valiance.types.default_types import Boolean
+from valiance.vtypes.default_types import Boolean
 from valiance.runtime.runtime_values import RuntimeNumber as NumberRuntime
 
 NUMBER = Symbol("Number")

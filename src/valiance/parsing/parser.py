@@ -77,7 +77,7 @@ from valiance.asts import (
 )
 from valiance.analysis.diagnostics import DiagnosticError
 from valiance.parsing.lexer import Token, TokenKind, lex
-from valiance.types import (
+from valiance.vtypes import (
     AnonymousTrait,
     AnonymousTraitRequirement,
     ArrayExactType,

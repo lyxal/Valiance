@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import valiance.types as T
+import valiance.vtypes as T
 from valiance.asts import (
     DefineNode,
     FunctionNode,

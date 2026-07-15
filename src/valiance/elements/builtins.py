@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from itertools import chain, cycle, groupby, islice
 from typing import Any
 
-import valiance.types as T
+import valiance.vtypes as T
 from valiance.elements.documentation import ElementDocumentation, element_documentation
 from valiance.runtime.runtime_values import (
     LazyList,
@@ -27,7 +27,7 @@ from valiance.runtime.runtime_values import (
     unwrap_runtime_value,
     RuntimeNumber,
 )
-from valiance.types.symbols import Symbol
+from valiance.vtypes.symbols import Symbol
 
 # Symbols reused across trait wiring, generic variance, and runtime type
 # checks below. Builtins that only ever need their own name (dup, +, map, ...)

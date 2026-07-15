@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from itertools import chain, cycle, groupby, islice
 from typing import Any
 
-import valiance.types as T
+import valiance.vtypes as T
 from valiance.documentation import ElementDocumentation, element_documentation
 from valiance.runtime_values import (
     LazyList,

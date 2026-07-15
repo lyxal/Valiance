@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from itertools import count, permutations
 from typing import cast
 
-import valiance.types as T
+import valiance.vtypes as T
 import valiance.analysis.where_clause as static_where
 from valiance.asts import (
     ASTNode,
@@ -19,7 +19,7 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedNode,
 )
-from valiance.types.symbols import Symbol
+from valiance.vtypes.symbols import Symbol
 
 from . import analyser as _core
 from . import _analyser_functions as _functions
@@ -133,13 +133,11 @@ def _analysis_type_is_scalar(
         return False
     if isinstance(typ, T.UnionType):
         return all(
-            _analysis_type_is_scalar(item, scalar_generics)
-            for item in typ.items
+            _analysis_type_is_scalar(item, scalar_generics) for item in typ.items
         )
     if isinstance(typ, T.IntersectionType):
         return any(
-            _analysis_type_is_scalar(item, scalar_generics)
-            for item in typ.items
+            _analysis_type_is_scalar(item, scalar_generics) for item in typ.items
         )
     if isinstance(typ, T.RowType):
         return _analysis_type_is_scalar(typ.base, scalar_generics)
@@ -175,14 +173,15 @@ def _source_element_arguments(
                 popped.atomic_type_vars,
             ):
                 return
-            for specialized_args, specialized_popped in (
-                _contextual_stack_argument_variants(
-                    args,
-                    overload.params,
-                    popped,
-                    ctx,
-                    analyser,
-                )
+            for (
+                specialized_args,
+                specialized_popped,
+            ) in _contextual_stack_argument_variants(
+                args,
+                overload.params,
+                popped,
+                ctx,
+                analyser,
             ):
                 yield specialized_args, specialized_popped, ()
         return
@@ -405,9 +404,7 @@ def _deferred_stack_function_argument(
     """Find the typed literal backing a deferred stack function type."""
     normalized = T.normalize(typ)
     overloads = (
-        normalized.overloads
-        if isinstance(normalized, T.OverloadSetType)
-        else ()
+        normalized.overloads if isinstance(normalized, T.OverloadSetType) else ()
     )
     source_nodes = tuple(
         overload.call_site_body[1]
@@ -496,9 +493,7 @@ def _call_element_candidates(
         declared = _call_site_static_overload(callable_overload)
         uses_static_values = bool(
             declared.where_clause
-            or static_where.rank_variable_names(
-                declared.params + declared.returns
-            )
+            or static_where.rank_variable_names(declared.params + declared.returns)
         )
         if uses_static_values:
             callable_result = _apply_overload_to_branch(
@@ -1080,9 +1075,7 @@ def _apply_overload_to_branch(
         )
     args = _row_views_for_arguments(args, overload.params, env)
     original_overload = overload
-    for initial_rank_values in _initial_rank_value_candidates(
-        overload.params, args
-    ):
+    for initial_rank_values in _initial_rank_value_candidates(overload.params, args):
         rank_bound = _substitute_overload_ranks(overload, initial_rank_values)
         preliminary_substitution = (
             _static_type_substitution(args, rank_bound.params, ctx)
@@ -1212,9 +1205,7 @@ def _propagate_union_requirement_to_inputs(
         refined = T.Tagged(input_value, *required_tags)
         name = branch.input_names[index] if index < len(branch.input_names) else None
         if name is not None:
-            branch = branch.refine_named_input_requirement(
-                name, input_type, refined
-            )
+            branch = branch.refine_named_input_requirement(name, input_type, refined)
         else:
             branch = branch.refine_input_requirement(input_type, refined)
     return branch
@@ -1390,9 +1381,7 @@ def _apply_call_site_checked_overload(
     for initial_rank_values in _initial_rank_value_candidates(
         static_source.params, args
     ):
-        rank_bound = _substitute_overload_ranks(
-            static_source, initial_rank_values
-        )
+        rank_bound = _substitute_overload_ranks(static_source, initial_rank_values)
         preliminary_substitution = (
             _static_type_substitution(args, rank_bound.params, ctx)
             if static_source.where_clause
@@ -1422,12 +1411,8 @@ def _apply_call_site_checked_overload(
             )
             if value.is_integer() and int(str(value)) >= 0
         }
-        specialized_source = _substitute_overload_ranks(
-            static_source, rank_values
-        )
-        if not _call_site_explicit_args_match(
-            specialized_source.params, args, ctx
-        ):
+        specialized_source = _substitute_overload_ranks(static_source, rank_values)
+        if not _call_site_explicit_args_match(specialized_source.params, args, ctx):
             continue
 
         deferred = replace(
@@ -1450,9 +1435,7 @@ def _apply_call_site_checked_overload(
             )
             if concrete is None or len(concrete.params) < len(args):
                 continue
-            consumed_count = _call_site_consumed_count(
-                overload, concrete, extra_count
-            )
+            consumed_count = _call_site_consumed_count(overload, concrete, extra_count)
             if consumed_count is None:
                 continue
             concrete_stack_count = len(concrete.params) - len(args)
@@ -1464,25 +1447,19 @@ def _apply_call_site_checked_overload(
                     if concrete_stack_count
                     else ()
                 )
-                result_branch = branch.with_stack(
-                    branch.stack.pop(consumed_count)
-                )
+                result_branch = branch.with_stack(branch.stack.pop(consumed_count))
             else:
                 stack_params = concrete.params[:concrete_stack_count]
                 sourced = branch.source_arguments(stack_params)
                 if sourced is None:
                     continue
                 concrete_stack_args, sourced_branch = sourced
-                preserved = concrete_stack_args[
-                    : concrete_stack_count - consumed_count
-                ]
+                preserved = concrete_stack_args[: concrete_stack_count - consumed_count]
                 result_branch = sourced_branch.push(*preserved)
             concrete_args = concrete_stack_args + args
             if len(concrete.params) != len(concrete_args):
                 continue
-            candidate = T.try_apply_overload(
-                concrete, concrete_args, ctx
-            ).applied
+            candidate = T.try_apply_overload(concrete, concrete_args, ctx).applied
             if candidate is None:
                 continue
             actual_returns = _apply_data_tag_flow(
@@ -1535,11 +1512,11 @@ def _call_site_static_overload(overload: T.Overload) -> T.Overload:
         param_names=_functions._function_param_names_for_overload(node, params),
     )
 
+
 def _overload_needs_call_site_checking(overload: T.Overload) -> bool:
     """Return whether an overload requires call-site checking."""
     return any(
-        _functions._is_call_site_checked_param(param)
-        for param in overload.params
+        _functions._is_call_site_checked_param(param) for param in overload.params
     )
 
 
@@ -1674,9 +1651,7 @@ def _call_site_checked_overload_signature(
         overloads = _functions._callable_overloads(analysis.typ)
         if len(overloads) != 1:
             return None
-        return _substitute_overload_ranks(
-            overloads[0], rank_values or {}
-        )
+        return _substitute_overload_ranks(overloads[0], rank_values or {})
     if len(call_params) < len(overload.params):
         return None
     explicit = call_params[-len(overload.params) :] if overload.params else ()
@@ -1836,9 +1811,7 @@ def _rank_candidates_for_pairs(
     """Fold nested rank extraction over an iterable of type pairs."""
     candidates: tuple[dict[str, int], ...] = (dict(values),)
     for pattern, actual in pairs:
-        candidates = _extend_rank_candidates(
-            candidates, ((pattern, actual),)
-        )
+        candidates = _extend_rank_candidates(candidates, ((pattern, actual),))
         if not candidates:
             break
     return candidates
@@ -1925,10 +1898,7 @@ def _variadic_tuple_rank_candidates(
         cache[key] = result
         return result
 
-    return tuple(
-        dict(bindings)
-        for bindings in rec(0, 0, _rank_binding_key(values))
-    )
+    return tuple(dict(bindings) for bindings in rec(0, 0, _rank_binding_key(values)))
 
 
 _MAX_RANK_BINDING_CANDIDATES = 1_024
@@ -1964,12 +1934,14 @@ def _deduplicate_rank_candidates(
     )
     return tuple(dict(key) for key in keys)
 
+
 def _match_variadic_tuple_types(
     pattern: T.VariadicTupleType,
     actual: T.TupleType,
     match: Callable[[T.Type, T.Type], bool],
 ) -> bool:
     """Return whether variadic tuple types match."""
+
     def rec(pattern_index: int, actual_index: int) -> bool:
         """Recursively continue the match variadic tuple types algorithm."""
         if pattern_index == len(pattern.items):
@@ -2188,8 +2160,7 @@ def _guaranteed_constructed_tag_sources(
             return {}
         common = set(branches[0]).intersection(*(set(item) for item in branches[1:]))
         return {
-            name: max(branch[name] for branch in branches)
-            for name in sorted(common)
+            name: max(branch[name] for branch in branches) for name in sorted(common)
         }
     if isinstance(typ, T.IntersectionType):
         result: dict[str, int] = {}
@@ -2499,9 +2470,7 @@ def _collect_static_element_bindings(
                 bindings[pattern.base.name] = actual.base
                 return True
             return T.same(previous, actual.base)
-        return _collect_static_element_bindings(
-            pattern.base, actual.base, bindings
-        )
+        return _collect_static_element_bindings(pattern.base, actual.base, bindings)
     if (
         isinstance(pattern, T.NominalType)
         and isinstance(actual, T.NominalType)
@@ -2795,8 +2764,7 @@ def _consistent_function_returns(
             returns = current
             continue
         if len(returns) != len(current) or not all(
-            T.same(left, right)
-            for left, right in zip(returns, current, strict=True)
+            T.same(left, right) for left, right in zip(returns, current, strict=True)
         ):
             return None
     return returns

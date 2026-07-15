@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import valiance.types as T
+import valiance.vtypes as T
 from valiance.asts import ASTNode, MatchNode
 
 

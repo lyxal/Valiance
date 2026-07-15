@@ -12,7 +12,7 @@ from typing import Any
 from valiance.asts import ASTNode, DefineNode, FunctionParam
 from valiance.parsing import parse
 from valiance.parsing.lexer import Token, TokenKind, lex
-from valiance.types import show
+from valiance.vtypes import show
 
 DOC_COMMENT_PREFIX = "#??"
 DEFAULT_REFERENCE_FILENAME = "reference.html"

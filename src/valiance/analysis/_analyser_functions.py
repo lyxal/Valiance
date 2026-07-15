@@ -7,7 +7,7 @@ from dataclasses import field, fields, replace
 from typing import cast
 
 import valiance.analysis.annotations as annotation_hooks
-import valiance.types as T
+import valiance.vtypes as T
 import valiance.analysis.where_clause as static_where
 from valiance.asts import (
     ASTNode,
@@ -28,7 +28,7 @@ from valiance.asts.nodes import (
     SetVariableNode,
     SetVariablesNode,
 )
-from valiance.types.symbols import Symbol
+from valiance.vtypes.symbols import Symbol
 
 from . import analyser as _core
 from . import _analyser_calls as _calls
@@ -1187,9 +1187,7 @@ def _collapse_equivalent_friendly_multidispatch_winners(
         min(
             winners,
             key=lambda candidate: (
-                candidate.overload_index
-                if candidate.overload_index is not None
-                else -1
+                candidate.overload_index if candidate.overload_index is not None else -1
             ),
         ),
     )
@@ -1402,9 +1400,7 @@ def _substitute_rank_variables_in_ast(
         declared = _declared_params(node) + (node.returns or ())
         shadowed_ranks = static_where.rank_variable_names(declared)
         active_ranks = {
-            name: value
-            for name, value in ranks.items()
-            if name not in shadowed_ranks
+            name: value for name, value in ranks.items() if name not in shadowed_ranks
         }
         shadowed_types = {generic.text for generic in node.generics}
         active_types = {
@@ -1432,9 +1428,7 @@ def _substitute_rank_variables_in_ast_value(
 ) -> object:
     """Substitute static bindings through one recursively nested AST value."""
     if isinstance(value, T.Type):
-        return static_where.substitute_static_type(
-            value, ranks=ranks, types=types
-        )
+        return static_where.substitute_static_type(value, ranks=ranks, types=types)
     if isinstance(value, FunctionParam):
         typ = (
             None
@@ -1446,9 +1440,7 @@ def _substitute_rank_variables_in_ast_value(
         default = tuple(
             cast(
                 ASTNode,
-                _substitute_rank_variables_in_ast(
-                    node, ranks, types, root=False
-                ),
+                _substitute_rank_variables_in_ast(node, ranks, types, root=False),
             )
             for node in value.default
         )
@@ -1459,9 +1451,7 @@ def _substitute_rank_variables_in_ast_value(
         argument = tuple(
             cast(
                 ASTNode,
-                _substitute_rank_variables_in_ast(
-                    node, ranks, types, root=False
-                ),
+                _substitute_rank_variables_in_ast(node, ranks, types, root=False),
             )
             for node in value.value
         )
@@ -1469,9 +1459,7 @@ def _substitute_rank_variables_in_ast_value(
             return value
         return replace(value, value=argument)
     if isinstance(value, ASTNode):
-        return _substitute_rank_variables_in_ast(
-            value, ranks, types, root=False
-        )
+        return _substitute_rank_variables_in_ast(value, ranks, types, root=False)
     if isinstance(value, tuple):
         return tuple(
             _substitute_rank_variables_in_ast_value(item, ranks, types)
@@ -1593,10 +1581,7 @@ def _transform_type_children(
         return T.Tup(*(transform(item) for item in typ.params))
     if isinstance(typ, T.VariadicTupleType):
         return T.TupVariadic(
-            *(
-                T.TupleTypeItem(transform(item.typ), item.repeated)
-                for item in typ.items
-            )
+            *(T.TupleTypeItem(transform(item.typ), item.repeated) for item in typ.items)
         )
     if isinstance(typ, T.RowType):
         return T.Row(

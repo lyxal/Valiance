@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import valiance.types as T
+import valiance.vtypes as T
 from valiance.asts import CastNode
 
 from ..contexts import NodeLintContext
