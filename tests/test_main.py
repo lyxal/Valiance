@@ -119,11 +119,35 @@ class MainTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             exit_code = main(["--help"])
 
-        self.assertEqual(exit_code, 2)
-        self.assertIn("usage: valiance", output.getvalue())
-        self.assertIn("valiance compile -c <code>", output.getvalue())
-        self.assertIn("valiance exec --file <file>", output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertIn("USAGE", output.getvalue())
+        self.assertIn("valiance compile --file src/main.vlnc", output.getvalue())
+        self.assertIn("exec      Execute existing bytecode without recompiling", output.getvalue())
         self.assertNotIn("analyse-demo", output.getvalue())
+
+
+    def test_subcommand_help_is_focused_and_succeeds(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["compile", "--help", "ignored"])
+        self.assertEqual(exit_code, 0)
+        self.assertIn("valiance compile", output.getvalue())
+        self.assertIn("EXAMPLE", output.getvalue())
+
+    def test_help_subcommand_and_version(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(main(["help", "test"]), 0)
+            self.assertEqual(main(["--version"]), 0)
+        self.assertIn("valiance test", output.getvalue())
+        self.assertIn("valiance 0.1.0", output.getvalue())
+
+    def test_typo_suggests_a_command_on_stderr(self):
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            exit_code = main(["compiel"])
+        self.assertEqual(exit_code, 2)
+        self.assertIn("Did you mean 'compile'?", error.getvalue())
 
     def test_main_parses_inline_code(self):
         output = io.StringIO()

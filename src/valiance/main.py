@@ -6,6 +6,8 @@ import argparse
 import copy
 import os
 import sys
+from difflib import get_close_matches
+from importlib.metadata import PackageNotFoundError, version
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -78,79 +80,88 @@ _ACTIONS = (
 )
 
 DEFAULT_PROG = "valiance"
+DOCS_URL = "https://github.com/lyxal/Valiance-Lang#readme"
+ISSUES_URL = "https://github.com/lyxal/Valiance-Lang/issues"
+
+
+def _version_text() -> str:
+    """Return the installed package version without making startup depend on metadata."""
+    try:
+        return version("valiance")
+    except PackageNotFoundError:
+        return "0.1.0"
+
 
 
 def _help_text(prog: str) -> str:
-    """Render the top-level usage/help text for the given program name."""
-    return f"""usage: {prog}
-       {prog} <file> [-o <file>]
-       {prog} compile [<entry>] [-o <file>] [--no-optimize]
-       {prog} compile --file <file> [-o <file>]
-       {prog} compile -c <code> [-o <file>]
-       {prog} run [<entry>] [--no-optimize]
-       {prog} run --file <file>
-       {prog} run -c <code>
-       {prog} exec [<entry>]
-       {prog} exec --file <file>
-       {prog} test [<selector-or-path> ...] [options]
-       {prog} lsp
-       {prog} parse <file>
-       {prog} analyse <file>
-       {prog} tidy [<file>] [--types] [--docstrings] [--format]
-       {prog} docs [<file>] [-o <file>]
-       {prog} docs --language [--format html|markdown|json] [-o <file>]
-       {prog} install
-       {prog} init [directory]
-       {prog} add <package-or-source> <version> [as <name>]
-       {prog} remove <name>
-       {prog} upgrade <name> <version>
+    """Render the top-level help text for the given program name."""
+    return f"""Valiance compiler, runtime, project tools, and interactive REPL.
 
-actions:
-  <no action>        start the REPL
-  compile             compile the current project's main or named entry
-  run                 run the current project's main or named entry
-  exec                execute existing project bytecode without compiling
-  test                discover and run tests under the project's tests directory
-  lsp                 start the Language Server Protocol server over stdio
-  parse               print the parsed AST
-  analyse             print the typed AST
-  tidy                rewrite one file or every project source file
-  docs                generate project or language reference documentation
-  annotate            legacy alias for `tidy --types --stdout`
-  install             install project dependencies and update valiance.lock
-  init                create a new project manifest and starter source tree
-  add                 add an exact-version dependency
-  remove              remove a direct dependency
-  upgrade             change a dependency to an exact version
+USAGE
+  {prog}                         Start the interactive REPL
+  {prog} <command> [options]
+  {prog} <file> [-o <file>]      Compile a source file (legacy shorthand)
 
-options:
-  -c, --code <code>   use inline Valiance code
-  --file <file>        use an explicit source or bytecode file
-  -o, --output <file> write compiled bytecode to this file
-  --no-optimize       disable bytecode optimisation for this compilation
-  --implicit-output   print the final stack if execution prints nothing
-                      (default for run --code)
-  --preview-lists     preview lazy lists instead of forcing full output
-  --filter <text>      run tests whose names or descriptions contain text
-  --list               list selected tests without running them
-  --flat               print copyable dotted names with --list
-  --fail-fast          stop after the first failed or errored test
-  --show-output        show captured output for passing tests too
-  --types              add available inferred function signatures with tidy
-  --docstrings         add missing #?? documentation stubs with tidy
-  --format             normalize indentation to two spaces with tidy
-  --stdout             print tidy output instead of rewriting a file
-  --title <title>      set the generated HTML reference title
-  --language           document built-ins and standard-library functions
-  --format <format>    output html, markdown, or json with docs --language
+EXAMPLES
+  {prog} run --code '1 2 +'
+  {prog} compile --file src/main.vlnc --output bin/main.vbc
+  {prog} test --filter arithmetic
 
-repl commands:
-  :help               show REPL help
-  :reset              clear stack, variables, definitions, and imports
-  :type <source>      show stack types without executing source
-  :clear              clear the terminal
-  :quit               exit the REPL
+COMMON COMMANDS
+  run       Run a project entry, source file, or inline code
+  compile   Compile a project entry, source file, or inline code
+  exec      Execute existing bytecode without recompiling
+  test      Discover and run project tests
+  parse     Print the parsed AST
+  analyse   Print the typed AST
+  tidy      Add types/docs or format source
+  docs      Generate project or language reference documentation
+  init      Create a Valiance project
+  add       Add an exact-version dependency
+  install   Install project dependencies
+  lsp       Start the stdio language server
+
+GLOBAL OPTIONS
+  -h, --help       Show help (also works after a command)
+  --version        Show the installed Valiance version
+
+Run `{prog} <command> --help` for command-specific help.
+Documentation: {DOCS_URL}
+Report issues:  {ISSUES_URL}
 """
+
+
+def _command_help_text(prog: str, action: str) -> str:
+    """Render focused help for one command."""
+    usage = {
+        "compile": "[<entry> | --file <file> | --code <code>] [-o <file>] [--no-optimize]",
+        "run": "[<entry> | --file <file> | --code <code>] [--implicit-output] [--preview-lists] [--no-optimize]",
+        "exec": "[<entry> | --file <file>] [--implicit-output] [--preview-lists]",
+        "parse": "<file> | --code <code>",
+        "analyse": "<file> | --code <code>",
+        "tidy": "[<file> | --file <file> | --code <code>] [--types] [--docstrings] [--format] [--stdout]",
+        "annotate": "<file> | --code <code>",
+        "docs": "[<file>] [-o <file>] [--title <title>] | --language [--format html|markdown|json]",
+        "test": "[<selector-or-path> ...] [--filter <text>] [--list [--flat]] [--fail-fast] [--show-output]",
+        "init": "[directory]",
+        "install": "",
+        "add": "<package-or-source> <version> [as <name>]",
+        "remove": "<name>",
+        "upgrade": "<name> <version>",
+        "lsp": "",
+    }.get(action, "")
+    examples = {
+        "compile": f"  {prog} compile --file src/main.vlnc --output bin/main.vbc",
+        "run": f"  {prog} run --code '1 2 +'",
+        "exec": f"  {prog} exec --file bin/main.vbc",
+        "test": f"  {prog} test --filter arithmetic",
+        "tidy": f"  {prog} tidy src/main.vlnc --types --docstrings --format",
+        "docs": f"  {prog} docs --language --format markdown --output -",
+    }.get(action)
+    text = f"USAGE\n  {prog} {action} {usage}".rstrip()
+    if examples:
+        text += f"\n\nEXAMPLE\n{examples}"
+    return text + f"\n\nUse `{prog} --help` for all commands.\nDocumentation: {DOCS_URL}\n"
 
 
 def _run(vln_mode: bool, argv: Sequence[str] | None = None) -> int:
@@ -160,9 +171,37 @@ def _run(vln_mode: bool, argv: Sequence[str] | None = None) -> int:
     if not args:
         return _run_repl()
 
+    if "--version" in args:
+        print(f"{prog} {_version_text()}")
+        return 0
+
+    if args[0] == "help":
+        if len(args) == 1:
+            print(_help_text(prog))
+            return 0
+        action = "analyse" if args[1] == "analyze" else args[1]
+        if action not in _ACTIONS:
+            print(f"error: unknown command '{args[1]}'", file=sys.stderr)
+            print(f"Try `{prog} --help` for available commands.", file=sys.stderr)
+            return 2
+        print(_command_help_text(prog, action))
+        return 0
+
+    if "-h" in args or "--help" in args:
+        action = "analyse" if args[0] == "analyze" else args[0]
+        print(_command_help_text(prog, action) if action in _ACTIONS else _help_text(prog))
+        return 0
+
+    if args[0] not in _ACTIONS and args[0].isidentifier() and not Path(args[0]).exists():
+        matches = get_close_matches(args[0], sorted(_ACTIONS), n=1, cutoff=0.6)
+        if matches:
+            print(f"error: unknown command '{args[0]}'. Did you mean '{matches[0]}'?", file=sys.stderr)
+            print(f"Try `{prog} --help` for available commands.", file=sys.stderr)
+            return 2
+
     parsed = _parse_args(args, prog=prog)
     if parsed is None:
-        print(_help_text(prog))
+        print(f"Try `{prog} --help` for usage.", file=sys.stderr)
         return 2
 
     if parsed.action == "lsp":
