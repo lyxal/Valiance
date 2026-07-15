@@ -596,6 +596,21 @@ class ImportNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class LintSuppressionNode(ASTNode):
+    """A source statement whose selected lint findings are suppressed."""
+
+    body: tuple[ASTNode, ...] = ()
+    codes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FileLintSuppressionNode(ASTNode):
+    """A directive suppressing selected lints for the containing source file."""
+
+    codes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class AnnotationNode(ASTNode):
     """A compile-time annotation applied to the following structure."""
 

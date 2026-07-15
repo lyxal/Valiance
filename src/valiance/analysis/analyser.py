@@ -977,6 +977,7 @@ class Analyser:
         self.warnings: list[str] = []
         self.lints: list[str] = []
         self.lint_findings: list[LintFinding] = []
+        self.disabled_lint_codes: set[str] | None = set()
         self._friendly_owners: tuple[Symbol, ...] = ()
         self._reported_data_element_disjoints: set[
             tuple[int, Symbol, Symbol]
@@ -984,6 +985,7 @@ class Analyser:
 
     def analyse(self, program: list[ASTNode]) -> list[TypedNode]:
         """Analyse a top-level sequence into typed nodes."""
+        self.disabled_lint_codes = set()
         if self._owns_prelude:
             self._prelude.nodes.clear()
             self._prelude.bindings.clear()
@@ -4371,6 +4373,8 @@ class Analyser:
 
     def _record_lint_finding(self, finding: LintFinding) -> None:
         """Append one structured finding while preserving the string API."""
+        if self.disabled_lint_codes is None or finding.code in self.disabled_lint_codes:
+            return
         if finding in self.lint_findings:
             return
         self.lint_findings.append(finding)

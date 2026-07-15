@@ -26,6 +26,7 @@ from valiance.asts import (
     ExtensionPatternRule,
     FieldAccessNode,
     FieldSetNode,
+    FileLintSuppressionNode,
     ForNode,
     FunctionNode,
     FunctionParam,
@@ -41,6 +42,7 @@ from valiance.asts import (
     IndexSetNode,
     ListLiteralNode,
     ListPatternNode,
+    LintSuppressionNode,
     LiteralPatternNode,
     MatchCaseNode,
     MatchNode,
@@ -179,6 +181,16 @@ class Parser:
 
     def _statement(self) -> tuple[ASTNode, ...]:
         """Parse statement from the current token stream."""
+        lint_directive = self._lint_suppression_directive()
+        if lint_directive is not None:
+            scope, codes, location = lint_directive
+            if scope == "file":
+                return (FileLintSuppressionNode(codes, location=location),)
+            body = self._statement()
+            if not body:
+                self._error("@lintOff must be followed by a statement")
+            return (LintSuppressionNode(body, codes, location=location),)
+
         overloads = self._overload_signatures()
         annotations = self._annotations()
         visibility: Symbol | None = None
@@ -262,6 +274,32 @@ class Parser:
         if annotations:
             self._error("annotation must be followed by a declaration")
         return self._chain_until(_LINE_TERMINATORS)
+
+    def _lint_suppression_directive(
+        self,
+    ) -> tuple[str, tuple[str, ...], SourceLocation] | None:
+        """Parse a node- or file-scoped lint suppression annotation."""
+        if not self._check(TokenKind.AT) or self._peek(1).kind is not TokenKind.IDENT:
+            return None
+        name = self._peek(1).value
+        if name not in {"lintOff", "lintFileOff"}:
+            return None
+        start = self._advance()
+        self._advance()
+        codes: list[str] = []
+        if self._match(TokenKind.LPAREN):
+            self._skip_newlines()
+            if not self._check(TokenKind.RPAREN):
+                while True:
+                    token = self._expect(TokenKind.STRING)
+                    codes.append(token.value)
+                    self._skip_newlines()
+                    if not self._match(TokenKind.COMMA):
+                        break
+                    self._skip_newlines()
+            self._expect(TokenKind.RPAREN)
+        self._skip_newlines()
+        return ("file" if name == "lintFileOff" else "node", tuple(codes), _loc(start))
 
     def _overload_signatures(self) -> tuple[OverloadSignature, ...]:
         """Parse overload signatures attached to the following define or fn."""

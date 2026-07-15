@@ -4896,6 +4896,42 @@ class ForeachRefactoringLintTests(unittest.TestCase):
         self.assertNotIn("prefer-vectorisation-or-map", codes)
         self.assertNotIn("prefer-fold", codes)
 
+    def test_node_lint_off_suppresses_all_lints_for_foreach(self):
+        analyser = self._analyse(
+            "$total = 0\n@lintOff\n"
+            "[1, 2, 3] foreach (n) => $total := + $n end"
+        )
+        self.assertEqual(analyser.lint_findings, [])
+
+    def test_node_lint_off_can_suppress_only_prefer_fold(self):
+        analyser = self._analyse(
+            '$total = 0\n@lintOff("prefer-fold")\n'
+            "[1, 2, 3] foreach (n) => $total := + ($n as Integer) end"
+        )
+        codes = [finding.code for finding in analyser.lint_findings]
+        self.assertNotIn("prefer-fold", codes)
+        self.assertIn("redundant-cast", codes)
+
+    def test_file_lint_off_suppresses_one_lint_code(self):
+        analyser = self._analyse(
+            '@lintFileOff("prefer-fold")\n'
+            "$total = 0\n"
+            "[1, 2, 3] foreach (n) => $total := + $n end\n"
+            "1 as Integer"
+        )
+        codes = [finding.code for finding in analyser.lint_findings]
+        self.assertNotIn("prefer-fold", codes)
+        self.assertIn("redundant-cast", codes)
+
+    def test_file_lint_off_without_codes_suppresses_all_lints(self):
+        analyser = self._analyse(
+            "@lintFileOff\n"
+            "$total = 0\n"
+            "[1, 2, 3] foreach (n) => $total := + $n end\n"
+            "1 as Integer"
+        )
+        self.assertEqual(analyser.lint_findings, [])
+
     def test_foreach_with_element_tags_is_not_linted(self):
         analyser = self._analyse("[1, 2, 3] foreach (n) => println($n) end")
         codes = [finding.code for finding in analyser.lint_findings]

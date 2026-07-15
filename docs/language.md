@@ -1399,7 +1399,29 @@ end
 - The input for each loop iteration is the item or `index, item` if index is specified.
 - These inputs will cycle.
   
-### 10.5.1. `break`
+#### 10.5.1. Suppressing lint advice
+
+Lint findings can be suppressed for one statement with `@lintOff`. With no
+arguments it suppresses every lint produced while analysing the following
+statement. Pass one or more stable lint codes to suppress only those rules:
+
+```vlnc
+$total = 0
+@lintOff("prefer-fold")
+[1, 2, 3, 4] foreach (n) => $total := + $n end
+```
+
+Place `@lintFileOff` at the beginning of a source file to suppress lints for the
+rest of that file. It accepts the same optional list of lint codes:
+
+```vlnc
+@lintFileOff("prefer-fold", "prefer-vectorisation-or-map")
+```
+
+`@lintFileOff` without arguments disables all lints in the file. Suppressions
+do not hide errors or ordinary warnings.
+
+### 10.5.2. `break`
 - While not a control flow structure, `break` has special syntax for terminating a loop early
 - `break <value>` will terminate a loop and push `value` to the stack
 - `break (<values>)` will terminate a loop and push all items in `values` to the stack.

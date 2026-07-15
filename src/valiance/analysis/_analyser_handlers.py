@@ -16,12 +16,14 @@ from valiance.asts import (
     CastNode,
     DictLiteralNode,
     ElementTagDeclarationNode,
+    FileLintSuppressionNode,
     FunctionNode,
     FunctionParam,
     ImportNode,
     IndexAccessNode,
     IndexSetNode,
     ListLiteralNode,
+    LintSuppressionNode,
     NumberLiteralNode,
     ObjectNode,
     PopNNode,
@@ -72,6 +74,43 @@ from . import _analyser_functions as _functions
 from . import _analyser_calls as _calls
 from . import _analyser_patterns as _patterns
 from . import _analyser_utils as _utils
+
+
+@_core.register(FileLintSuppressionNode)
+def _file_lint_suppression(
+    self: _core.Analyser,
+    node: FileLintSuppressionNode,
+    branch: _core.AnalysisBranch,
+) -> _core.BranchSet:
+    """Apply a file-scoped lint suppression without emitting runtime code."""
+    if node.codes:
+        if self.disabled_lint_codes is not None:
+            self.disabled_lint_codes.update(node.codes)
+    else:
+        self.disabled_lint_codes = None
+    return _core.BranchSet((branch,))
+
+
+@_core.register(LintSuppressionNode)
+def _lint_suppression(
+    self: _core.Analyser,
+    node: LintSuppressionNode,
+    branch: _core.AnalysisBranch,
+) -> _core.BranchSet:
+    """Analyse one statement and discard its selected lint findings."""
+    finding_count = len(self.lint_findings)
+    outputs = self.analyse_from(branch, node.body)
+    new_findings = self.lint_findings[finding_count:]
+    suppressed = set(node.codes)
+    kept = (
+        ()
+        if not node.codes
+        else tuple(item for item in new_findings if item.code not in suppressed)
+    )
+    del self.lint_findings[finding_count:]
+    del self.lints[finding_count:]
+    self._extend_lint_findings(kept)
+    return outputs
 
 
 @_core.register(NumberLiteralNode)
