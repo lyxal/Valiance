@@ -3311,7 +3311,22 @@ def _lower_chain_segment(
                 for piece in (reversed(left) if reverse_elements else left)
                 for node in piece.nodes
             )
-            if right.nodes and isinstance(right.nodes[0], MatchNode):
+            if right.nodes and isinstance(
+                right.nodes[0],
+                (
+                    AssertNode,
+                    AtNode,
+                    ForNode,
+                    IfNode,
+                    MatchNode,
+                    TryNode,
+                    UnfoldNode,
+                    WhileNode,
+                ),
+            ):
+                # Control-flow structures terminate the preceding chain but do
+                # not become part of it. Lower the pending elements before the
+                # structure so ``5 + if ...`` means ``5 +`` followed by ``if``.
                 return (*lowered_left, *right.nodes)
             return (*right.nodes, *lowered_left)
 
