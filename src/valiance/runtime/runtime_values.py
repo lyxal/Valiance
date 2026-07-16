@@ -744,100 +744,53 @@ def format_runtime_value(
 ) -> str:
     """Format a runtime value for user-visible output and diagnostics."""
     value = unwrap_runtime_value(value)
+    options = {
+        "quote_strings": quote_strings,
+        "tuple_single_comma": tuple_single_comma,
+        "lazy_preview_limit": lazy_preview_limit,
+    }
     if isinstance(value, (RuntimeNumber, int, float, Decimal)):
         rendered = format(value, "f")
-        if "." in rendered:
-            rendered = rendered.rstrip("0").rstrip(".")
-        return rendered
+        return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
     if isinstance(value, str):
         return repr(value) if quote_strings else value
     if isinstance(value, list):
         items: Iterable[Any] = value
         has_more = False
         if lazy_preview_limit is not None and len(value) > lazy_preview_limit:
-            items = value[:lazy_preview_limit]
-            has_more = True
-        return _format_list_items(
-            items,
-            quote_strings=quote_strings,
-            tuple_single_comma=tuple_single_comma,
-            lazy_preview_limit=lazy_preview_limit,
-            has_more=has_more,
-        )
+            items, has_more = value[:lazy_preview_limit], True
+        return _format_list_items(items, has_more=has_more, **options)
     if is_list_like(value):
-        return _format_lazy_list(
-            value,
-            quote_strings=quote_strings,
-            tuple_single_comma=tuple_single_comma,
-            lazy_preview_limit=lazy_preview_limit,
+        if lazy_preview_limit is None:
+            return _format_list_items(value, **options)
+        preview = list(islice(iter(value), lazy_preview_limit + 1))
+        has_more = len(preview) > lazy_preview_limit
+        return _format_list_items(
+            preview[:lazy_preview_limit], has_more=has_more, **options
         )
     if isinstance(value, tuple):
-        inner = ", ".join(
-            format_runtime_value(
-                item,
-                quote_strings=quote_strings,
-                tuple_single_comma=tuple_single_comma,
-                lazy_preview_limit=lazy_preview_limit,
-            )
-            for item in value
-        )
+        inner = ", ".join(format_runtime_value(item, **options) for item in value)
         if tuple_single_comma and len(value) == 1:
             inner += ","
         return f"({inner})"
     if isinstance(value, dict):
-        items = ", ".join(
-            _format_mapping_item(
-                key,
-                item,
-                quote_strings,
-                tuple_single_comma,
-                lazy_preview_limit,
+        items = []
+        for key, item in value.items():
+            key = unwrap_runtime_value(key)
+            rendered_key = (
+                json.dumps(key, ensure_ascii=False)
+                if isinstance(key, str)
+                else format_runtime_value(key, **(options | {"quote_strings": True}))
             )
-            for key, item in value.items()
-        )
-        return "{" + items + "}"
+            items.append(f"{rendered_key}: {format_runtime_value(item, **options)}")
+        return "{" + ", ".join(items) + "}"
     if isinstance(value, ObjectValue):
         items = ", ".join(
-            _format_field_item(
-                name,
-                item,
-                quote_strings,
-                tuple_single_comma,
-                lazy_preview_limit,
-            )
+            f"{name}: {format_runtime_value(item, **options)}"
             for name, item in value.fields.items()
         )
-        return f"{_object_type_name(value)}{{{items}}}"
+        return f"{object_type_name(value)}{{{items}}}"
     return repr(value) if quote_strings else str(value)
-
-
-def _format_lazy_list(
-    value: Any,
-    *,
-    quote_strings: bool,
-    tuple_single_comma: bool,
-    lazy_preview_limit: int | None,
-) -> str:
-    """Format lazy list for shared runtime-value behaviour."""
-    if lazy_preview_limit is None:
-        return _format_list_items(
-            value,
-            quote_strings=quote_strings,
-            tuple_single_comma=tuple_single_comma,
-            lazy_preview_limit=lazy_preview_limit,
-        )
-
-    preview = list(islice(iter(value), lazy_preview_limit + 1))
-    has_more = len(preview) > lazy_preview_limit
-    if has_more:
-        preview = preview[:lazy_preview_limit]
-    return _format_list_items(
-        preview,
-        quote_strings=quote_strings,
-        tuple_single_comma=tuple_single_comma,
-        lazy_preview_limit=lazy_preview_limit,
-        has_more=has_more,
-    )
 
 
 def _format_list_items(
@@ -848,7 +801,7 @@ def _format_list_items(
     lazy_preview_limit: int | None,
     has_more: bool = False,
 ) -> str:
-    """Format list items for shared runtime-value behaviour."""
+    """Format a sequence using the active recursive formatting options."""
     rendered = [
         format_runtime_value(
             item,
@@ -863,79 +816,8 @@ def _format_list_items(
     return "[" + ", ".join(rendered) + "]"
 
 
-def _format_nested(
-    value: Any,
-    quote_strings: bool,
-    tuple_single_comma: bool,
-    lazy_preview_limit: int | None,
-) -> str:
-    """Format nested for shared runtime-value behaviour."""
-    return format_runtime_value(
-        value,
-        quote_strings=quote_strings,
-        tuple_single_comma=tuple_single_comma,
-        lazy_preview_limit=lazy_preview_limit,
-    )
-
-
-def _format_mapping_item(
-    key: Any,
-    item: Any,
-    quote_strings: bool,
-    tuple_single_comma: bool,
-    lazy_preview_limit: int | None,
-) -> str:
-    """Format mapping item for shared runtime-value behaviour."""
-    rendered_key = _format_mapping_key(
-        key,
-        tuple_single_comma,
-        lazy_preview_limit,
-    )
-    rendered_item = _format_nested(
-        item,
-        quote_strings,
-        tuple_single_comma,
-        lazy_preview_limit,
-    )
-    return f"{rendered_key}: {rendered_item}"
-
-
-def _format_mapping_key(
-    key: Any,
-    tuple_single_comma: bool,
-    lazy_preview_limit: int | None,
-) -> str:
-    """Format mapping key for shared runtime-value behaviour."""
-    key = unwrap_runtime_value(key)
-    if isinstance(key, str):
-        return json.dumps(key, ensure_ascii=False)
-    return _format_nested(
-        key,
-        True,
-        tuple_single_comma,
-        lazy_preview_limit,
-    )
-
-
-def _format_field_item(
-    name: str,
-    item: Any,
-    quote_strings: bool,
-    tuple_single_comma: bool,
-    lazy_preview_limit: int | None,
-) -> str:
-    """Format field item for shared runtime-value behaviour."""
-    rendered_item = _format_nested(
-        item,
-        quote_strings,
-        tuple_single_comma,
-        lazy_preview_limit,
-    )
-    return f"{name}: {rendered_item}"
-
-
-def _object_type_name(value: ObjectValue) -> str:
-    """Return the canonical name for object type for shared runtime-value behaviour."""
+def object_type_name(value: ObjectValue) -> str:
+    """Return the canonical runtime name of an object value's type."""
     if not value.type_args:
         return value.type_name
     return f"{value.type_name}[{', '.join(value.type_args)}]"

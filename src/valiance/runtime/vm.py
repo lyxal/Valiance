@@ -39,6 +39,7 @@ from valiance.runtime.runtime_values import (
     format_runtime_value,
     is_eager_sequence,
     is_list_like,
+    object_type_name,
     runtime_collection_rank,
     runtime_value_tags,
     unwrap_runtime_value,
@@ -2652,7 +2653,7 @@ def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
         return value
     if isinstance(value, ObjectValue):
         if value.destroyed:
-            raise RuntimeError(f"use after destruction of {_object_type_name(value)}")
+            raise RuntimeError(f"use after destruction of {object_type_name(value)}")
         if (
             check_duplication
             and value.runtime_type is not None
@@ -2788,7 +2789,7 @@ def _run_object_cleanup(value: ObjectValue, vm: VirtualMachine) -> None:
             )
         except PanicSignal as exc:
             raise RuntimeError(
-                f"destructor for {_object_type_name(value)} must not panic"
+                f"destructor for {object_type_name(value)} must not panic"
             ) from exc
     value.cleaning_up = False
     value.destroyed = True
@@ -2816,9 +2817,9 @@ def _cleanup_fault_message(value: ObjectValue) -> str:
     """Format the message for cleanup fault during VM execution."""
     runtime = value.runtime_type
     if runtime is None or not runtime.mustcall_methods:
-        return f"{_object_type_name(value)} was dropped without required cleanup"
+        return f"{object_type_name(value)} was dropped without required cleanup"
     names = ", ".join(runtime.mustcall_methods)
-    return f"{_object_type_name(value)} requires one of: {names}"
+    return f"{object_type_name(value)} requires one of: {names}"
 
 
 def _fault_object(type_name: str, message: str) -> ObjectValue:
@@ -5558,13 +5559,6 @@ def _show_overload_inputs(overloads: tuple[BuiltinOverload, ...]) -> list[str]:
     ]
 
 
-def _object_type_name(value: ObjectValue) -> str:
-    """Return the canonical name for object type during VM execution."""
-    if not value.type_args:
-        return value.type_name
-    return f"{value.type_name}[{', '.join(value.type_args)}]"
-
-
 def _format_stack(stack: list[Any]) -> str:
     """Format stack during VM execution."""
     if not stack:
@@ -5666,7 +5660,7 @@ def _runtime_type_name(value: Any) -> str:
     if isinstance(value, dict):
         return "record"
     if isinstance(value, ObjectValue):
-        return _object_type_name(value)
+        return object_type_name(value)
     return type(value).__name__
 
 
