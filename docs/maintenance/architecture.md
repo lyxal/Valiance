@@ -65,7 +65,7 @@ When a node gains a field, check all of these places:
 
 ### Branch-based analysis
 
-The `src/valiance/analysis/state` package provides analyser-independent `BranchVariables`, `AnalysisBranch`, and `BranchSet` values. The `src/valiance/analysis/analyser.py` façade and its private
+The `src/valiance/analysis/state` package provides analyser-independent `BranchVariables`, `AnalysisBranch`, and `BranchSet` values. The `src/valiance/analysis/declarations` package owns function, object, trait, variant, enum, constructor, friendly-definition, and import registration. The `src/valiance/analysis/analyser.py` façade and its private
 `_analyser_*` implementation modules model analysis as a transformation from a
 set of possible branches to another set. The façade owns branch state, public
 entry points, and the `Analyser` orchestration class; handlers and focused helper
