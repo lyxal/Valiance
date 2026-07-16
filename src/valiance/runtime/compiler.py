@@ -138,19 +138,6 @@ class _LoopPatch:
     break_jumps: list[int]
 
 
-@dataclass(frozen=True, slots=True)
-class _FunctionCompilationPlan:
-    """Normalized bytecode metadata for a typed function overload."""
-
-    params: tuple[str, ...]
-    param_collection_ranks: tuple[int | None, ...]
-    dispatch_types: tuple[str | None, ...]
-    return_tags: tuple[tuple[DataTag, ...], ...]
-    return_tag_specs: tuple[object, ...]
-    return_collection_ranks: tuple[int | None, ...]
-    multi: bool
-
-
 class _Compiler:
     def __init__(
         self,
@@ -1440,35 +1427,28 @@ def _compile_function_overload(
         )
     returns = source.returns if source is not None else typ.returns
     return_ranks = tuple(_runtime_collection_rank(item) for item in returns or ())
-    plan = _FunctionCompilationPlan(
-        params=(*params, *static_params),
-        param_collection_ranks=(
-            *(_runtime_parameter_rank(item) for item in typ.params or ()),
-            *(None for _ in static_params),
-        ),
-        dispatch_types=tuple(
-            _runtime_dispatch_type(item) for item in source.params
-        ) if source is not None else (),
-        return_tags=tuple(_runtime_tags_for_type(item) for item in returns or ()),
-        return_tag_specs=tuple(_runtime_tag_contract_spec(item) for item in returns or ()),
-        return_collection_ranks=(
-            return_ranks if any(rank is not None for rank in return_ranks) else ()
-        ),
-        multi=source is not None and source.is_multi,
-    )
     return _Compiler().compile_function(
         overload.body,
-        params=plan.params,
+        params=(*params, *static_params),
         name=name,
         cycle_params=bool(typ.params),
         element_tags=_function_element_tag_names(overload.typ),
         recursive=_function_is_recursive(ast),
-        multi=plan.multi,
-        dispatch_types=plan.dispatch_types,
-        return_tags=plan.return_tags,
-        return_tag_specs=plan.return_tag_specs,
-        return_collection_ranks=plan.return_collection_ranks,
-        param_collection_ranks=plan.param_collection_ranks,
+        multi=source is not None and source.is_multi,
+        dispatch_types=tuple(
+            _runtime_dispatch_type(item) for item in source.params
+        ) if source is not None else (),
+        return_tags=tuple(_runtime_tags_for_type(item) for item in returns or ()),
+        return_tag_specs=tuple(
+            _runtime_tag_contract_spec(item) for item in returns or ()
+        ),
+        return_collection_ranks=(
+            return_ranks if any(rank is not None for rank in return_ranks) else ()
+        ),
+        param_collection_ranks=(
+            *(_runtime_parameter_rank(item) for item in typ.params or ()),
+            *(None for _ in static_params),
+        ),
     )
 
 
@@ -1504,15 +1484,6 @@ def _runtime_dispatch_type(typ: Type) -> str | None:
     if isinstance(typ, NominalType):
         return show(typ)
     return None
-
-
-def _compiled_function_arity(code: FunctionCode | FunctionSetCode) -> int:
-    """Determine the required arity for compiled function during typed-AST bytecode lowering."""
-    if isinstance(code, FunctionCode):
-        return len(code.params)
-    if not code.overloads:
-        return 0
-    return len(code.overloads[0].params)
 
 
 def _unfold_state_arity(node: UnfoldNode, typed_node: TypedNode | None) -> int:
@@ -1570,16 +1541,6 @@ def _function_is_recursive(ast: FunctionNode) -> bool:
         isinstance(annotation, AnnotationNode) and annotation.name.text == "recursive"
         for annotation in ast.annotations
     )
-
-
-def _runtime_nominal_name(typ: Type) -> str | None:
-    """Return the runtime nominal name represented by a static type."""
-    typ = normalize(typ)
-    while isinstance(typ, (TaggedType, ExactType, AtomicType)):
-        typ = normalize(typ.inner)
-    if isinstance(typ, NominalType):
-        return _symbol_runtime_name(typ.name)
-    return None
 
 
 def _substitute_runtime_type_template(
@@ -2188,18 +2149,6 @@ def _literal_pattern_value(node: ASTNode) -> object:
 def _compile_guard(condition: tuple[ASTNode, ...]) -> FunctionCode:
     """Compile guard during typed-AST bytecode lowering."""
     return _Compiler().compile_function(condition, params=("_",), name="<match guard>")
-
-
-def _type_pattern_name(typ: object) -> str:
-    """Return the canonical name for type pattern during typed-AST bytecode lowering."""
-    from valiance.vtypes import NominalType, NoneTypeNode, normalize
-
-    typ = normalize(typ)
-    if isinstance(typ, NoneTypeNode):
-        return "None"
-    if not isinstance(typ, NominalType):
-        raise CompileError(f"cannot compile match type pattern {typ}")
-    return typ.name.text
 
 
 def _runtime_tag_contract_spec(typ: Type) -> object:
