@@ -138,6 +138,19 @@ class _LoopPatch:
     break_jumps: list[int]
 
 
+@dataclass(frozen=True, slots=True)
+class _FunctionCompilationPlan:
+    """Normalized bytecode metadata for a typed function overload."""
+
+    params: tuple[str, ...]
+    param_collection_ranks: tuple[int | None, ...]
+    dispatch_types: tuple[str | None, ...]
+    return_tags: tuple[tuple[DataTag, ...], ...]
+    return_tag_specs: tuple[object, ...]
+    return_collection_ranks: tuple[int | None, ...]
+    multi: bool
+
+
 class _Compiler:
     def __init__(
         self,
@@ -1396,69 +1409,67 @@ def _compile_function_overload(
         raise CompileError(
             f"cannot compile function overload from {type(typ).__name__}"
         )
-    static_params = _static_param_names(ast, overload)
-    return _Compiler().compile_function(
-        overload.body,
-        params=(*_overload_param_names(ast, overload), *static_params),
-        name=name,
-        cycle_params=bool(typ.params),
-        element_tags=_function_element_tag_names(overload.typ),
-        recursive=_function_is_recursive(ast),
-        multi=_overload_is_multi(overload),
-        dispatch_types=_overload_dispatch_types(overload),
-        return_tags=_function_overload_return_tags(overload, typ),
-        return_tag_specs=_function_overload_return_tag_specs(overload, typ),
-        return_collection_ranks=_function_return_collection_ranks(typ),
-        param_collection_ranks=(
-            *_function_param_collection_ranks(typ),
-            *(None for _ in static_params),
-        ),
-    )
-
-
-def _overload_param_names(
-    ast: FunctionNode,
-    overload: FunctionOverloadTyping,
-) -> tuple[str, ...]:
-    """Collect the names for overload param during typed-AST bytecode lowering."""
-    source = overload.overload
-    typ = overload.typ
-    if isinstance(source, Overload) and source.param_names:
-        return tuple(
-            f"_{index}" if name is None else name.text
-            for index, name in enumerate(source.param_names)
-        )
-    if not isinstance(typ, FunctionType) or typ.params is None:
-        return ()
-    if ast.params is None:
-        return tuple(f"_{index}" for index in range(len(typ.params)))
-    return tuple(
-        f"_{index}" if param.name is None else param.name.text
-        for index, param in enumerate(ast.params)
-    )
-
-
-def _static_param_names(
-    ast: FunctionNode,
-    overload: FunctionOverloadTyping,
-) -> tuple[str, ...]:
-    """Collect hidden numeric ``where`` parameters in deterministic order."""
-    source = overload.overload
-    if isinstance(source, Overload) and (
-        source.where_clause
-        or static_where.rank_variable_names(source.params + source.returns)
-    ):
-        return static_where.static_parameter_names(
+    source = overload.overload if isinstance(overload.overload, Overload) else None
+    static_params = (
+        static_where.static_parameter_names(
             params=source.params,
             returns=source.returns,
             param_names=source.param_names,
             clause=source.where_clause,
         )
-
-    # Call-site-checked functions intentionally publish a deferred overload
-    # with empty returns/where metadata.  Their original AST still owns the
-    # static program and must define the same hidden parameters that calls pass.
-    return _ast_static_param_names(ast)
+        if source is not None
+        and (
+            source.where_clause
+            or static_where.rank_variable_names(source.params + source.returns)
+        )
+        else _ast_static_param_names(ast)
+    )
+    if source is not None and source.param_names:
+        params = tuple(
+            f"_{index}" if item is None else item.text
+            for index, item in enumerate(source.param_names)
+        )
+    elif typ.params is None:
+        params = ()
+    elif ast.params is None:
+        params = tuple(f"_{index}" for index in range(len(typ.params)))
+    else:
+        params = tuple(
+            f"_{index}" if item.name is None else item.name.text
+            for index, item in enumerate(ast.params)
+        )
+    returns = source.returns if source is not None else typ.returns
+    return_ranks = tuple(_runtime_collection_rank(item) for item in returns or ())
+    plan = _FunctionCompilationPlan(
+        params=(*params, *static_params),
+        param_collection_ranks=(
+            *(_runtime_parameter_rank(item) for item in typ.params or ()),
+            *(None for _ in static_params),
+        ),
+        dispatch_types=tuple(
+            _runtime_dispatch_type(item) for item in source.params
+        ) if source is not None else (),
+        return_tags=tuple(_runtime_tags_for_type(item) for item in returns or ()),
+        return_tag_specs=tuple(_runtime_tag_contract_spec(item) for item in returns or ()),
+        return_collection_ranks=(
+            return_ranks if any(rank is not None for rank in return_ranks) else ()
+        ),
+        multi=source is not None and source.is_multi,
+    )
+    return _Compiler().compile_function(
+        overload.body,
+        params=plan.params,
+        name=name,
+        cycle_params=bool(typ.params),
+        element_tags=_function_element_tag_names(overload.typ),
+        recursive=_function_is_recursive(ast),
+        multi=plan.multi,
+        dispatch_types=plan.dispatch_types,
+        return_tags=plan.return_tags,
+        return_tag_specs=plan.return_tag_specs,
+        return_collection_ranks=plan.return_collection_ranks,
+        param_collection_ranks=plan.param_collection_ranks,
+    )
 
 
 def _ast_static_param_names(ast: FunctionNode) -> tuple[str, ...]:
@@ -1473,85 +1484,6 @@ def _ast_static_param_names(ast: FunctionNode) -> tuple[str, ...]:
     )
 
 
-def _overload_is_multi(overload: FunctionOverloadTyping) -> bool:
-    """Return the Boolean result of overload is multi during typed-AST bytecode lowering."""
-    source = overload.overload
-    return isinstance(source, Overload) and source.is_multi
-
-
-def _overload_dispatch_types(
-    overload: FunctionOverloadTyping,
-) -> tuple[str | None, ...]:
-    """Determine the types used for overload dispatch during typed-AST bytecode lowering."""
-    source = overload.overload
-    if not isinstance(source, Overload):
-        return ()
-    return tuple(_runtime_dispatch_type(param) for param in source.params)
-
-
-def _function_overload_return_tags(
-    overload: FunctionOverloadTyping,
-    typ: FunctionType,
-) -> tuple[tuple[DataTag, ...], ...]:
-    """Return runtime tag contracts from the declared, unspecialized signature."""
-    source = overload.overload
-    returns = source.returns if isinstance(source, Overload) else typ.returns
-    if returns is None:
-        return ()
-    return tuple(_top_level_runtime_tags(ret) for ret in returns)
-
-
-def _function_return_tags(
-    typ: FunctionType,
-) -> tuple[tuple[DataTag, ...], ...]:
-    """Compute function return tags during typed-AST bytecode lowering."""
-    if typ.returns is None:
-        return ()
-    # Keep one entry per declared return even when no tags are declared. The
-    # VM uses this metadata to canonicalize runtime tag evidence to the static
-    # return contract, preventing stale computed or variant tags from leaking
-    # through an untagged function boundary.
-    return tuple(_top_level_runtime_tags(ret) for ret in typ.returns)
-
-
-def _function_overload_return_tag_specs(
-    overload: FunctionOverloadTyping,
-    typ: FunctionType,
-) -> tuple[object, ...]:
-    """Compile recursive runtime tag contracts for one function overload."""
-    source = overload.overload
-    returns = source.returns if isinstance(source, Overload) else typ.returns
-    if returns is None:
-        return ()
-    return tuple(_runtime_tag_contract_spec(ret) for ret in returns)
-
-
-def _function_return_tag_specs(typ: FunctionType) -> tuple[object, ...]:
-    """Compile recursive runtime tag contracts for a function type."""
-    if typ.returns is None:
-        return ()
-    return tuple(_runtime_tag_contract_spec(ret) for ret in typ.returns)
-
-
-def _function_return_collection_ranks(
-    typ: FunctionType,
-) -> tuple[int | None, ...]:
-    """Compute function return collection ranks during typed-AST bytecode lowering."""
-    if typ.returns is None:
-        return ()
-    ranks = tuple(_runtime_collection_rank(ret) for ret in typ.returns)
-    return ranks if any(rank is not None for rank in ranks) else ()
-
-
-def _function_param_collection_ranks(
-    typ: FunctionType,
-) -> tuple[int | None, ...]:
-    """Compute natural runtime ranks for function parameters."""
-    if typ.params is None:
-        return ()
-    return tuple(_runtime_parameter_rank(param) for param in typ.params)
-
-
 def _runtime_parameter_rank(typ: Type) -> int | None:
     """Return the collection rank a dynamic function parameter accepts."""
     typ = normalize(typ)
@@ -1562,11 +1494,6 @@ def _runtime_parameter_rank(typ: Type) -> int | None:
     if isinstance(typ, RankVariable):
         return None
     return 0
-
-
-def _top_level_runtime_tags(typ: Type) -> tuple[DataTag, ...]:
-    """Compute top level runtime tags during typed-AST bytecode lowering."""
-    return _runtime_tags_for_type(typ)
 
 
 def _runtime_dispatch_type(typ: Type) -> str | None:
