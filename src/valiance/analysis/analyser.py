@@ -3795,7 +3795,9 @@ class Analyser:
         present_type = T.Row(base, T.Field(name, field_type))
         receiver_type = T.optional(present_type) if optional_safe else present_type
         result_type = (
-            _patterns._optional_access_result_type(field_type)
+            field_type
+            if _patterns._optional_payload_type(field_type, strict=True) is not None
+            else T.optional(field_type)
             if optional_safe
             else field_type
         )
@@ -3830,7 +3832,7 @@ class Analyser:
             )
             return T.C(type(receiver_type), field_type, receiver_type.rank), refined
 
-        payload_type = _patterns._strict_optional_payload_type(receiver_type)
+        payload_type = _patterns._optional_payload_type(receiver_type, strict=True)
         if payload_type is None:
             return None, None
         field_type, refined_payload = self._field_type(
@@ -3846,7 +3848,12 @@ class Analyser:
         )
         if write:
             return field_type, refined_receiver
-        return _patterns._optional_access_result_type(field_type), refined_receiver
+        result_type = (
+            field_type
+            if _patterns._optional_payload_type(field_type, strict=True) is not None
+            else T.optional(field_type)
+        )
+        return result_type, refined_receiver
 
     def _field_type(
         self,

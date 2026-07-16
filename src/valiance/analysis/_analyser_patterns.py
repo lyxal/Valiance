@@ -62,72 +62,43 @@ def _unfold_emitted_type(
         missing = len(state_types) - len(returns)
         next_state = state_types[-missing:] + returns if missing else returns
         return next_state[-1]
-    return _optional_present_type(returns[-1])
+    return _optional_payload_type(returns[-1])
 
 
-def _strict_optional_payload_type(typ: T.Type) -> T.Type | None:
-    """Return the payload of exactly ``Some[T] | None`` optional types."""
-    typ = T.normalize(typ)
-    if not isinstance(typ, T.UnionType):
-        return None
-    found_none = False
-    payloads: list[T.Type] = []
-    for item in typ.items:
-        item = T.normalize(item)
-        if isinstance(item, T.NoneTypeNode):
-            found_none = True
-            continue
-        if (
-            isinstance(item, T.NominalType)
-            and item.name == Symbol("Some")
-            and len(item.args) == 1
-        ):
-            payloads.append(item.args[0])
-            continue
-        return None
-    if not found_none or not payloads:
-        return None
-    return payloads[0] if len(payloads) == 1 else T.U(*payloads)
-
-
-def _optional_access_result_type(field_type: T.Type) -> T.Type:
-    """Lift a member result into an optional, flattening optional members."""
-    return (
-        field_type
-        if _strict_optional_payload_type(field_type) is not None
-        else T.optional(field_type)
-    )
-
-
-def _optional_present_type(typ: T.Type) -> T.Type:
-    """Determine the type of optional present during static analysis."""
+def _optional_payload_type(typ: T.Type, *, strict: bool = False) -> T.Type | None:
+    """Return an optional's payload, optionally rejecting non-optional members."""
     typ = T.normalize(typ)
     if isinstance(typ, T.NoneTypeNode):
-        return T.Never()
+        return None if strict else T.Never()
     if (
         isinstance(typ, T.NominalType)
         and typ.name == Symbol("Some")
         and len(typ.args) == 1
     ):
-        return typ.args[0]
+        return None if strict else typ.args[0]
     if not isinstance(typ, T.UnionType):
-        return typ
+        return None if strict else typ
+    found_none = False
     present: list[T.Type] = []
     for item in typ.items:
         item = T.normalize(item)
         if isinstance(item, T.NoneTypeNode):
-            continue
-        if (
+            found_none = True
+        elif (
             isinstance(item, T.NominalType)
             and item.name == Symbol("Some")
             and len(item.args) == 1
         ):
             present.append(item.args[0])
+        elif strict:
+            return None
         else:
             present.append(item)
+    if strict and (not found_none or not present):
+        return None
     if not present:
         return T.Never()
-    return T.U(*present)
+    return present[0] if len(present) == 1 else T.U(*present)
 
 
 def _index_type(typ: T.Type, *, key: bool = False) -> T.Type:
