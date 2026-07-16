@@ -87,7 +87,7 @@ from valiance.vtypes.default_types import Boolean
 from .calls import candidates as _calls
 from .calls import callable_values as _functions
 from .control_flow import patterns as _patterns
-from . import _analyser_utils as _utils
+from .support import analysis_utils as _utils
 from .state import (
     AnalysisBranch, BranchSet, BranchVariables, Diagnostic,
     DiagnosticSeverity, InputMode, VariableWrite,
@@ -96,6 +96,7 @@ from .declarations import DeclarationAnalyser
 from .calls import CallAnalyser
 from .control_flow import ControlFlowAnalyser
 from .contracts import ContractAnalyser
+from .expressions import ExpressionAnalyser
 from .calls.models import (
     CallCandidate, ElementArguments, ElementCallPreparation, FunctionAnalysis,
     ListItemAnalysis, ModifierArgumentAnalysis, OverloadApplication,
@@ -336,6 +337,7 @@ class Analyser:
         self.calls = CallAnalyser(self)
         self.control_flow = ControlFlowAnalyser(self)
         self.contracts = ContractAnalyser(self)
+        self.expressions = ExpressionAnalyser(self)
 
     def __getattr__(self, name: str):
         """Delegate declaration operations to their owning subsystem."""
@@ -351,6 +353,9 @@ class Analyser:
         contracts = self.__dict__.get("contracts")
         if contracts is not None and contracts.provides(name):
             return getattr(contracts, name)
+        expressions = self.__dict__.get("expressions")
+        if expressions is not None and expressions.provides(name):
+            return getattr(expressions, name)
         raise AttributeError(name)
 
     def _load_project_lint_settings(self) -> None:
@@ -655,235 +660,37 @@ class Analyser:
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     @register(ElementNode)
     def _element(
         self,
         node: ElementNode,
         branch: AnalysisBranch,
     ) -> BranchSet:
-        """Analyse a `ElementNode` node and return the surviving branches."""
-        overloads = self.env.overloads_for(node.name)
-        if not overloads:
-            self._diagnose(self._unknown_element_message(node, branch), node)
-            return BranchSet()
-        if not annotation_hooks.valid_element_annotations(node.annotations):
-            self._diagnose(
-                f"unsupported element annotation on '{node.name}'",
-                node,
-            )
-            return BranchSet()
-
-        modifier_args = self._modifier_argument_types(branch, node)
-        if modifier_args is None:
-            return BranchSet()
-        if node.modifier_args and not _calls._modifier_arity_matches(
-            overloads,
-            modifier_args,
-        ):
-            self._diagnose(
-                f"element '{node.name}' expects "
-                f"{_calls._show_modifier_counts(overloads)} ':' function argument(s), "
-                f"got {len(modifier_args)}",
-                node,
-            )
-            return BranchSet()
-
-        if node.call_args and node.name == Symbol("call"):
-            return self._call_element_call(branch, node, overloads)
-
-        diagnostics_before = len(self.diagnostics)
-        sources, terminal = self.element_argument_sources(
-            node,
-            branch,
-            overloads,
-            modifier_args,
-        )
-        if not sources and terminal:
-            return BranchSet.collect(terminal)
-        if not sources and len(self.diagnostics) > diagnostics_before:
-            return BranchSet()
-        candidates = self.element_call_candidates(node, overloads, sources)
-
-        stack_before = branch.stack
-        if node.call_args:
-            call_shape_message = self._explicit_call_shape_message(node, overloads)
-            no_match_message = (
-                f"{call_shape_message}\n"
-                f"{_utils._show_overload_list(node.name, overloads)}"
-                if call_shape_message is not None
-                else (
-                    f"no overloads for element '{node.name}' match explicit call "
-                    f"syntax\n{_utils._show_overload_list(node.name, overloads)}"
-                )
-            )
-            ambiguous_message = (
-                f"ambiguous overloads for element '{node.name}' "
-                "with explicit call syntax"
-            )
-        else:
-            no_match_message = (
-                f"no overloads for element '{node.name}' match stack "
-                f"{_utils._show_stack(stack_before)}\n"
-                f"{_utils._show_overload_list(node.name, overloads)}"
-            )
-            ambiguous_message = (
-                f"ambiguous overloads for element '{node.name}' with stack "
-                f"{_utils._show_stack(stack_before)}"
-            )
-        winners = self.select_call_winners(
-            candidates=candidates,
-            branch=branch,
-            node=node,
-            no_match_message=no_match_message,
-            ambiguous_message=ambiguous_message,
-        )
-        if winners is None:
-            return BranchSet.collect(terminal)
-
-        results: list[AnalysisBranch] = list(terminal)
-        for candidate in winners:
-            committed = self.commit_element_candidate(node, overloads, candidate)
-            if committed is not None:
-                results.append(committed)
-        return BranchSet.collect(results)
-
-    def _unknown_element_message(
-        self,
-        node: ElementNode,
-        branch: AnalysisBranch,
-    ) -> str:
-        """Build an unknown-element message with type-viable typo suggestions."""
-        message = f"unknown element '{node.name}'"
-        suggestions = self._element_name_suggestions(node, branch)
-        if not suggestions:
-            return message
-        return f"{message}\ndid you mean:\n" + "\n".join(
-            f"  - {suggestion}" for suggestion in suggestions
-        )
-
-    def _element_name_suggestions(
-        self,
-        node: ElementNode,
-        branch: AnalysisBranch,
-    ) -> tuple[str, ...]:
-        """Return close visible element signatures that can consume this call."""
-        attempted = str(node.name)
-        ranked: list[tuple[float, Symbol]] = []
-        for name in self.env.visible_overload_names():
-            if _utils._internal_element_name(name):
-                continue
-            score = _utils._name_similarity(attempted, str(name))
-            if score >= 0.62:
-                ranked.append((score, name))
-        ranked.sort(key=lambda item: (-item[0], str(item[1])))
-
-        suggestions: list[str] = []
-        for _, name in ranked[:12]:
-            for overload in self._viable_suggestion_overloads(node, branch, name):
-                rendered = _utils._show_overload_signature(name, overload)
-                if rendered not in suggestions:
-                    suggestions.append(rendered)
-                if len(suggestions) == 3:
-                    return tuple(suggestions)
-        return tuple(suggestions)
-
-    def _viable_suggestion_overloads(
-        self,
-        node: ElementNode,
-        branch: AnalysisBranch,
-        name: Symbol,
-    ) -> tuple[T.Overload, ...]:
-        """Probe one similar name without leaking speculative diagnostics."""
-        overloads = self.env.overloads_for(name)
-        if not overloads:
-            return ()
-        candidate_node = replace(node, name=name, annotations=(), extension=None)
-        probe = self._child_analyser(self.env.lexical_child_scope())
-        prelude_nodes = len(self._prelude.nodes)
-        prelude_bindings = len(self._prelude.bindings)
-        try:
-            modifiers = probe._modifier_argument_types(branch, candidate_node)
-            if modifiers is None:
-                return ()
-            if candidate_node.modifier_args and not _calls._modifier_arity_matches(
-                overloads,
-                modifiers,
-            ):
-                return ()
-            if candidate_node.call_args and name == Symbol("call"):
-                return ()
-            sources, _ = probe.element_argument_sources(
-                candidate_node,
-                branch,
-                overloads,
-                modifiers,
-            )
-            candidates = probe.element_call_candidates(
-                candidate_node,
-                overloads,
-                sources,
-            )
-            viable: list[T.Overload] = []
-            for candidate in candidates:
-                overload = candidate.applied.overload
-                if overload.annotation_error is not None or overload in viable:
-                    continue
-                viable.append(overload)
-            return tuple(viable)
-        finally:
-            del self._prelude.nodes[prelude_nodes:]
-            del self._prelude.bindings[prelude_bindings:]
-
-    def _explicit_call_shape_message(
-        self,
-        node: ElementNode,
-        overloads: tuple[T.Overload, ...],
-    ) -> str | None:
-        """Diagnose named-argument mistakes before generic overload failure."""
-        named_args = tuple(arg.name for arg in node.call_args if arg.name is not None)
-        seen: set[Symbol] = set()
-        for name in named_args:
-            if name in seen:
-                return (
-                    f"named argument '{name}' is provided more than once for "
-                    f"element '{node.name}'"
-                )
-            seen.add(name)
-
-        parameter_names = tuple(
-            name
-            for overload in overloads
-            for name in overload.param_names
-            if name is not None
-        )
-        known = set(parameter_names)
-        for name in named_args:
-            if name in known:
-                continue
-            message = f"unknown named argument '{name}' for element '{node.name}'"
-            suggestions = _utils._similar_names(str(name), parameter_names, limit=1)
-            if suggestions:
-                message += f"\ndid you mean '{suggestions[0]}'?"
-            return message
-        return None
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        """Delegate element invocation to the call-planning subsystem."""
+        return self.calls._element(node, branch)
 
     @register(MatchNode)
     def _match(
@@ -903,199 +710,9 @@ class Analyser:
         """Delegate try analysis to the control-flow subsystem."""
         return self.control_flow._try(node, branch)
 
-    def _source_field_receiver(
-        self,
-        branch: AnalysisBranch,
-        name: Symbol,
-        *,
-        optional_safe: bool = False,
-    ) -> tuple[T.Type, T.Type | None, AnalysisBranch] | None:
-        """Source field receiver during static analysis."""
-        if branch.stack:
-            receiver_type = branch.stack[-1]
-            popped = branch.with_stack(branch.stack.pop())
-            resolver = self._safe_field_type if optional_safe else self._field_type
-            field_type, refined_receiver = resolver(receiver_type, name, popped)
-            if refined_receiver is not None:
-                popped = popped.refine_type(receiver_type, refined_receiver)
-                receiver_type = refined_receiver
-            return receiver_type, field_type, popped
 
-        if (
-            branch.input_mode is InputMode.CYCLE_EXPLICIT_PARAMS
-            and branch.cycle_params
-        ):
-            receiver_type = branch.cycle_params[
-                branch.cycle_index % len(branch.cycle_params)
-            ]
-            popped = replace(
-                branch,
-                cycle_index=(branch.cycle_index + 1) % len(branch.cycle_params),
-            )
-            resolver = self._safe_field_type if optional_safe else self._field_type
-            field_type, refined_receiver = resolver(
-                receiver_type,
-                name,
-                popped,
-            )
-            if refined_receiver is not None:
-                popped = popped.refine_type(receiver_type, refined_receiver)
-                receiver_type = refined_receiver
-            return receiver_type, field_type, popped
 
-        if branch.input_mode is not InputMode.INFER_INPUTS:
-            return None
 
-        base = _functions._anonymous_type_var(branch, 1)
-        field_type = _functions._anonymous_type_var(branch, 2)
-        present_type = T.Row(base, T.Field(name, field_type))
-        receiver_type = T.optional(present_type) if optional_safe else present_type
-        result_type = (
-            field_type
-            if _patterns._optional_payload_type(field_type, strict=True) is not None
-            else T.optional(field_type)
-            if optional_safe
-            else field_type
-        )
-        return (
-            receiver_type,
-            result_type,
-            replace(branch, inputs=branch.inputs + (receiver_type,)),
-        )
-
-    def _safe_field_type(
-        self,
-        receiver_type: T.Type,
-        name: Symbol,
-        branch: AnalysisBranch,
-        *,
-        write: bool = False,
-    ) -> tuple[T.Type | None, T.Type | None]:
-        """Determine a field type through an optional present value."""
-        receiver_type = T.normalize(receiver_type)
-        if not write and isinstance(receiver_type, T.CollectionType):
-            field_type, refined_base = self._safe_field_type(
-                receiver_type.base,
-                name,
-                branch,
-            )
-            if field_type is None:
-                return None, None
-            refined = (
-                receiver_type
-                if refined_base is None
-                else T.C(type(receiver_type), refined_base, receiver_type.rank)
-            )
-            return T.C(type(receiver_type), field_type, receiver_type.rank), refined
-
-        payload_type = _patterns._optional_payload_type(receiver_type, strict=True)
-        if payload_type is None:
-            return None, None
-        field_type, refined_payload = self._field_type(
-            payload_type,
-            name,
-            branch,
-            write=write,
-        )
-        if field_type is None:
-            return None, None
-        refined_receiver = (
-            None if refined_payload is None else T.optional(refined_payload)
-        )
-        if write:
-            return field_type, refined_receiver
-        result_type = (
-            field_type
-            if _patterns._optional_payload_type(field_type, strict=True) is not None
-            else T.optional(field_type)
-        )
-        return result_type, refined_receiver
-
-    def _field_type(
-        self,
-        receiver_type: T.Type,
-        name: Symbol,
-        branch: AnalysisBranch,
-        *,
-        write: bool = False,
-    ) -> tuple[T.Type | None, T.Type | None]:
-        """Determine the type of field during static analysis."""
-        receiver_type = T.normalize(receiver_type)
-        if isinstance(receiver_type, T.RowType):
-            existing = _utils._row_field_type(receiver_type, name)
-            if write:
-                return (existing, None) if existing is not None else (None, None)
-            if existing is not None:
-                return existing, None
-            field_type = _functions._anonymous_type_var(branch, 1)
-            return (
-                field_type,
-                T.Row(
-                    receiver_type.base,
-                    *receiver_type.fields,
-                    T.Field(name, field_type),
-                ),
-            )
-
-        if isinstance(receiver_type, T.VarType):
-            if write:
-                return None, None
-            field_type = _functions._anonymous_type_var(branch, 1)
-            return field_type, T.Row(receiver_type, T.Field(name, field_type))
-
-        if isinstance(receiver_type, T.NominalType):
-            definition = self.env.lookup_object(receiver_type.name)
-            attribute = None if definition is None else definition.attribute(name)
-            if attribute is None:
-                return None, None
-            if not self._can_access_attribute(
-                receiver_type.name,
-                attribute,
-                write=write,
-            ):
-                return None, None
-            substitution = {
-                generic.text: arg
-                for generic, arg in zip(
-                    definition.generics,
-                    receiver_type.args,
-                    strict=False,
-                )
-            }
-            return _calls._substitute_branch_type(attribute.typ, substitution), None
-
-        if isinstance(receiver_type, T.CollectionType):
-            field_type, refined_base = self._field_type(
-                receiver_type.base,
-                name,
-                branch,
-                write=write,
-            )
-            if field_type is None:
-                return None, None
-            refined = (
-                receiver_type
-                if refined_base is None
-                else T.C(type(receiver_type), refined_base, receiver_type.rank)
-            )
-            return T.C(type(receiver_type), field_type, receiver_type.rank), refined
-
-        return None, None
-
-    def _can_access_attribute(
-        self,
-        receiver_name: Symbol,
-        attribute: T.ObjectAttribute,
-        *,
-        write: bool,
-    ) -> bool:
-        """Return whether the analyser can access attribute."""
-        access = attribute.access.text
-        if access == "public":
-            return True
-        if access == "readable" and not write:
-            return True
-        return receiver_name in self._friendly_owners
 
 
 
@@ -1193,14 +810,18 @@ def analyse_function_details(
 
 # Importing the handlers runs their registration decorators against the shared
 # registry above. Keep this after ``Analyser`` and all helper modules exist.
-from . import _analyser_handlers as _handlers  # noqa: E402
+from .handlers import core as _handlers  # noqa: E402
 from .control_flow import blocks as _control_blocks  # noqa: E402
 from .control_flow import loop_handlers as _control_loops  # noqa: E402
 from .contracts import tag_handlers as _tag_handlers  # noqa: E402
+from .expressions import assignments as _assignments  # noqa: E402
+from .expressions import access_handlers as _access_handlers  # noqa: E402
+from .expressions import collections as _collections  # noqa: E402
 
 _ANALYSER_PARTS = (
     _functions, _calls, _patterns, _utils, _handlers,
     _control_blocks, _control_loops, _tag_handlers,
+    _assignments, _access_handlers, _collections,
 )
 
 

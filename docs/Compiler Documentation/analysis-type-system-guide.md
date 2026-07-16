@@ -20,7 +20,7 @@ For an approachable explanation before this exhaustive reference, read
   registry, the `Analyser` orchestration class, and compatibility access to
   private helpers.
 
-- `src/valiance/analysis/_analyser_handlers.py`
+- `src/valiance/analysis/handlers/core.py`
   Contains the concrete raw-AST node handlers registered with the façade.
 
 - `src/valiance/analysis/calls/callable_values.py` and `signatures.py`
@@ -32,10 +32,11 @@ For an approachable explanation before this exhaustive reference, read
   static evaluation, rank substitution, and tag-flow logic.
 
 - `src/valiance/analysis/control_flow/`
+- `src/valiance/analysis/expressions/`
   Contains indexing, optional access, match/try joins, pattern validation,
   destructuring, narrowing, and exhaustiveness helpers.
 
-- `src/valiance/analysis/_analyser_utils.py`
+- `src/valiance/analysis/support/analysis_utils.py`
   Contains shared diagnostics, branch merging, copy checks, and typed/type
   refinement utilities.
 
@@ -137,7 +138,7 @@ will use them. Node-specific checks belong in the node handler.
 ## Current Analyser Structure
 
 The public façade keeps the registry and dispatch loop, while
-`_analyser_handlers.py` supplies concrete handler registrations:
+`handlers/core.py` supplies the remaining cross-domain handler registrations:
 
 ```python
 @register(SomeNode)
@@ -166,7 +167,7 @@ Important helpers are grouped by responsibility:
   `_join_match_output(...)`, `_try_handler_output(...)`, and
   `_join_try_output(...)` keep control-flow normalization out of handlers.
 
-- `_analyser_utils.py`: `_trait_requirements(...)` and
+- `support/analysis_utils.py`: `_trait_requirements(...)` and
   `_literal_branch_results(...)` provide shared declaration and literal/branch
   utilities.
 
@@ -1255,7 +1256,7 @@ validated-match lifecycle points. Rules return structured `LintFinding` values;
 the analyser records and deduplicates them while keeping the legacy
 `analyser.lints` rendering synchronized. This means a new rule module can be
 added under `analysis/lints/rules/` without changing `analyser.py` or
-`_analyser_handlers.py`.
+`handlers/core.py`.
 
 Lint messages should be actionable: explain what is redundant or risky and give
 a concrete replacement such as removing an identity cast or replacing a

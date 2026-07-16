@@ -6,6 +6,7 @@ from typing import Any
 
 from .arguments import _CallArguments
 from .extensions import _CallExtensions
+from .elements import _ElementCalls
 from .functions import _CallableValues
 from .selection import _CallSelection
 
@@ -14,6 +15,7 @@ _CALL_OWNERS = (
     _CallSelection,
     _CallExtensions,
     _CallableValues,
+    _ElementCalls,
 )
 
 

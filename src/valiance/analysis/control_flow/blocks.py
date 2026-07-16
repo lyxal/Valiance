@@ -74,7 +74,7 @@ from .. import analyser as _core
 from ..calls import callable_values as _functions
 from ..calls import candidates as _calls
 from . import patterns as _patterns
-from .. import _analyser_utils as _utils
+from ..support import analysis_utils as _utils
 
 
 

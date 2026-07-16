@@ -36,7 +36,7 @@ from valiance.vtypes.relations import merge_stacks
 from .. import analyser as _core
 from ..calls import callable_values as _functions
 from ..calls import candidates as _calls
-from .. import _analyser_utils as _utils
+from ..support import analysis_utils as _utils
 
 
 def _extension_selector_arity(function: TypedFunctionNode) -> int | None:

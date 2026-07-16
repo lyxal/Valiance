@@ -195,10 +195,10 @@ application helpers. It does not perform analyser branch management.
 
 ### `analysis/state`, `analysis/declarations`, `analysis/calls`, and `analysis/analyser.py`: applying types to programs
 
-`analysis/state` owns the immutable `BranchVariables`, `AnalysisBranch`, and `BranchSet` foundations without depending on the concrete analyser. `analysis/declarations` owns environment-changing declarations and type-shape construction behind a `DeclarationAnalyser` service. `analysis/contracts` owns annotations, tags, where clauses, lifecycle rules, and their validation behind a `ContractAnalyser` service. The public façade owns diagnostics, handler
+`analysis/state` owns the immutable `BranchVariables`, `AnalysisBranch`, and `BranchSet` foundations without depending on the concrete analyser. `analysis/declarations` owns environment-changing declarations and type-shape construction behind a `DeclarationAnalyser` service. `analysis/expressions` owns variables, assignments, field and index access, and literal construction behind an `ExpressionAnalyser` service. `analysis/contracts` owns annotations, tags, where clauses, lifecycle rules, and their validation behind a `ContractAnalyser` service. The public façade owns diagnostics, handler
 dispatch, and the `Analyser` orchestration class. Focused private modules own:
 
-- `_analyser_handlers.py`: concrete AST handlers;
+- `handlers/core.py`: remaining cross-domain concrete AST handlers;
 - `calls/arguments.py`: stack and explicit argument sourcing;
 - `calls/candidates.py` and `calls/selection.py`: candidate construction, overload application, ranking, and commitment;
 - `calls/vectorisation.py`: rank solving, vectorisation, and result propagation;
@@ -206,8 +206,7 @@ dispatch, and the `Analyser` orchestration class. Focused private modules own:
 - `control_flow/patterns.py`: pattern typing, subject narrowing, and branch joins;
 - `control_flow/matches.py` and `exhaustiveness.py`: match analysis and coverage;
 - `control_flow/blocks.py`, `loop_handlers.py`, `loops.py`, and `exceptions.py`: branch-producing blocks, loops, unfolding, and try handling; and
-- `_analyser_utils.py`: shared branch, diagnostic, literal, and refinement
-  helpers.
+- `support/analysis_utils.py`: shared branch, diagnostic, literal, and refinement helpers.
 
 Together these modules own variable scopes, field access, diagnostics, and
 typed AST emission.
@@ -1800,9 +1799,9 @@ A productive first pass is:
    `compatible`, `_match_specificity`, `try_apply_overload`.
 5. `analysis/analyser.py`: `AnalysisBranch`, `BranchSet`, `analyse_block`,
    `source_arguments`, and the orchestration methods.
-6. `analysis/_analyser_handlers.py` and `analysis/calls/` — follow one node from dispatch through candidate
+6. `analysis/handlers/core.py` and `analysis/calls/` — follow one node from dispatch through candidate
    selection and overload application; consult `control_flow/patterns.py` or
-   `_analyser_utils.py` for the corresponding helper family.
+   `support/analysis_utils.py` for the corresponding helper family.
 7. `vtypes/environment.py` — connect names/declarations to the relation context.
 8. Focused tests in `tests/test_types.py` and `tests/test_analyser.py`.
 

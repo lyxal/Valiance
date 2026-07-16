@@ -32,7 +32,7 @@ from valiance.vtypes.symbols import Symbol
 
 from .. import analyser as _core
 from . import candidates as _calls
-from .. import _analyser_utils as _utils
+from ..support import analysis_utils as _utils
 
 
 

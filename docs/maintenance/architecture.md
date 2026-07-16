@@ -65,7 +65,7 @@ When a node gains a field, check all of these places:
 
 ### Branch-based analysis
 
-The `src/valiance/analysis/state` package provides analyser-independent `BranchVariables`, `AnalysisBranch`, and `BranchSet` values. The `src/valiance/analysis/contracts` package owns annotations, tags, where clauses, object lifecycle rules, and tag handlers. The `src/valiance/analysis/control_flow` package owns match analysis, exhaustiveness, try handling, loops, unfolding, and branch-producing block handlers. The `src/valiance/analysis/calls` package owns argument sourcing, candidate construction, overload selection, vectorisation, callable dispatch, and extension planning. The `src/valiance/analysis/declarations` package owns function, object, trait, variant, enum, constructor, friendly-definition, and import registration. The `src/valiance/analysis/analyser.py` façade and its private
+The `src/valiance/analysis/state` package provides analyser-independent `BranchVariables`, `AnalysisBranch`, and `BranchSet` values. The `src/valiance/analysis/expressions` package owns assignment, field, index, interpolation, and literal handlers. The `src/valiance/analysis/contracts` package owns annotations, tags, where clauses, object lifecycle rules, and tag handlers. The `src/valiance/analysis/control_flow` package owns match analysis, exhaustiveness, try handling, loops, unfolding, and branch-producing block handlers. The `src/valiance/analysis/calls` package owns argument sourcing, candidate construction, overload selection, vectorisation, callable dispatch, and extension planning. The `src/valiance/analysis/declarations` package owns function, object, trait, variant, enum, constructor, friendly-definition, and import registration. The `src/valiance/analysis/analyser.py` façade and its private
 `_analyser_*` implementation modules model analysis as a transformation from a
 set of possible branches to another set. The façade owns branch state, public
 entry points, and the `Analyser` orchestration class; handlers and focused helper
@@ -79,12 +79,12 @@ families live in sibling modules. A branch contains:
 - break information; and
 - diagnostics.
 
-Concrete AST handlers live in `analysis/_analyser_handlers.py`. They should
+Remaining cross-domain AST handlers live in `analysis/handlers/core.py`. They should
 return new branches rather than mutating existing ones. Branch joins should
 happen only where control flow actually converges. Function typing, call
 resolution, pattern/control-flow logic, and shared refinement helpers live in
 the corresponding `calls/` modules,
-`control_flow/` and `_analyser_utils.py` modules.
+`control_flow/` and `support/analysis_utils.py` modules.
 
 Non-fatal source-pattern advice is recorded both as rendered lint text and as
 structured rewrite metadata. Detection belongs in the registry-driven

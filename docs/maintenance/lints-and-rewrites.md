@@ -8,7 +8,7 @@ resolved type, branch, and overload facts needed to make safe recommendations.
 Lint detection is deliberately isolated from the analyser implementation under
 `src/valiance/analysis/lints/`. The analyser exposes generic lifecycle hooks;
 individual rules register against those hooks and never need to be wired into
-`analyser.py` or `_analyser_handlers.py`.
+`analyser.py` or `handlers/core.py`.
 
 The analyser does not rewrite programs while reporting lints. Optimisation is a
 separate post-codegen stage in `runtime/optimizer.py`, so enabling it does not

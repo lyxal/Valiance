@@ -15,7 +15,7 @@ from valiance.analysis import (
     default_environment,
 )
 from valiance.analysis.analyser import _branch_argument_substitution
-from valiance.analysis.annotations import AnnotationSpec, register_annotation
+from valiance.analysis.contracts.annotations import AnnotationSpec, register_annotation
 from valiance.elements.builtins import (
     BUILTIN_ELEMENTS,
     BUILTIN_ERROR_TYPES,

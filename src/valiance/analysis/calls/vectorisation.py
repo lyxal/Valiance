@@ -23,7 +23,7 @@ from valiance.vtypes.symbols import Symbol
 
 from .. import analyser as _core
 from . import callable_values as _functions
-from .. import _analyser_utils as _utils
+from ..support import analysis_utils as _utils
 
 
 
