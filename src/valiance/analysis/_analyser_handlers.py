@@ -1128,7 +1128,10 @@ def _index_access_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse a `IndexAccessNode` node and return the surviving branches."""
-    selector_values = _patterns._selector_value_count(node.selectors)
+    selector_values = sum(
+        bool(selector.start) + bool(selector.stop) + bool(selector.step)
+        for selector in node.selectors
+    )
     required = selector_values + 1
     if len(branch.stack) >= required:
         receiver_type = branch.stack[-required]
@@ -1169,7 +1172,10 @@ def _index_set_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse a `IndexSetNode` node and return the surviving branches."""
-    selector_values = _patterns._selector_value_count(node.selectors)
+    selector_values = sum(
+        bool(selector.start) + bool(selector.stop) + bool(selector.step)
+        for selector in node.selectors
+    )
     required = selector_values + 2
     if len(branch.stack) < required:
         self._diagnose(

@@ -130,14 +130,36 @@ def _optional_present_type(typ: T.Type) -> T.Type:
     return T.U(*present)
 
 
-def _selector_value_count(selectors: tuple[IndexSelector, ...]) -> int:
-    """Compute selector value count during static analysis."""
-    count = 0
-    for selector in selectors:
-        count += bool(selector.start)
-        count += bool(selector.stop)
-        count += bool(selector.step)
-    return count
+def _index_type(typ: T.Type, *, key: bool = False) -> T.Type:
+    """Return the key or item type selected by one scalar index."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        result = _index_type(typ.inner, key=key)
+        if key:
+            return result
+        carried = tuple(
+            T.DataTag(tag.name, tag.depth - 1, tag.absent)
+            for tag in typ.tags
+            if tag.depth > 0
+        )
+        return T.Tagged(result, *carried) if carried else result
+    if isinstance(typ, T.UnionType):
+        return T.U(*(_index_type(item, key=key) for item in typ.items))
+    if (
+        isinstance(typ, T.NominalType)
+        and typ.name.text == "Dict"
+        and len(typ.args) == 2
+    ):
+        return typ.args[0 if key else 1]
+    if key:
+        return T.Number
+    if isinstance(typ, T.CollectionType):
+        return T.collection_item_type(typ)
+    if isinstance(typ, T.TupleType):
+        return T.U(*typ.params) if typ.params else T.Never()
+    if isinstance(typ, T.NominalType) and typ.name.text == "String":
+        return T.String
+    return T.V("Indexed")
 
 
 def _indexed_type(
@@ -145,18 +167,18 @@ def _indexed_type(
     selectors: tuple[IndexSelector, ...],
     spread: bool,
 ) -> T.Type:
-    """Determine the type of indexed during static analysis."""
+    """Return the result type of an indexed access."""
     typ = T.normalize(receiver_type)
     for index, selector in enumerate(selectors):
-        item = typ if selector.is_slice else _single_index_type(typ)
+        item = typ if selector.is_slice else _index_type(typ)
         if index + 1 < len(selectors):
             typ = item
-            continue
-        if spread:
+        elif spread:
             return item
-        if len(selectors) > 1:
+        elif len(selectors) > 1:
             return T.ExactList(item)
-        return item
+        else:
+            return item
     return T.V("Indexed")
 
 
@@ -166,44 +188,38 @@ def _selectors_assignable(
     index_types: tuple[T.Type, ...],
     ctx: T.Context,
 ) -> bool:
-    """Return the Boolean result of selectors assignable during static analysis."""
-    expected = _selector_expected_types(receiver_type, selectors)
-    return len(expected) == len(index_types) and all(
-        T.assignable(_index_value_type(actual, ctx), target, ctx)
-        for actual, target in zip(index_types, expected, strict=True)
-    )
-
-
-def _index_value_type(typ: T.Type, ctx: T.Context) -> T.Type:
-    """Strip erasable data tags while preserving unit semantics for indices."""
-    typ = T.normalize(typ)
-    if isinstance(typ, T.TaggedType):
-        if any(not tag.absent and ctx.is_unit_tag(tag.name) for tag in typ.tags):
-            return typ
-        return _index_value_type(typ.inner, ctx)
-    if isinstance(typ, T.UnionType):
-        return T.U(*(_index_value_type(item, ctx) for item in typ.items))
-    return typ
-
-
-def _selector_expected_types(
-    receiver_type: T.Type,
-    selectors: tuple[IndexSelector, ...],
-) -> tuple[T.Type, ...]:
-    """Determine the types used for selector expected during static analysis."""
+    """Return whether supplied selector values match the receiver's index types."""
     typ = T.normalize(receiver_type)
     expected: list[T.Type] = []
+    slice_bound = T.U(T.Integer, T.ExactList(T.Integer))
     for selector in selectors:
-        key_type = _single_index_key_type(typ)
-        slice_bound_type = T.U(T.Integer, T.ExactList(T.Integer))
         if selector.start:
-            expected.append(slice_bound_type if selector.is_slice else key_type)
+            expected.append(slice_bound if selector.is_slice else _index_type(typ, key=True))
         if selector.stop:
-            expected.append(slice_bound_type)
+            expected.append(slice_bound)
         if selector.step:
             expected.append(T.Integer)
-        typ = typ if selector.is_slice else _single_index_type(typ)
-    return tuple(expected)
+        typ = typ if selector.is_slice else _index_type(typ)
+    if len(expected) != len(index_types):
+        return False
+
+    def index_value_type(value: T.Type) -> T.Type:
+        """Strip erasable tags while preserving unit-tag index semantics."""
+        value = T.normalize(value)
+        if isinstance(value, T.TaggedType):
+            if any(
+                not tag.absent and ctx.is_unit_tag(tag.name) for tag in value.tags
+            ):
+                return value
+            return index_value_type(value.inner)
+        if isinstance(value, T.UnionType):
+            return T.U(*(index_value_type(item) for item in value.items))
+        return value
+
+    return all(
+        T.assignable(index_value_type(actual), target, ctx)
+        for actual, target in zip(index_types, expected, strict=True)
+    )
 
 
 def _indexed_assignment_type(
@@ -212,15 +228,14 @@ def _indexed_assignment_type(
     value_type: T.Type,
     ctx: T.Context,
 ) -> T.Type | None:
-    """Determine the type of indexed assignment during static analysis."""
-    if len(selectors) == 1 and selectors[0].is_slice:
+    """Return the receiver type after a valid indexed assignment."""
+    if len(selectors) != 1:
+        item = _indexed_type(receiver_type, selectors, spread=False)
+        return receiver_type if T.assignable(value_type, item, ctx) else None
+    if selectors[0].is_slice:
         slice_type = _indexed_type(receiver_type, selectors, spread=False)
         if T.assignable(value_type, slice_type, ctx):
             return receiver_type
-        return _single_index_assignment_type(receiver_type, value_type, ctx)
-    if len(selectors) != 1:
-        item_type = _indexed_type(receiver_type, selectors, spread=False)
-        return receiver_type if T.assignable(value_type, item_type, ctx) else None
     return _single_index_assignment_type(receiver_type, value_type, ctx)
 
 
@@ -229,13 +244,11 @@ def _single_index_assignment_type(
     value_type: T.Type,
     ctx: T.Context,
 ) -> T.Type | None:
-    """Determine the type of single index assignment during static analysis."""
+    """Return the receiver type after assigning one indexed item."""
     typ = T.normalize(receiver_type)
     if isinstance(typ, T.TaggedType):
         updated = _single_index_assignment_type(typ.inner, value_type, ctx)
-        return (
-            None if updated is None else T.Tagged(updated, *typ.tags, exact=typ.exact)
-        )
+        return None if updated is None else T.Tagged(updated, *typ.tags, exact=typ.exact)
     if isinstance(typ, T.CollectionType):
         if T.assignable(value_type, typ.base, ctx):
             return receiver_type
@@ -252,49 +265,7 @@ def _single_index_assignment_type(
             return None
         if typ.name.text == "String":
             return receiver_type if T.assignable(value_type, T.String, ctx) else None
-    item_type = _single_index_type(receiver_type)
-    return receiver_type if T.assignable(value_type, item_type, ctx) else None
-
-
-def _single_index_key_type(typ: T.Type) -> T.Type:
-    """Determine the type of single index key during static analysis."""
-    typ = T.normalize(typ)
-    if isinstance(typ, T.TaggedType):
-        return _single_index_key_type(typ.inner)
-    if isinstance(typ, T.UnionType):
-        return T.U(*(_single_index_key_type(item) for item in typ.items))
-    if (
-        isinstance(typ, T.NominalType)
-        and typ.name.text == "Dict"
-        and len(typ.args) == 2
-    ):
-        return typ.args[0]
-    return T.Number
-
-
-def _single_index_type(typ: T.Type) -> T.Type:
-    """Determine the type of single index during static analysis."""
-    typ = T.normalize(typ)
-    if isinstance(typ, T.TaggedType):
-        item = _single_index_type(typ.inner)
-        carried = tuple(
-            T.DataTag(tag.name, tag.depth - 1, tag.absent)
-            for tag in typ.tags
-            if tag.depth > 0
-        )
-        return T.Tagged(item, *carried) if carried else item
-    if isinstance(typ, T.UnionType):
-        return T.U(*(_single_index_type(item) for item in typ.items))
-    if isinstance(typ, T.CollectionType):
-        return T.collection_item_type(typ)
-    if isinstance(typ, T.TupleType):
-        return T.U(*typ.params) if typ.params else T.Never()
-    if isinstance(typ, T.NominalType):
-        if typ.name.text == "String":
-            return T.String
-        if typ.name.text == "Dict" and len(typ.args) == 2:
-            return typ.args[1]
-    return T.V("Indexed")
+    return receiver_type if T.assignable(value_type, _index_type(receiver_type), ctx) else None
 
 
 def _nominal_name(typ: T.Type) -> Symbol | None:
