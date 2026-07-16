@@ -716,6 +716,67 @@ class TypePatternNode(MatchPatternNode):
     guard: tuple[ASTNode, ...] = ()
 
 
+def pattern_binding_counts(pattern: MatchPatternNode) -> dict[Symbol, int]:
+    """Return maximum binding occurrences along one successful pattern path."""
+    if isinstance(pattern, BindingPatternNode):
+        result = pattern_binding_counts(pattern.pattern)
+        result[pattern.name] = result.get(pattern.name, 0) + 1
+        return result
+    if isinstance(pattern, RestPatternNode):
+        return {} if pattern.name is None else {pattern.name: 1}
+    children: tuple[MatchPatternNode, ...] = ()
+    result = {} if not isinstance(pattern, TypePatternNode) or pattern.name is None else {pattern.name: 1}
+    if isinstance(pattern, TypePatternNode):
+        children = pattern.fields
+    elif isinstance(pattern, ListPatternNode):
+        children = pattern.items
+    elif isinstance(pattern, OrPatternNode):
+        for option in pattern.options:
+            for name, count in pattern_binding_counts(option).items():
+                result[name] = max(result.get(name, 0), count)
+        return result
+    for child in children:
+        for name, count in pattern_binding_counts(child).items():
+            result[name] = result.get(name, 0) + count
+    return result
+
+
+def has_repeated_match_bindings(patterns: tuple[MatchPatternNode, ...]) -> bool:
+    """Return whether a successful match path can bind one name twice."""
+    counts: dict[Symbol, int] = {}
+    for pattern in patterns:
+        for name, count in pattern_binding_counts(pattern).items():
+            counts[name] = counts.get(name, 0) + count
+    return any(count > 1 for count in counts.values())
+
+
+def is_default_match_pattern(pattern: MatchPatternNode) -> bool:
+    """Return whether a pattern unconditionally accepts every subject value."""
+    if has_repeated_match_bindings((pattern,)):
+        return False
+    if isinstance(pattern, (WildcardPatternNode, RestPatternNode)):
+        return True
+    if isinstance(pattern, BindingPatternNode):
+        return is_default_match_pattern(pattern.pattern)
+    if isinstance(pattern, OrPatternNode):
+        return any(is_default_match_pattern(option) for option in pattern.options)
+    return (
+        isinstance(pattern, TypePatternNode)
+        and pattern.typ is None
+        and not pattern.fields
+        and not pattern.guard
+    )
+
+
+def is_default_match_case(patterns: tuple[MatchPatternNode, ...]) -> bool:
+    """Return whether a case accepts every combination of subject values."""
+    return (
+        bool(patterns)
+        and not has_repeated_match_bindings(patterns)
+        and all(is_default_match_pattern(pattern) for pattern in patterns)
+    )
+
+
 @dataclass(frozen=True)
 class MatchCaseNode(ASTNode):
     """One branch of a match expression."""

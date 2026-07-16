@@ -92,6 +92,9 @@ from valiance.asts.nodes import (
     VariantMemberNode,
     WhileNode,
     WildcardPatternNode,
+    has_repeated_match_bindings,
+    is_default_match_case,
+    is_default_match_pattern,
 )
 from valiance.asts.pretty import pretty_ast
 from valiance.source_tools.source import typed_source
@@ -189,4 +192,7 @@ __all__ = [
     "VariantMemberNode",
     "WhileNode",
     "WildcardPatternNode",
+    "has_repeated_match_bindings",
+    "is_default_match_case",
+    "is_default_match_pattern",
 ]

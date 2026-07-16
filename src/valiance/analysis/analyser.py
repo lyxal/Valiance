@@ -72,6 +72,7 @@ from valiance.asts import (
     TypedTagApplicationNode,
     TypedTryNode,
     VariantMemberNode,
+    is_default_match_case,
 )
 from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
 from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
@@ -3373,7 +3374,8 @@ class Analyser:
             self._diagnose("match requires at least one case", node)
             return BranchSet()
 
-        arity = _patterns._match_arity(node)
+        arities = {len(case.patterns) for case in node.cases}
+        arity = next(iter(arities)) if len(arities) == 1 else None
         if arity is None:
             self._diagnose("match cases must match the same number of values", node)
             return BranchSet()
@@ -3657,7 +3659,7 @@ class Analyser:
     ) -> bool:
         """Return the Boolean result of match is exhaustive during static analysis."""
         if any(
-            case.is_default or _patterns._is_default_match_case(case.patterns)
+            case.is_default or is_default_match_case(case.patterns)
             for case in node.cases
         ):
             return True

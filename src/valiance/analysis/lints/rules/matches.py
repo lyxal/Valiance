@@ -16,9 +16,8 @@ from valiance.asts import (
     StringLiteralNode,
     TypePatternNode,
     WildcardPatternNode,
+    is_default_match_case,
 )
-from valiance.vtypes.symbols import Symbol
-
 from ..contexts import MatchLintContext
 from ..models import LintFinding, LintRewrite, RewriteKind, finding
 from ..registry import LintRegistry
@@ -65,7 +64,7 @@ def lint_match_patterns(context: MatchLintContext):
             else:
                 seen_literal_cases.add(key)
 
-        if _is_default_match_case(case.patterns):
+        if is_default_match_case(case.patterns):
             default_seen = True
     return findings
 
@@ -133,77 +132,3 @@ def _literal_match_case_key(
     return cast(tuple[tuple[str, object], ...], keys)
 
 
-def _is_default_match_case(patterns: tuple[MatchPatternNode, ...]) -> bool:
-    """Return whether a case accepts every combination of subject values."""
-    return (
-        bool(patterns)
-        and not _has_repeated_match_bindings(patterns)
-        and all(_is_default_match_pattern(pattern) for pattern in patterns)
-    )
-
-
-def _is_default_match_pattern(pattern: MatchPatternNode) -> bool:
-    """Return whether a pattern unconditionally accepts every subject value."""
-    if _has_repeated_match_bindings((pattern,)):
-        return False
-    if isinstance(pattern, (WildcardPatternNode, RestPatternNode)):
-        return True
-    if isinstance(pattern, BindingPatternNode):
-        return _is_default_match_pattern(pattern.pattern)
-    if isinstance(pattern, OrPatternNode):
-        return any(_is_default_match_pattern(option) for option in pattern.options)
-    return (
-        isinstance(pattern, TypePatternNode)
-        and pattern.typ is None
-        and not pattern.fields
-        and not pattern.guard
-    )
-
-
-def _pattern_binding_counts(pattern: MatchPatternNode) -> dict[Symbol, int]:
-    """Return maximum binding occurrences along one successful pattern path."""
-
-    def combine(
-        left: dict[Symbol, int],
-        right: dict[Symbol, int],
-    ) -> dict[Symbol, int]:
-        """Add binding counts from conjunctive child patterns."""
-        result = dict(left)
-        for name, count in right.items():
-            result[name] = result.get(name, 0) + count
-        return result
-
-    if isinstance(pattern, BindingPatternNode):
-        result = _pattern_binding_counts(pattern.pattern)
-        result[pattern.name] = result.get(pattern.name, 0) + 1
-        return result
-    if isinstance(pattern, RestPatternNode):
-        return {} if pattern.name is None else {pattern.name: 1}
-    if isinstance(pattern, TypePatternNode):
-        result = {} if pattern.name is None else {pattern.name: 1}
-        for field in pattern.fields:
-            result = combine(result, _pattern_binding_counts(field))
-        return result
-    if isinstance(pattern, ListPatternNode):
-        result: dict[Symbol, int] = {}
-        for item in pattern.items:
-            result = combine(result, _pattern_binding_counts(item))
-        return result
-    if isinstance(pattern, OrPatternNode):
-        result: dict[Symbol, int] = {}
-        for option in pattern.options:
-            for name, count in _pattern_binding_counts(option).items():
-                result[name] = max(result.get(name, 0), count)
-        return result
-    return {}
-
-
-def _has_repeated_match_bindings(
-    patterns: tuple[MatchPatternNode, ...],
-) -> bool:
-    """Return whether a successful case path can bind one name twice."""
-    counts: dict[Symbol, int] = {}
-    for pattern in patterns:
-        for name, count in _pattern_binding_counts(pattern).items():
-            counts[name] = counts.get(name, 0) + count
-    return any(count > 1 for count in counts.values())
