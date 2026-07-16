@@ -307,7 +307,13 @@ class _Compiler:
         self._borrowed_assignment_nodes = _borrowed_assignment_receivers(body)
         for index, node in enumerate(body):
             self.node(node)
-            if index + 1 < len(body) and _should_pop_statement_result(node):
+            ast = _unwrap(node)
+            if (
+                index + 1 < len(body)
+                and isinstance(ast, ForNode)
+                and isinstance(node, TypedNode)
+                and isinstance(node.typ, NoneTypeNode)
+            ):
                 self.emit(OpCode.POP)
         self.emit(OpCode.RETURN)
         return FunctionCode(
@@ -428,9 +434,19 @@ class _Compiler:
                     self.emit(OpCode.CALL, return_tag_specs or None)
                 else:
                     self.emit(OpCode.CALL_RESOLVED_ELEMENT, resolved)
-                tupled_count = _tupled_element_return_count(node, typed_node)
-                if tupled_count is not None:
-                    self.emit(OpCode.BUILD_TUPLE, tupled_count)
+                if (
+                    isinstance(typed_node, TypedElementNode)
+                    and typed_node.overload is not None
+                    and any(
+                        isinstance(annotation, AnnotationNode)
+                        and annotation.name.text == "@@tupled"
+                        for annotation in node.annotations
+                    )
+                ):
+                    self.emit(
+                        OpCode.BUILD_TUPLE,
+                        len(typed_node.overload.actual_returns),
+                    )
             case TagApplicationNode():
                 # Explicit function parameters are present on the analyser's
                 # conceptual stack, but runtime parameter values are sourced
@@ -548,8 +564,15 @@ class _Compiler:
                 if operand != 0:
                     self.emit(OpCode.SOURCE_ARGS, operand)
                     self.emit(OpCode.POP_N, operand)
-            case StackShuffleNode():
-                self.emit(OpCode.STACK_SHUFFLE, _stack_shuffle_spec(node))
+            case StackShuffleNode(mode, prestack, poststack):
+                self.emit(
+                    OpCode.STACK_SHUFFLE,
+                    (
+                        mode.text,
+                        tuple(None if item is None else item.text for item in prestack),
+                        tuple(item.text for item in poststack),
+                    ),
+                )
             case FunctionNode():
                 self.emit(
                     OpCode.MAKE_FUNCTION,
@@ -869,7 +892,11 @@ class _Compiler:
     ) -> None:
         """Compile and store an object-friendly element implementation."""
         body = definition.function.body
-        if _definition_has_annotation(definition, "self"):
+        if any(
+            isinstance(annotation, AnnotationNode)
+            and annotation.name.text == "self"
+            for annotation in definition.annotations
+        ):
             body = prepare_constructor_body(body)
             body = (*body, GetVariableNode(Symbol("self")))
         function = FunctionNode(
@@ -1059,8 +1086,8 @@ class _Compiler:
             for index, case in enumerate(node.cases)
             if index < len(typed_bodies)
         }
-        arity = _match_arity(node)
-        if arity:
+        arities = {len(case.patterns) for case in node.cases}
+        if len(arities) == 1 and (arity := next(iter(arities))):
             self.emit(OpCode.SOURCE_ARGS, arity)
         # Emit every pattern test in source order. Catch-all patterns are still
         # ordinary matches at runtime: hoisting them to a synthetic fallback
@@ -1069,7 +1096,13 @@ class _Compiler:
             (
                 self.emit(
                     OpCode.JUMP_IF_MATCH,
-                    (_compile_case_patterns(case.patterns), None),
+                    (
+                        tuple(
+                            _compile_match_pattern(pattern)
+                            for pattern in case.patterns
+                        ),
+                        None,
+                    ),
                 ),
                 case,
             )
@@ -1102,7 +1135,18 @@ class _Compiler:
         handlers: list[tuple[str | None, int]] = []
         end_jumps: list[int] = []
         for index, handler in enumerate(node.handlers):
-            handlers.append((_handler_type_name(handler), len(self.instructions)))
+            if handler.typ is not None and not isinstance(handler.typ, NominalType):
+                raise CompileError(
+                    f"cannot compile handler for non-nominal type {handler.typ}"
+                )
+            handlers.append(
+                (
+                    handler.typ.name.text
+                    if isinstance(handler.typ, NominalType)
+                    else None,
+                    len(self.instructions),
+                )
+            )
             handler_body: tuple[ASTNode | TypedNode, ...] = handler.body
             if index < len(handler_bodies):
                 handler_body = handler_bodies[index]
@@ -1373,16 +1417,6 @@ def _borrowed_assignment_receivers(
             if isinstance(previous_ast, SetVariableNode):
                 break
     return borrowed
-
-
-def _should_pop_statement_result(node: ASTNode | TypedNode) -> bool:
-    """Return whether the compiler helper should pop statement result."""
-    ast = _unwrap(node)
-    return (
-        isinstance(ast, ForNode)
-        and isinstance(node, TypedNode)
-        and isinstance(node.typ, NoneTypeNode)
-    )
 
 
 def _compile_function_overload(
@@ -1689,14 +1723,6 @@ def _record_runtime_variance_use(
         _record_runtime_variance_use(typ.inner, polarity, usage)
 
 
-def _definition_has_annotation(definition: DefineNode, name: str) -> bool:
-    """Return the Boolean result of definition has annotation during typed-AST bytecode lowering."""
-    return any(
-        isinstance(annotation, AnnotationNode) and annotation.name.text == name
-        for annotation in definition.annotations
-    )
-
-
 def _object_runtime_metadata(
     name: str,
     annotations: tuple[ASTNode, ...],
@@ -1769,21 +1795,6 @@ def _annotation_message(annotations: tuple[ASTNode, ...], name: str) -> str | No
     return None
 
 
-def _tupled_element_return_count(
-    node: ElementNode,
-    typed_node: TypedNode | None,
-) -> int | None:
-    """Compute tupled element return count during typed-AST bytecode lowering."""
-    if not any(
-        isinstance(annotation, AnnotationNode) and annotation.name.text == "@@tupled"
-        for annotation in node.annotations
-    ):
-        return None
-    if isinstance(typed_node, TypedElementNode) and typed_node.overload is not None:
-        return len(typed_node.overload.actual_returns)
-    return None
-
-
 def _unwrap(node: ASTNode | TypedNode) -> ASTNode:
     """Compute unwrap during typed-AST bytecode lowering."""
     if isinstance(node, TypedNode):
@@ -1811,7 +1822,16 @@ def _resolved_element_reference(
     runtime_name = _symbol_runtime_name(
         node.runtime_name if node.runtime_name is not None else ast.name
     ).removeprefix("*::")
-    type_args = _resolved_constructor_type_args(ast, node)
+    returned = (
+        node.overload.actual_returns[0]
+        if node.overload is not None and node.overload.actual_returns
+        else None
+    )
+    type_args = (
+        tuple(show(arg) for arg in returned.args)
+        if isinstance(returned, NominalType) and returned.args
+        else ()
+    )
     elements = runtime_elements()
     element = elements.get(source_runtime_name)
     if element is not None:
@@ -1849,7 +1869,14 @@ def _resolved_element_reference(
     elif node.overload is not None and node.overload.runtime_static_values:
         static_values = node.overload.runtime_static_values
     else:
-        static_values = _runtime_rank_values(node)
+        static_values = (
+            tuple(
+                RuntimeNumber(value)
+                for _, value in node.overload.rank_values
+            )
+            if node.overload is not None and node.overload.rank_values
+            else ()
+        )
     multidispatch = bool(node.overload is not None and node.overload.multidispatch)
     vectorised_depths = (
         tuple(node.overload.vectorised_depths) if node.overload is not None else ()
@@ -1993,28 +2020,6 @@ def _compiled_element_extension(
     )
 
 
-def _runtime_rank_values(node: TypedElementNode) -> tuple[RuntimeNumber, ...]:
-    """Collect the values for runtime rank during typed-AST bytecode lowering."""
-    if node.overload is None or not node.overload.rank_values:
-        return ()
-    return tuple(RuntimeNumber(value) for _, value in node.overload.rank_values)
-
-
-def _resolved_constructor_type_args(
-    ast: ElementNode,
-    node: TypedElementNode,
-) -> tuple[str, ...]:
-    """Compute resolved constructor type args during typed-AST bytecode lowering."""
-    if node.overload is None or not node.overload.actual_returns:
-        return ()
-    returned = node.overload.actual_returns[0]
-    if not isinstance(returned, NominalType):
-        return ()
-    if not returned.args:
-        return ()
-    return tuple(show(arg) for arg in returned.args)
-
-
 def _index_spec(
     selectors: tuple[IndexSelector, ...],
     spread: bool,
@@ -2031,17 +2036,6 @@ def _index_spec(
             for selector in selectors
         ),
         int(spread),
-    )
-
-
-def _stack_shuffle_spec(
-    node: StackShuffleNode,
-) -> tuple[str, tuple[str | None, ...], tuple[str, ...]]:
-    """Compute stack shuffle spec during typed-AST bytecode lowering."""
-    return (
-        node.mode.text,
-        tuple(None if label is None else label.text for label in node.prestack),
-        tuple(label.text for label in node.poststack),
     )
 
 
@@ -2071,33 +2065,6 @@ def _number(value: str, node: ASTNode) -> RuntimeNumber:
             location = f" at {node.location.line}:{node.location.column}"
         message = f"cannot compile numeric literal {value!r}{location}"
         raise CompileError(message) from exc
-
-
-def _compile_case_patterns(
-    patterns: tuple[MatchPatternNode, ...],
-) -> tuple[object, ...]:
-    """Compile case patterns during typed-AST bytecode lowering."""
-    return tuple(_compile_match_pattern(pattern) for pattern in patterns)
-
-
-def _match_arity(node: MatchNode) -> int | None:
-    """Determine the required arity for match during typed-AST bytecode lowering."""
-    if not node.cases:
-        return None
-    arities = {len(case.patterns) for case in node.cases}
-    if len(arities) != 1:
-        return None
-    return next(iter(arities))
-
-
-def _handler_type_name(handler: TryHandlerNode) -> str | None:
-    """Return the canonical name for handler type during typed-AST bytecode lowering."""
-    if handler.typ is None:
-        return None
-    typ = handler.typ
-    if isinstance(typ, NominalType):
-        return typ.name.text
-    raise CompileError(f"cannot compile handler for non-nominal type {typ}")
 
 
 def _compile_match_pattern(pattern: MatchPatternNode) -> object:
