@@ -3664,14 +3664,6 @@ def _call_resolved_builtin(
                 vectorised_target_ranks,
                 extension,
             )
-            if vectorized is None:
-                raise RuntimeError(
-                    _format_call_error(
-                        f"element '{callee.element.name}'",
-                        frame.stack,
-                        _show_overload_inputs((overload,)),
-                    )
-                )
             ownership_args = (*args, *_extension_owned_values(extension))
             vectorized = _bind_lazy_result_owners(ownership_args, vectorized)
             vectorized = _apply_runtime_collection_ranks(
@@ -3895,12 +3887,10 @@ def _call_vectorized_resolved_builtin(
     vectorised_depths: tuple[int, ...] = (),
     vectorised_target_ranks: tuple[int | None, ...] = (),
     extension: _RuntimeVectorExtension | None = None,
-) -> tuple[Any, ...] | None:
-    """Invoke vectorized resolved builtin during VM execution."""
+) -> tuple[Any, ...]:
+    """Execute the vectorisation plan selected by static analysis."""
     implementation = overload.implementation
     assert implementation is not None
-    if not overload.vectorisable:
-        return None
 
     def typed_implementation(
         item_args: tuple[Any, ...],
@@ -3917,30 +3907,27 @@ def _call_vectorized_resolved_builtin(
             else result
         )
 
-    try:
-        if vectorised_depths or vectorised_target_ranks:
-            resolved_depths = _resolve_vectorisation_depths(
-                args,
-                vectorised_depths,
-                vectorised_target_ranks,
-            )
-            return _vectorize_resolved_depths(
-                typed_implementation,
-                args,
-                context,
-                resolved_depths,
-                extension,
-                stop_at_zero=(
-                    any(rank is not None for rank in vectorised_target_ranks)
-                    or any(
-                        _parameter_stops_vectorisation(param)
-                        for param in overload.signature.params
-                    )
-                ),
-            )
-        return _vectorize_resolved(typed_implementation, args, context, extension)
-    except _CannotVectorize:
-        return None
+    if vectorised_depths or vectorised_target_ranks:
+        resolved_depths = _resolve_vectorisation_depths(
+            args,
+            vectorised_depths,
+            vectorised_target_ranks,
+        )
+        return _vectorize_resolved_depths(
+            typed_implementation,
+            args,
+            context,
+            resolved_depths,
+            extension,
+            stop_at_zero=(
+                any(rank is not None for rank in vectorised_target_ranks)
+                or any(
+                    _parameter_stops_vectorisation(param)
+                    for param in overload.signature.params
+                )
+            ),
+        )
+    return _vectorize_resolved(typed_implementation, args, context, extension)
 
 
 def _vectorize(
