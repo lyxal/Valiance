@@ -541,15 +541,25 @@ consumption patterns:
 - `correspond` consumes one group for each callable and records
   `runtime_static_values=(lower_arity, upper_arity)`.
 
-Use the shared helpers in `builtins.py` when writing the call-site helper:
+Call-site helpers must use the centralized group applicators in `builtins.py`:
 
+- `_apply_consecutive_call_site_callables(stack, overloads)` completes missing
+  lower inputs, partitions consecutive argument groups, and applies every
+  callable. Use it for one callable and for combinators such as `both` and
+  `correspond`.
+- `_shared_call_site_applications(stack, overloads)` completes one coherent
+  shared suffix and applies every callable to the suffix matching its arity. Use
+  it for fan-out combinators such as `fork`.
 - `_callable_overloads(type)` opens a concrete `Function[...]` or overload set.
-- `_apply_callable(overload, args)` checks one candidate and returns the applied
-  overload plus its concrete result shape.
-- `_callable_applications(type, args)` iterates all successful applications.
-- `_completed_call_site_stack(stack, expected)` aligns an available stack suffix
-  with declared callable parameters so an enclosing inferred function can source
-  missing lower inputs through `AnalysisBranch.source_arguments(...)`.
+
+Do not compare the physical stack length directly with a callable arity in a
+CSTC helper. An enclosing inferred function may legally supply missing lower
+inputs. The centralized applicators preserve that distinction and return both
+the completed argument tuple and concrete callable applications.
+
+`_completed_call_site_stack(stack, expected)` is the low-level alignment
+primitive used by those applicators. New CSTC helpers should not normally call
+it or `_apply_callable(...)` directly.
 
 For unequal group sizes, the analyser's partition must be preserved rather than
 recomputed from runtime function values. `correspond` returns a concrete overload

@@ -2836,6 +2836,58 @@ pick(_, 4)
         self.assertFalse(branches)
         self.assertIn("no overloads for element 'both'", analyser.diagnostics[-1])
 
+    def test_fork_infers_missing_shared_input_from_callable_arguments(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                "$avg = fn => fork: (sum, length) /\n"
+                "println $avg([4, 6, 1, 7])"
+            )
+        )
+
+        self.assertFalse(analyser.diagnostics)
+        self.assertEqual(show(typed[0].typ), "Function[Number+ -> Number]")
+
+    def test_list_of_functions_intersects_inferred_input_requirements(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                "define f => [sum, length] | fold: /\n"
+                "f([1, 2, 3, 4])"
+            )
+        )
+
+        self.assertFalse(analyser.diagnostics)
+        self.assertEqual(show(typed[0].typ), "Function[#-infinite Number+ -> Number]")
+
+    def test_peek_infers_partially_missing_callable_inputs(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                "$f = fn => 1 peek: "
+                "fn (a: Number, b: Number) => + end end"
+            )
+        )
+
+        self.assertFalse(analyser.diagnostics)
+        self.assertEqual(show(typed[0].typ), "Function[Number -> Number]")
+
+    def test_dip_infers_missing_callable_inputs_below_a_known_held_value(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                '$f = fn => "held" dip: sum end\n'
+                '$f([1, 2, 3])'
+            )
+        )
+
+        self.assertFalse(analyser.diagnostics)
+        self.assertEqual(show(typed[0].typ), "Function[Number+ -> String]")
+
     def test_fork_pops_maximum_modifier_parameter_count(self):
         analyser = Analyser()
 

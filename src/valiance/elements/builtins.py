@@ -919,6 +919,14 @@ class _CallableApplication:
     concrete_type: T.FunctionType
 
 
+@dataclass(frozen=True)
+class _CallSiteApplications:
+    """Concrete arguments and callable applications selected for one CSTC call."""
+
+    args: tuple[T.Type, ...]
+    applications: tuple[_CallableApplication, ...]
+
+
 def _callable_overloads(typ: T.Type) -> tuple[T.Overload, ...]:
     """Collect the overloads for callable for the built-in catalogue and runtime."""
     typ = T.normalize(typ)
@@ -957,91 +965,11 @@ def _callable_applications(
             yield application
 
 
-def _peek_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
-    """Compute peek call site for the built-in catalogue and runtime."""
-    if not call_params:
-        return None
-    function_type = call_params[-1]
-    stack = call_params[:-1]
-    for candidate in _callable_overloads(function_type):
-        arity = len(candidate.params)
-        if len(stack) >= arity:
-            args = stack[-arity:] if arity else ()
-        elif not stack:
-            # In an input-inferred function (for example an unfold body), the
-            # callable itself supplies the input shape that peek preserves.
-            args = candidate.params
-        else:
-            continue
-        application = _apply_callable(candidate, args)
-        if application is not None:
-            return T.Overload(
-                (*args, application.concrete_type),
-                application.applied.actual_returns,
-                call_site_body=0,
-            )
-    return None
-
-
-def _dip_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
-    """Compute dip call site for the built-in catalogue and runtime."""
-    if not call_params:
-        return None
-    function_type = call_params[-1]
-    stack = call_params[:-1]
-    for candidate in _callable_overloads(function_type):
-        arity = len(candidate.params)
-        if len(stack) < arity + 1:
-            continue
-        args = stack[-arity - 1 : -1] if arity else ()
-        application = _apply_callable(candidate, args)
-        if application is not None:
-            held = stack[-1]
-            return T.Overload(
-                (*args, held, application.concrete_type),
-                (*application.applied.actual_returns, held),
-                call_site_body=arity + 1,
-            )
-    return None
-
-
-def _fork_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
-    """Compute fork call site for the built-in catalogue and runtime."""
-    if len(call_params) < 2:
-        return None
-    left_type, right_type = call_params[-2:]
-    stack = call_params[:-2]
-    for left in _callable_overloads(left_type):
-        for right in _callable_overloads(right_type):
-            arity = max(len(left.params), len(right.params))
-            if len(stack) < arity:
-                continue
-            args = stack[-arity:] if arity else ()
-            left_args = args[-len(left.params) :] if left.params else ()
-            right_args = args[-len(right.params) :] if right.params else ()
-            left_application = _apply_callable(left, left_args)
-            right_application = _apply_callable(right, right_args)
-            if left_application is not None and right_application is not None:
-                return T.Overload(
-                    (
-                        *args,
-                        left_application.concrete_type,
-                        right_application.concrete_type,
-                    ),
-                    (
-                        *left_application.applied.actual_returns,
-                        *right_application.applied.actual_returns,
-                    ),
-                    call_site_body=arity,
-                )
-    return None
-
-
 def _completed_call_site_stack(
     stack: tuple[T.Type, ...],
     expected: tuple[T.Type, ...],
 ) -> tuple[T.Type, ...]:
-    """Complete missing lower stack inputs from a callable's declared parameters."""
+    """Complete a stack suffix from callable parameters for input inference."""
     required = len(expected)
     if required == 0:
         return ()
@@ -1051,22 +979,136 @@ def _completed_call_site_stack(
     return (*expected[:missing], *stack)
 
 
-def _both_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
-    """Type-check one callable against two consecutive input groups."""
+def _apply_consecutive_call_site_callables(
+    stack: tuple[T.Type, ...],
+    overloads: tuple[T.Overload, ...],
+) -> _CallSiteApplications | None:
+    """Complete, partition, and apply consecutive callable argument groups.
+
+    Completion happens before application, so a CSTC helper never has to reject
+    an undersized physical stack merely because an enclosing function can infer
+    the missing lower inputs.
+    """
+    expected = tuple(param for overload in overloads for param in overload.params)
+    args = _completed_call_site_stack(stack, expected)
+    applications: list[_CallableApplication] = []
+    offset = 0
+    for overload in overloads:
+        arity = len(overload.params)
+        group = args[offset : offset + arity]
+        offset += arity
+        application = _apply_callable(overload, group)
+        if application is None:
+            return None
+        applications.append(application)
+    return _CallSiteApplications(args, tuple(applications))
+
+
+def _shared_call_site_applications(
+    stack: tuple[T.Type, ...],
+    overloads: tuple[T.Overload, ...],
+) -> Iterator[_CallSiteApplications]:
+    """Yield coherent applications sharing one completed argument suffix.
+
+    Longest callable signatures provide candidate missing-input shapes. Every
+    callable then receives the suffix matching its own arity. This centralises
+    the inference rule used by fan-out combinators such as ``fork``.
+    """
+    arity = max((len(overload.params) for overload in overloads), default=0)
+    supplied = stack[-arity:] if len(stack) >= arity else stack
+    seeds = tuple(
+        overload.params for overload in overloads if len(overload.params) == arity
+    )
+    if arity == 0:
+        seeds = ((),)
+    for seed in dict.fromkeys(seeds):
+        args = _completed_call_site_stack(supplied, seed)
+        applications: list[_CallableApplication] = []
+        for overload in overloads:
+            callable_args = args[-len(overload.params) :] if overload.params else ()
+            application = _apply_callable(overload, callable_args)
+            if application is None:
+                break
+            applications.append(application)
+        else:
+            yield _CallSiteApplications(args, tuple(applications))
+
+
+def _peek_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+    """Type-check peek while preserving every inspected outer-stack value."""
     if not call_params:
         return None
     function_type = call_params[-1]
     stack = call_params[:-1]
     for candidate in _callable_overloads(function_type):
-        arity = len(candidate.params)
-        expected = (*candidate.params, *candidate.params)
-        args = _completed_call_site_stack(stack, expected)
-        first_args = args[:arity]
-        second_args = args[arity:]
-        first_application = _apply_callable(candidate, first_args)
-        second_application = _apply_callable(candidate, second_args)
-        if first_application is None or second_application is None:
+        group = _apply_consecutive_call_site_callables(stack, (candidate,))
+        if group is None:
             continue
+        application = group.applications[0]
+        return T.Overload(
+            (*group.args, application.concrete_type),
+            application.applied.actual_returns,
+            call_site_body=0,
+        )
+    return None
+
+
+def _dip_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+    """Type-check dip with one held value above an inferable argument group."""
+    if len(call_params) < 2:
+        return None
+    function_type = call_params[-1]
+    stack = call_params[:-1]
+    held = stack[-1]
+    for candidate in _callable_overloads(function_type):
+        group = _apply_consecutive_call_site_callables(stack[:-1], (candidate,))
+        if group is None:
+            continue
+        application = group.applications[0]
+        return T.Overload(
+            (*group.args, held, application.concrete_type),
+            (*application.applied.actual_returns, held),
+            call_site_body=len(candidate.params) + 1,
+        )
+    return None
+
+
+def _fork_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+    """Type-check two callables against one centrally completed shared suffix."""
+    if len(call_params) < 2:
+        return None
+    left_type, right_type = call_params[-2:]
+    stack = call_params[:-2]
+    for left in _callable_overloads(left_type):
+        for right in _callable_overloads(right_type):
+            for group in _shared_call_site_applications(stack, (left, right)):
+                left_application, right_application = group.applications
+                return T.Overload(
+                    (
+                        *group.args,
+                        left_application.concrete_type,
+                        right_application.concrete_type,
+                    ),
+                    (
+                        *left_application.applied.actual_returns,
+                        *right_application.applied.actual_returns,
+                    ),
+                    call_site_body=max(len(left.params), len(right.params)),
+                )
+    return None
+
+
+def _both_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+    """Type-check one callable against two completed consecutive groups."""
+    if not call_params:
+        return None
+    function_type = call_params[-1]
+    stack = call_params[:-1]
+    for candidate in _callable_overloads(function_type):
+        group = _apply_consecutive_call_site_callables(stack, (candidate, candidate))
+        if group is None:
+            continue
+        first_application, second_application = group.applications
         concrete_function_type = (
             first_application.concrete_type
             if T.same(
@@ -1075,8 +1117,9 @@ def _both_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
             )
             else function_type
         )
+        arity = len(candidate.params)
         return T.Overload(
-            (*args, concrete_function_type),
+            (*group.args, concrete_function_type),
             (
                 *first_application.applied.actual_returns,
                 *second_application.applied.actual_returns,
@@ -1088,26 +1131,22 @@ def _both_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
 
 
 def _correspond_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
-    """Type-check two callables against distinct consecutive input groups."""
+    """Type-check two callables against completed consecutive input groups."""
     if len(call_params) < 2:
         return None
     lower_type, upper_type = call_params[-2:]
     stack = call_params[:-2]
     for lower in _callable_overloads(lower_type):
         for upper in _callable_overloads(upper_type):
+            group = _apply_consecutive_call_site_callables(stack, (lower, upper))
+            if group is None:
+                continue
+            lower_application, upper_application = group.applications
             lower_arity = len(lower.params)
             upper_arity = len(upper.params)
-            expected = (*lower.params, *upper.params)
-            args = _completed_call_site_stack(stack, expected)
-            lower_args = args[:lower_arity]
-            upper_args = args[lower_arity:]
-            lower_application = _apply_callable(lower, lower_args)
-            upper_application = _apply_callable(upper, upper_args)
-            if lower_application is None or upper_application is None:
-                continue
             return T.Overload(
                 (
-                    *args,
+                    *group.args,
                     lower_application.concrete_type,
                     upper_application.concrete_type,
                 ),
@@ -1122,23 +1161,21 @@ def _correspond_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
 
 
 def _call_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
-    """Invoke call site for the built-in catalogue and runtime."""
+    """Invoke a callable against a centrally completed argument group."""
     if not call_params:
         return None
     function_type = call_params[-1]
     stack = call_params[:-1]
     for candidate in _callable_overloads(function_type):
-        arity = len(candidate.params)
-        if len(stack) < arity:
+        group = _apply_consecutive_call_site_callables(stack, (candidate,))
+        if group is None:
             continue
-        args = stack[-arity:] if arity else ()
-        application = _apply_callable(candidate, args)
-        if application is not None:
-            return T.Overload(
-                (*args, application.concrete_type),
-                application.applied.actual_returns,
-                call_site_body=arity,
-            )
+        application = group.applications[0]
+        return T.Overload(
+            (*group.args, application.concrete_type),
+            application.applied.actual_returns,
+            call_site_body=len(candidate.params),
+        )
     return None
 
 

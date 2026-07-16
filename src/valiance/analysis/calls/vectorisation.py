@@ -110,9 +110,11 @@ def _call_site_checked_overload_signature(
                     )
 
                 arity = len(declared.params)
-                if len(stack) < arity:
-                    continue
-                explicit = stack[-arity:] if arity else ()
+                if len(stack) >= arity:
+                    explicit = stack[-arity:] if arity else ()
+                else:
+                    missing = arity - len(stack)
+                    explicit = (*declared.params[:missing], *stack)
                 if uses_static_values:
                     application = _candidate_apply_overload_to_branch(
                         candidate,

@@ -985,6 +985,8 @@ Important invariants:
 - A CSTC call may source missing values through ordinary input inference or
   explicit-parameter cycling. Do not require every consumed value to already
   exist on the physical analysis stack before calling `source_arguments(...)`.
+  Built-in helpers must go through the centralized consecutive/shared call-site
+  applicators, which complete inferable inputs before checking callable bodies.
 
 Variadic tuple parameters trigger the same deferral because their concrete
 length is known only once the argument tuple type is known. At the call site,
