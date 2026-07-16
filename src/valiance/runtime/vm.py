@@ -47,7 +47,7 @@ from valiance.runtime.runtime_values import (
     with_runtime_collection_rank,
 )
 from valiance.elements.stdlib_native import runtime_stdlib_elements
-from valiance.analysis.where_clause import MAX_COMPILE_TIME_RANK
+from valiance.analysis.contracts.where_clauses import MAX_COMPILE_TIME_RANK
 from valiance.vtypes import (
     AtomicType,
     CollectionType,

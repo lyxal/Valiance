@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from valiance.analysis import Analyser
-from valiance.analysis.annotations import annotation_nodes
+from valiance.analysis.contracts.annotations import annotation_nodes
 from valiance.asts import ASTNode, DefineNode, ElementNode, StringLiteralNode
 from valiance.parsing import LexError, ParseError, Parser, lex
 from valiance.runtime import (

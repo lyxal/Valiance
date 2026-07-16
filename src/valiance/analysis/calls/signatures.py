@@ -6,9 +6,9 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import field, fields, replace
 from typing import cast
 
-import valiance.analysis.annotations as annotation_hooks
+import valiance.analysis.contracts.annotations as annotation_hooks
 import valiance.vtypes as T
-import valiance.analysis.where_clause as static_where
+import valiance.analysis.contracts.where_clauses as static_where
 from valiance.asts import (
     ASTNode,
     CallArgument,

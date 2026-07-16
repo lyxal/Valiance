@@ -26,7 +26,7 @@ codegen, and runtime.
 - Attaches `SourceLocation` to parser-produced AST nodes.
 - Parses `@name` annotations before declarations/function literals and
   `@@name` annotations before element calls. Semantics live in
-  `analysis/annotations.py`, not in the parser.
+  `analysis/contracts/annotations.py`, not in the parser.
 
 `src/valiance/asts/nodes.py`
 
@@ -724,7 +724,7 @@ Do not give annotations parser semantics.
 
 The parser records `AnnotationNode` values on declarations, function literals,
 and annotated element nodes. Validation and behavior belong in
-`analysis/annotations.py` so built-in annotations and future compiler-plugin
+`analysis/contracts/annotations.py` so built-in annotations and future compiler-plugin
 annotations use the same extension point.
 
 

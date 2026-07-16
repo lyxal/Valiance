@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from dataclasses import replace
 from typing import cast
 
-import valiance.analysis.annotations as annotation_hooks
+import valiance.analysis.contracts.annotations as annotation_hooks
 from valiance.analysis.lints import KNOWN_LINT_CODES, finding
 import valiance.vtypes as T
 from valiance.asts import (

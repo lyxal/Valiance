@@ -1,4 +1,4 @@
-"""Focused loops control-flow analysis."""
+"""Focused lifecycle contract validation."""
 
 from __future__ import annotations
 
@@ -81,12 +81,13 @@ from valiance.vtypes.default_types import Boolean
 
 from ..calls import candidates as _calls
 from ..calls import callable_values as _functions
-from . import patterns as _patterns
+from ..control_flow import patterns as _patterns
 from .. import _analyser_utils as _utils
 from ..state import (
     AnalysisBranch, BranchSet, BranchVariables, Diagnostic,
     DiagnosticSeverity, InputMode, VariableWrite,
 )
+
 
 from ..calls.models import (
     CallCandidate, ElementArguments, ElementCallPreparation, FunctionAnalysis,
@@ -98,53 +99,42 @@ from ..calls.models import (
 
 
 
-class _LoopAnalysis:
-    """Own loops control-flow operations."""
 
-    def _analyse_unfold_body_function(
-        self,
-        outer: AnalysisBranch,
-        node: FunctionNode,
-    ) -> FunctionAnalysis | None:
-        """Analyse unfold body function during static analysis."""
-        if node.params is None:
-            analysed = self._analyse_function_literal(outer, node)
-            return None if analysed is None else analysed[0]
 
-        params = _functions._declared_params(node)
-        body_params = tuple(_functions._parameter_value_type(param) for param in params)
-        named_params = tuple(
-            (param.name, typ)
-            for param, typ in zip(node.params, body_params, strict=True)
-            if param.name is not None
-        )
-        variables = BranchVariables.from_parameters(
-            named_params,
-            captures=_functions._function_capture_source(outer),
-        )
-        initial = AnalysisBranch(
-            inputs=body_params,
-            variables=variables,
-            input_mode=(
-                InputMode.CYCLE_EXPLICIT_PARAMS if body_params else InputMode.NILADIC
-            ),
-            cycle_params=body_params,
-            atomic_type_vars=(
-                outer.atomic_type_vars
-                | _functions._atomic_parameter_type_vars(params)
-            ),
-            origin=outer.origin,
-        )
-        function_analyser = self._child_analyser(self.env.lexical_child_scope())
-        final = function_analyser.analyse_block(BranchSet((initial,)), node.body)
-        signatures = self._function_signatures(node, final)
-        analysis = _functions._function_analysis_from_signatures(signatures)
-        if analysis is None:
-            self.diagnostics.extend(function_analyser.diagnostics)
-            self.warnings.extend(function_analyser.warnings)
-            self._extend_lint_findings(function_analyser.lint_findings)
-            return None
-        self.warnings.extend(function_analyser.warnings)
-        self._extend_lint_findings(function_analyser.lint_findings)
-        return analysis
+
+
+class _LifecycleContracts:
+    """Own lifecycle contract operations."""
+
+    def _validate_object_lifecycle(self, node: ObjectNode) -> bool:
+        """Return whether an object's lifecycle annotations are valid."""
+        ok = True
+        mustcall = _utils._mustcall_methods(node.annotations)
+        defined = {definition.name.text for definition in node.definitions}
+        for method in mustcall:
+            if method not in defined:
+                self._diagnose(
+                    f"@mustcall method '{method}' is not defined on {node.name}",
+                    node,
+                )
+                ok = False
+        destructor_name = f"~{node.name.text.rsplit('.', 1)[-1]}"
+        destructors = [
+            definition
+            for definition in node.definitions
+            if definition.name.text.startswith("~")
+        ]
+        for definition in destructors:
+            if definition.name.text != destructor_name:
+                self._diagnose(
+                    f"destructor for {node.name} must be named '{destructor_name}'",
+                    definition,
+                )
+                ok = False
+            if definition.function.params:
+                self._diagnose(
+                    "destructors cannot declare explicit parameters", definition
+                )
+                ok = False
+        return ok
 

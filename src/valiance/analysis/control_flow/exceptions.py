@@ -16,9 +16,9 @@ from itertools import count
 from pathlib import Path
 from typing import cast
 
-import valiance.analysis.annotations as annotation_hooks
+import valiance.analysis.contracts.annotations as annotation_hooks
 import valiance.vtypes as T
-import valiance.analysis.where_clause as static_where
+import valiance.analysis.contracts.where_clauses as static_where
 from valiance.elements.builtins import default_environment
 from valiance.analysis.lints import (
     DEFAULT_REGISTRY as DEFAULT_LINT_REGISTRY,

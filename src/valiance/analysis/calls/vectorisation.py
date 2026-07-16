@@ -8,7 +8,7 @@ from itertools import count, permutations
 from typing import cast
 
 import valiance.vtypes as T
-import valiance.analysis.where_clause as static_where
+import valiance.analysis.contracts.where_clauses as static_where
 from valiance.asts import (
     ASTNode,
     CallArgument,

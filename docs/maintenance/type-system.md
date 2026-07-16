@@ -195,7 +195,7 @@ application helpers. It does not perform analyser branch management.
 
 ### `analysis/state`, `analysis/declarations`, `analysis/calls`, and `analysis/analyser.py`: applying types to programs
 
-`analysis/state` owns the immutable `BranchVariables`, `AnalysisBranch`, and `BranchSet` foundations without depending on the concrete analyser. `analysis/declarations` owns environment-changing declarations and type-shape construction behind a `DeclarationAnalyser` service. The public façade owns diagnostics, handler
+`analysis/state` owns the immutable `BranchVariables`, `AnalysisBranch`, and `BranchSet` foundations without depending on the concrete analyser. `analysis/declarations` owns environment-changing declarations and type-shape construction behind a `DeclarationAnalyser` service. `analysis/contracts` owns annotations, tags, where clauses, lifecycle rules, and their validation behind a `ContractAnalyser` service. The public façade owns diagnostics, handler
 dispatch, and the `Analyser` orchestration class. Focused private modules own:
 
 - `_analyser_handlers.py`: concrete AST handlers;

@@ -48,7 +48,7 @@ For an approachable explanation before this exhaustive reference, read
   Declares the default element environment and runtime implementations for
   built-ins.
 
-- `src/valiance/analysis/annotations.py`
+- `src/valiance/analysis/contracts/annotations.py`
   Declares the compiler annotation registry and built-in annotation handlers.
   New compiler-owned annotations should register `AnnotationSpec` values here;
   future plugin loading should call the same `register_annotation(...)` hook
@@ -1150,7 +1150,7 @@ expressions and function bodies are not lost during branch merges. Both
 ## Annotations
 
 Annotations are parsed as `AnnotationNode` values and handled through
-`analysis/annotations.py`. The analyser calls the registry at four extension
+`analysis/contracts/annotations.py`. The analyser calls the registry at four extension
 points:
 
 - validation for a target kind such as `define`, `fn`, `object`, `variant`, or
