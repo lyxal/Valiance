@@ -100,6 +100,13 @@ class ModuleLoader:
         try:
             source = source_file.read_text(encoding="utf-8")
             program = parse(source)
+            if path.parts and path.parts[0] == "std":
+                from valiance.elements.stdlib_native import attach_native_object_elements
+
+                try:
+                    program = attach_native_object_elements(program, path.parts[-1])
+                except ValueError as exc:
+                    raise ModuleLoadError(f"{source_file}: {exc}") from exc
             from valiance.analysis import Analyser
             from valiance.elements.builtins import default_environment
             from valiance.elements.stdlib_native import install_native_stdlib

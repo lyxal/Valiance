@@ -1914,10 +1914,13 @@ def _resolved_element_reference(
         )
         if len(node.overload.params) != declared_arity:
             hidden_count = len(static_values) if element is None else 0
-            arity_override = len(node.overload.params) + hidden_count
-            consumed_override = (
-                node.overload.runtime_consumed_count + hidden_count
-            )
+            runtime_consumed = node.overload.runtime_consumed_count
+            if runtime_consumed is None:
+                runtime_consumed = declared_arity
+                arity_override = declared_arity + hidden_count
+            else:
+                arity_override = len(node.overload.params) + hidden_count
+            consumed_override = runtime_consumed + hidden_count
     return ResolvedElementReference(
         runtime_name,
         node.overload_index,

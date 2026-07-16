@@ -248,6 +248,27 @@ class _ImportDeclarations:
             )
             self.env.define_overload(name, overload)
 
+    def _register_imported_friendly_runtime_elements(
+        self,
+        owner: Symbol,
+        definitions: tuple[DefineNode, ...],
+    ) -> None:
+        """Make hidden native calls in imported friendly wrappers type-visible."""
+        for definition in definitions:
+            body = definition.function.body
+            if not body or not isinstance(body[-1], ElementNode):
+                continue
+            runtime_name = body[-1].name
+            if not runtime_name.namespace or self.env.overloads_for(runtime_name):
+                continue
+            params = tuple(
+                param.typ or T.Any for param in definition.function.params or ()
+            )
+            self.env.define_overload(
+                runtime_name,
+                T.Overload((T.N(owner), *params), definition.function.returns or ()),
+            )
+
     def _register_imported_object(
         self,
         obj,
@@ -292,6 +313,10 @@ class _ImportDeclarations:
                 defaults,
             )
         if obj.import_friendly:
+            self._register_imported_friendly_runtime_elements(
+                obj.name,
+                friendly_definitions,
+            )
             self._register_friendly_definitions(
                 current,
                 obj.name,

@@ -37,6 +37,7 @@ class NativeFunction:
     implementation: NativeImpl
     param_names: tuple[Symbol, ...] = ()
     documentation: ElementDocumentation | None = None
+    owner: Symbol | None = None
 
 
 def native_function(
@@ -47,6 +48,7 @@ def native_function(
     *,
     param_names: tuple[str, ...] = (),
     documentation: ElementDocumentation | None = None,
+    owner: str | None = None,
 ) -> NativeFunction:
     """Declare one importable Python-backed stdlib function."""
     return NativeFunction(
@@ -56,6 +58,7 @@ def native_function(
         implementation,
         tuple(Symbol(item) for item in param_names),
         documentation,
+        None if owner is None else Symbol(owner),
     )
 
 
@@ -66,6 +69,7 @@ def stdlib_element(
     *,
     param_names: tuple[str, ...] = (),
     documentation: ElementDocumentation | None = None,
+    owner: str | None = None,
 ) -> Callable[[NativeImpl], NativeImpl]:
     """Decorate a Python implementation as an importable stdlib function."""
 
@@ -78,10 +82,81 @@ def stdlib_element(
             fn,
             param_names=param_names,
             documentation=documentation,
+            owner=owner,
         )
         return fn
 
     return register
+
+
+def attach_native_object_elements(
+    program: list[object],
+    module_name: str,
+) -> list[object]:
+    """Attach Python-backed friendly elements to objects in a Valiance module."""
+    functions = _native_functions(module_name) or ()
+    attached = tuple(function for function in functions if function.owner is not None)
+    if not attached:
+        return program
+
+    from dataclasses import replace
+    from valiance.asts import ObjectNode
+
+    owners = {
+        node.name
+        for node in program
+        if isinstance(node, ObjectNode)
+        and node.kind == Symbol("object")
+        and node.target is None
+    }
+    missing = sorted(
+        {function.owner for function in attached if function.owner not in owners},
+        key=str,
+    )
+    if missing:
+        names = ", ".join(repr(str(name)) for name in missing)
+        raise ValueError(f"native object element owner(s) not found: {names}")
+
+    by_owner: dict[Symbol, list[DefineNode]] = {}
+    for function in attached:
+        assert function.owner is not None
+        by_owner.setdefault(function.owner, []).append(
+            _friendly_definition(module_name, function)
+        )
+    return [
+        replace(node, definitions=(*node.definitions, *by_owner.get(node.name, ())))
+        if isinstance(node, ObjectNode)
+        and node.kind == Symbol("object")
+        and node.target is None
+        else node
+        for node in program
+    ]
+
+
+def _friendly_definition(
+    module_name: str,
+    function: NativeFunction,
+) -> DefineNode:
+    """Build a Valiance object-friendly wrapper around one native element."""
+    param_names = _param_names(function)
+    runtime_name = Symbol(function.name.text, ("std", module_name))
+    body = (
+        GetVariableNode(Symbol("self")),
+        *(GetVariableNode(name) for name in param_names),
+        ElementNode(runtime_name),
+    )
+    return DefineNode(
+        function.name,
+        FunctionNode(
+            params=tuple(
+                FunctionParam(name, typ)
+                for name, typ in zip(param_names, function.params, strict=True)
+            ),
+            body=body,
+            returns=function.returns,
+        ),
+        visibility=Symbol("public"),
+    )
 
 
 def native_module_exports(module_name: str) -> object | None:
@@ -135,9 +210,10 @@ def _module_definition(module_name: str, function: NativeFunction):
 
 def _typed_wrapper(module_name: str, function: NativeFunction) -> TypedFunctionNode:
     """Compute typed wrapper for native standard-library registration."""
-    param_names = _param_names(function)
+    params = _effective_params(function)
+    param_names = _effective_param_names(function)
     runtime_name = Symbol(function.name.text, ("std", module_name))
-    overload = T.Overload(function.params, function.returns, param_names=param_names)
+    overload = T.Overload(params, function.returns, param_names=param_names)
     applied = T.AppliedOverload(
         overload,
         {},
@@ -149,7 +225,7 @@ def _typed_wrapper(module_name: str, function: NativeFunction) -> TypedFunctionN
     typed_body: tuple[TypedNode, ...] = (
         *(
             TypedNode(GetVariableNode(name), typ)
-            for name, typ in zip(param_names, function.params, strict=True)
+            for name, typ in zip(param_names, params, strict=True)
         ),
         TypedElementNode(
             ElementNode(runtime_name),
@@ -158,11 +234,11 @@ def _typed_wrapper(module_name: str, function: NativeFunction) -> TypedFunctionN
             0,
         ),
     )
-    function_type = T.Fn(function.params, function.returns)
+    function_type = T.Fn(params, function.returns)
     function_node = FunctionNode(
         params=tuple(
             FunctionParam(name, typ)
-            for name, typ in zip(param_names, function.params, strict=True)
+            for name, typ in zip(param_names, params, strict=True)
         ),
         body=tuple(node.node for node in typed_body),
         returns=function.returns,
@@ -187,12 +263,27 @@ def _runtime_element(module_name: str, function: NativeFunction) -> BuiltinEleme
         Symbol(function.name.text, ("std", module_name)),
         (
             BuiltinOverload(
-                T.Overload(function.params, function.returns),
+                T.Overload(_effective_params(function), function.returns),
                 function.implementation,
             ),
         ),
         function.documentation,
     )
+
+
+def _effective_params(function: NativeFunction) -> tuple[T.Type, ...]:
+    """Return the runtime parameters, including an attached object receiver."""
+    if function.owner is None:
+        return function.params
+    return (T.N(function.owner), *function.params)
+
+
+def _effective_param_names(function: NativeFunction) -> tuple[Symbol, ...]:
+    """Return wrapper parameter names, including an attached object receiver."""
+    names = _param_names(function)
+    if function.owner is None:
+        return names
+    return (Symbol("self"), *names)
 
 
 def _param_names(function: NativeFunction) -> tuple[Symbol, ...]:
