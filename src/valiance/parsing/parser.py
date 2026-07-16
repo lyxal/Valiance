@@ -3139,11 +3139,6 @@ def _flatten(items: tuple[tuple[ASTNode, ...], ...]) -> tuple[ASTNode, ...]:
     return tuple(node for item in items for node in item)
 
 
-def _element_tags(*names: str) -> frozenset[ElementTag]:
-    """Parse element tags from the current token stream."""
-    return frozenset(ElementTag(Symbol(name)) for name in names)
-
-
 def _collection_postfix_superset(
     inner: type[CollectionType],
     outer: type[CollectionType],

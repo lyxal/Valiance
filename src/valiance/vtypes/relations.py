@@ -2612,21 +2612,6 @@ def _application_dominates(
     )
 
 
-def _resolved_overload_dominates(
-    left: ResolvedOverload,
-    right: ResolvedOverload,
-    ctx: Context,
-) -> bool:
-    """Return the Boolean result of resolved overload dominates during type solving and overload resolution."""
-    return _overload_match_dominates(
-        left.scores,
-        left.params,
-        right.scores,
-        right.params,
-        ctx,
-    )
-
-
 def _overload_match_dominates(
     left_scores: tuple[Specificity, ...],
     left_params: tuple[Type, ...],

@@ -5744,20 +5744,6 @@ def _unwrapped_args(args: tuple[Any, ...]) -> tuple[Any, ...]:
     return tuple(unwrap_runtime_value(arg) for arg in args)
 
 
-def _apply_declared_return_tags(
-    values: tuple[Any, ...],
-    types: tuple[Any, ...],
-) -> tuple[Any, ...]:
-    """Apply declared return tags during VM execution."""
-    for typ in types:
-        if isinstance(typ, TaggedType):
-            break
-    else:
-        return values
-    tag_sets = tuple(_declared_runtime_tags(typ) for typ in types)
-    return _apply_runtime_return_tags(values, tag_sets)
-
-
 def _declared_runtime_tags(typ: Any) -> tuple[DataTag, ...]:
     """Compute declared runtime tags during VM execution."""
     if not isinstance(typ, TaggedType):

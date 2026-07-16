@@ -383,23 +383,6 @@ def _function_fat_arrow_index(
     return None
 
 
-def _token_index(
-    tokens: Sequence[Any],
-    kind: Any,
-    start: int,
-    end: int | None = None,
-) -> int | None:
-    """Find the index for token while reconstructing Valiance source."""
-    for index, token in enumerate(tokens):
-        if token.offset < start:
-            continue
-        if end is not None and token.offset >= end:
-            return None
-        if token.kind is kind:
-            return index
-    return None
-
-
 def _last_token_index(
     tokens: Sequence[Any],
     kind: Any,

@@ -957,14 +957,6 @@ def _callable_applications(
             yield application
 
 
-def _first_callable_application(
-    typ: T.Type,
-    args: tuple[T.Type, ...],
-) -> _CallableApplication | None:
-    """Compute first callable application for the built-in catalogue and runtime."""
-    return next(_callable_applications(typ, args), None)
-
-
 def _peek_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     """Compute peek call site for the built-in catalogue and runtime."""
     if not call_params:
