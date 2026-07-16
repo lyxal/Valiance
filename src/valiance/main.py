@@ -27,7 +27,7 @@ from valiance.modules_system.packages import (
     require_manifest,
     upgrade_dependency,
 )
-from valiance.parsing import LexError, ParseError, Parser, lex
+from valiance.parsing import LexError, ParseError, Parser, lex, parse
 from valiance.repl import ReplCompletion, create_repl_frontend
 from valiance.elements.reference_docs import (
     DocumentationError,
@@ -43,6 +43,8 @@ from valiance.runtime import (
     dumps,
     loads,
     run,
+    build_module,
+    dumps_module,
 )
 from valiance.runtime.runtime_values import DIAGNOSTIC_LIST_PREVIEW_LIMIT, format_runtime_value
 from valiance.source_tools import (
@@ -64,7 +66,7 @@ _ANSI_DIM = "\033[2m"
 _ANSI_CYAN = "\033[36m"
 _ANSI_GREEN = "\033[32m"
 
-_SOURCE_ACTIONS = {"compile", "run", "parse", "analyse", "analyze"}
+_SOURCE_ACTIONS = {"compile", "run", "parse", "analyse", "analyze", "compile-module", "build"}
 _SOURCE_TOOL_ACTIONS = {"tidy", "annotate", "docs"}
 _BYTECODE_ACTIONS = {"exec"}
 _PACKAGE_ACTIONS = {"init", "install", "add", "remove", "upgrade"}
@@ -110,6 +112,8 @@ EXAMPLES
 COMMON COMMANDS
   run       Run a project entry, source file, or inline code
   compile   Compile a project entry, source file, or inline code
+  compile-module  Compile a reusable .vbcm module
+  build     Build one or all [build.<name>] manifest targets
   exec      Execute existing bytecode without recompiling
   test      Discover and run project tests
   parse     Print the parsed AST
@@ -135,6 +139,8 @@ def _command_help_text(prog: str, action: str) -> str:
     """Render focused help for one command."""
     usage = {
         "compile": "[<entry> | --file <file> | --code <code>] [-o <file>] [--no-optimize]",
+        "compile-module": "--file <file> [-o <file>] [--no-optimize]",
+        "build": "[<target>] [--no-optimize]",
         "run": "[<entry> | --file <file> | --code <code>] [--implicit-output] [--preview-lists] [--no-optimize]",
         "exec": "[<entry> | --file <file>] [--implicit-output] [--preview-lists]",
         "parse": "<file> | --code <code>",
@@ -152,6 +158,8 @@ def _command_help_text(prog: str, action: str) -> str:
     }.get(action, "")
     examples = {
         "compile": f"  {prog} compile --file src/main.vlnc --output bin/main.vbc",
+        "compile-module": f"  {prog} compile-module --file src/library.vlnc --output bin/library.vbcm",
+        "build": f"  {prog} build library",
         "run": f"  {prog} run --code '1 2 +'",
         "exec": f"  {prog} exec --file bin/main.vbc",
         "test": f"  {prog} test --filter arithmetic",
@@ -207,6 +215,10 @@ def _run(vln_mode: bool, argv: Sequence[str] | None = None) -> int:
     if parsed.action == "lsp":
         from valiance.lsp import run_language_server
         return run_language_server()
+    if parsed.action == "build":
+        return _run_build_command(parsed)
+    if parsed.action == "compile-module":
+        return _run_compile_module_command(parsed)
     if parsed.action == "exec":
         bytecode_file = parsed.bytecode_file
         if bytecode_file is None:
@@ -315,6 +327,29 @@ def _parse_args(args: list[str], *, prog: str = DEFAULT_PROG) -> argparse.Namesp
         return _parse_tidy_args(explicit_action, args, prog=prog)
     if explicit_action == "docs":
         return _parse_docs_args(args, prog=prog)
+    if explicit_action in {"build", "compile-module"}:
+        parser = argparse.ArgumentParser(prog=prog, add_help=False)
+        parser.add_argument("--file", dest="explicit_source_file")
+        parser.add_argument("-o", "--output")
+        parser.add_argument("--no-optimize", "--no-optimise", dest="no_optimize", action="store_true")
+        parser.add_argument("name", nargs="?")
+        try:
+            parsed = parser.parse_args(args)
+        except SystemExit:
+            return None
+        parsed.action = explicit_action
+        if explicit_action == "compile-module":
+            if parsed.explicit_source_file is None:
+                print("error: compile-module requires --file", file=sys.stderr)
+                return None
+            if parsed.name is not None:
+                print("error: compile-module does not accept a target name", file=sys.stderr)
+                return None
+        elif parsed.explicit_source_file is not None or parsed.output is not None:
+            print("error: build uses settings from valiance.toml", file=sys.stderr)
+            return None
+        parsed.target_name = parsed.name
+        return parsed
 
     parser = argparse.ArgumentParser(
         prog=prog,
@@ -1325,6 +1360,111 @@ def _run_source(
         RuntimeError,
     ) as exc:
         _print_exception_diagnostic(exc, source=source, source_file=source_file)
+        return 1
+
+
+def _compile_module_artifact(
+    source_file: Path,
+    output: Path,
+    *,
+    module_name: str,
+    optimize: bool,
+) -> None:
+    """Analyse and compile one reusable Valiance bytecode module."""
+    source = source_file.read_text(encoding="utf-8")
+    program = parse(source)
+    analyser = Analyser(source_file=source_file)
+    typed = analyser.analyse(program)
+    if analyser.diagnostics:
+        raise CompileError("; ".join(analyser.diagnostics))
+    bytecode = compile_program(typed, optimize=optimize)
+    artifact = build_module(module_name, source, bytecode)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(dumps_module(artifact))
+
+
+def _run_compile_module_command(parsed: argparse.Namespace) -> int:
+    """Run a one-off compiled-module build."""
+    source = Path(parsed.explicit_source_file).resolve()
+    output = (
+        Path(parsed.output).resolve()
+        if parsed.output is not None
+        else source.with_suffix(".vbcm")
+    )
+    if output.suffix != ".vbcm":
+        print("Build error: compile-module output must use '.vbcm'", file=sys.stderr)
+        return 1
+    try:
+        _compile_module_artifact(
+            source,
+            output,
+            module_name=source.stem,
+            optimize=not parsed.no_optimize,
+        )
+    except (OSError, LexError, ParseError, CompileError, BytecodeFormatError) as exc:
+        _print_exception_diagnostic(exc, source_file=source)
+        return 1
+    print(f"Wrote bytecode module: {output}")
+    return 0
+
+
+def _run_build_command(parsed: argparse.Namespace) -> int:
+    """Build one or all named targets from the project manifest."""
+    try:
+        manifest = require_manifest()
+        if parsed.target_name is None:
+            targets = tuple(manifest.builds.values())
+            if not targets:
+                raise PackageError("project has no [build.<name>] targets")
+        else:
+            target = manifest.builds.get(parsed.target_name)
+            if target is None:
+                available = ", ".join(sorted(manifest.builds)) or "(none)"
+                raise PackageError(
+                    f"project has no build target {parsed.target_name!r}; "
+                    f"available targets: {available}"
+                )
+            targets = (target,)
+        for target in targets:
+            if target.entry is not None:
+                source_file = project_entry_path(manifest, target.entry)
+            else:
+                source_file = (manifest.root / str(target.source)).resolve()
+                try:
+                    source_file.relative_to(manifest.root.resolve())
+                except ValueError as exc:
+                    raise PackageError(
+                        f"build target {target.name!r} source must stay within the project root"
+                    ) from exc
+                if not source_file.is_file():
+                    raise PackageError(
+                        f"build target {target.name!r} source does not exist: {source_file}"
+                    )
+            suffix = ".vbcm" if target.kind == "module" else ".vbc"
+            output = manifest.root / (target.output or f"bin/{target.name}{suffix}")
+            optimize = target.optimize and not parsed.no_optimize
+            if target.kind == "module":
+                _compile_module_artifact(
+                    source_file,
+                    output,
+                    module_name=target.name,
+                    optimize=optimize,
+                )
+                print(f"Built {target.name}: {output}")
+            else:
+                source = source_file.read_text(encoding="utf-8")
+                result = _run_source(
+                    source,
+                    action="compile",
+                    bytecode_output=str(output),
+                    source_file=source_file,
+                    optimize=optimize,
+                )
+                if result:
+                    return result
+        return 0
+    except (PackageError, OSError, LexError, ParseError, CompileError, BytecodeFormatError) as exc:
+        _print_exception_diagnostic(exc)
         return 1
 
 

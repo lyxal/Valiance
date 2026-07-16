@@ -55,6 +55,18 @@ class LintSettings:
 
 
 @dataclass(frozen=True)
+class BuildTarget:
+    """One named artifact-producing project build target."""
+
+    name: str
+    kind: str
+    entry: str | None = None
+    source: str | None = None
+    output: str | None = None
+    optimize: bool = True
+
+
+@dataclass(frozen=True)
 class Manifest:
     """A parsed Valiance project manifest."""
 
@@ -63,6 +75,12 @@ class Manifest:
     entries: dict[str, str]
     dependencies: tuple[Dependency, ...]
     lints: LintSettings = LintSettings()
+    builds: dict[str, BuildTarget] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        """Normalize omitted build-target mappings for compatibility."""
+        if self.builds is None:
+            object.__setattr__(self, "builds", {})
 
     @property
     def path(self) -> Path:
@@ -102,6 +120,7 @@ def load_manifest(root: Path) -> Manifest:
     entries = data.get("entries", {})
     dependencies = data.get("dependencies", {})
     lints = data.get("lints", {})
+    builds = data.get("build", {})
     if not isinstance(project, dict):
         raise PackageError("[project] must be a table")
     if not isinstance(entries, dict):
@@ -110,6 +129,8 @@ def load_manifest(root: Path) -> Manifest:
         raise PackageError("[dependencies] must be a table")
     if not isinstance(lints, dict):
         raise PackageError("[lints] must be a table")
+    if not isinstance(builds, dict):
+        raise PackageError("[build] must be a table")
     unknown_lint_keys = set(lints) - {"enabled", "disable"}
     if unknown_lint_keys:
         names = ", ".join(sorted(map(str, unknown_lint_keys)))
@@ -137,12 +158,68 @@ def load_manifest(root: Path) -> Manifest:
             raise PackageError(f"entry {entry_name!r} path must be a string")
         parsed_entries[entry_name] = entry_path
 
+    parsed_builds: dict[str, BuildTarget] = {}
+    for target_name, target_value in builds.items():
+        if not NAME_RE.fullmatch(target_name):
+            raise PackageError(f"build target name {target_name!r} is not valid")
+        if not isinstance(target_value, dict):
+            raise PackageError(f"[build.{target_name}] must be a table")
+        unknown = set(target_value) - {"kind", "entry", "source", "output", "optimize"}
+        if unknown:
+            names = ", ".join(sorted(map(str, unknown)))
+            raise PackageError(f"unknown [build.{target_name}] setting(s): {names}")
+        kind = target_value.get("kind")
+        entry = target_value.get("entry")
+        source = target_value.get("source")
+        output = target_value.get("output")
+        optimize = target_value.get("optimize", True)
+        if kind not in {"module", "executable"}:
+            raise PackageError(
+                f"build target {target_name!r} kind must be 'module' or 'executable'"
+            )
+        if (entry is None) == (source is None):
+            raise PackageError(
+                f"build target {target_name!r} must specify exactly one of entry or source"
+            )
+        for label, value in (("entry", entry), ("source", source), ("output", output)):
+            if value is not None and not isinstance(value, str):
+                raise PackageError(
+                    f"build target {target_name!r} {label} must be a string"
+                )
+        if not isinstance(optimize, bool):
+            raise PackageError(
+                f"build target {target_name!r} optimize must be a boolean"
+            )
+        if entry is not None and entry not in parsed_entries:
+            raise PackageError(
+                f"build target {target_name!r} references unknown entry {entry!r}"
+            )
+        suffix = ".vbcm" if kind == "module" else ".vbc"
+        if output is not None and Path(output).suffix != suffix:
+            raise PackageError(
+                f"{kind} build target {target_name!r} output must use {suffix!r}"
+            )
+        parsed_builds[target_name] = BuildTarget(
+            target_name, kind, entry, source, output, optimize
+        )
+
+    outputs: dict[Path, str] = {}
+    for target in parsed_builds.values():
+        output = Path(target.output or f"bin/{target.name}{'.vbcm' if target.kind == 'module' else '.vbc'}")
+        previous = outputs.get(output)
+        if previous is not None:
+            raise PackageError(
+                f"build targets {previous!r} and {target.name!r} both write to {str(output)!r}"
+            )
+        outputs[output] = target.name
+
     return Manifest(
         root,
         dict(project),
         parsed_entries,
         tuple(_parse_dependency(name, value) for name, value in dependencies.items()),
         LintSettings(lint_enabled, tuple(dict.fromkeys(lint_disabled))),
+        parsed_builds,
     )
 
 
@@ -296,6 +373,7 @@ def add_dependency(
         manifest.entries,
         dependencies + (dependency,),
         manifest.lints,
+        manifest.builds,
     )
     write_manifest(updated)
     install(manifest.root)
@@ -309,7 +387,7 @@ def remove_dependency(name: str, *, start: Path | None = None) -> Manifest:
     dependencies = _without_dependency(manifest.dependencies, name)
     if len(dependencies) == len(manifest.dependencies):
         raise PackageError(f"dependency {name!r} is not declared")
-    updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies, manifest.lints)
+    updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies, manifest.lints, manifest.builds)
     write_manifest(updated)
     install(manifest.root)
     unused_dir = manifest.root / ".vln" / name
@@ -344,7 +422,7 @@ def upgrade_dependency(
         updated_dependency if dependency.local_name == name else dependency
         for dependency in manifest.dependencies
     )
-    updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies, manifest.lints)
+    updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies, manifest.lints, manifest.builds)
     write_manifest(updated)
     install(manifest.root)
     return updated
@@ -359,6 +437,17 @@ def write_manifest(manifest: Manifest) -> None:
     lines.append("[entries]")
     for name, path in manifest.entries.items():
         lines.append(f"{name} = {_toml_value(path)}")
+    for target in manifest.builds.values():
+        lines.append("")
+        lines.append(f"[build.{target.name}]")
+        lines.append(f"kind = {_toml_value(target.kind)}")
+        if target.entry is not None:
+            lines.append(f"entry = {_toml_value(target.entry)}")
+        if target.source is not None:
+            lines.append(f"source = {_toml_value(target.source)}")
+        if target.output is not None:
+            lines.append(f"output = {_toml_value(target.output)}")
+        lines.append(f"optimize = {_toml_value(target.optimize)}")
     lines.append("")
     lines.append("[lints]")
     lines.append(f"enabled = {_toml_value(manifest.lints.enabled)}")

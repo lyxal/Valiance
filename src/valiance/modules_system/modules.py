@@ -89,16 +89,37 @@ class ModuleLoader:
     ) -> ModuleExports:
         """Load, analyse, and cache a module and its exported facts."""
         source_file = self.resolve(path, current_file=current_file)
+        compiled_file = source_file.with_suffix(".vbcm")
         native_exports = _native_std_exports(path)
-        if source_file in self._cache:
-            return self._cache[source_file]
+        cache_key = source_file if source_file.exists() else compiled_file
+        if cache_key in self._cache:
+            return self._cache[cache_key]
         if source_file in self._loading:
             return ModuleExports(_module_name(path))
         if native_exports is not None and not source_file.exists():
             return native_exports
-        self._loading.add(source_file)
+        self._loading.add(cache_key)
         try:
-            source = source_file.read_text(encoding="utf-8")
+            compiled_module = None
+            if source_file.exists():
+                source = source_file.read_text(encoding="utf-8")
+            elif compiled_file.exists():
+                from valiance.runtime.compiled_module import load_module_file
+
+                try:
+                    compiled_module = load_module_file(compiled_file)
+                except Exception as exc:
+                    raise ModuleLoadError(f"could not load module {compiled_file}: {exc}") from exc
+                expected_name = _module_name(path)
+                if compiled_module.module_name != expected_name:
+                    raise ModuleLoadError(
+                        f"compiled module {compiled_file} declares "
+                        f"{compiled_module.module_name!r}, expected {expected_name!r}"
+                    )
+                source = compiled_module.interface_source
+                source_file = compiled_file
+            else:
+                source = source_file.read_text(encoding="utf-8")
             program = parse(source)
             if path.parts and path.parts[0] == "std":
                 from valiance.elements.stdlib_native import attach_native_object_elements
@@ -136,7 +157,7 @@ class ModuleLoader:
                 overlays,
                 analyser.runtime_prelude,
             )
-            self._cache[source_file] = exports
+            self._cache[cache_key] = exports
             return exports
         except OSError as exc:
             if native_exports is not None:
@@ -144,7 +165,7 @@ class ModuleLoader:
             message = f"could not read module {source_file}: {exc}"
             raise ModuleLoadError(message) from exc
         finally:
-            self._loading.discard(source_file)
+            self._loading.discard(cache_key)
 
     def resolve(
         self,
