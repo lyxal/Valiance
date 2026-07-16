@@ -1157,7 +1157,27 @@ class VirtualMachine:
                         case OpCode.GET_INDEX:
                             try:
                                 values = _pop_index_values(frame.stack, instruction.arg)
-                                receiver = _index_receiver(frame)
+                                if frame.stack:
+                                    receiver = frame.stack.pop()
+                                else:
+                                    try:
+                                        (
+                                            args,
+                                            stack_count,
+                                            next_cycle_index,
+                                            next_cycle_stack_remaining,
+                                        ) = frame.source_args(1)
+                                    except _StackUnderflow as exc:
+                                        raise RuntimeError(
+                                            "stack underflow during indexing"
+                                        ) from exc
+                                    if stack_count:
+                                        del frame.stack[-stack_count:]
+                                    frame.cycle_index = next_cycle_index
+                                    frame.cycle_stack_remaining = (
+                                        next_cycle_stack_remaining
+                                    )
+                                    receiver = args[0]
                                 result = _consume_receiver_result(
                                     receiver,
                                     _get_index(receiver, instruction.arg, values),
@@ -4749,7 +4769,11 @@ def _pop_index_values(
     """Pop index values during VM execution."""
     if spec[0] == ((0, 1, 0, 0),):
         return [(False, _pop(stack, "index"), None, None)]
-    values = iter(_pop_many(stack, _index_value_count(spec)))
+    value_count = sum(
+        has_start + has_stop + has_step
+        for _, has_start, has_stop, has_step in spec[0]
+    )
+    values = iter(_pop_many(stack, value_count))
     selectors = []
     for is_slice, has_start, has_stop, has_step in spec[0]:
         start = next(values) if has_start else None
@@ -4757,36 +4781,6 @@ def _pop_index_values(
         step = next(values) if has_step else None
         selectors.append((bool(is_slice), start, stop, step))
     return selectors
-
-
-@lru_cache(maxsize=None)
-def _index_value_count(
-    spec: tuple[tuple[tuple[int, int, int, int], ...], int],
-) -> int:
-    """Index value count during VM execution."""
-    return sum(
-        has_start + has_stop + has_step for _, has_start, has_stop, has_step in spec[0]
-    )
-
-
-def _index_receiver(frame: _Frame) -> Any:
-    """Index receiver during VM execution."""
-    if frame.stack:
-        return frame.stack.pop()
-    try:
-        (
-            args,
-            stack_count,
-            next_cycle_index,
-            next_cycle_stack_remaining,
-        ) = frame.source_args(1)
-    except _StackUnderflow as exc:
-        raise RuntimeError("stack underflow during indexing") from exc
-    if stack_count:
-        del frame.stack[-stack_count:]
-    frame.cycle_index = next_cycle_index
-    frame.cycle_stack_remaining = next_cycle_stack_remaining
-    return args[0]
 
 
 def _consume_receiver_result(
@@ -5057,7 +5051,12 @@ def _set_eager_slice(
 ) -> list[Any]:
     """Update eager slice during VM execution."""
     indexes = _eager_slice_indexes(len(receiver), start, stop, step)
-    replacements = _slice_replacements(value, len(indexes))
+    if is_list_like(value):
+        replacements = list(value)
+        if len(replacements) != len(indexes):
+            raise RuntimeError("slice assignment replacement length mismatch")
+    else:
+        replacements = [value] * len(indexes)
     updated = (
         receiver
         if in_place
@@ -5154,16 +5153,6 @@ def _eager_slice_indexes(
     stop_int = length - 1 if stop is None else _normal_index(_int_index(stop), length)
     python_stop = stop_int + (1 if step_int > 0 else -1)
     return list(range(length)[start_int:python_stop:step_int])
-
-
-def _slice_replacements(value: Any, count: int) -> list[Any]:
-    """Slice replacements during VM execution."""
-    if is_list_like(value):
-        replacements = list(value)
-        if len(replacements) != count:
-            raise RuntimeError("slice assignment replacement length mismatch")
-        return replacements
-    return [value] * count
 
 
 def _copy_eager_list(
