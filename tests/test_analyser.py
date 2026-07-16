@@ -2847,7 +2847,23 @@ pick(_, 4)
         )
 
         self.assertFalse(analyser.diagnostics)
-        self.assertEqual(show(typed[0].typ), "Function[Number+ -> Number]")
+        self.assertEqual(
+            show(typed[0].typ),
+            "Function[#-infinite Number+ -> Number]",
+        )
+
+    def test_fork_shared_input_rejects_infinite_value(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("define f => fork: (sum, length) | /"))
+        overload = analyser.env.overloads_for(Symbol("f"))[0]
+        self.assertEqual(show(overload.params[0]), "#-infinite Number+")
+
+        analyser.analyse(parse("f(#infinite [1, 2, 3, 4, 5])"))
+        self.assertIn(
+            "no overloads for element 'f' match",
+            str(analyser.diagnostics[0]),
+        )
 
     def test_list_of_functions_intersects_inferred_input_requirements(self):
         analyser = Analyser()

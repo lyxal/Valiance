@@ -328,34 +328,12 @@ def _merge_inferred_inputs(
     return base_inputs + tuple(merged)
 
 
-def _shared_required_input(candidates: tuple[T.Type, ...], ctx: T.Context) -> T.Type | None:
-    """Choose the narrowest observed input satisfying every forked requirement."""
-    refined = list(candidates)
-    for pattern in candidates:
-        for actual in candidates:
-            constraints = T._solve(pattern, actual, ctx)
-            if constraints is None:
-                continue
-            substitution = {name: T._combine_all(values, ctx) for name, values in constraints.items()}
-            if all(value is not None for value in substitution.values()):
-                refined.append(T._substitute(pattern, substitution))
-    viable = tuple(candidate for candidate in dict.fromkeys(refined) if all(_required_input_accepts(candidate, required, ctx) for required in candidates))
-    if not viable:
-        return None
-    return min(viable, key=lambda typ: (-len(T.show(typ)), T.show(typ), repr(typ)))
-
-
-def _required_input_accepts(candidate: T.Type, required: T.Type, ctx: T.Context) -> bool:
-    """Return whether a concrete shared input satisfies one inferred requirement."""
-    if T.assignable(candidate, required, ctx):
-        return True
-    constraints = T._solve(required, candidate, ctx)
-    if constraints is None:
-        return False
-    substitution = {name: T._combine_all(values, ctx) for name, values in constraints.items()}
-    if any(value is None for value in substitution.values()):
-        return False
-    return T.assignable(candidate, T._substitute(required, substitution), ctx)
+def _shared_required_input(
+    candidates: tuple[T.Type, ...],
+    ctx: T.Context,
+) -> T.Type | None:
+    """Choose the shared input requirement for forked literal branches."""
+    return T.meet_required_inputs(candidates, ctx)
 
 
 def _merge_branch_inputs(

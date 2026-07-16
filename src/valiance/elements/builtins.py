@@ -1015,23 +1015,26 @@ def _shared_call_site_applications(
     the inference rule used by fan-out combinators such as ``fork``.
     """
     arity = max((len(overload.params) for overload in overloads), default=0)
-    supplied = stack[-arity:] if len(stack) >= arity else stack
-    seeds = tuple(
-        overload.params for overload in overloads if len(overload.params) == arity
-    )
-    if arity == 0:
-        seeds = ((),)
-    for seed in dict.fromkeys(seeds):
-        args = _completed_call_site_stack(supplied, seed)
-        applications: list[_CallableApplication] = []
-        for overload in overloads:
-            callable_args = args[-len(overload.params) :] if overload.params else ()
-            application = _apply_callable(overload, callable_args)
-            if application is None:
-                break
-            applications.append(application)
-        else:
-            yield _CallSiteApplications(args, tuple(applications))
+    expected: list[T.Type] = []
+    for index in range(arity):
+        requirements = tuple(
+            overload.params[index - (arity - len(overload.params))]
+            for overload in overloads
+            if index >= arity - len(overload.params)
+        )
+        shared = T.meet_required_inputs(requirements)
+        if shared is None:
+            return
+        expected.append(shared)
+    args = _completed_call_site_stack(stack, tuple(expected))
+    applications: list[_CallableApplication] = []
+    for overload in overloads:
+        callable_args = args[-len(overload.params) :] if overload.params else ()
+        application = _apply_callable(overload, callable_args)
+        if application is None:
+            return
+        applications.append(application)
+    yield _CallSiteApplications(args, tuple(applications))
 
 
 def _peek_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:

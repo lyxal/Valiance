@@ -1266,6 +1266,66 @@ def _combine_all(
     return out
 
 
+def meet_required_inputs(
+    requirements: Iterable[Type],
+    ctx: Context | None = None,
+) -> Type | None:
+    """Return the narrowest inferred input satisfying every requirement.
+
+    This is a meet over call/input requirements rather than a branch-result join.
+    It preserves refinements such as absent data tags and rejects unrelated
+    alternatives instead of widening them into a union. Generic requirements are
+    specialized against the other observations before viable meets are selected.
+    """
+    ctx = ctx or Context()
+    candidates = tuple(dict.fromkeys(normalize(item) for item in requirements))
+    if not candidates:
+        return None
+    refined = list(candidates)
+    for pattern in candidates:
+        for actual in candidates:
+            constraints = _solve(pattern, actual, ctx)
+            if constraints is None:
+                continue
+            substitution = {
+                name: _combine_all(values, ctx)
+                for name, values in constraints.items()
+            }
+            if all(value is not None for value in substitution.values()):
+                refined.append(_substitute(pattern, substitution))
+    viable = tuple(
+        candidate
+        for candidate in dict.fromkeys(refined)
+        if all(
+            _required_input_accepts(candidate, required, ctx)
+            for required in candidates
+        )
+    )
+    if not viable:
+        return None
+    return min(viable, key=lambda typ: (-len(show(typ)), show(typ), repr(typ)))
+
+
+def _required_input_accepts(
+    candidate: Type,
+    required: Type,
+    ctx: Context,
+) -> bool:
+    """Return whether one concrete inferred input satisfies a requirement."""
+    if assignable(candidate, required, ctx):
+        return True
+    constraints = _solve(required, candidate, ctx)
+    if constraints is None:
+        return False
+    substitution = {
+        name: _combine_all(values, ctx)
+        for name, values in constraints.items()
+    }
+    if any(value is None for value in substitution.values()):
+        return False
+    return assignable(candidate, _substitute(required, substitution), ctx)
+
+
 def _reduced_union(*types: Type, ctx: Context | None = None) -> Type:
     """Build a deterministic union with assignable subtype members removed."""
     ctx = ctx or Context()
