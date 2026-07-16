@@ -6,11 +6,11 @@ from importlib import import_module
 
 _EXPORT_MODULES = {
     "Analyser": "valiance.analysis.analyser",
-    "AnalysisBranch": "valiance.analysis.analyser",
-    "BranchSet": "valiance.analysis.analyser",
-    "BranchVariables": "valiance.analysis.analyser",
+    "AnalysisBranch": "valiance.analysis.state",
+    "BranchSet": "valiance.analysis.state",
+    "BranchVariables": "valiance.analysis.state",
     "FunctionAnalysis": "valiance.analysis.analyser",
-    "InputMode": "valiance.analysis.analyser",
+    "InputMode": "valiance.analysis.state",
     "analyse": "valiance.analysis.analyser",
     "analyse_function": "valiance.analysis.analyser",
     "analyse_function_details": "valiance.analysis.analyser",

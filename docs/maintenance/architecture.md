@@ -10,7 +10,7 @@ A normal compile-and-run operation follows these stages:
 
 1. `parsing/lexer.py` turns source characters into tokens with source locations.
 2. `parsing/parser.py` turns tokens into raw nodes from `asts/nodes.py`.
-3. `analysis/analyser.py` transforms branch sets and emits typed AST nodes.
+3. `analysis/state` owns immutable branch and variable transformations; `analysis/analyser.py` orchestrates branch sets and emits typed AST nodes.
 4. `runtime/compiler.py` lowers typed nodes into instructions and function code.
 5. `runtime/optimizer.py` runs ordered, semantics-preserving bytecode passes.
 6. `runtime/serialization.py` optionally writes or reads portable bytecode.
@@ -65,7 +65,7 @@ When a node gains a field, check all of these places:
 
 ### Branch-based analysis
 
-The `src/valiance/analysis/analyser.py` façade and its private
+The `src/valiance/analysis/state` package provides analyser-independent `BranchVariables`, `AnalysisBranch`, and `BranchSet` values. The `src/valiance/analysis/analyser.py` façade and its private
 `_analyser_*` implementation modules model analysis as a transformation from a
 set of possible branches to another set. The façade owns branch state, public
 entry points, and the `Analyser` orchestration class; handlers and focused helper

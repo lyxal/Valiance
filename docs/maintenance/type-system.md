@@ -193,9 +193,9 @@ This is the policy-heavy core. It owns:
 `TypeStack` is an immutable tuple wrapper with `push`, `pop`, and overload
 application helpers. It does not perform analyser branch management.
 
-### `analysis/analyser.py` and `_analyser_*`: applying types to programs
+### `analysis/state`, `analysis/analyser.py`, and `_analyser_*`: applying types to programs
 
-The public façade owns `AnalysisBranch`, `BranchSet`, diagnostics, handler
+`analysis/state` owns the immutable `BranchVariables`, `AnalysisBranch`, and `BranchSet` foundations without depending on the concrete analyser. The public façade owns diagnostics, handler
 dispatch, and the `Analyser` orchestration class. Focused private modules own:
 
 - `_analyser_handlers.py`: concrete AST handlers;

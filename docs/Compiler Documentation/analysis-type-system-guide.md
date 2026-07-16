@@ -13,7 +13,8 @@ For an approachable explanation before this exhaustive reference, read
 
 ## Main Files
 
-- `src/valiance/analysis/analyser.py`
+- `src/valiance/analysis/state/` for immutable branch and variable state
+- `src/valiance/analysis/analyser.py` for orchestration
   Public façade for analysis. It owns branch state, diagnostics, the handler
   registry, the `Analyser` orchestration class, and compatibility access to
   private helpers.
