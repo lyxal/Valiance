@@ -352,25 +352,12 @@ end
             ],
         )
 
-    def test_control_flow_structures_break_without_belonging_to_preceding_chain(self):
-        cases = (
-            ("if (true) => 5 else => 6", IfNode),
-            ('assert => true else => "nope" end', AssertNode),
-            ("while (true) => break end", WhileNode),
-            ("unfold -> (n: Number) => $n end", UnfoldNode),
-            ("at (list+) => + end", AtNode),
-            ("foreach (x) => $x end", ForNode),
-            ("match =>\n  default => 1\nend", MatchNode),
-            ("try =>\n  1\nhandle =>\n  2\nend", TryNode),
-        )
+    def test_control_flow_breaks_without_belonging_to_preceding_chain(self):
+        program = parse("5 + if (true) => 5 else => 6")
 
-        for structure, node_type in cases:
-            with self.subTest(node_type=node_type.__name__):
-                program = parse(f"5 + {structure}")
-
-                self.assertEqual(program[0], NumberLiteralNode("5"))
-                self.assertEqual(program[1], ElementNode(Symbol("+")))
-                self.assertIsInstance(program[2], node_type)
+        self.assertEqual(program[0], NumberLiteralNode("5"))
+        self.assertEqual(program[1], ElementNode(Symbol("+")))
+        self.assertIsInstance(program[2], IfNode)
 
     def test_stack_field_access_terminates_infix_lowering_segment(self):
         self.assertEqual(

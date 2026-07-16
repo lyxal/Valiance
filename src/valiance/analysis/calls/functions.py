@@ -148,13 +148,19 @@ class _CallableValues:
         outer: AnalysisBranch,
         node: FunctionNode,
         origin: ASTNode,
+        *,
+        allow_top_level_captures: bool = True,
     ) -> tuple[FunctionAnalysis, AnalysisBranch] | None:
         """Analyse every explicitly declared signature against one shared body."""
         variants = self._overload_function_variants(node, origin)
         if variants is None:
             return None
         if len(variants) == 1 and variants[0] is node:
-            return self._analyse_function_literal(outer, node)
+            return self._analyse_function_literal(
+                outer,
+                node,
+                allow_top_level_captures=allow_top_level_captures,
+            )
 
         typings: list[FunctionOverloadTyping] = []
         for variant in variants:
@@ -162,7 +168,11 @@ class _CallableValues:
                 variant,
                 variant.generics,
             )
-            result = self._analyse_function_literal(outer, genericized)
+            result = self._analyse_function_literal(
+                outer,
+                genericized,
+                allow_top_level_captures=allow_top_level_captures,
+            )
             if result is None:
                 return None
             analysis, _ = result
@@ -189,6 +199,7 @@ class _CallableValues:
         node: FunctionNode,
         *,
         initial_function_locals: tuple[tuple[Symbol, T.Type], ...] = (),
+        allow_top_level_captures: bool = True,
     ) -> tuple[FunctionAnalysis, AnalysisBranch] | None:
         """Analyse function literal during static analysis."""
         declared_params = _functions._declared_params(node)
@@ -212,7 +223,11 @@ class _CallableValues:
         ):
             return self._call_site_checked_function(outer, node), outer
 
-        top_level_captures = _functions._top_level_assignment_capture_nodes(outer, node)
+        top_level_captures = (
+            ()
+            if allow_top_level_captures
+            else _functions._top_level_assignment_capture_nodes(outer, node)
+        )
         if top_level_captures:
             for capture in top_level_captures:
                 self._diagnose(
@@ -241,7 +256,10 @@ class _CallableValues:
         )
         variables = BranchVariables.from_parameters(
             named_params,
-            captures=_functions._function_capture_source(outer),
+            captures=_functions._function_capture_source(
+                outer,
+                allow_top_level_assignments=allow_top_level_captures,
+            ),
         )
         for local_name, local_type in initial_function_locals:
             write = variables.write(local_name, local_type, ctx=self.env.context)

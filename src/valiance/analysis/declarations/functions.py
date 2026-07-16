@@ -240,7 +240,12 @@ class _FunctionDeclarations:
             )
         ):
             self.env.define_overload(name, declared_overload)
-        result = self._analyse_overloaded_function_literal(branch, function_node, node)
+        result = self._analyse_overloaded_function_literal(
+            branch,
+            function_node,
+            node,
+            allow_top_level_captures=False,
+        )
         if result is None:
             return BranchSet((branch.emit(TypedNode(node, None)),))
         function, typed_branch = result

@@ -583,9 +583,13 @@ def _params_to_types(params: tuple[FunctionParam, ...]) -> tuple[T.Type, ...]:
 
 def _function_capture_source(
     outer: _core.AnalysisBranch,
+    *,
+    allow_top_level_assignments: bool = False,
 ) -> _core.BranchVariables | None:
     """Return bindings whose types are available inside a function body."""
     if outer.input_mode is not _core.InputMode.TOP_LEVEL:
+        return outer.variables
+    if allow_top_level_assignments:
         return outer.variables
     constants = outer.variables.constant_items()
     if not constants:
