@@ -1851,7 +1851,13 @@ class Parser:
             if label is not _EXPANDED_SKIP:
                 labels.append(label)
             else:
-                labels.extend(None for _ in range(_expanded_skip_count(self._previous)))
+                value = self._previous.value
+                count = (
+                    int(value[1:])
+                    if value.startswith("_") and value[1:].isdecimal()
+                    else 0
+                )
+                labels.extend(None for _ in range(count))
             self._skip_newlines()
             if not self._match(TokenKind.COMMA):
                 return tuple(labels)
@@ -3136,14 +3142,6 @@ def _flatten(items: tuple[tuple[ASTNode, ...], ...]) -> tuple[ASTNode, ...]:
 def _element_tags(*names: str) -> frozenset[ElementTag]:
     """Parse element tags from the current token stream."""
     return frozenset(ElementTag(Symbol(name)) for name in names)
-
-
-def _expanded_skip_count(token: Token) -> int:
-    """Parse expanded skip count from the current token stream."""
-    value = token.value
-    if value.startswith("_") and value[1:].isdecimal():
-        return int(value[1:])
-    return 0
 
 
 def _collection_postfix_superset(

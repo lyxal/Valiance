@@ -1416,16 +1416,6 @@ def _compile_function_overload(
     )
 
 
-def _function_param_names(ast: FunctionNode, arity: int) -> tuple[str, ...]:
-    """Collect the names for function param during typed-AST bytecode lowering."""
-    if ast.params is None:
-        return tuple(f"_{index}" for index in range(arity))
-    return tuple(
-        f"_{index}" if param.name is None else param.name.text
-        for index, param in enumerate(ast.params)
-    )
-
-
 def _overload_param_names(
     ast: FunctionNode,
     overload: FunctionOverloadTyping,
@@ -1440,7 +1430,12 @@ def _overload_param_names(
         )
     if not isinstance(typ, FunctionType) or typ.params is None:
         return ()
-    return _function_param_names(ast, len(typ.params))
+    if ast.params is None:
+        return tuple(f"_{index}" for index in range(len(typ.params)))
+    return tuple(
+        f"_{index}" if param.name is None else param.name.text
+        for index, param in enumerate(ast.params)
+    )
 
 
 def _static_param_names(
@@ -1612,32 +1607,16 @@ def _function_ast(node: FunctionNode | TypedNode) -> FunctionNode:
     return ast
 
 
-def _max_break_values(nodes: tuple[ASTNode, ...]) -> int:
-    """Collect the values for max break during typed-AST bytecode lowering."""
-    return max((_node_max_break_values(node) for node in nodes), default=0)
-
-
-def _node_max_break_values(node: ASTNode) -> int:
-    """Collect the values for node max break during typed-AST bytecode lowering."""
-    best = 0
-    if isinstance(node, BreakNode):
-        best = len(node.values)
-    for value in node.__dict__.values():
-        if isinstance(value, ASTNode):
-            best = max(best, _node_max_break_values(value))
-        if isinstance(value, tuple):
-            best = max(best, _tuple_max_break_values(value))
-    return best
-
-
-def _tuple_max_break_values(values: tuple[object, ...]) -> int:
-    """Collect the values for tuple max break during typed-AST bytecode lowering."""
-    best = 0
-    for value in values:
-        if isinstance(value, ASTNode):
-            best = max(best, _node_max_break_values(value))
-        if isinstance(value, tuple):
-            best = max(best, _tuple_max_break_values(value))
+def _max_break_values(value: ASTNode | tuple[object, ...]) -> int:
+    """Return the largest break-result arity nested within an AST value."""
+    if isinstance(value, BreakNode):
+        best = len(value.values)
+    else:
+        best = 0
+    children = value.__dict__.values() if isinstance(value, ASTNode) else value
+    for child in children:
+        if isinstance(child, (ASTNode, tuple)):
+            best = max(best, _max_break_values(child))
     return best
 
 
