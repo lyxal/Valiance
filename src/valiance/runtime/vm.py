@@ -5502,22 +5502,15 @@ def _format_instruction(instruction: object) -> str:
     arg = getattr(instruction, "arg", None)
     if arg is None:
         return name
-    return f"{name} {_format_instruction_arg(arg)}"
-
-
-def _format_instruction_arg(arg: object) -> str:
-    """Format instruction arg during VM execution."""
-    if isinstance(arg, str):
-        return repr(arg)
     if isinstance(arg, RuntimeNumber):
-        return _format_value(arg)
-    if isinstance(arg, tuple):
-        return repr(arg)
-    if isinstance(arg, FunctionCode):
-        return f"<function {_function_name(arg)}>"
-    if isinstance(arg, FunctionSetCode):
-        return f"<function set {len(arg.overloads)} overload(s)>"
-    return repr(arg)
+        rendered = _format_value(arg)
+    elif isinstance(arg, FunctionCode):
+        rendered = f"<function {_function_name(arg)}>"
+    elif isinstance(arg, FunctionSetCode):
+        rendered = f"<function set {len(arg.overloads)} overload(s)>"
+    else:
+        rendered = repr(arg)
+    return f"{name} {rendered}"
 
 
 def _show_overload_inputs(overloads: tuple[BuiltinOverload, ...]) -> list[str]:
@@ -5543,23 +5536,9 @@ def _format_stack_types(stack: list[Any]) -> str:
 
 
 def _format_value(value: Any) -> str:
-    """Format value during VM execution."""
-    compact = _compact_diagnostic_value(value)
-    if compact is not None:
-        return compact
-    return format_runtime_value(
-        value,
-        quote_strings=True,
-        lazy_preview_limit=DIAGNOSTIC_LIST_PREVIEW_LIMIT,
-    )
-
-
-def _compact_diagnostic_value(value: Any) -> str | None:
-    """Compute compact diagnostic value during VM execution."""
+    """Format one value compactly for VM diagnostics."""
     if isinstance(value, FunctionValue):
-        name = _function_name(value.code)
-        arity = len(value.code.params)
-        return f"<{name}/{arity}>"
+        return f"<{_function_name(value.code)}/{len(value.code.params)}>"
     if isinstance(value, OverloadedFunctionValue):
         arities = ", ".join(
             str(len(overload.code.params)) for overload in value.overloads
@@ -5571,39 +5550,28 @@ def _compact_diagnostic_value(value: Any) -> str | None:
         return f"<constructor {value.type_name}>"
     if isinstance(value, LazyList):
         return "<lazy list>"
-    if isinstance(value, list):
-        return _compact_sequence("[", "]", value)
-    if isinstance(value, tuple):
-        return _compact_sequence("(", ")", value)
+    if isinstance(value, (list, tuple)):
+        opening, closing = ("[", "]") if isinstance(value, list) else ("(", ")")
+        preview = [
+            _format_value(item)
+            for item in value[:DIAGNOSTIC_LIST_PREVIEW_LIMIT]
+        ]
+        if len(value) > DIAGNOSTIC_LIST_PREVIEW_LIMIT:
+            preview.append("...")
+        return opening + ", ".join(preview) + closing
     if isinstance(value, dict):
-        return _compact_mapping(value)
-    return None
-
-
-def _compact_sequence(opening: str, closing: str, values: Iterable[Any]) -> str:
-    """Compute compact sequence during VM execution."""
-    preview = []
-    has_more = False
-    for index, item in enumerate(values):
-        if index >= DIAGNOSTIC_LIST_PREVIEW_LIMIT:
-            has_more = True
-            break
-        preview.append(_format_value(item))
-    inner = ", ".join(preview)
-    if has_more:
-        inner = f"{inner}, ..." if inner else "..."
-    return opening + inner + closing
-
-
-def _compact_mapping(value: dict[Any, Any]) -> str:
-    """Compute compact mapping during VM execution."""
-    items = []
-    for index, (key, item) in enumerate(value.items()):
-        if index >= DIAGNOSTIC_LIST_PREVIEW_LIMIT:
-            items.append("...")
-            break
-        items.append(f"{_format_value(key)}: {_format_value(item)}")
-    return "{" + ", ".join(items) + "}"
+        items = []
+        for index, (key, item) in enumerate(value.items()):
+            if index >= DIAGNOSTIC_LIST_PREVIEW_LIMIT:
+                items.append("...")
+                break
+            items.append(f"{_format_value(key)}: {_format_value(item)}")
+        return "{" + ", ".join(items) + "}"
+    return format_runtime_value(
+        value,
+        quote_strings=True,
+        lazy_preview_limit=DIAGNOSTIC_LIST_PREVIEW_LIMIT,
+    )
 
 
 def _runtime_type_name(value: Any) -> str:
