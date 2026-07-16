@@ -887,7 +887,7 @@ class VirtualMachine:
                 try:
                     match instruction.op:
                         case OpCode.PUSH_CONST:
-                            frame.stack.append(_constant(instruction.arg))
+                            frame.stack.append(instruction.arg)
                         case OpCode.LOAD_VAR:
                             value = _load_name(
                                 instruction.arg,
@@ -2441,7 +2441,8 @@ def _exit_cycle(frame: _Frame) -> None:
 
 def _store_value(existing: Any, value: Any) -> Any:
     """Store value during VM execution."""
-    if _is_function_value(existing) and _is_function_value(value):
+    function_types = (FunctionValue, OverloadedFunctionValue)
+    if isinstance(existing, function_types) and isinstance(value, function_types):
         for overload in _function_overloads(existing) + _function_overloads(value):
             _retain_value(overload)
         return OverloadedFunctionValue(
@@ -2458,11 +2459,6 @@ def _bind_recursive_value(value: Any, name: str) -> None:
     if isinstance(value, OverloadedFunctionValue):
         for overload in value.overloads:
             overload.globals.setdefault(name, value)
-
-
-def _is_function_value(value: Any) -> bool:
-    """Return whether the value is function value."""
-    return isinstance(value, (FunctionValue, OverloadedFunctionValue))
 
 
 def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
@@ -2777,10 +2773,22 @@ def _run_object_cleanup(value: ObjectValue, vm: VirtualMachine) -> None:
             )
         except PanicSignal as exc:
             pop_error = exc
-    if runtime is not None and not _mustcall_satisfied(value):
-        pop_error = PanicSignal(
-            _fault_object("CleanupFault", _cleanup_fault_message(value))
+    if runtime is not None and runtime.mustcall_mode and runtime.mustcall_methods:
+        required = set(runtime.mustcall_methods)
+        called = value.mustcall_called
+        satisfied = (
+            required.issubset(called)
+            if runtime.mustcall_mode == "all"
+            else bool(required & set(called))
         )
+        if not satisfied:
+            names = ", ".join(runtime.mustcall_methods)
+            pop_error = PanicSignal(
+                _fault_object(
+                    "CleanupFault",
+                    f"{object_type_name(value)} requires one of: {names}",
+                )
+            )
     if runtime is not None and runtime.destructor_name is not None:
         try:
             vm.call_value(
@@ -2797,29 +2805,6 @@ def _run_object_cleanup(value: ObjectValue, vm: VirtualMachine) -> None:
         _release_value(item, vm)
     if pop_error is not None:
         raise pop_error
-
-
-def _mustcall_satisfied(value: ObjectValue) -> bool:
-    """Return the Boolean result of mustcall satisfied during virtual-machine execution."""
-    runtime = value.runtime_type
-    if runtime is None or runtime.mustcall_mode is None or not runtime.mustcall_methods:
-        return True
-    called = value.mustcall_called
-    required = set(runtime.mustcall_methods)
-    if runtime.mustcall_mode == "all":
-        return required.issubset(called)
-    if runtime.mustcall_mode == "any":
-        return bool(required & set(called))
-    return True
-
-
-def _cleanup_fault_message(value: ObjectValue) -> str:
-    """Format the message for cleanup fault during VM execution."""
-    runtime = value.runtime_type
-    if runtime is None or not runtime.mustcall_methods:
-        return f"{object_type_name(value)} was dropped without required cleanup"
-    names = ", ".join(runtime.mustcall_methods)
-    return f"{object_type_name(value)} requires one of: {names}"
 
 
 def _fault_object(type_name: str, message: str) -> ObjectValue:
@@ -4395,7 +4380,7 @@ def _build_string(stack: list[Any], template: tuple[object, ...]) -> str:
     pieces: list[str] = []
     for part in template:
         if part is None:
-            pieces.append(_string_value(next(values)))
+            pieces.append(format_runtime_value(next(values)))
         elif isinstance(part, str):
             pieces.append(part)
         else:
@@ -4427,11 +4412,6 @@ def _load_element_name(
     if value is not _MISSING_NAME:
         return value
     raise RuntimeError(f"undefined name '{name}'")
-
-
-def _constant(value: Any) -> Any:
-    """Compute constant during VM execution."""
-    return value
 
 
 def _truthy(value: Any) -> bool:
@@ -5637,11 +5617,6 @@ def _compact_mapping(value: dict[Any, Any]) -> str:
     return "{" + ", ".join(items) + "}"
 
 
-def _string_value(value: Any) -> str:
-    """Compute string value during VM execution."""
-    return format_runtime_value(value)
-
-
 def _runtime_type_name(value: Any) -> str:
     """Return the canonical name for runtime type during VM execution."""
     value = unwrap_runtime_value(value)
@@ -5698,16 +5673,6 @@ def _unwrapped_args(args: tuple[Any, ...]) -> tuple[Any, ...]:
     if not any(isinstance(arg, TaggedValue) for arg in args):
         return args
     return tuple(unwrap_runtime_value(arg) for arg in args)
-
-
-def _declared_runtime_tags(typ: Any) -> tuple[DataTag, ...]:
-    """Compute declared runtime tags during VM execution."""
-    if not isinstance(typ, TaggedType):
-        return ()
-    typ = normalize(typ)
-    if isinstance(typ, TaggedType):
-        return tuple(sorted(typ.tags))
-    return ()
 
 
 def _apply_cached_runtime_return_tags(
@@ -6043,41 +6008,6 @@ def _runtime_variant_parent_is_retained(
         if (current, tag.depth) in declared:
             return True
     return False
-
-
-def _apply_runtime_return_tags(
-    values: tuple[Any, ...] | list[Any],
-    tag_sets: tuple[tuple[DataTag, ...], ...],
-) -> tuple[Any, ...]:
-    """Apply runtime return tags during VM execution."""
-    if len(values) != len(tag_sets):
-        return tuple(values)
-    for tags in tag_sets:
-        if tags:
-            break
-    else:
-        return values if isinstance(values, tuple) else tuple(values)
-    if len(values) == 1:
-        tags = tag_sets[0]
-        additions, removals = _runtime_tag_delta(tags)
-        return (
-            update_runtime_tags(
-                values[0],
-                add=additions,
-                remove=removals,
-            ),
-        )
-    outputs: list[Any] = []
-    for value, tags in zip(values, tag_sets, strict=True):
-        additions, removals = _runtime_tag_delta(tags)
-        outputs.append(
-            update_runtime_tags(
-                value,
-                add=additions,
-                remove=removals,
-            )
-        )
-    return tuple(outputs)
 
 
 def _apply_runtime_collection_ranks(
