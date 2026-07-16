@@ -1548,38 +1548,6 @@ class VirtualMachine:
             return None
         raise RuntimeError(f"resolved element '{reference.name}' is not callable")
 
-    def _call_resolved_builtin_value(
-        self,
-        value: BuiltinValue,
-        frame: _Frame,
-        reference: ResolvedElementReference,
-    ) -> None:
-        """Invoke resolved builtin value during VM execution."""
-        try:
-            overload = value.element.definitions[reference.overload_index]
-        except IndexError as exc:
-            raise RuntimeError(
-                f"resolved element '{reference.name}' has no overload "
-                f"{reference.overload_index}"
-            ) from exc
-        _call_resolved_builtin(
-            value,
-            overload,
-            frame,
-            self,
-            reference.vectorised,
-            reference.vectorised_depths,
-            reference.vectorised_target_ranks,
-            reference.return_collection_ranks,
-            reference.return_tags,
-            reference.return_tag_specs,
-            reference.arity_override,
-            reference.consumed_override,
-            reference.static_values,
-            reference.type_args,
-            reference.extension,
-        )
-
     def _call_resolved_function_value(
         self,
         value: FunctionValue,
