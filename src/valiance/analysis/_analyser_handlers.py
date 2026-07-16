@@ -71,8 +71,8 @@ from valiance.vtypes.default_types import Boolean
 from valiance.vtypes.relations import merge_stacks
 
 from . import analyser as _core
-from . import _analyser_functions as _functions
-from . import _analyser_calls as _calls
+from .calls import callable_values as _functions
+from .calls import candidates as _calls
 from . import _analyser_patterns as _patterns
 from . import _analyser_utils as _utils
 

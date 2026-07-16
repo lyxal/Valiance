@@ -23,11 +23,11 @@ For an approachable explanation before this exhaustive reference, read
 - `src/valiance/analysis/_analyser_handlers.py`
   Contains the concrete raw-AST node handlers registered with the façade.
 
-- `src/valiance/analysis/_analyser_functions.py`
+- `src/valiance/analysis/calls/callable_values.py` and `signatures.py`
   Contains function typing, capture discovery, callable-shape helpers,
   genericisation, and generic variance inference.
 
-- `src/valiance/analysis/_analyser_calls.py`
+- `src/valiance/analysis/calls/candidates.py`, `selection.py`, and `vectorisation.py`
   Contains element-call planning, overload application, modifier handling,
   static evaluation, rank substitution, and tag-flow logic.
 
@@ -153,7 +153,7 @@ an `internal-node` diagnostic.
 
 Important helpers are grouped by responsibility:
 
-- `_analyser_functions.py`: `_function_overload(...)`,
+- `calls/callable_values.py`: `_function_overload(...)`,
   `_transform_overload_types(...)`, and `_transform_type_children(...)` build
   function overloads and rebuild type trees without hand-copying every
   dataclass field.

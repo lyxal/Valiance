@@ -37,7 +37,7 @@ from valiance.asts import (
 from valiance.vtypes.symbols import Symbol
 
 from . import analyser as _core
-from . import _analyser_functions as _functions
+from .calls import callable_values as _functions
 
 
 def _show_stack(stack: T.TypeStack) -> str:

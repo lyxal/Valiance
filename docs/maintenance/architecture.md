@@ -65,7 +65,7 @@ When a node gains a field, check all of these places:
 
 ### Branch-based analysis
 
-The `src/valiance/analysis/state` package provides analyser-independent `BranchVariables`, `AnalysisBranch`, and `BranchSet` values. The `src/valiance/analysis/declarations` package owns function, object, trait, variant, enum, constructor, friendly-definition, and import registration. The `src/valiance/analysis/analyser.py` façade and its private
+The `src/valiance/analysis/state` package provides analyser-independent `BranchVariables`, `AnalysisBranch`, and `BranchSet` values. The `src/valiance/analysis/calls` package owns argument sourcing, candidate construction, overload selection, vectorisation, callable dispatch, and extension planning. The `src/valiance/analysis/declarations` package owns function, object, trait, variant, enum, constructor, friendly-definition, and import registration. The `src/valiance/analysis/analyser.py` façade and its private
 `_analyser_*` implementation modules model analysis as a transformation from a
 set of possible branches to another set. The façade owns branch state, public
 entry points, and the `Analyser` orchestration class; handlers and focused helper
@@ -83,7 +83,7 @@ Concrete AST handlers live in `analysis/_analyser_handlers.py`. They should
 return new branches rather than mutating existing ones. Branch joins should
 happen only where control flow actually converges. Function typing, call
 resolution, pattern/control-flow logic, and shared refinement helpers live in
-the corresponding `_analyser_functions.py`, `_analyser_calls.py`,
+the corresponding `calls/` modules,
 `_analyser_patterns.py`, and `_analyser_utils.py` modules.
 
 Non-fatal source-pattern advice is recorded both as rendered lint text and as
