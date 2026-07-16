@@ -81,7 +81,7 @@ from valiance.vtypes.default_types import Boolean
 
 from . import candidates as _calls
 from . import callable_values as _functions
-from .. import _analyser_patterns as _patterns
+from ..control_flow import patterns as _patterns
 from .. import _analyser_utils as _utils
 from .. import analyser as _core
 from ..state import (

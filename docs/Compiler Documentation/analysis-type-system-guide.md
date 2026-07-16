@@ -31,7 +31,7 @@ For an approachable explanation before this exhaustive reference, read
   Contains element-call planning, overload application, modifier handling,
   static evaluation, rank substitution, and tag-flow logic.
 
-- `src/valiance/analysis/_analyser_patterns.py`
+- `src/valiance/analysis/control_flow/`
   Contains indexing, optional access, match/try joins, pattern validation,
   destructuring, narrowing, and exhaustiveness helpers.
 
@@ -162,7 +162,7 @@ Important helpers are grouped by responsibility:
   `_object_attributes(...)` keep declaration registration close to the
   environment-mutating orchestration methods.
 
-- `_analyser_patterns.py`: `_match_case_output(...)`,
+- `control_flow/patterns.py`: `_match_case_output(...)`,
   `_join_match_output(...)`, `_try_handler_output(...)`, and
   `_join_try_output(...)` keep control-flow normalization out of handlers.
 

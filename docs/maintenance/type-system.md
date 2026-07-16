@@ -203,8 +203,9 @@ dispatch, and the `Analyser` orchestration class. Focused private modules own:
 - `calls/candidates.py` and `calls/selection.py`: candidate construction, overload application, ranking, and commitment;
 - `calls/vectorisation.py`: rank solving, vectorisation, and result propagation;
 - `calls/callable_values.py` and `calls/signatures.py`: callable narrowing, function inference, genericisation, and signature transformations;
-- `_analyser_patterns.py`: control-flow joins, indexing, patterns, and row
-  narrowing; and
+- `control_flow/patterns.py`: pattern typing, subject narrowing, and branch joins;
+- `control_flow/matches.py` and `exhaustiveness.py`: match analysis and coverage;
+- `control_flow/blocks.py`, `loop_handlers.py`, `loops.py`, and `exceptions.py`: branch-producing blocks, loops, unfolding, and try handling; and
 - `_analyser_utils.py`: shared branch, diagnostic, literal, and refinement
   helpers.
 
@@ -1800,7 +1801,7 @@ A productive first pass is:
 5. `analysis/analyser.py`: `AnalysisBranch`, `BranchSet`, `analyse_block`,
    `source_arguments`, and the orchestration methods.
 6. `analysis/_analyser_handlers.py` and `analysis/calls/` — follow one node from dispatch through candidate
-   selection and overload application; consult `_analyser_patterns.py` or
+   selection and overload application; consult `control_flow/patterns.py` or
    `_analyser_utils.py` for the corresponding helper family.
 7. `vtypes/environment.py` — connect names/declarations to the relation context.
 8. Focused tests in `tests/test_types.py` and `tests/test_analyser.py`.

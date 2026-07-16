@@ -86,7 +86,7 @@ from valiance.vtypes.default_types import Boolean
 
 from .calls import candidates as _calls
 from .calls import callable_values as _functions
-from . import _analyser_patterns as _patterns
+from .control_flow import patterns as _patterns
 from . import _analyser_utils as _utils
 from .state import (
     AnalysisBranch, BranchSet, BranchVariables, Diagnostic,
@@ -94,6 +94,7 @@ from .state import (
 )
 from .declarations import DeclarationAnalyser
 from .calls import CallAnalyser
+from .control_flow import ControlFlowAnalyser
 from .calls.models import (
     CallCandidate, ElementArguments, ElementCallPreparation, FunctionAnalysis,
     ListItemAnalysis, ModifierArgumentAnalysis, OverloadApplication,
@@ -332,6 +333,7 @@ class Analyser:
         ] = set()
         self.declarations = DeclarationAnalyser(self)
         self.calls = CallAnalyser(self)
+        self.control_flow = ControlFlowAnalyser(self)
 
     def __getattr__(self, name: str):
         """Delegate declaration operations to their owning subsystem."""
@@ -341,6 +343,9 @@ class Analyser:
         calls = self.__dict__.get("calls")
         if calls is not None and calls.provides(name):
             return getattr(calls, name)
+        control_flow = self.__dict__.get("control_flow")
+        if control_flow is not None and control_flow.provides(name):
+            return getattr(control_flow, name)
         raise AttributeError(name)
 
     def _load_project_lint_settings(self) -> None:
@@ -1181,52 +1186,11 @@ class Analyser:
 
 
 
-    def _analyse_unfold_body_function(
-        self,
-        outer: AnalysisBranch,
-        node: FunctionNode,
-    ) -> FunctionAnalysis | None:
-        """Analyse unfold body function during static analysis."""
-        if node.params is None:
-            analysed = self._analyse_function_literal(outer, node)
-            return None if analysed is None else analysed[0]
 
-        params = _functions._declared_params(node)
-        body_params = tuple(_functions._parameter_value_type(param) for param in params)
-        named_params = tuple(
-            (param.name, typ)
-            for param, typ in zip(node.params, body_params, strict=True)
-            if param.name is not None
-        )
-        variables = BranchVariables.from_parameters(
-            named_params,
-            captures=_functions._function_capture_source(outer),
-        )
-        initial = AnalysisBranch(
-            inputs=body_params,
-            variables=variables,
-            input_mode=(
-                InputMode.CYCLE_EXPLICIT_PARAMS if body_params else InputMode.NILADIC
-            ),
-            cycle_params=body_params,
-            atomic_type_vars=(
-                outer.atomic_type_vars
-                | _functions._atomic_parameter_type_vars(params)
-            ),
-            origin=outer.origin,
-        )
-        function_analyser = self._child_analyser(self.env.lexical_child_scope())
-        final = function_analyser.analyse_block(BranchSet((initial,)), node.body)
-        signatures = self._function_signatures(node, final)
-        analysis = _functions._function_analysis_from_signatures(signatures)
-        if analysis is None:
-            self.diagnostics.extend(function_analyser.diagnostics)
-            self.warnings.extend(function_analyser.warnings)
-            self._extend_lint_findings(function_analyser.lint_findings)
-            return None
-        self.warnings.extend(function_analyser.warnings)
-        self._extend_lint_findings(function_analyser.lint_findings)
-        return analysis
+
+
+
+
 
     @register(MatchNode)
     def _match(
@@ -1234,114 +1198,8 @@ class Analyser:
         node: MatchNode,
         branch: AnalysisBranch,
     ) -> BranchSet:
-        """Analyse a `MatchNode` node and return the surviving branches."""
-        if not node.cases:
-            self._diagnose("match requires at least one case", node)
-            return BranchSet()
-
-        arities = {len(case.patterns) for case in node.cases}
-        arity = next(iter(arities)) if len(arities) == 1 else None
-        if arity is None:
-            self._diagnose("match cases must match the same number of values", node)
-            return BranchSet()
-        if arity == 0:
-            self._diagnose("match requires at least one pattern per case", node)
-            return BranchSet()
-
-        subject_params = tuple(
-            reversed(
-                tuple(
-                    _patterns._match_subject_pattern_type(branch, node, index, self.env)
-                    for index in range(arity)
-                )
-            )
-        )
-        sourced = branch.source_arguments(subject_params)
-        if sourced is None:
-            self._diagnose(
-                f"match requires {arity} value{'s' if arity != 1 else ''} on the stack",
-                node,
-            )
-            return BranchSet()
-        stack_subjects, body_input = sourced
-        subject_types = tuple(reversed(stack_subjects))
-        if not self._match_patterns_are_valid(subject_types, node):
-            return BranchSet()
-        if not self._match_is_exhaustive(subject_types, node):
-            return BranchSet()
-        self._extend_lint_findings(
-            self.lint_registry.check_match(
-                MatchLintContext(node=node, branch=branch, env=self.env)
-            )
-        )
-
-        joined: AnalysisBranch | None = None
-        typed_case_bodies: list[tuple[ASTNode | TypedNode, ...]] = []
-        subject_variables = _patterns._match_subject_variables(branch, arity)
-        previous_patterns: list[tuple[MatchPatternNode, ...]] = []
-        for case in node.cases:
-            case_variables = _patterns._match_case_variables(
-                body_input.variables,
-                case.patterns,
-                subject_types,
-                self.env,
-            )
-            if subject_variables:
-                case_variables = _patterns._refine_match_subject_variables(
-                    case_variables,
-                    subject_variables,
-                    case.patterns,
-                    subject_types,
-                    tuple(previous_patterns),
-                    self.env,
-                )
-            case_input = body_input.with_variables(case_variables)
-            case_input = replace(
-                case_input,
-                input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
-                cycle_params=subject_types,
-                cycle_index=0,
-            )
-            if not self._match_guards_are_valid(subject_types, case.patterns, node):
-                return BranchSet()
-            case_outputs = self.analyse_scoped_block(
-                BranchSet((case_input,)),
-                case.body,
-            )
-            typed_case_bodies.append(
-                _patterns._typed_block(
-                    case_outputs,
-                    len(case_input.typed_body),
-                    case.body,
-                )
-            )
-            for output in case_outputs:
-                candidate = _patterns._match_case_output(output, body_input, node)
-                joined = _patterns._join_match_output(
-                    original=branch,
-                    baseline=body_input,
-                    joined=joined,
-                    candidate=candidate,
-                    ctx=self.env.context,
-                )
-                if joined is None:
-                    self._diagnose("match cases inferred different inputs", node)
-                    return BranchSet()
-            previous_patterns.append(case.patterns)
-
-        if joined is None:
-            return BranchSet()
-        return BranchSet(
-            (
-                joined.emit(
-                    TypedMatchNode(
-                        node,
-                        _calls._returns_result_type(joined.stack.items),
-                        case_bodies=tuple(typed_case_bodies),
-                    )
-                ),
-            )
-        )
+        """Delegate match analysis to the control-flow subsystem."""
+        return self.control_flow._match(node, branch)
 
     @register(TryNode)
     def _try(
@@ -1349,270 +1207,8 @@ class Analyser:
         node: TryNode,
         branch: AnalysisBranch,
     ) -> BranchSet:
-        """Analyse a `TryNode` node and return the surviving branches."""
-        if not node.handlers:
-            self._diagnose("try requires at least one handler", node)
-            return BranchSet()
-
-        body_outputs = self.analyse_scoped_block(BranchSet((branch,)), node.body)
-        typed_body = _patterns._typed_block(
-            body_outputs,
-            len(branch.typed_body),
-            node.body,
-        )
-        outputs: list[AnalysisBranch] = list(body_outputs.branches)
-        typed_handler_bodies: list[tuple[ASTNode | TypedNode, ...]] = []
-        for handler in node.handlers:
-            if handler.typ is not None:
-                normalized_handler = T.normalize(handler.typ)
-                if (
-                    isinstance(normalized_handler, T.NominalType)
-                    and self.env.lookup_trait(normalized_handler.name) is not None
-                ):
-                    self._diagnose(
-                        f"try handler type {T.show(handler.typ)} is not a concrete "
-                        "runtime fault type",
-                        handler,
-                    )
-                elif not T.assignable(
-                    handler.typ,
-                    T.N(Symbol("Fault")),
-                    self.env.context,
-                ):
-                    self._diagnose(
-                        f"try handler type {T.show(handler.typ)} does not "
-                        "implement Fault",
-                        handler,
-                    )
-            handler_outputs = self.analyse_scoped_block(
-                BranchSet((branch,)),
-                handler.body,
-            )
-            typed_handler_bodies.append(
-                _patterns._typed_block(
-                    handler_outputs,
-                    len(branch.typed_body),
-                    handler.body,
-                )
-            )
-            for output in handler_outputs:
-                if output.inputs != branch.inputs:
-                    self._diagnose("try handlers inferred different inputs", handler)
-                    continue
-                outputs.append(_patterns._try_handler_output(output, branch, handler))
-
-        if not outputs:
-            return BranchSet()
-
-        joined: AnalysisBranch | None = None
-        for output in outputs:
-            joined = _patterns._join_try_output(
-                branch,
-                joined,
-                output,
-                self.env.context,
-            )
-            if joined is None:
-                self._diagnose("try branches inferred different inputs", node)
-                return BranchSet()
-        if joined is None:
-            return BranchSet()
-        return BranchSet(
-            (
-                joined.emit(
-                    TypedTryNode(
-                        node,
-                        _calls._returns_result_type(joined.stack.items),
-                        body=typed_body,
-                        handler_bodies=tuple(typed_handler_bodies),
-                    )
-                ),
-            )
-        )
-
-    def _match_guards_are_valid(
-        self,
-        subject_types: tuple[T.Type, ...],
-        patterns: tuple[MatchPatternNode, ...],
-        node: MatchNode,
-    ) -> bool:
-        """Return whether every match guard is valid."""
-        guards = tuple(_patterns._match_pattern_guards(patterns, subject_types))
-        for guard, subject_type in guards:
-            diagnostics_before = len(self.diagnostics)
-            guard_input = AnalysisBranch(
-                stack=T.TypeStack((subject_type,)),
-                variables=BranchVariables(),
-                input_mode=InputMode.TOP_LEVEL,
-            )
-            outputs = self.analyse_scoped_block(BranchSet((guard_input,)), guard)
-            terminal, outputs = _utils._split_terminal_branches(outputs)
-            if not outputs:
-                if terminal:
-                    continue
-                if len(self.diagnostics) == diagnostics_before:
-                    self._diagnose("match guard must be a boolean value", node)
-                return False
-            outputs = self.require_stack_top_assignable(
-                outputs,
-                expected=Boolean,
-                location=node.location,
-                message="match guard must be a boolean value",
-                code="match-guard-type",
-            )
-            if not outputs or any(output.failed for output in outputs):
-                self._diagnose("match guard must be a boolean value", node)
-                return False
-        return True
-
-    def _match_patterns_are_valid(
-        self,
-        subject_types: tuple[T.Type, ...],
-        node: MatchNode,
-    ) -> bool:
-        """Validate pattern structure that must agree with every runtime path."""
-        for case in node.cases:
-            for pattern, subject_type in zip(
-                case.patterns,
-                subject_types,
-                strict=True,
-            ):
-                for pattern_type in _match_pattern_types(pattern):
-                    if not self._validate_data_tags(
-                        ((pattern_type,),),
-                        pattern,
-                        allow_variants=True,
-                        require_declared=True,
-                    ):
-                        return False
-                uncheckable = _patterns._uncheckable_runtime_pattern_type(pattern)
-                if uncheckable is not None:
-                    invalid_pattern, invalid_type = uncheckable
-                    self._diagnose(
-                        f"{T.show(invalid_type)} cannot be checked at runtime",
-                        invalid_pattern,
-                    )
-                    return False
-                mismatch = _patterns._or_pattern_binding_mismatch(pattern)
-                if mismatch:
-                    names = ", ".join(str(name) for name in mismatch)
-                    self._diagnose(
-                        "every alternative in an or-pattern must bind the same "
-                        f"names; missing from some alternatives: {names}",
-                        pattern,
-                    )
-                    return False
-                invalid = _patterns._invalid_destructure_arity(
-                    pattern,
-                    subject_type,
-                    self.env,
-                )
-                if invalid is not None:
-                    invalid_pattern, name, actual, expected = invalid
-                    self._diagnose(
-                        f"pattern for {name} destructures {actual} fields, but "
-                        f"the type declares {expected}",
-                        invalid_pattern,
-                    )
-                    return False
-        return True
-
-    def _match_is_exhaustive(
-        self,
-        subject_types: tuple[T.Type, ...],
-        node: MatchNode,
-    ) -> bool:
-        """Return the Boolean result of match is exhaustive during static analysis."""
-        if any(
-            case.is_default or is_default_match_case(case.patterns)
-            for case in node.cases
-        ):
-            return True
-        if len(subject_types) != 1:
-            self._diagnose(
-                "match without default requires one enum or variant value",
-                node,
-            )
-            return False
-        subject_type = T.normalize(subject_types[0])
-        if isinstance(subject_type, T.UnionType):
-            missing = tuple(
-                item
-                for item in sorted(subject_type.items, key=T.show)
-                if not any(
-                    len(case.patterns) == 1
-                    and _patterns._pattern_is_irrefutable(
-                        case.patterns[0],
-                        item,
-                        self.env,
-                    )
-                    for case in node.cases
-                )
-            )
-            if not missing:
-                return True
-            self._diagnose(
-                "non-exhaustive match; missing cases for: "
-                + ", ".join(T.show(item) for item in missing),
-                node,
-            )
-            return False
-        if (
-            isinstance(subject_type, T.NominalType)
-            and subject_type.name.text == "Result"
-            and len(subject_type.args) == 2
-        ):
-            result_branches = (T.OKType(subject_type.args[0]), subject_type.args[1])
-            missing = tuple(
-                item
-                for item in result_branches
-                if not any(
-                    len(case.patterns) == 1
-                    and _patterns._pattern_is_irrefutable(
-                        case.patterns[0],
-                        item,
-                        self.env,
-                    )
-                    for case in node.cases
-                )
-            )
-            if not missing:
-                return True
-            self._diagnose(
-                "non-exhaustive Result match; missing cases for: "
-                + ", ".join(T.show(item) for item in missing),
-                node,
-            )
-            return False
-        closed_name = _patterns._nominal_name(subject_type)
-        if closed_name is None:
-            self._diagnose("match without default requires enum or variant value", node)
-            return False
-        expected = _patterns._closed_match_members(self.env, closed_name)
-        if expected is None:
-            self._diagnose("match without default requires enum or variant value", node)
-            return False
-        covered = {
-            member
-            for case in node.cases
-            for pattern in case.patterns
-            for member in _patterns._covered_closed_members(
-                pattern,
-                subject_type,
-                expected,
-                self.env,
-            )
-        }
-        missing = tuple(member for member in expected if member not in covered)
-        if missing:
-            self._diagnose(
-                "non-exhaustive match for "
-                f"{closed_name}; missing cases: "
-                + ", ".join(str(member) for member in missing),
-                node,
-            )
-            return False
-        return True
+        """Delegate try analysis to the control-flow subsystem."""
+        return self.control_flow._try(node, branch)
 
     def _source_field_receiver(
         self,
@@ -1920,8 +1516,13 @@ def analyse_function_details(
 # Importing the handlers runs their registration decorators against the shared
 # registry above. Keep this after ``Analyser`` and all helper modules exist.
 from . import _analyser_handlers as _handlers  # noqa: E402
+from .control_flow import blocks as _control_blocks  # noqa: E402
+from .control_flow import loop_handlers as _control_loops  # noqa: E402
 
-_ANALYSER_PARTS = (_functions, _calls, _patterns, _utils, _handlers)
+_ANALYSER_PARTS = (
+    _functions, _calls, _patterns, _utils, _handlers,
+    _control_blocks, _control_loops,
+)
 
 
 def __getattr__(name: str):
