@@ -530,9 +530,6 @@ class VirtualMachine:
                 for overload in value.overloads
                 if len(overload.code.params) == len(args)
             )
-            exact = _select_exact_runtime_overload(matches, tuple(args))
-            if exact is not None:
-                return self.call(exact, args)
             if len(matches) == 1:
                 return self.call(matches[0], args)
             errors: list[Exception] = []
@@ -963,6 +960,22 @@ class VirtualMachine:
                                     _closure_locals(frame),
                                 )
                             )
+                        case OpCode.APPLY_DISPATCH_PLAN:
+                            value = _pop(frame.stack, "function dispatch plan")
+                            if (
+                                not isinstance(value, OverloadedFunctionValue)
+                                or not isinstance(instruction.arg, FunctionSetCode)
+                            ):
+                                raise RuntimeError(
+                                    "function dispatch plan requires an overload set"
+                                )
+                            for overload in value.overloads:
+                                _retain_value(overload)
+                            planned = OverloadedFunctionValue(
+                                value.overloads, instruction.arg.dispatch_plan
+                            )
+                            _release_value(value, self)
+                            frame.stack.append(planned)
                         case OpCode.CALL:
                             try:
                                 if instruction.arg is None:
@@ -2958,27 +2971,6 @@ def _function_overloads(
     return value.overloads
 
 
-def _select_exact_runtime_overload(
-    overloads: tuple[FunctionValue, ...],
-    args: tuple[Any, ...],
-) -> FunctionValue | None:
-    """Select an overload by exact runtime type without executing candidates."""
-    matches = tuple(
-        overload
-        for overload in overloads
-        if overload.code.dispatch_types
-        and _runtime_types_match(args, overload.code.dispatch_types)
-    )
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) > 1:
-        raise RuntimeError(
-            "ambiguous overloaded function call for runtime types "
-            f"{tuple(_runtime_type_name(arg) for arg in args)}"
-        )
-    return None
-
-
 def _select_union_dispatch_overload(
     value: OverloadedFunctionValue,
     args: tuple[Any, ...],
@@ -3276,19 +3268,6 @@ def _select_multimethod_overload(
             f"{tuple(_runtime_type_name(arg) for arg in args)}"
         )
     return fallback
-
-
-def _runtime_types_match(
-    args: tuple[Any, ...],
-    dispatch_types: tuple[str | None, ...],
-) -> bool:
-    """Return the Boolean result of runtime types match during virtual-machine execution."""
-    if len(args) != len(dispatch_types):
-        return False
-    return all(
-        expected is not None and _runtime_type_name(arg) == expected
-        for arg, expected in zip(args, dispatch_types, strict=True)
-    )
 
 
 def _runtime_multimethod_types_match(

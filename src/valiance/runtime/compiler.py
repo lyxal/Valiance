@@ -351,6 +351,14 @@ class _Compiler:
                     else OpCode.LOAD_VAR
                 )
                 self.emit(opcode, _symbol_runtime_name(name))
+                if (
+                    isinstance(typed_node, TypedFunctionNode)
+                    and typed_node.dispatch_plan is not None
+                ):
+                    self.emit(
+                        OpCode.APPLY_DISPATCH_PLAN,
+                        FunctionSetCode((), typed_node.dispatch_plan.branches),
+                    )
             case SetVariableNode(name):
                 self.emit(OpCode.STORE_VAR, _symbol_runtime_name(name))
             case SetVariablesNode(targets):

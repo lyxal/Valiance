@@ -19,6 +19,7 @@ class OpCode(Enum):
     STORE_VAR = "store_var"
     LOAD_ELEMENT = "load_element"
     MAKE_FUNCTION = "make_function"
+    APPLY_DISPATCH_PLAN = "apply_dispatch_plan"
     CALL = "call"
     CALL_RESOLVED_ELEMENT = "call_resolved_element"
     CHECK_CAST = "check_cast"

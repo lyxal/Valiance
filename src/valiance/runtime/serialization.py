@@ -72,6 +72,7 @@ _OP_TO_BYTE = {
     OpCode.LOAD_VAR_BORROW: 0x2A,
     OpCode.CANONICALIZE_TAGS: 0x2B,
     OpCode.POP_N: 0x2C,
+    OpCode.APPLY_DISPATCH_PLAN: 0x2D,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 
