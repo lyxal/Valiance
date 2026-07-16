@@ -5,6 +5,7 @@ from __future__ import annotations
 from bisect import bisect_left
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import Protocol
 
 from valiance.runtime.bytecode import (
@@ -17,12 +18,16 @@ from valiance.runtime.bytecode import (
     Program,
     ResolvedElementReference,
     VectorExtensionReference,
+    decode_stack_shuffle_spec,
 )
 from valiance.runtime.runtime_values import RuntimeNumber
 
 
 class OptimizationError(ValueError):
     """Raised when an optimisation pass receives malformed bytecode."""
+
+
+_stack_shuffle_spec = partial(decode_stack_shuffle_spec, error_type=OptimizationError)
 
 
 class OptimizationPass(Protocol):
@@ -1073,46 +1078,6 @@ def _canonicalize_shuffle_instruction(instruction: Instruction) -> Instruction:
     )
     canonical_post = tuple(mapping[label] for label in poststack)
     return Instruction(OpCode.STACK_SHUFFLE, (mode, canonical_pre, canonical_post))
-
-
-def _stack_shuffle_spec(
-    value: object,
-) -> tuple[
-    str,
-    tuple[str | None, ...],
-    tuple[str, ...],
-    tuple[int, ...] | None,
-]:
-    """Validate and decode one stack-shuffle plan."""
-    if not isinstance(value, tuple) or len(value) != 3:
-        raise OptimizationError(f"invalid stack shuffle spec {value!r}")
-    mode, prestack, poststack = value
-    if mode not in {"copy", "move"}:
-        raise OptimizationError(f"invalid stack shuffle mode {mode!r}")
-    if not isinstance(prestack, tuple) or not all(
-        label is None or isinstance(label, str) for label in prestack
-    ):
-        raise OptimizationError(f"invalid stack shuffle prestack {prestack!r}")
-    if not isinstance(poststack, tuple) or not all(
-        isinstance(label, str) for label in poststack
-    ):
-        raise OptimizationError(f"invalid stack shuffle poststack {poststack!r}")
-    labels = {label for label in prestack if label is not None}
-    if any(label not in labels for label in poststack):
-        raise OptimizationError(
-            f"stack shuffle poststack contains a label absent from {prestack!r}"
-        )
-    permutation: tuple[int, ...] | None = None
-    if (
-        mode == "move"
-        and len(prestack) == len(poststack)
-        and all(label is not None for label in prestack)
-        and len(set(prestack)) == len(prestack)
-        and set(prestack) == set(poststack)
-    ):
-        positions = {label: index for index, label in enumerate(prestack)}
-        permutation = tuple(positions[label] for label in poststack)
-    return mode, prestack, poststack, permutation
 
 
 def _guaranteed_stack_depths(

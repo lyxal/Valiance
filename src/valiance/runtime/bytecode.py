@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from typing import Any
 
 from valiance.vtypes import DataTag, UnionDispatchBranch
@@ -64,6 +65,48 @@ class Instruction:
 
     op: OpCode
     arg: Any = None
+
+
+@lru_cache(maxsize=None)
+def decode_stack_shuffle_spec(
+    value: object,
+    error_type: type[Exception] = ValueError,
+) -> tuple[
+    str,
+    tuple[str | None, ...],
+    tuple[str, ...],
+    tuple[int, ...] | None,
+]:
+    """Validate and decode one stack-shuffle instruction payload."""
+    if not isinstance(value, tuple) or len(value) != 3:
+        raise error_type(f"invalid stack shuffle spec {value!r}")
+    mode, prestack, poststack = value
+    if mode not in {"copy", "move"}:
+        raise error_type(f"invalid stack shuffle mode {mode!r}")
+    if not isinstance(prestack, tuple) or not all(
+        label is None or isinstance(label, str) for label in prestack
+    ):
+        raise error_type(f"invalid stack shuffle prestack {prestack!r}")
+    if not isinstance(poststack, tuple) or not all(
+        isinstance(label, str) for label in poststack
+    ):
+        raise error_type(f"invalid stack shuffle poststack {poststack!r}")
+    labels = {label for label in prestack if label is not None}
+    if any(label not in labels for label in poststack):
+        raise error_type(
+            f"stack shuffle poststack contains a label absent from {prestack!r}"
+        )
+    permutation = None
+    if (
+        mode == "move"
+        and len(prestack) == len(poststack)
+        and all(label is not None for label in prestack)
+        and len(set(prestack)) == len(prestack)
+        and set(prestack) == set(poststack)
+    ):
+        positions = {label: index for index, label in enumerate(prestack)}
+        permutation = tuple(positions[label] for label in poststack)
+    return mode, prestack, poststack, permutation
 
 
 @dataclass(frozen=True, slots=True)

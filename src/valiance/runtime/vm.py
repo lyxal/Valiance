@@ -6,7 +6,7 @@ import builtins as _py_builtins
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
-from functools import lru_cache
+from functools import lru_cache, partial
 from itertools import islice, zip_longest
 from typing import Any, cast
 
@@ -24,6 +24,7 @@ from valiance.runtime.bytecode import (
     Program,
     ResolvedElementReference,
     VectorExtensionReference,
+    decode_stack_shuffle_spec,
 )
 from valiance.runtime.runtime_values import (
     DIAGNOSTIC_LIST_PREVIEW_LIMIT,
@@ -106,6 +107,9 @@ class RuntimeError(_py_builtins.RuntimeError):
 
 class AssertionFailure(RuntimeError):
     """Raised when a bare Valiance assertion fails."""
+
+
+_stack_shuffle_spec = partial(decode_stack_shuffle_spec, error_type=RuntimeError)
 
 
 @dataclass(frozen=True, slots=True)
@@ -3800,48 +3804,6 @@ def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
         elif index >= stack_arg_start and label not in retained_outputs:
             _release_value(value, vm)
     frame.stack.extend(outputs)
-
-
-@lru_cache(maxsize=None)
-def _stack_shuffle_spec(
-    spec: object,
-) -> tuple[
-    str,
-    tuple[str | None, ...],
-    tuple[str, ...],
-    tuple[int, ...] | None,
-]:
-    """Validate and cache one compiled stack-shuffle plan."""
-    if not isinstance(spec, tuple) or len(spec) != 3:
-        raise RuntimeError(f"invalid stack shuffle spec {spec!r}")
-    mode, prestack, poststack = spec
-    if mode not in {"copy", "move"}:
-        raise RuntimeError(f"invalid stack shuffle mode {mode!r}")
-    if not isinstance(prestack, tuple) or not all(
-        label is None or isinstance(label, str) for label in prestack
-    ):
-        raise RuntimeError(f"invalid stack shuffle prestack {prestack!r}")
-    if not isinstance(poststack, tuple) or not all(
-        isinstance(label, str) for label in poststack
-    ):
-        raise RuntimeError(f"invalid stack shuffle poststack {poststack!r}")
-    labels = {label for label in prestack if label is not None}
-    for label in poststack:
-        if label not in labels:
-            raise RuntimeError(
-                f"stack shuffle poststack label {label!r} is not in prestack"
-            )
-    permutation: tuple[int, ...] | None = None
-    if (
-        mode == "move"
-        and len(prestack) == len(poststack)
-        and all(label is not None for label in prestack)
-        and len(set(prestack)) == len(prestack)
-        and set(prestack) == set(poststack)
-    ):
-        positions = {label: index for index, label in enumerate(prestack)}
-        permutation = tuple(positions[label] for label in poststack)
-    return mode, prestack, poststack, permutation
 
 
 def _extract_object_field(receiver: ObjectValue, field: str, vm: VirtualMachine) -> Any:
