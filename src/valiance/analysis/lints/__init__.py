@@ -33,6 +33,7 @@ KNOWN_LINT_CODES = frozenset(
         "unreachable-match-case",
         "unused-lint-suppression",
         "unused-loop-index",
+        "unicode-identifier-security",
         "while-can-be-foreach",
     }
 )

@@ -27,3 +27,5 @@ When implementing features, don't leave them half finished. "Just for now" type 
 Make language feature implementations as extensible as possible. Don't hardcode tuple layouts, lengths, strings, etc.
 
 `tests/test_programs.py` is a test file containing programs that are fundamental Valiance behaviour. These must always pass after changes. Do not add or modify any tests here (unless of course you're specifically asked to do so).
+
+When adding new files, don't just leave them in the root directory. Place them in the appropriate subdirectory, and update the `docs/maintenance/README.md` file to include a link to the new file when appropriate.

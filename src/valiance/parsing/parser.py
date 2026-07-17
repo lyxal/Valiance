@@ -3061,7 +3061,8 @@ class Parser:
         (operator merging, `...`, `||`, and type-rank counting) rather than
         being separated (even by a single space) into distinct units.
         """
-        return second.offset == first.offset + len(first.value)
+        first_width = len(first.raw if first.raw is not None else first.value)
+        return second.offset == first.offset + first_width
 
     def _match(self, *kinds: TokenKind) -> bool:
         """Return the Boolean result of match from the current parser token stream."""

@@ -4,8 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import unicodedata
 
 from valiance.analysis.diagnostics import DiagnosticError
+from valiance.parsing.unicode_identifiers import (
+    forbidden_identifier_character,
+    is_xid_continue,
+    is_xid_start,
+    normalize_identifier,
+)
 
 
 class TokenKind(StrEnum):
@@ -125,6 +132,9 @@ class _Lexer:
             elif char in _OP_CHARS or char == "\\":
                 self._operator()
             else:
+                if forbidden_identifier_character(char):
+                    name = unicodedata.name(char, "unnamed character")
+                    self._fail(f"forbidden character U+{ord(char):04X} {name} in source")
                 self._fail(f"unexpected character {char!r}")
 
         self.tokens.append(Token(TokenKind.EOF, "", self.line, self.column, self.index))
@@ -325,8 +335,16 @@ class _Lexer:
             self._advance()
         while self._peek() == "?":
             self._advance()
+        raw = self.source[offset : self.index]
         self.tokens.append(
-            Token(TokenKind.IDENT, self.source[offset : self.index], line, col, offset)
+            Token(
+                TokenKind.IDENT,
+                normalize_identifier(raw),
+                line,
+                col,
+                offset,
+                raw=raw,
+            )
         )
 
     def _operator(self) -> None:
@@ -338,13 +356,15 @@ class _Lexer:
                 self._advance()
                 while self._is_ident_part(self._peek()):
                     self._advance()
+                raw = self.source[offset : self.index]
                 self.tokens.append(
                     Token(
                         TokenKind.OP,
-                        self.source[offset : self.index],
+                        "\\" + normalize_identifier(raw[1:]),
                         line,
                         col,
                         offset,
+                        raw=raw,
                     )
                 )
                 return
@@ -370,12 +390,12 @@ class _Lexer:
     @staticmethod
     def _is_ident_start(char: str) -> bool:
         """Return whether the value is ident start."""
-        return char == "_" or char.isalpha()
+        return is_xid_start(char) and not forbidden_identifier_character(char)
 
     @staticmethod
     def _is_ident_part(char: str) -> bool:
         """Return whether the value is ident part."""
-        return char == "_" or char.isalpha() or char.isdigit()
+        return is_xid_continue(char) and not forbidden_identifier_character(char)
 
     def _fail(
         self, message: str, line: int | None = None, col: int | None = None

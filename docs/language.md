@@ -4991,3 +4991,23 @@ disable = ["prefer-fold", "constant-never-reassigned"]
 Source-level `@lintOff` and `@lintFileOff` directives layer on top of the project
 policy and can suppress additional findings. A source directive cannot re-enable
 a lint disabled by the project manifest.
+
+### Unicode identifiers
+
+Variable names and alphanumeric element names follow Unicode Standard Annex #31's
+identifier model. An identifier starts with a character having the Unicode
+`XID_Start` property, or `_`, and continues with characters having
+`XID_Continue`. Identifiers are normalized to Unicode NFC as soon as they are
+lexed, so canonically equivalent spellings name the same binding.
+
+Control (`Cc`), format (`Cf`), private-use (`Co`), and surrogate (`Cs`)
+characters are forbidden. This excludes invisible joiners and bidirectional
+formatting controls. Emoji and pictographic symbols are not identifier
+characters because they do not have the required XID properties. The compiler
+may issue non-fatal `unicode-identifier-security` lints for mixed-script or
+visually confusable names; these warnings do not prevent legitimate multilingual
+programs.
+
+Symbolic element names retain the operator characters accepted before Unicode
+identifier support; this change only broadens the alphanumeric portions of
+names.

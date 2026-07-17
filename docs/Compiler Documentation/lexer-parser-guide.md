@@ -765,3 +765,14 @@ Known parser-facing gaps include:
 
 When implementing one of these, prefer adding the parser shape first, then
 making the analyser/runtime reject it explicitly if later stages are not ready.
+
+### Unicode identifiers
+
+The lexer implements the UAX #31 identifier profile with `XID_Start` and
+`XID_Continue`, extending the start set with `_`. Python's Unicode identifier
+predicates provide the versioned XID tables. Identifier token values are NFC
+normalized immediately; `Token.raw` retains the source spelling so adjacency and
+source spans continue to use the original width. The lexer explicitly rejects
+Unicode categories `Cc`, `Cf`, `Co`, and `Cs`. Symbolic operators remain governed
+by `_OP_CHARS` and are intentionally unchanged. Unicode helpers live beside the
+lexer in `src/valiance/parsing/unicode_identifiers.py`.
