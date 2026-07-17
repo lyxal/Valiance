@@ -134,7 +134,9 @@ class _Lexer:
             else:
                 if forbidden_identifier_character(char):
                     name = unicodedata.name(char, "unnamed character")
-                    self._fail(f"forbidden character U+{ord(char):04X} {name} in source")
+                    self._fail(
+                        f"forbidden character U+{ord(char):04X} {name} in source"
+                    )
                 self._fail(f"unexpected character {char!r}")
 
         self.tokens.append(Token(TokenKind.EOF, "", self.line, self.column, self.index))
@@ -304,8 +306,22 @@ class _Lexer:
                 self._number_part()
                 if self._peek() in {"e", "E"}:
                     self._exponent()
+
+        # Make sure that the number does not have any leading 0s (except for the number 0 itself).
+        # This is a common source of bugs in many programming languages, so we want to catch it early.
+
+        number_str = self.source[offset : self.index]
+        if number_str.startswith("0") and len(number_str) > 1 and number_str[1] != ".":
+            self._fail("numbers cannot have leading 0s", line, col)
+
         self.tokens.append(
-            Token(TokenKind.NUMBER, self.source[offset : self.index], line, col, offset)
+            Token(
+                TokenKind.NUMBER,
+                self.source[offset : self.index],
+                line,
+                col,
+                offset,
+            )
         )
 
     def _number_part(self) -> None:
