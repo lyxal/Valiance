@@ -126,7 +126,7 @@ def _index_type(typ: T.Type, *, key: bool = False) -> T.Type:
     ):
         return typ.args[0 if key else 1]
     if key:
-        return T.Number
+        return T.Integer
     if isinstance(typ, T.CollectionType):
         return T.collection_item_type(typ)
     if isinstance(typ, T.TupleType):

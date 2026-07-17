@@ -154,7 +154,7 @@ trapezoidal(fn (x: Number) => $x * $x end, 0, 1, 2)
 
     def test_fibonacci_in_three_styles(self):
         source = r"""
-define fibonacci1(n: Number) =>
+define fibonacci1(n: Integer) =>
   if ($n == 0) => 0
   else if ($n == 1) => 1
   else =>

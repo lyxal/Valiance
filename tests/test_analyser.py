@@ -3552,10 +3552,20 @@ define f(value: #left #right Number) -> Number => $value
         self.assertEqual(branch.stack, TypeStack((optional(Number),)))
         self.assertIsNone(branch.break_type)
 
-    def test_list_indexing_accepts_number_typed_indices(self):
+    def test_list_indexing_rejects_real_typed_indices(self):
         analyser = Analyser()
 
-        analyser.analyse(parse("[1, 2] $[1.5]"))
+        analyser.analyse(parse("[1, 2, 3, 4, 5] $[5 / 2]"))
+
+        self.assertIn(
+            "list indexing requires Integer index value(s)",
+            "\n".join(str(item) for item in analyser.diagnostics),
+        )
+
+    def test_list_indexing_accepts_integer_typed_indices(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("[1, 2] $[1]"))
 
         self.assertEqual(analyser.diagnostics, [])
 
