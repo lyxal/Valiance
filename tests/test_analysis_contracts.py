@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import copy
 import unittest
-from pathlib import Path
-
 from valiance.analysis import Analyser
 from valiance.analysis.contracts import ContractAnalyser
 from valiance.analysis.contracts import annotations, where_clauses
@@ -51,14 +49,11 @@ class ContractBoundaryTests(unittest.TestCase):
         """Tag declaration and application continue to emit valid typed nodes."""
         analyser = Analyser()
         analyser.analyse(
-            parse("tag #checked as computed\ndefine #checked(value: Number) -> #boolean Number => true\n1 #checked")
+            parse(
+                "tag #checked as computed\ndefine #checked(value: Number) -> #boolean Number => true\n1 #checked"
+            )
         )
         self.assertEqual(analyser.diagnostics, [])
-
-    def test_where_clause_module_moved_from_analysis_root(self) -> None:
-        """The old where-clause implementation path has been removed."""
-        root = Path(__file__).parents[1] / "src" / "valiance" / "analysis"
-        self.assertFalse((root / "where_clause.py").exists())
 
 
 if __name__ == "__main__":

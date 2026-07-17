@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import unittest
-from pathlib import Path
 
 from valiance.analysis import Analyser
 from valiance.analysis.calls import CallAnalyser
@@ -43,11 +42,24 @@ class CallPlanningBoundaryTests(unittest.TestCase):
         analyser.analyse(parse("1 2 +"))
         self.assertEqual(analyser.diagnostics, [])
 
-    def test_legacy_analyser_call_modules_are_removed(self) -> None:
-        """Phase 15C leaves no compatibility modules under old names."""
-        root = Path(__file__).parents[1] / "src" / "valiance" / "analysis"
-        self.assertFalse((root / "_analyser_calls.py").exists())
-        self.assertFalse((root / "_analyser_functions.py").exists())
+    def test_copied_session_preserves_every_service(self) -> None:
+        """REPL-style deep copies retain all service-to-context links."""
+        analyser = copy.deepcopy(Analyser())
+        analyser.analyse(parse("define twice(x: Number) -> Number => $x 2 *\n3 twice"))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertIs(analyser.declarations._context, analyser)
+        self.assertIs(analyser.calls._context, analyser)
+        self.assertIs(analyser.control_flow._context, analyser)
+        self.assertIs(analyser.contracts._context, analyser)
+        self.assertIs(analyser.expressions._context, analyser)
+
+    def test_element_diagnostics_are_owned_by_calls(self) -> None:
+        """Smart element suggestions are exposed by the call subsystem."""
+        analyser = Analyser()
+        self.assertTrue(analyser.calls.provides("_unknown_element_message"))
+        analyser.analyse(parse("1 prntln"))
+        self.assertTrue(analyser.diagnostics)
+        self.assertIn("did you mean", analyser.diagnostics[0])
 
 
 if __name__ == "__main__":

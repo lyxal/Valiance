@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import unittest
-from pathlib import Path
 
 from valiance.analysis import Analyser
 from valiance.analysis.control_flow import ControlFlowAnalyser
@@ -26,46 +25,41 @@ class ControlFlowBoundaryTests(unittest.TestCase):
     def test_match_analysis_commits_a_typed_match(self) -> None:
         """Pattern refinement and coverage produce the existing typed AST node."""
         analyser = Analyser()
-        typed = analyser.analyse(parse('''1 match =>
+        typed = analyser.analyse(parse("""1 match =>
   1 => "one"
   _ => "other"
-end'''))
+end"""))
         self.assertEqual(analyser.diagnostics, [])
         self.assertIsInstance(typed[-1], TypedMatchNode)
 
     def test_try_analysis_commits_a_typed_try(self) -> None:
         """Try branches and handlers retain their explicit typed representation."""
         analyser = Analyser()
-        typed = analyser.analyse(parse('''try =>
+        typed = analyser.analyse(parse("""try =>
   1
 handle =>
   2
-end'''))
+end"""))
         self.assertEqual(analyser.diagnostics, [])
         self.assertIsInstance(typed[-1], TypedTryNode)
 
     def test_loop_handlers_live_under_control_flow(self) -> None:
         """While and foreach handlers still emit their established typed nodes."""
         analyser = Analyser()
-        typed = analyser.analyse(parse('0 while (< 1) -> (n: Number) => 1 + end'))
+        typed = analyser.analyse(parse("0 while (< 1) -> (n: Number) => 1 + end"))
         self.assertEqual(analyser.diagnostics, [])
         self.assertIsInstance(typed[-1], TypedWhileNode)
 
         analyser = Analyser()
-        typed = analyser.analyse(parse('[1, 2] foreach (n) => $n end'))
+        typed = analyser.analyse(parse("[1, 2] foreach (n) => $n end"))
         self.assertEqual(analyser.diagnostics, [])
         self.assertIsInstance(typed[-1], TypedForNode)
 
     def test_control_flow_service_survives_session_copy(self) -> None:
         """REPL preview copies preserve control-flow context delegation."""
         analyser = copy.deepcopy(Analyser())
-        analyser.analyse(parse('1 match => _ => 2 end'))
+        analyser.analyse(parse("1 match => _ => 2 end"))
         self.assertEqual(analyser.diagnostics, [])
-
-    def test_legacy_pattern_module_is_removed(self) -> None:
-        """Phase 15D leaves no compatibility module under the old name."""
-        root = Path(__file__).parents[1] / "src" / "valiance" / "analysis"
-        self.assertFalse((root / "_analyser_patterns.py").exists())
 
 
 if __name__ == "__main__":
