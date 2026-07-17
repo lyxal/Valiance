@@ -27,7 +27,7 @@ from valiance.modules_system.packages import (
     require_manifest,
     upgrade_dependency,
 )
-from valiance.parsing import LexError, ParseError, Parser, lex, parse
+from valiance.parsing import LexError, ParseError, ParseErrors, Parser, lex, parse
 from valiance.repl import ReplCompletion, create_repl_frontend
 from valiance.elements.reference_docs import (
     DocumentationError,
@@ -1541,6 +1541,10 @@ def _print_exception_diagnostic(
     source_file: Path | None = None,
 ) -> None:
     """Print exception diagnostic for CLI and REPL orchestration."""
+    if isinstance(exc, ParseErrors):
+        for error in exc.errors:
+            _print_exception_diagnostic(error, source=source, source_file=source_file)
+        return
     if isinstance(exc, LexError):
         stage = "Lex error"
     elif isinstance(exc, ParseError):

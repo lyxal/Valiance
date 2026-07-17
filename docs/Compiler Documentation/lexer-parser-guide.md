@@ -137,6 +137,36 @@ Tests can compare AST nodes without specifying locations because `ASTNode`
 marks `location` as `compare=False`. Add explicit location assertions when a
 diagnostic feature depends on the source position.
 
+## Recoverable diagnostics
+
+The strict `lex(source)` and `parse(source)` helpers remain appropriate for
+callers that require a valid result. `lex` raises the first `LexError`; `parse`
+collects independent lexical and grammatical errors and raises `ParseErrors`
+when more than one is present.
+
+Editor and tooling integrations should use the recovery APIs:
+
+```python
+from valiance.parsing import lex_with_diagnostics, parse_with_diagnostics
+
+tokens, lex_errors = lex_with_diagnostics(source)
+result = parse_with_diagnostics(source)
+# result.nodes is the best-effort AST for valid statements.
+# result.diagnostics contains source-ordered lexer and parser errors.
+```
+
+Lexical recovery emits internal `ERROR` tokens and resumes at the next character
+or natural token boundary. Parser recovery is statement-oriented: after an
+error it synchronizes at a newline and continues with the next statement. This
+is deliberately conservative. It avoids inventing nested AST structure while
+still allowing a compiler or language server to report several independent
+mistakes in one pass.
+
+Diagnostics should state both the expectation and the token actually found.
+When adding grammar, prefer messages such as `expected ')' after argument list`
+over generic messages such as `invalid syntax`. Add a focused recovery test
+whenever a new construct introduces a useful synchronization boundary.
+
 ## Parser Model
 
 The parser is recursive descent over a token list. Its constructor materializes the

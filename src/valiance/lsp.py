@@ -13,7 +13,7 @@ import valiance.vtypes as T
 from valiance.analysis import Analyser
 from valiance.asts import ASTNode, DefineNode
 from valiance.analysis.diagnostics import DiagnosticError
-from valiance.parsing import LexError, ParseError, parse
+from valiance.parsing import LexError, ParseError, ParseErrors, parse
 from valiance.repl import completion_prefix, default_completion_items
 from valiance.source_tools import extract_documented_defines
 from valiance.vtypes.symbols import Symbol
@@ -154,6 +154,10 @@ class LanguageServer:
             diagnostics.extend(
                 _lint_diagnostic(item) for item in analyser.lint_findings
             )
+        except ParseErrors as exc:
+            diagnostics.extend(_exception_diagnostic(item) for item in exc.errors)
+            self.programs.pop(uri, None)
+            self.analysers.pop(uri, None)
         except (LexError, ParseError, DiagnosticError) as exc:
             diagnostics.append(_exception_diagnostic(exc))
             self.programs.pop(uri, None)

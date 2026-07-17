@@ -41,6 +41,7 @@ class TokenKind(StrEnum):
     DOLLAR = "$"
     QUOTE = "'"
     OP = "OP"
+    ERROR = "ERROR"
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,13 +78,29 @@ _OP_CHARS = set("+-*%!?=/<>~&^")
 
 
 def lex(source: str) -> list[Token]:
-    """Return Valiance tokens, preserving newlines as statement separators."""
-    lexer = _Lexer(source)
-    return lexer.lex()
+    """Return Valiance tokens, raising the first lexical diagnostic.
+
+    Use :func:`lex_with_diagnostics` for editor/compiler-front-end recovery.
+    """
+    tokens, diagnostics = lex_with_diagnostics(source)
+    if diagnostics:
+        raise diagnostics[0]
+    return tokens
+
+
+def lex_with_diagnostics(source: str) -> tuple[list[Token], tuple[LexError, ...]]:
+    """Tokenize *source* and collect recoverable lexical diagnostics.
+
+    Invalid characters become ``ERROR`` tokens.  Scanning then resumes at the
+    next character or natural token boundary so callers can report independent
+    errors from the rest of the file.
+    """
+    lexer = _Lexer(source, recover=True)
+    return lexer.lex(), tuple(lexer.diagnostics)
 
 
 class _Lexer:
-    def __init__(self, source: str) -> None:
+    def __init__(self, source: str, *, recover: bool = False) -> None:
         """Initialize this lexer."""
         self.source = source
         self.length = len(source)
@@ -91,6 +108,8 @@ class _Lexer:
         self.line = 1
         self.column = 1
         self.tokens: list[Token] = []
+        self.recover = recover
+        self.diagnostics: list[LexError] = []
 
     def lex(self) -> list[Token]:
         """Tokenize the complete source stream and append the EOF token."""
@@ -138,6 +157,8 @@ class _Lexer:
                         f"forbidden character U+{ord(char):04X} {name} in source"
                     )
                 self._fail(f"unexpected character {char!r}")
+                if self.recover and not self._at_end:
+                    self._advance()
 
         self.tokens.append(Token(TokenKind.EOF, "", self.line, self.column, self.index))
         return self.tokens
@@ -205,7 +226,7 @@ class _Lexer:
                 else:
                     self._advance()
             if depth:
-                self._fail("unterminated multiline comment")
+                self._fail("unterminated multiline comment; expected closing /#")
             return
         self._tag()
 
@@ -216,7 +237,9 @@ class _Lexer:
         if self._peek() == "-":
             self._advance()
         if not self._is_ident_start(self._peek()):
-            self._fail("expected tag name", line, col)
+            self._fail("expected tag name after '#'; for example #sorted or #-cached", line, col)
+            if self.recover:
+                return
         self._advance()
         while self._is_ident_part(self._peek()):
             self._advance()
@@ -250,7 +273,9 @@ class _Lexer:
                 return
             if char == "\\":
                 if self._at_end:
-                    self._fail("unterminated string escape")
+                    self._fail("unterminated string escape; expected a character after backslash")
+                    if self.recover:
+                        return
                 escaped = self._advance()
                 if escaped not in {'"', "\\", "$"}:
                     pieces.append("\\" + escaped)
@@ -268,7 +293,7 @@ class _Lexer:
                     interpolation_depth += 1
                 elif interpolation_depth > 0 and char == "}":
                     interpolation_depth -= 1
-        self._fail("unterminated string", line, col)
+        self._fail("unterminated string literal; expected a closing double quote", line, col)
 
     def _string_interpolation_nested_string(self, pieces: list[str]) -> None:
         """Scan string interpolation nested string while tokenizing Valiance source."""
@@ -416,5 +441,12 @@ class _Lexer:
     def _fail(
         self, message: str, line: int | None = None, col: int | None = None
     ) -> None:
-        """Scan fail while tokenizing Valiance source."""
-        raise LexError(message, line=line or self.line, column=col or self.column)
+        """Report a lexical error, optionally leaving a recoverable token."""
+        error = LexError(message, line=line or self.line, column=col or self.column)
+        if not self.recover:
+            raise error
+        self.diagnostics.append(error)
+        self.tokens.append(
+            Token(TokenKind.ERROR, message, error.line or self.line,
+                  error.column or self.column, self.index)
+        )

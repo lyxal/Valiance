@@ -78,7 +78,7 @@ from valiance.asts import (
     WildcardPatternNode,
 )
 from valiance.analysis.diagnostics import DiagnosticError
-from valiance.parsing.lexer import Token, TokenKind, lex
+from valiance.parsing.lexer import LexError, Token, TokenKind, lex, lex_with_diagnostics
 from valiance.vtypes import (
     AnonymousTrait,
     AnonymousTraitRequirement,
@@ -128,6 +128,30 @@ class ParseError(DiagnosticError, SyntaxError):
     """Raised when Valiance source cannot be parsed."""
 
 
+class ParseErrors(ParseError):
+    """A batch of independent lexer/parser diagnostics from one source file."""
+
+    def __init__(self, errors: tuple[DiagnosticError, ...]) -> None:
+        """Initialize a batch while retaining each source-located error."""
+        if not errors:
+            raise ValueError("ParseErrors requires at least one diagnostic")
+        self.errors = errors
+        first = errors[0]
+        super().__init__(
+            f"{len(errors)} syntax errors; first: {first.message}",
+            line=first.line,
+            column=first.column,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ParseResult:
+    """Best-effort syntax result and every diagnostic produced while recovering."""
+
+    nodes: tuple[ASTNode, ...]
+    diagnostics: tuple[DiagnosticError, ...]
+
+
 _EXPANDED_SKIP = object()
 
 
@@ -139,11 +163,35 @@ class _ChainPiece:
 
 
 def parse(source: str) -> list[ASTNode]:
-    """Parse Valiance source into AST nodes."""
+    """Parse Valiance source, reporting all reasonably recoverable errors."""
+    result = parse_with_diagnostics(source)
+    if result.diagnostics:
+        if len(result.diagnostics) == 1:
+            raise result.diagnostics[0]
+        raise ParseErrors(result.diagnostics)
+    return list(result.nodes)
+
+
+def parse_with_diagnostics(source: str) -> ParseResult:
+    """Return a best-effort AST together with lexer and parser diagnostics."""
+    tokens, lex_errors = lex_with_diagnostics(source)
+    # Lexical ERROR tokens identify already-reported spans.  Removing them lets
+    # the parser continue from the next real token without duplicate messages.
+    parse_tokens = [token for token in tokens if token.kind is not TokenKind.ERROR]
+    parser = Parser(parse_tokens, recover=True)
     try:
-        return Parser(lex(source)).parse_program()
-    except RecursionError as exc:
-        raise ParseError("source nesting is too deep") from exc
+        nodes = parser.parse_program()
+    except RecursionError:
+        token = parser._current
+        parser.diagnostics.append(
+            ParseError("source nesting is too deep", line=token.line, column=token.column)
+        )
+        nodes = parser.recovered_nodes
+    diagnostics = tuple(sorted(
+        (*lex_errors, *parser.diagnostics),
+        key=lambda item: (item.line or 0, item.column or 0),
+    ))
+    return ParseResult(tuple(nodes), diagnostics)
 
 
 def parse_type(source: str) -> Type:
@@ -154,15 +202,22 @@ def parse_type(source: str) -> Type:
         parser._skip_newlines()
         parser._expect(TokenKind.EOF)
         return typ
+    except LexError as exc:
+        # ``parse_type`` has historically exposed one syntax-error category to
+        # type-expression callers even when tokenization found the problem.
+        raise ParseError(exc.message, line=exc.line, column=exc.column) from exc
     except RecursionError as exc:
         raise ParseError("type nesting is too deep") from exc
 
 
 class Parser:
-    def __init__(self, tokens: Iterable[Token]) -> None:
+    def __init__(self, tokens: Iterable[Token], *, recover: bool = False) -> None:
         """Initialize this parser."""
         self.tokens = list(tokens)
         self.index = 0
+        self.recover = recover
+        self.diagnostics: list[ParseError] = []
+        self.recovered_nodes: list[ASTNode] = []
         self._allow_variadic_tuple_type = False
         self._where_clause_depth = 0
 
@@ -172,11 +227,25 @@ class Parser:
         self._skip_newlines()
         while not self._check(TokenKind.EOF):
             before = self.index
-            statement = self._statement()
-            if not statement and self.index == before:
-                self._error("expected statement")
-            nodes.extend(statement)
-            self._skip_separators()
+            try:
+                statement = self._statement()
+                if not statement and self.index == before:
+                    self._error("expected a statement or declaration")
+                nodes.extend(statement)
+                self.recovered_nodes = list(nodes)
+                self._skip_separators()
+            except ParseError as error:
+                if not self.recover:
+                    raise
+                self.diagnostics.append(error)
+                self._synchronize_statement(before)
+                if len(self.diagnostics) >= 100:
+                    token = self._current
+                    self.diagnostics.append(ParseError(
+                        "too many syntax errors; stopped after 100 diagnostics",
+                        line=token.line, column=token.column,
+                    ))
+                    break
         return nodes
 
     def _statement(self) -> tuple[ASTNode, ...]:
@@ -3119,9 +3188,31 @@ class Parser:
         return self.tokens[self.index - 1]
 
     def _error(self, message: str) -> None:
-        """Raise a source-located parse error at the current token."""
+        """Raise a source-located parse error with the unexpected token."""
         token = self._current
+        if token.kind is TokenKind.EOF:
+            detail = "end of file"
+        elif token.kind is TokenKind.NEWLINE:
+            detail = "end of line"
+        else:
+            detail = repr(token.raw if token.raw is not None else token.value)
+        if "found " not in message and "unexpected " not in message:
+            message = f"{message}; found {detail}"
         raise ParseError(message, line=token.line, column=token.column)
+
+    def _synchronize_statement(self, start: int) -> None:
+        """Advance to a conservative top-level statement boundary."""
+        # Recovery intentionally favours finding more independent errors over
+        # fabricating nested AST structure.  A newline is the strongest general
+        # boundary in Valiance; orphan closers are consumed to guarantee progress.
+        while not self._check(TokenKind.EOF):
+            if self._check(TokenKind.NEWLINE):
+                self._advance()
+                self._skip_newlines()
+                return
+            self._advance()
+        if self.index <= start and not self._check(TokenKind.EOF):
+            self._advance()
 
 
 _LINE_TERMINATORS: set[TokenKind | str] = {
