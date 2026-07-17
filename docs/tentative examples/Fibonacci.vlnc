@@ -1,4 +1,4 @@
-define fibonacci1(n: Number) =>
+define fibonacci1(n: Integer) =>
   if ($n == 0) => 0
   else if ($n == 1) => 1
   else =>
