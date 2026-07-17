@@ -28,4 +28,4 @@ Make language feature implementations as extensible as possible. Don't hardcode 
 
 `tests/test_programs.py` is a test file containing programs that are fundamental Valiance behaviour. These must always pass after changes. Do not add or modify any tests here (unless of course you're specifically asked to do so).
 
-When adding new files, don't just leave them in the root directory. Place them in the appropriate subdirectory, and update the `docs/maintenance/README.md` file to include a link to the new file when appropriate.
+When adding new files, don't just leave them in the root directory. Place them in the appropriate subdirectory, and update the `docs/maintenance/README.md` file to include a link to the new file when appropriate. Additionally, don't make patch-specific test files. Add tests to existing test files where they logically belong. If a new test file really is needed, add it to the appropriate subdirectory and update the `docs/maintenance/README.md` file to include a link to the new test file.

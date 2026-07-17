@@ -129,6 +129,28 @@ class LexerTests(unittest.TestCase):
         with self.assertRaises(LexError):
             lex('"missing')
 
+    def test_lexes_newline_escape_in_string(self):
+        token = lex(r'"first\nsecond"')[0]
+
+        self.assertEqual(token.kind, TokenKind.STRING)
+        self.assertEqual(token.value, "first\nsecond")
+
+    def test_lexes_tab_escape_in_string(self):
+        token = lex(r'"first\tsecond"')[0]
+
+        self.assertEqual(token.kind, TokenKind.STRING)
+        self.assertEqual(token.value, "first\tsecond")
+
+    def test_lexes_literal_newline_in_string(self):
+        token = lex('"first\nsecond"')[0]
+
+        self.assertEqual(token.kind, TokenKind.STRING)
+        self.assertEqual(token.value, "first\nsecond")
+
+    def test_rejects_undefined_string_escape(self):
+        with self.assertRaisesRegex(LexError, r"invalid string escape"):
+            lex(r'"bad\qescape"')
+
     def test_deeply_nested_source_fails_with_parse_error_not_recursion_error(self):
         source = "[" * 2_000 + "0" + "]" * 2_000
 

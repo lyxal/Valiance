@@ -3434,14 +3434,26 @@ def _string_parts(raw: str, token: Token) -> tuple[str | tuple[ASTNode, ...], ..
         char = raw[index]
         if char == "\\":
             if index + 1 >= len(raw):
-                literal.append("\\")
-                index += 1
-                continue
+                raise ParseError(
+                    "unterminated string escape",
+                    line=token.line,
+                    column=token.column,
+                )
             escaped = raw[index + 1]
-            if escaped in {'"', "\\", "$"}:
-                literal.append(escaped)
-            else:
-                literal.append("\\" + escaped)
+            escape_values = {
+                '"': '"',
+                "\\": "\\",
+                "$": "$",
+                "n": "\n",
+                "t": "\t",
+            }
+            if escaped not in escape_values:
+                raise ParseError(
+                    f"invalid string escape '\\{escaped}'",
+                    line=token.line,
+                    column=token.column,
+                )
+            literal.append(escape_values[escaped])
             index += 2
             continue
         if char != "$":

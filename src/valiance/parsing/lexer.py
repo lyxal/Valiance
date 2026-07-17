@@ -272,18 +272,39 @@ class _Lexer:
                 )
                 return
             if char == "\\":
+                escape_line, escape_col = self.line, self.column - 1
                 if self._at_end:
-                    self._fail("unterminated string escape; expected a character after backslash")
+                    self._fail(
+                        "unterminated string escape; expected a character after backslash",
+                        escape_line,
+                        escape_col,
+                    )
                     if self.recover:
                         return
                 escaped = self._advance()
-                if escaped not in {'"', "\\", "$"}:
-                    pieces.append("\\" + escaped)
-                else:
-                    pieces.append(escaped)
+                escape_values = {
+                    '"': '"',
+                    "\\": "\\",
+                    "$": "$",
+                    "n": "\n",
+                    "t": "\t",
+                }
+                if escaped not in escape_values:
+                    self._fail(
+                        f"invalid string escape '\\{escaped}'",
+                        escape_line,
+                        escape_col,
+                    )
+                    if self.recover:
+                        self._skip_invalid_string()
+                        return
+                pieces.append(escape_values[escaped])
             elif interpolation_depth > 0 and char == '"':
                 pieces.append(char)
-                self._string_interpolation_nested_string(pieces)
+                if not self._string_interpolation_nested_string(pieces):
+                    if self.recover:
+                        self._skip_invalid_string()
+                    return
             else:
                 pieces.append(char)
                 if char == "$" and self._peek() == "{":
@@ -295,18 +316,40 @@ class _Lexer:
                     interpolation_depth -= 1
         self._fail("unterminated string literal; expected a closing double quote", line, col)
 
-    def _string_interpolation_nested_string(self, pieces: list[str]) -> None:
-        """Scan string interpolation nested string while tokenizing Valiance source."""
+    def _string_interpolation_nested_string(self, pieces: list[str]) -> bool:
+        """Scan and validate a string nested inside an interpolation."""
         while not self._at_end:
             char = self._advance()
             pieces.append(char)
             if char == "\\":
+                escape_line, escape_col = self.line, self.column - 1
                 if self._at_end:
-                    self._fail("unterminated string escape")
-                pieces.append(self._advance())
+                    self._fail("unterminated string escape", escape_line, escape_col)
+                    return False
+                escaped = self._advance()
+                pieces.append(escaped)
+                if escaped not in {'"', "\\", "$", "n", "t"}:
+                    self._fail(
+                        f"invalid string escape '\\{escaped}'",
+                        escape_line,
+                        escape_col,
+                    )
+                    if self.recover:
+                        self._skip_invalid_string()
+                    return False
+            elif char == '"':
+                return True
+        self._fail("unterminated nested string")
+        return False
+
+    def _skip_invalid_string(self) -> None:
+        """Consume through a closing quote after a recoverable string error."""
+        while not self._at_end:
+            char = self._advance()
+            if char == "\\" and not self._at_end:
+                self._advance()
             elif char == '"':
                 return
-        self._fail("unterminated nested string")
 
     def _starts_number(self) -> bool:
         """Return the Boolean result of starts number while tokenizing Valiance source."""
