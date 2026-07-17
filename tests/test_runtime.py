@@ -283,6 +283,21 @@ end
         self.assertEqual(execute("1i0"), [RuntimeNumber("1")])
         self.assertEqual(execute("1.5i0"), [RuntimeNumber("1.5")])
 
+    def test_power_uses_the_principal_complex_branch(self):
+        self.assertEqual(execute("-1 ** 0.5"), [RuntimeNumber("0i1")])
+
+        result = RuntimeNumber("-2") ** RuntimeNumber("0.5i1")
+        self.assertTrue(result.is_complex())
+
+    def test_power_keeps_real_results_real(self):
+        self.assertEqual(
+            RuntimeNumber("0i1") ** RuntimeNumber("2"), RuntimeNumber("-1")
+        )
+        self.assertEqual(execute("9 ** 0.5"), [RuntimeNumber("3")])
+        self.assertEqual(execute("-8 ** (1 / 3)"), [RuntimeNumber("-2")])
+        self.assertEqual(execute("-8 ** (2 / 3)"), [RuntimeNumber("4")])
+        self.assertEqual(execute("-8 ** (-1 / 3)"), [RuntimeNumber("-0.5")])
+
     def test_arithmetic_preserves_arbitrarily_large_integer_precision(self):
         value = "12345678901234567890123456789"
 

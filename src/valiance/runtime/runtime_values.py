@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import cmath
 from collections.abc import Iterable, Mapping, Sequence, Sized
 from dataclasses import dataclass, field
+from fractions import Fraction
 from functools import lru_cache
 from decimal import Decimal, localcontext
 from itertools import islice
@@ -583,31 +585,80 @@ class RuntimeNumber:
     # ---------- power ----------
 
     def __pow__(self, other):
-        """Raise this runtime number to the power of another value."""
+        """Raise this number to another number on the principal branch."""
         other = RuntimeNumber.from_value(other)
 
         if other.imag.is_zero() and other.real.is_integer():
             exponent = other.real.to_int()
+            if exponent < 0:
+                return RuntimeNumber(1) / (self ** -exponent)
 
-            if exponent >= 0:
-                result = RuntimeNumber(1)
-
-                for _ in range(exponent):
-                    result *= self
-
-                return result
+            result = RuntimeNumber(1)
+            for _ in range(exponent):
+                result *= self
+            return result
 
         precision = inferred_precision(
             self.real,
+            self.imag,
             other.real,
+            other.imag,
         )
 
-        with localcontext() as ctx:
-            ctx.prec = precision
+        if self.imag.is_zero() and other.imag.is_zero():
+            base_decimal = self.real.to_decimal(precision)
+            exponent_decimal = other.real.to_decimal(precision)
 
-            result = self.real.to_decimal(precision) ** other.real.to_decimal(precision)
+            if self.real >= ZERO:
+                with localcontext() as ctx:
+                    ctx.prec = precision
+                    result = base_decimal**exponent_decimal
+                return RuntimeNumber(BigDecimal.from_decimal(result))
 
-        return RuntimeNumber(BigDecimal.from_decimal(result))
+            # Prefer the real value for recognizable odd-denominator rational
+            # powers, such as (-8) ** (1 / 3). Other negative-base powers use
+            # the principal complex branch below.
+            rational = Fraction(exponent_decimal).limit_denominator(1_000_000)
+            with localcontext() as ctx:
+                ctx.prec = precision
+                approximation = Decimal(rational.numerator) / Decimal(
+                    rational.denominator
+                )
+                tolerance = Decimal(10) ** min(-16, other.real.exponent)
+                is_rational = abs(exponent_decimal - approximation) <= tolerance
+            if rational.denominator % 2 == 1 and is_rational:
+                with localcontext() as ctx:
+                    ctx.prec = precision
+                    magnitude = (-base_decimal) ** (
+                        Decimal(abs(rational.numerator))
+                        / Decimal(rational.denominator)
+                    )
+                    if rational.numerator < 0:
+                        magnitude = Decimal(1) / magnitude
+                if rational.numerator % 2:
+                    magnitude = -magnitude
+                return RuntimeNumber(BigDecimal.from_decimal(magnitude))
+
+        base = complex(
+            float(self.real.to_decimal(precision)),
+            float(self.imag.to_decimal(precision)),
+        )
+        exponent = complex(
+            float(other.real.to_decimal(precision)),
+            float(other.imag.to_decimal(precision)),
+        )
+        result = base**exponent
+
+        # Complex arithmetic can leave a rounding-sized imaginary component
+        # on a mathematically real result, such as i ** 2.
+        tolerance = 1e-15 * max(1.0, abs(result.real), abs(result.imag))
+        real = 0.0 if abs(result.real) <= tolerance else result.real
+        imag = 0.0 if abs(result.imag) <= tolerance else result.imag
+        return RuntimeNumber((float(real), float(imag)))
+
+    def __rpow__(self, other):
+        """Raise another number to this number on the principal branch."""
+        return RuntimeNumber.from_value(other) ** self
 
     def __mod__(self, other):
         """Return the modulus of this runtime number and another value."""
