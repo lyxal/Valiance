@@ -538,6 +538,12 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The preferred non-empty value, otherwise the fallback.",
         category="Optionals and results",
     ),
+    "sqrt": element_documentation(
+        "Compute the square root of a number.",
+        parameters=(("value", "Number to compute square root of."),),
+        returns="The square root of the input number.",
+        category="Mathematics",
+    ),
 }
 
 
@@ -1492,6 +1498,12 @@ def _double(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _squared(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `squared` built-in runtime overload."""
     return (args[0] * args[0],)
+
+
+@builtin("sqrt", (T.Number,), (T.Number,))
+def _sqrt(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `sqrt` built-in runtime overload."""
+    return (args[0] ** 0.5,)
 
 
 @builtin(
