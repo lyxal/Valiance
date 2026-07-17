@@ -577,14 +577,14 @@ def _nominal_copy_error(name: Symbol, env: T.Environment) -> str | None:
 
 
 def _number_literal_type(value: str) -> T.Type:
-    """Determine the type of number literal during static analysis."""
-    if "i" in value.lower():
-        return T.Number
+    """Infer numeric type from the literal's normalized mathematical value."""
     try:
         parsed = RuntimeNumber(value)
     except InvalidOperation:
         return T.Number
-    if parsed == parsed.to_integral_value():
+    if parsed.is_complex():
+        return T.Number
+    if parsed.is_integer():
         return T.Integer
     return T.Real
 

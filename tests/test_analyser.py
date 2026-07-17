@@ -208,10 +208,18 @@ move(file -> file, file)
                 NumberLiteralNode("1.5"),
                 NumberLiteralNode("1e-2"),
                 NumberLiteralNode("1e2"),
+                NumberLiteralNode("1i0"),
+                NumberLiteralNode("1.5i0"),
+                NumberLiteralNode("1i2"),
+                NumberLiteralNode("1.3e5.2"),
+                NumberLiteralNode("1e2.0"),
             ],
         )
 
-        self.assertEqual([node.typ for node in typed], [Integer, Real, Real, Integer])
+        self.assertEqual(
+            [node.typ for node in typed],
+            [Integer, Real, Real, Integer, Integer, Real, Number, Real, Integer],
+        )
 
     def test_builtin_elements_are_declared_before_installation(self):
         names = {element.name for element in BUILTIN_ELEMENTS}

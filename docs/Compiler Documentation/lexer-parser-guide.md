@@ -93,7 +93,10 @@ Important token rules:
   and `$` are unescaped; other backslash sequences are preserved with the
   backslash.
 - Numbers include signed decimals, scientific notation, and the current complex
-  literal form such as `3i4`.
+  literal form such as `3i4`. Scientific exponents may themselves be real-valued,
+  so `1.3e5.2` is one NUMBER token rather than a number followed by field access.
+  Numeric inference uses the normalized value: a zero imaginary component does
+  not force `Number`, so `1i0` is `Integer` and `1.5i0` is `Real`.
 - Alphanumeric identifiers use `_` or alphabetic start characters followed by
   `_`, alphabetic characters, or digits.
 - Symbolic operators are made from `_OP_CHARS`. `_operator()` emits exactly one

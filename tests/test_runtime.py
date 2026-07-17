@@ -272,6 +272,17 @@ end
         self.assertEqual(execute("(1 + 2) * (3 + 4)"), [RuntimeNumber("21")])
         self.assertEqual(execute("5 -(2, _)"), [RuntimeNumber("-3")])
 
+    def test_real_valued_scientific_exponent_executes_as_one_literal(self):
+        result = execute("1.3e5.2")
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], RuntimeNumber("1.3e5.2"))
+        self.assertTrue(str(result[0]).startswith("206036.115019944753"))
+
+    def test_zero_imaginary_component_preserves_real_value(self):
+        self.assertEqual(execute("1i0"), [RuntimeNumber("1")])
+        self.assertEqual(execute("1.5i0"), [RuntimeNumber("1.5")])
+
     def test_arithmetic_preserves_arbitrarily_large_integer_precision(self):
         value = "12345678901234567890123456789"
 

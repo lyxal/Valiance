@@ -52,7 +52,7 @@ from valiance.asts import (
     WhileNode,
     WildcardPatternNode,
 )
-from valiance.parsing import LexError, ParseError, lex, parse, parse_type
+from valiance.parsing import LexError, ParseError, TokenKind, lex, parse, parse_type
 from valiance.vtypes import (
     AnonymousTraitType,
     Atomic,
@@ -105,6 +105,13 @@ class LexerTests(unittest.TestCase):
         tokens = lex("3i")
 
         self.assertEqual(tokens[0].value, "3i")
+
+    def test_lexes_real_valued_scientific_exponent_as_one_number(self):
+        tokens = lex("1.3e5.2")
+
+        self.assertEqual(tokens[0].kind, TokenKind.NUMBER)
+        self.assertEqual(tokens[0].value, "1.3e5.2")
+        self.assertEqual(tokens[1].kind, TokenKind.EOF)
 
     def test_rejects_bang_data_tag_alias(self):
         with self.assertRaises(LexError):

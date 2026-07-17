@@ -317,6 +317,23 @@ class NumericContext:
 ZERO = BigDecimal(0)
 
 
+def _number_component_from_string(value: str) -> BigDecimal:
+    """Parse one real component, including real-valued decimal exponents."""
+    lower = value.lower()
+    if "e" not in lower:
+        return BigDecimal.from_string(value)
+    mantissa_text, exponent_text = lower.split("e", 1)
+    if "." not in exponent_text:
+        return BigDecimal.from_string(value)
+
+    mantissa = Decimal(mantissa_text)
+    exponent = Decimal(exponent_text)
+    with localcontext() as ctx:
+        ctx.prec = NumericContext.min_precision
+        result = mantissa * (Decimal(10) ** exponent)
+    return BigDecimal.from_decimal(result)
+
+
 def inferred_precision(*values: BigDecimal) -> int:
     """
     Estimate a useful working precision for an inexact operation.
@@ -359,10 +376,12 @@ class RuntimeNumber:
         elif isinstance(value, str):
             if "i" in value:
                 parts = value.split("i", 1)
-                self.real = BigDecimal.from_string(parts[0])
-                self.imag = BigDecimal.from_string(parts[1])
+                self.real = _number_component_from_string(parts[0])
+                self.imag = (
+                    ZERO if parts[1] == "" else _number_component_from_string(parts[1])
+                )
             else:
-                self.real = BigDecimal.from_string(value)
+                self.real = _number_component_from_string(value)
                 self.imag = ZERO
         elif isinstance(value, tuple) and len(value) == 2:
             if isinstance(value[0], BigDecimal) and isinstance(value[1], BigDecimal):

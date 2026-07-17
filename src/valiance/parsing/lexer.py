@@ -359,14 +359,15 @@ class _Lexer:
                 self._advance()
 
     def _exponent(self) -> None:
-        """Scan exponent while tokenizing Valiance source."""
+        """Scan an integer or real-valued scientific-notation exponent."""
         self._advance()
         if self._peek() in {"+", "-"}:
             self._advance()
         if not self._peek().isdigit():
             self._fail("expected exponent digits")
-        while self._peek().isdigit():
-            self._advance()
+            if self.recover:
+                return
+        self._number_part()
 
     def _ident(self) -> None:
         """Scan ident while tokenizing Valiance source."""
