@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from valiance.analysis.diagnostics import Diagnostic, SourceLocation, render
-from valiance.main import main
+from valiance.main import _ReplSession, main
 
 
 class MainTests(unittest.TestCase):
@@ -1083,3 +1083,18 @@ class MainTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class ReplBareParameterDiagnosticTests(unittest.TestCase):
+    def test_repl_type_hint_leads_with_bare_parameter_suggestion(self):
+        session = _ReplSession()
+        source = (
+            "define quad(a, b, c) => "
+            "0 - $b | sqrt(4 * $a * c - (2 * $b)) | [+, -] / (2 * $a)"
+        )
+
+        hint = session.type_hint(source)
+
+        self.assertEqual(
+            hint,
+            "Type error: 1:48: unknown element 'c'\ndid you mean '$c'?",
+        )

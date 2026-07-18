@@ -5023,3 +5023,19 @@ class ForeachRefactoringLintTests(unittest.TestCase):
         codes = [finding.code for finding in analyser.lint_findings]
         self.assertNotIn("prefer-vectorisation-or-map", codes)
         self.assertNotIn("prefer-fold", codes)
+
+class BareParameterElementDiagnosticTests(unittest.TestCase):
+    def test_bare_parameter_name_is_suggested_and_prioritised(self):
+        analyser = Analyser()
+        source = (
+            "define quad(a, b, c) => "
+            "0 - $b | sqrt(4 * $a * c - (2 * $b)) | [+, -] / (2 * $a)"
+        )
+
+        analyser.analyse(parse(source))
+
+        self.assertTrue(analyser.diagnostics)
+        self.assertEqual(
+            analyser.diagnostics[0],
+            "1:48: unknown element 'c'\ndid you mean '$c'?",
+        )

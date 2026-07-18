@@ -210,6 +210,8 @@ class _ElementCalls:
     ) -> str:
         """Build an unknown-element message with type-viable typo suggestions."""
         message = f"unknown element '{node.name}'"
+        if branch.variables.read(node.name) is not None:
+            return f"{message}\ndid you mean '${node.name}'?"
         suggestions = self._element_name_suggestions(node, branch)
         if not suggestions:
             return message

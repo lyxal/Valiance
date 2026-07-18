@@ -731,8 +731,15 @@ class Analyser:
     def _diagnose(self, message: str, node: ASTNode | None = None) -> None:
         """Update diagnose state during static analysis."""
         diagnostic = _utils._diagnostic_message(message, node)
-        if diagnostic not in self.diagnostics:
-            self.diagnostics.append(diagnostic)
+        if diagnostic in self.diagnostics:
+            return
+        if "unknown element " in diagnostic and "did you mean '$" in diagnostic:
+            # A bare parameter name is a primary spelling error. Put it before
+            # overload failures produced while recovering through the same chain
+            # so every frontend leads with the actionable cause.
+            self.diagnostics.insert(0, diagnostic)
+            return
+        self.diagnostics.append(diagnostic)
 
     def _warn(self, message: str, node: ASTNode | None = None) -> None:
         """Update warn state during static analysis."""
