@@ -7,6 +7,8 @@ from enum import Enum
 
 from valiance.asts import ASTNode, SourceLocation
 
+from .codes import short_lint_code
+
 
 class RewriteKind(str, Enum):
     """A structural action that could realise a lint recommendation."""
@@ -43,9 +45,15 @@ class LintFinding:
 
     def render(self) -> str:
         """Render the backwards-compatible location-prefixed lint message."""
+        short = short_lint_code(self.code)
+        message = (
+            self.message
+            if short is None
+            else f"[{short}/{self.code}] {self.message}"
+        )
         if self.location is None:
-            return self.message
-        return f"{self.location.line}:{self.location.column}: {self.message}"
+            return message
+        return f"{self.location.line}:{self.location.column}: {message}"
 
 
 def finding(

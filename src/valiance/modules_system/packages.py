@@ -143,9 +143,13 @@ def load_manifest(root: Path) -> Manifest:
         isinstance(code, str) for code in lint_disabled
     ):
         raise PackageError("[lints].disable must be an array of lint-code strings")
-    from valiance.analysis.lints import KNOWN_LINT_CODES
+    from valiance.analysis.lints import canonical_lint_code
 
-    unknown_codes = sorted(set(lint_disabled) - KNOWN_LINT_CODES)
+    resolved_lint_codes = tuple(canonical_lint_code(code) for code in lint_disabled)
+    unknown_codes = sorted(
+        code for code, canonical in zip(lint_disabled, resolved_lint_codes, strict=True)
+        if canonical is None
+    )
     if unknown_codes:
         rendered = ", ".join(repr(code) for code in unknown_codes)
         raise PackageError(f"unknown lint code(s) in [lints].disable: {rendered}")
@@ -218,7 +222,10 @@ def load_manifest(root: Path) -> Manifest:
         dict(project),
         parsed_entries,
         tuple(_parse_dependency(name, value) for name, value in dependencies.items()),
-        LintSettings(lint_enabled, tuple(dict.fromkeys(lint_disabled))),
+        LintSettings(
+            lint_enabled,
+            tuple(dict.fromkeys(code for code in resolved_lint_codes if code is not None)),
+        ),
         parsed_builds,
     )
 

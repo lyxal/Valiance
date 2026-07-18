@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
-from valiance.analysis.lints import KNOWN_LINT_CODES, finding
+from valiance.analysis.lints import canonical_lint_code, finding
 import valiance.vtypes as T
 from valiance.asts import (
     AnnotationNode,
@@ -84,7 +84,8 @@ def _file_lint_suppression(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Apply a file-scoped lint suppression without emitting runtime code."""
-    unknown = tuple(code for code in node.codes if code not in KNOWN_LINT_CODES)
+    resolved = tuple((code, canonical_lint_code(code)) for code in node.codes)
+    unknown = tuple(code for code, canonical in resolved if canonical is None)
     for code in unknown:
         self._record_lint_finding(
             finding(
@@ -93,7 +94,7 @@ def _file_lint_suppression(
                 node,
             )
         )
-    known = tuple(code for code in node.codes if code in KNOWN_LINT_CODES)
+    known = tuple(canonical for _code, canonical in resolved if canonical is not None)
     if node.codes:
         if self.disabled_lint_codes is not None:
             self.disabled_lint_codes.update(known)
@@ -110,7 +111,8 @@ def _lint_suppression(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse one statement and discard its selected lint findings."""
-    unknown = tuple(code for code in node.codes if code not in KNOWN_LINT_CODES)
+    resolved = tuple((code, canonical_lint_code(code)) for code in node.codes)
+    unknown = tuple(code for code, canonical in resolved if canonical is None)
     for code in unknown:
         self._record_lint_finding(
             finding("unknown-lint-code", f"unknown lint code '{code}' in @lintOff", node)
@@ -119,7 +121,7 @@ def _lint_suppression(
     outputs = self.analyse_from(branch, node.body)
     new_findings = self.lint_findings[finding_count:]
     produced = {item.code for item in new_findings}
-    suppressed = {code for code in node.codes if code in KNOWN_LINT_CODES}
+    suppressed = {canonical for _code, canonical in resolved if canonical is not None}
     kept = (
         ()
         if not node.codes

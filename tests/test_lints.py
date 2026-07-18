@@ -123,6 +123,26 @@ class BuiltinLintRuleTests(unittest.TestCase):
         )
         self.assertNotIn("explicit-map-can-vectorise", codes)
 
+    def test_short_code_suppresses_lint(self) -> None:
+        """A short lint identifier is accepted anywhere its long name is accepted."""
+        self.assertNotIn(
+            "prefer-sum",
+            self._codes(
+                '@lintFileOff("L011")\n'
+                '$total = 0\n[1, 2] foreach (n) => $total := + $n end'
+            ),
+        )
+
+    def test_lint_render_includes_short_and_long_codes(self) -> None:
+        """Displayed diagnostics make both suppression identifiers discoverable."""
+        analyser = Analyser()
+        analyser.analyse(parse("[1, 2, 3] map: + 1"))
+        rendered = next(
+            lint for lint in analyser.lints
+            if "explicit-map-can-vectorise" in lint
+        )
+        self.assertIn("[L005/explicit-map-can-vectorise]", rendered)
+
     def test_repeated_literal_equality_chain_prefers_match(self) -> None:
         """An else-if chain over one subject is match-shaped."""
         self.assertIn(

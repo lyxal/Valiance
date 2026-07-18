@@ -405,10 +405,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
     ),
     "reshape": element_documentation(
         "Reshape a finite value using a list or tuple of dimensions.",
-        parameters=(
-            ("values", "Finite input value; nested lists are flattened first."),
-            ("shape", "Non-empty list or tuple of non-negative integer dimensions."),
-        ),
+        parameters=(("values", "Finite input value; nested lists are flattened first."), ("shape", "Non-empty list or tuple of non-negative integer dimensions.")),
         returns="A nested list whose rank equals the number of dimensions.",
         examples=(("[1, 2, 3, 4, 5, 6] reshape {2, 3}", "[[1, 2, 3], [4, 5, 6]]"),),
         category="Collections",
@@ -2235,11 +2232,7 @@ def _remove_at(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),),
     param_names=("values", "shape"),
     vectorisable=False,
-    where_clause=(
-        GetVariableNode(Symbol("shape")),
-        ElementNode(Symbol("length")),
-        SetVariableNode(Symbol("n")),
-    ),
+    where_clause=(GetVariableNode(Symbol("shape")), ElementNode(Symbol("length")), SetVariableNode(Symbol("n"))),
 )
 def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Reshape a finite, possibly nested value to the requested dimensions."""
@@ -2247,7 +2240,6 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     shape_values = list(raw_shape)
     if not shape_values:
         raise RuntimeError("reshape shape must contain at least one dimension")
-
     shape: list[int] = []
     for raw_dimension in shape_values:
         if not isinstance(raw_dimension, RuntimeNumber) or not raw_dimension.is_integer():
@@ -2256,7 +2248,6 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         if dimension < 0:
             raise RuntimeError("reshape dimensions must be non-negative")
         shape.append(dimension)
-
     def flatten(value: Any) -> Iterator[Any]:
         """Yield scalar leaves from a finite prefix of a nested value."""
         if is_list_like(value) or isinstance(value, tuple):
@@ -2264,7 +2255,6 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 yield from flatten(item)
         else:
             yield value
-
     expected = 1
     for dimension in shape:
         expected *= dimension
@@ -2272,13 +2262,8 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     if len(items) != expected:
         rendered_shape = ", ".join(str(dimension) for dimension in shape)
         received = f"more than {expected}" if len(items) > expected else str(len(items))
-        raise RuntimeError(
-            f"reshape needs exactly {expected} items for shape ({rendered_shape}); "
-            f"received {received}"
-        )
-
+        raise RuntimeError(f"reshape needs exactly {expected} items for shape ({rendered_shape}); received {received}")
     position = 0
-
     def build(depth: int) -> list[Any]:
         """Build one nested result level while advancing the flat position."""
         nonlocal position
@@ -2288,7 +2273,6 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
             position += dimension
             return result
         return [build(depth + 1) for _ in range(dimension)]
-
     return (build(0),)
 
 @builtin(

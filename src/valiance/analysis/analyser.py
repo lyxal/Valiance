@@ -377,10 +377,16 @@ class Analyser:
             if self.project_lints_enabled
             else None
         )
+        from valiance.analysis.lints import canonical_lint_code
+
         for node in program:
             if isinstance(node, FileLintSuppressionNode):
                 if node.codes:
-                    self.disabled_lint_codes.update(node.codes)
+                    self.disabled_lint_codes.update(
+                        canonical
+                        for code in node.codes
+                        if (canonical := canonical_lint_code(code)) is not None
+                    )
                 else:
                     self.disabled_lint_codes = None
                     break

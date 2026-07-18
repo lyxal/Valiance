@@ -4382,7 +4382,7 @@ class SmartDiagnosticTests(unittest.TestCase):
         self.assertEqual(
             analyser.lints,
             [
-                "1:3: this move leaves the stack unchanged; "
+                "1:3: [L007/no-op-move] this move leaves the stack unchanged; "
                 "remove `move(value -> value)`"
             ],
         )
@@ -4396,7 +4396,7 @@ class SmartDiagnosticTests(unittest.TestCase):
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             analyser.lints,
-            ["1:3: unnecessary cast to Integer; remove `as Integer`"],
+            ["1:3: [L013/redundant-cast] unnecessary cast to Integer; remove `as Integer`"],
         )
         self.assertEqual(typed[-1].typ, Integer)
 
@@ -4409,7 +4409,7 @@ class SmartDiagnosticTests(unittest.TestCase):
         self.assertEqual(
             analyser.lints,
             [
-                "1:3: checked cast to Number is statically safe; "
+                "1:3: [L015/safe-checked-cast] checked cast to Number is statically safe; "
                 "write `as Number` instead of `as! Number`"
             ],
         )
@@ -4450,7 +4450,7 @@ class SmartDiagnosticTests(unittest.TestCase):
         self.assertEqual(
             analyser.lints,
             [
-                "1:3: this copy produces no values and has no effect; "
+                "1:3: [L006/no-op-copy] this copy produces no values and has no effect; "
                 "remove `copy(value ->)`"
             ],
         )
@@ -4475,7 +4475,7 @@ end
         self.assertEqual(
             analyser.lints,
             [
-                "4:3: code after `return` is unreachable; "
+                "4:3: [L017/unreachable-code] code after `return` is unreachable; "
                 "remove it or move it before the return"
             ],
         )
@@ -4501,7 +4501,7 @@ end
         self.assertEqual(
             analyser.lints,
             [
-                "5:3: match case is unreachable because an earlier case "
+                "5:3: [L018/unreachable-match-case] match case is unreachable because an earlier case "
                 "matches every value; remove this case"
             ],
         )
@@ -4527,7 +4527,7 @@ end
         self.assertEqual(
             analyser.lints,
             [
-                "5:3: duplicate match case; remove this case because the "
+                "5:3: [L003/duplicate-match-case] duplicate match case; remove this case because the "
                 "same literal pattern appears earlier"
             ],
         )
@@ -4551,7 +4551,7 @@ end
         self.assertEqual(
             analyser.lints,
             [
-                "4:8: duplicate match alternative; remove the repeated "
+                "4:8: [L004/duplicate-pattern-alternative] duplicate match alternative; remove the repeated "
                 "literal pattern"
             ],
         )

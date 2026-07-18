@@ -1413,11 +1413,7 @@ def _apply_call_site_checked_overload(
         }
         specialized_source = _functions._transform_overload_types(
             static_source,
-            lambda typ: static_where.substitute_static_type(
-                typ,
-                ranks=rank_values,
-                types=preliminary_substitution,
-            ),
+            lambda typ: static_where.substitute_static_type(typ, ranks=rank_values, types=preliminary_substitution),
         )
         if not _call_site_explicit_args_match(specialized_source.params, args, ctx):
             continue

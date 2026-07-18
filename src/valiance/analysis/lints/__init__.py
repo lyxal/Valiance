@@ -11,32 +11,11 @@ from .registry import LintRegistry
 from .rules import load_rules
 
 
-KNOWN_LINT_CODES = frozenset(
-    {
-        "captured-write-not-persistent",
-        "constant-never-reassigned",
-        "duplicate-match-case",
-        "duplicate-pattern-alternative",
-        "explicit-map-can-vectorise",
-        "no-op-copy",
-        "no-op-move",
-        "prefer-filter",
-        "prefer-fold",
-        "prefer-match",
-        "prefer-sum",
-        "prefer-vectorisation-or-map",
-        "redundant-cast",
-        "redundant-checked-cast",
-        "safe-checked-cast",
-        "unknown-lint-code",
-        "unreachable-code",
-        "unreachable-match-case",
-        "unused-lint-suppression",
-        "unused-loop-index",
-        "unicode-identifier-security",
-        "while-can-be-foreach",
-    }
-)
+from .codes import LINT_SHORT_CODES, canonical_lint_code, short_lint_code
+
+
+KNOWN_LINT_CODES = frozenset(LINT_SHORT_CODES)
+KNOWN_LINT_IDENTIFIERS = frozenset((*LINT_SHORT_CODES, *LINT_SHORT_CODES.values()))
 
 DEFAULT_REGISTRY = LintRegistry()
 load_rules(DEFAULT_REGISTRY)
@@ -45,6 +24,10 @@ __all__ = [
     "BlockLintContext",
     "DEFAULT_REGISTRY",
     "KNOWN_LINT_CODES",
+    "KNOWN_LINT_IDENTIFIERS",
+    "LINT_SHORT_CODES",
+    "canonical_lint_code",
+    "short_lint_code",
     "LintFinding",
     "LintRegistry",
     "LintRewrite",

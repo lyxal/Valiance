@@ -1075,7 +1075,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         rendered = error.getvalue()
         self.assertIn(
-            "Lint warning: checked cast to Number is statically safe",
+            "Lint warning: [L015/safe-checked-cast] checked cast to Number is statically safe",
             rendered,
         )
         self.assertIn("write `as Number` instead of `as! Number`", rendered)
