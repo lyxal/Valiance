@@ -1567,3 +1567,19 @@ Unsupported instructions, dynamic callables, effects, extensions, multidispatch,
 or non-scalar output shapes reject symbolic preparation and retain the ordinary
 VM path. The former membership-specific recognizer is intentionally absent so
 new spellings cannot be addressed by accumulating more positional cases.
+
+### Exact-rank collection arguments in prepared leaves
+
+Prepared direct-leaf calls no longer equate every list-like argument with a
+request for vectorisation. Before adapting a collection argument, the plan
+compares its runtime collection rank with the function parameter's analysed
+collection rank. An exact-rank argument is one scalar parameter value and enters
+the leaf directly; only arguments above the accepted rank use collection
+adaptation. This applies to arbitrary collection-accepting leaf functions and is
+not specific to grids, neighborhoods, indexing, or cellular automata.
+
+This distinction is especially important for higher-order mapping over nested
+collections. A mapper accepting `T+` must receive each rank-one cell group once,
+not recursively vectorise the mapper over every scalar inside that group. Rank-2
+inputs to that same rank-1 parameter continue to vectorise normally. The tests
+cover both sides of this boundary.

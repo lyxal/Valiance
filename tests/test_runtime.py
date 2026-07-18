@@ -580,6 +580,43 @@ end
             },
         )
 
+    def test_prepared_leaf_treats_exact_rank_collection_as_scalar(self):
+        source = """
+fn (cells: Integer+) -> Integer => $cells[1] end
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+        function = vm.run(compile_program(typed, optimize=False))[0]
+        prepared = vm.prepare_call(function, 1, 1)
+
+        self.assertEqual(
+            prepared.invoke1(
+                [RuntimeNumber(10), RuntimeNumber(20), RuntimeNumber(30)]
+            ),
+            (RuntimeNumber(20),),
+        )
+
+    def test_prepared_leaf_still_vectorises_above_parameter_rank(self):
+        source = """
+fn (cells: Integer+) -> Integer => $cells[0] end
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+        function = vm.run(compile_program(typed, optimize=False))[0]
+        prepared = vm.prepare_call(function, 1, 1)
+
+        result = prepared.invoke1(
+            [
+                [RuntimeNumber(1), RuntimeNumber(2)],
+                [RuntimeNumber(3), RuntimeNumber(4)],
+            ]
+        )
+        self.assertEqual(result, ([RuntimeNumber(1), RuntimeNumber(3)],))
+
     def test_prepared_call_exposes_arity_specialised_invocation(self):
         analyser = Analyser()
         typed = analyser.analyse(

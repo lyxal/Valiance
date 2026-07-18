@@ -909,9 +909,20 @@ class VirtualMachine:
             return None
         needs_contracts = _prepared_call_needs_return_contracts(value.code)
 
+        target_ranks = value.code.param_collection_ranks
+
         def invoke_leaf(*args: Any) -> tuple[Any, ...]:
             """Invoke a direct leaf while preserving collection adaptation."""
-            if any(is_list_like(arg) for arg in args):
+            collection_args_are_scalar = (
+                len(target_ranks) == len(args)
+                and all(
+                    target_rank is not None
+                    and runtime_collection_rank(arg) == target_rank
+                    for arg, target_rank in zip(args, target_ranks, strict=True)
+                    if is_list_like(arg)
+                )
+            )
+            if any(is_list_like(arg) for arg in args) and not collection_args_are_scalar:
                 return tuple(self.call_value(value, list(args)))
             if needs_contracts:
                 return tuple(self._execute_direct_leaf(value, tuple(args)))
