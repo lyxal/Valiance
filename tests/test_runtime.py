@@ -78,7 +78,7 @@ end
 const $BOARD_WIDTH = 10
 const $BOARD_HEIGHT = 10
 
-$board = range(1, $BOARD_WIDTH * $BOARD_HEIGHT) | map: randbit | reshape ($BOARD_WIDTH, $BOARD_HEIGHT)
+$board = range(1, $BOARD_WIDTH * $BOARD_HEIGHT) | map: randbit | reshape {$BOARD_WIDTH, $BOARD_HEIGHT}
 $board := step
 $board
 """
@@ -98,7 +98,7 @@ define step(board: Number++) -> Number++ =>
 end
 
 const ($BOARD_WIDTH, $BOARD_HEIGHT) = 10 | 10
-$board = range(1, $BOARD_WIDTH * $BOARD_HEIGHT) | map: randbit | reshape ($BOARD_WIDTH, $BOARD_HEIGHT)
+$board = range(1, $BOARD_WIDTH * $BOARD_HEIGHT) | map: randbit | reshape {$BOARD_WIDTH, $BOARD_HEIGHT}
 $board := step
 $board
 """
@@ -3227,6 +3227,58 @@ println
             with contextlib.redirect_stdout(output):
                 self.assertEqual(execute(source.format(function=function)), [])
             self.assertEqual(output.getvalue(), expected)
+
+    def test_reshape_accepts_tuple_shape_and_infers_exact_rank(self):
+        source = "[1, 2, 3, 4, 5, 6] reshape {2, 3}"
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(str(typed[-1].typ), "Integer+2")
+        expected = [[RuntimeNumber("1"), RuntimeNumber("2"), RuntimeNumber("3")],
+                    [RuntimeNumber("4"), RuntimeNumber("5"), RuntimeNumber("6")]]
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            self.assertEqual(_materialize_lists(run(program)), [expected])
+            self.assertEqual(_materialize_lists(run(loads(dumps(program)))), [expected])
+
+    def test_reshape_accepts_runtime_list_shape_with_minimum_rank(self):
+        source = "[1, 2, 3, 4, 5, 6] reshape [2, 3]"
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(str(typed[-1].typ), "Integer*")
+        self.assertEqual(
+            _materialize_lists(run(compile_program(typed, optimize=False))),
+            [[[RuntimeNumber("1"), RuntimeNumber("2"), RuntimeNumber("3")],
+              [RuntimeNumber("4"), RuntimeNumber("5"), RuntimeNumber("6")]]],
+        )
+
+    def test_reshape_supports_arbitrary_rank_and_flattens_input(self):
+        self.assertEqual(
+            _materialize_lists(execute("[[1, 2], [3, 4]] reshape {2, 1, 2}")),
+            [[[[RuntimeNumber("1"), RuntimeNumber("2")]],
+              [[RuntimeNumber("3"), RuntimeNumber("4")]]]],
+        )
+
+    def test_reshape_rejects_old_three_argument_form(self):
+        analyser = Analyser()
+        analyser.analyse(parse("[1, 2, 3, 4] reshape (2, 2)"))
+        self.assertTrue(analyser.diagnostics)
+        self.assertIn("no overloads for element 'reshape'", str(analyser.diagnostics[0]))
+
+    def test_reshape_validates_shape_and_item_count(self):
+        analyser = Analyser()
+        analyser.analyse(parse("[1] reshape {}"))
+        self.assertTrue(analyser.diagnostics)
+
+        invalid = (
+            ("[1] reshape {1.5}", "must be integers"),
+            ("[1] reshape {-1}", "must be non-negative"),
+            ("[1, 2, 3] reshape {2, 2}", "needs exactly 4 items"),
+        )
+        for source, message in invalid:
+            with self.subTest(source=source), self.assertRaisesRegex(RuntimeError, message):
+                execute(source)
 
     def test_executes_list_tuple_record_and_dict_literals(self):
         self.assertEqual(execute("[1, 2, 3] length"), [RuntimeNumber("3")])

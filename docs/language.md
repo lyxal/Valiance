@@ -223,14 +223,14 @@ $instructions[$i].jump = $open
 - `removeAt(index)` returns a copy without the indexed item. Negative indices count from the end.
 - `rotate(amount)` rotates a finite list or string.
 - `sum` adds a numeric list and returns zero for an empty list.
-- `reshape(rows, columns)` turns a flat finite list into a rectangular rank-2 list and requires exactly `rows * columns` items.
+- `reshape shape` reshapes a finite value using a non-empty list or tuple of dimensions; tuple length determines the exact result rank.
 - `map` accepts strings as character sequences. It also accepts a niladic callable; in that overload the callable is invoked once per input item and the item itself is ignored. This supports constructions such as `range(1, 100) | map: randbit`.
 
 ```
 [0] overtake 5                 #? [0, 0, 0, 0, 0]
 "aaabbc" groupConsecutive     #? ["aaa", "bb", "c"]
 [1, 2, 3, 4] removeAt(1)      #? [1, 3, 4]
-range(1, 6) reshape(2, 3)     #? [[1, 2, 3], [4, 5, 6]]
+range(1, 6) reshape {2, 3}     #? [[1, 2, 3], [4, 5, 6]]
 ```
  
 ## 1.7. Arrays

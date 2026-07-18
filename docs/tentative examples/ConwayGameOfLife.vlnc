@@ -15,7 +15,7 @@ define step(board: Number++) -> Number++ =>
 end
 
 const ($BOARD_WIDTH, $BOARD_HEIGHT) = 10 | 10
-$board = range(1, $BOARD_WIDTH * $BOARD_HEIGHT) | map: randbit | reshape ($BOARD_WIDTH, $BOARD_HEIGHT)
+$board = range(1, $BOARD_WIDTH * $BOARD_HEIGHT) | map: randbit | reshape {$BOARD_WIDTH, $BOARD_HEIGHT}
 
 while (true) =>
   println $board

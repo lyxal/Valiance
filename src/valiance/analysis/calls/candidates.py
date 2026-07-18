@@ -1411,13 +1411,21 @@ def _apply_call_site_checked_overload(
             )
             if value.is_integer() and int(str(value)) >= 0
         }
-        specialized_source = _substitute_overload_ranks(static_source, rank_values)
+        specialized_source = _functions._transform_overload_types(
+            static_source,
+            lambda typ: static_where.substitute_static_type(
+                typ,
+                ranks=rank_values,
+                types=preliminary_substitution,
+            ),
+        )
         if not _call_site_explicit_args_match(specialized_source.params, args, ctx):
             continue
 
         deferred = replace(
             overload,
             params=specialized_source.params,
+            returns=specialized_source.returns,
             generic_constraints=specialized_source.generic_constraints,
         )
         for extra_count in range(len(branch.stack) + 1):

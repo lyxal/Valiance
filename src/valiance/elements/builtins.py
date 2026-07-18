@@ -17,6 +17,7 @@ from typing import Any
 
 import valiance.vtypes as T
 from valiance.elements.documentation import ElementDocumentation, element_documentation
+from valiance.asts import ElementNode, GetVariableNode, SetVariableNode
 from valiance.runtime.runtime_values import (
     LazyList,
     ListValue,
@@ -403,13 +404,13 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         category="Collections",
     ),
     "reshape": element_documentation(
-        "Reshape a flat list into a rectangular two-dimensional list.",
+        "Reshape a finite value using a list or tuple of dimensions.",
         parameters=(
-            ("values", "Flat input list."),
-            ("rows", "Number of output rows."),
-            ("columns", "Number of items in each row."),
+            ("values", "Finite input value; nested lists are flattened first."),
+            ("shape", "Non-empty list or tuple of non-negative integer dimensions."),
         ),
-        returns="A two-dimensional list with the requested shape.",
+        returns="A nested list whose rank equals the number of dimensions.",
+        examples=(("[1, 2, 3, 4, 5, 6] reshape {2, 3}", "[[1, 2, 3], [4, 5, 6]]"),),
         category="Collections",
     ),
     "append": element_documentation(
@@ -763,6 +764,7 @@ def builtin(
     param_names: tuple[str | Symbol | None, ...] = (),
     documentation: ElementDocumentation | None = None,
     vectorisable: bool = True,
+    where_clause: tuple[object, ...] = (),
 ):
     """Register one overload of `name`, implemented by the decorated function."""
     normalized_param_names = tuple(
@@ -781,6 +783,7 @@ def builtin(
                 params,
                 returns,
                 generic_constraints,
+                where_clause=where_clause,
                 param_names=normalized_param_names,
                 call_site_body=call_site,
                 element_tags=frozenset(element_tags),
@@ -2221,36 +2224,72 @@ def _remove_at(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin(
     "reshape",
-    (T.ExactList(T.V("Item")), T.Integer, T.Integer),
-    (T.ExactList(T.V("Item"), 2),),
-    param_names=("values", "rows", "columns"),
+    (T.C(T.ListRuggedType, T.V("Item")), T.ExactList(T.Number)),
+    (T.C(T.ListMinType, T.V("Item")),),
+    param_names=("values", "shape"),
+    vectorisable=False,
 )
 @builtin(
     "reshape",
-    (T.Integer, T.Integer, T.ExactList(T.V("Item"))),
-    (T.ExactList(T.V("Item"), 2),),
-    param_names=("rows", "columns", "values"),
+    (T.C(T.ListRuggedType, T.V("Item")), T.TupRepeat(T.Number)),
+    (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),),
+    param_names=("values", "shape"),
+    vectorisable=False,
+    where_clause=(
+        GetVariableNode(Symbol("shape")),
+        ElementNode(Symbol("length")),
+        SetVariableNode(Symbol("n")),
+    ),
 )
 def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Reshape a flat finite list into a rectangular two-dimensional list."""
-    if isinstance(args[0], RuntimeNumber):
-        raw_rows, raw_columns, values = args
-    else:
-        values, raw_rows, raw_columns = args
-    rows = int(raw_rows)
-    columns = int(raw_columns)
-    if rows < 0 or columns < 0:
-        raise RuntimeError("reshape dimensions must be non-negative")
+    """Reshape a finite, possibly nested value to the requested dimensions."""
+    values, raw_shape = args
+    shape_values = list(raw_shape)
+    if not shape_values:
+        raise RuntimeError("reshape shape must contain at least one dimension")
 
-    expected = rows * columns
-    items = list(islice(iter(values), expected + 1))
+    shape: list[int] = []
+    for raw_dimension in shape_values:
+        if not isinstance(raw_dimension, RuntimeNumber) or not raw_dimension.is_integer():
+            raise RuntimeError("reshape dimensions must be integers")
+        dimension = int(raw_dimension)
+        if dimension < 0:
+            raise RuntimeError("reshape dimensions must be non-negative")
+        shape.append(dimension)
+
+    def flatten(value: Any) -> Iterator[Any]:
+        """Yield scalar leaves from a finite prefix of a nested value."""
+        if is_list_like(value) or isinstance(value, tuple):
+            for item in value:
+                yield from flatten(item)
+        else:
+            yield value
+
+    expected = 1
+    for dimension in shape:
+        expected *= dimension
+    items = list(islice(flatten(values), expected + 1))
     if len(items) != expected:
+        rendered_shape = ", ".join(str(dimension) for dimension in shape)
+        received = f"more than {expected}" if len(items) > expected else str(len(items))
         raise RuntimeError(
-            f"reshape needs exactly {expected} items for shape ({rows}, {columns}); "
-            f"received {'more than ' if len(items) > expected else ''}{len(items)}"
+            f"reshape needs exactly {expected} items for shape ({rendered_shape}); "
+            f"received {received}"
         )
-    return ([items[row * columns : (row + 1) * columns] for row in range(rows)],)
 
+    position = 0
+
+    def build(depth: int) -> list[Any]:
+        """Build one nested result level while advancing the flat position."""
+        nonlocal position
+        dimension = shape[depth]
+        if depth == len(shape) - 1:
+            result = items[position : position + dimension]
+            position += dimension
+            return result
+        return [build(depth + 1) for _ in range(dimension)]
+
+    return (build(0),)
 
 @builtin(
     "append",
