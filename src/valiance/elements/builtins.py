@@ -580,6 +580,7 @@ class RuntimeContext:
     ) = None
     static_values: tuple[Any, ...] = ()
     type_args: tuple[str, ...] = ()
+    test_predicate: Callable[[Any, Any], bool] | None = None
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
@@ -631,6 +632,11 @@ class BuiltinOverload:
         tuple[tuple[T.DataTag, ...], tuple[T.DataTag, ...]], ...
     ] = field(init=False, repr=False, compare=False)
     ownership_trivial: bool = field(init=False, repr=False, compare=False)
+    runtime_argument_passthrough: tuple[bool, ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         """Cache runtime-only signature facts used on every invocation."""
@@ -663,6 +669,14 @@ class BuiltinOverload:
                 for typ in (*self.signature.params, *self.signature.returns)
             ),
         )
+        object.__setattr__(
+            self,
+            "runtime_argument_passthrough",
+            tuple(
+                _runtime_parameter_preserves_value(param)
+                for param in self.signature.params
+            ),
+        )
 
     def runtime_matches(self, args: tuple[Any, ...]) -> bool:
         """Return whether these runtime arguments match the nominal signature."""
@@ -691,10 +705,10 @@ class BuiltinOverload:
         if self.signature.call_site_body is not None:
             return args
         return tuple(
-            _runtime_implementation_arg(argument, parameter)
-            for argument, parameter in zip(
+            argument if passthrough else unwrap_runtime_value(argument)
+            for argument, passthrough in zip(
                 args,
-                self.signature.params,
+                self.runtime_argument_passthrough,
                 strict=True,
             )
         )
@@ -868,6 +882,14 @@ def _present_value(value: Any) -> Any:
         return value.fields.get("value", _MISSING)
     return _MISSING
 
+
+
+def _runtime_parameter_preserves_value(parameter: T.Type) -> bool:
+    """Return whether a built-in parameter receives the complete runtime value."""
+    parameter = T.normalize(parameter)
+    while isinstance(parameter, (T.ExactType, T.AtomicType, T.TaggedType)):
+        parameter = T.normalize(parameter.inner)
+    return isinstance(parameter, (T.VarType, T.FunctionType, T.OverloadSetType))
 
 def _runtime_implementation_arg(value: Any, parameter: T.Type) -> Any:
     """Return the runtime representation expected by a built-in parameter.
@@ -1711,6 +1733,11 @@ def _filter(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
     def filtered_items():
         """Collect the items for filtered for the built-in catalogue and runtime."""
+        if ctx.test_predicate is not None:
+            for item in values:
+                if ctx.test_predicate(predicate, item):
+                    yield item
+            return
         for item in values:
             result = ctx.call(predicate, [item])
             if result[0]:

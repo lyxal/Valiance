@@ -134,6 +134,11 @@ class FunctionValue:
         repr=False,
         compare=False,
     )
+    predicate_test: Callable[[Any], bool] | None | bool = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __repr__(self) -> str:
         """Return a developer-facing representation of this function value."""
@@ -406,6 +411,7 @@ class VirtualMachine:
                     self.call_value,
                     self.format_value,
                     self.call_value_overload,
+                    test_predicate=self.test_predicate,
                 ),
             )
             for name, element in (
@@ -498,6 +504,134 @@ class VirtualMachine:
         )
         return list(contracted)
 
+    def test_predicate(self, value: Any, argument: Any) -> bool:
+        """Invoke a unary predicate through the cheapest semantics-preserving path."""
+        if isinstance(value, FunctionValue) and self._can_execute_direct_leaf(value):
+            if value.predicate_test is None:
+                value.predicate_test = self._prepare_vector_membership_predicate(value) or False
+            if value.predicate_test is not False:
+                return value.predicate_test(argument)
+            result = self._execute_direct_leaf_body(value, (argument,))
+            if len(result) != 1:
+                raise RuntimeError("predicate must return exactly one value")
+            return bool(unwrap_runtime_value(result[0]))
+        result = self.call_value(value, [argument])
+        if len(result) != 1:
+            raise RuntimeError("predicate must return exactly one value")
+        return bool(unwrap_runtime_value(result[0]))
+
+    def _prepare_vector_membership_predicate(
+        self,
+        function: FunctionValue,
+    ) -> Callable[[Any], bool] | None:
+        """Prepare a straight-line scalar/vector/membership predicate when possible.
+
+        The specialization is structural rather than source-name based. It recognizes
+        the bytecode produced for a scalar argument broadcast across a constant exact
+        list, followed by membership testing of the vector result. The generic VM path
+        remains the fallback for every other callable shape.
+        """
+        instructions = function.code.instructions
+        if len(function.code.params) != 1 or len(instructions) < 12:
+            return None
+        if instructions[0].op is not OpCode.PUSH_CONST:
+            return None
+        needle = instructions[0].arg
+        if not (
+            instructions[1].op is OpCode.LOAD_VAR
+            and instructions[1].arg == function.code.params[0]
+        ):
+            return None
+
+        constants: list[Any] = []
+        temporary_names: list[str] = []
+        index = 2
+        while index + 3 < len(instructions):
+            begin, constant, end, store = instructions[index : index + 4]
+            if not (
+                begin.op is OpCode.CYCLE_BEGIN
+                and constant.op is OpCode.PUSH_CONST
+                and end.op is OpCode.CYCLE_END
+                and store.op is OpCode.STORE_VAR
+                and isinstance(store.arg, str)
+                and store.arg.startswith("\x00literal_")
+            ):
+                break
+            constants.append(constant.arg)
+            temporary_names.append(store.arg)
+            index += 4
+        if not constants:
+            return None
+        for name in temporary_names:
+            if not (
+                index < len(instructions)
+                and instructions[index].op is OpCode.LOAD_VAR
+                and instructions[index].arg == name
+            ):
+                return None
+            index += 1
+        if index >= len(instructions) or instructions[index].op is not OpCode.BUILD_LIST:
+            return None
+        build_arg = instructions[index].arg
+        if not isinstance(build_arg, tuple) or build_arg[0] != len(constants):
+            return None
+        index += 1
+        if index >= len(instructions) or instructions[index].op is not OpCode.CALL_RESOLVED_ELEMENT:
+            return None
+        vector_reference = instructions[index].arg
+        if not (
+            isinstance(vector_reference, ResolvedElementReference)
+            and vector_reference.vectorised
+            and vector_reference.vectorised_depths == (0, 1)
+            and vector_reference.extension is None
+        ):
+            return None
+        index += 1
+        if index < len(instructions) and instructions[index].op is OpCode.STACK_SHUFFLE:
+            index += 1
+        if index < len(instructions) and instructions[index].op is OpCode.CALL_RESOLVED_ELEMENT:
+            swap_reference = instructions[index].arg
+            if isinstance(swap_reference, ResolvedElementReference) and swap_reference.name == "swap":
+                index += 1
+        if index + 1 >= len(instructions):
+            return None
+        membership = instructions[index]
+        returned = instructions[index + 1]
+        if not (
+            membership.op is OpCode.CALL_RESOLVED_ELEMENT
+            and isinstance(membership.arg, ResolvedElementReference)
+            and membership.arg.name == "in"
+            and returned.op is OpCode.RETURN
+            and index + 2 == len(instructions)
+        ):
+            return None
+
+        builtin = function.globals.get(vector_reference.name)
+        if not isinstance(builtin, BuiltinValue):
+            return None
+        try:
+            overload = builtin.element.definitions[vector_reference.overload_index]
+        except IndexError:
+            return None
+        implementation = overload.implementation
+        if implementation is None or len(overload.signature.params) != 2:
+            return None
+        context = builtin.context
+        projected_constants = tuple(constants)
+
+        def test(argument: Any) -> bool:
+            """Evaluate the prepared predicate without frames or temporary vectors."""
+            for constant in projected_constants:
+                runtime_args = overload.runtime_arguments((argument, constant))
+                result = implementation(runtime_args, context)
+                if len(result) != 1:
+                    raise RuntimeError("vectorized scalar overload must return one value")
+                if unwrap_runtime_value(result[0]) == needle:
+                    return True
+            return False
+
+        return test
+
     def call_value(self, value: Any, args: list[Any]) -> list[Any]:
         """Invoke a runtime callable, resolving overload and vectorisation behaviour."""
         if isinstance(value, FunctionValue):
@@ -518,6 +652,8 @@ class VirtualMachine:
                     raise
                 except Exception:
                     pass
+            if self._can_execute_direct_leaf(value):
+                return self._execute_direct_leaf(value, tuple(args))
             return self.call(value, args)
         if isinstance(value, OverloadedFunctionValue):
             if len(value.overloads) == 1:
@@ -1872,12 +2008,10 @@ class VirtualMachine:
                     except IndexError:
                         direct_leaf = False
                         break
-                    if not overload.ownership_trivial:
-                        direct_leaf = False
-                        break
                 elif (
                     instruction.op in {OpCode.LOAD_VAR, OpCode.LOAD_VAR_BORROW}
                     and instruction.arg not in function.code.params
+                    and not str(instruction.arg).startswith("\x00literal_")
                 ):
                     value = function.globals.get(instruction.arg, _MISSING_NAME)
                     if value is _MISSING_NAME or _needs_release(value):
@@ -1886,18 +2020,15 @@ class VirtualMachine:
             function.direct_leaf = direct_leaf
         return function.direct_leaf and not function.code.accepts_stack_inputs
 
-    def _execute_direct_leaf(
+    def _execute_direct_leaf_body(
         self,
         function: FunctionValue,
         args: tuple[Any, ...],
     ) -> list[Any]:
-        """Execute a proved leaf without entering the frame scheduler."""
+        """Execute a proved leaf and return its raw stack result."""
         locals_, retained_locals = _function_call_locals(function, args)
         cycle_values = tuple(args) if function.code.cycle_params else ()
         initial_stack = [] if cycle_values else list(args)
-        return_tag_specs = _resolve_static_rank_variables(
-            function.code.return_tag_specs, locals_
-        )
         activation = self._new_activation(
             function.code,
             locals_,
@@ -1909,6 +2040,19 @@ class VirtualMachine:
         result = self._run_activation(activation)
         if isinstance(result, _FunctionCallRequest):
             raise RuntimeError("direct leaf unexpectedly suspended at a call")
+        return result
+
+    def _execute_direct_leaf(
+        self,
+        function: FunctionValue,
+        args: tuple[Any, ...],
+    ) -> list[Any]:
+        """Execute a proved leaf without entering the frame scheduler."""
+        locals_ = dict(zip(function.code.params, args, strict=False))
+        return_tag_specs = _resolve_static_rank_variables(
+            function.code.return_tag_specs, locals_
+        )
+        result = self._execute_direct_leaf_body(function, args)
         ranked = (
             _apply_runtime_collection_ranks(
                 result,
@@ -3860,19 +4004,50 @@ def _call_vectorized_resolved_builtin(
             vectorised_depths,
             vectorised_target_ranks,
         )
+        stop_at_zero = (
+            any(rank is not None for rank in vectorised_target_ranks)
+            or any(
+                _parameter_stops_vectorisation(param)
+                for param in overload.signature.params
+            )
+        )
+        zero_depths_are_scalar = all(
+            depth != 0 or not is_list_like(arg)
+            for arg, depth in zip(args, resolved_depths, strict=True)
+        )
+        if (
+            (stop_at_zero or zero_depths_are_scalar)
+            and extension is None
+            and resolved_depths
+            and all(depth in (0, 1) for depth in resolved_depths)
+        ):
+            vector_args = tuple(
+                arg
+                for arg, depth in zip(args, resolved_depths, strict=True)
+                if depth == 1
+            )
+            if vector_args and all(is_eager_sequence(arg) for arg in vector_args):
+                lengths = {len(arg) for arg in vector_args}
+                if len(lengths) != 1:
+                    raise RuntimeError("cannot vectorise lists with different lengths")
+                result_items = [
+                    typed_implementation(
+                        tuple(
+                            arg[index] if depth == 1 else arg
+                            for arg, depth in zip(args, resolved_depths, strict=True)
+                        ),
+                        context,
+                    )
+                    for index in range(next(iter(lengths)))
+                ]
+                return _transpose_vectorized_items(result_items)
         return _vectorize_resolved_depths(
             typed_implementation,
             args,
             context,
             resolved_depths,
             extension,
-            stop_at_zero=(
-                any(rank is not None for rank in vectorised_target_ranks)
-                or any(
-                    _parameter_stops_vectorisation(param)
-                    for param in overload.signature.params
-                )
-            ),
+            stop_at_zero=stop_at_zero,
         )
     return _vectorize_resolved(typed_implementation, args, context, extension)
 
