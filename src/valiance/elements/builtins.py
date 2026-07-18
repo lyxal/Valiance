@@ -544,6 +544,15 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The square root of the input number.",
         category="Mathematics",
     ),
+    "filter": element_documentation(
+        "Filter a list by a predicate",
+        parameters=(
+            ("iterable", "The list to filter"),
+            ("predicate", "Callable that returns true for items to keep"),
+        ),
+        returns="The filtered list.",
+        category="Lists",
+    ),
 }
 
 
@@ -675,6 +684,19 @@ class BuiltinOverload:
         return all(
             _runtime_vector_arg_matches(arg, param)
             for arg, param in zip(args, self.signature.params, strict=True)
+        )
+
+    def runtime_arguments(self, args: tuple[Any, ...]) -> tuple[Any, ...]:
+        """Project arguments into the representations expected by this overload."""
+        if self.signature.call_site_body is not None:
+            return args
+        return tuple(
+            _runtime_implementation_arg(argument, parameter)
+            for argument, parameter in zip(
+                args,
+                self.signature.params,
+                strict=True,
+            )
         )
 
 
@@ -845,6 +867,25 @@ def _present_value(value: Any) -> Any:
     if value.type_name == "Some" or value.type_name.rsplit(".", 1)[-1] == "Some":
         return value.fields.get("value", _MISSING)
     return _MISSING
+
+
+def _runtime_implementation_arg(value: Any, parameter: T.Type) -> Any:
+    """Return the runtime representation expected by a built-in parameter.
+
+    Generic and callable parameters carry complete runtime values because they
+    may be forwarded or returned unchanged. Concrete operational parameters
+    receive their shallow payload; nested collection items retain their own tag
+    evidence. Explicit tag requirements still describe the operational inner
+    value; tag validation and propagation remain VM responsibilities.
+    """
+    parameter = T.normalize(parameter)
+    if isinstance(parameter, (T.ExactType, T.AtomicType)):
+        return _runtime_implementation_arg(value, parameter.inner)
+    if isinstance(parameter, (T.VarType, T.FunctionType, T.OverloadSetType)):
+        return value
+    if isinstance(parameter, T.TaggedType):
+        return _runtime_implementation_arg(value, parameter.inner)
+    return unwrap_runtime_value(value)
 
 
 def _runtime_assignable(value: Any, typ: T.Type) -> bool:
@@ -1654,6 +1695,30 @@ def _false(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 # --------------------------------------------------------------------------
 # Lists
 # --------------------------------------------------------------------------
+
+
+@builtin(
+    "filter",
+    (
+        T.ExactList(T.TypeVariable("Item")),
+        T.Fn((T.TypeVariable("Item"),), (T.Boolean,)),
+    ),
+    (T.ExactList(T.TypeVariable("Item")),),
+)
+def _filter(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Filter a finite list using a unary predicate function."""
+    values, predicate = args
+
+    def filtered_items():
+        """Collect the items for filtered for the built-in catalogue and runtime."""
+        for item in values:
+            result = ctx.call(predicate, [item])
+            if result[0]:
+                yield item
+
+    if _callable_has_element_tag(predicate, "Eager"):
+        return (list(filtered_items()),)
+    return (LazyList(filtered_items()),)
 
 
 @builtin(

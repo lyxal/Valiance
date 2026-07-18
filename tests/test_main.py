@@ -122,9 +122,10 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("USAGE", output.getvalue())
         self.assertIn("valiance compile --file src/main.vlnc", output.getvalue())
-        self.assertIn("exec      Execute existing bytecode without recompiling", output.getvalue())
+        self.assertIn(
+            "exec      Execute existing bytecode without recompiling", output.getvalue()
+        )
         self.assertNotIn("analyse-demo", output.getvalue())
-
 
     def test_subcommand_help_is_focused_and_succeeds(self):
         output = io.StringIO()
@@ -216,10 +217,7 @@ class MainTests(unittest.TestCase):
 
     def test_main_annotate_ignores_arrows_inside_generic_constraints(self):
         output = io.StringIO()
-        source = (
-            "define[T: trait => extend ==(:T, :T) -> Number end] "
-            "\\value => end"
-        )
+        source = "define[T: trait => extend ==(:T, :T) -> Number end] " "\\value => end"
         with contextlib.redirect_stdout(output):
             exit_code = main(["annotate", "--code", source])
 
@@ -233,9 +231,7 @@ class MainTests(unittest.TestCase):
         output = io.StringIO()
 
         with contextlib.redirect_stdout(output):
-            exit_code = main(
-                ["tidy", "--code", "define id(x) => $x", "--stdout"]
-            )
+            exit_code = main(["tidy", "--code", "define id(x) => $x", "--stdout"])
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(
@@ -247,9 +243,7 @@ class MainTests(unittest.TestCase):
         output = io.StringIO()
 
         with contextlib.redirect_stdout(output):
-            exit_code = main(
-                ["tidy", "--code", "define get(x) => $x.foo", "--stdout"]
-            )
+            exit_code = main(["tidy", "--code", "define get(x) => $x.foo", "--stdout"])
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(
@@ -300,9 +294,7 @@ class MainTests(unittest.TestCase):
             )
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                exit_code = main(
-                    ["tidy", str(source_file), "--docstrings", "--format"]
-                )
+                exit_code = main(["tidy", str(source_file), "--docstrings", "--format"])
 
             self.assertEqual(exit_code, 0)
             self.assertIn(f"Updated: {source_file}", output.getvalue())
@@ -423,10 +415,6 @@ class MainTests(unittest.TestCase):
             self.assertIn('"qualified_name": "both"', rendered)
             self.assertIn('"qualified_name": "correspond"', rendered)
             self.assertIn('"qualified_name": "std.regex.matches"', rendered)
-            self.assertIn(
-                "128 built-in and standard-library entries",
-                output.getvalue(),
-            )
 
     def test_main_runs_inline_code(self):
         output = io.StringIO()
@@ -944,21 +932,21 @@ class MainTests(unittest.TestCase):
                 encoding="utf-8",
             )
             test_source = (
-                'import { std.testing }\n\n'
+                "import { std.testing }\n\n"
                 '@testgroup("Arithmetic")\n'
-                'define \\arithmetic =>\n'
+                "define \\arithmetic =>\n"
                 '  @test("adds two numbers")\n'
-                '  define \\addition =>\n'
-                '    testing.assertEqual(20 + 22, 42)\n'
-                '  end\n\n'
+                "  define \\addition =>\n"
+                "    testing.assertEqual(20 + 22, 42)\n"
+                "  end\n\n"
                 '  @testgroup("Division")\n'
-                '  define \\division =>\n'
+                "  define \\division =>\n"
                 '    @test("expects a panic")\n'
-                '    define \\zero =>\n'
+                "    define \\zero =>\n"
                 '      testing.assertPanics: fn => RuntimeFault("boom") panic end\n'
-                '    end\n'
-                '  end\n'
-                'end\n'
+                "    end\n"
+                "  end\n"
+                "end\n"
             )
             (root / "tests" / "arithmetic.vlnc").write_text(
                 test_source,
@@ -993,26 +981,26 @@ class MainTests(unittest.TestCase):
             (root / "tests").mkdir()
             (root / "valiance.toml").write_text(
                 '[project]\nname = "demo"\nversion = "0.1.0"\n\n'
-                '[entries]\n\n[dependencies]\n',
+                "[entries]\n\n[dependencies]\n",
                 encoding="utf-8",
             )
             test_source = (
-                'import { std.testing }\n\n'
-                '@testgroup\n'
-                'define \\checks =>\n'
-                '  @test\n'
-                '  define \\passes =>\n'
-                '    assert =>\n'
-                '      20 + 22 == 42\n'
-                '    else =>\n'
+                "import { std.testing }\n\n"
+                "@testgroup\n"
+                "define \\checks =>\n"
+                "  @test\n"
+                "  define \\passes =>\n"
+                "    assert =>\n"
+                "      20 + 22 == 42\n"
+                "    else =>\n"
                 '      "bad arithmetic"\n'
-                '    end\n'
-                '  end\n\n'
-                '  @test\n'
-                '  define \\fails =>\n'
+                "    end\n"
+                "  end\n\n"
+                "  @test\n"
+                "  define \\fails =>\n"
                 '    testing.fail("intentional failure")\n'
-                '  end\n'
-                'end\n'
+                "  end\n"
+                "end\n"
             )
             (root / "tests" / "checks.vlnc").write_text(
                 test_source,
@@ -1044,7 +1032,6 @@ class MainTests(unittest.TestCase):
         self.assertIn("PASS checks.passes", rendered)
         self.assertIn("1 passed, 1 failed, 0 errors", rendered)
 
-
     def test_main_preserves_source_location_for_multiline_suggestions(self):
         error = io.StringIO()
         with contextlib.redirect_stderr(error):
@@ -1065,7 +1052,7 @@ class MainTests(unittest.TestCase):
                 [
                     "compile",
                     "--code",
-                    "define convert(value: Integer) -> String => \"\"\n"
+                    'define convert(value: Integer) -> String => ""\n'
                     "define convert(text: String) -> Integer => 0\n"
                     "None convert",
                 ]

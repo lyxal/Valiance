@@ -377,6 +377,25 @@ min $sorted
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "Cheap min\n")
 
+    def test_tagged_values_remain_operational_through_stack_shuffles(self):
+        source = """
+range(1, 100) filter: fn (n) =>
+  0 in swap ($n % [3, 5])
+end sum
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+
+        direct = compile_program(typed, optimize=False)
+        optimized = compile_program(typed)
+        restored = loads(dumps(optimized))
+        expected = [RuntimeNumber(2418)]
+
+        self.assertEqual(run(direct), expected)
+        self.assertEqual(run(optimized), expected)
+        self.assertEqual(run(restored), expected)
+
     def test_tag_validator_failure_panics(self):
         with self.assertRaises(RuntimeError):
             execute("""

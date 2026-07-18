@@ -195,6 +195,10 @@ class TaggedValue:
         """Return an item selected from this tagged value."""
         return self.value[index]
 
+    def __bool__(self) -> bool:
+        """Return the truthiness of the wrapped runtime value."""
+        return bool(self.value)
+
     def __eq__(self, other: object) -> bool:
         """Return whether this tagged value equals another value."""
         return self.value == unwrap_runtime_value(other)

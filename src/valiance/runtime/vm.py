@@ -3351,7 +3351,7 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
                 implementation = overload.implementation
                 assert implementation is not None
                 try:
-                    result = implementation(_unwrapped_args(args), callee.context)
+                    result = implementation(args, callee.context)
                 except _py_builtins.RuntimeError as exc:
                     raise _with_call_detail(
                         exc,
@@ -3401,7 +3401,7 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
         if implementation is None:
             continue
         try:
-            result = implementation(_unwrapped_args(args), callee.context)
+            result = implementation(overload.runtime_arguments(args), callee.context)
             if overload.runtime_return_tags:
                 result = _apply_cached_runtime_return_tags(
                     result,
@@ -3647,7 +3647,7 @@ def _call_resolved_builtin(
     implementation = overload.implementation
     assert implementation is not None
     try:
-        result = implementation(_unwrapped_args(args), context)
+        result = implementation(overload.runtime_arguments(args), context)
         if overload.runtime_return_tags:
             result = _apply_cached_runtime_return_tags(
                 result,
@@ -3844,7 +3844,7 @@ def _call_vectorized_resolved_builtin(
         item_context: RuntimeContext,
     ) -> tuple[Any, ...]:
         """Compute typed implementation during VM execution."""
-        result = implementation(_unwrapped_args(item_args), item_context)
+        result = implementation(overload.runtime_arguments(item_args), item_context)
         return (
             _apply_cached_runtime_return_tags(
                 result,
@@ -3890,7 +3890,7 @@ def _vectorize(
         implementation = overload.implementation
         if implementation is None:
             raise _CannotVectorize
-        result = implementation(_unwrapped_args(args), context)
+        result = implementation(overload.runtime_arguments(args), context)
         return (
             _apply_cached_runtime_return_tags(
                 result,
@@ -3913,7 +3913,7 @@ def _vectorize_resolved(
     """Vectorize resolved during VM execution."""
     vector_args = tuple(arg for arg in args if is_list_like(arg))
     if not vector_args:
-        return implementation(_unwrapped_args(args), context)
+        return implementation(args, context)
     if all(is_eager_sequence(arg) for arg in vector_args):
         return _vectorize_eager_resolved(implementation, args, context, extension)
     return (
@@ -3933,7 +3933,7 @@ def _vectorize_resolved_depths(
     """Vectorize resolved depths during VM execution."""
     if not any(depth > 0 for depth in depths):
         if stop_at_zero:
-            return implementation(_unwrapped_args(args), context)
+            return implementation(args, context)
         return _vectorize_resolved(implementation, args, context, extension)
     vector_args = tuple(
         arg for arg, depth in zip(args, depths, strict=False) if depth > 0
@@ -5550,20 +5550,6 @@ def _lift_common_collection_tags(
     )
     return cleaned, lifted
 
-
-def _unwrapped_args(args: tuple[Any, ...]) -> tuple[Any, ...]:
-    """Return arguments directly unless one carries a runtime tag wrapper."""
-    if len(args) == 1:
-        value = args[0]
-        return (value.value,) if isinstance(value, TaggedValue) else args
-    if len(args) == 2:
-        left, right = args
-        if not isinstance(left, TaggedValue) and not isinstance(right, TaggedValue):
-            return args
-        return unwrap_runtime_value(left), unwrap_runtime_value(right)
-    if not any(isinstance(arg, TaggedValue) for arg in args):
-        return args
-    return tuple(unwrap_runtime_value(arg) for arg in args)
 
 
 def _apply_cached_runtime_return_tags(
