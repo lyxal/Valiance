@@ -628,6 +628,7 @@ class VirtualMachine:
                 self._prepare_identity_call,
                 self._prepare_resolved_builtin_call,
                 self._prepare_straight_line_call,
+                self._prepare_match_dispatch_call,
                 self._prepare_direct_leaf_call,
             )
             for builder in builders:
@@ -713,6 +714,185 @@ class VirtualMachine:
             return (argument,)
 
         return PreparedCall(arity, multiplicity, "identity", invoke_identity)
+
+    def _prepare_match_dispatch_call(
+        self,
+        value: FunctionValue,
+        arity: int,
+        multiplicity: int,
+    ) -> PreparedCall | None:
+        """Prepare a scalar guarded-match decision tree without VM activations."""
+        if (
+            arity != 1
+            or multiplicity != 1
+            or len(value.code.params) != 1
+            or value.code.accepts_stack_inputs
+            or value.code.element_tags
+            or _prepared_call_needs_return_contracts(value.code)
+        ):
+            return None
+        instructions = value.code.instructions
+        if (
+            len(instructions) < 4
+            or instructions[0].op is not OpCode.SOURCE_ARGS
+            or instructions[-1].op is not OpCode.RETURN
+        ):
+            return None
+        branches: list[tuple[Callable[[Any], bool], Callable[[Any], Any]]] = []
+        index = 1
+        while index < len(instructions) - 1:
+            instruction = instructions[index]
+            if instruction.op is OpCode.MATCH_ERROR:
+                index += 1
+                continue
+            if instruction.op is not OpCode.JUMP_IF_MATCH:
+                break
+            patterns, target = instruction.arg
+            if not isinstance(patterns, tuple) or len(patterns) != 1:
+                return None
+            pattern = patterns[0]
+            if not isinstance(pattern, tuple) or not pattern:
+                return None
+            if pattern[0] == "guard" and len(pattern) == 2:
+                guard_code = pattern[1]
+                if not isinstance(guard_code, FunctionCode):
+                    return None
+                guard = self._prepare_builtin_stack_test(guard_code, value.globals)
+                if guard is None:
+                    return None
+            elif pattern[0] == "wildcard":
+                guard = lambda _subject: True
+            else:
+                return None
+            if not isinstance(target, int) or not 0 <= target < len(instructions):
+                return None
+            producer = self._prepare_match_branch_result(
+                instructions, target, value.globals
+            )
+            if producer is None:
+                return None
+            branches.append((guard, producer))
+            index += 1
+        if not branches:
+            return None
+
+        def invoke_match(subject: Any) -> tuple[Any, ...]:
+            """Evaluate prepared guards in source order and produce one branch value."""
+            if is_list_like(subject):
+                return tuple(self.call_value(value, [subject]))
+            for guard, producer in branches:
+                if guard(subject):
+                    return (producer(subject),)
+            raise RuntimeError("non-exhaustive match at runtime")
+
+        return PreparedCall(arity, multiplicity, "match-dispatch", invoke_match)
+
+    def _prepare_builtin_stack_test(
+        self,
+        code: FunctionCode,
+        globals_: dict[str, Any],
+    ) -> Callable[[Any], bool] | None:
+        """Compile one pure scalar built-in stack program into a Boolean test."""
+        operations: list[tuple[str, Any]] = []
+        pending_builtin: BuiltinValue | None = None
+        for instruction in code.instructions:
+            if instruction.op is OpCode.PUSH_CONST:
+                operations.append(("const", instruction.arg))
+            elif instruction.op is OpCode.LOAD_VAR:
+                operations.append(("arg", None))
+            elif instruction.op is OpCode.LOAD_ELEMENT:
+                candidate = globals_.get(instruction.arg)
+                if not isinstance(candidate, BuiltinValue):
+                    return None
+                pending_builtin = candidate
+            elif instruction.op is OpCode.CALL:
+                if pending_builtin is None:
+                    return None
+                operations.append(("call", pending_builtin))
+                pending_builtin = None
+            elif instruction.op is OpCode.RETURN:
+                continue
+            else:
+                return None
+        if pending_builtin is not None:
+            return None
+
+        selection_cache: dict[
+            tuple[int, tuple[type[Any], ...]],
+            BuiltinOverload,
+        ] = {}
+
+        def test(subject: Any) -> bool:
+            """Run one prepared guard using direct selected built-in implementations."""
+            stack: list[Any] = [subject]
+            for kind, payload in operations:
+                if kind == "const":
+                    stack.append(payload)
+                    continue
+                if kind == "arg":
+                    stack.append(subject)
+                    continue
+                builtin = payload
+                selected: BuiltinOverload | None = None
+                selected_args: tuple[Any, ...] = ()
+                for overload in builtin.candidates:
+                    width = len(overload.signature.params)
+                    if len(stack) < width:
+                        continue
+                    call_args = tuple(stack[-width:]) if width else ()
+                    cache_key = (id(builtin), tuple(type(arg) for arg in call_args))
+                    cached = selection_cache.get(cache_key)
+                    if cached is not None and cached.runtime_matches(call_args):
+                        selected = cached
+                        selected_args = call_args
+                        break
+                    if (
+                        overload.implementation is not None
+                        and overload.ownership_trivial
+                        and not overload.signature.element_tags
+                        and overload.runtime_matches(call_args)
+                    ):
+                        selected = overload
+                        selected_args = call_args
+                        selection_cache[cache_key] = overload
+                        break
+                if selected is None or selected.implementation is None:
+                    raise RuntimeError("prepared guard found no matching built-in overload")
+                width = len(selected.signature.params)
+                if width:
+                    del stack[-width:]
+                stack.extend(
+                    selected.implementation(
+                        selected.runtime_arguments(selected_args),
+                        builtin.context,
+                    )
+                )
+            if len(stack) != 1:
+                raise RuntimeError("prepared guard produced an invalid stack")
+            return _truthy(stack[0])
+
+        return test
+
+    def _prepare_match_branch_result(
+        self,
+        instructions: tuple[Any, ...],
+        target: int,
+        globals_: dict[str, Any],
+    ) -> Callable[[Any], Any] | None:
+        """Prepare a constant or scalar-formatting result for one match branch."""
+        instruction = instructions[target]
+        if instruction.op is OpCode.PUSH_CONST:
+            result = instruction.arg
+            return lambda _subject: result
+        if (
+            target + 2 < len(instructions)
+            and instruction.op is OpCode.LOAD_ELEMENT
+            and instruction.arg == "top"
+            and instructions[target + 1].op is OpCode.CALL
+            and instructions[target + 2].op is OpCode.BUILD_STRING
+        ):
+            return self.format_value
+        return None
 
     def _prepare_direct_leaf_call(
         self,
@@ -932,7 +1112,7 @@ class VirtualMachine:
         """Invoke a unary predicate through a cached extensible preparation path."""
         if isinstance(value, FunctionValue):
             if value.predicate_test is None:
-                specializers = (self._prepare_vector_membership_predicate,)
+                specializers = (self._prepare_symbolic_predicate,)
                 prepared_test = next(
                     (
                         candidate
@@ -965,118 +1145,186 @@ class VirtualMachine:
             raise RuntimeError("predicate must return exactly one value")
         return bool(unwrap_runtime_value(result[0]))
 
-    def _prepare_vector_membership_predicate(
+    def _prepare_symbolic_predicate(
         self,
         function: FunctionValue,
     ) -> Callable[[Any], bool] | None:
-        """Prepare a straight-line scalar/vector/membership predicate when possible.
-
-        The specialization is structural rather than source-name based. It recognizes
-        the bytecode produced for a scalar argument broadcast across a constant exact
-        list, followed by membership testing of the vector result. The generic VM path
-        remains the fallback for every other callable shape.
-        """
-        instructions = function.code.instructions
-        if len(function.code.params) != 1 or len(instructions) < 12:
+        """Prepare a pure straight-line predicate from its symbolic stack graph."""
+        if len(function.code.params) != 1 or function.code.accepts_stack_inputs:
             return None
-        if instructions[0].op is not OpCode.PUSH_CONST:
-            return None
-        needle = instructions[0].arg
-        if not (
-            instructions[1].op is OpCode.LOAD_VAR
-            and instructions[1].arg == function.code.params[0]
-        ):
-            return None
-
-        constants: list[Any] = []
-        temporary_names: list[str] = []
-        index = 2
-        while index + 3 < len(instructions):
-            begin, constant, end, store = instructions[index : index + 4]
-            if not (
-                begin.op is OpCode.CYCLE_BEGIN
-                and constant.op is OpCode.PUSH_CONST
-                and end.op is OpCode.CYCLE_END
-                and store.op is OpCode.STORE_VAR
-                and isinstance(store.arg, str)
-                and store.arg.startswith("\x00literal_")
-            ):
-                break
-            constants.append(constant.arg)
-            temporary_names.append(store.arg)
-            index += 4
-        if not constants:
-            return None
-        for name in temporary_names:
-            if not (
-                index < len(instructions)
-                and instructions[index].op is OpCode.LOAD_VAR
-                and instructions[index].arg == name
-            ):
+        stack: list[object] = []
+        locals_: dict[str, object] = {
+            function.code.params[0]: ("arg", 0),
+        }
+        for instruction in function.code.instructions:
+            op = instruction.op
+            if op is OpCode.PUSH_CONST:
+                stack.append(("const", instruction.arg))
+            elif op in {OpCode.LOAD_VAR, OpCode.LOAD_VAR_BORROW}:
+                expression = locals_.get(instruction.arg)
+                if expression is None:
+                    return None
+                stack.append(expression)
+            elif op is OpCode.STORE_VAR:
+                if not stack:
+                    return None
+                locals_[instruction.arg] = stack.pop()
+            elif op in {OpCode.CYCLE_BEGIN, OpCode.CYCLE_END}:
+                continue
+            elif op is OpCode.BUILD_LIST:
+                count = (
+                    instruction.arg[0]
+                    if isinstance(instruction.arg, tuple)
+                    else instruction.arg
+                )
+                if not isinstance(count, int) or count < 0 or len(stack) < count:
+                    return None
+                items = tuple(stack[-count:]) if count else ()
+                if count:
+                    del stack[-count:]
+                stack.append(("list", items))
+            elif op is OpCode.STACK_SHUFFLE:
+                try:
+                    _mode, prestack, poststack, permutation = _stack_shuffle_spec(
+                        instruction.arg
+                    )
+                except RuntimeError:
+                    return None
+                width = len(prestack)
+                if len(stack) < width:
+                    return None
+                values = stack[-width:]
+                if permutation is not None:
+                    stack[-width:] = [values[index] for index in permutation]
+                else:
+                    labelled = {
+                        label: value
+                        for label, value in zip(prestack, values, strict=True)
+                        if label is not None
+                    }
+                    stack[-width:] = [labelled[label] for label in poststack]
+            elif op is OpCode.CALL_RESOLVED_ELEMENT:
+                reference = instruction.arg
+                if not isinstance(reference, ResolvedElementReference):
+                    return None
+                builtin = function.globals.get(reference.name)
+                if not isinstance(builtin, BuiltinValue):
+                    return None
+                try:
+                    overload = builtin.element.definitions[reference.overload_index]
+                except IndexError:
+                    return None
+                width = len(overload.signature.params)
+                if len(stack) < width:
+                    return None
+                arguments = tuple(stack[-width:]) if width else ()
+                if reference.name == "swap" and width == 2:
+                    del stack[-width:]
+                    stack.extend(reversed(arguments))
+                    continue
+                if reference.name == "top" and width == 1:
+                    del stack[-width:]
+                    stack.append(arguments[0])
+                    continue
+                if (
+                    overload.implementation is None
+                    or overload.signature.element_tags
+                    or reference.extension is not None
+                    or reference.static_values
+                    or reference.type_args
+                    or reference.multidispatch
+                ):
+                    return None
+                if width:
+                    del stack[-width:]
+                if len(overload.signature.returns) != 1:
+                    return None
+                kind = "vector-call" if reference.vectorised else "call"
+                stack.append((kind, overload, builtin.context, arguments, reference))
+            elif op is OpCode.RETURN:
+                continue
+            else:
                 return None
-            index += 1
-        if index >= len(instructions) or instructions[index].op is not OpCode.BUILD_LIST:
+        if len(stack) != 1:
             return None
-        build_arg = instructions[index].arg
-        if not isinstance(build_arg, tuple) or build_arg[0] != len(constants):
-            return None
-        index += 1
-        if index >= len(instructions) or instructions[index].op is not OpCode.CALL_RESOLVED_ELEMENT:
-            return None
-        vector_reference = instructions[index].arg
-        if not (
-            isinstance(vector_reference, ResolvedElementReference)
-            and vector_reference.vectorised
-            and vector_reference.vectorised_depths == (0, 1)
-            and vector_reference.extension is None
-        ):
-            return None
-        index += 1
-        if index < len(instructions) and instructions[index].op is OpCode.STACK_SHUFFLE:
-            index += 1
-        if index < len(instructions) and instructions[index].op is OpCode.CALL_RESOLVED_ELEMENT:
-            swap_reference = instructions[index].arg
-            if (
-                isinstance(swap_reference, ResolvedElementReference)
-                and swap_reference.name == "swap"
-            ):
-                index += 1
-        if index + 1 >= len(instructions):
-            return None
-        membership = instructions[index]
-        returned = instructions[index + 1]
-        if not (
-            membership.op is OpCode.CALL_RESOLVED_ELEMENT
-            and isinstance(membership.arg, ResolvedElementReference)
-            and membership.arg.name == "in"
-            and returned.op is OpCode.RETURN
-            and index + 2 == len(instructions)
-        ):
-            return None
+        expression = stack[0]
 
-        builtin = function.globals.get(vector_reference.name)
-        if not isinstance(builtin, BuiltinValue):
-            return None
-        try:
-            overload = builtin.element.definitions[vector_reference.overload_index]
-        except IndexError:
-            return None
-        implementation = overload.implementation
-        if implementation is None or len(overload.signature.params) != 2:
-            return None
-        context = builtin.context
-        projected_constants = tuple(constants)
+        def evaluate(node: object, argument: Any) -> Any:
+            """Evaluate one normalized symbolic expression node."""
+            if not isinstance(node, tuple) or not node:
+                raise RuntimeError("invalid prepared expression node")
+            kind = node[0]
+            if kind == "arg":
+                return argument
+            if kind == "const":
+                return node[1]
+            if kind == "list":
+                return [evaluate(item, argument) for item in node[1]]
+            if kind == "vector-call":
+                _kind, overload, context, arguments, reference = node
+                values = tuple(evaluate(item, argument) for item in arguments)
+                result = _call_vectorized_resolved_builtin(
+                    overload,
+                    values,
+                    context,
+                    reference.vectorised_depths,
+                    reference.vectorised_target_ranks,
+                )
+                if len(result) != 1:
+                    raise RuntimeError("prepared expression call must return one value")
+                return result[0]
+            if kind == "call":
+                _kind, overload, context, arguments, _reference = node
+                # Fuse generic membership over a symbolic vector call. This rule
+                # depends on expression semantics, not source or bytecode order.
+                if (
+                    overload.signature.params
+                    and len(arguments) == 2
+                    and getattr(overload, "implementation", None) is not None
+                    and isinstance(arguments[1], tuple)
+                    and arguments[1]
+                    and arguments[1][0] == "vector-call"
+                ):
+                    needle = evaluate(arguments[0], argument)
+                    vector_node = arguments[1]
+                    _, projected, projected_context, projected_args, reference = vector_node
+                    evaluated = tuple(evaluate(item, argument) for item in projected_args)
+                    depths = reference.vectorised_depths
+                    vector_positions = tuple(
+                        index for index, depth in enumerate(depths) if depth == 1
+                    )
+                    if len(vector_positions) == 1:
+                        position = vector_positions[0]
+                        vector = evaluated[position]
+                        for item in vector:
+                            scalar_args = tuple(
+                                item if index == position else value
+                                for index, value in enumerate(evaluated)
+                            )
+                            produced = projected.implementation(
+                                projected.runtime_arguments(scalar_args),
+                                projected_context,
+                            )
+                            if len(produced) != 1:
+                                raise RuntimeError(
+                                    "prepared vector projection must return one value"
+                                )
+                            if unwrap_runtime_value(produced[0]) == unwrap_runtime_value(needle):
+                                return True
+                        return False
+                values = tuple(evaluate(item, argument) for item in arguments)
+                result = overload.implementation(
+                    overload.runtime_arguments(values),
+                    context,
+                )
+                if len(result) != 1:
+                    raise RuntimeError("prepared expression call must return one value")
+                return result[0]
+            raise RuntimeError(f"unknown prepared expression node {kind!r}")
 
         def test(argument: Any) -> bool:
-            """Evaluate the prepared predicate without frames or temporary vectors."""
-            for constant in projected_constants:
-                runtime_args = overload.runtime_arguments((argument, constant))
-                result = implementation(runtime_args, context)
-                if len(result) != 1:
-                    raise RuntimeError("vectorized scalar overload must return one value")
-                if unwrap_runtime_value(result[0]) == needle:
-                    return True
-            return False
+            """Evaluate the symbolic predicate graph for one scalar argument."""
+            return _truthy(evaluate(expression, argument))
 
         return test
 

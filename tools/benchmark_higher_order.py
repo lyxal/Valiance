@@ -22,9 +22,19 @@ class Workload:
 
 WORKLOADS = (
     Workload(
-        "filter-vector-membership",
+        "filter-vector-membership-prefix-needle",
         "range(1, 10000) filter: fn (n) => "
         "0 in swap ($n % [3, 5]) end sum",
+    ),
+    Workload(
+        "filter-vector-membership-suffix-needle",
+        "range(1, 10000) filter: fn (n) => "
+        "$n % [3, 5] in swap 0 end sum",
+    ),
+    Workload(
+        "filter-vector-membership-pipeline",
+        "range(1, 10000) filter: fn (n) => "
+        "[3, 5] | $n | swap | % | 0 | swap | in end sum",
     ),
     Workload(
         "unary-map",
@@ -61,6 +71,17 @@ WORKLOADS = (
         "filter-head",
         "range(1, 1000000) "
         "filter: fn (n) => $n > 100 end | head",
+    ),
+    Workload(
+        "guarded-match-map",
+        """range(1, 10000) map fn (n: Integer) =>
+  match =>
+    if % 15 == 0 => "FizzBuzz"
+    if % 5 == 0 => "Buzz"
+    if % 3 == 0 => "Fizz"
+    _ => "${top}"
+  end
+end | length""",
     ),
     Workload(
         "niladic-map",

@@ -481,6 +481,77 @@ define pick(a: Number, b: Number = 2) -> Number => $a $b +
         self.assertEqual(planned.run_terminal(terminal), RuntimeNumber(4))
         self.assertEqual(consumed, [1, 2, 3, 4])
 
+    def test_vector_membership_preparation_is_operand_order_invariant(self):
+        sources = (
+            "range(1, 100) filter fn (n) => "
+            "$n % [3, 5] in swap 0 end sum",
+            "range(1, 100) filter fn (n) => "
+            "0 in swap ($n % [3, 5]) end sum",
+            "range(1, 100) filter fn (n) => "
+            "[3, 5] | $n | swap | % | 0 | swap | in end sum",
+        )
+        results = [execute(source) for source in sources]
+        self.assertEqual(
+            results,
+            [[RuntimeNumber(2418)], [RuntimeNumber(2418)], [RuntimeNumber(2418)]],
+        )
+
+    def test_guarded_match_uses_prepared_dispatch_plan(self):
+        source = """
+fn (n: Integer) -> String =>
+  match =>
+    if % 15 == 0 => "FizzBuzz"
+    if % 5 == 0 => "Buzz"
+    if % 3 == 0 => "Fizz"
+    _ => "${top}"
+  end
+end
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(
+            output=lambda _value: None,
+            collect_optimization_stats=True,
+        )
+        function = vm.run(compile_program(typed))[0]
+        prepared = vm.prepare_call(function, 1, 1)
+
+        self.assertEqual(prepared.strategy, "match-dispatch")
+        self.assertEqual(prepared.invoke1(RuntimeNumber(15)), ("FizzBuzz",))
+        self.assertEqual(prepared.invoke1(RuntimeNumber(10)), ("Buzz",))
+        self.assertEqual(prepared.invoke1(RuntimeNumber(9)), ("Fizz",))
+        self.assertEqual(prepared.invoke1(RuntimeNumber(7)), ("7",))
+        assert vm.optimization_stats is not None
+        self.assertEqual(
+            vm.optimization_stats.snapshot()[
+                "prepared.strategy.match-dispatch"
+            ],
+            1,
+        )
+
+    def test_guarded_match_map_preserves_source_order(self):
+        result = execute(
+            """
+range(1, 16) map fn (n: Integer) =>
+  match =>
+    if % 15 == 0 => "FizzBuzz"
+    if % 5 == 0 => "Buzz"
+    if % 3 == 0 => "Fizz"
+    _ => "${top}"
+  end
+end
+"""
+        )
+        self.assertEqual(
+            list(result[0]),
+            [
+                "1", "2", "Fizz", "4", "Buzz", "Fizz", "7", "8",
+                "Fizz", "Buzz", "11", "Fizz", "13", "14",
+                "FizzBuzz", "16",
+            ],
+        )
+
     def test_optimization_stats_are_disabled_by_default(self):
         self.assertIsNone(VirtualMachine(output=lambda _value: None).optimization_stats)
 

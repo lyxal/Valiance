@@ -1522,3 +1522,48 @@ right-broadcast shapes avoid recursive vector dispatch and validate vector
 lengths once. Other arities use the same kernel interface with a generic eager
 loop; nested ranks, lazy inputs, extensions, and dynamic shapes retain the full
 vectorisation path.
+
+### Prepared guarded-match dispatch
+
+Pure scalar functions whose control flow is a source-ordered guarded `match` can
+now receive a `match-dispatch` prepared plan. The plan compiles each guard's
+small built-in stack program once, caches stable runtime overload selections by
+argument shape, and invokes selected ownership-trivial built-ins directly. It
+also prepares constant branch results and scalar string formatting without
+creating guard or branch VM activations for every input item.
+
+The recognizer is structural: it consumes `SOURCE_ARGS`, `JUMP_IF_MATCH`, guard
+`FunctionCode`, branch targets, and the final return shape. It is not tied to
+FizzBuzz, particular constants, or a range size. Guards or branch bodies outside
+the proved subset retain the existing direct-leaf or general VM execution path.
+Source-order semantics, wildcard fallback, vectorisation fallback, runtime type
+matching, and return contracts remain unchanged.
+
+The scalar/vector-membership predicate recognizer is stack-shape invariant for
+equivalent needle placement. It accepts both a membership needle already below
+the projected vector and a needle pushed after vector projection followed by the
+corresponding shuffle. Recognition derives the argument, constant-list build,
+vector operation, needle, reorder operations, and terminal membership call from
+bytecode rather than requiring one source spelling. Paired benchmarks and tests
+must remain within ordinary run-to-run variance and return identical predicates.
+
+### V12 symbolic straight-line predicate plans
+
+The dedicated scalar/vector-membership bytecode recognizer has been removed.
+Predicate preparation now symbolically executes the supported straight-line
+bytecode subset into an expression graph. Argument loads, constants,
+compiler-generated literal temporaries, list construction, stack permutations,
+resolved built-ins, and vectorised calls become semantic nodes rather than
+instruction-position patterns. Equivalent prefix, postfix, and pipeline source
+forms consequently produce equivalent graphs even when their bytecode order and
+shuffle instructions differ.
+
+The evaluator compiles pure resolved calls into reusable graph nodes. A generic
+terminal-call rewrite can consume a rank-one symbolic vector call item by item
+when the terminal compares or searches its projected result, avoiding temporary
+vector materialisation. The rewrite is triggered by graph topology and resolved
+call semantics, not source text, constant values, or instruction offsets.
+Unsupported instructions, dynamic callables, effects, extensions, multidispatch,
+or non-scalar output shapes reject symbolic preparation and retain the ordinary
+VM path. The former membership-specific recognizer is intentionally absent so
+new spellings cannot be addressed by accumulating more positional cases.
