@@ -8,6 +8,7 @@ import valiance.vtypes as T
 from valiance.elements.builtins import RuntimeContext
 from valiance.elements.documentation import element_documentation
 from valiance.elements.stdlib_native import stdlib_element
+from valiance.runtime.runtime_values import ListValue
 
 
 @stdlib_element(
@@ -77,4 +78,19 @@ def _all_neighbors(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
                 cells.append(board[neighbor_row][neighbor_column])
             output_row.append(cells)
         neighborhoods.append(output_row)
-    return (neighborhoods,)
+    result = ListValue(
+        (
+            ListValue(
+                (ListValue(cells, runtime_rank=1) for cells in row),
+                runtime_rank=2,
+            )
+            for row in neighborhoods
+        ),
+        runtime_rank=3,
+    )
+    for row in result:
+        for cells in row:
+            cells._tag_free = all(not hasattr(item, "tags") for item in cells)
+        row._tag_free = all(cells._tag_free is True for cells in row)
+    result._tag_free = all(row._tag_free is True for row in result)
+    return (result,)

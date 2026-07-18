@@ -496,6 +496,36 @@ define pick(a: Number, b: Number = 2) -> Number => $a $b +
             [[RuntimeNumber(2418)], [RuntimeNumber(2418)], [RuntimeNumber(2418)]],
         )
 
+    def test_symbolic_match_prepares_index_reduction_and_aggregate_patterns(self):
+        source = """
+fn (values: Integer+) -> Integer =>
+  [$values[1], sum removeAt($values, 1)] match =>
+    [_, 4] => 9
+    [2, 2] => 8
+    _ => 0
+  end
+end
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+        function = vm.run(compile_program(typed, optimize=False))[0]
+        prepared = vm.prepare_call(function, 1, 1)
+        self.assertEqual(prepared.strategy, "symbolic-match")
+        self.assertEqual(
+            prepared.invoke1(
+                [RuntimeNumber(1), RuntimeNumber(2), RuntimeNumber(3)]
+            ),
+            (RuntimeNumber(9),),
+        )
+        self.assertEqual(
+            prepared.invoke1(
+                [RuntimeNumber(1), RuntimeNumber(2), RuntimeNumber(1)]
+            ),
+            (RuntimeNumber(8),),
+        )
+
     def test_guarded_match_uses_prepared_dispatch_plan(self):
         source = """
 fn (n: Integer) -> String =>

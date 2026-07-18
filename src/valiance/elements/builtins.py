@@ -19,6 +19,7 @@ import valiance.vtypes as T
 from valiance.elements.documentation import ElementDocumentation, element_documentation
 from valiance.runtime.runtime_values import (
     LazyList,
+    ListValue,
     LazyPipelineStage,
     PlannedLazyList,
     PipelineTerminal,
@@ -27,6 +28,7 @@ from valiance.runtime.runtime_values import (
     format_runtime_value,
     is_finite_list_like,
     is_list_like,
+    runtime_collection_rank,
     unwrap_runtime_value,
     RuntimeNumber,
 )
@@ -1907,6 +1909,45 @@ def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         )
         return mapped[0]
 
+    target_rank = (
+        prepared.parameter_ranks[0]
+        if prepared is not None and prepared.parameter_ranks
+        else None
+    )
+    if (
+        prepared is not None
+        and target_rank is not None
+        and isinstance(args[0], list)
+        and runtime_collection_rank(args[0]) - 1 > target_rank
+    ):
+        input_rank = runtime_collection_rank(args[0])
+        traversal_depth = input_rank - 1 - target_rank
+
+        def map_nested(value: Any, depth: int) -> Any:
+            """Traverse known outer ranks before invoking the scalar callback."""
+            if depth == 0:
+                return prepared.invoke1(value)[0]
+            result = ListValue(
+                (map_nested(item, depth - 1) for item in value),
+                runtime_rank=depth,
+            )
+            result._tag_free = all(
+                not hasattr(item, "tags")
+                and (not isinstance(item, ListValue) or item._tag_free is True)
+                for item in result
+            )
+            return result
+
+        result = ListValue(
+            (map_nested(item, traversal_depth) for item in args[0]),
+            runtime_rank=input_rank - target_rank,
+        )
+        result._tag_free = all(
+            not hasattr(item, "tags")
+            and (not isinstance(item, ListValue) or item._tag_free is True)
+            for item in result
+        )
+        return (result,)
     if _callable_has_element_tag(args[1], "Eager"):
         return ([map_item(item) for item in args[0]],)
     if isinstance(args[0], PlannedLazyList):

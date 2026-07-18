@@ -130,6 +130,7 @@ class PreparedCall:
     multiplicity: int
     strategy: str
     implementation: Callable[..., tuple[Any, ...]] = field(repr=False)
+    parameter_ranks: tuple[int | None, ...] = ()
 
     def __call__(self, *args: Any) -> tuple[Any, ...]:
         """Invoke this prepared plan after validating its fixed argument shape."""
@@ -628,12 +629,18 @@ class VirtualMachine:
                 self._prepare_identity_call,
                 self._prepare_resolved_builtin_call,
                 self._prepare_straight_line_call,
+                self._prepare_symbolic_match_call,
                 self._prepare_match_dispatch_call,
                 self._prepare_direct_leaf_call,
             )
             for builder in builders:
                 plan = builder(value, arity, multiplicity)
                 if plan is not None:
+                    if not plan.parameter_ranks:
+                        plan = replace(
+                            plan,
+                            parameter_ranks=value.code.param_collection_ranks,
+                        )
                     value.prepared_calls[key] = plan
                     if self.optimization_stats is not None:
                         self.optimization_stats.increment("prepared.created")
@@ -714,6 +721,304 @@ class VirtualMachine:
             return (argument,)
 
         return PreparedCall(arity, multiplicity, "identity", invoke_identity)
+
+    def _prepare_symbolic_match_call(
+        self,
+        value: FunctionValue,
+        arity: int,
+        multiplicity: int,
+    ) -> PreparedCall | None:
+        """Compile a pure expression followed by a literal-pattern decision tree."""
+        if (
+            arity != 1
+            or multiplicity != 1
+            or len(value.code.params) != 1
+            or value.code.accepts_stack_inputs
+            or value.code.element_tags
+        ):
+            return None
+        instructions = value.code.instructions
+        source_index = next(
+            (
+                index
+                for index, instruction in enumerate(instructions)
+                if instruction.op is OpCode.SOURCE_ARGS
+            ),
+            None,
+        )
+        if source_index is None or source_index == 0:
+            return None
+        stack: list[object] = []
+        locals_: dict[str, object] = {value.code.params[0]: ("arg", 0)}
+        for instruction in instructions[:source_index]:
+            op = instruction.op
+            if op is OpCode.PUSH_CONST:
+                stack.append(("const", instruction.arg))
+            elif op in {OpCode.LOAD_VAR, OpCode.LOAD_VAR_BORROW}:
+                expression = locals_.get(instruction.arg)
+                if expression is None:
+                    return None
+                stack.append(expression)
+            elif op is OpCode.STORE_VAR:
+                if not stack:
+                    return None
+                locals_[instruction.arg] = stack.pop()
+            elif op in {OpCode.CYCLE_BEGIN, OpCode.CYCLE_END}:
+                continue
+            elif op is OpCode.GET_INDEX:
+                if len(stack) < 2:
+                    return None
+                index_expression = stack.pop()
+                receiver = stack.pop()
+                stack.append(("index", receiver, index_expression))
+            elif op is OpCode.BUILD_LIST:
+                count = (
+                    instruction.arg[0]
+                    if isinstance(instruction.arg, tuple)
+                    else instruction.arg
+                )
+                if not isinstance(count, int) or count < 0 or len(stack) < count:
+                    return None
+                items = tuple(stack[-count:]) if count else ()
+                if count:
+                    del stack[-count:]
+                stack.append(("aggregate", items))
+            elif op is OpCode.CALL_RESOLVED_ELEMENT:
+                reference = instruction.arg
+                if not isinstance(reference, ResolvedElementReference):
+                    return None
+                builtin = value.globals.get(reference.name)
+                if not isinstance(builtin, BuiltinValue):
+                    return None
+                try:
+                    overload = builtin.element.definitions[reference.overload_index]
+                except IndexError:
+                    return None
+                width = len(overload.signature.params)
+                if (
+                    reference.vectorised
+                    or reference.extension is not None
+                    or reference.static_values
+                    or reference.type_args
+                    or reference.multidispatch
+                    or overload.implementation is None
+                    or len(overload.signature.returns) != 1
+                    or len(stack) < width
+                ):
+                    return None
+                arguments = tuple(stack[-width:]) if width else ()
+                if width:
+                    del stack[-width:]
+                stack.append(
+                    ("call", reference.name, overload, builtin.context, arguments)
+                )
+            else:
+                return None
+        if len(stack) != 1:
+            return None
+        subject = stack[0]
+
+        branches: list[tuple[tuple[object, ...], Any]] = []
+        index = source_index + 1
+        while index < len(instructions):
+            instruction = instructions[index]
+            if instruction.op is OpCode.MATCH_ERROR:
+                break
+            if instruction.op is OpCode.RETURN:
+                break
+            if instruction.op is not OpCode.JUMP_IF_MATCH:
+                return None
+            patterns, target = instruction.arg
+            if (
+                not isinstance(patterns, tuple)
+                or len(patterns) != 1
+                or not isinstance(target, int)
+                or not 0 <= target < len(instructions)
+                or instructions[target].op is not OpCode.PUSH_CONST
+            ):
+                return None
+            branches.append((patterns, instructions[target].arg))
+            index += 1
+        if not branches:
+            return None
+
+        def evaluate(node: object, argument: Any) -> Any:
+            """Evaluate one pure symbolic node, applying projection reductions."""
+            if not isinstance(node, tuple) or not node:
+                raise RuntimeError("invalid symbolic match expression")
+            kind = node[0]
+            if kind == "arg":
+                return argument
+            if kind == "const":
+                return node[1]
+            if kind == "index":
+                receiver = evaluate(node[1], argument)
+                position = int(evaluate(node[2], argument))
+                return receiver[position]
+            if kind == "aggregate":
+                return tuple(evaluate(item, argument) for item in node[1])
+            if kind == "call":
+                _kind, name, overload, context, arguments = node
+                # A reduction over one removal projection can consume the source
+                # directly. This avoids constructing the intermediate collection.
+                if (
+                    name == "sum"
+                    and len(arguments) == 1
+                    and isinstance(arguments[0], tuple)
+                    and arguments[0]
+                    and arguments[0][0] == "call"
+                    and arguments[0][1] == "removeAt"
+                ):
+                    removal = arguments[0]
+                    removal_args = removal[4]
+                    if len(removal_args) == 2:
+                        source = evaluate(removal_args[0], argument)
+                        omitted = int(evaluate(removal_args[1], argument))
+                        total: Any = RuntimeNumber(0)
+                        for item_index, item in enumerate(source):
+                            if item_index != omitted:
+                                total += item
+                        return total
+                values = tuple(evaluate(item, argument) for item in arguments)
+                result = overload.implementation(
+                    overload.runtime_arguments(values),
+                    context,
+                )
+                if len(result) != 1:
+                    raise RuntimeError("symbolic match call must return one value")
+                return result[0]
+            raise RuntimeError(f"unsupported symbolic match node {kind!r}")
+
+        def pattern_matches(pattern: object, candidate: Any) -> bool:
+            """Match allocation-free literal, wildcard, and aggregate patterns."""
+            if not isinstance(pattern, tuple) or not pattern:
+                return False
+            kind = pattern[0]
+            if kind == "wildcard":
+                return True
+            if kind == "literal":
+                literal = pattern[1]
+                if isinstance(candidate, int) and isinstance(literal, RuntimeNumber):
+                    return (
+                        literal.imag.coefficient == 0
+                        and literal.real.exponent >= 0
+                        and candidate
+                        == literal.real.coefficient * (10 ** literal.real.exponent)
+                    )
+                if isinstance(candidate, RuntimeNumber) and isinstance(literal, RuntimeNumber):
+                    return (
+                        candidate.real.coefficient == literal.real.coefficient
+                        and candidate.real.exponent == literal.real.exponent
+                        and candidate.imag.coefficient == literal.imag.coefficient
+                        and candidate.imag.exponent == literal.imag.exponent
+                    )
+                return candidate == literal
+            if kind == "list" and len(pattern) == 2:
+                children = pattern[1]
+                return (
+                    isinstance(candidate, (list, tuple))
+                    and len(candidate) == len(children)
+                    and all(
+                        pattern_matches(child, item)
+                        for child, item in zip(children, candidate, strict=True)
+                    )
+                )
+            return False
+
+        def compile_node(node: object) -> Callable[[Any], Any]:
+            """Compile one symbolic node into a reusable unary Python closure."""
+            if not isinstance(node, tuple) or not node:
+                raise RuntimeError("invalid symbolic match expression")
+            kind = node[0]
+            if kind == "arg":
+                return lambda argument: argument
+            if kind == "const":
+                constant = node[1]
+                return lambda _argument: constant
+            if kind == "index":
+                receiver = compile_node(node[1])
+                position = compile_node(node[2])
+                return lambda argument: receiver(argument)[int(position(argument))]
+            if kind == "aggregate":
+                items = tuple(compile_node(item) for item in node[1])
+                return lambda argument: tuple(item(argument) for item in items)
+            if kind == "call":
+                _kind, name, overload, context, arguments = node
+                if (
+                    name == "sum"
+                    and len(arguments) == 1
+                    and isinstance(arguments[0], tuple)
+                    and arguments[0]
+                    and arguments[0][0] == "call"
+                    and arguments[0][1] == "removeAt"
+                    and len(arguments[0][4]) == 2
+                ):
+                    source = compile_node(arguments[0][4][0])
+                    omitted = compile_node(arguments[0][4][1])
+
+                    def reduce_projection(argument: Any) -> Any:
+                        """Reduce a collection while skipping one projected index."""
+                        values = source(argument)
+                        omitted_index = int(omitted(argument))
+                        integer_total = 0
+                        projected: list[Any] = []
+                        integral = True
+                        for item_index, item in enumerate(values):
+                            if item_index == omitted_index:
+                                continue
+                            projected.append(item)
+                            if (
+                                integral
+                                and isinstance(item, RuntimeNumber)
+                                and item.imag.coefficient == 0
+                                and item.real.exponent >= 0
+                            ):
+                                integer_total += (
+                                    item.real.coefficient * (10 ** item.real.exponent)
+                                )
+                            else:
+                                integral = False
+                        if integral:
+                            return integer_total
+                        total: Any = RuntimeNumber(0)
+                        for item in projected:
+                            total += item
+                        return total
+
+                    return reduce_projection
+                compiled_arguments = tuple(compile_node(item) for item in arguments)
+                implementation = overload.implementation
+                assert implementation is not None
+
+                def invoke_resolved(argument: Any) -> Any:
+                    """Invoke one resolved scalar operation from compiled operands."""
+                    values = tuple(item(argument) for item in compiled_arguments)
+                    result = implementation(overload.runtime_arguments(values), context)
+                    if len(result) != 1:
+                        raise RuntimeError("symbolic match call must return one value")
+                    return result[0]
+
+                return invoke_resolved
+            raise RuntimeError(f"unsupported symbolic match node {kind!r}")
+
+        subject_evaluator = compile_node(subject)
+        compiled_branches = tuple(
+            (
+                (lambda candidate, pattern=patterns[0]: pattern_matches(pattern, candidate)),
+                result,
+            )
+            for patterns, result in branches
+        )
+
+        def invoke_symbolic(argument: Any) -> tuple[Any, ...]:
+            """Evaluate the subject graph once and dispatch its prepared patterns."""
+            candidate = subject_evaluator(argument)
+            for matcher, result in compiled_branches:
+                if matcher(candidate):
+                    return (result,)
+            raise RuntimeError("non-exhaustive match at runtime")
+
+        return PreparedCall(arity, multiplicity, "symbolic-match", invoke_symbolic)
 
     def _prepare_match_dispatch_call(
         self,
@@ -6601,6 +6906,20 @@ def _canonicalize_runtime_tag_contracts(
     )
 
 
+def _tag_contract_declares_tags(spec: object) -> bool:
+    """Return whether one structural contract can add or retain runtime tags."""
+    if not isinstance(spec, tuple) or not spec:
+        return True
+    kind = spec[0]
+    if kind == "tagged":
+        return True
+    if kind == "collection" and len(spec) == 4:
+        return _tag_contract_declares_tags(spec[3])
+    if kind in {"union", "intersection", "tuple"} and len(spec) == 2:
+        return any(_tag_contract_declares_tags(item) for item in spec[1])
+    return False
+
+
 def _canonicalize_runtime_value_tag_contract(
     value: Any,
     spec: object,
@@ -6609,6 +6928,12 @@ def _canonicalize_runtime_value_tag_contract(
     """Recursively enforce one structural runtime tag contract."""
     if not isinstance(spec, tuple) or not spec or not isinstance(spec[0], str):
         raise RuntimeError("invalid bytecode: malformed runtime tag contract")
+    if (
+        isinstance(value, ListValue)
+        and value._tag_free is True
+        and not _tag_contract_declares_tags(spec)
+    ):
+        return value
     kind = spec[0]
     if kind == "tagged":
         if len(spec) != 3 or not isinstance(spec[2], tuple):

@@ -1583,3 +1583,31 @@ collections. A mapper accepting `T+` must receive each rank-one cell group once,
 not recursively vectorise the mapper over every scalar inside that group. Rank-2
 inputs to that same rank-1 parameter continue to vectorise normally. The tests
 cover both sides of this boundary.
+
+### V14 nested traversal and symbolic aggregate matches
+
+Prepared calls now retain their analysed parameter collection ranks. `map` uses
+those ranks to build one traversal plan for nested eager inputs: it descends only
+the outer ranks and invokes the prepared callback at its declared stop rank.
+This removes repeated rank discovery and vector-kernel selection while
+preserving ordinary lazy rank-one map behaviour.
+
+A new `symbolic-match` plan compiles pure expression prefixes followed by
+source-ordered literal-pattern matches. Supported graph nodes include arguments,
+constants, temporary locals, indexing, aggregate construction, resolved scalar
+calls, and literal/wildcard aggregate patterns. Branches currently require
+constant scalar results; unsupported patterns or effects retain the VM path.
+The graph compiler performs escape-aware `sum(removeAt(collection, index))`
+projection reduction without constructing the removed collection, and an
+integral transient reduction may remain unboxed until its match consumer.
+These transformations are based on graph topology rather than element names,
+source spelling, dimensions, or literal values.
+
+### Proven tag-free collection metadata
+
+`ListValue` now carries invalidatable tag-freedom metadata alongside ownership
+metadata. Native producers and rank-aware maps may prove a newly created tree is
+tag-free. Runtime return-contract canonicalisation can then skip recursive walks
+only when the static contract also declares no tags. Every mutating list method
+invalidates the proof. Tagged contracts and collections without proof continue
+through full recursive canonicalisation.

@@ -236,10 +236,12 @@ class ListValue(list[Any]):
         self.runtime_rank = runtime_rank
         self.refcount = 1
         self._ownership_trivial: bool | None = None
+        self._tag_free: bool | None = None
 
     def _invalidate_ownership_cache(self) -> None:
         """Forget whether every direct item is ownership-trivial."""
         self._ownership_trivial = None
+        self._tag_free = None
 
     def __setitem__(self, key: Any, value: Any) -> None:
         """Set one item and invalidate cached ownership metadata."""
