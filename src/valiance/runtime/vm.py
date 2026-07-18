@@ -412,6 +412,7 @@ class VirtualMachine:
                     self.format_value,
                     self.call_value_overload,
                     test_predicate=self.test_predicate,
+                    prepare_call=self.prepare_call,
                 ),
             )
             for name, element in (
@@ -504,6 +505,65 @@ class VirtualMachine:
         )
         return list(contracted)
 
+    def prepare_call(
+        self,
+        value: Any,
+        arity: int,
+        multiplicity: int,
+    ) -> Callable[..., tuple[Any, ...]]:
+        """Prepare a fixed-shape callable once for repeated higher-order use."""
+        if arity < 0 or multiplicity < 0:
+            raise RuntimeError("prepared call shape cannot be negative")
+
+        if (
+            isinstance(value, FunctionValue)
+            and len(value.code.params) == arity
+            and not value.code.accepts_stack_inputs
+            and self._can_execute_direct_leaf(value)
+        ):
+            needs_contracts = _prepared_call_needs_return_contracts(value.code)
+
+            def invoke_leaf(*args: Any) -> tuple[Any, ...]:
+                """Invoke a fixed-shape direct leaf with required return contracts."""
+                if len(args) != arity:
+                    raise RuntimeError(
+                        f"prepared callable expected {arity} arguments, got {len(args)}"
+                    )
+                if any(is_list_like(arg) for arg in args):
+                    # A collection argument may require the user-function
+                    # vectorisation path selected by its compiled parameter ranks.
+                    result = tuple(self.call_value(value, list(args)))
+                else:
+                    result = tuple(
+                        self._execute_direct_leaf(value, tuple(args))
+                        if needs_contracts
+                        else self._execute_direct_leaf_body(value, tuple(args))
+                    )
+                if len(result) != multiplicity:
+                    raise RuntimeError(
+                        f"prepared callable expected {multiplicity} results, "
+                        f"got {len(result)}"
+                    )
+                return result
+
+            return invoke_leaf
+
+        def invoke_general(*args: Any) -> tuple[Any, ...]:
+            """Invoke a fixed-shape callable through the fully general VM path."""
+            if len(args) != arity:
+                raise RuntimeError(
+                    f"prepared callable expected {arity} arguments, got {len(args)}"
+                )
+            result = tuple(self.call_value(value, list(args)))
+            if len(result) != multiplicity:
+                raise RuntimeError(
+                    f"prepared callable expected {multiplicity} results, "
+                    f"got {len(result)}"
+                )
+            return result
+
+        return invoke_general
+
     def test_predicate(self, value: Any, argument: Any) -> bool:
         """Invoke a unary predicate through the cheapest semantics-preserving path."""
         if isinstance(value, FunctionValue) and self._can_execute_direct_leaf(value):
@@ -591,7 +651,10 @@ class VirtualMachine:
             index += 1
         if index < len(instructions) and instructions[index].op is OpCode.CALL_RESOLVED_ELEMENT:
             swap_reference = instructions[index].arg
-            if isinstance(swap_reference, ResolvedElementReference) and swap_reference.name == "swap":
+            if (
+                isinstance(swap_reference, ResolvedElementReference)
+                and swap_reference.name == "swap"
+            ):
                 index += 1
         if index + 1 >= len(instructions):
             return None
@@ -5758,6 +5821,22 @@ def _runtime_tag_delta(
         tuple(tag for tag in tags if not tag.absent),
         tuple(tag for tag in tags if tag.absent),
     )
+
+
+def _prepared_call_needs_return_contracts(code: FunctionCode) -> bool:
+    """Return whether a prepared leaf must apply post-execution return metadata."""
+    if code.return_tags or code.return_collection_ranks:
+        return True
+
+    def structurally_plain(spec: object) -> bool:
+        """Return whether a contract only removes impossible top-level wrappers."""
+        return (
+            isinstance(spec, tuple)
+            and bool(spec)
+            and spec[0] in {"any", "none", "nominal"}
+        )
+
+    return any(not structurally_plain(spec) for spec in code.return_tag_specs)
 
 
 def _validated_tag_parent_mapping(

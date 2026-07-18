@@ -1370,3 +1370,20 @@ The runtime is large because it implements many language features, not because
 its core is mysterious. Follow the records: typed node, instruction, reference,
 frame, value. At each boundary, verify that the earlier stage made the decision
 and the later stage merely executes it.
+
+### Prepared calls for repeated higher-order invocation
+
+Higher-order built-ins should prepare fixed-shape callable arguments once before
+entering a repeated loop. `RuntimeContext.prepare_call(callable, arity,
+multiplicity)` returns an invocation closure that validates the fixed call shape,
+uses direct-leaf execution when the compiled body proves that safe, and otherwise
+falls back to the general callable path. Unary `map` and string mapping use
+prepared unary calls, while `fold` uses prepared binary calls. `filter` additionally uses the
+predicate service so Boolean-only structural specialisations can avoid temporary
+vectors and function frames.
+
+Prepared execution may skip post-call return processing only when the compiled
+return metadata is structurally plain. Tagged, collection-ranked, union,
+intersection, and tuple contracts continue through the ordinary return-contract
+path. This keeps the fast path an execution optimisation rather than a second
+source of language semantics.

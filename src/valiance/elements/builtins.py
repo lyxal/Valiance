@@ -581,6 +581,9 @@ class RuntimeContext:
     static_values: tuple[Any, ...] = ()
     type_args: tuple[str, ...] = ()
     test_predicate: Callable[[Any, Any], bool] | None = None
+    prepare_call: (
+        Callable[[Any, int, int], Callable[..., tuple[Any, ...]]] | None
+    ) = None
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
@@ -1544,8 +1547,17 @@ def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         result = next(iterator)
     except StopIteration as exc:
         raise RuntimeError("reduce requires a non-empty list") from exc
+    prepared = (
+        ctx.prepare_call(reducer, 2, 1)
+        if ctx.prepare_call is not None
+        else None
+    )
     for item in iterator:
-        called = ctx.call(reducer, [result, item])
+        called = (
+            prepared(result, item)
+            if prepared is not None
+            else tuple(ctx.call(reducer, [result, item]))
+        )
         result = called[0]
     return (result,)
 
@@ -1759,7 +1771,21 @@ def _filter(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _map_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Map a unary function over the characters of a finite string."""
     values, function = args
-    return ([ctx.call(function, [character])[0] for character in values],)
+    prepared = (
+        ctx.prepare_call(function, 1, 1)
+        if ctx.prepare_call is not None
+        else None
+    )
+    return (
+        [
+            (
+                prepared(character)
+                if prepared is not None
+                else tuple(ctx.call(function, [character]))
+            )[0]
+            for character in values
+        ],
+    )
 
 
 @builtin(
@@ -1773,10 +1799,20 @@ def _map_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `map` built-in runtime overload."""
 
+    prepared = (
+        ctx.prepare_call(args[1], 1, 1)
+        if ctx.prepare_call is not None
+        else None
+    )
+
     def mapped_items():
         """Collect the items for mapped for the built-in catalogue and runtime."""
         for item in args[0]:
-            mapped = ctx.call(args[1], [item])
+            mapped = (
+                prepared(item)
+                if prepared is not None
+                else tuple(ctx.call(args[1], [item]))
+            )
             yield mapped[0]
 
     if _callable_has_element_tag(args[1], "Eager"):
