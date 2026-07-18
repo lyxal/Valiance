@@ -33,6 +33,9 @@ from valiance.runtime.runtime_values import (
     LazyList,
     ListValue,
     ObjectValue,
+    LazyPipelineStage,
+    PlannedLazyList,
+    PipelineTerminal,
     RuntimeNumber,
 )
 
@@ -436,6 +439,276 @@ define pick(a: Number, b: Number = 2) -> Number => $a $b +
 3 pick(_, 5)
 """),
             [RuntimeNumber("7"), RuntimeNumber("8")],
+        )
+
+    def test_drop_is_a_stateful_fused_pipeline_stage(self):
+        planned = execute(
+            "range(1, 10) map: fn (n) => $n * 2 end | drop 3"
+        )[0]
+
+        self.assertIsInstance(planned, PlannedLazyList)
+        self.assertEqual(
+            tuple(stage.name for stage in planned.stages),
+            ("map", "drop"),
+        )
+        self.assertEqual(
+            list(planned),
+            [
+                RuntimeNumber(8),
+                RuntimeNumber(10),
+                RuntimeNumber(12),
+                RuntimeNumber(14),
+                RuntimeNumber(16),
+                RuntimeNumber(18),
+                RuntimeNumber(20),
+            ],
+        )
+
+    def test_head_terminates_a_planned_pipeline_after_one_output(self):
+        consumed: list[int] = []
+
+        def source():
+            for value in range(1, 10):
+                consumed.append(value)
+                yield RuntimeNumber(value)
+
+        planned = PlannedLazyList(
+            source(),
+            (LazyPipelineStage.filtering(lambda value: value > 3),),
+        )
+        terminal = PipelineTerminal.first("missing")
+
+        self.assertEqual(planned.run_terminal(terminal), RuntimeNumber(4))
+        self.assertEqual(consumed, [1, 2, 3, 4])
+
+    def test_optimization_stats_are_disabled_by_default(self):
+        self.assertIsNone(VirtualMachine(output=lambda _value: None).optimization_stats)
+
+    def test_optimization_stats_report_prepared_plan_reuse(self):
+        analyser = Analyser()
+        typed = analyser.analyse(
+            parse("fn (value: Integer) -> Integer => $value end")
+        )
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(
+            output=lambda _value: None,
+            collect_optimization_stats=True,
+        )
+        function = vm.run(compile_program(typed))[0]
+
+        vm.prepare_call(function, 1, 1)
+        vm.prepare_call(function, 1, 1)
+
+        assert vm.optimization_stats is not None
+        self.assertEqual(
+            vm.optimization_stats.snapshot(),
+            {
+                "prepared.created": 1,
+                "prepared.strategy.identity": 2,
+                "prepared.reused": 1,
+            },
+        )
+
+    def test_prepared_call_exposes_arity_specialised_invocation(self):
+        analyser = Analyser()
+        typed = analyser.analyse(
+            parse("fn (a: Integer, b: Integer) -> Integer => $a $b + end")
+        )
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+        function = vm.run(compile_program(typed))[0]
+        prepared = vm.prepare_call(function, 2, 1)
+
+        self.assertEqual(
+            prepared.invoke2(RuntimeNumber(20), RuntimeNumber(22)),
+            (RuntimeNumber(42),),
+        )
+
+    def test_take_is_a_stateful_fused_pipeline_stage(self):
+        consumed: list[int] = []
+
+        def source():
+            for value in range(1, 10):
+                consumed.append(value)
+                yield RuntimeNumber(value)
+
+        planned = PlannedLazyList(
+            source(),
+            (
+                LazyPipelineStage.mapping(lambda value: value * 2),
+                LazyPipelineStage.limiting(3),
+            ),
+        )
+
+        self.assertEqual(
+            list(planned),
+            [RuntimeNumber(2), RuntimeNumber(4), RuntimeNumber(6)],
+        )
+        self.assertEqual(consumed, [1, 2, 3])
+
+    def test_zero_take_does_not_pull_the_pipeline_source(self):
+        consumed: list[int] = []
+
+        def source():
+            consumed.append(1)
+            yield RuntimeNumber(1)
+
+        planned = PlannedLazyList(
+            source(),
+            (LazyPipelineStage.limiting(0),),
+        )
+
+        self.assertEqual(list(planned), [])
+        self.assertEqual(consumed, [])
+
+    def test_user_function_vectorisation_reuses_prepared_scalar_plan(self):
+        analyser = Analyser()
+        typed = analyser.analyse(
+            parse(
+                "fn (n: Integer) -> Integer => ($n * 2) + 1 end"
+            )
+        )
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+        function = vm.run(compile_program(typed, optimize=False))[0]
+
+        result = vm.call_value(
+            function,
+            [[RuntimeNumber(1), RuntimeNumber(2), RuntimeNumber(3)]],
+        )
+
+        self.assertEqual(
+            result,
+            [[RuntimeNumber(3), RuntimeNumber(5), RuntimeNumber(7)]],
+        )
+        prepared = function.prepared_calls[(1, 1)]
+        self.assertEqual(prepared.strategy, "straight-line")
+
+    def test_length_fuses_a_finite_planned_pipeline(self):
+        result = execute(
+            "range(1, 20) filter: fn (n) => $n % 2 == 0 end | length"
+        )
+        self.assertEqual(result, [RuntimeNumber(10)])
+
+    def test_prepared_predicate_uses_general_plan_for_new_shapes(self):
+        result = execute(
+            "range(1, 10) filter: fn (n) => $n > 7 end | sum"
+        )
+        self.assertEqual(result, [RuntimeNumber(27)])
+
+    def test_map_builds_a_fusible_lazy_pipeline(self):
+        result = execute(
+            "range(1, 5) map: fn (n) => $n % 3 end"
+        )[0]
+
+        self.assertIsInstance(result, PlannedLazyList)
+        self.assertEqual(tuple(stage.name for stage in result.stages), ("map",))
+        self.assertEqual(
+            list(result),
+            [
+                RuntimeNumber(1),
+                RuntimeNumber(2),
+                RuntimeNumber(0),
+                RuntimeNumber(1),
+                RuntimeNumber(2),
+            ],
+        )
+
+    def test_map_filter_sum_executes_one_fused_pipeline(self):
+        result = execute(
+            "range(1, 20) "
+            "map: fn (n) => $n % 7 end | "
+            "filter: fn (n) => $n > 2 end | "
+            "sum"
+        )
+
+        self.assertEqual(result, [RuntimeNumber(54)])
+
+    def test_straight_line_plan_handles_multiple_resolved_calls(self):
+        source = "fn (n: Integer) -> Integer => ($n * 2) + 1 end"
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+        function = vm.run(compile_program(typed, optimize=False))[0]
+        prepared = vm.prepare_call(function, 1, 1)
+
+        self.assertEqual(prepared.strategy, "straight-line")
+        self.assertEqual(prepared(RuntimeNumber(5)), (RuntimeNumber(11),))
+
+    def test_prepared_niladic_scalar_uses_constant_strategy(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse("fn () -> Integer => 7 end"))
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+        function = vm.run(compile_program(typed))[0]
+        prepared = vm.prepare_call(function, 0, 1)
+
+        self.assertEqual(prepared.strategy, "constant")
+        self.assertEqual(prepared(), (RuntimeNumber(7),))
+        self.assertIs(prepared, vm.prepare_call(function, 0, 1))
+
+    def test_prepared_unary_identity_uses_identity_strategy(self):
+        analyser = Analyser()
+        typed = analyser.analyse(
+            parse("fn (value: Integer) -> Integer => $value end")
+        )
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+        function = vm.run(compile_program(typed))[0]
+        prepared = vm.prepare_call(function, 1, 1)
+
+        self.assertEqual(prepared.strategy, "identity")
+        self.assertEqual(prepared(RuntimeNumber(9)), (RuntimeNumber(9),))
+
+    def test_prepared_unary_wrapper_uses_resolved_builtin_strategy(self):
+        analyser = Analyser()
+        typed = analyser.analyse(
+            parse("fn (n: Integer) -> Integer => $n % 7 end")
+        )
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+        function = vm.run(compile_program(typed))[0]
+
+        first = vm.prepare_call(function, 1, 1)
+        second = vm.prepare_call(function, 1, 1)
+
+        self.assertIs(first, second)
+        self.assertEqual(first.strategy, "resolved-builtin")
+        self.assertEqual(first(RuntimeNumber(10)), (RuntimeNumber(3),))
+
+    def test_prepared_binary_wrapper_uses_resolved_builtin_strategy(self):
+        analyser = Analyser()
+        typed = analyser.analyse(
+            parse(
+                "fn (a: Integer, b: Integer) -> Integer => "
+                "$a $b + end"
+            )
+        )
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+        function = vm.run(compile_program(typed))[0]
+        prepared = vm.prepare_call(function, 2, 1)
+
+        self.assertEqual(prepared.strategy, "resolved-builtin")
+        self.assertEqual(
+            prepared(RuntimeNumber(6), RuntimeNumber(7)),
+            (RuntimeNumber(13),),
+        )
+
+    def test_prepared_wrapper_falls_back_for_collection_vectorisation(self):
+        analyser = Analyser()
+        typed = analyser.analyse(
+            parse("fn (n: Integer) -> Integer => $n % 7 end")
+        )
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+        function = vm.run(compile_program(typed))[0]
+        prepared = vm.prepare_call(function, 1, 1)
+
+        self.assertEqual(
+            list(prepared([RuntimeNumber(8), RuntimeNumber(9)])[0]),
+            [RuntimeNumber(1), RuntimeNumber(2)],
         )
 
     def test_vectorises_scalar_overloads_over_lists(self):

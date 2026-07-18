@@ -19,6 +19,9 @@ import valiance.vtypes as T
 from valiance.elements.documentation import ElementDocumentation, element_documentation
 from valiance.runtime.runtime_values import (
     LazyList,
+    LazyPipelineStage,
+    PlannedLazyList,
+    PipelineTerminal,
     ObjectValue,
     PanicSignal,
     format_runtime_value,
@@ -1298,7 +1301,13 @@ def _top(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _peek(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `peek` built-in runtime overload."""
     callable_value = args[-1]
-    return ctx.call(callable_value, list(args[:-1]))
+    call_args = tuple(args[:-1])
+    prepared = _prepared_runtime_call(ctx, callable_value, len(call_args))
+    return (
+        prepared(*call_args)
+        if prepared is not None
+        else tuple(ctx.call(callable_value, list(call_args)))
+    )
 
 
 @builtin("dip", (T.Fn(),), call_site=_dip_call_site)
@@ -1308,7 +1317,14 @@ def _dip(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         raise RuntimeError("dip requires a held value beneath its callable")
     callable_value = args[-1]
     held = args[-2]
-    return (*ctx.call(callable_value, list(args[:-2])), held)
+    call_args = tuple(args[:-2])
+    prepared = _prepared_runtime_call(ctx, callable_value, len(call_args))
+    called = (
+        prepared(*call_args)
+        if prepared is not None
+        else tuple(ctx.call(callable_value, list(call_args)))
+    )
+    return (*called, held)
 
 
 @builtin("fork", (T.Fn(), T.Fn()), call_site=_fork_call_site)
@@ -1317,9 +1333,21 @@ def _fork(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     *call_args, left, right = args
     left_arity = _runtime_callable_arity(left)
     right_arity = _runtime_callable_arity(right)
-    left_args = call_args[-left_arity:] if left_arity else []
-    right_args = call_args[-right_arity:] if right_arity else []
-    return (*ctx.call(left, list(left_args)), *ctx.call(right, list(right_args)))
+    left_args = tuple(call_args[-left_arity:]) if left_arity else ()
+    right_args = tuple(call_args[-right_arity:]) if right_arity else ()
+    left_plan = _prepared_runtime_call(ctx, left, left_arity)
+    right_plan = _prepared_runtime_call(ctx, right, right_arity)
+    left_result = (
+        left_plan(*left_args)
+        if left_plan is not None
+        else tuple(ctx.call(left, list(left_args)))
+    )
+    right_result = (
+        right_plan(*right_args)
+        if right_plan is not None
+        else tuple(ctx.call(right, list(right_args)))
+    )
+    return (*left_result, *right_result)
 
 
 @builtin("both", (T.Fn(),), call_site=_both_call_site)
@@ -1332,9 +1360,14 @@ def _both(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     arity = int(ctx.static_values[0]) if ctx.static_values else len(values) // 2
     if arity < 0 or len(values) != arity * 2:
         raise RuntimeError("invalid both call-site arity metadata")
+    prepared = _prepared_runtime_call(ctx, callable_value, arity)
+    lower = tuple(values[:arity])
+    upper = tuple(values[arity:])
+    if prepared is not None:
+        return (*prepared(*lower), *prepared(*upper))
     return (
-        *ctx.call(callable_value, list(values[:arity])),
-        *ctx.call(callable_value, list(values[arity:])),
+        *ctx.call(callable_value, list(lower)),
+        *ctx.call(callable_value, list(upper)),
     )
 
 
@@ -1357,10 +1390,21 @@ def _correspond(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     if lower_arity < 0 or upper_arity < 0 or len(values) != lower_arity + upper_arity:
         raise RuntimeError("invalid correspond call-site arity metadata")
     split = lower_arity
-    return (
-        *ctx.call(lower, list(values[:split])),
-        *ctx.call(upper, list(values[split:])),
+    lower_args = tuple(values[:split])
+    upper_args = tuple(values[split:])
+    lower_plan = _prepared_runtime_call(ctx, lower, lower_arity)
+    upper_plan = _prepared_runtime_call(ctx, upper, upper_arity)
+    lower_result = (
+        lower_plan(*lower_args)
+        if lower_plan is not None
+        else tuple(ctx.call(lower, list(lower_args)))
     )
+    upper_result = (
+        upper_plan(*upper_args)
+        if upper_plan is not None
+        else tuple(ctx.call(upper, list(upper_args)))
+    )
+    return (*lower_result, *upper_result)
 
 
 @builtin("call", (T.Fn(),), call_site=_call_call_site)
@@ -1393,6 +1437,17 @@ def _call(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         hidden_static_values = tuple(ctx.static_values[5:])
     else:
         hidden_static_values = tuple(ctx.static_values[1:])
+    callable_code = getattr(callable_value, "code", None)
+    if (
+        selected in (None, 0)
+        and not vectorised
+        and not hidden_static_values
+        and callable_code is not None
+        and not getattr(callable_code, "accepts_stack_inputs", False)
+    ):
+        prepared = _prepared_runtime_call(ctx, callable_value, len(call_args))
+        if prepared is not None:
+            return prepared.invoke_proven(tuple(call_args))
     if isinstance(selected, int) and ctx.call_overload is not None:
         return tuple(
             ctx.call_overload(
@@ -1419,6 +1474,38 @@ def _runtime_callable_arity(value: Any) -> int:
     if overloads:
         return max(_runtime_callable_arity(overload) for overload in overloads)
     return 0
+
+
+def _runtime_callable_multiplicity(value: Any) -> int:
+    """Determine one concrete callable's compiled return multiplicity."""
+    code = getattr(value, "code", None)
+    if code is not None:
+        specs = getattr(code, "return_tag_specs", ())
+        ranks = getattr(code, "return_collection_ranks", ())
+        tags = getattr(code, "return_tags", ())
+        return max(len(specs), len(ranks), len(tags))
+    overloads = getattr(value, "overloads", ())
+    if overloads:
+        multiplicities = {
+            _runtime_callable_multiplicity(overload) for overload in overloads
+        }
+        if len(multiplicities) == 1:
+            return next(iter(multiplicities))
+    return 0
+
+
+def _prepared_runtime_call(
+    ctx: RuntimeContext,
+    callable_value: Any,
+    arity: int,
+) -> Callable[..., tuple[Any, ...]] | None:
+    """Prepare any concrete runtime callable when its stack shape is reified."""
+    if ctx.prepare_call is None:
+        return None
+    multiplicity = _runtime_callable_multiplicity(callable_value)
+    if multiplicity < 0:
+        return None
+    return ctx.prepare_call(callable_value, arity, multiplicity)
 
 
 def _runtime_callable_value(value: Any) -> bool:
@@ -1552,13 +1639,23 @@ def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         if ctx.prepare_call is not None
         else None
     )
-    for item in iterator:
+
+    def reduce_item(accumulator: Any, item: Any) -> Any:
+        """Reduce one item through the prepared or general callable path."""
         called = (
-            prepared(result, item)
+            prepared.invoke2(accumulator, item)
             if prepared is not None
-            else tuple(ctx.call(reducer, [result, item]))
+            else tuple(ctx.call(reducer, [accumulator, item]))
         )
-        result = called[0]
+        return called[0]
+
+    if isinstance(values, PlannedLazyList):
+        # The first value was already obtained from the same lazy iterator.
+        for item in iterator:
+            result = reduce_item(result, item)
+        return (result,)
+    for item in iterator:
+        result = reduce_item(result, item)
     return (result,)
 
 
@@ -1743,21 +1840,17 @@ def _filter(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Filter a finite list using a unary predicate function."""
     values, predicate = args
 
-    def filtered_items():
-        """Collect the items for filtered for the built-in catalogue and runtime."""
+    def test(item: Any) -> bool:
+        """Evaluate the predicate once for one pipeline item."""
         if ctx.test_predicate is not None:
-            for item in values:
-                if ctx.test_predicate(predicate, item):
-                    yield item
-            return
-        for item in values:
-            result = ctx.call(predicate, [item])
-            if result[0]:
-                yield item
+            return ctx.test_predicate(predicate, item)
+        return bool(ctx.call(predicate, [item])[0])
 
     if _callable_has_element_tag(predicate, "Eager"):
-        return (list(filtered_items()),)
-    return (LazyList(filtered_items()),)
+        return ([item for item in values if test(item)],)
+    if isinstance(values, PlannedLazyList):
+        return (values.append_stage(LazyPipelineStage.filtering(test)),)
+    return (PlannedLazyList(values, (LazyPipelineStage.filtering(test),)),)
 
 
 @builtin(
@@ -1779,7 +1872,7 @@ def _map_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (
         [
             (
-                prepared(character)
+                prepared.invoke1(character)
                 if prepared is not None
                 else tuple(ctx.call(function, [character]))
             )[0]
@@ -1805,19 +1898,20 @@ def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         else None
     )
 
-    def mapped_items():
-        """Collect the items for mapped for the built-in catalogue and runtime."""
-        for item in args[0]:
-            mapped = (
-                prepared(item)
-                if prepared is not None
-                else tuple(ctx.call(args[1], [item]))
-            )
-            yield mapped[0]
+    def map_item(item: Any) -> Any:
+        """Map one value through the prepared or general callable path."""
+        mapped = (
+            prepared.invoke1(item)
+            if prepared is not None
+            else tuple(ctx.call(args[1], [item]))
+        )
+        return mapped[0]
 
     if _callable_has_element_tag(args[1], "Eager"):
-        return (list(mapped_items()),)
-    return (LazyList(mapped_items()),)
+        return ([map_item(item) for item in args[0]],)
+    if isinstance(args[0], PlannedLazyList):
+        return (args[0].append_stage(LazyPipelineStage.mapping(map_item)),)
+    return (PlannedLazyList(args[0], (LazyPipelineStage.mapping(map_item),)),)
 
 
 @builtin(
@@ -1830,11 +1924,24 @@ def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _map_niladic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Call a niladic mapping function once for every input-list item."""
+    prepared = (
+        ctx.prepare_call(args[1], 0, 1)
+        if ctx.prepare_call is not None
+        else None
+    )
+    use_prepared = (
+        prepared is not None
+        and getattr(prepared, "strategy", None) == "constant"
+    )
 
     def mapped_items():
         """Yield one niladic callable result for each input item."""
         for _item in args[0]:
-            mapped = ctx.call(args[1], [])
+            mapped = (
+                prepared.invoke0()
+                if use_prepared
+                else tuple(ctx.call(args[1], []))
+            )
             yield mapped[0]
 
     return (LazyList(mapped_items()),)
@@ -1851,9 +1958,13 @@ def _map_niladic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     element_tags=(EAGER_TAG,),
 )
 def _map_eager_effect(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `map` built-in runtime overload."""
+    """Execute an eager mapping callable through one reusable call plan."""
+    prepared = _prepared_runtime_call(ctx, args[1], 1)
     for item in args[0]:
-        ctx.call(args[1], [item])
+        if prepared is not None:
+            prepared(item)
+        else:
+            ctx.call(args[1], [item])
     return ()
 
 
@@ -1894,6 +2005,8 @@ def _take(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     lst, n = args
     if n < 0:
         raise RuntimeError("take requires a non-negative integer")
+    if isinstance(lst, PlannedLazyList):
+        return (lst.append_stage(LazyPipelineStage.limiting(int(n))),)
     if isinstance(lst, LazyList):
         return (LazyList(islice(iter(lst), int(n))),)
     return (lst[: int(n)],)
@@ -1908,14 +2021,24 @@ def _take(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("length", (T.String,), (T.Integer,), vectorisable=False)
 @alias("len")
 def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Return the exact length of a finite list or string."""
-    return (RuntimeNumber(len(args[0])),)
+    """Return the exact length, fusing any finite planned pipeline."""
+    value = args[0]
+    if isinstance(value, PlannedLazyList):
+        return (RuntimeNumber(value.count_terminal()),)
+    return (RuntimeNumber(len(value)),)
 
 
 @builtin("head", (T.ExactList(T.TypeVariable("Item")),), (T.TypeVariable("Item"),))
 def _head(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `head` built-in runtime overload."""
-    for item in args[0]:
+    """Return the first item, terminating a planned pipeline immediately."""
+    values = args[0]
+    if isinstance(values, PlannedLazyList):
+        return (
+            values.run_terminal(
+                PipelineTerminal.first("head requires a non-empty list")
+            ),
+        )
+    for item in values:
         return (item,)
     raise RuntimeError("head requires a non-empty list")
 
@@ -1978,6 +2101,8 @@ def _drop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     count = int(raw_count)
     if count < 0:
         raise RuntimeError("drop requires a non-negative integer")
+    if isinstance(values, PlannedLazyList):
+        return (values.append_stage(LazyPipelineStage.dropping(count)),)
     if isinstance(values, LazyList):
         return (LazyList(islice(iter(values), count, None)),)
     return (values[count:],)
@@ -2027,8 +2152,12 @@ def _group_consecutive_string(
 
 @builtin("sum", (T.ExactList(T.Number),), (T.Number,))
 def _sum(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Add every numeric item in a list, using zero for an empty list."""
-    return (sum(args[0], RuntimeNumber(0)),)
+    """Add every numeric item, fusing any prepared lazy pipeline stages."""
+    values = args[0]
+    zero = RuntimeNumber(0)
+    if isinstance(values, PlannedLazyList):
+        return (values.sum_terminal(zero),)
+    return (sum(values, zero),)
 
 
 @builtin(
@@ -2317,11 +2446,21 @@ def _and_then(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     if _is_none_value(value):
         return (value,)
     present = _present_value(value)
+    prepared = _prepared_runtime_call(ctx, callable_value, 1)
     if present is not _MISSING:
-        called = ctx.call(callable_value, [present])
+        called = (
+            prepared(present)
+            if prepared is not None
+            else tuple(ctx.call(callable_value, [present]))
+        )
         return (called[0],)
     if _is_ok_value(value):
-        called = ctx.call(callable_value, [value.fields["value"]])
+        payload = value.fields["value"]
+        called = (
+            prepared(payload)
+            if prepared is not None
+            else tuple(ctx.call(callable_value, [payload]))
+        )
         result = called[0]
         if _is_ok_value(result) or _is_err_value(result):
             return (result,)

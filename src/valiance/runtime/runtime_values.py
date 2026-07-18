@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import cmath
-from collections.abc import Iterable, Mapping, Sequence, Sized
+from collections.abc import Callable, Iterable, Mapping, Sequence, Sized
 from dataclasses import dataclass, field
 from fractions import Fraction
 from functools import lru_cache
@@ -35,6 +35,191 @@ class LazyList:
         if isinstance(other, Sequence) and not isinstance(other, (str, bytes, tuple)):
             return list(self) == list(other)
         return False
+
+
+@dataclass(frozen=True, slots=True)
+class LazyPipelineStage:
+    """One reusable lazy transformation that builds fresh per-iterator state."""
+
+    name: str
+    build: Callable[[], Callable[[Any], tuple[bool, Any, bool]]] = field(
+        repr=False,
+        compare=False,
+    )
+    empty_without_source: bool = False
+
+    @staticmethod
+    def mapping(operation: Callable[[Any], Any]) -> LazyPipelineStage:
+        """Build a stateless stage that transforms every incoming value."""
+        return LazyPipelineStage(
+            "map",
+            lambda: lambda value: (True, operation(value), False),
+        )
+
+    @staticmethod
+    def filtering(predicate: Callable[[Any], bool]) -> LazyPipelineStage:
+        """Build a stateless stage that conditionally keeps its incoming value."""
+        return LazyPipelineStage(
+            "filter",
+            lambda: lambda value: (bool(predicate(value)), value, False),
+        )
+
+    @staticmethod
+    def dropping(count: int) -> LazyPipelineStage:
+        """Build a stateful stage that discards a fixed input prefix."""
+        if count < 0:
+            raise ValueError("pipeline drop count cannot be negative")
+
+        def build() -> Callable[[Any], tuple[bool, Any, bool]]:
+            """Create independent drop state for one pipeline iterator."""
+            remaining = count
+
+            def apply(value: Any) -> tuple[bool, Any, bool]:
+                """Drop values until the stage's prefix has been consumed."""
+                nonlocal remaining
+                if remaining > 0:
+                    remaining -= 1
+                    return False, value, False
+                return True, value, False
+
+            return apply
+
+        return LazyPipelineStage("drop", build)
+
+    @staticmethod
+    def limiting(count: int) -> LazyPipelineStage:
+        """Build a stateful stage that stops after the requested output prefix."""
+        if count < 0:
+            raise ValueError("pipeline limit cannot be negative")
+
+        def build() -> Callable[[Any], tuple[bool, Any, bool]]:
+            """Create independent limit state for one pipeline iterator."""
+            remaining = count
+
+            def apply(value: Any) -> tuple[bool, Any, bool]:
+                """Keep one value and mark the item that completes the prefix."""
+                nonlocal remaining
+                if remaining <= 0:
+                    return False, value, True
+                remaining -= 1
+                return True, value, remaining == 0
+
+            return apply
+
+        return LazyPipelineStage(
+            "take",
+            build,
+            empty_without_source=count == 0,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineTerminal:
+    """Generic state machine driven by a planned lazy pipeline."""
+
+    initial: Callable[[], Any] = field(repr=False)
+    consume: Callable[[Any, Any], tuple[Any, bool]] = field(repr=False)
+    finish: Callable[[Any], Any] = field(repr=False)
+
+    @staticmethod
+    def reducing(initial: Any, reducer: Callable[[Any, Any], Any]) -> PipelineTerminal:
+        """Build a terminal that consumes every produced value."""
+        return PipelineTerminal(
+            lambda: initial,
+            lambda state, item: (reducer(state, item), False),
+            lambda state: state,
+        )
+
+    @staticmethod
+    def first(error: str) -> PipelineTerminal:
+        """Build an early-terminating terminal for the first produced value."""
+        missing = object()
+
+        def finish(value: Any) -> Any:
+            """Return the first value or raise the caller-provided empty error."""
+            if value is missing:
+                raise RuntimeError(error)
+            return value
+
+        return PipelineTerminal(
+            lambda: missing,
+            lambda _state, item: (item, True),
+            finish,
+        )
+
+
+@dataclass(eq=False)
+class PlannedLazyList(LazyList):
+    """A lazy list whose reusable stages can be fused into terminal consumers."""
+
+    source: Iterable[Any] = field(default=())
+    stages: tuple[LazyPipelineStage, ...] = field(default=())
+
+    def __init__(
+        self,
+        source: Iterable[Any],
+        stages: tuple[LazyPipelineStage, ...],
+        *,
+        runtime_rank: int | None = None,
+        owned_values: tuple[Any, ...] = (),
+    ) -> None:
+        """Initialize a reusable lazy pipeline without nesting generators."""
+        super().__init__((), runtime_rank, owned_values)
+        self.source = source
+        self.stages = stages
+
+    def __iter__(self):
+        """Execute fresh instances of all registered stages in one loop."""
+        operations = tuple(stage.build() for stage in self.stages)
+        if any(stage.empty_without_source for stage in self.stages):
+            # A zero-length prefix must not pull even one source item.
+            return
+        for source_item in self.source:
+            item = source_item
+            stop_after_item = False
+            for operation in operations:
+                keep, item, stop = operation(item)
+                stop_after_item = stop_after_item or stop
+                if not keep:
+                    break
+            else:
+                yield item
+            if stop_after_item:
+                return
+
+    def append_stage(self, stage: LazyPipelineStage) -> PlannedLazyList:
+        """Return a pipeline sharing this source with one additional stage."""
+        return PlannedLazyList(
+            self.source,
+            (*self.stages, stage),
+            runtime_rank=self.runtime_rank,
+            owned_values=self.owned_values,
+        )
+
+    def run_terminal(self, terminal: PipelineTerminal) -> Any:
+        """Drive this pipeline with an arbitrary stateful terminal."""
+        state = terminal.initial()
+        for item in self:
+            state, stop = terminal.consume(state, item)
+            if stop:
+                break
+        return terminal.finish(state)
+
+    def reduce_terminal(
+        self,
+        initial: Any,
+        reducer: Callable[[Any, Any], Any],
+    ) -> Any:
+        """Drive every pipeline stage and one terminal reducer in one loop."""
+        return self.run_terminal(PipelineTerminal.reducing(initial, reducer))
+
+    def count_terminal(self) -> int:
+        """Count values surviving every pipeline stage without materializing them."""
+        return self.reduce_terminal(0, lambda count, _item: count + 1)
+
+    def sum_terminal(self, zero: Any) -> Any:
+        """Fuse this pipeline with numeric summation in one loop."""
+        return self.reduce_terminal(zero, lambda total, item: total + item)
 
 
 class ListValue(list[Any]):

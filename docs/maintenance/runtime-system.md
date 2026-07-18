@@ -1387,3 +1387,138 @@ return metadata is structurally plain. Tagged, collection-ranked, union,
 intersection, and tuple contracts continue through the ordinary return-contract
 path. This keeps the fast path an execution optimisation rather than a second
 source of language semantics.
+
+Prepared calls are represented by a runtime-only `PreparedCall` object with an
+observable strategy name for structural tests and profiling. The current
+strategies are `resolved-builtin`, `direct-leaf`, and `general`. Straight-line
+wrappers whose operands are parameters or constants and whose final operation is
+a pure ownership-trivial resolved built-in use `resolved-builtin`; this removes
+the wrapper frame entirely. Plans are cached per function value and fixed
+arity/multiplicity pair. Collection-valued arguments continue through the normal
+vectorisation path.
+
+Run `PYTHONPATH=src python -m tools.benchmark_higher_order --runs 5` to measure
+execution-only medians for filter predicates, unary mapping, binary folding, and
+niladic mapping. The benchmark compiles each workload once and constructs a fresh
+VM for every measured execution.
+
+
+Niladic scalar functions made only from `PUSH_CONST` instructions use the
+`constant` prepared-call strategy when they have no effects or nontrivial return
+contracts. Niladic `map` opts into preparation only for this strategy, avoiding
+the overhead regression seen when ordinary niladic calls were routed through a
+generic plan. Scalar unary identity functions similarly use an `identity` plan.
+Both strategies preserve the ordinary fallback for tagged, collection-valued,
+effectful, or lifecycle-bearing results.
+
+
+### Fused lazy iterator plans
+
+Pure list `map` and non-eager `filter` now produce `PlannedLazyList` values. A
+plan stores its original source and an ordered tuple of map/filter stages rather
+than nesting one generator inside another. Consecutive stages append to the same
+plan, preserving source order and one evaluation per stage. `sum` recognizes a
+planned list and drives all stages with one terminal loop. This fuses `map ->
+sum`, `filter -> sum`, and mixed `map -> filter -> sum` pipelines while ordinary
+iteration still exposes the same lazy list semantics. Runtime collection-tag
+canonicalization preserves plans only for structurally plain item contracts;
+tagged and otherwise nontrivial contracts retain the existing recursive path.
+
+Prepared calls also support a conservative `straight-line` strategy for short
+scalar stack programs made only from parameter loads, scalar constants, and pure
+ownership-trivial resolved built-ins. The builder proves stack depth at every
+operation and rejects cycling-dependent, vectorised, effectful, tagged,
+lifecycle-bearing, or user-call instructions. This removes full VM frames for
+small arithmetic mapper and reducer bodies containing several built-in calls.
+
+
+### Generality boundary for higher-order optimisation
+
+Prepared execution is intentionally shape-driven rather than element-name
+driven. Every concrete callable first receives a reusable fixed
+arity/multiplicity `PreparedCall`; the generic plan builders cover constants,
+identities, single resolved built-ins, multi-operation straight-line scalar
+programs, direct leaves, and the fully general fallback. Predicate execution uses
+the same preparation path. The vector-membership recognizer is merely one
+registered predicate specializer ahead of that path, not a requirement for fast
+filtering. New elements automatically participate when their selected overloads
+are pure, ownership-trivial resolved built-ins, while effectful, vectorised,
+tagged, lifecycle-bearing, or user-calling operations retain the general VM
+semantics.
+
+`PlannedLazyList` likewise exposes generic `reduce_terminal` and
+`count_terminal` operations. `sum` and `length` are current consumers, but future
+terminals can fuse without adding a new list wrapper or a source-specific opcode.
+Stack combinators (`peek`, `dip`, `fork`, `both`, and `correspond`) now prepare
+their concrete callables using reified runtime arity and multiplicity, so future
+callable implementations benefit from the same plan selection rather than from
+combinator-specific fast paths.
+
+Pipeline fusion is also extension-oriented. `LazyPipelineStage` is a generic
+keep/value transformation rather than a closed switch over built-in element
+names. Current `mapping(...)` and `filtering(...)` constructors are convenience
+factories; future lazy elements can append their own stage with the same
+`(keep, value)` contract, and future terminals can consume any plan through
+`reduce_terminal(...)`. This prevents every new lazy element or terminal from
+requiring a bespoke VM opcode or pairwise fusion rule.
+
+### Prepared scalar kernels inside vectorisation
+
+User-function vectorisation now prepares the scalar callable once before walking
+any vector depth. Each scalar leaf invokes `PreparedCall.invoke_proven(...)`,
+which omits repeated arity and multiplicity checks because analysis and the
+vectorisation plan have already fixed both shapes. This is not restricted to a
+particular function body: constant, identity, resolved-builtin, straight-line,
+direct-leaf, and general strategies all participate. Explicit `call` also uses
+the same prepared plan for statically selected non-vector leaf invocations, so a
+callable reached through generic call syntax does not lose its prepared strategy.
+Collection-valued leaves, extensions, dynamic target ranks, and overloaded
+selection continue through the existing vectorisation machinery.
+
+### Stateful lazy pipeline stages
+
+`LazyPipelineStage` now builds fresh per-iterator operations. This lets future
+lazy elements carry iterator-local state without sharing it between traversals.
+The first stateful stage is `limiting(...)`, used by `take`. A planned
+`map/filter/take/...` pipeline remains one source loop, stops immediately after
+the requested output prefix, and a zero-length prefix does not pull the source at
+all. Stage results carry both keep/drop and stop-after-item signals, so future
+early-terminating stages can preserve ordering without bespoke generator nests.
+
+Eager higher-order `map`, optional/Result continuation through `&`, and explicit
+`call` now use the same prepared-call entrypoint as lazy map, filter, fold, and
+stack combinators. This broadens optimisation coverage by callable shape rather
+than by benchmark or element implementation.
+
+### V9 general call, vector-kernel, and pipeline infrastructure
+
+`PreparedCall` exposes `invoke0`, `invoke1`, and `invoke2` for hot fixed-arity
+consumers, while `invoke_proven` remains available for arbitrary stack effects.
+These methods bypass tuple packing and repeated shape checks only where analysis
+or the surrounding higher-order element has already proved the call shape.
+
+`ScalarKernel` is the vectorisation-facing scalar interface. User-function
+vectorisation adapts any prepared strategy to this interface, including
+constant, identity, resolved-builtin, straight-line, direct-leaf, and general
+plans. The vector walker therefore depends on a stable arity/multiplicity kernel
+rather than on the kind or spelling of the function being vectorised.
+
+Lazy pipelines now support a generic `PipelineTerminal` state machine with
+initial, consume, early-stop, and finish operations. Existing reducing terminals
+and first-value termination use this shared protocol. `head` terminates planned
+pipelines after the first produced value. Stateful `drop` joins `take` as a
+composable stage with fresh iterator-local state, allowing map/filter/drop/take
+pipelines to remain one source traversal.
+
+`VirtualMachine(collect_optimization_stats=True)` enables debug-only counters for
+prepared-plan creation, reuse, and selected strategies. Counters are absent by
+default, so normal execution does not perform per-call instrumentation. Use the
+snapshot to confirm broad optimisation coverage and detect unexpected general
+fallbacks in benchmark or diagnostic tooling.
+
+Rank-one eager user-function vectorisation now selects a dedicated scalar-kernel
+loop after resolving vector depths once. Unary, binary zip, left-broadcast, and
+right-broadcast shapes avoid recursive vector dispatch and validate vector
+lengths once. Other arities use the same kernel interface with a generic eager
+loop; nested ranks, lazy inputs, extensions, and dynamic shapes retain the full
+vectorisation path.

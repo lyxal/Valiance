@@ -30,6 +30,7 @@ from valiance.runtime.runtime_values import (
     DIAGNOSTIC_LIST_PREVIEW_LIMIT,
     DictValue,
     LazyList,
+    PlannedLazyList,
     ListValue,
     RuntimeNumber,
     ObjectRuntimeType,
@@ -121,6 +122,80 @@ class _ExecutionContext:
     stack: tuple[Any, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedCall:
+    """Reusable fixed-shape execution plan for one higher-order callable."""
+
+    arity: int
+    multiplicity: int
+    strategy: str
+    implementation: Callable[..., tuple[Any, ...]] = field(repr=False)
+
+    def __call__(self, *args: Any) -> tuple[Any, ...]:
+        """Invoke this prepared plan after validating its fixed argument shape."""
+        if len(args) != self.arity:
+            raise RuntimeError(
+                f"prepared callable expected {self.arity} arguments, got {len(args)}"
+            )
+        return self.invoke_checked(args)
+
+    def invoke_checked(self, args: tuple[Any, ...]) -> tuple[Any, ...]:
+        """Invoke pre-grouped arguments and validate the result multiplicity."""
+        result = self.implementation(*args)
+        if len(result) != self.multiplicity:
+            raise RuntimeError(
+                f"prepared callable expected {self.multiplicity} results, "
+                f"got {len(result)}"
+            )
+        return result
+
+    def invoke_proven(self, args: tuple[Any, ...]) -> tuple[Any, ...]:
+        """Invoke at a call site whose fixed input/output shape is already proved."""
+        return self.implementation(*args)
+
+    def invoke0(self) -> tuple[Any, ...]:
+        """Invoke a proved niladic plan without constructing an argument tuple."""
+        return self.implementation()
+
+    def invoke1(self, value: Any) -> tuple[Any, ...]:
+        """Invoke a proved unary plan without variadic argument collection."""
+        return self.implementation(value)
+
+    def invoke2(self, left: Any, right: Any) -> tuple[Any, ...]:
+        """Invoke a proved binary plan without variadic argument collection."""
+        return self.implementation(left, right)
+
+
+@dataclass(frozen=True, slots=True)
+class ScalarKernel:
+    """Uniform scalar execution kernel consumed by vectorisation machinery."""
+
+    arity: int
+    multiplicity: int
+    invoke: Callable[[tuple[Any, ...]], tuple[Any, ...]] = field(repr=False)
+
+    @classmethod
+    def from_prepared(cls, prepared: PreparedCall) -> ScalarKernel:
+        """Adapt a prepared function call into a vector scalar kernel."""
+        if prepared.arity == 1:
+            return cls(
+                1,
+                prepared.multiplicity,
+                lambda args: prepared.invoke1(args[0]),
+            )
+        if prepared.arity == 2:
+            return cls(
+                2,
+                prepared.multiplicity,
+                lambda args: prepared.invoke2(args[0], args[1]),
+            )
+        return cls(
+            prepared.arity,
+            prepared.multiplicity,
+            prepared.invoke_proven,
+        )
+
+
 @dataclass(slots=True)
 class FunctionValue:
     """A function closure."""
@@ -136,6 +211,11 @@ class FunctionValue:
     )
     predicate_test: Callable[[Any], bool] | None | bool = field(
         default=None,
+        repr=False,
+        compare=False,
+    )
+    prepared_calls: dict[tuple[int, int], PreparedCall] = field(
+        default_factory=dict,
         repr=False,
         compare=False,
     )
@@ -383,6 +463,21 @@ class _FunctionReturn(Exception):
     values: tuple[Any, ...]
 
 
+@dataclass(slots=True)
+class OptimizationStats:
+    """Optional debug counters for prepared runtime execution decisions."""
+
+    counters: Counter[str] = field(default_factory=Counter)
+
+    def increment(self, name: str) -> None:
+        """Record one optimisation event."""
+        self.counters[name] += 1
+
+    def snapshot(self) -> dict[str, int]:
+        """Return an immutable-style copy suitable for diagnostics and tests."""
+        return dict(self.counters)
+
+
 class VirtualMachine:
     """A small stack-based bytecode interpreter."""
 
@@ -391,6 +486,7 @@ class VirtualMachine:
         *,
         output: Callable[[str], None] | None = None,
         list_preview_limit: int | None = None,
+        collect_optimization_stats: bool = False,
     ) -> None:
         """Initialize this virtual machine."""
         self.output = (lambda value: print(value, end="")) if output is None else output
@@ -399,6 +495,9 @@ class VirtualMachine:
             lazy_preview_limit=list_preview_limit,
         )
         self.tag_parents: dict[str, str] = {}
+        self.optimization_stats = (
+            OptimizationStats() if collect_optimization_stats else None
+        )
         self._resolved_builtin_cache: dict[
             int,
             tuple[ResolvedElementReference, BuiltinValue, BuiltinOverload],
@@ -510,71 +609,357 @@ class VirtualMachine:
         value: Any,
         arity: int,
         multiplicity: int,
-    ) -> Callable[..., tuple[Any, ...]]:
-        """Prepare a fixed-shape callable once for repeated higher-order use."""
+    ) -> PreparedCall:
+        """Prepare and cache a fixed-shape callable for repeated higher-order use."""
         if arity < 0 or multiplicity < 0:
             raise RuntimeError("prepared call shape cannot be negative")
-
-        if (
-            isinstance(value, FunctionValue)
-            and len(value.code.params) == arity
-            and not value.code.accepts_stack_inputs
-            and self._can_execute_direct_leaf(value)
-        ):
-            needs_contracts = _prepared_call_needs_return_contracts(value.code)
-
-            def invoke_leaf(*args: Any) -> tuple[Any, ...]:
-                """Invoke a fixed-shape direct leaf with required return contracts."""
-                if len(args) != arity:
-                    raise RuntimeError(
-                        f"prepared callable expected {arity} arguments, got {len(args)}"
+        key = (arity, multiplicity)
+        if isinstance(value, FunctionValue):
+            cached = value.prepared_calls.get(key)
+            if cached is not None:
+                if self.optimization_stats is not None:
+                    self.optimization_stats.increment("prepared.reused")
+                    self.optimization_stats.increment(
+                        f"prepared.strategy.{cached.strategy}"
                     )
-                if any(is_list_like(arg) for arg in args):
-                    # A collection argument may require the user-function
-                    # vectorisation path selected by its compiled parameter ranks.
-                    result = tuple(self.call_value(value, list(args)))
-                else:
-                    result = tuple(
-                        self._execute_direct_leaf(value, tuple(args))
-                        if needs_contracts
-                        else self._execute_direct_leaf_body(value, tuple(args))
-                    )
-                if len(result) != multiplicity:
-                    raise RuntimeError(
-                        f"prepared callable expected {multiplicity} results, "
-                        f"got {len(result)}"
-                    )
-                return result
-
-            return invoke_leaf
+                return cached
+            builders = (
+                self._prepare_constant_call,
+                self._prepare_identity_call,
+                self._prepare_resolved_builtin_call,
+                self._prepare_straight_line_call,
+                self._prepare_direct_leaf_call,
+            )
+            for builder in builders:
+                plan = builder(value, arity, multiplicity)
+                if plan is not None:
+                    value.prepared_calls[key] = plan
+                    if self.optimization_stats is not None:
+                        self.optimization_stats.increment("prepared.created")
+                        self.optimization_stats.increment(
+                            f"prepared.strategy.{plan.strategy}"
+                        )
+                    return plan
 
         def invoke_general(*args: Any) -> tuple[Any, ...]:
-            """Invoke a fixed-shape callable through the fully general VM path."""
-            if len(args) != arity:
-                raise RuntimeError(
-                    f"prepared callable expected {arity} arguments, got {len(args)}"
-                )
-            result = tuple(self.call_value(value, list(args)))
-            if len(result) != multiplicity:
-                raise RuntimeError(
-                    f"prepared callable expected {multiplicity} results, "
-                    f"got {len(result)}"
-                )
+            """Invoke through the fully general overload/vectorisation path."""
+            return tuple(self.call_value(value, list(args)))
+
+        plan = PreparedCall(arity, multiplicity, "general", invoke_general)
+        if self.optimization_stats is not None:
+            self.optimization_stats.increment("prepared.created")
+            self.optimization_stats.increment("prepared.strategy.general")
+        return plan
+
+    def _prepare_constant_call(
+        self,
+        value: FunctionValue,
+        arity: int,
+        multiplicity: int,
+    ) -> PreparedCall | None:
+        """Prepare a pure niladic scalar function as a reusable constant result."""
+        if (
+            arity != 0
+            or value.code.params
+            or value.code.accepts_stack_inputs
+            or value.code.element_tags
+            or _prepared_call_needs_return_contracts(value.code)
+        ):
+            return None
+        instructions = value.code.instructions
+        if (
+            len(instructions) != multiplicity + 1
+            or instructions[-1].op is not OpCode.RETURN
+            or any(item.op is not OpCode.PUSH_CONST for item in instructions[:-1])
+        ):
+            return None
+        result = tuple(item.arg for item in instructions[:-1])
+        if not all(isinstance(item, _SCALAR_RUNTIME_TYPES) for item in result):
+            return None
+
+        def invoke_constant() -> tuple[Any, ...]:
+            """Return the prepared immutable scalar result."""
             return result
 
-        return invoke_general
+        return PreparedCall(arity, multiplicity, "constant", invoke_constant)
+
+    def _prepare_identity_call(
+        self,
+        value: FunctionValue,
+        arity: int,
+        multiplicity: int,
+    ) -> PreparedCall | None:
+        """Prepare a scalar unary identity function without entering the VM."""
+        if (
+            arity != 1
+            or multiplicity != 1
+            or len(value.code.params) != 1
+            or value.code.accepts_stack_inputs
+            or value.code.element_tags
+            or _prepared_call_needs_return_contracts(value.code)
+        ):
+            return None
+        instructions = value.code.instructions
+        if not (
+            len(instructions) == 2
+            and instructions[0].op is OpCode.LOAD_VAR
+            and instructions[0].arg == value.code.params[0]
+            and instructions[1].op is OpCode.RETURN
+        ):
+            return None
+
+        def invoke_identity(argument: Any) -> tuple[Any, ...]:
+            """Return the supplied scalar argument unchanged."""
+            return (argument,)
+
+        return PreparedCall(arity, multiplicity, "identity", invoke_identity)
+
+    def _prepare_direct_leaf_call(
+        self,
+        value: FunctionValue,
+        arity: int,
+        multiplicity: int,
+    ) -> PreparedCall | None:
+        """Prepare a direct-leaf plan when no call can suspend into user code."""
+        if (
+            len(value.code.params) != arity
+            or value.code.accepts_stack_inputs
+            or not self._can_execute_direct_leaf(value)
+        ):
+            return None
+        needs_contracts = _prepared_call_needs_return_contracts(value.code)
+
+        def invoke_leaf(*args: Any) -> tuple[Any, ...]:
+            """Invoke a direct leaf while preserving collection adaptation."""
+            if any(is_list_like(arg) for arg in args):
+                return tuple(self.call_value(value, list(args)))
+            if needs_contracts:
+                return tuple(self._execute_direct_leaf(value, tuple(args)))
+            return tuple(self._execute_direct_leaf_body(value, tuple(args)))
+
+        return PreparedCall(arity, multiplicity, "direct-leaf", invoke_leaf)
+
+    def _prepare_straight_line_call(
+        self,
+        value: FunctionValue,
+        arity: int,
+        multiplicity: int,
+    ) -> PreparedCall | None:
+        """Prepare a short stack program made only from pure resolved built-ins."""
+        if (
+            len(value.code.params) != arity
+            or value.code.accepts_stack_inputs
+            or value.code.element_tags
+            or multiplicity < 1
+            or _prepared_call_needs_return_contracts(value.code)
+        ):
+            return None
+        instructions = value.code.instructions
+        if not instructions or instructions[-1].op is not OpCode.RETURN:
+            return None
+        operations: list[tuple[str, Any]] = []
+        has_call = False
+        used_arguments: set[int] = set()
+        stack_depth = 0
+        for instruction in instructions[:-1]:
+            if instruction.op is OpCode.LOAD_VAR and instruction.arg in value.code.params:
+                argument_index = value.code.params.index(instruction.arg)
+                operations.append(("arg", argument_index))
+                used_arguments.add(argument_index)
+                stack_depth += 1
+                continue
+            if instruction.op is OpCode.PUSH_CONST:
+                operations.append(("const", instruction.arg))
+                stack_depth += 1
+                continue
+            if instruction.op is not OpCode.CALL_RESOLVED_ELEMENT:
+                return None
+            reference = instruction.arg
+            if not isinstance(reference, ResolvedElementReference):
+                return None
+            if (
+                reference.vectorised
+                or reference.extension is not None
+                or reference.static_values
+                or reference.type_args
+                or reference.multidispatch
+                or reference.arity_override is not None
+                or reference.consumed_override is not None
+                or reference.return_tags
+                or reference.return_tag_specs
+                or reference.return_collection_ranks
+            ):
+                return None
+            builtin = value.globals.get(reference.name)
+            if not isinstance(builtin, BuiltinValue):
+                return None
+            try:
+                overload = builtin.element.definitions[reference.overload_index]
+            except IndexError:
+                return None
+            if (
+                overload.implementation is None
+                or not overload.ownership_trivial
+                or overload.runtime_return_tags
+                or overload.signature.element_tags
+            ):
+                return None
+            width = len(overload.signature.params)
+            if stack_depth < width:
+                return None
+            stack_depth += len(overload.signature.returns) - width
+            operations.append(("call", (overload, builtin.context)))
+            has_call = True
+        if (
+            not has_call
+            or stack_depth != multiplicity
+            or used_arguments != set(range(arity))
+        ):
+            return None
+
+        def invoke_straight_line(*args: Any) -> tuple[Any, ...]:
+            """Evaluate a prepared scalar stack program without a VM frame."""
+            if any(is_list_like(arg) for arg in args):
+                return tuple(self.call_value(value, list(args)))
+            stack: list[Any] = []
+            for kind, payload in operations:
+                if kind == "arg":
+                    stack.append(args[payload])
+                elif kind == "const":
+                    stack.append(payload)
+                else:
+                    overload, context = payload
+                    width = len(overload.signature.params)
+                    if len(stack) < width:
+                        raise RuntimeError("prepared straight-line stack underflow")
+                    call_args = tuple(stack[-width:]) if width else ()
+                    if width:
+                        del stack[-width:]
+                    implementation = overload.implementation
+                    assert implementation is not None
+                    stack.extend(
+                        implementation(overload.runtime_arguments(call_args), context)
+                    )
+            if len(stack) != multiplicity:
+                raise RuntimeError(
+                    "prepared straight-line callable produced an invalid stack"
+                )
+            return tuple(stack)
+
+        return PreparedCall(arity, multiplicity, "straight-line", invoke_straight_line)
+
+    def _prepare_resolved_builtin_call(
+        self,
+        value: FunctionValue,
+        arity: int,
+        multiplicity: int,
+    ) -> PreparedCall | None:
+        """Collapse a straight-line wrapper into its selected built-in implementation."""
+        if (
+            len(value.code.params) != arity
+            or value.code.accepts_stack_inputs
+            or multiplicity != 1
+        ):
+            return None
+        instructions = value.code.instructions
+        if len(instructions) < arity + 2 or instructions[-1].op is not OpCode.RETURN:
+            return None
+        call = instructions[-2]
+        if call.op is not OpCode.CALL_RESOLVED_ELEMENT:
+            return None
+        reference = call.arg
+        if not isinstance(reference, ResolvedElementReference):
+            return None
+        if (
+            reference.vectorised
+            or reference.extension is not None
+            or reference.static_values
+            or reference.type_args
+            or reference.multidispatch
+            or reference.arity_override is not None
+            or reference.consumed_override is not None
+            or reference.return_tags
+            or reference.return_tag_specs
+            or reference.return_collection_ranks
+        ):
+            return None
+        builtin = value.globals.get(reference.name)
+        if not isinstance(builtin, BuiltinValue):
+            return None
+        try:
+            overload = builtin.element.definitions[reference.overload_index]
+        except IndexError:
+            return None
+        if (
+            overload.implementation is None
+            or not overload.ownership_trivial
+            or overload.runtime_return_tags
+            or overload.signature.element_tags
+            or len(overload.signature.returns) != multiplicity
+        ):
+            return None
+
+        operands: list[tuple[str, Any]] = []
+        argument_names = set(value.code.params)
+        for instruction in instructions[:-2]:
+            if instruction.op is OpCode.LOAD_VAR and instruction.arg in argument_names:
+                operands.append(("arg", value.code.params.index(instruction.arg)))
+            elif instruction.op is OpCode.PUSH_CONST:
+                operands.append(("const", instruction.arg))
+            else:
+                return None
+        if len(operands) != len(overload.signature.params):
+            return None
+        used = [payload for kind, payload in operands if kind == "arg"]
+        if sorted(used) != list(range(arity)):
+            return None
+        implementation = overload.implementation
+        context = builtin.context
+
+        def invoke_builtin(*args: Any) -> tuple[Any, ...]:
+            """Invoke the selected built-in without a wrapper function frame."""
+            if any(is_list_like(arg) for arg in args):
+                return tuple(self.call_value(value, list(args)))
+            call_args = tuple(
+                args[payload] if kind == "arg" else payload
+                for kind, payload in operands
+            )
+            return implementation(overload.runtime_arguments(call_args), context)
+
+        return PreparedCall(arity, multiplicity, "resolved-builtin", invoke_builtin)
 
     def test_predicate(self, value: Any, argument: Any) -> bool:
-        """Invoke a unary predicate through the cheapest semantics-preserving path."""
-        if isinstance(value, FunctionValue) and self._can_execute_direct_leaf(value):
+        """Invoke a unary predicate through a cached extensible preparation path."""
+        if isinstance(value, FunctionValue):
             if value.predicate_test is None:
-                value.predicate_test = self._prepare_vector_membership_predicate(value) or False
-            if value.predicate_test is not False:
-                return value.predicate_test(argument)
-            result = self._execute_direct_leaf_body(value, (argument,))
-            if len(result) != 1:
-                raise RuntimeError("predicate must return exactly one value")
-            return bool(unwrap_runtime_value(result[0]))
+                specializers = (self._prepare_vector_membership_predicate,)
+                prepared_test = next(
+                    (
+                        candidate
+                        for specializer in specializers
+                        if (candidate := specializer(value)) is not None
+                    ),
+                    None,
+                )
+                if prepared_test is None and self._can_execute_direct_leaf(value):
+                    def prepared_test(argument: Any) -> bool:
+                        """Execute a proved predicate leaf without return-tag rebuilding."""
+                        result = self._execute_direct_leaf_body(value, (argument,))
+                        if len(result) != 1:
+                            raise RuntimeError(
+                                "predicate must return exactly one value"
+                            )
+                        return bool(unwrap_runtime_value(result[0]))
+                if prepared_test is None:
+                    prepared = self.prepare_call(value, 1, 1)
+
+                    def prepared_test(argument: Any) -> bool:
+                        """Convert one prepared unary result to predicate truth."""
+                        return bool(unwrap_runtime_value(prepared(argument)[0]))
+
+                value.predicate_test = prepared_test
+            assert value.predicate_test is not False
+            return value.predicate_test(argument)
         result = self.call_value(value, [argument])
         if len(result) != 1:
             raise RuntimeError("predicate must return exactly one value")
@@ -4249,11 +4634,35 @@ def _vectorize_function(
     target_ranks: tuple[int | None, ...] = (),
     extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...]:
-    """Vectorize function during VM execution."""
+    """Vectorize a user function through one reusable scalar execution plan."""
+    prepared = vm.prepare_call(
+        callee,
+        len(callee.code.params),
+        _function_return_multiplicity(callee.code),
+    )
+    kernel = ScalarKernel.from_prepared(prepared)
 
     def implementation(item_args: tuple[Any, ...], _context: RuntimeContext):
-        """Handle implementation during VM execution."""
-        return tuple(vm.call(callee, list(item_args)))
+        """Execute one statically shaped scalar item call."""
+        return kernel.invoke(item_args)
+
+    resolved_depths = (
+        _resolve_vectorisation_depths(args, depths, target_ranks)
+        if depths or target_ranks
+        else tuple(1 if is_list_like(arg) else 0 for arg in args)
+    )
+    if (
+        extension is None
+        and resolved_depths
+        and all(depth in (0, 1) for depth in resolved_depths)
+        and any(depth == 1 for depth in resolved_depths)
+        and all(
+            depth == 0 or is_eager_sequence(arg)
+            for arg, depth in zip(args, resolved_depths, strict=True)
+        )
+    ):
+        result = _vectorize_eager_kernel(kernel, args, resolved_depths)
+        return _bind_lazy_result_owners(args, result)
 
     context = RuntimeContext(
         vm.output,
@@ -4266,7 +4675,7 @@ def _vectorize_function(
             implementation,
             args,
             context,
-            _resolve_vectorisation_depths(args, depths, target_ranks),
+            resolved_depths,
             extension,
             stop_at_zero=True,
         )
@@ -4275,6 +4684,52 @@ def _vectorize_function(
     )
     ownership_args = (*args, *_extension_owned_values(extension))
     return _bind_lazy_result_owners(ownership_args, result)
+
+
+def _vectorize_eager_kernel(
+    kernel: ScalarKernel,
+    args: tuple[Any, ...],
+    depths: tuple[int, ...],
+) -> tuple[Any, ...]:
+    """Run a rank-one eager vector loop directly against one scalar kernel."""
+    vectors = tuple(
+        arg
+        for arg, depth in zip(args, depths, strict=True)
+        if depth == 1
+    )
+    lengths = {len(vector) for vector in vectors}
+    if len(lengths) != 1:
+        raise RuntimeError("cannot vectorise lists with different lengths")
+    length = next(iter(lengths), 0)
+    result_items: list[tuple[Any, ...]] = []
+    if kernel.arity == 1 and depths == (1,):
+        vector = args[0]
+        result_items = [kernel.invoke((vector[index],)) for index in range(length)]
+    elif kernel.arity == 2:
+        left, right = args
+        left_vector = depths[0] == 1
+        right_vector = depths[1] == 1
+        if left_vector and right_vector:
+            result_items = [
+                kernel.invoke((left[index], right[index]))
+                for index in range(length)
+            ]
+        elif left_vector:
+            result_items = [
+                kernel.invoke((left[index], right)) for index in range(length)
+            ]
+        else:
+            result_items = [
+                kernel.invoke((left, right[index])) for index in range(length)
+            ]
+    else:
+        for index in range(length):
+            item_args = tuple(
+                arg[index] if depth == 1 else arg
+                for arg, depth in zip(args, depths, strict=True)
+            )
+            result_items.append(kernel.invoke(item_args))
+    return _transpose_vectorized_items(result_items)
 
 
 def _vectorize_eager(
@@ -5823,9 +6278,24 @@ def _runtime_tag_delta(
     )
 
 
+def _function_return_multiplicity(code: FunctionCode) -> int:
+    """Return the statically reified number of values produced by a function."""
+    widths = (
+        len(code.return_tag_specs),
+        len(code.return_collection_ranks),
+        len(code.return_tags),
+    )
+    multiplicity = max(widths, default=0)
+    if multiplicity == 0 and code.name == "<main>":
+        return 0
+    return multiplicity
+
+
 def _prepared_call_needs_return_contracts(code: FunctionCode) -> bool:
     """Return whether a prepared leaf must apply post-execution return metadata."""
-    if code.return_tags or code.return_collection_ranks:
+    if any(code.return_tags) or any(
+        rank is not None for rank in code.return_collection_ranks
+    ):
         return True
 
     def structurally_plain(spec: object) -> bool:
@@ -5990,6 +6460,12 @@ def _canonicalize_runtime_collection_tag_contract(
                 item, item_spec(item), tag_parents
             )
 
+    if isinstance(value, PlannedLazyList) and (
+        isinstance(base_spec, tuple)
+        and base_spec
+        and base_spec[0] in {"any", "none", "nominal"}
+    ):
+        return value
     if isinstance(value, LazyList):
         return LazyList(converted_items(), runtime_rank=value.runtime_rank)
     converted = list(converted_items())
