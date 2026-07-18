@@ -270,7 +270,14 @@ def _walk_typed(value: object):
 def _element_call_vectorisable(node: TypedElementNode) -> bool:
     """Return whether the selected built-in overload permits vectorisation."""
     applied = node.overload
-    if applied is None or any(isinstance(T.normalize(p), T.ExactType) for p in applied.overload.params):
+    if (
+        applied is None
+        or not applied.overload.params
+        or any(
+            isinstance(T.normalize(param), T.ExactType)
+            for param in applied.overload.params
+        )
+    ):
         return False
     name = node.runtime_name or getattr(node.node, "name", None)
     for element in BUILTIN_ELEMENTS:
