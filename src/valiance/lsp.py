@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlparse
 import valiance.vtypes as T
 from valiance.analysis import Analyser
 from valiance.asts import ASTNode, DefineNode
-from valiance.analysis.diagnostics import DiagnosticError
+from valiance.analysis.diagnostics import DiagnosticError, from_message
 from valiance.parsing import LexError, ParseError, ParseErrors, parse
 from valiance.repl import completion_prefix, default_completion_items
 from valiance.source_tools import extract_documented_defines
@@ -444,6 +444,10 @@ def _message_diagnostic(message: str, severity: int) -> dict[str, Any]:
         rng = _location_range(int(line), int(column))
     else:
         text, rng = message, _location_range(1, 1)
+    structured = from_message("Type error", message)
+    text = structured.message
+    if "\ndid you mean " in message and structured.help is not None:
+        text += f"\nhelp: {structured.help}"
     return {"range": rng, "severity": severity, "source": "valiance", "message": text}
 
 

@@ -1096,5 +1096,18 @@ class ReplBareParameterDiagnosticTests(unittest.TestCase):
 
         self.assertEqual(
             hint,
-            "Type error: 1:48: unknown element 'c'\ndid you mean '$c'?",
+            "Type error: unknown element 'c'\nhelp: did you mean '$c'?",
         )
+
+class BareParameterRunDiagnosticHelpTests(unittest.TestCase):
+    def test_run_renders_bare_parameter_suggestion_as_help(self):
+        error = io.StringIO()
+        source = "define f(c) => 1 c +"
+        with contextlib.redirect_stderr(error):
+            exit_code = main(["run", "--code", source])
+
+        self.assertEqual(exit_code, 1)
+        rendered = error.getvalue()
+        self.assertIn("Type error: unknown element 'c'", rendered)
+        self.assertIn("help: did you mean '$c'?", rendered)
+        self.assertNotIn("unknown element 'c'\\ndid you mean", rendered)

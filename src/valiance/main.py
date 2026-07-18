@@ -938,7 +938,11 @@ class _ReplSession:
         except (OSError, RuntimeError) as exc:
             return f"Type error: {exc}"
         if analyser.diagnostics:
-            return f"Type error: {analyser.diagnostics[0]}"
+            diagnostic = from_message("Type error", analyser.diagnostics[0])
+            rendered = f"{diagnostic.stage}: {diagnostic.message}"
+            if diagnostic.help is not None:
+                rendered += f"\nhelp: {diagnostic.help}"
+            return rendered
         if len(final) != 1:
             return "Type error: source has no single valid stack effect"
         next_branch = next(iter(final))

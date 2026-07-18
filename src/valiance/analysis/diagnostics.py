@@ -67,7 +67,21 @@ def from_message(stage: str, message: str) -> Diagnostic:
             int(match.group("column")),
         )
         message = match.group("message")
-    return Diagnostic(stage, message, location, _help_for(message))
+    message, specific_help = _split_specific_help(message)
+    return Diagnostic(
+        stage,
+        message,
+        location,
+        specific_help or _help_for(message),
+    )
+
+
+def _split_specific_help(message: str) -> tuple[str, str | None]:
+    """Move an analyser suggestion out of the message and into diagnostic help."""
+    lines = message.splitlines()
+    if len(lines) == 2 and lines[1].startswith("did you mean "):
+        return lines[0], lines[1]
+    return message, None
 
 
 def from_exception(stage: str, exc: BaseException) -> Diagnostic:
