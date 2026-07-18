@@ -115,6 +115,14 @@ class BuiltinLintRuleTests(unittest.TestCase):
             self._codes("[1, 2, 3] map: + 1"),
         )
 
+    def test_niladic_map_does_not_claim_direct_vectorisation(self) -> None:
+        """Mapping a nilad invokes it per item rather than vectorising an input."""
+        codes = self._codes(
+            "import { std.random.randbit }\n"
+            "range(1, 10) map: randbit"
+        )
+        self.assertNotIn("explicit-map-can-vectorise", codes)
+
     def test_repeated_literal_equality_chain_prefers_match(self) -> None:
         """An else-if chain over one subject is match-shaped."""
         self.assertIn(
