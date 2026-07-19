@@ -1237,15 +1237,6 @@ def _element_documentation_markdown(documentation: ElementDocumentation) -> str:
     return "\n\n".join(item for item in sections if item)
 
 
-def _definition_documentation(source: str, name: str) -> str:
-    """Render the ``#??`` documentation attached to a named definition."""
-    references = (
-        item for item in extract_documented_defines(source) if item.name == name
-    )
-    rendered = tuple(_docstring_markdown(item.docstring) for item in references)
-    return "\n\n---\n\n".join(item for item in rendered if item)
-
-
 def _docstring_markdown(docstring: Any) -> str:
     """Render parsed Valiance documentation as hover-friendly Markdown."""
     sections: list[str] = []

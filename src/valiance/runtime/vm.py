@@ -6,7 +6,7 @@ import builtins as _py_builtins
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
-from functools import lru_cache, partial
+from functools import partial
 from itertools import islice, zip_longest
 from typing import Any, cast
 
@@ -6828,17 +6828,6 @@ def _apply_cached_runtime_return_tags(
     return tuple(
         update_runtime_tags(value, add=additions, remove=removals)
         for value, (additions, removals) in zip(values, deltas, strict=True)
-    )
-
-
-@lru_cache(maxsize=256)
-def _runtime_tag_delta(
-    tags: tuple[DataTag, ...],
-) -> tuple[tuple[DataTag, ...], tuple[DataTag, ...]]:
-    """Split one immutable return-tag set once for repeated call sites."""
-    return (
-        tuple(tag for tag in tags if not tag.absent),
-        tuple(tag for tag in tags if tag.absent),
     )
 
 
