@@ -371,6 +371,31 @@ class OverloadAwareNavigationTests(unittest.TestCase):
         self.assertNotIn("greeting(name: String)", value)
         self.assertNotIn("String docs.", value)
 
+    def test_local_selected_overload_hover_includes_its_docstring(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            main = Path(tmp) / "main.vlnc"
+            source = (
+                "#?? String conversion docs.\n"
+                "define convert(value: String) -> String => $value\n"
+                "#?? Integer conversion docs.\n"
+                "define convert(value: Integer) -> Integer => $value\n"
+                "1 convert\n"
+            )
+            server, uri = self.server_for(main, source)
+            hover = server._hover({
+                "textDocument": {"uri": uri},
+                "position": {"line": 4, "character": 4},
+            })
+
+        value = hover["contents"]["value"]
+        self.assertIn("convert(value: Integer) -> Integer", value)
+        self.assertIn("Integer conversion docs.", value)
+        self.assertNotIn("convert(value: String)", value)
+        self.assertNotIn("String conversion docs.", value)
+
 class HoverLimitAndFallbackTests(unittest.TestCase):
     def test_unresolved_overload_hover_is_capped_at_five(self):
         from valiance.lsp import _render_overload_hover
@@ -390,6 +415,50 @@ class HoverLimitAndFallbackTests(unittest.TestCase):
         self.assertEqual(rendered.count("many(value:"), 5)
         self.assertIn("…and 3 more overloads.", rendered)
         self.assertNotIn("Type5", rendered)
+        self.assertNotIn("### Overload", rendered)
+        self.assertIn("```\n\n---\n\n```valiance", rendered)
+
+    def test_selected_nested_import_hover_includes_matching_docstring(self):
+        import io
+        import tempfile
+        from pathlib import Path
+        from valiance.lsp import LanguageServer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            (root / "src" / "app.vlnc").write_text(
+                "#?? Return a greeting for `name`.\n"
+                "#?? @param name The name to greet.\n"
+                "#?? @returns A friendly greeting.\n"
+                "public define greeting(name: String) -> String => $name\n"
+                "#?? Integer overload documentation.\n"
+                "#?? @param x An integer to increment.\n"
+                "#?? @returns The incremented integer.\n"
+                "public define greeting(x: Integer) -> Integer => $x + 1\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = "import { root.src.app.greeting }\ngreeting(5) println"
+            server = LanguageServer(io.BytesIO(), io.BytesIO())
+            server.initialized = True
+            uri = main.as_uri()
+            server.documents[uri] = source
+            server._analyse(uri)
+            hover = server._hover({
+                "textDocument": {"uri": uri},
+                "position": {"line": 1, "character": 3},
+            })
+
+        value = hover["contents"]["value"]
+        self.assertIn("greeting(x: Integer) -> Integer", value)
+        self.assertIn("Integer overload documentation.", value)
+        self.assertIn("**Parameter `x`:** An integer to increment.", value)
+        self.assertNotIn("Return a greeting for `name`.", value)
 
     def test_selected_import_doc_fallback_does_not_require_target_analysis(self):
         import tempfile

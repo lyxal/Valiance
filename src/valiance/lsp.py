@@ -326,11 +326,20 @@ class LanguageServer:
         selected: T.Overload,
     ) -> str:
         """Load the exact docstring belonging to the selected call overload."""
+        # Prefer signature-matched source documentation for imports. This path
+        # does not depend on the imported module analysing successfully, and it
+        # avoids losing the docstring when definition lookup falls back to a
+        # different same-named declaration.
+        imported_documentation = self._documentation_from_import_sources(
+            uri, name, selected
+        )
+        if imported_documentation:
+            return imported_documentation
         location = self._definition(
             {"textDocument": {"uri": uri}, "position": position}
         )
         if location is None:
-            return self._documentation_from_import_sources(uri, name, selected)
+            return ""
         source_uri = location["uri"]
         source = self.documents.get(source_uri)
         if source is None:
@@ -818,15 +827,17 @@ def _render_single_overload_hover(
 def _render_overload_hover(
     name: str, overloads: tuple[T.Overload, ...], docs: tuple[str, ...]
 ) -> str:
-    """Render at most five unresolved overloads with their own documentation."""
+    """Render at most five unresolved overloads as clearly separated sections."""
     limit = 5
+    visible = overloads[:limit]
     sections: list[str] = []
-    for index, overload in enumerate(overloads[:limit]):
-        section = f"```valiance\n{_overload_signature(name, overload)}\n```"
+    for index, overload in enumerate(visible):
+        signature = f"```valiance\n{_overload_signature(name, overload)}\n```"
+        parts = [signature]
         documentation = docs[index] if index < len(docs) else ""
         if documentation:
-            section += f"\n\n{documentation}"
-        sections.append(section)
+            parts.append(documentation)
+        sections.append("\n\n".join(parts))
     hidden = len(overloads) - limit
     if hidden > 0:
         sections.append(f"*…and {hidden} more overload{'s' if hidden != 1 else ''}.*")
