@@ -3939,3 +3939,34 @@ end
 
 if __name__ == "__main__":
     unittest.main()
+
+class ImportedOverloadRuntimeTests(unittest.TestCase):
+    def test_imported_overloads_call_the_runtime_body_selected_by_analysis(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "src"
+            source_dir.mkdir()
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            (source_dir / "app.vlnc").write_text(
+                'public define greeting(name: String) -> String => "Hello, $name!"\n'
+                'public define greeting(x: Integer) -> Integer => $x + 1\n',
+                encoding="utf-8",
+            )
+            main = source_dir / "main.vlnc"
+            source = (
+                'import {app.greeting}\n'
+                'greeting("Valiance")\n'
+                'greeting(5)'
+            )
+            analyser = Analyser(source_file=main)
+            typed = analyser.analyse(parse(source))
+            self.assertFalse(analyser.diagnostics)
+
+            direct = run(compile_program(typed, optimize=False))
+            restored = run(loads(dumps(compile_program(typed, optimize=False))))
+
+        self.assertEqual(direct, ["Hello, Valiance!", RuntimeNumber(6)])
+        self.assertEqual(restored, direct)

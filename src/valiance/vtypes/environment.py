@@ -229,6 +229,9 @@ class Environment:
         default_factory=dict[Symbol, dict[int, bool]]
     )
     runtime_names: dict[Symbol, Symbol] = field(default_factory=dict[Symbol, Symbol])
+    overload_runtime_names: dict[tuple[Symbol, Overload], Symbol] = field(
+        default_factory=dict[tuple[Symbol, Overload], Symbol]
+    )
 
     def child_scope(self) -> Environment:
         """Return a child frame that can read this environment."""
@@ -238,16 +241,45 @@ class Environment:
         """Return a child frame whose declarations and relation facts are local."""
         return Environment(context=self.context.copy(), parent=self)
 
-    def bind_runtime_name(self, source_name: Symbol, runtime_name: Symbol) -> None:
-        """Bind one source-level name to its compiled runtime storage name."""
-        self.runtime_names[source_name] = runtime_name
+    def bind_runtime_name(
+        self,
+        source_name: Symbol,
+        runtime_name: Symbol,
+        overload: Overload | None = None,
+    ) -> None:
+        """Bind a source name, optionally for one overload, to runtime storage."""
+        if overload is None:
+            self.runtime_names[source_name] = runtime_name
+        else:
+            self.overload_runtime_names[(source_name, overload)] = runtime_name
 
-    def runtime_name_for(self, source_name: Symbol) -> Symbol:
-        """Return the runtime storage name visible for a source-level symbol."""
+    def overload_runtime_name_for(
+        self,
+        source_name: Symbol,
+        overload: Overload,
+    ) -> Symbol | None:
+        """Return an overload-specific runtime binding without generic fallback."""
+        runtime_name = self.overload_runtime_names.get((source_name, overload))
+        if runtime_name is not None:
+            return runtime_name
+        if self.parent is not None:
+            return self.parent.overload_runtime_name_for(source_name, overload)
+        return None
+
+    def runtime_name_for(
+        self,
+        source_name: Symbol,
+        overload: Overload | None = None,
+    ) -> Symbol:
+        """Return the runtime storage name visible for a source symbol/overload."""
+        if overload is not None:
+            runtime_name = self.overload_runtime_names.get((source_name, overload))
+            if runtime_name is not None:
+                return runtime_name
         if source_name in self.runtime_names:
             return self.runtime_names[source_name]
         if self.parent is not None:
-            return self.parent.runtime_name_for(source_name)
+            return self.parent.runtime_name_for(source_name, overload)
         return source_name
 
     def define_object(

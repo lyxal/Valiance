@@ -230,7 +230,6 @@ class _ImportDeclarations:
         runtime_name: Symbol,
     ) -> None:
         """Register imported definition during static analysis."""
-        self.env.bind_runtime_name(name, runtime_name)
         declared = tuple(
             typing.overload
             for typing in typed_node.overloads
@@ -247,6 +246,7 @@ class _ImportDeclarations:
                 selected,
             )
             self.env.define_overload(name, overload)
+            self.env.bind_runtime_name(name, runtime_name, overload)
 
     def _register_imported_friendly_runtime_elements(
         self,

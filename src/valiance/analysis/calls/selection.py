@@ -227,16 +227,23 @@ class _CallSelection:
         )
         if node.extension is not None and extension is None:
             return None
+        overload_runtime_name = self.env.overload_runtime_name_for(
+            node.name, overload
+        )
+        selected_index = (
+            candidate.overload_index
+            if candidate.overload_index is not None
+            else _calls._overload_index(overloads, overload)
+        )
+        # An imported source overload is compiled as its own one-slot function.
+        # Its visible overload-set index therefore must not be reused at runtime.
+        runtime_index = 0 if overload_runtime_name is not None else selected_index
         return candidate.branch.push(*actual_returns).emit(
             TypedElementNode(
                 node,
                 _calls._returns_result_type(actual_returns),
                 candidate.applied,
-                (
-                    candidate.overload_index
-                    if candidate.overload_index is not None
-                    else _calls._overload_index(overloads, overload)
-                ),
+                runtime_index,
                 _calls._specialize_modifier_arguments(
                     candidate.applied,
                     candidate.modifiers,
@@ -245,7 +252,7 @@ class _CallSelection:
                 candidate.call_arg_order,
                 candidate.callable_overload_index,
                 extension,
-                self.env.runtime_name_for(node.name),
+                overload_runtime_name or self.env.runtime_name_for(node.name),
             )
         )
 
