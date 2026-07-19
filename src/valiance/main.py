@@ -25,6 +25,7 @@ from valiance.modules_system.packages import (
     add_dependency,
     init_project,
     install,
+    normalize_project_template,
     project_entry_path,
     remove_dependency,
     require_manifest,
@@ -184,7 +185,7 @@ def _command_help_text(prog: str, action: str) -> str:
             f"  {prog} init my_app --template application --tests\n"
             f"  {prog} init . --template package --tests\n"
             f"  {prog} init scratch --template empty --no-tests\n\n"
-            "Interactive use provides an arrow-key selector; use ↑/↓ and Enter.\n"
+            "Interactive use provides inline choices; use ↑/↓ and Enter.\n"
             "Non-interactive use defaults to application with tests."
         ),
         "add": (
@@ -811,52 +812,94 @@ def _choose_project_options() -> tuple[str, bool]:
     return _choose_project_options_plain()
 
 
+def _open_completion_menu() -> None:
+    """Open the current prompt completion menu before the user presses a key."""
+    from prompt_toolkit.application.current import get_app
+
+    get_app().current_buffer.start_completion(select_first=True)
+
+
 def _choose_project_options_tui() -> tuple[str, bool] | None:
-    """Show prompt-toolkit radio lists controlled by arrows and Enter."""
-    from prompt_toolkit.shortcuts import radiolist_dialog
+    """Prompt inline with arrow-selectable completions and one-press Enter."""
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.completion import WordCompleter
+    from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.styles import Style
+
+    bindings = KeyBindings()
+
+    @bindings.add("enter")
+    def _accept_and_submit(event) -> None:
+        """Apply the highlighted completion and submit it with the same Enter."""
+        buffer = event.current_buffer
+        state = buffer.complete_state
+        if state is not None and state.current_completion is not None:
+            buffer.apply_completion(state.current_completion)
+        buffer.validate_and_handle()
 
     style = Style.from_dict(
         {
-            "dialog": "bg:#1e1e1e",
-            "dialog frame.label": "bold #5fd7ff",
-            "dialog.body": "bg:#1e1e1e #f0f0f0",
-            "radio-selected": "bold #5fd7ff",
-            "radio-checked": "bold #5fd7ff",
-            "button.focused": "bg:#5fd7ff #101010 bold",
+            # Keep the menu readable on both dark and light terminal themes by
+            # giving every completion surface an explicit high-contrast colour.
+            "prompt": "bold #5fd7ff",
+            "completion-menu": "bg:#20242b #f4f4f4",
+            "completion-menu.completion": "bg:#20242b #f4f4f4",
+            "completion-menu.completion.current": "bg:#5fd7ff #101820 bold",
+            "completion-menu.meta.completion": "bg:#20242b #c8d0d9",
+            "completion-menu.meta.completion.current": "bg:#5fd7ff #101820",
+            "scrollbar.background": "bg:#343a44",
+            "scrollbar.button": "bg:#7a8796",
         }
     )
-    template = radiolist_dialog(
-        title="Create a Valiance project",
-        text="Choose a project template\n\nUse ↑/↓ to move, Enter to continue, or Ctrl+C to cancel.",
-        values=[
-            (item.name, f"{item.name} — {item.description}")
-            for item in PROJECT_TEMPLATES
-        ],
-        default=DEFAULT_PROJECT_TEMPLATE,
-        ok_text="Continue",
-        cancel_text="Cancel",
-        style=style,
-    ).run()
-    if template is None:
-        raise KeyboardInterrupt
+    session = PromptSession(key_bindings=bindings, style=style)
+    print("Create a Valiance project")
+    print("Use Up/Down to choose, then press Enter. Ctrl+C cancels.\n")
+    template_completer = WordCompleter(
+        [item.name for item in PROJECT_TEMPLATES],
+        meta_dict={item.name: item.description for item in PROJECT_TEMPLATES},
+        ignore_case=True,
+        sentence=True,
+    )
+    while True:
+        template = session.prompt(
+            [("class:prompt", "Template: ")],
+            default="",
+            completer=template_completer,
+            complete_while_typing=True,
+            complete_in_thread=False,
+            pre_run=_open_completion_menu,
+        ).strip().lower()
+        try:
+            template = normalize_project_template(template)
+            break
+        except PackageError as exc:
+            print(f"Invalid template: {exc}", file=sys.stderr)
     if template == "empty":
         return template, False
-    tests = radiolist_dialog(
-        title="Create a Valiance project",
-        text="Include a test scaffold?\n\nThe generated tests import and exercise the project API.",
-        values=[
-            (True, "Yes — include tests"),
-            (False, "No — source only"),
-        ],
-        default=True,
-        ok_text="Create project",
-        cancel_text="Back",
-        style=style,
-    ).run()
-    if tests is None:
-        return _choose_project_options_tui()
-    return template, bool(tests)
+
+    tests_completer = WordCompleter(
+        ["yes", "no"],
+        meta_dict={
+            "yes": "include tests that exercise project code",
+            "no": "create source without tests",
+        },
+        ignore_case=True,
+        sentence=True,
+    )
+    while True:
+        tests = session.prompt(
+            [("class:prompt", "Include tests: ")],
+            default="",
+            completer=tests_completer,
+            complete_while_typing=True,
+            complete_in_thread=False,
+            pre_run=_open_completion_menu,
+        ).strip().lower()
+        if tests in {"yes", "y"}:
+            return template, True
+        if tests in {"no", "n"}:
+            return template, False
+        print("Please choose yes or no.", file=sys.stderr)
 
 
 def _choose_project_options_plain() -> tuple[str, bool]:

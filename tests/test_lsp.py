@@ -131,7 +131,7 @@ class DefinitionProviderTests(unittest.TestCase):
             location = self.definition(main, source, 1, 4)
 
         self.assertEqual(location["uri"], shared.as_uri())
-        self.assertEqual(location["range"]["start"], {"line": 0, "character": 7})
+        self.assertEqual(location["range"]["start"], {"line": 0, "character": 14})
 
     def test_go_to_definition_follows_import_alias(self):
         import tempfile
@@ -258,3 +258,117 @@ class HoverEnhancementTests(unittest.TestCase):
         value = hover["contents"]["value"]
         self.assertIn("convert(value: Number) -> String", value)
         self.assertIn("convert(value: String) -> String", value)
+
+class OverloadAwareNavigationTests(unittest.TestCase):
+    def server_for(self, source_file, source):
+        server = LanguageServer(io.BytesIO(), io.BytesIO())
+        server.initialized = True
+        uri = source_file.as_uri()
+        server.documents[uri] = source
+        server._analyse(uri)
+        return server, uri
+
+    def test_imported_overloads_pair_each_signature_with_its_docstring(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            (root / "greetings.vlnc").write_text(
+                "#?? Return a greeting for name.\n"
+                "#?? @param name The name to greet.\n"
+                "#?? @returns A friendly greeting.\n"
+                "public define greeting(name: String) -> String => \"Hello\"\n"
+                "#?? Increment an integer.\n"
+                "#?? @param x An integer to increment.\n"
+                "#?? @returns The incremented integer.\n"
+                "public define greeting(x: Integer) -> Integer => $x 1 +\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = 'import { root.greetings.greeting }\n1 greeting'
+            server, uri = self.server_for(main, source)
+            hover = server._hover({
+                "textDocument": {"uri": uri},
+                "position": {"line": 1, "character": 4},
+            })
+
+        value = hover["contents"]["value"]
+        first = value.index("greeting(name: String) -> String")
+        first_doc = value.index("Return a greeting for name.")
+        second = value.index("greeting(x: Integer) -> Integer")
+        second_doc = value.index("Increment an integer.")
+        self.assertLess(first, first_doc)
+        self.assertLess(first_doc, second)
+        self.assertLess(second, second_doc)
+        self.assertIn("---", value)
+
+    def test_go_to_definition_uses_selected_overload_and_name_range(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            target = root / "greetings.vlnc"
+            target.write_text(
+                "public define greeting(name: String) -> String => name\n"
+                "public define greeting(x: Integer) -> Integer => $x\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = 'import { root.greetings.greeting }\n1 greeting'
+            server, uri = self.server_for(main, source)
+            location = server._definition({
+                "textDocument": {"uri": uri},
+                "position": {"line": 1, "character": 4},
+            })
+
+        self.assertEqual(location["uri"], target.as_uri())
+        self.assertEqual(location["range"]["start"], {"line": 1, "character": 14})
+
+    def test_string_interpolation_variable_hover_uses_assignment_type(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            main = Path(tmp) / "main.vlnc"
+            source = '$name = "Valiance"\n"Hello, $name"'
+            server, uri = self.server_for(main, source)
+            hover = server._hover({
+                "textDocument": {"uri": uri},
+                "position": {"line": 1, "character": 10},
+            })
+
+        self.assertIn("$name: String", hover["contents"]["value"])
+
+    def test_definition_name_hover_only_shows_that_overloads_docstring(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            main = Path(tmp) / "main.vlnc"
+            source = (
+                "#?? String docs.\n"
+                "define greeting(name: String) -> String => $name\n"
+                "#?? Integer docs.\n"
+                "define greeting(x: Integer) -> Integer => $x\n"
+            )
+            server, uri = self.server_for(main, source)
+            hover = server._hover({
+                "textDocument": {"uri": uri},
+                "position": {"line": 3, "character": 9},
+            })
+
+        value = hover["contents"]["value"]
+        self.assertIn("greeting(x: Integer) -> Integer", value)
+        self.assertIn("Integer docs.", value)
+        self.assertNotIn("greeting(name: String)", value)
+        self.assertNotIn("String docs.", value)

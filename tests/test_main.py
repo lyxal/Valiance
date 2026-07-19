@@ -1192,27 +1192,36 @@ class BareParameterRunDiagnosticHelpTests(unittest.TestCase):
         self.assertNotIn("unknown element 'c'\\ndid you mean", rendered)
 
 class InitTemplateChooserTests(unittest.TestCase):
-    @patch("prompt_toolkit.shortcuts.radiolist_dialog")
-    def test_arrow_key_chooser_selects_template_then_tests(self, dialog):
-        template_dialog = unittest.mock.MagicMock()
-        template_dialog.run.return_value = "package"
-        tests_dialog = unittest.mock.MagicMock()
-        tests_dialog.run.return_value = True
-        dialog.side_effect = [template_dialog, tests_dialog]
+    @patch("prompt_toolkit.PromptSession")
+    def test_inline_chooser_selects_template_then_tests(self, session_type):
+        session = unittest.mock.MagicMock()
+        session.prompt.side_effect = ["package", "yes"]
+        session_type.return_value = session
 
         from valiance.main import _choose_project_options_tui
 
         self.assertEqual(_choose_project_options_tui(), ("package", True))
-        self.assertEqual(dialog.call_count, 2)
-        self.assertIn("↑/↓", dialog.call_args_list[0].kwargs["text"])
+        self.assertEqual(session.prompt.call_count, 2)
+        style = session_type.call_args.kwargs["style"]
+        rendered = style.style_rules
+        self.assertIn(("completion-menu.completion", "bg:#20242b #f4f4f4"), rendered)
+        self.assertIn(
+            ("completion-menu.meta.completion", "bg:#20242b #c8d0d9"),
+            rendered,
+        )
+        for call in session.prompt.call_args_list:
+            self.assertEqual(call.kwargs["default"], "")
+            self.assertTrue(call.kwargs["complete_while_typing"])
+            self.assertIsNotNone(call.kwargs["pre_run"])
 
-    @patch("prompt_toolkit.shortcuts.radiolist_dialog")
-    def test_empty_template_skips_test_question(self, dialog):
-        template_dialog = unittest.mock.MagicMock()
-        template_dialog.run.return_value = "empty"
-        dialog.return_value = template_dialog
+    @patch("prompt_toolkit.PromptSession")
+    def test_empty_template_skips_test_question(self, session_type):
+        session = unittest.mock.MagicMock()
+        session.prompt.return_value = "empty"
+        session_type.return_value = session
 
         from valiance.main import _choose_project_options_tui
 
         self.assertEqual(_choose_project_options_tui(), ("empty", False))
-        self.assertEqual(dialog.call_count, 1)
+        self.assertEqual(session.prompt.call_count, 1)
+

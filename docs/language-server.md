@@ -52,3 +52,20 @@ module), signatures remain available but source docstrings may not be shown.
 Variable hover is flow-sensitive to the typed occurrence retained by analysis,
 so it reflects the type known at that read or assignment rather than guessing
 from text.
+
+### Overload-aware navigation and hover
+
+For an element call, hover keeps every visible overload in a separate section and
+places that overload's own docstring immediately beneath its signature. Imported
+docstrings are matched by parameter and return signature rather than only by
+element name, so same-named definitions do not have their documentation merged.
+
+Go to Definition uses the overload selected by static analysis at the call site.
+The returned range selects the element identifier itself, not the `define`
+keyword. Hovering the identifier in a `define` declaration is declaration-local:
+it shows only that declaration's signature and documentation.
+
+Variable hover also recognizes `$name` interpolation inside strings. Because
+interpolation children are lowered during analysis, the server uses the latest
+analysed assignment visible before the interpolation when no direct typed
+variable-read node remains.

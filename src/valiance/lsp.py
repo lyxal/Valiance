@@ -15,11 +15,12 @@ from valiance.analysis import Analyser
 from valiance.asts import (
     ASTNode,
     DefineNode,
+    ElementNode,
     GetVariableNode,
     ImportNode,
     SetVariableNode,
 )
-from valiance.asts.nodes import TypedNode
+from valiance.asts.nodes import TypedElementNode, TypedFunctionNode, TypedNode
 from valiance.analysis.diagnostics import DiagnosticError, from_message
 from valiance.modules_system.modules import ModuleLoadError, ModuleLoader
 from valiance.parsing import LexError, ParseError, ParseErrors, parse
@@ -220,10 +221,11 @@ class LanguageServer:
         ]
 
     def _hover(self, params: dict[str, Any]) -> dict[str, Any] | None:
-        """Return complete source-like signatures for the symbol under the cursor."""
+        """Return overload-specific signatures, documentation, and variable types."""
         uri = params["textDocument"]["uri"]
         source = self.documents.get(uri, "")
-        word = _word_at(source, params["position"])
+        position = params["position"]
+        word = _word_at(source, position)
         analyser = self.analysers.get(uri)
         if not word or analyser is None:
             return None
@@ -234,7 +236,8 @@ class LanguageServer:
             variable_type = _variable_type_at(
                 self.typed_programs.get(uri, []),
                 lookup_name,
-                params["position"],
+                position,
+                source=source,
             )
             if variable_type is None:
                 return None
@@ -243,64 +246,96 @@ class LanguageServer:
                     "kind": "markdown",
                     "value": f"```valiance\n${display_name}: {T.show(variable_type)}\n```",
                 },
-                "range": _word_range(source, params["position"]),
+                "range": _word_range(source, position),
+            }
+
+        declaration = _definition_at_position(
+            source, self.programs.get(uri, []), lookup_name, position
+        )
+        if declaration is not None:
+            overloads = _definition_overloads(
+                self.typed_programs.get(uri, []), declaration
+            )
+            documentation = _definition_documentation_at_line(
+                source, lookup_name, declaration.location.line
+            )
+            value = _render_overload_hover(display_name, overloads, (documentation,))
+            return {
+                "contents": {"kind": "markdown", "value": value},
+                "range": _word_range(source, position),
             }
 
         overloads = analyser.env.overloads_for(Symbol(lookup_name))
         if not overloads:
             return None
-        signatures = "\n".join(
-            _overload_signature(display_name, item) for item in overloads
+        selected = _selected_overload_at(
+            self.typed_programs.get(uri, []), lookup_name, position
         )
-        documentation = _definition_documentation(source, lookup_name)
-        if not documentation:
-            documentation = self._imported_documentation(
-                uri, lookup_name, params["position"]
-            )
-        value = f"```valiance\n{signatures}\n```"
-        if documentation:
-            value += f"\n\n{documentation}"
+        docs = self._overload_documentation(
+            uri, lookup_name, position, overloads, selected
+        )
+        value = _render_overload_hover(display_name, overloads, docs)
         return {
             "contents": {"kind": "markdown", "value": value},
-            "range": _word_range(source, params["position"]),
+            "range": _word_range(source, position),
         }
 
-    def _imported_documentation(
-        self, uri: str, name: str, position: dict[str, int]
-    ) -> str:
-        """Load documentation from the source declaration of an imported function."""
+    def _overload_documentation(
+        self,
+        uri: str,
+        name: str,
+        position: dict[str, int],
+        overloads: tuple[T.Overload, ...],
+        selected: T.Overload | None,
+    ) -> tuple[str, ...]:
+        """Return documentation aligned with each local or imported overload."""
+        source = self.documents.get(uri, "")
+        local = _documented_overloads(source, name)
+        if local:
+            return _match_overload_docs(overloads, local)
+
+        target = self._definition_source(uri, name, position, selected)
+        if target is None:
+            return tuple("" for _ in overloads)
+        _, target_source, target_name = target
+        documented = _documented_overloads(target_source, target_name)
+        return _match_overload_docs(overloads, documented)
+
+    def _definition_source(
+        self,
+        uri: str,
+        name: str,
+        position: dict[str, int],
+        selected: T.Overload | None,
+    ) -> tuple[str, str, str] | None:
+        """Resolve the source URI, text, and declared name for one element."""
         location = self._definition(
             {"textDocument": {"uri": uri}, "position": position}
         )
-        if location is None or location.get("uri") == uri:
-            return ""
+        if location is None:
+            return None
         source_uri = location["uri"]
         source = self.documents.get(source_uri)
         if source is None:
             path = _uri_path(source_uri)
             if path is None:
-                return ""
+                return None
             try:
                 source = path.read_text(encoding="utf-8")
             except OSError:
-                return ""
+                return None
         try:
             program = parse(source)
         except (LexError, ParseError, ParseErrors):
-            return ""
+            return None
         start = location["range"]["start"]
-        declaration_name = next(
-            (
-                str(node.name).removeprefix("\\")
-                for node in program
-                if isinstance(node, DefineNode)
-                and node.location is not None
-                and node.location.line - 1 == start["line"]
-                and node.location.column - 1 == start["character"]
-            ),
-            name,
+        declaration = _definition_at_lsp_start(source, program, start)
+        declared_name = (
+            str(declaration.name).removeprefix("\\")
+            if declaration is not None
+            else name
         )
-        return _definition_documentation(source, declaration_name)
+        return source_uri, source, declared_name
 
     def _definition(self, params: dict[str, Any]) -> dict[str, Any] | None:
         """Find local or imported definitions, including project dependencies."""
@@ -310,10 +345,14 @@ class LanguageServer:
         if not word:
             return None
         target = word.lstrip("$#\\")
-        local = _definition_location(uri, self.programs.get(uri, []), target)
-        if local is not None:
-            return local
-
+        selected = _selected_overload_at(
+            self.typed_programs.get(uri, []), target, params["position"]
+        )
+        declaration = _definition_at_position(
+            source, self.programs.get(uri, []), target, params["position"]
+        )
+        if declaration is not None:
+            return _definition_location(uri, source, declaration)
         current_file = _uri_path(uri)
         if current_file is None:
             return None
@@ -339,8 +378,14 @@ class LanguageServer:
                         ParseErrors,
                     ):
                         continue
-                    location = _definition_location(
-                        source_file.as_uri(), imported_program, imported_name
+                    imported_analyser = Analyser(source_file=source_file)
+                    imported_typed = imported_analyser.analyse(imported_program)
+                    location = _definition_location_for_overload(
+                        source_file.as_uri(),
+                        imported_source,
+                        imported_typed,
+                        imported_name,
+                        selected,
                     )
                     if location is not None:
                         return location
@@ -453,49 +498,237 @@ def _typed_nodes(value: Any) -> list[TypedNode]:
     return found
 
 
+def _source_offset_at(source: str, position: dict[str, int]) -> int:
+    """Return a source offset for an LSP position."""
+    return _offset(source, position)
+
+
+def _node_offset(node: ASTNode) -> int:
+    """Return a sortable source offset for an AST node."""
+    return getattr(getattr(node, "location", None), "offset", -1)
+
+
 def _variable_type_at(
     program: list[TypedNode],
     name: str,
     position: dict[str, int],
+    *,
+    source: str,
 ) -> Any | None:
-    """Return the analyser type for the variable occurrence under the cursor."""
+    """Return the analyser type for a variable, including string interpolation."""
     line = position.get("line", 0) + 1
     character = position.get("character", 0) + 1
-    candidates: list[TypedNode] = []
+    direct: list[TypedNode] = []
+    assignments: list[TypedNode] = []
+    cursor_offset = _source_offset_at(source, position)
     for typed in _typed_nodes(program):
         node = typed.node
         if not isinstance(node, (GetVariableNode, SetVariableNode)):
             continue
-        if str(node.name) != name or node.location is None or typed.typ is None:
+        if str(node.name) != name or typed.typ is None:
+            continue
+        if isinstance(node, SetVariableNode) and _node_offset(node) <= cursor_offset:
+            assignments.append(typed)
+        if node.location is not None and node.location.line == line:
+            direct.append(typed)
+    if direct:
+        return min(
+            direct,
+            key=lambda item: abs(item.node.location.column - character),
+        ).typ
+    if assignments:
+        return max(assignments, key=lambda item: _node_offset(item.node)).typ
+    return None
+
+
+def _selected_overload_at(
+    program: list[TypedNode], name: str, position: dict[str, int]
+) -> T.Overload | None:
+    """Return the overload selected for the element occurrence under the cursor."""
+    line = position.get("line", 0) + 1
+    character = position.get("character", 0) + 1
+    candidates: list[TypedElementNode] = []
+    for typed in _typed_nodes(program):
+        node = typed.node
+        if not isinstance(typed, TypedElementNode) or not isinstance(node, ElementNode):
+            continue
+        if str(node.name) != name or node.location is None or typed.overload is None:
             continue
         if node.location.line == line:
             candidates.append(typed)
     if not candidates:
         return None
-    return min(
+    chosen = min(
         candidates,
         key=lambda item: abs(item.node.location.column - character),
-    ).typ
+    )
+    return chosen.overload.overload
 
 
-def _definition_location(
-    uri: str, program: list[ASTNode], name: str
-) -> dict[str, Any] | None:
-    """Return an LSP location for a named top-level definition."""
+def _definition_name_range(source: str, node: DefineNode) -> dict[str, Any]:
+    """Return the exact name range rather than the preceding define keyword."""
+    name = str(node.name).removeprefix("\\")
+    line_index = max(node.location.line - 1, 0)
+    lines = source.splitlines()
+    line = lines[line_index] if line_index < len(lines) else ""
+    start_at = max(node.location.column - 1, 0)
+    match = re.search(rf"\b{re.escape(name)}\b", line[start_at:])
+    column = start_at + (match.start() if match else 0)
+    return {
+        "start": {"line": line_index, "character": column},
+        "end": {"line": line_index, "character": column + len(name)},
+    }
+
+
+def _definition_location(uri: str, source: str, node: DefineNode) -> dict[str, Any]:
+    """Return an LSP location selecting a definition's element name."""
+    return {"uri": uri, "range": _definition_name_range(source, node)}
+
+
+def _definition_at_position(
+    source: str,
+    program: list[ASTNode],
+    name: str,
+    position: dict[str, int],
+) -> DefineNode | None:
+    """Return the exact declaration whose name is under the cursor."""
     for node in program:
-        if (
-            isinstance(node, DefineNode)
-            and str(node.name).removeprefix("\\") == name
-            and node.location
-        ):
-            return {
-                "uri": uri,
-                "range": _location_range(
-                    node.location.line, node.location.column, len(name)
-                ),
-            }
+        if not isinstance(node, DefineNode) or node.location is None:
+            continue
+        if str(node.name).removeprefix("\\") != name:
+            continue
+        rng = _definition_name_range(source, node)
+        if _position_in_range(position, rng):
+            return node
     return None
 
+
+def _definition_at_lsp_start(
+    source: str, program: list[ASTNode], start: dict[str, int]
+) -> DefineNode | None:
+    """Return the declaration selected by a definition response range."""
+    for node in program:
+        if isinstance(node, DefineNode) and node.location is not None:
+            if _definition_name_range(source, node)["start"] == start:
+                return node
+    return None
+
+
+def _position_in_range(position: dict[str, int], rng: dict[str, Any]) -> bool:
+    """Return whether an LSP position lies inside a single-line range."""
+    return (
+        position.get("line", 0) == rng["start"]["line"]
+        and rng["start"]["character"]
+        <= position.get("character", 0)
+        <= rng["end"]["character"]
+    )
+
+
+def _definition_overloads(
+    typed_program: list[TypedNode], declaration: DefineNode
+) -> tuple[T.Overload, ...]:
+    """Return only overloads contributed by one exact define declaration."""
+    for typed in typed_program:
+        if isinstance(typed, TypedFunctionNode) and typed.node is declaration:
+            return tuple(
+                item.overload
+                for item in typed.overloads
+                if isinstance(item.overload, T.Overload)
+            )
+    return ()
+
+
+def _definition_location_for_overload(
+    uri: str,
+    source: str,
+    typed_program: list[TypedNode],
+    name: str,
+    selected: T.Overload | None,
+) -> dict[str, Any] | None:
+    """Locate the declaration that contributes a selected overload."""
+    fallback: DefineNode | None = None
+    for typed in typed_program:
+        if not isinstance(typed, TypedFunctionNode) or not isinstance(typed.node, DefineNode):
+            continue
+        node = typed.node
+        if str(node.name).removeprefix("\\") != name:
+            continue
+        fallback = fallback or node
+        overloads = _definition_overloads(typed_program, node)
+        if selected is not None and any(_same_overload(item, selected) for item in overloads):
+            return _definition_location(uri, source, node)
+    return _definition_location(uri, source, fallback) if fallback is not None else None
+
+
+def _same_overload(left: T.Overload, right: T.Overload) -> bool:
+    """Compare overload signatures while ignoring module-specific runtime metadata."""
+    return (
+        left.params == right.params
+        and left.returns == right.returns
+        and left.param_names == right.param_names
+    )
+
+
+def _documented_overloads(source: str, name: str) -> tuple[tuple[str, str], ...]:
+    """Return source signatures paired with their individual docstrings."""
+    return tuple(
+        (item.signature, _docstring_markdown(item.docstring))
+        for item in extract_documented_defines(source)
+        if item.name == name
+    )
+
+
+def _signature_key(signature: str) -> str:
+    """Normalize a rendered definition signature for overload matching."""
+    signature = re.sub(r"^(?:public |private |multi )+", "", signature)
+    signature = re.sub(r"^define(?:\[[^]]*\])?\s+", "", signature)
+    return re.sub(r"\s+", " ", signature).strip()
+
+
+def _match_overload_docs(
+    overloads: tuple[T.Overload, ...], documented: tuple[tuple[str, str], ...]
+) -> tuple[str, ...]:
+    """Align each visible overload with the docstring of its source declaration."""
+    indexed = [(_signature_key(signature), doc) for signature, doc in documented]
+    result: list[str] = []
+    for overload in overloads:
+        expected = _signature_key(_overload_signature("__name__", overload)).replace(
+            "__name__", "", 1
+        )
+        matched = ""
+        for signature, doc in indexed:
+            suffix = signature[signature.find("(") :] if "(" in signature else signature
+            if suffix == expected:
+                matched = doc
+                break
+        result.append(matched)
+    return tuple(result)
+
+
+def _definition_documentation_at_line(source: str, name: str, line: int) -> str:
+    """Return documentation for one exact same-named declaration line."""
+    return next(
+        (
+            _docstring_markdown(item.docstring)
+            for item in extract_documented_defines(source)
+            if item.name == name and item.line == line
+        ),
+        "",
+    )
+
+
+def _render_overload_hover(
+    name: str, overloads: tuple[T.Overload, ...], docs: tuple[str, ...]
+) -> str:
+    """Render each overload beside its own documentation in a distinct section."""
+    sections: list[str] = []
+    for index, overload in enumerate(overloads):
+        section = f"```valiance\n{_overload_signature(name, overload)}\n```"
+        documentation = docs[index] if index < len(docs) else ""
+        if documentation:
+            section += f"\n\n{documentation}"
+        sections.append(section)
+    return "\n\n---\n\n".join(sections)
 
 def _import_definition_candidates(
     spec: Any, local_name: str

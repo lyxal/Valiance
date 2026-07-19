@@ -4037,13 +4037,13 @@ vln init scratch --template empty --no-tests
 ```
 
 When standard input and output are interactive and neither choice was supplied,
-`vln init` opens a keyboard-driven selector. Use Up/Down to move, Enter to
-continue, and Ctrl+C to cancel. A second selector chooses whether tests are
-included. Choosing Back from that step returns to the template list. If the
-enhanced terminal UI is unavailable, the command falls back to a portable
-numbered prompt. Scripts and redirected sessions default to `application` with
-tests. The `empty` template always omits tests because it contains no generated
-API to exercise.
+`vln init` keeps the normal terminal screen and presents inline completion menus.
+Use Up/Down to highlight a choice and press Enter once to select and submit it.
+The selected template remains in the terminal history, followed by a second
+inline yes/no prompt for tests. Ctrl+C cancels. If the enhanced inline UI is
+unavailable, the command falls back to a portable numbered prompt. Scripts and
+redirected sessions default to `application` with tests. The `empty` template
+always omits tests because it contains no generated API to exercise.
 
 List templates without creating anything:
 
