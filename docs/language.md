@@ -4037,9 +4037,13 @@ vln init scratch --template empty --no-tests
 ```
 
 When standard input and output are interactive and neither choice was supplied,
-`vln init` asks for a template and then whether to include tests. Scripts and
-redirected sessions default to `application` with tests. The `empty` template
-always omits tests because it contains no generated API to exercise.
+`vln init` opens a keyboard-driven selector. Use Up/Down to move, Enter to
+continue, and Ctrl+C to cancel. A second selector chooses whether tests are
+included. Choosing Back from that step returns to the template list. If the
+enhanced terminal UI is unavailable, the command falls back to a portable
+numbered prompt. Scripts and redirected sessions default to `application` with
+tests. The `empty` template always omits tests because it contains no generated
+API to exercise.
 
 List templates without creating anything:
 

@@ -184,7 +184,7 @@ def _command_help_text(prog: str, action: str) -> str:
             f"  {prog} init my_app --template application --tests\n"
             f"  {prog} init . --template package --tests\n"
             f"  {prog} init scratch --template empty --no-tests\n\n"
-            "Interactive use asks for a template and whether to include tests.\n"
+            "Interactive use provides an arrow-key selector; use ↑/↓ and Enter.\n"
             "Non-interactive use defaults to application with tests."
         ),
         "add": (
@@ -795,13 +795,72 @@ def _print_project_templates() -> None:
 
 
 def _choose_project_options() -> tuple[str, bool]:
-    """Prompt for template and tests, or return automation-friendly defaults."""
+    """Choose init options with an arrow-key UI, falling back to text input."""
     interactive = bool(
         getattr(sys.stdin, "isatty", lambda: False)()
         and getattr(sys.stdout, "isatty", lambda: False)()
     )
     if not interactive:
         return DEFAULT_PROJECT_TEMPLATE, True
+    try:
+        selected = _choose_project_options_tui()
+    except (ImportError, OSError, RuntimeError, ValueError):
+        selected = None
+    if selected is not None:
+        return selected
+    return _choose_project_options_plain()
+
+
+def _choose_project_options_tui() -> tuple[str, bool] | None:
+    """Show prompt-toolkit radio lists controlled by arrows and Enter."""
+    from prompt_toolkit.shortcuts import radiolist_dialog
+    from prompt_toolkit.styles import Style
+
+    style = Style.from_dict(
+        {
+            "dialog": "bg:#1e1e1e",
+            "dialog frame.label": "bold #5fd7ff",
+            "dialog.body": "bg:#1e1e1e #f0f0f0",
+            "radio-selected": "bold #5fd7ff",
+            "radio-checked": "bold #5fd7ff",
+            "button.focused": "bg:#5fd7ff #101010 bold",
+        }
+    )
+    template = radiolist_dialog(
+        title="Create a Valiance project",
+        text="Choose a project template\n\nUse ↑/↓ to move, Enter to continue, or Ctrl+C to cancel.",
+        values=[
+            (item.name, f"{item.name} — {item.description}")
+            for item in PROJECT_TEMPLATES
+        ],
+        default=DEFAULT_PROJECT_TEMPLATE,
+        ok_text="Continue",
+        cancel_text="Cancel",
+        style=style,
+    ).run()
+    if template is None:
+        raise KeyboardInterrupt
+    if template == "empty":
+        return template, False
+    tests = radiolist_dialog(
+        title="Create a Valiance project",
+        text="Include a test scaffold?\n\nThe generated tests import and exercise the project API.",
+        values=[
+            (True, "Yes — include tests"),
+            (False, "No — source only"),
+        ],
+        default=True,
+        ok_text="Create project",
+        cancel_text="Back",
+        style=style,
+    ).run()
+    if tests is None:
+        return _choose_project_options_tui()
+    return template, bool(tests)
+
+
+def _choose_project_options_plain() -> tuple[str, bool]:
+    """Provide a portable numbered chooser when prompt-toolkit is unavailable."""
     print("Choose a project template:")
     for index, template in enumerate(PROJECT_TEMPLATES, start=1):
         default = " (default)" if template.name == DEFAULT_PROJECT_TEMPLATE else ""

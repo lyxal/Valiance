@@ -1190,3 +1190,29 @@ class BareParameterRunDiagnosticHelpTests(unittest.TestCase):
         self.assertIn("Type error: unknown element 'c'", rendered)
         self.assertIn("help: did you mean '$c'?", rendered)
         self.assertNotIn("unknown element 'c'\\ndid you mean", rendered)
+
+class InitTemplateChooserTests(unittest.TestCase):
+    @patch("prompt_toolkit.shortcuts.radiolist_dialog")
+    def test_arrow_key_chooser_selects_template_then_tests(self, dialog):
+        template_dialog = unittest.mock.MagicMock()
+        template_dialog.run.return_value = "package"
+        tests_dialog = unittest.mock.MagicMock()
+        tests_dialog.run.return_value = True
+        dialog.side_effect = [template_dialog, tests_dialog]
+
+        from valiance.main import _choose_project_options_tui
+
+        self.assertEqual(_choose_project_options_tui(), ("package", True))
+        self.assertEqual(dialog.call_count, 2)
+        self.assertIn("↑/↓", dialog.call_args_list[0].kwargs["text"])
+
+    @patch("prompt_toolkit.shortcuts.radiolist_dialog")
+    def test_empty_template_skips_test_question(self, dialog):
+        template_dialog = unittest.mock.MagicMock()
+        template_dialog.run.return_value = "empty"
+        dialog.return_value = template_dialog
+
+        from valiance.main import _choose_project_options_tui
+
+        self.assertEqual(_choose_project_options_tui(), ("empty", False))
+        self.assertEqual(dialog.call_count, 1)
