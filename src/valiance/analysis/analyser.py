@@ -25,6 +25,7 @@ import valiance.analysis.contracts.annotations as annotation_hooks
 import valiance.vtypes as T
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.elements.builtins import default_environment
+from valiance.analysis.import_runtime import prelude_seed, with_import_runtime_name
 from valiance.analysis.lints import (
     DEFAULT_REGISTRY as DEFAULT_LINT_REGISTRY,
     BlockLintContext,
@@ -189,72 +190,9 @@ class _AnalysisPrelude:
             source_name.text,
             (f"__valiance_import_{self.namespace_seed}_{index}",),
         )
-        self.nodes.append(_with_import_runtime_name(node, runtime_name))
+        self.nodes.append(with_import_runtime_name(node, runtime_name))
         self.bindings.append((node, source_name, runtime_name))
         return runtime_name
-
-
-def _prelude_seed(source_file: Path | None) -> str:
-    """Return a stable internal namespace seed for imported declarations."""
-    identity = "<inline>" if source_file is None else str(source_file.resolve())
-    return sha1(identity.encode("utf-8")).hexdigest()[:12]
-
-
-def _rewrite_imported_self_calls(
-    value,
-    source_name: Symbol,
-    runtime_name: Symbol,
-):
-    """Retarget recursive calls in an imported definition to its hidden binding."""
-    if isinstance(value, TypedElementNode):
-        rewritten = {
-            field.name: _rewrite_imported_self_calls(
-                getattr(value, field.name), source_name, runtime_name
-            )
-            for field in fields(value)
-        }
-        if isinstance(value.node, ElementNode) and value.node.name == source_name:
-            rewritten["runtime_name"] = runtime_name
-            rewritten["overload_index"] = 0
-        return replace(value, **rewritten)
-    if isinstance(value, tuple):
-        return tuple(
-            _rewrite_imported_self_calls(item, source_name, runtime_name)
-            for item in value
-        )
-    if is_dataclass(value) and not isinstance(value, ASTNode):
-        rewritten = {
-            field.name: _rewrite_imported_self_calls(
-                getattr(value, field.name), source_name, runtime_name
-            )
-            for field in fields(value)
-        }
-        return replace(value, **rewritten)
-    return value
-
-
-def _with_import_runtime_name(
-    node: TypedNode,
-    runtime_name: Symbol,
-) -> TypedNode:
-    """Attach a hidden runtime binding without changing source-level names."""
-    if isinstance(node, TypedFunctionNode):
-        source_name = (
-            node.node.name if isinstance(node.node, DefineNode) else Symbol("")
-        )
-        overloads = _rewrite_imported_self_calls(
-            node.overloads, source_name, runtime_name
-        )
-        return TypedImportedFunctionNode(
-            node.node,
-            node.typ,
-            overloads,
-            node.dispatch_plan,
-            runtime_name,
-        )
-    if isinstance(node.node, ObjectNode):
-        return TypedImportedObjectNode(node.node, node.typ, runtime_name)
-    return node
 
 
 def _nested_types(typ: T.Type) -> Iterator[T.Type]:
@@ -356,7 +294,7 @@ class Analyser:
         self.module_loader = module_loader or ModuleLoader()
         self.source_file = source_file
         self.lint_registry = lint_registry or DEFAULT_LINT_REGISTRY
-        self._prelude = _prelude or _AnalysisPrelude(_prelude_seed(source_file))
+        self._prelude = _prelude or _AnalysisPrelude(prelude_seed(source_file))
         self._owns_prelude = _prelude is None
         self.diagnostics: list[str] = []
         self.warnings: list[str] = []

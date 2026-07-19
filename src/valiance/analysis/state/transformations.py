@@ -8,7 +8,10 @@ from typing import cast
 
 import valiance.vtypes as T
 from valiance.asts import (
+    AnnotationNode,
     FunctionOverloadTyping,
+    ListLiteralNode,
+    StringLiteralNode,
     TypedAtNode,
     TypedCallNode,
     TypedElementExtension,

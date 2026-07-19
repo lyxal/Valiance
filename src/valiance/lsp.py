@@ -749,6 +749,7 @@ def _ast_nodes(value: Any) -> list[ASTNode]:
     seen: set[int] = set()
 
     def visit(item: Any) -> None:
+        """Visit raw AST dataclasses and collection children exactly once."""
         if id(item) in seen:
             return
         if isinstance(item, ASTNode):

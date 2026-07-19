@@ -37,6 +37,23 @@ from valiance.asts import (
 from valiance.vtypes.symbols import Symbol
 
 from .. import analyser as _core
+from ..state.transformations import (
+    _assignment_error,
+    _assignment_stored_type,
+    _child_symbol,
+    _erase_absent_tag_requirements,
+    _lookup,
+    _mustcall_methods,
+    _refine_input_requirement_items,
+    _refine_items,
+    _refine_stack,
+    _refine_typed_body,
+    _refine_typed_extension,
+    _refine_typed_node,
+    _set_item,
+    _set_symbol_flag,
+    _sorted_items,
+)
 from ..calls import callable_values as _functions
 
 
@@ -597,176 +614,14 @@ def _row_field_type(row: T.RowType, name: Symbol) -> T.Type | None:
     return None
 
 
-def _refine_stack(stack: T.TypeStack, old: T.Type, new: T.Type) -> T.TypeStack:
-    """Refine stack during static analysis."""
-    return T.TypeStack(tuple(_refine_type(item, old, new) for item in stack.items))
 
 
-def _refine_items(
-    items: tuple[tuple[Symbol, T.Type], ...],
-    old: T.Type,
-    new: T.Type,
-) -> tuple[tuple[Symbol, T.Type], ...]:
-    """Refine items during static analysis."""
-    return tuple((name, _refine_type(typ, old, new)) for name, typ in items)
 
 
-def _refine_typed_body(
-    typed_body: tuple[TypedNode, ...],
-    old: T.Type,
-    new: T.Type,
-) -> tuple[TypedNode, ...]:
-    """Refine typed body during static analysis."""
-    return tuple(_refine_typed_node(node, old, new) for node in typed_body)
 
 
-def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> TypedNode:
-    """Refine typed node during static analysis."""
-    typ = None if typed_node.typ is None else _refine_type(typed_node.typ, old, new)
-    if isinstance(typed_node, TypedImportedFunctionNode):
-        return TypedImportedFunctionNode(
-            typed_node.node,
-            typ,
-            tuple(
-                FunctionOverloadTyping(
-                    _refine_type(overload.typ, old, new),
-                    _refine_typed_body(overload.body, old, new),
-                    overload.overload,
-                )
-                for overload in typed_node.overloads
-            ),
-            typed_node.dispatch_plan,
-            typed_node.runtime_name,
-        )
-    if isinstance(typed_node, TypedFunctionNode):
-        return TypedFunctionNode(
-            typed_node.node,
-            typ,
-            tuple(
-                FunctionOverloadTyping(
-                    _refine_type(overload.typ, old, new),
-                    _refine_typed_body(overload.body, old, new),
-                    overload.overload,
-                )
-                for overload in typed_node.overloads
-            ),
-            typed_node.dispatch_plan,
-        )
-    if isinstance(typed_node, TypedLiteralNode):
-        return TypedLiteralNode(
-            typed_node.node,
-            typ,
-            tuple(_refine_typed_body(item, old, new) for item in typed_node.items),
-        )
-    if isinstance(typed_node, TypedTagApplicationNode):
-        return TypedTagApplicationNode(
-            typed_node.node,
-            typ,
-            typed_node.validator,
-            typed_node.validator_index,
-            typed_node.added_tags,
-            typed_node.removed_tags,
-            typed_node.validator_runtime_name,
-            typed_node.validator_plans,
-        )
-    if isinstance(typed_node, TypedElementNode):
-        return TypedElementNode(
-            typed_node.node,
-            typ,
-            typed_node.overload,
-            typed_node.overload_index,
-            typed_node.modifier_args,
-            typed_node.call_arg_order,
-            typed_node.call_overload_index,
-            _refine_typed_extension(typed_node.extension, old, new),
-            typed_node.runtime_name,
-        )
-    if isinstance(typed_node, TypedCallNode):
-        return TypedCallNode(
-            typed_node.node,
-            typ,
-            typed_node.overload,
-        )
-    if isinstance(typed_node, TypedIfNode):
-        return TypedIfNode(
-            typed_node.node,
-            typ,
-            _refine_typed_body(typed_node.condition, old, new),
-            _refine_typed_body(typed_node.then_branch, old, new),
-            _refine_typed_body(typed_node.else_branch, old, new),
-            typed_node.then_padding,
-            typed_node.else_padding,
-        )
-    if isinstance(typed_node, TypedUnfoldNode):
-        function = typed_node.function
-        refined_function = (
-            None
-            if function is None
-            else cast(
-                TypedFunctionNode,
-                _refine_typed_node(function, old, new),
-            )
-        )
-        return TypedUnfoldNode(
-            typed_node.node,
-            typ,
-            typed_node.state_arity,
-            refined_function,
-        )
-    if isinstance(typed_node, TypedAtNode):
-        function = typed_node.function
-        refined_function = (
-            None
-            if function is None
-            else cast(
-                TypedFunctionNode,
-                _refine_typed_node(function, old, new),
-            )
-        )
-        return TypedAtNode(
-            typed_node.node,
-            typ,
-            refined_function,
-            typed_node.overload,
-            typed_node.function_overload_index,
-        )
-    if isinstance(typed_node, TypedImportedObjectNode):
-        return TypedImportedObjectNode(
-            typed_node.node,
-            typ,
-            typed_node.runtime_name,
-        )
-    return TypedNode(typed_node.node, typ)
 
 
-def _refine_typed_extension(
-    extension: TypedElementExtension | None,
-    old: T.Type,
-    new: T.Type,
-) -> TypedElementExtension | None:
-    """Refine typed extension during static analysis."""
-    if extension is None:
-        return None
-
-    def refine_function(function: TypedFunctionNode | None) -> TypedFunctionNode | None:
-        """Refine function during static analysis."""
-        if function is None:
-            return None
-        refined = _refine_typed_node(function, old, new)
-        assert isinstance(refined, TypedFunctionNode)
-        return refined
-
-    return TypedElementExtension(
-        default=refine_function(extension.default),
-        rules=tuple(
-            TypedExtensionPatternRule(
-                rule.pattern,
-                cast(TypedFunctionNode, _refine_typed_node(rule.function, old, new)),
-            )
-            for rule in extension.rules
-        ),
-        selector=refine_function(extension.selector),
-    )
 
 
 def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
@@ -824,21 +679,8 @@ def _refine_input_requirement(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
     )
 
 
-def _refine_input_requirement_items(
-    items: tuple[tuple[Symbol, T.Type], ...], old: T.Type, new: T.Type
-) -> tuple[tuple[Symbol, T.Type], ...]:
-    """Refine named input facts while preserving negative tag constraints."""
-    return tuple(
-        (name, _refine_input_requirement(typ, old, new)) for name, typ in items
-    )
 
 
-def _erase_absent_tag_requirements(typ: T.Type) -> T.Type:
-    """Compute erase absent tag requirements during static analysis."""
-    typ = T.normalize(typ)
-    if isinstance(typ, T.TaggedType) and all(tag.absent for tag in typ.tags):
-        return typ.inner
-    return typ
 
 
 def _stack_assignable(
@@ -877,97 +719,17 @@ def _return_value_shape(typ: T.Type) -> T.Type:
     return normalized
 
 
-def _lookup(
-    items: tuple[tuple[Symbol, T.Type], ...],
-    name: Symbol,
-) -> T.Type | None:
-    """Compute lookup during static analysis."""
-    for key, typ in items:
-        if key == name:
-            return typ
-    return None
 
 
-def _assignment_error(
-    name: Symbol,
-    source: T.Type,
-    target: T.Type,
-    ctx: T.Context,
-) -> str | None:
-    """Return the error description for assignment during static analysis."""
-    if _assignment_stored_type(target, source, ctx) is not None:
-        return None
-    return (
-        f"cannot assign {T.show(source)} to variable '{name}' of type {T.show(target)}"
-    )
 
 
-def _assignment_stored_type(
-    existing: T.Type,
-    source: T.Type,
-    ctx: T.Context,
-) -> T.Type | None:
-    """Determine the type of assignment stored during static analysis."""
-    if T.assignable(source, existing, ctx):
-        return existing
-    if T.assignable(existing, source, ctx):
-        return source
-    return None
 
 
-def _mustcall_methods(annotations: tuple[ASTNode, ...]) -> tuple[str, ...]:
-    """Compute mustcall methods during static analysis."""
-    for annotation in annotations:
-        if not isinstance(annotation, AnnotationNode):
-            continue
-        if annotation.name.text != "mustcall":
-            continue
-        kwargs = dict(annotation.kwargs)
-        for key in (Symbol("all"), Symbol("any")):
-            value = kwargs.get(key)
-            if not isinstance(value, ListLiteralNode):
-                continue
-            methods: list[str] = []
-            for item in value.items:
-                if len(item) != 1 or not isinstance(item[0], StringLiteralNode):
-                    return ()
-                methods.append(item[0].value)
-            return tuple(methods)
-    return ()
 
 
-def _child_symbol(parent: Symbol, child: Symbol) -> Symbol:
-    """Compute child symbol during static analysis."""
-    return Symbol(child.text, (*parent.namespace, parent.text, *child.namespace))
 
 
-def _set_item(
-    items: tuple[tuple[Symbol, T.Type], ...],
-    name: Symbol,
-    typ: T.Type,
-) -> tuple[tuple[Symbol, T.Type], ...]:
-    """Compute set item during static analysis."""
-    result = {key: value for key, value in items}
-    result[name] = typ
-    return _sorted_items(result.items())
 
 
-def _set_symbol_flag(
-    items: tuple[Symbol, ...],
-    name: Symbol,
-    enabled: bool,
-) -> tuple[Symbol, ...]:
-    """Compute set symbol flag during static analysis."""
-    result = set(items)
-    if enabled:
-        result.add(name)
-    else:
-        result.discard(name)
-    return tuple(sorted(result))
 
 
-def _sorted_items(
-    items: Iterable[tuple[Symbol, T.Type]],
-) -> tuple[tuple[Symbol, T.Type], ...]:
-    """Collect the items for sorted during static analysis."""
-    return tuple(sorted(items, key=lambda item: item[0]))
