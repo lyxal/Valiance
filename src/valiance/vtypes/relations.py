@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable
 from itertools import product
 
 from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.structural import anonymous_trait_subject_name
 from valiance.vtypes.builders import (
     ERR,
     OK,
@@ -219,7 +220,7 @@ def _solve_anonymous_trait(
 ) -> dict[str, list[Type]] | None:
     """Solve a trait across every coherent requirement/overload path."""
     constraints: dict[str, list[Type]] = {}
-    subject = _anonymous_trait_subject_name(target)
+    subject = anonymous_trait_subject_name(target)
     if subject is not None:
         constraints[subject] = [source]
 
@@ -260,16 +261,6 @@ def _solve_anonymous_trait(
     return merged if _combined_substitution(merged, ctx) is not None else None
 
 
-def _anonymous_trait_subject_name(target: AnonymousTraitType) -> str | None:
-    """Return the subject generic name for an anonymous structural trait."""
-    if target.generics:
-        return target.generics[0].text
-    for requirement in target.requirements:
-        for item in requirement.overload.params + requirement.overload.returns:
-            name = _first_type_var_name(item)
-            if name is not None:
-                return name
-    return None
 
 
 def _first_type_var_name(typ: Type) -> str | None:
@@ -319,7 +310,7 @@ def _first_type_var_name(typ: Type) -> str | None:
                 if name is not None:
                     return name
     if isinstance(typ, AnonymousTraitType):
-        return _anonymous_trait_subject_name(typ)
+        return anonymous_trait_subject_name(typ)
     if isinstance(typ, (TaggedType, ExactType, AtomicType)):
         return _first_type_var_name(typ.inner)
     return None

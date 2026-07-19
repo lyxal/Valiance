@@ -7,6 +7,9 @@ from dataclasses import dataclass, replace
 from itertools import permutations
 
 import valiance.vtypes as T
+from valiance.analysis.support.function_shapes import function_param_names_for_overload
+
+_function_param_names_for_overload = function_param_names_for_overload
 from valiance.asts import (
     AnnotationNode,
     ASTNode,
@@ -270,7 +273,7 @@ def recursive_overload(
         params,
         node.returns,
         where_clause=node.where_clause,
-        param_names=_function_param_names_for_overload(node, params),
+        param_names=function_param_names_for_overload(node, params),
         element_tags=node.element_tags,
         annotation_error=annotation_error_message(node.annotations),
         annotation_warning=annotation_warning_message(node.annotations),
@@ -289,17 +292,6 @@ def _returns_result_type(returns: tuple[T.Type, ...]) -> T.Type | None:
     return None
 
 
-def _function_param_names_for_overload(
-    node: FunctionNode,
-    inputs: tuple[T.Type, ...],
-) -> tuple[Symbol | None, ...]:
-    """Build or resolve the overload for function param names for while applying compiler annotations."""
-    if node.params is None:
-        return (None,) * len(inputs)
-    names = tuple(param.name for param in node.params)
-    if len(names) < len(inputs):
-        return (None,) * (len(inputs) - len(names)) + names
-    return names
 
 
 def _validate_test_annotation(

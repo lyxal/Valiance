@@ -8,6 +8,9 @@ from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
 import valiance.vtypes as T
+from valiance.analysis.support.function_shapes import function_param_names_for_overload
+
+_function_param_names_for_overload = function_param_names_for_overload
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.asts import (
     ASTNode,
@@ -284,7 +287,7 @@ def _function_overload(
         params=params,
         returns=returns,
         where_clause=where_clause,
-        param_names=_function_param_names_for_overload(node, params),
+        param_names=function_param_names_for_overload(node, params),
         call_site_body=call_site_body,
         element_tags=frozenset() if element_tags is None else element_tags,
         annotation_error=annotation_hooks.annotation_error_message(node.annotations),
@@ -445,17 +448,6 @@ def _is_bare_function_type(typ: T.Type) -> bool:
     )
 
 
-def _function_param_names_for_overload(
-    node: FunctionNode,
-    inputs: tuple[T.Type, ...],
-) -> tuple[Symbol | None, ...]:
-    """Return parameter names aligned with an overload."""
-    if node.params is None:
-        return (None,) * len(inputs)
-    names = tuple(param.name for param in node.params)
-    if len(names) < len(inputs):
-        return (None,) * (len(inputs) - len(names)) + names
-    return names
 
 
 def _function_param_defaults_for_overload(
@@ -570,7 +562,7 @@ def _static_body_variable_names(node: FunctionNode) -> tuple[Symbol, ...]:
     names = static_where.static_parameter_names(
         params=params,
         returns=node.returns or (),
-        param_names=_function_param_names_for_overload(node, params),
+        param_names=function_param_names_for_overload(node, params),
         clause=node.where_clause,
     )
     return tuple(Symbol(name) for name in names)

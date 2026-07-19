@@ -743,16 +743,20 @@ def _overload_signature(name: str, overload: T.Overload) -> str:
     return f"{name}({', '.join(params)}){tag_clause} -> {returns}".rstrip()
 
 
-def _ast_nodes(value: Any) -> list[ASTNode]:
-    """Flatten raw AST dataclass fields for nested declaration lookup."""
-    found: list[ASTNode] = []
+
+
+
+
+def _dataclass_nodes(value: Any, node_type: type[Any]) -> list[Any]:
+    """Flatten matching nodes from recursively nested dataclass fields."""
+    found: list[Any] = []
     seen: set[int] = set()
 
     def visit(item: Any) -> None:
-        """Visit raw AST dataclasses and collection children exactly once."""
+        """Visit dataclasses and collection children exactly once."""
         if id(item) in seen:
             return
-        if isinstance(item, ASTNode):
+        if isinstance(item, node_type):
             seen.add(id(item))
             found.append(item)
         if isinstance(item, (tuple, list)):
@@ -765,30 +769,16 @@ def _ast_nodes(value: Any) -> list[ASTNode]:
 
     visit(value)
     return found
+
+
+def _ast_nodes(value: Any) -> list[ASTNode]:
+    """Flatten raw AST nodes for nested declaration lookup."""
+    return _dataclass_nodes(value, ASTNode)
 
 
 def _typed_nodes(value: Any) -> list[TypedNode]:
-    """Flatten typed dataclass fields for source-sensitive editor features."""
-    found: list[TypedNode] = []
-    seen: set[int] = set()
-
-    def visit(item: Any) -> None:
-        """Visit typed dataclasses and collection children exactly once."""
-        if id(item) in seen:
-            return
-        if isinstance(item, TypedNode):
-            seen.add(id(item))
-            found.append(item)
-        if isinstance(item, (tuple, list)):
-            for child in item:
-                visit(child)
-        elif is_dataclass(item):
-            seen.add(id(item))
-            for field in fields(item):
-                visit(getattr(item, field.name))
-
-    visit(value)
-    return found
+    """Flatten typed nodes for source-sensitive editor features."""
+    return _dataclass_nodes(value, TypedNode)
 
 
 def _source_offset_at(source: str, position: dict[str, int]) -> int:

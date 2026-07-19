@@ -8,6 +8,12 @@ from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
 import valiance.vtypes as T
+from valiance.analysis.state.transformations import transform_overload_types
+
+_transform_overload_types = transform_overload_types
+from valiance.vtypes.structural import anonymous_trait_subject_name
+
+_anonymous_trait_subject_name = anonymous_trait_subject_name
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.asts import (
     ASTNode,
@@ -57,7 +63,7 @@ def _genericize_overload(
     """Generalize overload during static analysis."""
     if not generics:
         return overload
-    return _transform_overload_types(
+    return transform_overload_types(
         overload,
         lambda typ: _genericize_type(typ, generics),
     )
@@ -344,25 +350,12 @@ def _genericize_requirement(
     """Generalize requirement during static analysis."""
     return T.TraitRequirement(
         requirement.name,
-        _transform_overload_types(
+        transform_overload_types(
             requirement.overload,
             lambda typ: _genericize_type(typ, generics),
         ),
     )
 
-def _transform_overload_types(
-    overload: T.Overload,
-    transform: Callable[[T.Type], T.Type],
-    *,
-    element_tags: frozenset[T.ElementTag] | None = None,
-) -> T.Overload:
-    """Determine the types used for transform overload during static analysis."""
-    return replace(
-        overload,
-        params=tuple(transform(param) for param in overload.params),
-        returns=tuple(transform(ret) for ret in overload.returns),
-        element_tags=overload.element_tags if element_tags is None else element_tags,
-    )
 
 def _transform_type_children(
     typ: T.Type,
@@ -445,22 +438,12 @@ def _anonymous_trait_subject_view(typ: T.Type) -> T.Type:
     """Build the view of anonymous trait subject during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.AnonymousTraitType):
-        subject = _anonymous_trait_subject_name(typ)
+        subject = anonymous_trait_subject_name(typ)
         if subject is not None:
             return T.V(subject)
         return typ
     return _transform_type_children(typ, _anonymous_trait_subject_view)
 
-def _anonymous_trait_subject_name(typ: T.AnonymousTraitType) -> str | None:
-    """Return the canonical name for anonymous trait subject during static analysis."""
-    if typ.generics:
-        return typ.generics[0].text
-    for requirement in typ.requirements:
-        for item in requirement.overload.params + requirement.overload.returns:
-            name = _first_type_var_name(item)
-            if name is not None:
-                return name
-    return None
 
 def _first_type_var_name(typ: T.Type) -> str | None:
     """Return the canonical name for first type var during static analysis."""
@@ -509,7 +492,7 @@ def _first_type_var_name(typ: T.Type) -> str | None:
                 if name is not None:
                     return name
     if isinstance(typ, T.AnonymousTraitType):
-        return _anonymous_trait_subject_name(typ)
+        return anonymous_trait_subject_name(typ)
     if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
         return _first_type_var_name(typ.inner)
     return None
