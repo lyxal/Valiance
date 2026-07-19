@@ -25,6 +25,7 @@ from valiance.analysis.diagnostics import DiagnosticError, from_message
 from valiance.modules_system.modules import ModuleLoadError, ModuleLoader
 from valiance.elements.builtins import BUILTIN_ELEMENTS, BuiltinElement
 from valiance.elements.documentation import ElementDocumentation
+from valiance.elements.stdlib_native import native_stdlib_functions
 from valiance.parsing import LexError, ParseError, ParseErrors, parse
 from valiance.repl import completion_prefix, default_completion_items
 from valiance.source_tools import extract_documented_defines
@@ -365,6 +366,9 @@ class LanguageServer:
         docs = self._overload_documentation(
             uri, lookup_name, position, overloads, selected
         )
+        stdlib_documentation = self._stdlib_documentation(
+            uri, lookup_name, selected
+        )
         builtin = _builtin_for_overloads(lookup_name, overloads, selected)
         builtin_documentation = (
             _element_documentation_markdown(builtin.documentation)
@@ -385,13 +389,14 @@ class LanguageServer:
                     "",
                 )
             if not selected_doc:
-                selected_doc = builtin_documentation
+                selected_doc = stdlib_documentation or builtin_documentation
             value = _render_single_overload_hover(
                 display_name, selected, selected_doc
             )
         else:
-            if builtin_documentation and not any(docs):
-                docs = tuple(builtin_documentation for _ in overloads)
+            shared_documentation = stdlib_documentation or builtin_documentation
+            if shared_documentation and not any(docs):
+                docs = tuple(shared_documentation for _ in overloads)
             value = _render_overload_hover(display_name, overloads, docs)
         return {
             "contents": {"kind": "markdown", "value": value},
@@ -505,6 +510,41 @@ class LanguageServer:
                     matched = _match_overload_docs((selected,), documented)
                     if matched and matched[0]:
                         return matched[0]
+        return ""
+
+    def _stdlib_documentation(
+        self, uri: str, name: str, selected: T.Overload | None
+    ) -> str:
+        """Return metadata documentation for an imported native stdlib element."""
+        modules = native_stdlib_functions()
+        for node in self.programs.get(uri, []):
+            if not isinstance(node, ImportNode):
+                continue
+            for spec in node.specs:
+                for module_path, imported_name in _import_definition_candidates(
+                    spec, name
+                ):
+                    parts = tuple(module_path.parts)
+                    if not parts or parts[0] != "std" or len(parts) < 2:
+                        continue
+                    module_name = ".".join(parts[1:])
+                    functions = modules.get(module_name, ())
+                    for function in functions:
+                        if function.name.text != imported_name:
+                            continue
+                        overload = T.Overload(
+                            function.params,
+                            function.returns,
+                            param_names=function.param_names,
+                        )
+                        if selected is not None and not _same_overload(
+                            overload, selected
+                        ):
+                            continue
+                        if function.documentation is not None:
+                            return _element_documentation_markdown(
+                                function.documentation
+                            )
         return ""
 
     def _definition_source(

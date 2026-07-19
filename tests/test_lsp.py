@@ -284,6 +284,26 @@ class HoverEnhancementTests(unittest.TestCase):
             }
         )
 
+    def test_native_stdlib_hover_includes_registered_documentation(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = "import { std.trig.sin }\n1 sin"
+            hover = self.hover(main, source, 1, 3)
+
+        value = hover["contents"]["value"]
+        self.assertIn("sin(n: Number) -> Number", value)
+        self.assertIn("Return the sine of an angle in radians.", value)
+        self.assertIn("**Parameter `n`:** Angle in radians.", value)
+        self.assertIn("**Returns:** The sine of the angle.", value)
+
     def test_imported_function_hover_includes_source_docstring(self):
         import tempfile
         from pathlib import Path
