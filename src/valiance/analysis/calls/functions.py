@@ -226,12 +226,12 @@ class _CallableValues:
         top_level_captures = (
             ()
             if allow_top_level_captures
-            else _functions._top_level_assignment_capture_nodes(outer, node)
+            else _functions._top_level_capture_nodes(outer, node)
         )
         if top_level_captures:
             for capture in top_level_captures:
                 self._diagnose(
-                    f"cannot capture top-level assignment '{capture.name}'",
+                    f"cannot capture top-level variable '{capture.name}'",
                     capture,
                 )
             return None

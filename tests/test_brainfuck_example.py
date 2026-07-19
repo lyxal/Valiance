@@ -12,11 +12,11 @@ from valiance.parsing import parse
 from valiance.runtime import RuntimeError, compile_program, dumps, loads, run
 
 BRAINFUCK_INTERPRETER = r"""
-const $TAPE_SIZE = 30000
-$tape = [0] overtake $TAPE_SIZE
+define \TAPE_SIZE -> Integer => 30000
+$tape = [0] overtake \TAPE_SIZE
 
 tag #TapePointer as unit
-define #TapePointer(:Integer) => inRange(0, $TAPE_SIZE)
+define #TapePointer(:Integer) => inRange(0, \TAPE_SIZE)
 
 define get(tape: Integer+, ind: #TapePointer Integer) => $tape[#-TapePointer $ind]
 define apply(:#TapePointer Integer, fn: Function[Integer -> Integer]) =>
@@ -61,10 +61,10 @@ while ($pc < length $instructions) =>
       $tape[#-TapePointer $tp] := - 1 | % 256
       $pc := + 1
     ">" =>
-      $tp := apply: fn => + 1 | % $TAPE_SIZE
+      $tp := apply: fn => + 1 | % \TAPE_SIZE
       $pc := + 1
     "<" =>
-      $tp := apply: fn => - 1 | % $TAPE_SIZE
+      $tp := apply: fn => - 1 | % \TAPE_SIZE
       $pc := + 1
     "." =>
       print fromCharcode $tape[#-TapePointer $tp]

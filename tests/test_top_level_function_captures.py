@@ -77,7 +77,25 @@ call(call($outer))
             with self.subTest(source=source):
                 analyser, _typed = analyse(source)
                 self.assertEqual(len(analyser.diagnostics), 1)
-                self.assertIn("cannot capture top-level assignment 'x'", analyser.diagnostics[0])
+                self.assertIn("cannot capture top-level variable 'x'", analyser.diagnostics[0])
+
+    def test_define_cannot_capture_top_level_constant(self):
+        """A top-level constant is not importable closure state for a define."""
+        for body in (
+            '$x',
+            '"value: $x"',
+            '"value: ${$x 1 +}"',
+            '"function: ${fn () => $x end}"',
+        ):
+            source = f"const $x = 5\ndefine bad -> String => {body} end"
+            with self.subTest(body=body):
+                analyser, _typed = analyse(source)
+                self.assertEqual(len(analyser.diagnostics), 1)
+                self.assertIn(
+                    "cannot capture top-level variable 'x'",
+                    analyser.diagnostics[0],
+                )
+
 
 
 if __name__ == "__main__":

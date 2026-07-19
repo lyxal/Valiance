@@ -1554,7 +1554,7 @@ define timesFive(y: Number) -> Number => $x $y *
 
         self.assertEqual(
             analyser.diagnostics,
-            ["3:42: cannot capture top-level assignment 'x'"],
+            ["3:42: cannot capture top-level variable 'x'"],
         )
 
     def test_repeated_unannotated_named_parameter_specializes_from_overload_use(self):

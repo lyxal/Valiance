@@ -591,44 +591,38 @@ def _function_capture_source(
         return outer.variables
     if allow_top_level_assignments:
         return outer.variables
-    constants = outer.variables.constant_items()
-    if not constants:
-        return None
-    return _core.BranchVariables(
-        function_locals=constants,
-        function_constants=tuple(name for name, _typ in constants),
-    )
+    return None
 
 
-def _top_level_assignment_capture_nodes(
+def _top_level_capture_nodes(
     outer: _core.AnalysisBranch,
     node: FunctionNode,
 ) -> tuple[GetVariableNode, ...]:
-    """Compute top level assignment capture nodes during static analysis."""
+    """Find reads that would capture any top-level variable."""
     if outer.input_mode is not _core.InputMode.TOP_LEVEL:
         return ()
-    visible = set(outer.variables.nonconstant_names())
+    visible = set(outer.variables.visible_names())
     if not visible:
         return ()
-    return _top_level_assignment_capture_reads_in_function(node, visible, frozenset())
+    return _top_level_capture_reads_in_function(node, visible, frozenset())
 
 
-def _top_level_assignment_capture_reads_in_function(
+def _top_level_capture_reads_in_function(
     node: FunctionNode,
     visible: set[Symbol],
     inherited_bound: frozenset[Symbol],
 ) -> tuple[GetVariableNode, ...]:
-    """Compute top level assignment capture reads in function during static analysis."""
+    """Find top-level capture reads in one function and its nested functions."""
     bound = inherited_bound | _function_bound_variable_names(node)
-    return _top_level_assignment_capture_reads_in_nodes(node.body, visible, bound)
+    return _top_level_capture_reads_in_nodes(node.body, visible, bound)
 
 
-def _top_level_assignment_capture_reads_in_nodes(
+def _top_level_capture_reads_in_nodes(
     nodes: tuple[ASTNode, ...],
     visible: set[Symbol],
     bound: frozenset[Symbol],
 ) -> tuple[GetVariableNode, ...]:
-    """Compute top level assignment capture reads in nodes during static analysis."""
+    """Find unbound reads of visible top-level variables in AST nodes."""
     reads: list[GetVariableNode] = []
     for node in nodes:
         if isinstance(node, GetVariableNode):
@@ -637,7 +631,7 @@ def _top_level_assignment_capture_reads_in_nodes(
             continue
         if isinstance(node, FunctionNode):
             reads.extend(
-                _top_level_assignment_capture_reads_in_function(
+                _top_level_capture_reads_in_function(
                     node,
                     visible,
                     bound,
@@ -646,7 +640,7 @@ def _top_level_assignment_capture_reads_in_nodes(
             continue
         for item in fields(node):
             reads.extend(
-                _top_level_assignment_capture_reads_in_value(
+                _top_level_capture_reads_in_value(
                     getattr(node, item.name),
                     visible,
                     bound,
@@ -655,21 +649,21 @@ def _top_level_assignment_capture_reads_in_nodes(
     return tuple(reads)
 
 
-def _top_level_assignment_capture_reads_in_value(
+def _top_level_capture_reads_in_value(
     value: object,
     visible: set[Symbol],
     bound: frozenset[Symbol],
 ) -> tuple[GetVariableNode, ...]:
-    """Compute top level assignment capture reads in value during static analysis."""
+    """Find top-level capture reads in a recursively nested AST value."""
     if isinstance(value, FunctionNode):
-        return _top_level_assignment_capture_reads_in_function(value, visible, bound)
+        return _top_level_capture_reads_in_function(value, visible, bound)
     if isinstance(value, ASTNode):
-        return _top_level_assignment_capture_reads_in_nodes((value,), visible, bound)
+        return _top_level_capture_reads_in_nodes((value,), visible, bound)
     if isinstance(value, tuple):
         reads: list[GetVariableNode] = []
         for item in value:
             reads.extend(
-                _top_level_assignment_capture_reads_in_value(item, visible, bound)
+                _top_level_capture_reads_in_value(item, visible, bound)
             )
         return tuple(reads)
     return ()

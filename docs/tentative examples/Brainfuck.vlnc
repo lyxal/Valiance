@@ -1,8 +1,8 @@
-const $TAPE_SIZE = 30000
-$tape = [0] overtake $TAPE_SIZE
+define \TAPE_SIZE -> Integer => 30000
+$tape = [0] overtake \TAPE_SIZE
 
 tag #TapePointer as unit
-define #TapePointer(:Integer) => inRange(0, $TAPE_SIZE)
+define #TapePointer(:Integer) => inRange(0, \TAPE_SIZE)
 
 define get(tape: Integer+, ind: #TapePointer Integer) => $tape[#-TapePointer $ind]
 define apply(:#TapePointer Integer, fn: Function[Integer -> Integer]) =>
