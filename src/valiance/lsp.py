@@ -208,6 +208,8 @@ class LanguageServer:
         source = self.documents.get(uri, "")
         position = params["position"]
         cursor_offset = _source_offset_at(source, position)
+        if _cursor_in_comment(source, cursor_offset):
+            return []
         prefix = completion_prefix(source[: _offset(source, position)])
         import_prefix = _import_completion_prefix(source, cursor_offset)
         if import_prefix is not None:
@@ -1089,6 +1091,54 @@ def _import_definition_candidates(
                 )
             )
     return tuple(candidates)
+
+
+def _cursor_in_comment(source: str, cursor_offset: int) -> bool:
+    """Return whether the cursor is inside a single-line or nested block comment."""
+    index = 0
+    block_depth = 0
+    in_string = False
+    escaped = False
+    limit = min(max(cursor_offset, 0), len(source))
+    while index < limit:
+        char = source[index]
+        next_char = source[index + 1] if index + 1 < limit else ""
+        if block_depth:
+            if char == "#" and next_char == "/":
+                block_depth += 1
+                index += 2
+                continue
+            if char == "/" and next_char == "#":
+                block_depth -= 1
+                index += 2
+                continue
+            index += 1
+            continue
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            index += 1
+            continue
+        if char == "#" and next_char == "?":
+            newline = source.find("\n", index, limit)
+            if newline < 0:
+                return True
+            index = newline + 1
+            continue
+        if char == "#" and next_char == "/":
+            block_depth = 1
+            index += 2
+            continue
+        index += 1
+    return block_depth > 0
 
 
 def _import_completion_prefix(source: str, cursor_offset: int) -> str | None:

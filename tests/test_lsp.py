@@ -129,6 +129,51 @@ class LanguageServerTests(unittest.TestCase):
         self.assertIn("print", element_labels)
         self.assertIn("println", element_labels)
 
+    def test_completion_is_suppressed_in_single_line_comments(self):
+        for source in ("#? pri", "#?? pri"):
+            results = self.session(source, {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/completion",
+                "params": {
+                    "textDocument": {"uri": "file:///tmp/main.vlnc"},
+                    "position": {"line": 0, "character": len(source)},
+                },
+            })
+            completion = next(
+                item["result"] for item in results if item.get("id") == 2
+            )
+            self.assertEqual(completion, [])
+
+    def test_completion_is_suppressed_in_nested_block_comments(self):
+        source = "#/ outer #/ inner /# pri /#"
+        cursor = source.index("pri") + len("pri")
+        results = self.session(source, {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": {"uri": "file:///tmp/main.vlnc"},
+                "position": {"line": 0, "character": cursor},
+            },
+        })
+        completion = next(item["result"] for item in results if item.get("id") == 2)
+        self.assertEqual(completion, [])
+
+    def test_comment_markers_inside_strings_do_not_suppress_completion(self):
+        source = '"#? not a comment"\npri'
+        results = self.session(source, {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": {"uri": "file:///tmp/main.vlnc"},
+                "position": {"line": 1, "character": 3},
+            },
+        })
+        completion = next(item["result"] for item in results if item.get("id") == 2)
+        self.assertIn("print", {item["label"] for item in completion})
+
     def test_completion_suggests_named_parameter(self):
         source = "define demo(input: Integer) => $input"
         results = self.session(source, {
