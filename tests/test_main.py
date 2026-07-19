@@ -1,5 +1,6 @@
 import contextlib
 import io
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -852,6 +853,30 @@ class MainTests(unittest.TestCase):
                 '[project]\nname = "demo"\nversion = "1.0.0"\n\n[dependencies]\n',
                 encoding="utf-8",
             )
+            package = Path(tmp) / "package"
+            package.mkdir()
+            (package / "repo.vlnc").write_text("", encoding="utf-8")
+            (package / "valiance.toml").write_text(
+                '[project]\nname = "repo"\nversion = "1.0.0"\n\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "init", "-q"], cwd=package, check=True)
+            subprocess.run(["git", "add", "."], cwd=package, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                 "commit", "-qm", "v1"], cwd=package, check=True
+            )
+            subprocess.run(["git", "tag", "v1.0.0"], cwd=package, check=True)
+            (package / "valiance.toml").write_text(
+                '[project]\nname = "repo"\nversion = "1.1.0"\n\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", "."], cwd=package, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                 "commit", "-qm", "v1.1"], cwd=package, check=True
+            )
+            subprocess.run(["git", "tag", "v1.1.0"], cwd=package, check=True)
             old_cwd = Path.cwd()
             output = io.StringIO()
             try:
@@ -859,11 +884,9 @@ class MainTests(unittest.TestCase):
 
                 os.chdir(root)
                 with contextlib.redirect_stdout(output):
-                    add_exit = main(
-                        ["add", "github.com/user/repo", "1.0.0", "as", "repo"]
-                    )
+                    add_exit = main(["add", str(package), "1.0.0", "as", "repo"])
                     upgrade_exit = main(["upgrade", "repo", "1.1.0"])
-                    install_exit = main(["install"])
+                    install_exit = main(["install", "--locked"])
                     remove_exit = main(["remove", "repo"])
             finally:
                 os.chdir(old_cwd)
@@ -890,14 +913,70 @@ class MainTests(unittest.TestCase):
             source = (project / "src" / "main.vlnc").read_text(encoding="utf-8")
             gitignore = (project / ".gitignore").read_text(encoding="utf-8")
             lock = (project / "valiance.lock").read_text(encoding="utf-8")
+            readme = (project / "README.md").read_text(encoding="utf-8")
+            test_exists = (project / "tests/project.vlnc").is_file()
+            test_contents = (project / "tests/project.vlnc").read_text(encoding="utf-8")
 
         self.assertEqual(exit_code, 0)
         self.assertIn('name = "demo"', manifest)
         self.assertIn("[entries]", manifest)
         self.assertIn('main = "src/main.vlnc"', manifest)
-        self.assertIn('"Hello, Valiance" println', source)
+        self.assertIn('greeting("Valiance") println', source)
+        self.assertTrue(test_exists)
+        self.assertIn("root.src.app.greeting", test_contents)
+        self.assertIn(f"Next: cd {project}", output.getvalue())
         self.assertIn(".vln/", gitignore)
         self.assertIn('"dependencies": []', lock)
+        self.assertIn("# demo", readme)
+
+
+    def test_init_lists_templates(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(["init", "--list-templates"])
+
+        self.assertEqual(exit_code, 0)
+        rendered = output.getvalue()
+        self.assertIn("application", rendered)
+        self.assertIn("multi-module", rendered)
+        self.assertIn("package", rendered)
+        self.assertIn("empty", rendered)
+        self.assertIn("(default)", rendered)
+
+    def test_init_package_can_scaffold_current_directory(self):
+        with tempfile.TemporaryDirectory(prefix="valiance_package_") as tmp:
+            root = Path(tmp)
+            old_cwd = Path.cwd()
+            output = io.StringIO()
+            try:
+                import os
+
+                os.chdir(root)
+                with contextlib.redirect_stdout(output):
+                    exit_code = main(["init", ".", "--template", "package"])
+            finally:
+                os.chdir(old_cwd)
+
+            project_name = root.name
+            manifest = (root / "valiance.toml").read_text(encoding="utf-8")
+            package_source_exists = (root / f"{project_name}.vlnc").is_file()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn(f'name = "{project_name}"', manifest)
+        self.assertTrue(package_source_exists)
+        self.assertNotIn("Next: cd", output.getvalue())
+        self.assertIn("Next: vln test", output.getvalue())
+
+    def test_init_application_can_omit_tests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "minimal_demo"
+            exit_code = main(
+                ["init", str(project), "--template", "application", "--no-tests"]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue((project / "src/main.vlnc").is_file())
+            self.assertFalse((project / "tests").exists())
 
     def test_package_add_rejects_non_exact_versions(self):
         with tempfile.TemporaryDirectory() as tmp:

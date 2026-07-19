@@ -4006,36 +4006,66 @@ given an explicit source input where supported.
 
 ## 24.2. Creating a Project
 
-Create a project in the current directory with:
+Create a project in the current directory without adding a wrapper directory:
 
 ```text
 vln init
+vln init . --template package --tests
 ```
 
-Create a project in another directory with:
+Create one in a new directory with:
 
 ```text
 vln init myproject
 ```
 
-The command creates:
+Project shape and testing are independent choices. Available templates are:
+
+- `application`: a runnable application with `src/main.vlnc` and a small public
+  application module;
+- `package`: a reusable root package module with no executable entry;
+- `multi-module`: a runnable application split across source modules;
+- `empty`: project metadata and documentation without generated source.
+
+Tests may be included or omitted for any source-bearing template:
 
 ```text
+vln init my_app --template application --tests
+vln init my_app --template application --no-tests
+vln init my_lib --template package --tests
+vln init scratch --template empty --no-tests
+```
+
+When standard input and output are interactive and neither choice was supplied,
+`vln init` asks for a template and then whether to include tests. Scripts and
+redirected sessions default to `application` with tests. The `empty` template
+always omits tests because it contains no generated API to exercise.
+
+List templates without creating anything:
+
+```text
+vln init --list-templates
+```
+
+Every template always creates:
+
+```text
+README.md
 valiance.toml
 valiance.lock
 .gitignore
-src/main.vlnc
 ```
 
-The generated source file contains a small runnable program.
+The README is specific to the selected project shape. `.gitignore` always
+contains `.vln/` and `bin/`, while preserving any existing ignore rules when
+initializing an already-created directory. Generated tests import and exercise
+the generated project module rather than unrelated sample code. Existing files
+are not overwritten, and initialization fails when the target already contains
+`valiance.toml`.
 
-The generated `.gitignore` includes:
-
-```gitignore
-.vln/
-```
-
-`vln init` fails if the target directory already contains `valiance.toml`.
+After creating a project outside the current directory, the CLI prints a
+copyable `Next: cd <directory>` instruction. Current-directory scaffolds instead
+recommend the relevant `vln run` or `vln test` command.
 
 ## 24.3. The Project Manifest
 
@@ -4327,119 +4357,91 @@ Dependencies are never upgraded automatically.
 
 ## 24.12. Installation
 
-Install the dependencies declared by the current project with:
+Install and resolve the dependencies declared by the current project with:
 
 ```text
 vln install
 ```
 
-The command:
+Phase-one package management is registryless. Every installable dependency must
+use an explicit Git source and an exact numeric version. The installer resolves
+either the `v<version>` or `<version>` tag, records the resulting commit SHA,
+checks out source without its `.git` directory, validates the package manifest,
+and recursively installs its dependencies. Registry-name dependencies are
+reserved for a future static index and currently produce an actionable error.
 
-1. loads the nearest `valiance.toml`;
-2. regenerates `valiance.lock`;
-3. creates the project's `.vln` directory;
-4. creates one directory for each direct dependency;
-5. writes package metadata for each dependency.
-
-The managed directory has this form:
+Packages are source-first and are installed beneath the importing package:
 
 ```text
 <project root>/.vln/
-├── somelib/
-│   └── package.json
-└── repo/
-    └── package.json
+└── parent/
+    ├── valiance.toml
+    ├── parent.vlnc
+    └── .vln/
+        └── transitive/
+            ├── valiance.toml
+            └── transitive.vlnc
 ```
 
-Each `package.json` records the dependency's local name, identity, source, and
-exact version.
+Nested installation preserves each package's own dependency aliases and lets
+`dep.<name>` resolve against the nearest package manifest. Installations are
+prepared in a temporary directory and moved into place atomically. Package
+symlinks are rejected and no package installation scripts are executed.
 
-The current installer does not yet fetch package contents. The generated
-directories are placeholders for the future package acquisition and resolution
-system.
+To reproduce an existing lockfile without resolving tags again, use:
+
+```text
+vln install --locked
+```
+
+Locked mode rejects a stale manifest/lockfile pair, checks existing package
+trees against their recorded SHA-256 integrity, and restores missing or changed
+packages from the exact locked commit. It never upgrades dependencies.
 
 ## 24.13. The Lockfile
 
-`valiance.lock` is generated from the current manifest.
+`valiance.lock` separates direct manifest intent from the complete resolved
+graph. It records:
 
-The lockfile records:
+- the lockfile format version and root project identity;
+- canonical direct dependency declarations for stale-lock detection;
+- every direct and transitive package's local name and package identity;
+- its canonical Git source and requested exact version;
+- the immutable commit revision selected from the version tag;
+- a canonical `sha256:` digest of the package source tree;
+- child dependency names and the managed installation path.
 
-- a lockfile format version;
-- the root project's name and version;
-- each direct dependency's local name;
-- dependency kind;
-- package identity;
-- source;
-- exact version;
-- an empty transitive dependency list;
-- a currently unset integrity value.
-
-A simplified lockfile looks like:
-
-```json
-{
-  "version": 1,
-  "package": {
-    "name": "myproject",
-    "version": "0.1.0"
-  },
-  "dependencies": [
-    {
-      "name": "somelib",
-      "kind": "registry",
-      "identity": "somelib",
-      "source": "registry",
-      "version": "1.2.3",
-      "dependencies": [],
-      "integrity": null
-    }
-  ]
-}
-```
-
-Do not edit `valiance.lock` by hand.
-
-The current lockfile describes direct dependencies only. Transitive dependency
-resolution and integrity verification are future package-manager work.
+The source-tree digest excludes `.git`, `.vln`, and generated `valiance.lock`
+data. Do not edit `valiance.lock` by hand. Commit both `valiance.toml` and
+`valiance.lock`; CI should use `vln install --locked`.
 
 ## 24.14. The Managed Package Directory
 
-Project package metadata is stored under:
-
-```text
-<project root>/.vln/
-```
-
-This directory is managed by Valiance and should not be edited manually.
-
-It should normally remain excluded from version control:
+Project packages are stored under `<project root>/.vln/`. Each package may have
+its own managed `.vln/` directory for transitive dependencies. These directories
+are installation output, should not be edited manually, and should remain
+excluded from version control:
 
 ```gitignore
 .vln/
 ```
 
-`valiance.toml` and `valiance.lock` should be committed when the project is kept
-in version control.
-
 ## 24.15. Current Resolution Model
 
-The package manager currently records only direct dependencies declared by the
-root project.
+The launch resolver intentionally uses exact versions and a single deterministic
+Git tag-to-commit rule. It detects dependency cycles, validates fetched package
+versions, and resolves the complete graph recursively. Because dependencies are
+nested beneath their importer, different branches may contain different versions
+of the same source without alias leakage.
 
-It does not yet:
+The phase-one manager does not yet provide:
 
-- contact a package registry;
-- clone VCS repositories;
-- inspect dependency manifests;
-- resolve transitive dependency graphs;
-- install multiple versions of transitive packages;
-- calculate integrity hashes;
-- enforce package identity at the type level;
-- provide global package installation.
-
-The manifest and lockfile formats already preserve fields needed by parts of a
-future implementation, but those fields must not be treated as evidence that
-the corresponding behavior exists today.
+- a named package registry or discovery/search service;
+- version ranges or constraint solving;
+- signed provenance or vulnerability metadata;
+- archive/CDN mirrors;
+- global package installation;
+- precompiled package distribution.
 
 ## 24.16. Command Summary
 
@@ -5011,3 +5013,17 @@ programs.
 Symbolic element names retain the operator characters accepted before Unicode
 identifier support; this change only broadens the alphanumeric portions of
 names.
+
+## 24.17. Package Command Presentation
+
+Package commands report each package operation using stable stages: resolving,
+fetching, verifying, installing, and writing the lockfile. Interactive terminals
+render an in-place 20-cell progress bar for package stages. Redirected output
+and CI receive one complete line per update instead, so logs remain readable and
+contain no carriage-return animation.
+
+Successful locked installs identify packages already verified in the local
+cache. Failures use a `Package error:` heading and, when recovery is known, a
+separate `help:` line with the exact next action. `vln add --help` and
+`vln install --help` document arguments, examples, recursive dependency
+behaviour, integrity verification, and the recommended locked CI workflow.

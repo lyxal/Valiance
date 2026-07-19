@@ -770,26 +770,26 @@ Current audit total: 546 / 779 items complete (70.1%).
 
 ## 40. Package management and CLI
 
-- [ ] Recognise `valiance.toml` as the project manifest.
-- [ ] Use the manifest location as the project root.
+- [x] Recognise `valiance.toml` as the project manifest.
+- [x] Use the manifest location as the project root.
 - [ ] Support standalone scripts without a manifest.
 - [ ] Disable external packages for standalone scripts.
-- [ ] Parse project metadata.
-- [ ] Parse exact-version dependency declarations.
-- [ ] Reject version ranges, wildcards, and implicit version selection.
-- [ ] Generate and maintain `valiance.lock`.
-- [ ] Record exact transitive dependency versions.
-- [ ] Install per-project packages into `.vln`.
+- [x] Parse project metadata.
+- [x] Parse exact-version dependency declarations.
+- [x] Reject version ranges, wildcards, and implicit version selection.
+- [x] Generate and maintain `valiance.lock`.
+- [x] Record exact transitive dependency versions.
+- [x] Install per-project packages into `.vln`.
 - [ ] Support a global package location for tools.
-- [ ] Install multiple versions of the same dependency simultaneously.
+- [x] Install multiple versions of the same dependency simultaneously.
 - [ ] Keep types from different package versions distinct.
-- [ ] Support explicit dependency upgrades.
-- [ ] Implement `vln install`.
+- [x] Support explicit dependency upgrades.
+- [x] Implement `vln install`.
 - [ ] Implement installed-package `vln add`.
-- [ ] Implement VCS-package `vln add`.
-- [ ] Implement `vln remove`.
-- [ ] Implement `vln upgrade`.
-- [ ] Update both manifest and lockfile during package changes.
+- [x] Implement VCS-package `vln add`.
+- [x] Implement `vln remove`.
+- [x] Implement `vln upgrade`.
+- [x] Update both manifest and lockfile during package changes.
 
 ## 41. Concurrency — deferred design area
 

@@ -19,6 +19,9 @@ from valiance.asts import pretty_ast, typed_source
 from valiance.analysis.diagnostics import from_exception, from_message, render, should_color
 from valiance.modules_system.packages import (
     PackageError,
+    PackageProgress,
+    PROJECT_TEMPLATES,
+    DEFAULT_PROJECT_TEMPLATE,
     add_dependency,
     init_project,
     install,
@@ -65,6 +68,8 @@ _ANSI_BOLD = "\033[1m"
 _ANSI_DIM = "\033[2m"
 _ANSI_CYAN = "\033[36m"
 _ANSI_GREEN = "\033[32m"
+_ANSI_YELLOW = "\033[33m"
+_ANSI_RED = "\033[31m"
 
 _SOURCE_ACTIONS = {"compile", "run", "parse", "analyse", "analyze", "compile-module", "build"}
 _SOURCE_TOOL_ACTIONS = {"tidy", "annotate", "docs"}
@@ -149,8 +154,8 @@ def _command_help_text(prog: str, action: str) -> str:
         "annotate": "<file> | --code <code>",
         "docs": "[<file>] [-o <file>] [--title <title>] | --language [--format html|markdown|json]",
         "test": "[<selector-or-path> ...] [--filter <text>] [--list [--flat]] [--fail-fast] [--show-output]",
-        "init": "[directory]",
-        "install": "",
+        "init": "[directory] [--template <name>] [--tests | --no-tests] [--list-templates]",
+        "install": "[--locked]",
         "add": "<package-or-source> <version> [as <name>]",
         "remove": "<name>",
         "upgrade": "<name> <version>",
@@ -167,7 +172,53 @@ def _command_help_text(prog: str, action: str) -> str:
         "docs": f"  {prog} docs --language --format markdown --output -",
     }.get(action)
     text = f"USAGE\n  {prog} {action} {usage}".rstrip()
-    if examples:
+    package_details = {
+        "init": (
+            "Create a Valiance project in a new directory or the current directory.\n\n"
+            "OPTIONS\n"
+            "  --template <name>  Use application, package, multi-module, or empty\n"
+            "  --tests            Include tests that exercise generated project code\n"
+            "  --no-tests         Do not create a test scaffold\n"
+            "  --list-templates   Show available templates and exit\n\n"
+            "EXAMPLES\n"
+            f"  {prog} init my_app --template application --tests\n"
+            f"  {prog} init . --template package --tests\n"
+            f"  {prog} init scratch --template empty --no-tests\n\n"
+            "Interactive use asks for a template and whether to include tests.\n"
+            "Non-interactive use defaults to application with tests."
+        ),
+        "add": (
+            "Add an exact-version Git dependency and install its complete dependency graph.\n\n"
+            "ARGUMENTS\n"
+            "  <package-or-source>  Git URL or local Git repository path\n"
+            "  <version>            Exact numeric version; resolves v<version> or <version>\n"
+            "  as <name>            Optional local import alias\n\n"
+            "EXAMPLES\n"
+            f"  {prog} add https://github.com/owner/math.git 1.2.0\n"
+            f"  {prog} add ../local-math 1.2.0 as math\n\n"
+            "The command updates valiance.toml, recursively fetches dependencies, verifies\n"
+            "SHA-256 integrity, and writes exact commit revisions to valiance.lock."
+        ),
+        "install": (
+            "Resolve and install all dependencies from valiance.toml.\n\n"
+            "OPTIONS\n"
+            "  --locked  Reproduce valiance.lock exactly; fail if it is stale\n\n"
+            "EXAMPLES\n"
+            f"  {prog} install\n"
+            f"  {prog} install --locked    # recommended for CI"
+        ),
+        "remove": (
+            "Remove a direct dependency and its managed package directory.\n\n"
+            f"EXAMPLE\n  {prog} remove math"
+        ),
+        "upgrade": (
+            "Change one dependency to another exact version and reinstall the graph.\n\n"
+            f"EXAMPLE\n  {prog} upgrade math 1.3.0"
+        ),
+    }.get(action)
+    if package_details:
+        text += "\n\n" + package_details
+    elif examples:
         text += f"\n\nEXAMPLE\n{examples}"
     return text + f"\n\nUse `{prog} --help` for all commands.\nDocumentation: {DOCS_URL}\n"
 
@@ -362,6 +413,12 @@ def _parse_args(args: list[str], *, prog: str = DEFAULT_PROG) -> argparse.Namesp
     parser.add_argument("--emit-bytecode", dest="legacy_output")
     parser.add_argument("--implicit-output", action="store_true")
     parser.add_argument("--preview-lists", action="store_true")
+    parser.add_argument("--locked", action="store_true")
+    parser.add_argument("--template")
+    parser.add_argument("--list-templates", action="store_true")
+    parser.add_argument("--tests", dest="init_tests", action="store_true")
+    parser.add_argument("--no-tests", dest="init_tests", action="store_false")
+    parser.set_defaults(init_tests=None)
     parser.add_argument(
         "--no-optimize",
         "--no-optimise",
@@ -439,6 +496,16 @@ def _parse_args(args: list[str], *, prog: str = DEFAULT_PROG) -> argparse.Namesp
             return None
         return _validate_package_args(parsed)
 
+    if parsed.locked:
+        print("error: --locked is only valid with install", file=sys.stderr)
+        return None
+    if (
+        parsed.template is not None
+        or parsed.list_templates
+        or parsed.init_tests is not None
+    ):
+        print("error: init template and test options are only valid with init", file=sys.stderr)
+        return None
     if parsed.output is not None and parsed.action != "compile":
         print("error: bytecode output is only valid for compile", file=sys.stderr)
         return None
@@ -660,13 +727,38 @@ def _validate_package_args(parsed: argparse.Namespace) -> argparse.Namespace | N
         if args:
             print("error: install takes no arguments", file=sys.stderr)
             return None
+        if (
+            parsed.template is not None
+            or parsed.list_templates
+            or parsed.init_tests is not None
+        ):
+            print("error: init template and test options are only valid with init", file=sys.stderr)
+            return None
         return parsed
+    if parsed.locked:
+        print("error: --locked is only valid with install", file=sys.stderr)
+        return None
     if parsed.action == "init":
         if len(args) > 1:
             print("error: init takes at most one directory", file=sys.stderr)
             return None
+        if parsed.list_templates and (
+            parsed.template is not None or parsed.init_tests is not None
+        ):
+            print(
+                "error: --list-templates cannot be combined with template or test options",
+                file=sys.stderr,
+            )
+            return None
         parsed.package_args = args
         return parsed
+    if (
+        parsed.template is not None
+        or parsed.list_templates
+        or parsed.init_tests is not None
+    ):
+        print("error: init template and test options are only valid with init", file=sys.stderr)
+        return None
     if parsed.action == "remove":
         if len(args) != 1:
             print("error: remove requires a dependency name", file=sys.stderr)
@@ -694,20 +786,156 @@ def _validate_package_args(parsed: argparse.Namespace) -> argparse.Namespace | N
     return None
 
 
+def _print_project_templates() -> None:
+    """Print the built-in init templates in a compact, discoverable list."""
+    print("Available project templates:")
+    for template in PROJECT_TEMPLATES:
+        default = " (default)" if template.name == DEFAULT_PROJECT_TEMPLATE else ""
+        print(f"  {template.name:<14} {template.description}{default}")
+
+
+def _choose_project_options() -> tuple[str, bool]:
+    """Prompt for template and tests, or return automation-friendly defaults."""
+    interactive = bool(
+        getattr(sys.stdin, "isatty", lambda: False)()
+        and getattr(sys.stdout, "isatty", lambda: False)()
+    )
+    if not interactive:
+        return DEFAULT_PROJECT_TEMPLATE, True
+    print("Choose a project template:")
+    for index, template in enumerate(PROJECT_TEMPLATES, start=1):
+        default = " (default)" if template.name == DEFAULT_PROJECT_TEMPLATE else ""
+        print(f"  {index}. {template.name:<14} {template.description}{default}")
+    while True:
+        try:
+            answer = input("Template [1]: ").strip()
+        except EOFError:
+            return DEFAULT_PROJECT_TEMPLATE, True
+        if not answer:
+            template_name = DEFAULT_PROJECT_TEMPLATE
+            break
+        if answer.isdigit() and 1 <= int(answer) <= len(PROJECT_TEMPLATES):
+            template_name = PROJECT_TEMPLATES[int(answer) - 1].name
+            break
+        names = {template.name for template in PROJECT_TEMPLATES}
+        if answer.lower() in names:
+            template_name = answer.lower()
+            break
+        print("Please enter a template number or name.", file=sys.stderr)
+    if template_name == "empty":
+        return template_name, False
+    try:
+        tests_answer = input("Include tests? [Y/n]: ").strip().lower()
+    except EOFError:
+        return template_name, True
+    return template_name, tests_answer not in {"n", "no"}
+
+
+def _shell_quote(value: str) -> str:
+    """Quote a path for the user's shell only when whitespace requires it."""
+    if not value or any(character.isspace() for character in value):
+        return '"' + value.replace('"', '\\"') + '"'
+    return value
+
+
+class _PackageProgressUI:
+    """Render package progress clearly in both terminals and CI logs."""
+
+    _LABELS = {
+        "resolve": "Resolving",
+        "fetch": "Fetching",
+        "verify": "Verifying",
+        "install": "Installing",
+        "cached": "Verified",
+        "lock": "Lockfile",
+        "complete": "Complete",
+    }
+
+    def __init__(self) -> None:
+        """Detect terminal capabilities and initialize renderer state."""
+        self.color = should_color(sys.stdout)
+        self.interactive = bool(getattr(sys.stdout, "isatty", lambda: False)())
+        self._active = False
+
+    def __call__(self, update: PackageProgress) -> None:
+        """Render one progress event as an in-place bar or stable log line."""
+        label = self._LABELS.get(update.action, update.action.title())
+        package = f" {update.package}" if update.package else ""
+        detail = f" - {update.detail}" if update.detail else ""
+        bar = ""
+        if update.step is not None and update.total:
+            width = 20
+            filled = min(width, round(width * update.step / update.total))
+            bar = f" [{'#' * filled}{'-' * (width - filled)}]"
+        line = f"{label:<10}{bar}{package}{detail}"
+        if self.interactive:
+            print("\r\033[2K" + line, end="", flush=True)
+            self._active = True
+            if update.action in {"install", "cached", "lock", "complete"}:
+                print()
+                self._active = False
+        else:
+            print(line)
+
+    def finish(self) -> None:
+        """Terminate any active in-place progress line before other output."""
+        if self._active:
+            print()
+            self._active = False
+
+
+def _print_package_error(exc: PackageError) -> None:
+    """Render a package failure with an optional actionable next step."""
+    color = should_color(sys.stderr)
+    prefix = _repl_style("Package error", _ANSI_BOLD + _ANSI_RED, color)
+    print(f"{prefix}: {exc}", file=sys.stderr)
+    if exc.hint:
+        hint = _repl_style("help", _ANSI_BOLD + _ANSI_CYAN, color)
+        print(f"  {hint}: {exc.hint}", file=sys.stderr)
+
+
 def _run_package_command(parsed: argparse.Namespace) -> int:
     """Run package command for CLI and REPL orchestration."""
+    progress = _PackageProgressUI()
     try:
         if parsed.action == "install":
-            manifest, lock_path = install()
+            mode = "locked" if parsed.locked else "resolve"
+            print(f"Installing dependencies ({mode} mode)")
+            manifest, lock_path = install(locked=parsed.locked, progress=progress)
             print(
                 f"Installed {len(manifest.dependencies)} dependencies; "
                 f"updated {lock_path}"
             )
             return 0
         if parsed.action == "init":
+            if parsed.list_templates:
+                _print_project_templates()
+                return 0
             args = getattr(parsed, "package_args", [])
-            root = init_project(Path(args[0]) if args else None)
+            requested_path = Path(args[0]) if args else None
+            if parsed.template is None and parsed.init_tests is None:
+                template, include_tests = _choose_project_options()
+            else:
+                template = parsed.template or DEFAULT_PROJECT_TEMPLATE
+                include_tests = (
+                    parsed.init_tests if parsed.init_tests is not None else True
+                )
+            if template == "empty":
+                include_tests = False
+            root = init_project(
+                requested_path, template=template, tests=include_tests
+            )
             print(f"Initialized Valiance project: {root}")
+            print(f"Template: {template}")
+            print(f"Tests: {'included' if include_tests else 'not included'}")
+            if root != Path.cwd().resolve():
+                target = args[0] if args else str(root)
+                print(f"Next: cd {_shell_quote(target)}")
+            else:
+                if include_tests:
+                    print("Next: vln test")
+                elif template in {"application", "multi-module"}:
+                    print("Next: vln run")
             return 0
         args = parsed.package_args
         if parsed.action == "add":
@@ -715,6 +943,7 @@ def _run_package_command(parsed: argparse.Namespace) -> int:
                 args[0],
                 args[1],
                 alias=args[3] if len(args) == 4 else None,
+                progress=progress,
             )
             print(f"Added dependency; updated {manifest.path}")
             return 0
@@ -723,11 +952,12 @@ def _run_package_command(parsed: argparse.Namespace) -> int:
             print(f"Removed dependency; updated {manifest.path}")
             return 0
         if parsed.action == "upgrade":
-            manifest = upgrade_dependency(args[0], args[1])
+            manifest = upgrade_dependency(args[0], args[1], progress=progress)
             print(f"Upgraded dependency; updated {manifest.path}")
             return 0
     except PackageError as exc:
-        print(f"Package error: {exc}", file=sys.stderr)
+        progress.finish()
+        _print_package_error(exc)
         return 1
     print(f"error: unknown package action {parsed.action!r}", file=sys.stderr)
     return 1

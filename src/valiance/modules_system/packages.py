@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 import tomllib
+from urllib.parse import urlparse
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,8 +21,72 @@ NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 DEFAULT_PROJECT_ENTRY = Path("src/main.vlnc")
 
 
+@dataclass(frozen=True)
+class ProjectTemplate:
+    """One built-in project scaffold offered by ``vln init``."""
+
+    name: str
+    description: str
+
+
+PROJECT_TEMPLATES = (
+    ProjectTemplate("application", "A runnable application with one entry point"),
+    ProjectTemplate("package", "A reusable package exposing a public API"),
+    ProjectTemplate(
+        "multi-module", "A runnable application split across source modules"
+    ),
+    ProjectTemplate("empty", "Project metadata and documentation without source"),
+)
+DEFAULT_PROJECT_TEMPLATE = "application"
+_TEMPLATE_ALIASES = {
+    "application": "application",
+    "app": "application",
+    "minimal": "application",
+    "package": "package",
+    "library": "package",
+    "lib": "package",
+    "multi-module": "multi-module",
+    "multimodule": "multi-module",
+    "multi": "multi-module",
+    "empty": "empty",
+}
+
+
 class PackageError(Exception):
     """Raised when package metadata or commands are invalid."""
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        """Create a package failure with an optional actionable recovery hint."""
+        super().__init__(message)
+        self.hint = hint
+
+
+@dataclass(frozen=True)
+class PackageProgress:
+    """One user-facing package operation update."""
+
+    action: str
+    package: str | None = None
+    detail: str | None = None
+    step: int | None = None
+    total: int | None = None
+
+
+ProgressCallback = Callable[[PackageProgress], None]
+
+
+def _report(
+    callback: ProgressCallback | None,
+    action: str,
+    package: str | None = None,
+    detail: str | None = None,
+    *,
+    step: int | None = None,
+    total: int | None = None,
+) -> None:
+    """Emit an optional progress update without coupling package logic to a UI."""
+    if callback is not None:
+        callback(PackageProgress(action, package, detail, step, total))
 
 
 @dataclass(frozen=True)
@@ -267,93 +338,472 @@ def init_project(
     path: Path | None = None,
     *,
     name: str | None = None,
+    template: str = DEFAULT_PROJECT_TEMPLATE,
+    tests: bool = True,
 ) -> Path:
-    """Create a minimal Valiance project structure."""
+    """Create a Valiance project in a new directory or the current directory."""
     root = (path or Path.cwd()).resolve()
     project_name = name or root.name
+    if not NAME_RE.fullmatch(project_name):
+        raise PackageError(
+            f"project name {project_name!r} is not a valid module component",
+            hint="Use letters, numbers, and underscores, beginning with a letter or underscore.",
+        )
+    template_name = normalize_project_template(template)
     if (root / "valiance.toml").exists():
         raise PackageError(f"{root} already contains valiance.toml")
     root.mkdir(parents=True, exist_ok=True)
-    (root / "src").mkdir(exist_ok=True)
-    (root / "valiance.toml").write_text(
-        "\n".join(
-            (
-                "[project]",
-                f"name = {_toml_value(project_name)}",
-                'version = "0.1.0"',
-                "",
-                "[entries]",
-                'main = "src/main.vlnc"',
-                "",
-                "[lints]",
-                "enabled = true",
-                "disable = []",
-                "",
-                "[dependencies]",
-                "",
-            )
-        ),
-        encoding="utf-8",
-    )
-    main = root / "src" / "main.vlnc"
-    if not main.exists():
-        main.write_text('"Hello, Valiance" println\n', encoding="utf-8")
 
-    tests_dir = root / "tests"
-    tests_dir.mkdir(exist_ok=True)
-    sample_test = tests_dir / "sample.vlnc"
-    if not sample_test.exists():
-        sample_test.write_text(
-            "\n".join(
-                (
-                    "import { std.testing }",
-                    "",
-                    '@testgroup("Sample")',
-                    "define \\sample =>",
-                    '  @test("adds two numbers")',
-                    "  define \\addition =>",
-                    "    testing.assertEqual(20 + 22, 42)",
-                    "  end",
-                    "end",
-                    "",
-                )
-            ),
-            encoding="utf-8",
+    files, entries = _project_template_files(
+        template_name, project_name, include_tests=tests
+    )
+    manifest_lines = [
+        "[project]",
+        f"name = {_toml_value(project_name)}",
+        'version = "0.1.0"',
+        "",
+    ]
+    if entries:
+        manifest_lines.append("[entries]")
+        manifest_lines.extend(
+            f"{entry_name} = {_toml_value(entry_path)}"
+            for entry_name, entry_path in entries.items()
         )
+        manifest_lines.append("")
+    manifest_lines.extend(
+        (
+            "[lints]",
+            "enabled = true",
+            "disable = []",
+            "",
+            "[dependencies]",
+            "",
+        )
+    )
+    (root / "valiance.toml").write_text(
+        "\n".join(manifest_lines), encoding="utf-8"
+    )
+    for relative, contents in files.items():
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists():
+            target.write_text(contents, encoding="utf-8")
 
     gitignore = root / ".gitignore"
-    if gitignore.exists():
-        contents = gitignore.read_text(encoding="utf-8")
-        if ".vln/" not in contents.splitlines():
-            separator = "" if contents.endswith("\n") else "\n"
-            gitignore.write_text(contents + separator + ".vln/\n", encoding="utf-8")
-    else:
-        gitignore.write_text(".vln/\n", encoding="utf-8")
+    required_ignores = (".vln/", "bin/")
+    existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    lines = existing.splitlines()
+    for ignored in required_ignores:
+        if ignored not in lines:
+            lines.append(ignored)
+    gitignore.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     write_lockfile(load_manifest(root))
     return root
 
 
-def install(start: Path | None = None) -> tuple[Manifest, Path]:
-    """Update the lockfile and ensure local package directories exist."""
+def normalize_project_template(template: str) -> str:
+    """Normalize a template name or raise a helpful package error."""
+    normalized = _TEMPLATE_ALIASES.get(template.strip().lower())
+    if normalized is None:
+        choices = ", ".join(item.name for item in PROJECT_TEMPLATES)
+        raise PackageError(
+            f"unknown project template {template!r}",
+            hint=f"Choose one of: {choices}.",
+        )
+    return normalized
+
+
+def _project_template_files(
+    template: str, project_name: str, *, include_tests: bool
+) -> tuple[dict[Path, str], dict[str, str]]:
+    """Return source, README, optional tests, and entries for one scaffold."""
+    greeting = (
+        "#?? Return a greeting for `name`.\n"
+        "#?? @param name The name to greet.\n"
+        "#?? @returns A friendly greeting.\n"
+        "public define greeting(name: String) -> String => \"Hello, $name!\"\n"
+    )
+    files: dict[Path, str] = {}
+    entries: dict[str, str] = {}
+    test_import = ""
+    group_name = project_name
+
+    if template == "application":
+        files[Path("src/app.vlnc")] = greeting
+        files[Path("src/main.vlnc")] = (
+            "import { root.src.app.greeting }\n\n"
+            'greeting("Valiance") println\n'
+        )
+        entries["main"] = "src/main.vlnc"
+        test_import = "root.src.app.greeting"
+        files[Path("README.md")] = (
+            f"# {project_name}\n\n"
+            "A Valiance application.\n\n"
+            "## Run\n\n```text\nvln run\n```\n\n"
+            "## Test\n\n```text\nvln test\n```\n\n"
+            "## Build\n\n```text\nvln compile\n```\n"
+        )
+    elif template == "multi-module":
+        files[Path("src/messages.vlnc")] = greeting
+        files[Path("src/main.vlnc")] = (
+            "import { root.src.messages.greeting }\n\n"
+            'greeting("Valiance") println\n'
+        )
+        entries["main"] = "src/main.vlnc"
+        test_import = "root.src.messages.greeting"
+        group_name = "Messages"
+        files[Path("README.md")] = (
+            f"# {project_name}\n\n"
+            "A multi-module Valiance application. The executable entry is "
+            "`src/main.vlnc`; reusable functionality lives in "
+            "`src/messages.vlnc`.\n\n"
+            "## Commands\n\n```text\nvln run\nvln test\nvln compile\n```\n"
+        )
+    elif template == "package":
+        files[Path(f"{project_name}.vlnc")] = greeting
+        test_import = f"root.{project_name}.greeting"
+        files[Path("README.md")] = (
+            f"# {project_name}\n\n"
+            "A reusable Valiance package.\n\n"
+            "## Use\n\n"
+            f"Consumers can import the public API from `dep.{project_name}`.\n\n"
+            "## Test\n\n```text\nvln test\n```\n\n"
+            "Create an exact version tag such as `v0.1.0` before sharing it.\n"
+        )
+    else:
+        files[Path("README.md")] = (
+            f"# {project_name}\n\n"
+            "An empty Valiance project. Add an executable entry under `src/` "
+            "and declare it in `[entries]`, or add a root `.vlnc` module for a "
+            "reusable package.\n"
+        )
+
+    if include_tests and test_import:
+        files[Path("tests/project.vlnc")] = (
+            "import { std.testing }\n"
+            f"import {{ {test_import} }}\n\n"
+            f'@testgroup("{group_name}")\n'
+            "define \\project =>\n"
+            '  @test("greets a supplied name")\n'
+            "  define \\greetingUsesName =>\n"
+            '    testing.assertEqual(greeting("Valiance"), "Hello, Valiance!")\n'
+            "  end\n"
+            "end\n"
+        )
+    return files, entries
+
+def install(
+    start: Path | None = None,
+    *,
+    locked: bool = False,
+    progress: ProgressCallback | None = None,
+) -> tuple[Manifest, Path]:
+    """Resolve, fetch, verify, and install the complete dependency graph.
+
+    Source packages are checked out at an immutable Git revision.  The lockfile
+    records that revision and a canonical SHA-256 tree digest.  ``locked`` mode
+    refuses to re-resolve the manifest and reproduces only the recorded graph.
+    """
     manifest = require_manifest(start)
-    lock_path = write_lockfile(manifest)
     packages_dir = manifest.root / ".vln"
     packages_dir.mkdir(exist_ok=True)
-    for dependency in manifest.dependencies:
-        package_dir = packages_dir / dependency.local_name
-        package_dir.mkdir(exist_ok=True)
-        metadata = {
-            "name": dependency.local_name,
-            "identity": dependency.identity,
-            "source": dependency.source or "registry",
-            "version": dependency.version,
-        }
-        (package_dir / "package.json").write_text(
-            json.dumps(metadata, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+    if locked:
+        lock = _read_lockfile(manifest)
+        _validate_lock_matches_manifest(manifest, lock)
+        records = lock.get("dependencies")
+        if not isinstance(records, list):
+            raise PackageError("lockfile dependencies must be an array")
+        _report(progress, "lock", detail="Lockfile matches valiance.toml")
+        _install_locked_records(manifest, records, progress=progress)
+        _report(progress, "complete", detail=f"Installed {len(records)} packages")
+        return manifest, manifest.root / "valiance.lock"
+
+    records: list[dict[str, object]] = []
+    _resolve_and_install_manifest(
+        manifest,
+        packages_dir,
+        records=records,
+        ancestry=(),
+        install_prefix=(),
+        progress=progress,
+    )
+    lock_path = write_lockfile(manifest, resolved=records)
+    _report(progress, "lock", detail=f"Wrote {lock_path.name}")
+    _report(progress, "complete", detail=f"Installed {len(records)} packages")
     return manifest, lock_path
 
+
+def _resolve_and_install_manifest(
+    manifest: Manifest,
+    packages_dir: Path,
+    *,
+    records: list[dict[str, object]],
+    ancestry: tuple[str, ...],
+    install_prefix: tuple[str, ...],
+    progress: ProgressCallback | None,
+) -> None:
+    """Resolve and install every dependency declared by one manifest."""
+    for dependency in sorted(manifest.dependencies, key=lambda item: item.local_name):
+        if dependency.source is None:
+            raise PackageError(
+                f"cannot install registry dependency {dependency.identity!r}",
+                hint=(
+                    "Use an explicit Git source, for example: "
+                    f'{dependency.local_name} = {{ source = "https://github.com/owner/repo.git", '
+                    f'version = "{dependency.version}" }}'
+                ),
+            )
+        source = _canonical_git_source(dependency.source, manifest.root)
+        label = dependency.local_name
+        _report(progress, "resolve", label, dependency.version, step=1, total=4)
+        revision = _resolve_git_revision(source, dependency.version)
+        _report(progress, "fetch", label, revision[:12], step=2, total=4)
+        cycle_key = f"{source}@{revision}"
+        if cycle_key in ancestry:
+            chain = " -> ".join((*ancestry, cycle_key))
+            raise PackageError(f"dependency cycle detected: {chain}")
+        destination = packages_dir / dependency.local_name
+        with tempfile.TemporaryDirectory(
+            prefix=f".{dependency.local_name}-", dir=packages_dir
+        ) as tmp_name:
+            checkout = Path(tmp_name) / "source"
+            _checkout_git_revision(source, revision, checkout)
+            package_manifest = load_manifest(checkout)
+            _report(progress, "verify", label, "manifest and SHA-256", step=3, total=4)
+            _validate_package_manifest(dependency, package_manifest)
+            integrity = _tree_integrity(checkout)
+            child_names = [item.local_name for item in package_manifest.dependencies]
+            record = {
+                "name": dependency.local_name,
+                "package": package_manifest.project.get(
+                    "name", dependency.identity
+                ),
+                "kind": "vcs",
+                "identity": dependency.identity,
+                "source": source,
+                "version": dependency.version,
+                "revision": revision,
+                "integrity": integrity,
+                "dependencies": sorted(child_names),
+                "install_path": "/".join((*install_prefix, dependency.local_name)),
+            }
+            records.append(record)
+            child_root = checkout / ".vln"
+            child_root.mkdir(exist_ok=True)
+            _resolve_and_install_manifest(
+                package_manifest,
+                child_root,
+                records=records,
+                ancestry=(*ancestry, cycle_key),
+                install_prefix=(*install_prefix, dependency.local_name, ".vln"),
+                progress=progress,
+            )
+            if destination.exists():
+                shutil.rmtree(destination)
+            os.replace(checkout, destination)
+            _report(progress, "install", label, str(destination), step=4, total=4)
+
+
+def _install_locked_records(
+    manifest: Manifest,
+    records: list[object],
+    *,
+    progress: ProgressCallback | None,
+) -> None:
+    """Install exactly the revisions and hashes recorded in a lockfile."""
+    normalized: list[dict[str, object]] = []
+    for value in records:
+        if not isinstance(value, dict):
+            raise PackageError("lockfile dependency entries must be objects")
+        required = {"name", "source", "version", "revision", "integrity", "install_path"}
+        missing = sorted(required - value.keys())
+        if missing:
+            raise PackageError(
+                "lockfile dependency entry is missing: " + ", ".join(missing)
+            )
+        normalized.append(value)
+    normalized.sort(key=lambda item: str(item["install_path"]).count("/"))
+    for record in normalized:
+        label = str(record["name"])
+        _report(progress, "verify", label, "locked integrity", step=1, total=2)
+        rel = Path(str(record["install_path"]))
+        if rel.is_absolute() or ".." in rel.parts:
+            raise PackageError("lockfile install_path must stay within .vln")
+        destination = manifest.root / ".vln" / rel
+        expected = str(record["integrity"])
+        if destination.is_dir() and _tree_integrity(destination) == expected:
+            _report(progress, "cached", label, "already verified", step=2, total=2)
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix=f".{record['name']}-", dir=destination.parent
+        ) as tmp_name:
+            checkout = Path(tmp_name) / "source"
+            _checkout_git_revision(
+                str(record["source"]), str(record["revision"]), checkout
+            )
+            actual = _tree_integrity(checkout)
+            if actual != expected:
+                raise PackageError(
+                    f"integrity check failed for {record['name']!r}: "
+                    f"expected {expected}, got {actual}"
+                )
+            locked_manifest = load_manifest(checkout)
+            if locked_manifest.project.get("version") != record["version"]:
+                raise PackageError(
+                    f"locked package {record['name']!r} manifest version changed"
+                )
+            if destination.exists():
+                shutil.rmtree(destination)
+            os.replace(checkout, destination)
+            _report(progress, "install", label, "restored locked revision", step=2, total=2)
+
+
+def _canonical_git_source(source: str, relative_to: Path) -> str:
+    """Return a stable Git source, resolving local paths from the manifest."""
+    parsed = urlparse(source)
+    if parsed.scheme or source.startswith("git@"):
+        return source
+    path = Path(source).expanduser()
+    if not path.is_absolute():
+        path = relative_to / path
+    return str(path.resolve())
+
+
+def _git(args: list[str], *, cwd: Path | None = None) -> str:
+    """Run Git and turn process failures into package diagnostics."""
+    try:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise PackageError("Git is required to install source dependencies") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "Git command failed").strip()
+        raise PackageError(detail) from exc
+    return completed.stdout
+
+
+def _resolve_git_revision(source: str, version: str) -> str:
+    """Resolve ``version`` or ``v<version>`` to an immutable commit SHA."""
+    output = _git(
+        [
+            "ls-remote",
+            "--tags",
+            source,
+            f"refs/tags/{version}",
+            f"refs/tags/{version}^{{}}",
+            f"refs/tags/v{version}",
+            f"refs/tags/v{version}^{{}}",
+        ]
+    )
+    refs: dict[str, str] = {}
+    for line in output.splitlines():
+        try:
+            revision, ref = line.split("\t", 1)
+        except ValueError:
+            continue
+        refs[ref] = revision
+    for tag in (f"v{version}", version):
+        peeled = refs.get(f"refs/tags/{tag}^{{}}")
+        direct = refs.get(f"refs/tags/{tag}")
+        if peeled or direct:
+            return peeled or direct or ""
+    raise PackageError(
+        f"source {source!r} has no tag for version {version!r}",
+        hint=f"Create and push tag v{version}, or choose an existing exact version.",
+    )
+
+
+def _checkout_git_revision(source: str, revision: str, destination: Path) -> None:
+    """Clone one source and check out only its locked revision."""
+    _git(["clone", "--quiet", "--no-checkout", source, str(destination)])
+    _git(["checkout", "--quiet", "--detach", revision], cwd=destination)
+    git_dir = destination / ".git"
+    if git_dir.exists():
+        shutil.rmtree(git_dir)
+
+
+def _validate_package_manifest(
+    dependency: Dependency, package_manifest: Manifest
+) -> None:
+    """Ensure fetched package metadata agrees with the dependency request."""
+    actual_version = package_manifest.project.get("version")
+    if actual_version != dependency.version:
+        raise PackageError(
+            f"package {dependency.local_name!r} declares version {actual_version!r}, "
+            f"expected {dependency.version!r}"
+        )
+    actual_name = package_manifest.project.get("name")
+    expected_name = dependency.package
+    if expected_name is not None and actual_name != expected_name:
+        raise PackageError(
+            f"package {dependency.local_name!r} declares name {actual_name!r}, "
+            f"expected {expected_name!r}"
+        )
+
+
+def _tree_integrity(root: Path) -> str:
+    """Hash a package tree canonically without VCS or managed dependency data."""
+    digest = hashlib.sha256()
+    ignored_roots = {".git", ".vln"}
+    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+        rel = path.relative_to(root)
+        if rel.parts and rel.parts[0] in ignored_roots:
+            continue
+        if path.is_symlink():
+            raise PackageError(f"package contains unsupported symlink: {rel}")
+        if not path.is_file() or rel.as_posix() == "valiance.lock":
+            continue
+        encoded = rel.as_posix().encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+        data = path.read_bytes()
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
+    return "sha256:" + digest.hexdigest()
+
+
+def _manifest_dependency_records(manifest: Manifest) -> list[dict[str, str]]:
+    """Return canonical direct intent for lockfile staleness checks."""
+    return [
+        {
+            "name": item.local_name,
+            "identity": item.identity,
+            "source": item.source or "registry",
+            "version": item.version,
+        }
+        for item in sorted(manifest.dependencies, key=lambda value: value.local_name)
+    ]
+
+
+def _read_lockfile(manifest: Manifest) -> dict[str, object]:
+    """Read and validate the root lockfile container."""
+    path = manifest.root / "valiance.lock"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise PackageError(f"could not read {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise PackageError(f"invalid {path}: {exc}") from exc
+    if not isinstance(value, dict) or value.get("version") != 1:
+        raise PackageError("unsupported or invalid valiance.lock")
+    return value
+
+
+def _validate_lock_matches_manifest(
+    manifest: Manifest, lock: dict[str, object]
+) -> None:
+    """Reject locked installs when direct dependency intent has changed."""
+    if lock.get("manifest_dependencies") != _manifest_dependency_records(manifest):
+        raise PackageError(
+            "valiance.lock is out of date with valiance.toml",
+            hint="Run `vln install` to resolve dependencies and refresh the lockfile.",
+        )
 
 def add_dependency(
     target: str,
@@ -361,6 +811,7 @@ def add_dependency(
     *,
     alias: str | None = None,
     start: Path | None = None,
+    progress: ProgressCallback | None = None,
 ) -> Manifest:
     """Add or replace a project dependency and persist the manifest."""
     manifest = require_manifest(start)
@@ -383,7 +834,7 @@ def add_dependency(
         manifest.builds,
     )
     write_manifest(updated)
-    install(manifest.root)
+    install(manifest.root, progress=progress)
     return updated
 
 
@@ -399,10 +850,7 @@ def remove_dependency(name: str, *, start: Path | None = None) -> Manifest:
     install(manifest.root)
     unused_dir = manifest.root / ".vln" / name
     if unused_dir.exists() and unused_dir.is_dir():
-        for child in sorted(unused_dir.iterdir(), reverse=True):
-            if child.is_file():
-                child.unlink()
-        unused_dir.rmdir()
+        shutil.rmtree(unused_dir)
     return updated
 
 
@@ -411,6 +859,7 @@ def upgrade_dependency(
     version: str,
     *,
     start: Path | None = None,
+    progress: ProgressCallback | None = None,
 ) -> Manifest:
     """Update a dependency version and reinstall the resolved package set."""
     manifest = require_manifest(start)
@@ -431,7 +880,7 @@ def upgrade_dependency(
     )
     updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies, manifest.lints, manifest.builds)
     write_manifest(updated)
-    install(manifest.root)
+    install(manifest.root, progress=progress)
     return updated
 
 
@@ -466,34 +915,29 @@ def write_manifest(manifest: Manifest) -> None:
     manifest.path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
-def write_lockfile(manifest: Manifest) -> Path:
-    """Write the resolved dependency set to the project lockfile."""
+def write_lockfile(
+    manifest: Manifest,
+    *,
+    resolved: list[dict[str, object]] | None = None,
+) -> Path:
+    """Write exact revisions, integrity, and the complete dependency graph."""
+    dependencies = resolved if resolved is not None else []
     lock = {
         "version": 1,
         "package": {
             "name": manifest.project.get("name", manifest.root.name),
             "version": manifest.project.get("version", "0.0.0"),
         },
-        "dependencies": [
-            {
-                "name": dependency.local_name,
-                "kind": dependency.kind,
-                "identity": dependency.identity,
-                "source": dependency.source or "registry",
-                "version": dependency.version,
-                "dependencies": [],
-                "integrity": None,
-            }
-            for dependency in sorted(
-                manifest.dependencies,
-                key=lambda item: item.local_name,
-            )
-        ],
+        "manifest_dependencies": _manifest_dependency_records(manifest),
+        "dependencies": dependencies,
     }
     path = manifest.root / "valiance.lock"
-    path.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary = path.with_suffix(".lock.tmp")
+    temporary.write_text(
+        json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    os.replace(temporary, path)
     return path
-
 
 def dependency_install_root(manifest: Manifest, name: str) -> Path:
     """Return the directory used for installed project dependencies."""
