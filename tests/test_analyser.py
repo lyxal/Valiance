@@ -2339,6 +2339,33 @@ getName $joe
             "cannot assign String to variable 'item' of type Number",
         )
 
+    def test_function_parameters_are_read_only_in_nested_scopes(self):
+        sources = (
+            "define f(x: Integer) -> Integer => if (true) => $x = 2 end | $x end",
+            "define f(x: Integer) -> Integer => if (true) => $x := + 1 end | $x end",
+            "define f(x: Integer) -> Integer => [1] foreach (n) => $x = $n end | $x end",
+        )
+        for source in sources:
+            with self.subTest(source=source):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertEqual(len(analyser.diagnostics), 1)
+                self.assertIn(
+                    "cannot assign to read-only parameter 'x'",
+                    analyser.diagnostics[0],
+                )
+
+    def test_nested_function_parameter_remains_read_only(self):
+        analyser = Analyser()
+        analyser.analyse(
+            parse("define f(x: Integer) => fn (y: Integer) => $y = $x end end")
+        )
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "cannot assign to read-only parameter 'y'",
+            analyser.diagnostics[0],
+        )
+
     def test_branch_variables_reject_parameter_writes(self):
         variables = BranchVariables(parameters=((X, Number),))
 

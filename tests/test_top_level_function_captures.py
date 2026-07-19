@@ -80,7 +80,7 @@ call(call($outer))
                 self.assertIn("cannot capture top-level variable 'x'", analyser.diagnostics[0])
 
     def test_define_cannot_capture_top_level_constant(self):
-        """A top-level constant is not importable closure state for a define."""
+        """A define cannot capture a module-level constant indirectly."""
         for body in (
             '$x',
             '"value: $x"',
@@ -91,11 +91,7 @@ call(call($outer))
             with self.subTest(body=body):
                 analyser, _typed = analyse(source)
                 self.assertEqual(len(analyser.diagnostics), 1)
-                self.assertIn(
-                    "cannot capture top-level variable 'x'",
-                    analyser.diagnostics[0],
-                )
-
+                self.assertIn("cannot capture top-level variable 'x'", analyser.diagnostics[0])
 
 
 if __name__ == "__main__":

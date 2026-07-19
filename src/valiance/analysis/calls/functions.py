@@ -236,6 +236,15 @@ class _CallableValues:
                 )
             return None
 
+        parameter_writes = _functions._parameter_write_nodes(node)
+        if parameter_writes:
+            for write, name in parameter_writes:
+                self._diagnose(
+                    f"cannot assign to read-only parameter '{name}'",
+                    write,
+                )
+            return None
+
         params = _functions._declared_params(node)
         body_params = tuple(
             _functions._parameter_value_type(

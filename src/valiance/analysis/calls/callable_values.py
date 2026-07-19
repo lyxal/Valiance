@@ -598,7 +598,7 @@ def _top_level_capture_nodes(
     outer: _core.AnalysisBranch,
     node: FunctionNode,
 ) -> tuple[GetVariableNode, ...]:
-    """Find reads that would capture any top-level variable."""
+    """Compute top level assignment capture nodes during static analysis."""
     if outer.input_mode is not _core.InputMode.TOP_LEVEL:
         return ()
     visible = set(outer.variables.visible_names())
@@ -612,7 +612,7 @@ def _top_level_capture_reads_in_function(
     visible: set[Symbol],
     inherited_bound: frozenset[Symbol],
 ) -> tuple[GetVariableNode, ...]:
-    """Find top-level capture reads in one function and its nested functions."""
+    """Compute top level assignment capture reads in function during static analysis."""
     bound = inherited_bound | _function_bound_variable_names(node)
     return _top_level_capture_reads_in_nodes(node.body, visible, bound)
 
@@ -622,7 +622,7 @@ def _top_level_capture_reads_in_nodes(
     visible: set[Symbol],
     bound: frozenset[Symbol],
 ) -> tuple[GetVariableNode, ...]:
-    """Find unbound reads of visible top-level variables in AST nodes."""
+    """Compute top level assignment capture reads in nodes during static analysis."""
     reads: list[GetVariableNode] = []
     for node in nodes:
         if isinstance(node, GetVariableNode):
@@ -654,7 +654,7 @@ def _top_level_capture_reads_in_value(
     visible: set[Symbol],
     bound: frozenset[Symbol],
 ) -> tuple[GetVariableNode, ...]:
-    """Find top-level capture reads in a recursively nested AST value."""
+    """Compute top level assignment capture reads in value during static analysis."""
     if isinstance(value, FunctionNode):
         return _top_level_capture_reads_in_function(value, visible, bound)
     if isinstance(value, ASTNode):
@@ -679,6 +679,69 @@ def _function_bound_variable_names(node: FunctionNode) -> frozenset[Symbol]:
         if isinstance(assigned, SetVariablesNode):
             names.update(target.name for target in assigned.targets)
     return frozenset(names)
+
+
+def _parameter_write_nodes(
+    node: FunctionNode,
+) -> tuple[tuple[ASTNode, Symbol], ...]:
+    """Return writes that target a parameter of this or an enclosing function."""
+    parameters = frozenset(
+        param.name for param in node.params or () if param.name is not None
+    )
+    return _parameter_writes_in_nodes(node.body, parameters)
+
+
+def _parameter_writes_in_nodes(
+    nodes: tuple[ASTNode, ...],
+    parameters: frozenset[Symbol],
+) -> tuple[tuple[ASTNode, Symbol], ...]:
+    """Find parameter writes recursively through control flow and closures."""
+    writes: list[tuple[ASTNode, Symbol]] = []
+    for node in nodes:
+        if isinstance(node, SetVariableNode):
+            if node.name in parameters:
+                writes.append((node, node.name))
+            continue
+        if isinstance(node, SetVariablesNode):
+            writes.extend(
+                (node, target.name)
+                for target in node.targets
+                if target.name in parameters
+            )
+            continue
+        if isinstance(node, FunctionNode):
+            nested = frozenset(
+                param.name
+                for param in node.params or ()
+                if param.name is not None
+            )
+            writes.extend(_parameter_writes_in_nodes(node.body, nested))
+            continue
+        for item in fields(node):
+            writes.extend(
+                _parameter_writes_in_value(getattr(node, item.name), parameters)
+            )
+    return tuple(writes)
+
+
+def _parameter_writes_in_value(
+    value: object,
+    parameters: frozenset[Symbol],
+) -> tuple[tuple[ASTNode, Symbol], ...]:
+    """Find parameter writes in a recursively nested AST field value."""
+    if isinstance(value, FunctionNode):
+        nested = frozenset(
+            param.name for param in value.params or () if param.name is not None
+        )
+        return _parameter_writes_in_nodes(value.body, nested)
+    if isinstance(value, ASTNode):
+        return _parameter_writes_in_nodes((value,), parameters)
+    if isinstance(value, tuple):
+        writes: list[tuple[ASTNode, Symbol]] = []
+        for item in value:
+            writes.extend(_parameter_writes_in_value(item, parameters))
+        return tuple(writes)
+    return ()
 
 
 def _function_analysis_from_signatures(
