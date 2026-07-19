@@ -274,7 +274,24 @@ class LanguageServer:
         docs = self._overload_documentation(
             uri, lookup_name, position, overloads, selected
         )
-        value = _render_overload_hover(display_name, overloads, docs)
+        if selected is not None:
+            selected_doc = self._selected_overload_documentation(
+                uri, lookup_name, position, selected
+            )
+            if not selected_doc:
+                selected_doc = next(
+                    (
+                        docs[index]
+                        for index, overload in enumerate(overloads)
+                        if index < len(docs) and _same_overload(overload, selected)
+                    ),
+                    "",
+                )
+            value = _render_single_overload_hover(
+                display_name, selected, selected_doc
+            )
+        else:
+            value = _render_overload_hover(display_name, overloads, docs)
         return {
             "contents": {"kind": "markdown", "value": value},
             "range": _word_range(source, position),
@@ -300,6 +317,77 @@ class LanguageServer:
         _, target_source, target_name = target
         documented = _documented_overloads(target_source, target_name)
         return _match_overload_docs(overloads, documented)
+
+    def _selected_overload_documentation(
+        self,
+        uri: str,
+        name: str,
+        position: dict[str, int],
+        selected: T.Overload,
+    ) -> str:
+        """Load the exact docstring belonging to the selected call overload."""
+        location = self._definition(
+            {"textDocument": {"uri": uri}, "position": position}
+        )
+        if location is None:
+            return self._documentation_from_import_sources(uri, name, selected)
+        source_uri = location["uri"]
+        source = self.documents.get(source_uri)
+        if source is None:
+            path = _uri_path(source_uri)
+            if path is None:
+                return ""
+            try:
+                source = path.read_text(encoding="utf-8")
+            except OSError:
+                return ""
+        try:
+            program = parse(source)
+        except (LexError, ParseError, ParseErrors):
+            return ""
+        declaration = _definition_at_lsp_start(
+            source, program, location["range"]["start"]
+        )
+        if declaration is None or declaration.location is None:
+            return self._documentation_from_import_sources(uri, name, selected)
+        declared_name = str(declaration.name).removeprefix("\\")
+        documentation = _definition_documentation_at_line(
+            source, declared_name, declaration.location.line
+        )
+        return documentation or self._documentation_from_import_sources(
+            uri, name, selected
+        )
+
+    def _documentation_from_import_sources(
+        self, uri: str, name: str, selected: T.Overload
+    ) -> str:
+        """Match selected-overload docs directly from imported source files."""
+        current_file = _uri_path(uri)
+        if current_file is None:
+            return ""
+        loader = ModuleLoader()
+        for node in self.programs.get(uri, []):
+            if not isinstance(node, ImportNode):
+                continue
+            for spec in node.specs:
+                for module_path, imported_name in _import_definition_candidates(
+                    spec, name
+                ):
+                    try:
+                        source_file = loader.resolve(
+                            module_path, current_file=current_file
+                        )
+                        source_uri = source_file.as_uri()
+                        source = self.documents.get(source_uri)
+                        if source is None:
+                            source = source_file.read_text(encoding="utf-8")
+                    except (ModuleLoadError, OSError):
+                        continue
+                    documented = _documented_overloads(source, imported_name)
+                    matched = _match_overload_docs((selected,), documented)
+                    if matched and matched[0]:
+                        return matched[0]
+        return ""
 
     def _definition_source(
         self,
@@ -717,17 +805,31 @@ def _definition_documentation_at_line(source: str, name: str, line: int) -> str:
     )
 
 
+def _render_single_overload_hover(
+    name: str, overload: T.Overload, documentation: str
+) -> str:
+    """Render only the overload selected at a statically resolved call site."""
+    value = f"```valiance\n{_overload_signature(name, overload)}\n```"
+    if documentation:
+        value += f"\n\n{documentation}"
+    return value
+
+
 def _render_overload_hover(
     name: str, overloads: tuple[T.Overload, ...], docs: tuple[str, ...]
 ) -> str:
-    """Render each overload beside its own documentation in a distinct section."""
+    """Render at most five unresolved overloads with their own documentation."""
+    limit = 5
     sections: list[str] = []
-    for index, overload in enumerate(overloads):
+    for index, overload in enumerate(overloads[:limit]):
         section = f"```valiance\n{_overload_signature(name, overload)}\n```"
         documentation = docs[index] if index < len(docs) else ""
         if documentation:
             section += f"\n\n{documentation}"
         sections.append(section)
+    hidden = len(overloads) - limit
+    if hidden > 0:
+        sections.append(f"*…and {hidden} more overload{'s' if hidden != 1 else ''}.*")
     return "\n\n---\n\n".join(sections)
 
 def _import_definition_candidates(

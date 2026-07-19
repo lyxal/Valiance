@@ -256,7 +256,7 @@ class HoverEnhancementTests(unittest.TestCase):
             hover = self.hover(main, source, 1, 6)
 
         value = hover["contents"]["value"]
-        self.assertIn("convert(value: Number) -> String", value)
+        self.assertNotIn("convert(value: Number) -> String", value)
         self.assertIn("convert(value: String) -> String", value)
 
 class OverloadAwareNavigationTests(unittest.TestCase):
@@ -298,14 +298,12 @@ class OverloadAwareNavigationTests(unittest.TestCase):
             })
 
         value = hover["contents"]["value"]
-        first = value.index("greeting(name: String) -> String")
-        first_doc = value.index("Return a greeting for name.")
-        second = value.index("greeting(x: Integer) -> Integer")
-        second_doc = value.index("Increment an integer.")
-        self.assertLess(first, first_doc)
-        self.assertLess(first_doc, second)
-        self.assertLess(second, second_doc)
-        self.assertIn("---", value)
+        self.assertNotIn("greeting(name: String) -> String", value)
+        selected = value.index("greeting(x: Integer) -> Integer")
+        selected_doc = value.index("Increment an integer.")
+        self.assertLess(selected, selected_doc)
+        self.assertNotIn("Return a greeting for name.", value)
+        self.assertNotIn("Selected overload", value)
 
     def test_go_to_definition_uses_selected_overload_and_name_range(self):
         import tempfile
@@ -372,3 +370,63 @@ class OverloadAwareNavigationTests(unittest.TestCase):
         self.assertIn("Integer docs.", value)
         self.assertNotIn("greeting(name: String)", value)
         self.assertNotIn("String docs.", value)
+
+class HoverLimitAndFallbackTests(unittest.TestCase):
+    def test_unresolved_overload_hover_is_capped_at_five(self):
+        from valiance.lsp import _render_overload_hover
+        import valiance.vtypes as T
+        from valiance.vtypes.symbols import Symbol
+
+        overloads = tuple(
+            T.Overload(
+                params=(T.NominalType(Symbol(f"Type{index}")),),
+                returns=(T.NominalType(Symbol(f"Result{index}")),),
+                param_names=(Symbol("value"),),
+            )
+            for index in range(8)
+        )
+        rendered = _render_overload_hover("many", overloads, ("",) * 8)
+
+        self.assertEqual(rendered.count("many(value:"), 5)
+        self.assertIn("…and 3 more overloads.", rendered)
+        self.assertNotIn("Type5", rendered)
+
+    def test_selected_import_doc_fallback_does_not_require_target_analysis(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            (root / "greetings.vlnc").write_text(
+                "import { root.missing.helper }\n"
+                "#?? Increment an integer.\n"
+                "#?? @param x An integer to increment.\n"
+                "#?? @returns The incremented integer.\n"
+                "public define greeting(x: Integer) -> Integer => $x\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = "import { root.greetings.greeting }\n1 greeting"
+            server = LanguageServer(io.BytesIO(), io.BytesIO())
+            server.initialized = True
+            uri = main.as_uri()
+            server.documents[uri] = source
+            server._analyse(uri)
+            import valiance.vtypes as T
+            from valiance.vtypes.symbols import Symbol
+            selected = T.Overload(
+                params=(T.NominalType(Symbol("Integer")),),
+                returns=(T.NominalType(Symbol("Integer")),),
+                param_names=(Symbol("x"),),
+            )
+
+            documentation = server._documentation_from_import_sources(
+                uri, "greeting", selected
+            )
+
+        self.assertIn("Increment an integer.", documentation)
+        self.assertIn("**Parameter `x`:**", documentation)

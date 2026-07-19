@@ -69,3 +69,13 @@ Variable hover also recognizes `$name` interpolation inside strings. Because
 interpolation children are lowered during analysis, the server uses the latest
 analysed assignment visible before the interpolation when no direct typed
 variable-read node remains.
+
+When static analysis selects an overload at a call site, hover shows only that
+selected signature and its source documentation. The complete overload set is
+reserved for unresolved references where no unique call target has been selected.
+
+Unresolved overload lists, including names hovered inside import declarations,
+show at most five overloads and report how many additional overloads were hidden.
+Selected imported-call documentation also has a syntax-only source fallback, so
+it remains available when analysing the target module fails because of unrelated
+imports or diagnostics.
