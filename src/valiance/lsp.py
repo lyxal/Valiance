@@ -11,8 +11,9 @@ from urllib.parse import unquote, urlparse
 
 import valiance.vtypes as T
 from valiance.analysis import Analyser
-from valiance.asts import ASTNode, DefineNode
+from valiance.asts import ASTNode, DefineNode, ImportNode
 from valiance.analysis.diagnostics import DiagnosticError, from_message
+from valiance.modules_system.modules import ModuleLoadError, ModuleLoader
 from valiance.parsing import LexError, ParseError, ParseErrors, parse
 from valiance.repl import completion_prefix, default_completion_items
 from valiance.source_tools import extract_documented_defines
@@ -231,25 +232,47 @@ class LanguageServer:
         }
 
     def _definition(self, params: dict[str, Any]) -> dict[str, Any] | None:
-        """Find a definition in the current document."""
+        """Find local or imported definitions, including project dependencies."""
         uri = params["textDocument"]["uri"]
         source = self.documents.get(uri, "")
         word = _word_at(source, params["position"])
         if not word:
             return None
         target = word.lstrip("$#\\")
+        local = _definition_location(uri, self.programs.get(uri, []), target)
+        if local is not None:
+            return local
+
+        current_file = _uri_path(uri)
+        if current_file is None:
+            return None
+        loader = ModuleLoader()
         for node in self.programs.get(uri, []):
-            if (
-                isinstance(node, DefineNode)
-                and str(node.name) == target
-                and node.location
-            ):
-                return {
-                    "uri": uri,
-                    "range": _location_range(
-                        node.location.line, node.location.column, len(target)
-                    ),
-                }
+            if not isinstance(node, ImportNode):
+                continue
+            for spec in node.specs:
+                for module_path, imported_name in _import_definition_candidates(
+                    spec, target
+                ):
+                    try:
+                        source_file = loader.resolve(
+                            module_path, current_file=current_file
+                        )
+                        imported_source = source_file.read_text(encoding="utf-8")
+                        imported_program = parse(imported_source)
+                    except (
+                        ModuleLoadError,
+                        OSError,
+                        LexError,
+                        ParseError,
+                        ParseErrors,
+                    ):
+                        continue
+                    location = _definition_location(
+                        source_file.as_uri(), imported_program, imported_name
+                    )
+                    if location is not None:
+                        return location
         return None
 
     def _document_symbols(self, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -333,6 +356,56 @@ def _overload_signature(name: str, overload: T.Overload) -> str:
     tags = T.show(T.Fn((), (), overload.element_tags)) if overload.element_tags else ""
     tag_clause = tags[tags.index("<") :] if tags else ""
     return f"{name}({', '.join(params)}){tag_clause} -> {returns}".rstrip()
+
+
+def _definition_location(
+    uri: str, program: list[ASTNode], name: str
+) -> dict[str, Any] | None:
+    """Return an LSP location for a named top-level definition."""
+    for node in program:
+        if (
+            isinstance(node, DefineNode)
+            and str(node.name).removeprefix("\\") == name
+            and node.location
+        ):
+            return {
+                "uri": uri,
+                "range": _location_range(
+                    node.location.line, node.location.column, len(name)
+                ),
+            }
+    return None
+
+
+def _import_definition_candidates(
+    spec: Any, local_name: str
+) -> tuple[tuple[Any, str], ...]:
+    """Return full-module and implicit-final-component import interpretations."""
+    candidates: list[tuple[Any, str]] = []
+    if spec.components:
+        for component in spec.components:
+            visible = str(component.alias or component.name).removeprefix("\\")
+            if visible == local_name:
+                candidates.append(
+                    (spec.path, str(component.name).removeprefix("\\"))
+                )
+        return tuple(candidates)
+
+    # First preserve a true namespace import. If the complete path is not a
+    # source module, mirror the analyser's implicit final-component fallback.
+    candidates.append((spec.path, local_name))
+    if len(spec.path.parts) >= 2:
+        visible = str(spec.alias or spec.path.parts[-1]).removeprefix("\\")
+        if visible == local_name:
+            from valiance.asts import ImportPath
+
+            candidates.append(
+                (
+                    ImportPath(spec.path.parts[:-1], spec.path.root),
+                    spec.path.parts[-1],
+                )
+            )
+    return tuple(candidates)
 
 
 def _definition_documentation(source: str, name: str) -> str:

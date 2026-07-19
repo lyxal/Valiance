@@ -14,3 +14,25 @@ Hover output renders every visible overload as a Valiance signature, including
 parameter names when available, parameter and return types, negative data-tag
 requirements, and element tags. Compiler diagnostics use the parser/analyser's
 one-based line and column and convert them to LSP's zero-based positions.
+
+## Go to definition
+
+The server advertises the standard LSP `definitionProvider` capability. Editors
+using an LSP client, including the Valiance VS Code extension, therefore support
+Ctrl+click, F12, and **Go to Definition** without an extension-specific command.
+
+Definition lookup supports:
+
+- definitions in the current document;
+- explicitly imported project functions;
+- imports renamed with `as`;
+- namespace-member imports;
+- `root` imports;
+- installed `dep` package imports, including transitive package-local imports;
+- standard-library source modules when source is available.
+
+The result is an ordinary LSP `Location` containing a file URI and the exact
+source range of the declaration. VS Code opens closed target files automatically.
+If a module cannot be read or parsed, or if the selected token is not a known
+declaration, the server returns no location rather than surfacing an internal
+error.

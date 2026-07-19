@@ -94,3 +94,88 @@ class LanguageServerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class DefinitionProviderTests(unittest.TestCase):
+    def definition(self, source_file, source, line, character):
+        output = io.BytesIO()
+        server = LanguageServer(io.BytesIO(), output)
+        server.initialized = True
+        uri = source_file.as_uri()
+        server.documents[uri] = source
+        server._analyse(uri)
+        return server._definition(
+            {
+                "textDocument": {"uri": uri},
+                "position": {"line": line, "character": character},
+            }
+        )
+
+    def test_go_to_definition_opens_imported_project_module(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            shared = root / "shared.vlnc"
+            shared.write_text(
+                "public define answer(value: Number) -> Number => $value\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = "import { root.shared.answer }\n42 answer"
+
+            location = self.definition(main, source, 1, 4)
+
+        self.assertEqual(location["uri"], shared.as_uri())
+        self.assertEqual(location["range"]["start"], {"line": 0, "character": 7})
+
+    def test_go_to_definition_follows_import_alias(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            shared = root / "shared.vlnc"
+            shared.write_text(
+                "public define answer(value: Number) -> Number => $value\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = "import { root.shared.answer as solution }\n42 solution"
+
+            location = self.definition(main, source, 1, 5)
+
+        self.assertEqual(location["uri"], shared.as_uri())
+
+    def test_go_to_definition_follows_dependency_import(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / ".vln" / "math"
+            package.mkdir(parents=True)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n\n'
+                '[dependencies]\nmath = { source = "local/math", version = "1.0.0" }\n',
+                encoding="utf-8",
+            )
+            target = package / "math.vlnc"
+            target.write_text(
+                "public define twice(value: Number) -> Number => $value 2 *\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = "import { dep.math.twice }\n21 twice"
+
+            location = self.definition(main, source, 1, 4)
+
+        self.assertEqual(location["uri"], target.as_uri())
