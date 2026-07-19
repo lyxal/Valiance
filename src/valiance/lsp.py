@@ -265,12 +265,12 @@ class LanguageServer:
                 "range": _word_range(source, position),
             }
 
-        overloads = analyser.env.overloads_for(Symbol(lookup_name))
-        if not overloads:
-            return None
         selected = _selected_overload_at(
             self.typed_programs.get(uri, []), lookup_name, position
         )
+        overloads = analyser.env.overloads_for(Symbol(lookup_name))
+        if not overloads and selected is None:
+            return None
         docs = self._overload_documentation(
             uri, lookup_name, position, overloads, selected
         )
@@ -326,6 +326,14 @@ class LanguageServer:
         selected: T.Overload,
     ) -> str:
         """Load the exact docstring belonging to the selected call overload."""
+        # Match source documentation first. This covers nested local defines,
+        # which are intentionally absent from the module-level environment.
+        local_documentation = _match_overload_docs(
+            (selected,), _documented_overloads(self.documents.get(uri, ""), name)
+        )
+        if local_documentation and local_documentation[0]:
+            return local_documentation[0]
+
         # Prefer signature-matched source documentation for imports. This path
         # does not depend on the imported module analysing successfully, and it
         # avoids losing the docstring when definition lookup falls back to a
@@ -571,6 +579,29 @@ def _overload_signature(name: str, overload: T.Overload) -> str:
     return f"{name}({', '.join(params)}){tag_clause} -> {returns}".rstrip()
 
 
+def _ast_nodes(value: Any) -> list[ASTNode]:
+    """Flatten raw AST dataclass fields for nested declaration lookup."""
+    found: list[ASTNode] = []
+    seen: set[int] = set()
+
+    def visit(item: Any) -> None:
+        if id(item) in seen:
+            return
+        if isinstance(item, ASTNode):
+            seen.add(id(item))
+            found.append(item)
+        if isinstance(item, (tuple, list)):
+            for child in item:
+                visit(child)
+        elif is_dataclass(item):
+            seen.add(id(item))
+            for field in fields(item):
+                visit(getattr(item, field.name))
+
+    visit(value)
+    return found
+
+
 def _typed_nodes(value: Any) -> list[TypedNode]:
     """Flatten typed dataclass fields for source-sensitive editor features."""
     found: list[TypedNode] = []
@@ -689,7 +720,7 @@ def _definition_at_position(
     position: dict[str, int],
 ) -> DefineNode | None:
     """Return the exact declaration whose name is under the cursor."""
-    for node in program:
+    for node in _ast_nodes(program):
         if not isinstance(node, DefineNode) or node.location is None:
             continue
         if str(node.name).removeprefix("\\") != name:
@@ -704,7 +735,7 @@ def _definition_at_lsp_start(
     source: str, program: list[ASTNode], start: dict[str, int]
 ) -> DefineNode | None:
     """Return the declaration selected by a definition response range."""
-    for node in program:
+    for node in _ast_nodes(program):
         if isinstance(node, DefineNode) and node.location is not None:
             if _definition_name_range(source, node)["start"] == start:
                 return node
@@ -725,8 +756,19 @@ def _definition_overloads(
     typed_program: list[TypedNode], declaration: DefineNode
 ) -> tuple[T.Overload, ...]:
     """Return only overloads contributed by one exact define declaration."""
-    for typed in typed_program:
-        if isinstance(typed, TypedFunctionNode) and typed.node is declaration:
+    for typed in _typed_nodes(typed_program):
+        same_declaration = (
+            isinstance(typed, TypedFunctionNode)
+            and isinstance(typed.node, DefineNode)
+            and (
+                typed.node is declaration
+                or (
+                    typed.node.location == declaration.location
+                    and typed.node.name == declaration.name
+                )
+            )
+        )
+        if same_declaration:
             return tuple(
                 item.overload
                 for item in typed.overloads
@@ -779,7 +821,14 @@ def _signature_key(signature: str) -> str:
     """Normalize a rendered definition signature for overload matching."""
     signature = re.sub(r"^(?:public |private |multi )+", "", signature)
     signature = re.sub(r"^define(?:\[[^]]*\])?\s+", "", signature)
-    return re.sub(r"\s+", " ", signature).strip()
+    # Inferred effects can appear on the analysed overload even when the source
+    # declaration omitted an explicit tag contract. They do not distinguish
+    # which source docstring belongs to an otherwise identical signature.
+    signature = re.sub(r"\)\s*<[^>]*>\s*->", ") ->", signature)
+    signature = re.sub(r"\s+", " ", signature).strip()
+    if signature.endswith(")"):
+        signature += " ->"
+    return signature
 
 
 def _match_overload_docs(

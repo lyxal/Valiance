@@ -371,6 +371,60 @@ class OverloadAwareNavigationTests(unittest.TestCase):
         self.assertNotIn("greeting(name: String)", value)
         self.assertNotIn("String docs.", value)
 
+    def test_nested_define_declaration_hover_shows_signature_and_docstring(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            main = Path(tmp) / "main.vlnc"
+            source = (
+                "define outer(x: Integer) =>\n"
+                "  #?? Print the nested integer.\n"
+                "  #?? @param y The integer to print.\n"
+                "  define inner(y: Integer) =>\n"
+                "    println $y\n"
+                "  end\n"
+                "  inner 5\n"
+                "end\n"
+            )
+            server, uri = self.server_for(main, source)
+            hover = server._hover({
+                "textDocument": {"uri": uri},
+                "position": {"line": 3, "character": 10},
+            })
+
+        value = hover["contents"]["value"]
+        self.assertIn("inner(y: Integer)", value)
+        self.assertIn("Print the nested integer.", value)
+        self.assertIn("**Parameter `y`:** The integer to print.", value)
+
+    def test_nested_define_call_hover_shows_selected_signature_and_docstring(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            main = Path(tmp) / "main.vlnc"
+            source = (
+                "define outer(x: Integer) =>\n"
+                "  #?? Print the nested integer.\n"
+                "  #?? @param y The integer to print.\n"
+                "  define inner(y: Integer) =>\n"
+                "    println $y\n"
+                "  end\n"
+                "  inner 5\n"
+                "end\n"
+            )
+            server, uri = self.server_for(main, source)
+            hover = server._hover({
+                "textDocument": {"uri": uri},
+                "position": {"line": 6, "character": 4},
+            })
+
+        value = hover["contents"]["value"]
+        self.assertIn("inner(y: Integer)", value)
+        self.assertIn("Print the nested integer.", value)
+        self.assertIn("**Parameter `y`:** The integer to print.", value)
+
     def test_local_selected_overload_hover_includes_its_docstring(self):
         import tempfile
         from pathlib import Path
