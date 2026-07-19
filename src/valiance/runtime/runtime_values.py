@@ -222,6 +222,19 @@ class PlannedLazyList(LazyList):
         return self.reduce_terminal(zero, lambda total, item: total + item)
 
 
+
+
+def _mutate_and_invalidate(
+    container: Any,
+    mutation: Callable[..., Any],
+    *args: Any,
+) -> Any:
+    """Apply a built-in container mutation and invalidate ownership metadata."""
+    result = mutation(container, *args)
+    container._invalidate_ownership_cache()
+    return result
+
+
 class ListValue(list[Any]):
     """An eager Valiance list carrying rank and ownership-scan metadata."""
 
@@ -245,13 +258,11 @@ class ListValue(list[Any]):
 
     def __setitem__(self, key: Any, value: Any) -> None:
         """Set one item and invalidate cached ownership metadata."""
-        super().__setitem__(key, value)
-        self._invalidate_ownership_cache()
+        _mutate_and_invalidate(self, list.__setitem__, key, value)
 
     def __delitem__(self, key: Any) -> None:
         """Delete one item and invalidate cached ownership metadata."""
-        super().__delitem__(key)
-        self._invalidate_ownership_cache()
+        _mutate_and_invalidate(self, list.__delitem__, key)
 
     def append(self, value: Any) -> None:
         """Append one item and invalidate cached ownership metadata."""
@@ -318,13 +329,11 @@ class DictValue(dict[Any, Any]):
 
     def __setitem__(self, key: Any, value: Any) -> None:
         """Set one item and invalidate cached ownership metadata."""
-        super().__setitem__(key, value)
-        self._invalidate_ownership_cache()
+        _mutate_and_invalidate(self, dict.__setitem__, key, value)
 
     def __delitem__(self, key: Any) -> None:
         """Delete one item and invalidate cached ownership metadata."""
-        super().__delitem__(key)
-        self._invalidate_ownership_cache()
+        _mutate_and_invalidate(self, dict.__delitem__, key)
 
     def clear(self) -> None:
         """Remove all items and record that the mapping is ownership-trivial."""

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from valiance.analysis.service_facade import AnalysisServiceFacade
 
 from .enums import _EnumDeclarations
 from .functions import _FunctionDeclarations
@@ -21,7 +21,7 @@ _DECLARATION_OWNERS = (
 )
 
 
-class DeclarationAnalyser(*_DECLARATION_OWNERS):
+class DeclarationAnalyser(AnalysisServiceFacade, *_DECLARATION_OWNERS):
     """Coordinate declaration services over a shared analysis context."""
 
     _OPERATIONS = frozenset(
@@ -32,26 +32,9 @@ class DeclarationAnalyser(*_DECLARATION_OWNERS):
         or name == "prepare_defined_overload"
     )
 
-    def __init__(self, context: Any) -> None:
-        """Retain the orchestration context used by declaration operations."""
-        object.__setattr__(self, "_context", context)
 
-    def provides(self, name: str) -> bool:
-        """Return whether this subsystem owns an operation name."""
-        return name in self._OPERATIONS
 
-    def __getattr__(self, name: str):
-        """Read shared state and cross-subsystem operations from the façade."""
-        context = object.__getattribute__(self, "_context")
-        return getattr(context, name)
 
-    def __setattr__(self, name: str, value: Any) -> None:
-        """Commit shared analysis state changes to the orchestration context."""
-        if name == "_context":
-            object.__setattr__(self, name, value)
-            return
-        context = object.__getattribute__(self, "_context")
-        setattr(context, name, value)
 
 
 __all__ = ["DeclarationAnalyser"]

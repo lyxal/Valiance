@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
-from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.symbols import Symbol, tag_symbol
 from valiance.vtypes.nodes import Overload, Variance
 
 
@@ -83,26 +83,26 @@ class Context:
 
     def define_tag(self, name: str | Symbol, kind: TagKind) -> None:
         """Register a data tag category."""
-        self.data_tags[_tag_symbol(name)] = kind
+        self.data_tags[tag_symbol(name)] = kind
 
     def define_variant_tag(self, name: str | Symbol, parent: str | Symbol) -> None:
         """Register a runtime variant tag and its computed parent."""
-        tag = _tag_symbol(name)
-        parent_tag = _tag_symbol(parent)
+        tag = tag_symbol(name)
+        parent_tag = tag_symbol(parent)
         self.data_tags[tag] = TagKind.VARIANT
         self.tag_parents[tag] = parent_tag
         self.data_tags.setdefault(parent_tag, TagKind.COMPUTED)
 
     def add_disjoint_tags(self, name: str | Symbol, other: str | Symbol) -> None:
         """Record that applying one tag removes the other."""
-        tag = _tag_symbol(name)
-        other_tag = _tag_symbol(other)
+        tag = tag_symbol(name)
+        other_tag = tag_symbol(other)
         self.disjoint_tags.setdefault(tag, set()).add(other_tag)
         self.disjoint_tags.setdefault(other_tag, set()).add(tag)
 
     def tag_kind(self, name: str | Symbol) -> TagKind:
         """Return a tag's declared kind, defaulting to computed."""
-        return self.data_tags.get(_tag_symbol(name), TagKind.COMPUTED)
+        return self.data_tags.get(tag_symbol(name), TagKind.COMPUTED)
 
     def is_constructed_like_tag(self, name: str | Symbol) -> bool:
         """Return whether a tag should stick through ordinary operations."""
@@ -110,11 +110,11 @@ class Context:
 
     def tag_parent(self, name: str | Symbol) -> Symbol | None:
         """Return the computed parent of a variant tag, if declared."""
-        return self.tag_parents.get(_tag_symbol(name))
+        return self.tag_parents.get(tag_symbol(name))
 
     def tag_disjoints(self, name: str | Symbol) -> set[Symbol]:
         """Return tags disjoint with ``name``."""
-        return self.disjoint_tags.get(_tag_symbol(name), set())
+        return self.disjoint_tags.get(tag_symbol(name), set())
 
     def is_unit_tag(self, name: str | Symbol) -> bool:
         """Return whether a tag has unit semantics."""
@@ -145,7 +145,3 @@ class Context:
         """Return overloads visible to anonymous structural trait checks."""
         return tuple(self.structural_overloads.get(name, ()))
 
-
-def _tag_symbol(name: str | Symbol) -> Symbol:
-    """Normalize parser-facing tag names into symbol-table keys."""
-    return name if isinstance(name, Symbol) else Symbol(name)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
-from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.symbols import Symbol, tag_symbol
 from valiance.vtypes.context import Context, TagKind, Variance
 from valiance.vtypes.nodes import (
     FunctionType,
@@ -596,13 +596,13 @@ class Environment:
 
     def define_tag(self, tag: str | Symbol, kind: TagKind) -> None:
         """Register a data tag declaration visible in this environment."""
-        name = _tag_symbol(tag)
+        name = tag_symbol(tag)
         self.data_tags[name] = DataTagDefinition(name, kind)
         self.context.define_tag(name, kind)
 
     def lookup_tag(self, tag: str | Symbol) -> DataTagDefinition | None:
         """Return a data tag declaration, if visible."""
-        name = _tag_symbol(tag)
+        name = tag_symbol(tag)
         if name in self.data_tags:
             return self.data_tags[name]
         if self.parent is not None:
@@ -615,12 +615,12 @@ class Environment:
         kind: ElementTagKind,
     ) -> None:
         """Register an element tag declaration visible in this environment."""
-        name = _tag_symbol(tag)
+        name = tag_symbol(tag)
         self.element_tags[name] = ElementTagDefinition(name, kind)
 
     def lookup_element_tag(self, tag: str | Symbol) -> ElementTagDefinition | None:
         """Return an element tag declaration, if visible."""
-        name = _tag_symbol(tag)
+        name = tag_symbol(tag)
         if name in self.element_tags:
             return self.element_tags[name]
         if self.parent is not None:
@@ -641,14 +641,14 @@ class Environment:
         right: str | Symbol,
     ) -> None:
         """Record that two element tags cannot appear together."""
-        left_name = _tag_symbol(left)
-        right_name = _tag_symbol(right)
+        left_name = tag_symbol(left)
+        right_name = tag_symbol(right)
         self.disjoint_element_tags.setdefault(left_name, set()).add(right_name)
         self.disjoint_element_tags.setdefault(right_name, set()).add(left_name)
 
     def element_tag_disjoints(self, tag: str | Symbol) -> frozenset[Symbol]:
         """Return element tags declared disjoint with ``tag``."""
-        name = _tag_symbol(tag)
+        name = tag_symbol(tag)
         local = self.disjoint_element_tags.get(name, set())
         parent = (
             self.parent.element_tag_disjoints(name)
@@ -663,13 +663,13 @@ class Environment:
         element_tag: str | Symbol,
     ) -> None:
         """Record that tagged data cannot be passed to the element effect."""
-        data_name = _tag_symbol(data_tag)
-        element_name = _tag_symbol(element_tag)
+        data_name = tag_symbol(data_tag)
+        element_name = tag_symbol(element_tag)
         self.disjoint_data_element_tags.setdefault(data_name, set()).add(element_name)
 
     def data_tag_element_disjoints(self, tag: str | Symbol) -> frozenset[Symbol]:
         """Return element tags disjoint with a data tag."""
-        name = _tag_symbol(tag)
+        name = tag_symbol(tag)
         local = self.disjoint_data_element_tags.get(name, set())
         parent = (
             self.parent.data_tag_element_disjoints(name)
@@ -680,7 +680,7 @@ class Environment:
 
     def element_tag_data_disjoints(self, tag: str | Symbol) -> frozenset[Symbol]:
         """Return data tags disjoint with an element tag."""
-        name = _tag_symbol(tag)
+        name = tag_symbol(tag)
         local = {
             data_tag
             for data_tag, element_tags in self.disjoint_data_element_tags.items()
@@ -707,8 +707,8 @@ class Environment:
 
     def add_variant_tag(self, tag: str | Symbol, parent: str | Symbol) -> None:
         """Record a runtime variant tag with a computed parent tag."""
-        name = _tag_symbol(tag)
-        parent_name = _tag_symbol(parent)
+        name = tag_symbol(tag)
+        parent_name = tag_symbol(parent)
         self.data_tags[name] = DataTagDefinition(name, TagKind.VARIANT)
         self.data_tags.setdefault(
             parent_name,
@@ -719,8 +719,8 @@ class Environment:
 
     def add_disjoint_tags(self, tag: str | Symbol, other: str | Symbol) -> None:
         """Record two data tags that remove each other."""
-        name = _tag_symbol(tag)
-        other_name = _tag_symbol(other)
+        name = tag_symbol(tag)
+        other_name = tag_symbol(other)
         self.disjoint_tags.setdefault(name, set()).add(other_name)
         self.disjoint_tags.setdefault(other_name, set()).add(name)
         self.context.add_disjoint_tags(name, other_name)
@@ -734,7 +734,7 @@ class Environment:
         public: bool = False,
     ) -> None:
         """Register a tag overlay signature for an existing element."""
-        definition = TagOverlayDefinition(_tag_symbol(tag), element, overload, public)
+        definition = TagOverlayDefinition(tag_symbol(tag), element, overload, public)
         self.tag_overlays.setdefault(element, []).append(definition)
 
     def overlays_for(self, element: Symbol) -> tuple[TagOverlayDefinition, ...]:
@@ -745,11 +745,11 @@ class Environment:
 
     def define_tag_attached_element(self, tag: str | Symbol, element: Symbol) -> None:
         """Record that importing ``tag`` should also import ``element``."""
-        self.tag_attached_elements.setdefault(_tag_symbol(tag), set()).add(element)
+        self.tag_attached_elements.setdefault(tag_symbol(tag), set()).add(element)
 
     def attached_elements_for_tag(self, tag: str | Symbol) -> frozenset[Symbol]:
         """Return elements attached to a tag declaration."""
-        name = _tag_symbol(tag)
+        name = tag_symbol(tag)
         local = self.tag_attached_elements.get(name, set())
         parent = (
             self.parent.attached_elements_for_tag(name)
@@ -831,11 +831,6 @@ def _is_call_site_checked_type(typ: Type) -> bool:
     if isinstance(typ, VariadicTupleType):
         return True
     return False
-
-
-def _tag_symbol(name: str | Symbol) -> Symbol:
-    """Normalize parser-facing tag names into symbol-table keys."""
-    return name if isinstance(name, Symbol) else Symbol(name)
 
 
 def _generic_variance(

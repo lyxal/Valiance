@@ -26,3 +26,8 @@ class Symbol:
         if not self.namespace:
             return self.text
         return ".".join((*self.namespace, self.text))
+
+
+def tag_symbol(name: str | Symbol) -> Symbol:
+    """Normalize parser-facing tag names into symbol-table keys."""
+    return name if isinstance(name, Symbol) else Symbol(name)
