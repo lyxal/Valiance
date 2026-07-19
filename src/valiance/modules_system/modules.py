@@ -80,6 +80,7 @@ class ModuleLoader:
     std_root: Path | None = None
     _cache: dict[Path, ModuleExports] = field(default_factory=dict)
     _loading: set[Path] = field(default_factory=set)
+    source_overrides: dict[Path, str] = field(default_factory=dict)
 
     def load(
         self,
@@ -101,7 +102,9 @@ class ModuleLoader:
         self._loading.add(cache_key)
         try:
             compiled_module = None
-            if source_file.exists():
+            if source_file.resolve() in self.source_overrides:
+                source = self.source_overrides[source_file.resolve()]
+            elif source_file.exists():
                 source = source_file.read_text(encoding="utf-8")
             elif compiled_file.exists():
                 from valiance.runtime.compiled_module import load_module_file
@@ -194,6 +197,9 @@ class ModuleLoader:
             return _source_path(root, path.parts)
         if current_file is None:
             raise ModuleLoadError("local imports require a source file")
+        # Unqualified paths are strictly relative to the importing file. For
+        # example, src/main.vlnc importing app.greeting resolves src/app.vlnc,
+        # while parsers.json resolves src/parsers/json.vlnc.
         return _source_path(current_file.parent, path.parts)
 
     def _resolve_dependency(

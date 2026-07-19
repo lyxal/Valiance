@@ -58,6 +58,21 @@ class LanguageServerTests(unittest.TestCase):
         self.assertNotIn("println", labels)
         self.assertTrue(all(item["kind"] == 9 for item in completion))
 
+    def test_import_completion_inserts_only_missing_suffix(self):
+        source = "import { std."
+        results = self.session(source, {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": {"uri": "file:///tmp/main.vlnc"},
+                "position": {"line": 0, "character": len(source)},
+            },
+        })
+        completion = next(item["result"] for item in results if item.get("id") == 2)
+        random_item = next(item for item in completion if item["label"] == "std.random")
+        self.assertEqual(random_item["insertText"], "random")
+
     def test_import_completion_filters_module_prefix(self):
         source = "import { std.r"
         results = self.session(source, {
@@ -217,6 +232,111 @@ class LanguageServerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class WorkspaceRefreshTests(unittest.TestCase):
+    def test_unsaved_export_change_reanalyses_open_dependents(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            library = root / "library.vlnc"
+            consumer = root / "consumer.vlnc"
+            library.write_text(
+                "public define convert(x: Integer) -> Integer => $x\n",
+                encoding="utf-8",
+            )
+            consumer.write_text(
+                'import { root.library.convert }\n1 convert',
+                encoding="utf-8",
+            )
+            server = LanguageServer(io.BytesIO(), io.BytesIO())
+            server.initialized = True
+            library_uri = library.as_uri()
+            consumer_uri = consumer.as_uri()
+            server.documents[library_uri] = library.read_text(encoding="utf-8")
+            server.documents[consumer_uri] = consumer.read_text(encoding="utf-8")
+            server._refresh_workspace(library_uri)
+            self.assertFalse(server.analysers[consumer_uri].diagnostics)
+
+            server.documents[library_uri] = (
+                "public define convert(x: String) -> String => $x\n"
+            )
+            server._refresh_workspace(library_uri)
+
+            self.assertTrue(server.analysers[consumer_uri].diagnostics)
+            self.assertTrue(
+                any("convert" in item for item in server.analysers[consumer_uri].diagnostics)
+            )
+
+    def test_relative_import_resolves_from_importing_file_directory(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "src"
+            source_dir.mkdir()
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            app = source_dir / "app.vlnc"
+            main = source_dir / "main.vlnc"
+            app.write_text(
+                'public define greeting(name: String) -> String => $name\n',
+                encoding="utf-8",
+            )
+            main_source = (
+                'import {app.greeting}\nprintln greeting("Valiance")'
+            )
+            server = LanguageServer(io.BytesIO(), io.BytesIO())
+            server.initialized = True
+            main_uri = main.as_uri()
+            server.documents[main_uri] = main_source
+            server._refresh_workspace(main_uri)
+
+            self.assertFalse(server.analysers[main_uri].diagnostics)
+
+    def test_nested_relative_import_resolves_from_importing_file_directory(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "src"
+            parser_dir = source_dir / "parsers"
+            parser_dir.mkdir(parents=True)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            module = parser_dir / "json.vlnc"
+            main = source_dir / "main.vlnc"
+            module.write_text(
+                'public define parseJson(value: String) -> String => $value\n',
+                encoding="utf-8",
+            )
+            main_source = (
+                'import {parsers.json.parseJson}\nparseJson("{}")'
+            )
+            server = LanguageServer(io.BytesIO(), io.BytesIO())
+            server.initialized = True
+            main_uri = main.as_uri()
+            server.documents[main_uri] = main_source
+            server._refresh_workspace(main_uri)
+
+            self.assertFalse(server.analysers[main_uri].diagnostics)
+
+    def test_windows_file_uri_does_not_leave_leading_drive_slash(self):
+        from valiance.lsp import _uri_path
+
+        path = _uri_path("file:///C:/demo/src/app.vlnc")
+        self.assertEqual(str(path).replace("\\", "/"), "C:/demo/src/app.vlnc")
 
 class DefinitionProviderTests(unittest.TestCase):
     def definition(self, source_file, source, line, character):

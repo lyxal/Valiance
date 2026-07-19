@@ -50,6 +50,7 @@ class LanguageServer:
         self.analysers: dict[str, Analyser] = {}
         self.programs: dict[str, list[ASTNode]] = {}
         self.typed_programs: dict[str, list[TypedNode]] = {}
+        self.module_loader = ModuleLoader()
         self.initialized = False
         self.shutdown_requested = False
         self.exit_code = 0
@@ -112,14 +113,14 @@ class LanguageServer:
         if method == "textDocument/didOpen":
             document = params["textDocument"]
             self.documents[document["uri"]] = document["text"]
-            self._analyse(document["uri"])
+            self._refresh_workspace(document["uri"])
             return None
         if method == "textDocument/didChange":
             uri = params["textDocument"]["uri"]
             changes = params.get("contentChanges", [])
             if changes:
                 self.documents[uri] = changes[-1]["text"]
-            self._analyse(uri)
+            self._refresh_workspace(uri)
             return None
         if method == "textDocument/didClose":
             uri = params["textDocument"]["uri"]
@@ -152,13 +153,28 @@ class LanguageServer:
             )
         return NotImplemented
 
+    def _refresh_workspace(self, changed_uri: str) -> None:
+        """Reanalyse open documents against all current unsaved module sources."""
+        self.module_loader.source_overrides = {
+            path.resolve(): source
+            for uri, source in self.documents.items()
+            if (path := _uri_path(uri)) is not None
+        }
+        self.module_loader._cache.clear()
+        # Analyse the changed document first, then every dependent open document.
+        ordered = [changed_uri, *(uri for uri in self.documents if uri != changed_uri)]
+        for uri in ordered:
+            self._analyse(uri)
+
     def _analyse(self, uri: str) -> None:
         """Analyse an open document and publish diagnostics at source locations."""
         source = self.documents.get(uri, "")
         diagnostics: list[dict[str, Any]] = []
         try:
             program = parse(source)
-            analyser = Analyser(source_file=_uri_path(uri))
+            analyser = Analyser(
+                source_file=_uri_path(uri), module_loader=self.module_loader
+            )
             typed_program = analyser.analyse(program)
             self.programs[uri] = program
             self.typed_programs[uri] = typed_program
@@ -1118,6 +1134,11 @@ def _import_completion_items(uri: str, prefix: str) -> list[dict[str, Any]]:
             "kind": 9,
             "sortText": module.casefold(),
             "filterText": module,
+            "insertText": (
+                module[len(prefix) :]
+                if prefix and module.casefold().startswith(prefix.casefold())
+                else module
+            ),
         }
         for module in sorted(modules, key=str.casefold)
         if not normalized or module.casefold().startswith(normalized)
@@ -1197,9 +1218,16 @@ def _docstring_markdown(docstring: Any) -> str:
 
 
 def _uri_path(uri: str) -> Path | None:
-    """Convert a file URI to a local path when possible."""
+    """Convert a file URI to a native path, including Windows drive URIs."""
     parsed = urlparse(uri)
-    return Path(unquote(parsed.path)) if parsed.scheme == "file" else None
+    if parsed.scheme != "file":
+        return None
+    path = unquote(parsed.path)
+    if re.match(r"^/[A-Za-z]:/", path):
+        path = path[1:]
+    if parsed.netloc and parsed.netloc not in {"", "localhost"}:
+        path = f"//{parsed.netloc}{path}"
+    return Path(path)
 
 
 def _offset(source: str, position: dict[str, int]) -> int:
