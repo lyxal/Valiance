@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import fields, is_dataclass
+from importlib import resources
 import sys
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -32,7 +33,8 @@ from valiance.source_tools import extract_documented_defines
 from valiance.vtypes.symbols import Symbol
 
 _WORD = re.compile(
-    r"(?:\*::|[$#\\])?[A-Za-z_][A-Za-z0-9_:]*|[+\-*%!?=/< >~&^]+".replace(" ", "")
+    r"(?:\*::|[$#\\])?[A-Za-z_][A-Za-z0-9_]*(?:(?:::|\.)[A-Za-z_][A-Za-z0-9_]*)*"
+    r"|[+\-*%!?=/< >~&^]+".replace(" ", "")
 )
 _LOCATION = re.compile(r"^(\d+):(\d+):\s*(.*)$", re.DOTALL)
 
@@ -92,7 +94,7 @@ class LanguageServer:
             return {
                 "capabilities": {
                     "textDocumentSync": {"openClose": True, "change": 1},
-                    "completionProvider": {"triggerCharacters": ["$", "#", "\\"]},
+                    "completionProvider": {"triggerCharacters": ["$", "#", "\\", "{", "."]},
                     "hoverProvider": True,
                     "definitionProvider": True,
                     "documentSymbolProvider": True,
@@ -191,6 +193,9 @@ class LanguageServer:
         position = params["position"]
         cursor_offset = _source_offset_at(source, position)
         prefix = completion_prefix(source[: _offset(source, position)])
+        import_prefix = _import_completion_prefix(source, cursor_offset)
+        if import_prefix is not None:
+            return _import_completion_items(uri, import_prefix)
         items: dict[str, tuple[str, int]] = {
             item.text: (item.meta, 14 if item.meta == "keyword" else 7)
             for item in default_completion_items()
@@ -1038,6 +1043,12 @@ def _import_definition_candidates(
 ) -> tuple[tuple[Any, str], ...]:
     """Return full-module and implicit-final-component import interpretations."""
     candidates: list[tuple[Any, str]] = []
+    if not spec.components and "." in local_name:
+        namespace, member = local_name.split(".", 1)
+        visible_namespace = str(spec.alias or spec.path.parts[-1]).removeprefix("\\")
+        if namespace == visible_namespace:
+            candidates.append((spec.path, member))
+            return tuple(candidates)
     if spec.components:
         for component in spec.components:
             visible = str(component.alias or component.name).removeprefix("\\")
@@ -1062,6 +1073,55 @@ def _import_definition_candidates(
                 )
             )
     return tuple(candidates)
+
+
+def _import_completion_prefix(source: str, cursor_offset: int) -> str | None:
+    """Return the current import-path fragment when the cursor is inside import braces."""
+    before = source[:cursor_offset]
+    import_start = before.rfind("import")
+    if import_start < 0:
+        return None
+    brace_start = before.find("{", import_start)
+    if brace_start < 0 or before.rfind("}", import_start) > brace_start:
+        return None
+    fragment = before[brace_start + 1 :].split(",")[-1].strip()
+    return fragment
+
+
+def _import_completion_items(uri: str, prefix: str) -> list[dict[str, Any]]:
+    """Return modules only while completing an import clause."""
+    modules: set[str] = set()
+    std_root = resources.files("valiance.std")
+    for path in std_root.iterdir():
+        if path.name.startswith("_"):
+            continue
+        if path.name.endswith(".py") or path.name.endswith(".vlnc"):
+            modules.add(f"std.{path.name.rsplit('.', 1)[0]}")
+
+    current_file = _uri_path(uri)
+    if current_file is not None:
+        directory = current_file.parent
+        for parent in (directory, *directory.parents):
+            if (parent / "valiance.toml").exists():
+                for path in parent.rglob("*.vlnc"):
+                    if path == current_file or any(part in {".vln", "bin"} for part in path.parts):
+                        continue
+                    relative = path.relative_to(parent).with_suffix("")
+                    modules.add("root." + ".".join(relative.parts))
+                break
+
+    normalized = prefix.casefold()
+    return [
+        {
+            "label": module,
+            "detail": "module",
+            "kind": 9,
+            "sortText": module.casefold(),
+            "filterText": module,
+        }
+        for module in sorted(modules, key=str.casefold)
+        if not normalized or module.casefold().startswith(normalized)
+    ]
 
 
 def _builtin_for_overloads(

@@ -40,6 +40,40 @@ class LanguageServerTests(unittest.TestCase):
         ]
         return self.run_server(*base, *requests, *end)
 
+    def test_import_completion_suggests_modules_only(self):
+        source = "import {"
+        results = self.session(source, {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": {"uri": "file:///tmp/main.vlnc"},
+                "position": {"line": 0, "character": len(source)},
+            },
+        })
+        completion = next(item["result"] for item in results if item.get("id") == 2)
+        labels = {item["label"] for item in completion}
+        self.assertIn("std.text", labels)
+        self.assertIn("std.random", labels)
+        self.assertNotIn("println", labels)
+        self.assertTrue(all(item["kind"] == 9 for item in completion))
+
+    def test_import_completion_filters_module_prefix(self):
+        source = "import { std.r"
+        results = self.session(source, {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": {"uri": "file:///tmp/main.vlnc"},
+                "position": {"line": 0, "character": len(source)},
+            },
+        })
+        completion = next(item["result"] for item in results if item.get("id") == 2)
+        labels = {item["label"] for item in completion}
+        self.assertIn("std.random", labels)
+        self.assertNotIn("std.text", labels)
+
     def test_completion_suggests_variables_parameters_and_elements(self):
         source = (
             "define demo(input: Integer) =>\n"
@@ -283,6 +317,42 @@ class HoverEnhancementTests(unittest.TestCase):
                 "position": {"line": line, "character": character},
             }
         )
+
+    def test_namespaced_source_stdlib_hover_includes_docstring(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = 'import {std.text}\ntext.exclaim("a")'
+            hover = self.hover(main, source, 1, 6)
+
+        value = hover["contents"]["value"]
+        self.assertIn("text.exclaim", value)
+        self.assertIn("exclamation", value.casefold())
+
+    def test_namespaced_native_stdlib_hover_includes_documentation(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = "import {std.random}\nrandom.between(1, 2)"
+            hover = self.hover(main, source, 1, 8)
+
+        value = hover["contents"]["value"]
+        self.assertIn("random.between", value)
+        self.assertIn("random integer", value.casefold())
 
     def test_native_stdlib_hover_includes_registered_documentation(self):
         import tempfile
