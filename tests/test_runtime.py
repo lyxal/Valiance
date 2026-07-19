@@ -3941,6 +3941,38 @@ if __name__ == "__main__":
     unittest.main()
 
 class ImportedOverloadRuntimeTests(unittest.TestCase):
+    def test_imported_recursive_definition_calls_hidden_runtime_binding(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "src"
+            source_dir.mkdir()
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            (source_dir / "fib.vlnc").write_text(
+                "public define fibonacci(n: Integer) -> Integer =>\n"
+                "  $n match =>\n"
+                "    0 => 0\n"
+                "    1 => 1\n"
+                "    _ => fibonacci($n - 1) + fibonacci($n - 2)\n"
+                "  end\n"
+                "end\n",
+                encoding="utf-8",
+            )
+            main = source_dir / "main.vlnc"
+            analyser = Analyser(source_file=main)
+            typed = analyser.analyse(
+                parse("import {fib.fibonacci}\nfibonacci(10)")
+            )
+            self.assertFalse(analyser.diagnostics)
+
+            direct = run(compile_program(typed, optimize=False))
+            restored = run(loads(dumps(compile_program(typed, optimize=False))))
+
+        self.assertEqual(direct, [RuntimeNumber(55)])
+        self.assertEqual(restored, direct)
+
     def test_imported_overloads_call_the_runtime_body_selected_by_analysis(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
