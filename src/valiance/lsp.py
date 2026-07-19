@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import fields, is_dataclass
 import sys
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -11,7 +12,14 @@ from urllib.parse import unquote, urlparse
 
 import valiance.vtypes as T
 from valiance.analysis import Analyser
-from valiance.asts import ASTNode, DefineNode, ImportNode
+from valiance.asts import (
+    ASTNode,
+    DefineNode,
+    GetVariableNode,
+    ImportNode,
+    SetVariableNode,
+)
+from valiance.asts.nodes import TypedNode
 from valiance.analysis.diagnostics import DiagnosticError, from_message
 from valiance.modules_system.modules import ModuleLoadError, ModuleLoader
 from valiance.parsing import LexError, ParseError, ParseErrors, parse
@@ -35,6 +43,7 @@ class LanguageServer:
         self.documents: dict[str, str] = {}
         self.analysers: dict[str, Analyser] = {}
         self.programs: dict[str, list[ASTNode]] = {}
+        self.typed_programs: dict[str, list[TypedNode]] = {}
         self.initialized = False
         self.shutdown_requested = False
         self.exit_code = 0
@@ -111,6 +120,7 @@ class LanguageServer:
             self.documents.pop(uri, None)
             self.analysers.pop(uri, None)
             self.programs.pop(uri, None)
+            self.typed_programs.pop(uri, None)
             self._notify(
                 "textDocument/publishDiagnostics", {"uri": uri, "diagnostics": []}
             )
@@ -143,8 +153,9 @@ class LanguageServer:
         try:
             program = parse(source)
             analyser = Analyser(source_file=_uri_path(uri))
-            analyser.analyse(program)
+            typed_program = analyser.analyse(program)
             self.programs[uri] = program
+            self.typed_programs[uri] = typed_program
             self.analysers[uri] = analyser
             diagnostics.extend(
                 _message_diagnostic(item, 1) for item in analyser.diagnostics
@@ -158,10 +169,12 @@ class LanguageServer:
         except ParseErrors as exc:
             diagnostics.extend(_exception_diagnostic(item) for item in exc.errors)
             self.programs.pop(uri, None)
+            self.typed_programs.pop(uri, None)
             self.analysers.pop(uri, None)
         except (LexError, ParseError, DiagnosticError) as exc:
             diagnostics.append(_exception_diagnostic(exc))
             self.programs.pop(uri, None)
+            self.typed_programs.pop(uri, None)
             self.analysers.pop(uri, None)
         self._notify(
             "textDocument/publishDiagnostics", {"uri": uri, "diagnostics": diagnostics}
@@ -216,6 +229,23 @@ class LanguageServer:
             return None
         display_name = word.lstrip("$#\\")
         lookup_name = word[3:] if word.startswith("*::") else display_name
+
+        if word.startswith("$"):
+            variable_type = _variable_type_at(
+                self.typed_programs.get(uri, []),
+                lookup_name,
+                params["position"],
+            )
+            if variable_type is None:
+                return None
+            return {
+                "contents": {
+                    "kind": "markdown",
+                    "value": f"```valiance\n${display_name}: {T.show(variable_type)}\n```",
+                },
+                "range": _word_range(source, params["position"]),
+            }
+
         overloads = analyser.env.overloads_for(Symbol(lookup_name))
         if not overloads:
             return None
@@ -223,6 +253,10 @@ class LanguageServer:
             _overload_signature(display_name, item) for item in overloads
         )
         documentation = _definition_documentation(source, lookup_name)
+        if not documentation:
+            documentation = self._imported_documentation(
+                uri, lookup_name, params["position"]
+            )
         value = f"```valiance\n{signatures}\n```"
         if documentation:
             value += f"\n\n{documentation}"
@@ -230,6 +264,43 @@ class LanguageServer:
             "contents": {"kind": "markdown", "value": value},
             "range": _word_range(source, params["position"]),
         }
+
+    def _imported_documentation(
+        self, uri: str, name: str, position: dict[str, int]
+    ) -> str:
+        """Load documentation from the source declaration of an imported function."""
+        location = self._definition(
+            {"textDocument": {"uri": uri}, "position": position}
+        )
+        if location is None or location.get("uri") == uri:
+            return ""
+        source_uri = location["uri"]
+        source = self.documents.get(source_uri)
+        if source is None:
+            path = _uri_path(source_uri)
+            if path is None:
+                return ""
+            try:
+                source = path.read_text(encoding="utf-8")
+            except OSError:
+                return ""
+        try:
+            program = parse(source)
+        except (LexError, ParseError, ParseErrors):
+            return ""
+        start = location["range"]["start"]
+        declaration_name = next(
+            (
+                str(node.name).removeprefix("\\")
+                for node in program
+                if isinstance(node, DefineNode)
+                and node.location is not None
+                and node.location.line - 1 == start["line"]
+                and node.location.column - 1 == start["character"]
+            ),
+            name,
+        )
+        return _definition_documentation(source, declaration_name)
 
     def _definition(self, params: dict[str, Any]) -> dict[str, Any] | None:
         """Find local or imported definitions, including project dependencies."""
@@ -356,6 +427,55 @@ def _overload_signature(name: str, overload: T.Overload) -> str:
     tags = T.show(T.Fn((), (), overload.element_tags)) if overload.element_tags else ""
     tag_clause = tags[tags.index("<") :] if tags else ""
     return f"{name}({', '.join(params)}){tag_clause} -> {returns}".rstrip()
+
+
+def _typed_nodes(value: Any) -> list[TypedNode]:
+    """Flatten typed dataclass fields for source-sensitive editor features."""
+    found: list[TypedNode] = []
+    seen: set[int] = set()
+
+    def visit(item: Any) -> None:
+        """Visit typed dataclasses and collection children exactly once."""
+        if id(item) in seen:
+            return
+        if isinstance(item, TypedNode):
+            seen.add(id(item))
+            found.append(item)
+        if isinstance(item, (tuple, list)):
+            for child in item:
+                visit(child)
+        elif is_dataclass(item):
+            seen.add(id(item))
+            for field in fields(item):
+                visit(getattr(item, field.name))
+
+    visit(value)
+    return found
+
+
+def _variable_type_at(
+    program: list[TypedNode],
+    name: str,
+    position: dict[str, int],
+) -> Any | None:
+    """Return the analyser type for the variable occurrence under the cursor."""
+    line = position.get("line", 0) + 1
+    character = position.get("character", 0) + 1
+    candidates: list[TypedNode] = []
+    for typed in _typed_nodes(program):
+        node = typed.node
+        if not isinstance(node, (GetVariableNode, SetVariableNode)):
+            continue
+        if str(node.name) != name or node.location is None or typed.typ is None:
+            continue
+        if node.location.line == line:
+            candidates.append(typed)
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda item: abs(item.node.location.column - character),
+    ).typ
 
 
 def _definition_location(

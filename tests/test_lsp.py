@@ -179,3 +179,82 @@ class DefinitionProviderTests(unittest.TestCase):
             location = self.definition(main, source, 1, 4)
 
         self.assertEqual(location["uri"], target.as_uri())
+
+class HoverEnhancementTests(unittest.TestCase):
+    def hover(self, source_file, source, line, character):
+        output = io.BytesIO()
+        server = LanguageServer(io.BytesIO(), output)
+        server.initialized = True
+        uri = source_file.as_uri()
+        server.documents[uri] = source
+        server._analyse(uri)
+        return server._hover(
+            {
+                "textDocument": {"uri": uri},
+                "position": {"line": line, "character": character},
+            }
+        )
+
+    def test_imported_function_hover_includes_source_docstring(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            (root / "math.vlnc").write_text(
+                "#?? Double a number.\n"
+                "#?? @param value Number to double.\n"
+                "#?? @returns The doubled number.\n"
+                "public define double(value: Number) -> Number => $value 2 *\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = "import { root.math.double }\n10 double"
+
+            hover = self.hover(main, source, 1, 5)
+
+        value = hover["contents"]["value"]
+        self.assertIn("double(value: Number) -> Number", value)
+        self.assertIn("Double a number.", value)
+        self.assertIn("**Parameter `value`:** Number to double.", value)
+        self.assertIn("**Returns:** The doubled number.", value)
+
+    def test_variable_hover_shows_inferred_type(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            main = Path(tmp) / "main.vlnc"
+            source = '$message = "hello"\n$message println'
+
+            hover = self.hover(main, source, 1, 3)
+
+        self.assertIn("$message: String", hover["contents"]["value"])
+
+    def test_imported_multi_function_hover_lists_every_overload(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "1.0.0"\n\n[dependencies]\n',
+                encoding="utf-8",
+            )
+            (root / "convert.vlnc").write_text(
+                "public define convert(value: Number) -> String => \"number\"\n"
+                "public define convert(value: String) -> String => $value\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = 'import { root.convert.convert }\n"x" convert'
+
+            hover = self.hover(main, source, 1, 6)
+
+        value = hover["contents"]["value"]
+        self.assertIn("convert(value: Number) -> String", value)
+        self.assertIn("convert(value: String) -> String", value)

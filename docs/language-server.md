@@ -36,3 +36,19 @@ source range of the declaration. VS Code opens closed target files automatically
 If a module cannot be read or parsed, or if the selected token is not a known
 declaration, the server returns no location rather than surfacing an internal
 error.
+
+## Hover information
+
+Hover uses analysed program data rather than token spelling alone:
+
+- local and imported functions show every visible overload signature;
+- imported function documentation is loaded from the source declaration,
+  including descriptions, parameters, type parameters, returns, and extra fields;
+- variables show their inferred or declared analyser type at that occurrence.
+
+Imported documentation follows `root`, local, standard-library, and installed
+`dep` source modules. If source is unavailable (for example, a compiled-only
+module), signatures remain available but source docstrings may not be shown.
+Variable hover is flow-sensitive to the typed occurrence retained by analysis,
+so it reflects the type known at that read or assignment rather than guessing
+from text.

@@ -226,7 +226,9 @@ def import_definitions(
     public = exports.public_definitions()
     public_objects = {obj.name for obj in exports.public_objects()}
     if spec.components:
-        by_name = {definition.name: definition for definition in public}
+        by_name: dict[Symbol, list[ModuleDefinition]] = {}
+        for definition in public:
+            by_name.setdefault(definition.name, []).append(definition)
         selected: list[ModuleDefinition] = []
         for component in spec.components:
             if component.kind == Symbol("tag"):
@@ -239,21 +241,24 @@ def import_definitions(
                 continue
             if component.kind is not None:
                 continue
-            definition = by_name.get(component.name)
-            if definition is None:
+            definitions = by_name.get(component.name, [])
+            if not definitions:
                 if component.name in public_objects:
                     continue
                 raise ModuleLoadError(
                     f"module {exports.module_name!r} has no public "
                     f"component {component.name.text!r}"
                 )
-            definition = _select_overloads(definition, component, exports.module_name)
-            selected.append(
-                _renamed_definition(
-                    definition,
-                    component.alias or component.name,
+            for definition in definitions:
+                definition = _select_overloads(
+                    definition, component, exports.module_name
                 )
-            )
+                selected.append(
+                    _renamed_definition(
+                        definition,
+                        component.alias or component.name,
+                    )
+                )
         return tuple(selected)
 
     namespace = spec.alias or Symbol(exports.module_name.rsplit(".", 1)[-1])
