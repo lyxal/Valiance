@@ -40,6 +40,62 @@ class LanguageServerTests(unittest.TestCase):
         ]
         return self.run_server(*base, *requests, *end)
 
+    def test_completion_suggests_variables_parameters_and_elements(self):
+        source = (
+            "define demo(input: Integer) =>\n"
+            "  $count = $input\n"
+            "  $co\n"
+            "end"
+        )
+        results = self.session(source, {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": {"uri": "file:///tmp/main.vlnc"},
+                "position": {"line": 2, "character": 5},
+            },
+        })
+        completion = next(item["result"] for item in results if item.get("id") == 2)
+        labels = {item["label"] for item in completion}
+        self.assertIn("$count", labels)
+        self.assertNotIn("$input", labels)
+        count = next(item for item in completion if item["label"] == "$count")
+        self.assertEqual(count["kind"], 6)
+        self.assertIn("variable", count["detail"])
+
+        element_results = self.session("pri", {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": {"uri": "file:///tmp/main.vlnc"},
+                "position": {"line": 0, "character": 3},
+            },
+        })
+        element_completion = next(
+            item["result"] for item in element_results if item.get("id") == 2
+        )
+        element_labels = {item["label"] for item in element_completion}
+        self.assertIn("print", element_labels)
+        self.assertIn("println", element_labels)
+
+    def test_completion_suggests_named_parameter(self):
+        source = "define demo(input: Integer) => $input"
+        results = self.session(source, {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": {"uri": "file:///tmp/main.vlnc"},
+                "position": {"line": 0, "character": len(source)},
+            },
+        })
+        completion = next(item["result"] for item in results if item.get("id") == 2)
+        candidate = next(item for item in completion if item["label"] == "$input")
+        self.assertEqual(candidate["kind"], 6)
+        self.assertIn("Integer", candidate["detail"])
+
     def test_hover_renders_full_overload_signatures(self):
         source = "1 2 +"
         results = self.session(source, {"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {"textDocument": {"uri": "file:///tmp/main.vlnc"}, "position": {"line": 0, "character": 4}}})

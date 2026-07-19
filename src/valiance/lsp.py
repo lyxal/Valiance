@@ -184,25 +184,106 @@ class LanguageServer:
         )
 
     def _completion(self, params: dict[str, Any]) -> list[dict[str, Any]]:
-        """Return keywords, types, declarations, tags, and elements."""
+        """Return context-aware variables, elements, declarations, types, and keywords."""
         uri = params["textDocument"]["uri"]
         source = self.documents.get(uri, "")
-        prefix = completion_prefix(source[: _offset(source, params["position"])])
-        items = {
-            item.text: item.meta
+        position = params["position"]
+        cursor_offset = _source_offset_at(source, position)
+        prefix = completion_prefix(source[: _offset(source, position)])
+        items: dict[str, tuple[str, int]] = {
+            item.text: (item.meta, 14 if item.meta == "keyword" else 7)
             for item in default_completion_items()
             if not item.text.startswith(":")
         }
+
+        # Built-ins remain available even while the current token leaves the
+        # document temporarily unparseable or unanalysable.
+        for element in BUILTIN_ELEMENTS:
+            label = element.name.dotted()
+            items.setdefault(
+                label,
+                (
+                    "\n".join(
+                        _overload_signature(label, item) for item in element.overloads
+                    ),
+                    3,
+                ),
+            )
+
+        # Recover variable names from source text so completion still works
+        # while the user is in the middle of typing an otherwise invalid read.
+        source_before_cursor = source[:cursor_offset]
+        for match in re.finditer(r"\$([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*([^=\n]+))?=", source_before_cursor):
+            name = f"${match.group(1)}"
+            declared = (match.group(2) or "").strip()
+            items[name] = (f"variable: {declared}" if declared else "variable", 6)
+        for match in re.finditer(r"(?:define|fn)(?:\[[^]\n]*\])?[^=\n]*\(([^)]*)\)", source_before_cursor):
+            for parameter in match.group(1).split(","):
+                parameter_match = re.match(
+                    r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*([^=]+))?",
+                    parameter,
+                )
+                if parameter_match is None:
+                    continue
+                name = f"${parameter_match.group(1)}"
+                declared = (parameter_match.group(2) or "").strip()
+                items.setdefault(
+                    name,
+                    (f"parameter: {declared}" if declared else "parameter", 6),
+                )
+
+        typed_program = self.typed_programs.get(uri, [])
+        for typed in _typed_nodes(typed_program):
+            node = typed.node
+            if isinstance(node, (GetVariableNode, SetVariableNode)):
+                if node.location is None or _node_offset(node) > cursor_offset:
+                    continue
+                name = f"${node.name}"
+                detail = f"variable: {T.show(typed.typ)}" if typed.typ is not None else "variable"
+                items[name] = (detail, 6)
+            elif isinstance(typed, TypedFunctionNode) and isinstance(node, DefineNode):
+                if node.location is None or _node_offset(node) > cursor_offset:
+                    continue
+                overloads = tuple(
+                    item.overload
+                    for item in typed.overloads
+                    if isinstance(item.overload, T.Overload)
+                )
+                if overloads:
+                    name = str(node.name).removeprefix("\\")
+                    items[name] = (
+                        "\n".join(_overload_signature(name, item) for item in overloads),
+                        3,
+                    )
+
+        # Named parameters may not yet have a typed read at the cursor, so add
+        # their declared shape directly from every enclosing declaration seen so far.
+        for node in _ast_nodes(self.programs.get(uri, [])):
+            if not isinstance(node, DefineNode) or node.location is None:
+                continue
+            if _node_offset(node) > cursor_offset:
+                continue
+            for param in node.function.params or ():
+                if param.name is None:
+                    continue
+                name = f"${param.name}"
+                detail = f"parameter: {T.show(param.typ)}" if param.typ is not None else "parameter"
+                items.setdefault(name, (detail, 6))
+
         analyser = self.analysers.get(uri)
         if analyser:
             env = analyser.env
             while env is not None:
                 for name in env.overloads:
                     overloads = env.overloads_for(name)
+                    label = name.dotted()
                     items.setdefault(
-                        name.text,
-                        "\n".join(
-                            _overload_signature(name.text, item) for item in overloads
+                        label,
+                        (
+                            "\n".join(
+                                _overload_signature(label, item) for item in overloads
+                            ),
+                            3,
                         ),
                     )
                 for collection, kind in (
@@ -212,14 +293,22 @@ class LanguageServer:
                     (env.enums, "enum"),
                 ):
                     for name in collection:
-                        items.setdefault(name.text, kind)
+                        items.setdefault(name.dotted(), (kind, 7))
                 for name in env.data_tags:
-                    items.setdefault(f"#{name.text}", "data tag")
+                    items.setdefault(f"#{name.text}", ("data tag", 21))
                 env = env.parent
+
+        normalized_prefix = prefix.casefold()
         return [
-            {"label": text, "detail": detail, "kind": 3, "sortText": text}
-            for text, detail in sorted(items.items())
-            if not prefix or text.startswith(prefix)
+            {
+                "label": text,
+                "detail": detail,
+                "kind": kind,
+                "sortText": text.casefold(),
+                "filterText": text,
+            }
+            for text, (detail, kind) in sorted(items.items(), key=lambda item: item[0].casefold())
+            if not normalized_prefix or text.casefold().startswith(normalized_prefix)
         ]
 
     def _hover(self, params: dict[str, Any]) -> dict[str, Any] | None:
