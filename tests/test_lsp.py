@@ -48,6 +48,39 @@ class LanguageServerTests(unittest.TestCase):
         self.assertIn("+(_1: Integer, _2: Integer) -> Integer", value)
         self.assertNotEqual(value.strip(), "overload")
 
+    def test_selected_builtin_hover_includes_documentation(self):
+        source = "1 2 +"
+        results = self.session(source, {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": {"uri": "file:///tmp/main.vlnc"},
+                "position": {"line": 0, "character": 4},
+            },
+        })
+        hover = next(item["result"] for item in results if item.get("id") == 2)
+        value = hover["contents"]["value"]
+        self.assertIn("+(_1: Integer, _2: Integer) -> Integer", value)
+        self.assertIn("Add numbers or concatenate strings.", value)
+
+    def test_builtin_hover_renders_structured_documentation(self):
+        source = "10 dup"
+        results = self.session(source, {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": {"uri": "file:///tmp/main.vlnc"},
+                "position": {"line": 0, "character": 4},
+            },
+        })
+        hover = next(item["result"] for item in results if item.get("id") == 2)
+        value = hover["contents"]["value"]
+        self.assertIn("Duplicate the top stack value.", value)
+        self.assertIn("**Parameter `value`:** Value to duplicate.", value)
+        self.assertIn("**Returns:** Two copies of the input value.", value)
+
     def test_hover_includes_define_docstring(self):
         source = (
             "#?? Double a number.\n"

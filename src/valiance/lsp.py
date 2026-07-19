@@ -23,6 +23,8 @@ from valiance.asts import (
 from valiance.asts.nodes import TypedElementNode, TypedFunctionNode, TypedNode
 from valiance.analysis.diagnostics import DiagnosticError, from_message
 from valiance.modules_system.modules import ModuleLoadError, ModuleLoader
+from valiance.elements.builtins import BUILTIN_ELEMENTS, BuiltinElement
+from valiance.elements.documentation import ElementDocumentation
 from valiance.parsing import LexError, ParseError, ParseErrors, parse
 from valiance.repl import completion_prefix, default_completion_items
 from valiance.source_tools import extract_documented_defines
@@ -274,6 +276,12 @@ class LanguageServer:
         docs = self._overload_documentation(
             uri, lookup_name, position, overloads, selected
         )
+        builtin = _builtin_for_overloads(lookup_name, overloads, selected)
+        builtin_documentation = (
+            _element_documentation_markdown(builtin.documentation)
+            if builtin is not None and builtin.documentation is not None
+            else ""
+        )
         if selected is not None:
             selected_doc = self._selected_overload_documentation(
                 uri, lookup_name, position, selected
@@ -287,10 +295,14 @@ class LanguageServer:
                     ),
                     "",
                 )
+            if not selected_doc:
+                selected_doc = builtin_documentation
             value = _render_single_overload_hover(
                 display_name, selected, selected_doc
             )
         else:
+            if builtin_documentation and not any(docs):
+                docs = tuple(builtin_documentation for _ in overloads)
             value = _render_overload_hover(display_name, overloads, docs)
         return {
             "contents": {"kind": "markdown", "value": value},
@@ -921,6 +933,47 @@ def _import_definition_candidates(
                 )
             )
     return tuple(candidates)
+
+
+def _builtin_for_overloads(
+    name: str,
+    overloads: tuple[T.Overload, ...],
+    selected: T.Overload | None,
+) -> BuiltinElement | None:
+    """Return the built-in represented by the visible or selected overloads."""
+    for element in BUILTIN_ELEMENTS:
+        names = {element.name.text}
+        if element.canonical_name is not None:
+            names.add(element.canonical_name.text)
+        if name not in names:
+            continue
+        if selected is not None and any(
+            _same_overload(item, selected) for item in element.overloads
+        ):
+            return element
+        if overloads and all(
+            any(_same_overload(item, candidate) for candidate in element.overloads)
+            for item in overloads
+        ):
+            return element
+    return None
+
+
+def _element_documentation_markdown(documentation: ElementDocumentation) -> str:
+    """Render built-in metadata using the same shape as source docstrings."""
+    sections = [documentation.summary]
+    sections.extend(documentation.description)
+    fields = [
+        f"- **Parameter `{item.name}`:** {item.description}"
+        for item in documentation.parameters
+    ]
+    if documentation.returns is not None:
+        fields.append(f"- **Returns:** {documentation.returns}")
+    if fields:
+        sections.append("\n".join(fields))
+    if documentation.notes:
+        sections.append("\n".join(f"- **Note:** {item}" for item in documentation.notes))
+    return "\n\n".join(item for item in sections if item)
 
 
 def _definition_documentation(source: str, name: str) -> str:
