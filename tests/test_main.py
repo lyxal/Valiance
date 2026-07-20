@@ -504,6 +504,44 @@ class MainTests(unittest.TestCase):
         self.assertIn("\033[34m  --> <code>:1:2\033[0m", rendered)
         self.assertIn("\033[33m^\033[0m", rendered)
 
+    def test_diagnostic_rendering_highlights_source_and_inline_code(self):
+        rendered = render(
+            Diagnostic(
+                "Type error",
+                "cannot safely cast `Number` with `as!`",
+                SourceLocation(1, 1),
+                "Try `value as String` instead.",
+            ),
+            'define value: Number => "text" #? note',
+            color=True,
+        )
+
+        self.assertIn("\033[1m\033[35mdefine\033[0m", rendered)
+        self.assertIn("\033[36mNumber\033[0m", rendered)
+        self.assertIn('\033[32m"text"\033[0m', rendered)
+        self.assertIn("\033[2m#? note\033[0m", rendered)
+        self.assertIn("\033[2m`\033[0m\033[36mNumber\033[0m", rendered)
+        self.assertIn("\033[1m\033[35mas\033[0m", rendered)
+        self.assertIn("\033[1m\033[37m!\033[0m", rendered)
+        self.assertIn("\033[37mvalue\033[0m", rendered)
+
+    def test_diagnostic_rendering_keeps_plain_text_unchanged_without_colour(self):
+        rendered = render(
+            Diagnostic(
+                "Type error",
+                "cannot safely cast `Number`",
+                SourceLocation(1, 1),
+                "Try `value as String` instead.",
+            ),
+            "value as Number",
+            color=False,
+        )
+
+        self.assertNotIn("\033[", rendered)
+        self.assertIn("Type error: cannot safely cast `Number`", rendered)
+        self.assertIn("1 | value as Number", rendered)
+        self.assertIn("help: Try `value as String` instead.", rendered)
+
     def test_main_formats_runtime_errors_with_context(self):
         error = io.StringIO()
         with contextlib.redirect_stderr(error):

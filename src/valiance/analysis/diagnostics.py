@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
+from valiance.repl import highlighted_fragments
+
 
 @dataclass(frozen=True, slots=True)
 class SourceLocation:
@@ -51,6 +53,24 @@ _BOLD = "\033[1m"
 _RED = "\033[31m"
 _YELLOW = "\033[33m"
 _BLUE = "\033[34m"
+_MAGENTA = "\033[35m"
+_CYAN = "\033[36m"
+_GREEN = "\033[32m"
+_WHITE = "\033[37m"
+_DIM = "\033[2m"
+_INLINE_CODE = re.compile(r"`([^`\n]+)`")
+_SYNTAX_STYLES = {
+    "class:keyword": _BOLD + _MAGENTA,
+    "class:type": _CYAN,
+    "class:number": _YELLOW,
+    "class:string": _GREEN,
+    "class:comment": _DIM,
+    "class:variable": _BLUE,
+    "class:tag": _RED,
+    "class:operator": _BOLD + _WHITE,
+    "class:punctuation": _WHITE,
+    "class:name": _WHITE,
+}
 _LOCATION_PREFIX = re.compile(
     r"^(?P<line>\d+):(?P<column>\d+):\s*(?P<message>.*)$",
     re.DOTALL,
@@ -108,7 +128,8 @@ def render(
     color: bool = False,
 ) -> str:
     """Render a compiler diagnostic with source context when available."""
-    lines = [f"{_style_stage(diagnostic.stage, color)}: {diagnostic.message}"]
+    message = _highlight_inline_code(diagnostic.message, color)
+    lines = [f"{_style_stage(diagnostic.stage, color)}: {message}"]
     if diagnostic.location is not None:
         label = "<code>" if source_file is None else str(source_file)
         location = diagnostic.location
@@ -128,13 +149,15 @@ def render(
                 line_gutter = f"{diagnostic.location.line} |"
                 caret = _style("^", _diagnostic_color(diagnostic.stage), color)
                 lines.append(_style(blank_gutter, _BLUE, color))
-                lines.append(f"{_style(line_gutter, _BLUE, color)} {snippet}")
+                highlighted = _highlight_source(snippet, color)
+                lines.append(f"{_style(line_gutter, _BLUE, color)} {highlighted}")
                 lines.append(
                     f"{_style(blank_gutter, _BLUE, color)} "
                     f"{' ' * (caret_column - 1)}{caret}"
                 )
     if diagnostic.help is not None:
-        lines.append(f"  {_style('help', _BOLD, color)}: {diagnostic.help}")
+        help_text = _highlight_inline_code(diagnostic.help, color)
+        lines.append(f"  {_style('help', _BOLD, color)}: {help_text}")
     return "\n".join(lines)
 
 
@@ -142,6 +165,31 @@ def should_color(stream: TextIO | None = None) -> bool:
     """Return whether diagnostics should use ANSI color for this stream."""
     stream = sys.stderr if stream is None else stream
     return bool(getattr(stream, "isatty", lambda: False)())
+
+
+def _highlight_source(source: str, color: bool) -> str:
+    """Render Valiance source with the same token colours as the enhanced REPL."""
+    if not color:
+        return source
+    return "".join(
+        _style(text, _SYNTAX_STYLES.get(token_style, ""), True)
+        if token_style
+        else text
+        for token_style, text in highlighted_fragments(source)
+    )
+
+
+def _highlight_inline_code(text: str, color: bool) -> str:
+    """Syntax-highlight backtick-delimited Valiance fragments in diagnostic prose."""
+    if not color:
+        return text
+
+    def replace(match: re.Match[str]) -> str:
+        """Highlight one backtick-delimited source fragment."""
+        code = _highlight_source(match.group(1), True)
+        return f"{_style('`', _DIM, True)}{code}{_style('`', _DIM, True)}"
+
+    return _INLINE_CODE.sub(replace, text)
 
 
 def _source_line(source: str, line: int) -> str | None:

@@ -72,3 +72,6 @@ build/
 *.sock
 ast.svg
 ast.dot
+
+# Valiance bytecode files (yes, really)
+*.vbc
