@@ -3184,7 +3184,7 @@ class VirtualMachine:
         if pattern_index == len(patterns):
             return value_index == len(values)
         pattern = patterns[pattern_index]
-        if _is_rest_pattern(pattern):
+        if isinstance(pattern, tuple) and pattern and pattern[0] == "rest":
             name = pattern[1]
             for end in range(value_index, len(values) + 1):
                 snapshot = dict(bindings)
@@ -5023,36 +5023,6 @@ def _call_vectorized_resolved_builtin(
                 for param in overload.signature.params
             )
         )
-        zero_depths_are_scalar = all(
-            depth != 0 or not is_list_like(arg)
-            for arg, depth in zip(args, resolved_depths, strict=True)
-        )
-        if (
-            (stop_at_zero or zero_depths_are_scalar)
-            and extension is None
-            and resolved_depths
-            and all(depth in (0, 1) for depth in resolved_depths)
-        ):
-            vector_args = tuple(
-                arg
-                for arg, depth in zip(args, resolved_depths, strict=True)
-                if depth == 1
-            )
-            if vector_args and all(is_eager_sequence(arg) for arg in vector_args):
-                lengths = {len(arg) for arg in vector_args}
-                if len(lengths) != 1:
-                    raise RuntimeError("cannot vectorise lists with different lengths")
-                result_items = [
-                    typed_implementation(
-                        tuple(
-                            arg[index] if depth == 1 else arg
-                            for arg, depth in zip(args, resolved_depths, strict=True)
-                        ),
-                        context,
-                    )
-                    for index in range(next(iter(lengths)))
-                ]
-                return _transpose_vectorized_items(result_items)
         return _vectorize_resolved_depths(
             typed_implementation,
             args,
@@ -5069,15 +5039,19 @@ def _vectorize(
     args: tuple[Any, ...],
     context: RuntimeContext,
 ) -> tuple[Any, ...]:
-    """Compute vectorize during VM execution."""
-    vector_args = tuple(arg for arg in args if is_list_like(arg))
-    if not vector_args:
-        if not overload.runtime_matches(args):
+    """Vectorise one built-in through the shared resolved-call traversal."""
+    implementation = overload.implementation
+    if implementation is None:
+        raise _CannotVectorize
+
+    def invoke(
+        item_args: tuple[Any, ...],
+        item_context: RuntimeContext,
+    ) -> tuple[Any, ...]:
+        """Invoke the built-in after vector traversal reaches scalar arguments."""
+        if not overload.runtime_matches(item_args):
             raise _CannotVectorize
-        implementation = overload.implementation
-        if implementation is None:
-            raise _CannotVectorize
-        result = implementation(overload.runtime_arguments(args), context)
+        result = implementation(overload.runtime_arguments(item_args), item_context)
         return (
             _apply_cached_runtime_return_tags(
                 result,
@@ -5086,9 +5060,8 @@ def _vectorize(
             if overload.runtime_return_tags
             else result
         )
-    if all(is_eager_sequence(arg) for arg in vector_args):
-        return _vectorize_eager(overload, args, context)
-    return (LazyList(_vectorize_lazy(overload, args, context)),)
+
+    return _vectorize_resolved(invoke, args, context)
 
 
 def _vectorize_resolved(
@@ -5098,13 +5071,15 @@ def _vectorize_resolved(
     extension: _RuntimeVectorExtension | None = None,
 ) -> tuple[Any, ...]:
     """Vectorize resolved during VM execution."""
-    vector_args = tuple(arg for arg in args if is_list_like(arg))
-    if not vector_args:
+    depths = tuple(1 if is_list_like(arg) else 0 for arg in args)
+    if not any(depths):
         return implementation(args, context)
-    if all(is_eager_sequence(arg) for arg in vector_args):
-        return _vectorize_eager_resolved(implementation, args, context, extension)
-    return (
-        LazyList(_vectorize_lazy_resolved(implementation, args, context, extension)),
+    return _vectorize_resolved_depths(
+        implementation,
+        args,
+        context,
+        depths,
+        extension,
     )
 
 
@@ -5234,17 +5209,13 @@ def _vectorize_function(
         vm.format_value,
         vm.call_value_overload,
     )
-    result = (
-        _vectorize_resolved_depths(
-            implementation,
-            args,
-            context,
-            resolved_depths,
-            extension,
-            stop_at_zero=True,
-        )
-        if depths or target_ranks
-        else _vectorize_resolved(implementation, args, context, extension)
+    result = _vectorize_resolved_depths(
+        implementation,
+        args,
+        context,
+        resolved_depths,
+        extension,
+        stop_at_zero=bool(depths or target_ranks),
     )
     ownership_args = (*args, *_extension_owned_values(extension))
     return _bind_lazy_result_owners(ownership_args, result)
@@ -5296,55 +5267,6 @@ def _vectorize_eager_kernel(
     return _transpose_vectorized_items(result_items)
 
 
-def _vectorize_eager(
-    overload: BuiltinOverload,
-    args: tuple[Any, ...],
-    context: RuntimeContext,
-) -> tuple[Any, ...]:
-    """Vectorize eager during VM execution."""
-    vector_lengths = {len(arg) for arg in args if is_eager_sequence(arg)}
-    if len(vector_lengths) != 1:
-        raise RuntimeError("cannot vectorise lists with different lengths")
-
-    result_items = []
-    for index in range(next(iter(vector_lengths))):
-        item_args = tuple(arg[index] if is_eager_sequence(arg) else arg for arg in args)
-        result_items.append(_vectorize(overload, item_args, context))
-
-    return _transpose_vectorized_items(result_items)
-
-
-def _vectorize_eager_resolved(
-    implementation: Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]],
-    args: tuple[Any, ...],
-    context: RuntimeContext,
-    extension: _RuntimeVectorExtension | None = None,
-) -> tuple[Any, ...]:
-    """Vectorize eager resolved during VM execution."""
-    vector_lengths = tuple(len(arg) for arg in args if is_eager_sequence(arg))
-    if not vector_lengths:
-        raise _CannotVectorize
-    if extension is None and len(set(vector_lengths)) != 1:
-        raise RuntimeError("cannot vectorise lists with different lengths")
-
-    result_items = []
-    for index in range(max(vector_lengths)):
-        item_args = tuple(
-            (
-                arg[index]
-                if is_eager_sequence(arg) and index < len(arg)
-                else (_MISSING_VECTOR_ITEM if is_eager_sequence(arg) else arg)
-            )
-            for arg in args
-        )
-        item_args = _extend_vector_args(item_args, extension, context)
-        result_items.append(
-            _vectorize_resolved(implementation, item_args, context, extension)
-        )
-
-    return _transpose_vectorized_items(result_items)
-
-
 def _vectorize_eager_resolved_depths(
     implementation: Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]],
     args: tuple[Any, ...],
@@ -5389,51 +5311,6 @@ def _vectorize_eager_resolved_depths(
         )
 
     return _transpose_vectorized_items(result_items)
-
-
-def _vectorize_lazy(
-    overload: BuiltinOverload,
-    args: tuple[Any, ...],
-    context: RuntimeContext,
-):
-    """Vectorize lazy during VM execution."""
-    sentinel = object()
-    iterators = tuple(iter(arg) if is_list_like(arg) else None for arg in args)
-    for items in zip_longest(
-        *(iterator for iterator in iterators if iterator is not None),
-        fillvalue=sentinel,
-    ):
-        if sentinel in items:
-            raise RuntimeError("cannot vectorise lists with different lengths")
-        item_iter = iter(items)
-        item_args = tuple(next(item_iter) if is_list_like(arg) else arg for arg in args)
-        result = _vectorize(overload, item_args, context)
-        if len(result) != 1:
-            raise RuntimeError("lazy vectorised overload must return one value")
-        yield result[0]
-
-
-def _vectorize_lazy_resolved(
-    implementation: Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]],
-    args: tuple[Any, ...],
-    context: RuntimeContext,
-    extension: _RuntimeVectorExtension | None = None,
-):
-    """Vectorize lazy resolved during VM execution."""
-    iterators = tuple(iter(arg) if is_list_like(arg) else None for arg in args)
-    for items in zip_longest(
-        *(iterator for iterator in iterators if iterator is not None),
-        fillvalue=_MISSING_VECTOR_ITEM,
-    ):
-        if extension is None and _MISSING_VECTOR_ITEM in items:
-            raise RuntimeError("cannot vectorise lists with different lengths")
-        item_iter = iter(items)
-        item_args = tuple(next(item_iter) if is_list_like(arg) else arg for arg in args)
-        item_args = _extend_vector_args(item_args, extension, context)
-        result = _vectorize_resolved(implementation, item_args, context, extension)
-        if len(result) != 1:
-            raise RuntimeError("lazy vectorised overload must return one value")
-        yield result[0]
 
 
 def _vectorize_lazy_resolved_depths(
@@ -5946,11 +5823,6 @@ def _bind_match_name(bindings: dict[str, Any], name: str, value: Any) -> bool:
         return bindings[name] == value
     bindings[name] = value
     return True
-
-
-def _is_rest_pattern(pattern: object) -> bool:
-    """Return whether the value is rest pattern."""
-    return isinstance(pattern, tuple) and bool(pattern) and pattern[0] == "rest"
 
 
 def _pop_index_values(
