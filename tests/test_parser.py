@@ -1355,6 +1355,23 @@ end
         self.assertIsInstance(node.cases[1].patterns[0], OrPatternNode)
         self.assertIsInstance(node.cases[2].patterns[0], OrPatternNode)
 
+    def test_parses_multiline_list_with_trailing_comma(self):
+        [node] = parse("""[
+1,
+]""")
+
+        self.assertEqual(node.items, ((NumberLiteralNode("1"),),))
+
+    def test_parses_multiline_list_with_newline_before_closer(self):
+        [node] = parse("""[1,
+2
+]""")
+
+        self.assertEqual(
+            node.items,
+            ((NumberLiteralNode("1"),), (NumberLiteralNode("2"),)),
+        )
+
     def test_parses_list_literal_as_item_expressions(self):
         [node] = parse('[1, +(2, 3), "x"]')
 

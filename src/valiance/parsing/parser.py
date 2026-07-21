@@ -2385,11 +2385,17 @@ class Parser:
         if self._match(closer):
             return ()
         while True:
-            items.append(self._chain_until({TokenKind.COMMA, closer}))
+            item = self._chain_until({TokenKind.COMMA, TokenKind.NEWLINE, closer})
+            if not item:
+                self._error("expected expression")
+            items.append(item)
+            self._skip_newlines()
             if self._match(closer):
                 return tuple(items)
             self._expect(TokenKind.COMMA)
             self._skip_newlines()
+            if self._match(closer):
+                return tuple(items)
 
     def _argument_expressions(
         self, closer: TokenKind
