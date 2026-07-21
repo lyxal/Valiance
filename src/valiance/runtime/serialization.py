@@ -10,6 +10,8 @@ from valiance.runtime.bytecode import (
     ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
+    IndexOperationSpec,
+    IndexSelectorSpec,
     Instruction,
     ObjectConstructorReference,
     OpCode,
@@ -25,7 +27,7 @@ from valiance.vtypes import (
     Variance,
 )
 
-MAGIC = b"VLNCBC\x18"
+MAGIC = b"VLNCBC\x19"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -90,6 +92,7 @@ _EXTENSION_RULE_REFERENCE = 0x08
 _VECTOR_EXTENSION_REFERENCE = 0x09
 _OBJECT_CONSTRUCTOR_REFERENCE = 0x0A
 _BOOL = 0x0B
+_INDEX_OPERATION_SPEC = 0x0C
 
 
 class BytecodeFormatError(Exception):
@@ -232,8 +235,22 @@ class _Writer:
         elif isinstance(value, ObjectConstructorReference):
             self.u8(_OBJECT_CONSTRUCTOR_REFERENCE)
             self.object_constructor_reference(value)
+        elif isinstance(value, IndexOperationSpec):
+            self.u8(_INDEX_OPERATION_SPEC)
+            self.index_operation_spec(value)
         else:
             raise BytecodeFormatError(f"cannot serialize bytecode value {value!r}")
+
+    def index_operation_spec(self, spec: IndexOperationSpec) -> None:
+        """Encode one named indexed-read or indexed-write payload."""
+        self.u32(len(spec.selectors))
+        for selector in spec.selectors:
+            self.bool(selector.is_slice)
+            self.bool(selector.has_start)
+            self.bool(selector.has_stop)
+            self.bool(selector.has_step)
+        self.bool(spec.spread)
+        self.bool(spec.grouped_update)
 
     def bool(self, value: bool) -> None:
         """Encode a Boolean presence byte."""
@@ -456,7 +473,26 @@ class _Reader:
             return self.vector_extension_reference()
         if tag == _OBJECT_CONSTRUCTOR_REFERENCE:
             return self.object_constructor_reference()
+        if tag == _INDEX_OPERATION_SPEC:
+            return self.index_operation_spec()
         raise BytecodeFormatError(f"unknown bytecode value tag {tag}")
+
+    def index_operation_spec(self) -> IndexOperationSpec:
+        """Decode one named indexed-read or indexed-write payload."""
+        selectors = tuple(
+            IndexSelectorSpec(
+                is_slice=self.bool(),
+                has_start=self.bool(),
+                has_stop=self.bool(),
+                has_step=self.bool(),
+            )
+            for _ in range(self.u32())
+        )
+        return IndexOperationSpec(
+            selectors=selectors,
+            spread=self.bool(),
+            grouped_update=self.bool(),
+        )
 
     def bool(self) -> bool:
         """Decode a Boolean byte and validate its representation."""

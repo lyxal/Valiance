@@ -9,6 +9,8 @@ from valiance.runtime.bytecode import (
     ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
+    IndexOperationSpec,
+    IndexSelectorSpec,
     Instruction,
     OpCode,
     Program,
@@ -20,6 +22,31 @@ from valiance.runtime.runtime_values import RuntimeNumber
 
 
 class BytecodeSerializationTests(unittest.TestCase):
+    def test_index_operation_specs_round_trip_as_named_payloads(self):
+        spec = IndexOperationSpec(
+            selectors=(
+                IndexSelectorSpec(False, True, False, False),
+                IndexSelectorSpec(True, True, True, True),
+            ),
+            spread=True,
+            grouped_update=True,
+        )
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.GET_INDEX, spec),
+                    Instruction(OpCode.RETURN),
+                ),
+                name="<main>",
+            )
+        )
+
+        decoded = loads(dumps(program))
+
+        self.assertEqual(decoded, program)
+        self.assertIsInstance(decoded.main.instructions[0].arg, IndexOperationSpec)
+        self.assertEqual(spec.value_count, 4)
+
     def test_boolean_constants_preserve_boolean_type(self):
         for value in (False, True):
             with self.subTest(value=value):
@@ -226,7 +253,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x18"))
+        self.assertTrue(data.startswith(b"VLNCBC\x19"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)

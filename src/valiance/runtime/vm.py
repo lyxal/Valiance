@@ -19,6 +19,8 @@ from valiance.elements.builtins import (
 from valiance.runtime.bytecode import (
     FunctionCode,
     FunctionSetCode,
+    IndexOperationSpec,
+    IndexSelectorSpec,
     ObjectConstructorReference,
     OpCode,
     Program,
@@ -2354,7 +2356,7 @@ class VirtualMachine:
                                     _get_index(receiver, instruction.arg, values, self),
                                     self,
                                 )
-                                if instruction.arg[1]:
+                                if instruction.arg.spread:
                                     if not isinstance(result, list):
                                         raise RuntimeError(
                                             "spread indexing requires a list result"
@@ -5841,22 +5843,20 @@ def _bind_match_name(bindings: dict[str, Any], name: str, value: Any) -> bool:
 
 def _pop_index_values(
     stack: list[Any],
-    spec: tuple[tuple[tuple[int, int, int, int], ...], int, int],
+    spec: IndexOperationSpec,
 ) -> list[tuple[bool, Any, Any, Any]]:
-    """Pop index values during VM execution."""
-    if spec[0] == ((0, 1, 0, 0),):
+    """Pop the runtime values described by an index-operation payload."""
+    if spec.selectors == (
+        IndexSelectorSpec(False, True, False, False),
+    ):
         return [(False, _pop(stack, "index"), None, None)]
-    value_count = sum(
-        has_start + has_stop + has_step
-        for _, has_start, has_stop, has_step in spec[0]
-    )
-    values = iter(_pop_many(stack, value_count))
+    values = iter(_pop_many(stack, spec.value_count))
     selectors = []
-    for is_slice, has_start, has_stop, has_step in spec[0]:
-        start = next(values) if has_start else None
-        stop = next(values) if has_stop else None
-        step = next(values) if has_step else None
-        selectors.append((bool(is_slice), start, stop, step))
+    for selector in spec.selectors:
+        start = next(values) if selector.has_start else None
+        stop = next(values) if selector.has_stop else None
+        step = next(values) if selector.has_step else None
+        selectors.append((selector.is_slice, start, stop, step))
     return selectors
 
 
@@ -5878,7 +5878,7 @@ def _consume_receiver_result(
 
 def _get_index(
     receiver: Any,
-    spec: tuple[tuple[tuple[int, int, int, int], ...], int, int],
+    spec: IndexOperationSpec,
     selectors: list[tuple[bool, Any, Any, Any]],
     vm: VirtualMachine,
 ) -> Any:
@@ -5888,7 +5888,7 @@ def _get_index(
         if selection is not None:
             return _gather_selection(receiver, selection)
     if len(selectors) > 1 and all(not item[0] for item in selectors):
-        grouped_update = len(spec) > 2 and bool(spec[2])
+        grouped_update = spec.grouped_update
         if grouped_update:
             _validate_distinct_selection_indices(receiver, selectors)
         if is_list_like(receiver) and not is_eager_sequence(receiver):
@@ -5909,7 +5909,7 @@ def _get_index(
 
 def _set_index(
     receiver: Any,
-    spec: tuple[tuple[tuple[int, int, int, int], ...], int, int],
+    spec: IndexOperationSpec,
     selectors: list[tuple[bool, Any, Any, Any]],
     value: Any,
     *,
@@ -5917,7 +5917,7 @@ def _set_index(
     vm: VirtualMachine,
 ) -> Any:
     """Update index during VM execution."""
-    grouped_update = len(spec) > 2 and bool(spec[2])
+    grouped_update = spec.grouped_update
     if len(selectors) == 1 and not selectors[0][0]:
         selection = _selection_positions(receiver, selectors[0][1], vm)
         if selection is not None:

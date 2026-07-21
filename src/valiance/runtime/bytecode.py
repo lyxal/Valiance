@@ -70,6 +70,35 @@ class Instruction:
     arg: Any = None
 
 
+@dataclass(frozen=True, slots=True)
+class IndexSelectorSpec:
+    """Static stack shape for one index or slice selector."""
+
+    is_slice: bool
+    has_start: bool
+    has_stop: bool
+    has_step: bool
+
+    @property
+    def value_count(self) -> int:
+        """Return how many runtime stack values encode this selector."""
+        return int(self.has_start) + int(self.has_stop) + int(self.has_step)
+
+
+@dataclass(frozen=True, slots=True)
+class IndexOperationSpec:
+    """Named bytecode payload for an indexed read or write."""
+
+    selectors: tuple[IndexSelectorSpec, ...]
+    spread: bool = False
+    grouped_update: bool = False
+
+    @property
+    def value_count(self) -> int:
+        """Return the total number of selector values consumed from the stack."""
+        return sum(selector.value_count for selector in self.selectors)
+
+
 @lru_cache(maxsize=None)
 def decode_stack_shuffle_spec(
     value: object,

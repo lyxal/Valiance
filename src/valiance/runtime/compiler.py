@@ -87,6 +87,8 @@ from valiance.runtime.bytecode import (
     ExtensionRuleReference,
     FunctionCode,
     FunctionSetCode,
+    IndexOperationSpec,
+    IndexSelectorSpec,
     Instruction,
     ObjectConstructorReference,
     OpCode,
@@ -2036,20 +2038,20 @@ def _index_spec(
     selectors: tuple[IndexSelector, ...],
     spread: bool,
     grouped_update: bool = False,
-) -> tuple[tuple[tuple[int, int, int, int], ...], int, int]:
-    """Compute index spec during typed-AST bytecode lowering."""
-    return (
-        tuple(
-            (
-                int(selector.is_slice),
-                int(bool(selector.start)),
-                int(bool(selector.stop)),
-                int(bool(selector.step)),
+) -> IndexOperationSpec:
+    """Describe the runtime stack shape of an indexed read or write."""
+    return IndexOperationSpec(
+        selectors=tuple(
+            IndexSelectorSpec(
+                is_slice=selector.is_slice,
+                has_start=bool(selector.start),
+                has_stop=bool(selector.stop),
+                has_step=bool(selector.step),
             )
             for selector in selectors
         ),
-        int(spread),
-        int(grouped_update),
+        spread=spread,
+        grouped_update=grouped_update,
     )
 
 
