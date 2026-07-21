@@ -5921,6 +5921,10 @@ def _set_index(
     if len(selectors) == 1 and not selectors[0][0]:
         selection = _selection_positions(receiver, selectors[0][1], vm)
         if selection is not None:
+            if grouped_update and len({_selection_identity(item) for item in selection}) != len(selection):
+                raise RuntimeError(
+                    "whole-selection augmented assignment contains duplicate indices"
+                )
             return _set_selected_positions(
                 receiver,
                 selection,
@@ -5968,6 +5972,8 @@ def _selection_positions(
         if len(mask) > len(receiver):
             raise RuntimeError("Boolean mask is longer than the indexed value")
         return [index for index, flag in enumerate(mask) if _truthy(flag)]
+    if is_list_like(selector):
+        return _sequence_selection_positions(receiver, selector)
     if not isinstance(selector, (FunctionValue, OverloadedFunctionValue)):
         return None
     if isinstance(receiver, dict):
@@ -5991,6 +5997,58 @@ def _selection_positions(
     raise RuntimeError("function selectors require a list, string, or dictionary")
 
 
+def _selection_identity(value: Any) -> Any:
+    """Return a hashable identity for scalar or multidimensional positions."""
+    if _is_path(value):
+        return tuple(_selection_identity(item) for item in value)
+    return value
+
+
+def _sequence_selection_positions(receiver: Any, selector: Any) -> list[Any]:
+    """Resolve an Integer+ or Integer++ selector through index-path semantics."""
+    requested = list(selector)
+    if isinstance(receiver, dict):
+        for key in requested:
+            _index_one(receiver, key)
+        return requested
+    if not (isinstance(receiver, str) or is_list_like(receiver)):
+        raise RuntimeError(
+            "a sequence selector requires a list, string, or dictionary receiver"
+        )
+    paths = any(_is_path(value) for value in requested)
+    if paths and not all(_is_path(value) for value in requested):
+        raise RuntimeError("multidimensional selectors require one path per item")
+    if paths:
+        for path in requested:
+            if not path:
+                raise RuntimeError("multidimensional index paths cannot be empty")
+            _index_path(receiver, path)
+        return requested
+    if not is_eager_sequence(receiver) and not isinstance(receiver, str):
+        positions: list[int] = []
+        for value in requested:
+            index = _int_index(value)
+            if index < 0:
+                raise RuntimeError(
+                    "lazy list selection does not support negative indices"
+                )
+            positions.append(index)
+        return positions
+    length = len(receiver)
+    positions = []
+    for value in requested:
+        index = _int_index(value)
+        if not -length <= index < length:
+            raise PanicSignal(
+                _fault_object(
+                    "IndexFault",
+                    _index_fault_message(index, length),
+                )
+            )
+        positions.append(_normal_index(index, length))
+    return positions
+
+
 def _gather_selection(receiver: Any, positions: list[Any]) -> Any:
     """Gather selected positions while preserving the receiver collection kind."""
     if isinstance(receiver, str):
@@ -5998,27 +6056,15 @@ def _gather_selection(receiver: Any, positions: list[Any]) -> Any:
     if isinstance(receiver, dict):
         return DictValue((key, receiver[key]) for key in positions)
     if is_eager_sequence(receiver):
-        return _copy_eager_list(receiver, (receiver[index] for index in positions))
+        return _copy_eager_list(
+            receiver,
+            (_index_path(receiver, position) for position in positions),
+        )
     if is_list_like(receiver):
-        wanted = iter(positions)
-        try:
-            target = next(wanted)
-        except StopIteration:
-            return LazyList(())
-
-        def selected_items():
-            """Yield selected lazy-list items in source order."""
-            nonlocal target
-            for index, item in enumerate(receiver):
-                if index != target:
-                    continue
-                yield item
-                try:
-                    target = next(wanted)
-                except StopIteration:
-                    return
-
-        return LazyList(selected_items())
+        return _index_many_lazy(
+            receiver,
+            tuple(RuntimeNumber(index) for index in positions),
+        )
     raise RuntimeError("value is not selectable")
 
 
@@ -6031,6 +6077,13 @@ def _set_selected_positions(
     in_place: bool,
 ) -> Any:
     """Replace values chosen by a mask or predicate selector."""
+    if positions and all(_is_path(position) for position in positions):
+        return _set_selected_paths(
+            receiver,
+            positions,
+            value,
+            grouped_update=grouped_update,
+        )
     if isinstance(receiver, dict):
         if isinstance(value, dict):
             if set(value) != set(positions):
@@ -6094,6 +6147,28 @@ def _set_selected_positions(
             yield replacement_by_index.get(index, item)
 
     return LazyList(updated_items())
+
+
+def _set_selected_paths(
+    receiver: Any,
+    paths: list[Any],
+    value: Any,
+    *,
+    grouped_update: bool,
+) -> Any:
+    """Scatter replacement values through multidimensional index paths."""
+    if is_list_like(value):
+        replacements = list(value)
+        if len(replacements) != len(paths):
+            raise RuntimeError("selection assignment replacement length mismatch")
+    elif grouped_update:
+        raise RuntimeError("augmented path selection must return a list")
+    else:
+        replacements = [value] * len(paths)
+    updated = receiver
+    for path, replacement in zip(paths, replacements, strict=True):
+        updated = _set_index_path(updated, path, replacement)
+    return updated
 
 
 def _validate_distinct_selection_indices(

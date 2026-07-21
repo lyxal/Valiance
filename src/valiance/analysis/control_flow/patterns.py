@@ -141,22 +141,45 @@ def _boolean_result_type() -> T.Type:
     return T.Tagged(T.Number, T.DataTag("boolean"))
 
 
+def _selector_sequence_item_type(receiver_type: T.Type) -> T.Type | None:
+    """Return the element type accepted by a sequence selector for a receiver."""
+    receiver = T.normalize(receiver_type)
+    if isinstance(receiver, T.TaggedType):
+        return _selector_sequence_item_type(receiver.inner)
+    if isinstance(receiver, T.UnionType):
+        items = tuple(_selector_sequence_item_type(item) for item in receiver.items)
+        if any(item is None for item in items):
+            return None
+        return T.U(*items)
+    if isinstance(receiver, (T.ListExactType, T.ListMinType, T.ListRuggedType)) or (
+        isinstance(receiver, T.NominalType) and receiver.name.text == "String"
+    ):
+        return T.Integer
+    if (
+        isinstance(receiver, T.NominalType)
+        and receiver.name.text == "Dict"
+        and len(receiver.args) == 2
+    ):
+        return receiver.args[0]
+    return None
+
+
 def _selector_mode(
     receiver_type: T.Type,
     selector_type: T.Type,
     ctx: T.Context,
 ) -> str | None:
-    """Classify a single selector as a predicate or Boolean mask when applicable."""
+    """Classify one whole-selection selector by its semantic operation."""
     receiver = T.normalize(receiver_type)
     selector = T.normalize(selector_type)
     if isinstance(receiver, T.TaggedType):
         return _selector_mode(receiver.inner, selector, ctx)
     if isinstance(receiver, T.UnionType):
-        modes = {
-            _selector_mode(item, selector, ctx)
-            for item in receiver.items
-        }
+        modes = {_selector_mode(item, selector, ctx) for item in receiver.items}
         return modes.pop() if len(modes) == 1 and None not in modes else None
+
+    # Boolean-tagged sequences are masks even though Integer is also the normal
+    # positional index type. This ordering preserves the semantic distinction.
     if isinstance(selector, T.TaggedType):
         if any(
             tag.name == "boolean" and not tag.absent and tag.depth == 1
@@ -167,8 +190,26 @@ def _selector_mode(
             if isinstance(
                 receiver,
                 (T.ListExactType, T.ListMinType, T.ListRuggedType),
-            ) or (isinstance(receiver, T.NominalType) and receiver.name.text == "String"):
+            ) or (
+                isinstance(receiver, T.NominalType)
+                and receiver.name.text == "String"
+            ):
                 return "mask"
+
+    if (
+        isinstance(receiver, (T.ListExactType, T.ListMinType, T.ListRuggedType))
+        and T.assignable(selector, T.ExactList(T.Integer, rank=2), ctx)
+    ):
+        return "paths"
+
+    sequence_item = _selector_sequence_item_type(receiver)
+    if sequence_item is not None and T.assignable(
+        selector,
+        T.ExactList(sequence_item),
+        ctx,
+    ):
+        return "sequence"
+
     if isinstance(receiver, (T.ListExactType, T.ListMinType, T.ListRuggedType)):
         expected = T.Fn((T.collection_item_type(receiver),), (_boolean_result_type(),))
     elif isinstance(receiver, T.NominalType) and receiver.name.text == "String":
@@ -186,7 +227,7 @@ def _selector_mode(
 
 def _selection_type(receiver_type: T.Type, mode: str | None) -> T.Type | None:
     """Return the gathered value type for a mask or predicate selector."""
-    if mode not in {"mask", "predicate"}:
+    if mode not in {"mask", "predicate", "sequence", "paths"}:
         return None
     typ = T.normalize(receiver_type)
     if isinstance(typ, T.TaggedType):
@@ -196,6 +237,8 @@ def _selection_type(receiver_type: T.Type, mode: str | None) -> T.Type | None:
         selected = tuple(_selection_type(item, mode) for item in typ.items)
         return None if any(item is None for item in selected) else T.U(*selected)
     if isinstance(typ, (T.ListExactType, T.ListMinType, T.ListRuggedType)):
+        if mode == "paths":
+            return T.ExactList(typ.base)
         return typ
     if isinstance(typ, T.NominalType) and typ.name.text in {"String", "Dict"}:
         return typ
@@ -294,15 +337,20 @@ def _grouped_update_receiver(typ: T.Type) -> bool:
     )
 
 
-def _selection_replacement_item_type(receiver_type: T.Type) -> T.Type:
+def _selection_replacement_item_type(
+    receiver_type: T.Type,
+    mode: str | None = None,
+) -> T.Type:
     """Return the scalar value type broadcast by selection replacement."""
     typ = T.normalize(receiver_type)
     if isinstance(typ, T.TaggedType):
-        return _selection_replacement_item_type(typ.inner)
+        return _selection_replacement_item_type(typ.inner, mode)
     if isinstance(typ, T.UnionType):
-        return T.U(*(_selection_replacement_item_type(item) for item in typ.items))
+        return T.U(*(
+            _selection_replacement_item_type(item, mode) for item in typ.items
+        ))
     if isinstance(typ, T.CollectionType):
-        return T.collection_item_type(typ)
+        return typ.base if mode == "paths" else T.collection_item_type(typ)
     if isinstance(typ, T.NominalType) and typ.name.text == "String":
         return T.String
     if isinstance(typ, T.NominalType) and typ.name.text == "Dict" and len(typ.args) == 2:

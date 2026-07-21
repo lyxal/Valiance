@@ -1180,6 +1180,8 @@ $[1:3] = 4
 - Whole-selection augmented assignment is available for lists and strings. It must return the same collection kind and a compatible element type, with exactly one result item or character per selected position.
 - Repeated positions in a multiple-index augmented assignment are a runtime error; no replacement is stored.
 - A list, string, or dictionary may also be indexed by a selector function. List and string selectors accept one item; dictionary selectors accept the key and value. The function must return `#boolean Number`, and the selected values retain their original collection kind.
+- Any expression valid in a list item may appear inside one index selector. Its top result must be `Integer`, `Integer+`, `Integer++`, an applicable Boolean selector function, or a `#boolean+ Number+` mask.
+- `Integer+` is an ordered sequence of positional indices. `Integer++` is an ordered sequence of multidimensional paths: each inner `Integer+` is applied as chained indexing. For example, `$matrix[[[0, 1], [1, 0]]]` gathers the same values as the paths `$matrix[[0, 1]]` and `$matrix[[1, 0]]`. Replacement and augmented assignment use the same paths.
 - Lists and strings may be indexed by a `#boolean+ Number+` mask. True positions are selected. A shorter mask truncates selection at the mask length; a mask longer than the receiver is a runtime error.
 - Function and mask selectors work with normal indexing, normal assignment, and augmented assignment. They change only the selected positions: replacement and whole-selection augmented-assignment rules remain otherwise unchanged.
 

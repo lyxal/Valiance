@@ -295,7 +295,10 @@ def _index_set_node(
             grouped_update=grouped,
         )
     if selector_mode is not None:
-        replacement_item = _patterns._selection_replacement_item_type(receiver_type)
+        replacement_item = _patterns._selection_replacement_item_type(
+            receiver_type,
+            selector_mode,
+        )
         if T.assignable(value_type, item_type, self.env.context) or (
             not grouped
             and T.assignable(value_type, replacement_item, self.env.context)

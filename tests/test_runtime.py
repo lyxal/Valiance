@@ -3807,6 +3807,131 @@ println(triple([1, 2, 3, 4, 5]))
                 "$data"
             )
 
+    def test_list_valued_selector_gathers_indices_in_declared_order(self):
+        source = (
+            "$x = [1, 2, 3, 4, 5]\n"
+            "$y = [1, 2, 4, 3, 0]\n"
+            "$x[$y]"
+        )
+        expected = [[
+            RuntimeNumber("2"),
+            RuntimeNumber("3"),
+            RuntimeNumber("5"),
+            RuntimeNumber("4"),
+            RuntimeNumber("1"),
+        ]]
+        self.assertEqual(execute(source), expected)
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        restored = loads(dumps(compile_program(typed, optimize=False)))
+        self.assertEqual(run(restored), expected)
+
+    def test_list_valued_selector_supports_strings_and_dictionaries(self):
+        self.assertEqual(
+            execute('$text = "abcde"\n$indices = [4, 0, 2]\n$text[$indices]'),
+            ["eac"],
+        )
+        self.assertEqual(
+            execute(
+                '$data = dict{"a" => 1, "b" => 2}\n'
+                '$keys = ["b", "a"]\n'
+                "$data[$keys]"
+            ),
+            [{"b": RuntimeNumber("2"), "a": RuntimeNumber("1")}],
+        )
+
+    def test_list_valued_selector_supports_assignment_and_augmentation(self):
+        self.assertEqual(
+            execute(
+                "$data = [1, 2, 3, 4]\n"
+                "$indices = [0, 2]\n"
+                "$data[$indices] = 9\n"
+                "$data"
+            ),
+            [[
+                RuntimeNumber("9"),
+                RuntimeNumber("2"),
+                RuntimeNumber("9"),
+                RuntimeNumber("4"),
+            ]],
+        )
+        self.assertEqual(
+            execute(
+                "$data = [1, 2, 3, 4]\n"
+                "$indices = [0, 2]\n"
+                "$data[$indices] := 1 rotate\n"
+                "$data"
+            ),
+            [[
+                RuntimeNumber("3"),
+                RuntimeNumber("2"),
+                RuntimeNumber("1"),
+                RuntimeNumber("4"),
+            ]],
+        )
+
+    def test_list_valued_augmented_selector_rejects_duplicate_indices(self):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "whole-selection augmented assignment contains duplicate indices",
+        ):
+            execute(
+                "$data = [1, 2, 3]\n"
+                "$indices = [1, 1]\n"
+                "$data[$indices] := 1 rotate"
+            )
+
+    def test_integer_rank_two_selector_gathers_multidimensional_paths(self):
+        source = (
+            "$matrix = [[1, 2], [3, 4]]\n"
+            "$paths = [[0, 1], [1, 0]]\n"
+            "$matrix[$paths]"
+        )
+        expected = [[RuntimeNumber("2"), RuntimeNumber("3")]]
+        self.assertEqual(execute(source), expected)
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        restored = loads(dumps(compile_program(typed, optimize=False)))
+        self.assertEqual(run(restored), expected)
+
+    def test_integer_rank_two_selector_supports_assignment_and_augmentation(self):
+        self.assertEqual(
+            execute(
+                "$matrix = [[1, 2], [3, 4]]\n"
+                "$matrix[[[0, 1], [1, 0]]] = 9\n"
+                "$matrix"
+            ),
+            [[
+                [RuntimeNumber("1"), RuntimeNumber("9")],
+                [RuntimeNumber("9"), RuntimeNumber("4")],
+            ]],
+        )
+        self.assertEqual(
+            execute(
+                "$matrix = [[1, 2], [3, 4]]\n"
+                "$matrix[[[0, 1], [1, 0]]] := 1 rotate\n"
+                "$matrix"
+            ),
+            [[
+                [RuntimeNumber("1"), RuntimeNumber("3")],
+                [RuntimeNumber("2"), RuntimeNumber("4")],
+            ]],
+        )
+
+    def test_integer_rank_two_augmented_selector_rejects_duplicate_paths(self):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "whole-selection augmented assignment contains duplicate indices",
+        ):
+            execute(
+                "$matrix = [[1, 2], [3, 4]]\n"
+                "$matrix[[[0, 1], [0, 1]]] := 1 rotate"
+            )
+
     def test_boolean_mask_indexes_lists_and_strings(self):
         self.assertEqual(
             execute("[1, 2, 3, 4] $[[true, false, true]]"),
