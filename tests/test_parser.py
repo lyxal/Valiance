@@ -74,6 +74,7 @@ from valiance.vtypes import (
     Tup,
     TupleTypeItem,
     TupVariadic,
+    U,
     V,
     optional,
     same,
@@ -1396,6 +1397,27 @@ end
                 N(Symbol("Result"), Number, String),
             )
         )
+        self.assertTrue(
+            same(
+                parse_type("(Number | Number+ | Number++)"),
+                U(Number, C(ListExactType, Number), C(ListExactType, Number, 2)),
+            )
+        )
+
+    def test_parenthesized_union_is_valid_as_an_unnamed_parameter_type(self):
+        [node] = parse(
+            'define foo(:(Number | Number+ | Number++)) => println "Fits"'
+        )
+
+        self.assertEqual(
+            node.function.params[0].typ,
+            U(Number, C(ListExactType, Number), C(ListExactType, Number, 2)),
+        )
+
+    def test_parenthesized_type_is_grouping_not_function_shorthand(self):
+        with self.assertRaises(ParseError):
+            parse_type("(Number, String -> Number)")
+
         self.assertEqual(
             parse_type("T(.bar: U, .baz: String)"),
             Row(

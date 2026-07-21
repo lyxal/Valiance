@@ -2931,21 +2931,9 @@ class Parser:
                 optional_depth,
             )
         if self._match(TokenKind.LPAREN):
-            params: list[Type] = []
-            if not self._check(TokenKind.ARROW):
-                while True:
-                    params.append(self.parse_type_expression())
-                    if not self._match(TokenKind.COMMA):
-                        break
-            self._expect(TokenKind.ARROW)
-            returns: list[Type] = []
-            if not self._check(TokenKind.RPAREN):
-                while True:
-                    returns.append(self.parse_type_expression())
-                    if not self._match(TokenKind.COMMA):
-                        break
+            typ = self.parse_type_expression()
             self._expect(TokenKind.RPAREN)
-            return Fn(params, returns)
+            return typ
         self._error("expected type")
 
     def _anonymous_trait_type(self) -> Type:

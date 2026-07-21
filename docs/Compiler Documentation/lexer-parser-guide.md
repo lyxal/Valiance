@@ -508,7 +508,7 @@ The type parser currently supports:
 - `None`
 - Bare function type: `Function`, lowered to unknown-shape `T.Fn()`
 - Function types: `Function[Number, String -> Number]`
-- Function shorthand: `(Number, String -> Number)`
+- Parenthesized grouping: `(Number | String)`
 - Tuple types: `{Number, String}`
 - Arbitrary-length tuple parameter types: `{Number...}`,
   `{Number..., String}`, `{Number..., String...}`
