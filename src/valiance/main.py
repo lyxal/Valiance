@@ -29,6 +29,8 @@ from valiance.modules_system.packages import (
     project_entry_path,
     remove_dependency,
     require_manifest,
+    find_project_root,
+    load_manifest,
     upgrade_dependency,
 )
 from valiance.parsing import LexError, ParseError, ParseErrors, Parser, lex, parse
@@ -1467,7 +1469,15 @@ def _tidy_source(
     if add_docstrings:
         rendered = add_missing_docstrings(rendered)
     if apply_format:
-        rendered = format_source(rendered, indent_width=2)
+        add_trailing_commas = True
+        root = find_project_root(source_file or Path.cwd())
+        if root is not None:
+            add_trailing_commas = "trailing-commas" in load_manifest(root).formatting.add
+        rendered = format_source(
+            rendered,
+            indent_width=2,
+            add_trailing_commas=add_trailing_commas,
+        )
     return rendered
 
 

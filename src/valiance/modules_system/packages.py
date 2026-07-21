@@ -126,6 +126,13 @@ class LintSettings:
 
 
 @dataclass(frozen=True)
+class FormatSettings:
+    """Project-wide formatter policy loaded from ``valiance.toml``."""
+
+    add: tuple[str, ...] = ("trailing-commas",)
+
+
+@dataclass(frozen=True)
 class BuildTarget:
     """One named artifact-producing project build target."""
 
@@ -147,6 +154,7 @@ class Manifest:
     dependencies: tuple[Dependency, ...]
     lints: LintSettings = LintSettings()
     builds: dict[str, BuildTarget] = None  # type: ignore[assignment]
+    formatting: FormatSettings = FormatSettings()
 
     def __post_init__(self) -> None:
         """Normalize omitted build-target mappings for compatibility."""
@@ -191,6 +199,7 @@ def load_manifest(root: Path) -> Manifest:
     entries = data.get("entries", {})
     dependencies = data.get("dependencies", {})
     lints = data.get("lints", {})
+    formatting = data.get("format", {})
     builds = data.get("build", {})
     if not isinstance(project, dict):
         raise PackageError("[project] must be a table")
@@ -200,6 +209,8 @@ def load_manifest(root: Path) -> Manifest:
         raise PackageError("[dependencies] must be a table")
     if not isinstance(lints, dict):
         raise PackageError("[lints] must be a table")
+    if not isinstance(formatting, dict):
+        raise PackageError("[format] must be a table")
     if not isinstance(builds, dict):
         raise PackageError("[build] must be a table")
     unknown_lint_keys = set(lints) - {"enabled", "disable"}
@@ -224,6 +235,18 @@ def load_manifest(root: Path) -> Manifest:
     if unknown_codes:
         rendered = ", ".join(repr(code) for code in unknown_codes)
         raise PackageError(f"unknown lint code(s) in [lints].disable: {rendered}")
+
+    unknown_format_keys = set(formatting) - {"add"}
+    if unknown_format_keys:
+        names = ", ".join(sorted(map(str, unknown_format_keys)))
+        raise PackageError(f"unknown [format] setting(s): {names}")
+    format_add = formatting.get("add", ["trailing-commas"])
+    if not isinstance(format_add, list) or not all(isinstance(option, str) for option in format_add):
+        raise PackageError("[format].add must be an array of formatter option strings")
+    unknown_format_options = sorted(set(format_add) - {"trailing-commas"})
+    if unknown_format_options:
+        rendered = ", ".join(repr(option) for option in unknown_format_options)
+        raise PackageError(f"unknown formatter option(s) in [format].add: {rendered}")
 
     parsed_entries: dict[str, str] = {}
     for entry_name, entry_path in entries.items():
@@ -298,6 +321,7 @@ def load_manifest(root: Path) -> Manifest:
             tuple(dict.fromkeys(code for code in resolved_lint_codes if code is not None)),
         ),
         parsed_builds,
+        FormatSettings(tuple(dict.fromkeys(format_add))),
     )
 
 
@@ -845,7 +869,7 @@ def remove_dependency(name: str, *, start: Path | None = None) -> Manifest:
     dependencies = _without_dependency(manifest.dependencies, name)
     if len(dependencies) == len(manifest.dependencies):
         raise PackageError(f"dependency {name!r} is not declared")
-    updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies, manifest.lints, manifest.builds)
+    updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies, manifest.lints, manifest.builds, manifest.formatting)
     write_manifest(updated)
     install(manifest.root)
     unused_dir = manifest.root / ".vln" / name
@@ -878,7 +902,7 @@ def upgrade_dependency(
         updated_dependency if dependency.local_name == name else dependency
         for dependency in manifest.dependencies
     )
-    updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies, manifest.lints, manifest.builds)
+    updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies, manifest.lints, manifest.builds, manifest.formatting)
     write_manifest(updated)
     install(manifest.root, progress=progress)
     return updated
@@ -908,6 +932,9 @@ def write_manifest(manifest: Manifest) -> None:
     lines.append("[lints]")
     lines.append(f"enabled = {_toml_value(manifest.lints.enabled)}")
     lines.append(f"disable = {_toml_value(list(manifest.lints.disabled))}")
+    lines.append("")
+    lines.append("[format]")
+    lines.append(f"add = {_toml_value(list(manifest.formatting.add))}")
     lines.append("")
     lines.append("[dependencies]")
     for dependency in sorted(manifest.dependencies, key=lambda item: item.local_name):

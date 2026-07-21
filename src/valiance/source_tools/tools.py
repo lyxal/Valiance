@@ -9,7 +9,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
-from valiance.asts import ASTNode, DefineNode, FunctionParam
+from valiance.asts import ASTNode, DefineNode, FunctionParam, ListLiteralNode
 from valiance.parsing import parse
 from valiance.parsing.lexer import Token, TokenKind, lex
 from valiance.vtypes import show
@@ -275,7 +275,12 @@ def render_html_reference(
     )
 
 
-def format_source(source: str, *, indent_width: int = 2) -> str:
+def format_source(
+    source: str,
+    *,
+    indent_width: int = 2,
+    add_trailing_commas: bool = True,
+) -> str:
     """Normalize leading indentation while preserving source text otherwise.
 
     Valiance indentation is not semantic, so the formatter deliberately avoids
@@ -353,7 +358,47 @@ def format_source(source: str, *, indent_width: int = 2) -> str:
             continue
         frames.append(_FormatFrame(_format_frame_kind(identifiers), original_indent))
 
-    return "".join(rendered_lines)
+    rendered = "".join(rendered_lines)
+    return _add_multiline_list_trailing_commas(rendered) if add_trailing_commas else rendered
+
+
+def _add_multiline_list_trailing_commas(source: str) -> str:
+    """Add a trailing comma to every non-empty multiline list literal."""
+    program = parse(source)
+    starts = {
+        node.location.offset
+        for node in _walk_ast(program)
+        if isinstance(node, ListLiteralNode) and node.location is not None
+    }
+    tokens = lex(source)
+    insertions: list[int] = []
+    pairs = {TokenKind.LBRACKET: TokenKind.RBRACKET, TokenKind.LPAREN: TokenKind.RPAREN, TokenKind.LBRACE: TokenKind.RBRACE}
+    for index, token in enumerate(tokens):
+        if token.kind is not TokenKind.LBRACKET or token.offset not in starts:
+            continue
+        stack = [TokenKind.RBRACKET]
+        close_index = None
+        for cursor in range(index + 1, len(tokens)):
+            current = tokens[cursor]
+            if current.kind in pairs:
+                stack.append(pairs[current.kind])
+            elif stack and current.kind is stack[-1]:
+                stack.pop()
+                if not stack:
+                    close_index = cursor
+                    break
+        if close_index is None or tokens[close_index].line == token.line:
+            continue
+        previous = next(
+            (item for item in reversed(tokens[index + 1:close_index]) if item.kind not in {TokenKind.WHITESPACE, TokenKind.NEWLINE}),
+            None,
+        )
+        if previous is None or previous.kind is TokenKind.COMMA:
+            continue
+        insertions.append(previous.offset + len(previous.raw or previous.value))
+    for offset in reversed(sorted(set(insertions))):
+        source = source[:offset] + "," + source[offset:]
+    return source
 
 
 def _walk_ast(value: Any) -> Iterable[ASTNode]:

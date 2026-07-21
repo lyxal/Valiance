@@ -92,6 +92,22 @@ class SourceToolsTests(unittest.TestCase):
             "end\n",
         )
 
+    def test_format_source_adds_multiline_list_trailing_commas(self):
+        source = "[\n1\n]\n[1,\n2\n]\n[1, 2]\n"
+
+        self.assertEqual(
+            format_source(source),
+            "[\n1,\n]\n[1,\n2,\n]\n[1, 2]\n",
+        )
+
+    def test_format_source_can_disable_trailing_commas(self):
+        source = "[\n1\n]\n"
+
+        self.assertEqual(
+            format_source(source, add_trailing_commas=False),
+            source,
+        )
+
     def test_format_source_preserves_multiline_string_contents(self):
         source = 'define text -> String =>\n"first\n    second"\nend\n'
 

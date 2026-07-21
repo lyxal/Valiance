@@ -51,9 +51,17 @@ alias for `vln tidy --types --stdout` on one file or an inline snippet.
 The type pass fills missing parameter or return annotations and preserves
 signature components that were already written explicitly.
 
-The formatter only normalizes leading indentation. It uses two spaces per
-multiline `=>` block and does not change expression spacing or line wrapping,
-because indentation is not semantically meaningful in Valiance.
+The formatter normalizes leading indentation and adds trailing commas to
+non-empty multiline list literals. It uses two spaces per multiline `=>` block
+and does not otherwise change expression spacing or line wrapping. Projects can
+select additive formatter rules in `valiance.toml`:
+
+```toml
+[format]
+add = ["trailing-commas"]
+```
+
+Use `add = []` to leave multiline-list commas unchanged.
 
 ## Generating an HTML reference
 

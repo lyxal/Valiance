@@ -314,6 +314,25 @@ class MainTests(unittest.TestCase):
                 "end\n",
             )
 
+    def test_main_tidy_respects_project_format_add_options(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "0.1.0"\n\n'
+                '[entries]\nmain = "src/main.vlnc"\n\n'
+                '[format]\nadd = []\n',
+                encoding="utf-8",
+            )
+            source_file = root / "src" / "main.vlnc"
+            source_file.parent.mkdir()
+            source_file.write_text("[\n1\n]\n", encoding="utf-8")
+
+            with patch("pathlib.Path.cwd", return_value=root):
+                exit_code = main(["tidy", "--format"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(source_file.read_text(encoding="utf-8"), "[\n1\n]\n")
+
     def test_main_tidy_without_file_rewrites_whole_project(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
