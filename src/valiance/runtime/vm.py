@@ -7290,14 +7290,16 @@ def _canonicalize_runtime_collection_tag_contract(
         return value
     if isinstance(value, LazyList):
         return LazyList(converted_items(), runtime_rank=value.runtime_rank)
-    converted = list(converted_items())
+    converted, lifted_tags = _lift_common_collection_tags(list(converted_items()))
     if isinstance(value, ListValue):
         value[:] = converted
-        return value
-    if isinstance(value, list):
+        result: Any = value
+    elif isinstance(value, list):
         value[:] = converted
-        return value
-    return converted
+        result = value
+    else:
+        result = converted
+    return update_runtime_tags(result, add=lifted_tags) if lifted_tags else result
 
 
 def _runtime_tag_contract_matches(

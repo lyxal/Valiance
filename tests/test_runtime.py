@@ -3932,6 +3932,27 @@ println(triple([1, 2, 3, 4, 5]))
                 "$matrix[[[0, 1], [0, 1]]] := 1 rotate"
             )
 
+    def test_vectorised_comparison_result_is_a_boolean_mask(self):
+        source = (
+            "$values = [5, 1, 2, 7, 8, 2, 4, 6, 7, 1, 4, 7, 8]\n"
+            "$values[$values < 5]"
+        )
+        expected = [[
+            RuntimeNumber("1"),
+            RuntimeNumber("2"),
+            RuntimeNumber("2"),
+            RuntimeNumber("4"),
+            RuntimeNumber("1"),
+            RuntimeNumber("4"),
+        ]]
+        self.assertEqual(execute(source), expected)
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        restored = loads(dumps(compile_program(typed, optimize=False)))
+        self.assertEqual(run(restored), expected)
+
     def test_boolean_mask_indexes_lists_and_strings(self):
         self.assertEqual(
             execute("[1, 2, 3, 4] $[[true, false, true]]"),
