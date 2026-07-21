@@ -1996,6 +1996,26 @@ def _dynamic_vectorisation_target_rank(
     return parameter_collection.rank
 
 
+def _wrap_vectorised_return(
+    return_type: Type,
+    collection_type: CollectionClass,
+    rank: int,
+) -> Type:
+    """Lift one return through vectorisation while preserving tag depth."""
+    normalized = normalize(return_type)
+    if isinstance(normalized, TaggedType):
+        lifted = tuple(
+            DataTag(tag.name, tag.depth + rank, tag.absent)
+            for tag in normalized.tags
+        )
+        return Tagged(
+            C(collection_type, normalized.inner, rank),
+            *lifted,
+            exact=normalized.exact,
+        )
+    return C(collection_type, normalized, rank)
+
+
 def _wrap_returns_for_vector_depth(
     returns: tuple[Type, ...],
     args: tuple[Type, ...],
@@ -2017,7 +2037,9 @@ def _wrap_returns_for_vector_depth(
         elif vector_type is not type(arg_collection):
             vector_type = ListExactType
     out_type = ArrayExactType if vector_type is ArrayExactType else ListExactType
-    return tuple(C(out_type, ret, vector_rank) for ret in returns)
+    return tuple(
+        _wrap_vectorised_return(ret, out_type, vector_rank) for ret in returns
+    )
 
 
 def _wrap_returns_for_vectorisation(
@@ -2048,8 +2070,13 @@ def _wrap_returns_for_vectorisation(
     )
     output_type = ArrayMinType if array_only else ListMinType
     if minimum_rank > 0:
-        return tuple(C(output_type, ret, minimum_rank) for ret in returns)
-    return tuple(U(ret, C(output_type, ret, 1)) for ret in returns)
+        return tuple(
+            _wrap_vectorised_return(ret, output_type, minimum_rank)
+            for ret in returns
+        )
+    return tuple(
+        U(ret, _wrap_vectorised_return(ret, output_type, 1)) for ret in returns
+    )
 
 
 def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:

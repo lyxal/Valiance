@@ -646,6 +646,23 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(applied.params, (C(ListExactType, Integer), Integer))
         self.assertEqual(applied.actual_returns, (C(ListExactType, Integer),))
 
+    def test_vectorised_return_lifts_data_tags_to_collection_depth(self):
+        boolean_integer = Tagged(Integer, DataTag("boolean"))
+        applied = apply_overload(
+            Overload((Integer, Integer), (boolean_integer,)),
+            (C(ListExactType, Integer), Integer),
+        )
+        self.assertIsNotNone(applied)
+        self.assertEqual(
+            applied.actual_returns,
+            (
+                Tagged(
+                    C(ListExactType, Integer),
+                    DataTag("boolean", depth=1),
+                ),
+            ),
+        )
+
     def test_apply_overload_marks_vectorisation(self):
         overload = Overload((Number, Number), (Number,))
 

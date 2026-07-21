@@ -499,6 +499,18 @@ define \\f<Read, Write> => 1
         )
         self.assertFalse(typed[-1].overload.vectorised)
 
+    def test_vectorised_comparison_infers_item_level_boolean_tag(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse("$lst = [5, 1, 2, 7]\n$lst < 5"))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            typed[-1].typ,
+            Tagged(
+                C(ListExactType, Integer),
+                DataTag("boolean", depth=1),
+            ),
+        )
+
     def test_element_records_vectorised_overload_application(self):
         typed = analyse(parse("[1, 2, 3] + [4, 5, 6]"))
 

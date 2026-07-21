@@ -593,7 +593,8 @@ def _apply_data_tag_flow(
     for index, ret in enumerate(actual_returns):
         declared = declared_returns[index] if index < len(declared_returns) else ret
         explicit = _explicit_tags(declared)
-        flowed = _strip_implicit_computed_tags(ret, explicit, ctx)
+        actual_explicit = _vectorised_explicit_tags(declared, ret, explicit)
+        flowed = _strip_implicit_computed_tags(ret, actual_explicit, ctx)
         output_rank = _type_rank(flowed)
         additions = tuple(
             T.DataTag(name, max(output_rank - 1, 0))
@@ -708,6 +709,34 @@ def _explicit_tags(typ: T.Type) -> frozenset[T.DataTag]:
             result.update(_explicit_tags(item))
         return frozenset(result)
     return frozenset()
+
+def _vectorised_explicit_tags(
+    declared: T.Type,
+    actual: T.Type,
+    tags: frozenset[T.DataTag],
+) -> frozenset[T.DataTag]:
+    """Lift declared return tags to every rank introduced by vectorisation."""
+    declared_rank = _type_rank(declared)
+    return frozenset(
+        T.DataTag(tag.name, tag.depth + max(rank - declared_rank, 0), tag.absent)
+        for rank in _possible_type_ranks(actual)
+        for tag in tags
+    )
+
+
+def _possible_type_ranks(typ: T.Type) -> frozenset[int]:
+    """Return every collection rank represented by a return type."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        return _possible_type_ranks(typ.inner)
+    if isinstance(typ, T.UnionType):
+        return frozenset(
+            rank for item in typ.items for rank in _possible_type_ranks(item)
+        )
+    if isinstance(typ, T.CollectionType) and isinstance(typ.rank, int):
+        return frozenset((typ.rank,))
+    return frozenset((0,))
+
 
 def _strip_implicit_computed_tags(
     typ: T.Type,
