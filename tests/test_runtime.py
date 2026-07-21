@@ -3807,6 +3807,113 @@ println(triple([1, 2, 3, 4, 5]))
                 "$data"
             )
 
+    def test_boolean_mask_indexes_lists_and_strings(self):
+        self.assertEqual(
+            execute("[1, 2, 3, 4] $[[true, false, true]]"),
+            [[RuntimeNumber("1"), RuntimeNumber("3")]],
+        )
+        self.assertEqual(
+            execute('"abcd" $[[true, false, true]]'),
+            ["ac"],
+        )
+
+    def test_boolean_mask_may_be_shorter_but_not_longer_than_receiver(self):
+        self.assertEqual(
+            execute("[1, 2, 3, 4] $[[false, true]]"),
+            [[RuntimeNumber("2")]],
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Boolean mask is longer than the indexed value",
+        ):
+            execute("[1, 2] $[[true, false, true]]")
+
+    def test_selector_functions_index_lists_strings_and_dictionaries(self):
+        self.assertEqual(
+            execute(
+                "[1, 2, 3, 4] "
+                "$[fn (x: Number) -> #boolean Number => $x > 2 end]"
+            ),
+            [[RuntimeNumber("3"), RuntimeNumber("4")]],
+        )
+        self.assertEqual(
+            execute(
+                '"abcd" '
+                '$[fn (c: String) -> #boolean Number => $c in "bd" end]'
+            ),
+            ["bd"],
+        )
+        self.assertEqual(
+            execute(
+                '$data = dict{"a" => 1, "b" => 2, "c" => 3}\n'
+                "$data[fn (key: String, value: Number) -> #boolean Number => "
+                "$value > 1 end]"
+            ),
+            [{"b": RuntimeNumber("2"), "c": RuntimeNumber("3")}],
+        )
+
+    def test_mask_and_function_selectors_support_normal_assignment(self):
+        self.assertEqual(
+            execute(
+                "$data = [1, 2, 3, 4]\n"
+                "$data[[true, false, true]] = 9\n"
+                "$data"
+            ),
+            [[
+                RuntimeNumber("9"),
+                RuntimeNumber("2"),
+                RuntimeNumber("9"),
+                RuntimeNumber("4"),
+            ]],
+        )
+        self.assertEqual(
+            execute(
+                '$data = dict{"a" => 1, "b" => 2}\n'
+                "$data[fn (key: String, value: Number) -> #boolean Number => "
+                "true end] = 7\n"
+                "$data"
+            ),
+            [{"a": RuntimeNumber("7"), "b": RuntimeNumber("7")}],
+        )
+
+    def test_mask_and_function_selectors_preserve_grouped_augmented_assignment(self):
+        self.assertEqual(
+            execute(
+                "$data = [1, 2, 3, 4]\n"
+                "$data[[true, false, true]] := 1 rotate\n"
+                "$data"
+            ),
+            [[
+                RuntimeNumber("3"),
+                RuntimeNumber("2"),
+                RuntimeNumber("1"),
+                RuntimeNumber("4"),
+            ]],
+        )
+        self.assertEqual(
+            execute(
+                '$text = "abcd"\n'
+                "$text[fn (c: String) -> #boolean Number => "
+                '$c in "bd" end] := 1 rotate\n'
+                "$text"
+            ),
+            ["adcb"],
+        )
+
+    def test_dictionary_function_selector_supports_augmented_assignment(self):
+        source = (
+            "define keep(value: Dict[String, Integer]) -> "
+            "Dict[String, Integer] => $value end\n"
+            '$data = dict{"a" => 1, "b" => 2}\n'
+            "$data[fn (key: String, value: Integer) -> #boolean Number => "
+            "$value > 1 end] := keep\n"
+            "$data"
+        )
+        self.assertEqual(
+            execute(source),
+            [{"a": RuntimeNumber("1"), "b": RuntimeNumber("2")}],
+        )
+
     def test_normal_slice_assignment_remains_replacement(self):
         self.assertEqual(
             execute("[1, 2, 3, 4]\n$[1:2] = 9"),

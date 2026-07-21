@@ -2351,7 +2351,7 @@ class VirtualMachine:
                                     receiver = args[0]
                                 result = _consume_receiver_result(
                                     receiver,
-                                    _get_index(receiver, instruction.arg, values),
+                                    _get_index(receiver, instruction.arg, values, self),
                                     self,
                                 )
                                 if instruction.arg[1]:
@@ -2383,6 +2383,7 @@ class VirtualMachine:
                                         values,
                                         value,
                                         in_place=borrowed,
+                                        vm=self,
                                     )
                                 )
                             except PanicSignal as exc:
@@ -5879,8 +5880,13 @@ def _get_index(
     receiver: Any,
     spec: tuple[tuple[tuple[int, int, int, int], ...], int, int],
     selectors: list[tuple[bool, Any, Any, Any]],
+    vm: VirtualMachine,
 ) -> Any:
     """Find the index for get during VM execution."""
+    if len(selectors) == 1 and not selectors[0][0]:
+        selection = _selection_positions(receiver, selectors[0][1], vm)
+        if selection is not None:
+            return _gather_selection(receiver, selection)
     if len(selectors) > 1 and all(not item[0] for item in selectors):
         grouped_update = len(spec) > 2 and bool(spec[2])
         if grouped_update:
@@ -5908,9 +5914,20 @@ def _set_index(
     value: Any,
     *,
     in_place: bool = False,
+    vm: VirtualMachine,
 ) -> Any:
     """Update index during VM execution."""
     grouped_update = len(spec) > 2 and bool(spec[2])
+    if len(selectors) == 1 and not selectors[0][0]:
+        selection = _selection_positions(receiver, selectors[0][1], vm)
+        if selection is not None:
+            return _set_selected_positions(
+                receiver,
+                selection,
+                value,
+                grouped_update=grouped_update,
+                in_place=in_place,
+            )
     if len(selectors) == 1 and selectors[0][0]:
         _, start, stop, step = selectors[0]
         return _set_slice_value(receiver, start, stop, step, value, in_place=in_place)
@@ -5920,6 +5937,163 @@ def _set_index(
             return _set_many_indices(receiver, selectors, value, in_place=in_place)
         raise RuntimeError("indexed assignment requires one non-slice index")
     return _set_index_path(receiver, selectors[0][1], value, in_place=in_place)
+
+
+def _boolean_mask_values(selector: Any) -> list[Any] | None:
+    """Return a reified Boolean mask payload, or ``None`` for another selector."""
+    if not isinstance(selector, TaggedValue):
+        return None
+    if not any(
+        tag.name == "boolean" and not tag.absent and tag.depth == 1
+        for tag in selector.tags
+    ):
+        return None
+    return list(selector.value)
+
+
+def _selection_positions(
+    receiver: Any,
+    selector: Any,
+    vm: VirtualMachine,
+) -> list[Any] | None:
+    """Resolve a mask or predicate selector to concrete list positions or keys."""
+    mask = _boolean_mask_values(selector)
+    if mask is not None:
+        if isinstance(receiver, dict):
+            return None
+        if not (isinstance(receiver, str) or is_list_like(receiver)):
+            raise RuntimeError("Boolean masks require a list or string receiver")
+        if not is_eager_sequence(receiver) and not isinstance(receiver, str):
+            receiver = list(receiver)
+        if len(mask) > len(receiver):
+            raise RuntimeError("Boolean mask is longer than the indexed value")
+        return [index for index, flag in enumerate(mask) if _truthy(flag)]
+    if not isinstance(selector, (FunctionValue, OverloadedFunctionValue)):
+        return None
+    if isinstance(receiver, dict):
+        selected: list[Any] = []
+        for key, item in receiver.items():
+            result = vm.call_value(selector, [key, item])
+            if len(result) != 1:
+                raise RuntimeError("dictionary selector must return one Boolean value")
+            if _truthy(result[0]):
+                selected.append(key)
+        return selected
+    if isinstance(receiver, str) or is_list_like(receiver):
+        selected = []
+        for index, item in enumerate(receiver):
+            result = vm.call_value(selector, [item])
+            if len(result) != 1:
+                raise RuntimeError("selector must return one Boolean value")
+            if _truthy(result[0]):
+                selected.append(index)
+        return selected
+    raise RuntimeError("function selectors require a list, string, or dictionary")
+
+
+def _gather_selection(receiver: Any, positions: list[Any]) -> Any:
+    """Gather selected positions while preserving the receiver collection kind."""
+    if isinstance(receiver, str):
+        return "".join(receiver[index] for index in positions)
+    if isinstance(receiver, dict):
+        return DictValue((key, receiver[key]) for key in positions)
+    if is_eager_sequence(receiver):
+        return _copy_eager_list(receiver, (receiver[index] for index in positions))
+    if is_list_like(receiver):
+        wanted = iter(positions)
+        try:
+            target = next(wanted)
+        except StopIteration:
+            return LazyList(())
+
+        def selected_items():
+            """Yield selected lazy-list items in source order."""
+            nonlocal target
+            for index, item in enumerate(receiver):
+                if index != target:
+                    continue
+                yield item
+                try:
+                    target = next(wanted)
+                except StopIteration:
+                    return
+
+        return LazyList(selected_items())
+    raise RuntimeError("value is not selectable")
+
+
+def _set_selected_positions(
+    receiver: Any,
+    positions: list[Any],
+    value: Any,
+    *,
+    grouped_update: bool,
+    in_place: bool,
+) -> Any:
+    """Replace values chosen by a mask or predicate selector."""
+    if isinstance(receiver, dict):
+        if isinstance(value, dict):
+            if set(value) != set(positions):
+                raise RuntimeError(
+                    "dictionary selection replacement must contain exactly the selected keys"
+                )
+            replacements = [value[key] for key in positions]
+        elif grouped_update:
+            raise RuntimeError(
+                "augmented dictionary selection must return a dictionary"
+            )
+        else:
+            replacements = [value] * len(positions)
+        updated = DictValue(receiver) if isinstance(receiver, DictValue) else dict(receiver)
+        for key, replacement in zip(positions, replacements, strict=True):
+            updated[key] = replacement
+        return updated
+    if isinstance(receiver, str):
+        if isinstance(value, str):
+            replacements = list(value)
+            if len(replacements) != len(positions):
+                raise RuntimeError("selection assignment replacement length mismatch")
+        elif grouped_update:
+            raise RuntimeError("augmented string selection must return a string")
+        elif isinstance(value, str) and len(value) == 1:
+            replacements = [value] * len(positions)
+        else:
+            replacements = [value] * len(positions)
+        if any(not isinstance(item, str) or len(item) != 1 for item in replacements):
+            raise RuntimeError("string selection assignment requires characters")
+        updated = list(receiver)
+        for index, replacement in zip(positions, replacements, strict=True):
+            updated[index] = replacement
+        return "".join(updated)
+    if is_list_like(value):
+        replacements = list(value)
+        if len(replacements) != len(positions):
+            raise RuntimeError("selection assignment replacement length mismatch")
+    elif grouped_update:
+        raise RuntimeError("augmented list selection must return a list")
+    else:
+        replacements = [value] * len(positions)
+    if is_eager_sequence(receiver):
+        updated = (
+            receiver
+            if in_place
+            and isinstance(receiver, ListValue)
+            and receiver.refcount == 1
+            and _list_ownership_is_trivial(receiver)
+            else _copy_eager_list(receiver, skip_indexes=frozenset(positions))
+        )
+        for index, replacement in zip(positions, replacements, strict=True):
+            list.__setitem__(updated, index, replacement)
+        _update_list_ownership_after_replacements(updated, replacements)
+        return updated
+    replacement_by_index = dict(zip(positions, replacements, strict=True))
+
+    def updated_items():
+        """Yield a lazy list with selected positions replaced."""
+        for index, item in enumerate(receiver):
+            yield replacement_by_index.get(index, item)
+
+    return LazyList(updated_items())
 
 
 def _validate_distinct_selection_indices(

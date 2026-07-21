@@ -1179,6 +1179,9 @@ $[1:3] = 4
 - For augmented assignment with a slice or several indices, Valiance gathers the selected values, runs the augmented-assignment code once on that whole selection, and scatters the result back pairwise in selector order.
 - Whole-selection augmented assignment is available for lists and strings. It must return the same collection kind and a compatible element type, with exactly one result item or character per selected position.
 - Repeated positions in a multiple-index augmented assignment are a runtime error; no replacement is stored.
+- A list, string, or dictionary may also be indexed by a selector function. List and string selectors accept one item; dictionary selectors accept the key and value. The function must return `#boolean Number`, and the selected values retain their original collection kind.
+- Lists and strings may be indexed by a `#boolean+ Number+` mask. True positions are selected. A shorter mask truncates selection at the mask length; a mask longer than the receiver is a runtime error.
+- Function and mask selectors work with normal indexing, normal assignment, and augmented assignment. They change only the selected positions: replacement and whole-selection augmented-assignment rules remain otherwise unchanged.
 
 ```
 $data = [0, 1, 2, 3, 4, 5]

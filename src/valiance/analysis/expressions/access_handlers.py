@@ -211,8 +211,15 @@ def _index_access_node(
         self._diagnose("list indexing requires Integer index value(s)", node)
         return _core.BranchSet()
 
+    selector_mode = (
+        _patterns._selector_mode(receiver_type, index_types[0], self.env.context)
+        if len(node.selectors) == 1 and len(index_types) == 1
+        else None
+    )
     grouped = node.grouped_update and (
-        len(node.selectors) > 1 or any(item.is_slice for item in node.selectors)
+        len(node.selectors) > 1
+        or any(item.is_slice for item in node.selectors)
+        or selector_mode is not None
     )
     if grouped and not _patterns._grouped_update_receiver(receiver_type):
         self._diagnose(
@@ -220,12 +227,14 @@ def _index_access_node(
             node,
         )
         return _core.BranchSet()
-    result_type = _patterns._indexed_type(
-        receiver_type,
-        node.selectors,
-        node.spread,
-        grouped_update=grouped,
-    )
+    result_type = _patterns._selection_type(receiver_type, selector_mode)
+    if result_type is None:
+        result_type = _patterns._indexed_type(
+            receiver_type,
+            node.selectors,
+            node.spread,
+            grouped_update=grouped,
+        )
     return _core.BranchSet(
         (base_branch.push(result_type).emit(TypedNode(node, result_type)),)
     )
@@ -261,8 +270,15 @@ def _index_set_node(
         self._diagnose("list indexing requires Integer index value(s)", node)
         return _core.BranchSet()
 
+    selector_mode = (
+        _patterns._selector_mode(receiver_type, index_types[0], self.env.context)
+        if len(node.selectors) == 1 and len(index_types) == 1
+        else None
+    )
     grouped = node.grouped_update and (
-        len(node.selectors) > 1 or any(item.is_slice for item in node.selectors)
+        len(node.selectors) > 1
+        or any(item.is_slice for item in node.selectors)
+        or selector_mode is not None
     )
     if grouped and not _patterns._grouped_update_receiver(receiver_type):
         self._diagnose(
@@ -270,19 +286,31 @@ def _index_set_node(
             node,
         )
         return _core.BranchSet()
-    item_type = _patterns._indexed_type(
-        receiver_type,
-        node.selectors,
-        spread=False,
-        grouped_update=grouped,
-    )
-    updated_receiver_type = _patterns._indexed_assignment_type(
-        receiver_type,
-        node.selectors,
-        value_type,
-        self.env.context,
-        grouped_update=grouped,
-    )
+    item_type = _patterns._selection_type(receiver_type, selector_mode)
+    if item_type is None:
+        item_type = _patterns._indexed_type(
+            receiver_type,
+            node.selectors,
+            spread=False,
+            grouped_update=grouped,
+        )
+    if selector_mode is not None:
+        replacement_item = _patterns._selection_replacement_item_type(receiver_type)
+        if T.assignable(value_type, item_type, self.env.context) or (
+            not grouped
+            and T.assignable(value_type, replacement_item, self.env.context)
+        ):
+            updated_receiver_type = receiver_type
+        else:
+            updated_receiver_type = None
+    else:
+        updated_receiver_type = _patterns._indexed_assignment_type(
+            receiver_type,
+            node.selectors,
+            value_type,
+            self.env.context,
+            grouped_update=grouped,
+        )
     if updated_receiver_type is None:
         self._diagnose(
             f"cannot assign {T.show(value_type)} to indexed item "

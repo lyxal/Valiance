@@ -136,6 +136,72 @@ def _index_type(typ: T.Type, *, key: bool = False) -> T.Type:
     return T.V("Indexed")
 
 
+def _boolean_result_type() -> T.Type:
+    """Return the scalar Boolean-number type required from selector functions."""
+    return T.Tagged(T.Number, T.DataTag("boolean"))
+
+
+def _selector_mode(
+    receiver_type: T.Type,
+    selector_type: T.Type,
+    ctx: T.Context,
+) -> str | None:
+    """Classify a single selector as a predicate or Boolean mask when applicable."""
+    receiver = T.normalize(receiver_type)
+    selector = T.normalize(selector_type)
+    if isinstance(receiver, T.TaggedType):
+        return _selector_mode(receiver.inner, selector, ctx)
+    if isinstance(receiver, T.UnionType):
+        modes = {
+            _selector_mode(item, selector, ctx)
+            for item in receiver.items
+        }
+        return modes.pop() if len(modes) == 1 and None not in modes else None
+    if isinstance(selector, T.TaggedType):
+        if any(
+            tag.name == "boolean" and not tag.absent and tag.depth == 1
+            for tag in selector.tags
+        ) and isinstance(selector.inner, T.ListExactType) and T.assignable(
+            selector.inner.base, T.Number, ctx
+        ):
+            if isinstance(
+                receiver,
+                (T.ListExactType, T.ListMinType, T.ListRuggedType),
+            ) or (isinstance(receiver, T.NominalType) and receiver.name.text == "String"):
+                return "mask"
+    if isinstance(receiver, (T.ListExactType, T.ListMinType, T.ListRuggedType)):
+        expected = T.Fn((T.collection_item_type(receiver),), (_boolean_result_type(),))
+    elif isinstance(receiver, T.NominalType) and receiver.name.text == "String":
+        expected = T.Fn((T.String,), (_boolean_result_type(),))
+    elif (
+        isinstance(receiver, T.NominalType)
+        and receiver.name.text == "Dict"
+        and len(receiver.args) == 2
+    ):
+        expected = T.Fn(receiver.args, (_boolean_result_type(),))
+    else:
+        return None
+    return "predicate" if T.compatible(selector, expected, ctx) else None
+
+
+def _selection_type(receiver_type: T.Type, mode: str | None) -> T.Type | None:
+    """Return the gathered value type for a mask or predicate selector."""
+    if mode not in {"mask", "predicate"}:
+        return None
+    typ = T.normalize(receiver_type)
+    if isinstance(typ, T.TaggedType):
+        selected = _selection_type(typ.inner, mode)
+        return None if selected is None else T.Tagged(selected, *typ.tags, exact=typ.exact)
+    if isinstance(typ, T.UnionType):
+        selected = tuple(_selection_type(item, mode) for item in typ.items)
+        return None if any(item is None for item in selected) else T.U(*selected)
+    if isinstance(typ, (T.ListExactType, T.ListMinType, T.ListRuggedType)):
+        return typ
+    if isinstance(typ, T.NominalType) and typ.name.text in {"String", "Dict"}:
+        return typ
+    return None
+
+
 def _indexed_type(
     receiver_type: T.Type,
     selectors: tuple[IndexSelector, ...],
@@ -199,6 +265,13 @@ def _selectors_assignable(
             return T.U(*(index_value_type(item) for item in value.items))
         return value
 
+    if (
+        len(selectors) == 1
+        and not selectors[0].is_slice
+        and len(index_types) == 1
+        and _selector_mode(receiver_type, index_types[0], ctx) is not None
+    ):
+        return True
     return all(
         T.assignable(index_value_type(actual), target, ctx)
         for actual, target in zip(index_types, expected, strict=True)
@@ -215,7 +288,26 @@ def _grouped_update_receiver(typ: T.Type) -> bool:
     return isinstance(
         typ,
         (T.ListExactType, T.ListMinType, T.ListRuggedType),
-    ) or (isinstance(typ, T.NominalType) and typ.name.text == "String")
+    ) or (
+        isinstance(typ, T.NominalType)
+        and typ.name.text in {"String", "Dict"}
+    )
+
+
+def _selection_replacement_item_type(receiver_type: T.Type) -> T.Type:
+    """Return the scalar value type broadcast by selection replacement."""
+    typ = T.normalize(receiver_type)
+    if isinstance(typ, T.TaggedType):
+        return _selection_replacement_item_type(typ.inner)
+    if isinstance(typ, T.UnionType):
+        return T.U(*(_selection_replacement_item_type(item) for item in typ.items))
+    if isinstance(typ, T.CollectionType):
+        return T.collection_item_type(typ)
+    if isinstance(typ, T.NominalType) and typ.name.text == "String":
+        return T.String
+    if isinstance(typ, T.NominalType) and typ.name.text == "Dict" and len(typ.args) == 2:
+        return typ.args[1]
+    return T.V("Indexed")
 
 
 def _indexed_assignment_type(
