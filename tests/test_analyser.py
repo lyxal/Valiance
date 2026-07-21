@@ -3726,6 +3726,24 @@ end
 
         self.assertEqual(typed[0].typ, C(ListExactType, U(Integer, String)))
 
+    def test_list_literal_factors_common_exact_list_rank(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse("[[[1, 2, 3]], [[4, 5, 6], 7], [8, [[9]], 10]]")
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            typed[-1].typ,
+            ExactList(U(Integer, ExactList(Integer), ExactList(Integer, 2)), 2),
+        )
+
+    def test_list_literal_keeps_scalar_and_list_items_as_a_union(self):
+        typed = analyse(parse("[1, [2, 3]]"))
+
+        self.assertEqual(typed[-1].typ, ExactList(U(Integer, ExactList(Integer))))
+
     def test_empty_list_literal_requires_annotation_or_cast(self):
         analyser = Analyser(Environment())
 

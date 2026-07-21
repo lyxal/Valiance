@@ -163,16 +163,37 @@ def _list_literal_node(
     )
 
 def _list_literal_type(items: tuple[T.Type, ...]) -> T.Type:
-    """Build a list type, lifting tags common to every item by one depth."""
-    base = T.normalize(T.U(*items))
+    """Build the simplest exact-list type and lift tags shared by every item."""
+    normalized_items = tuple(T.normalize(item) for item in items)
+    base = _factor_common_exact_list_rank(normalized_items)
     if not isinstance(base, T.TaggedType):
-        return T.C(T.ListExactType, base)
+        return T.normalize(T.C(T.ListExactType, base))
     lifted = tuple(T.DataTag(tag.name, tag.depth + 1, tag.absent) for tag in base.tags)
     return T.Tagged(
-        T.C(T.ListExactType, base.inner),
+        T.normalize(T.C(T.ListExactType, base.inner)),
         *lifted,
         exact=base.exact,
     )
+
+
+def _factor_common_exact_list_rank(items: tuple[T.Type, ...]) -> T.Type:
+    """Factor the common exact-list prefix shared by every literal item."""
+    if not items or not all(isinstance(item, T.ListExactType) for item in items):
+        return T.normalize(T.U(*items))
+
+    exact_items = cast(tuple[T.ListExactType, ...], items)
+    if not all(isinstance(item.rank, int) for item in exact_items):
+        return T.normalize(T.U(*items))
+
+    common_rank = min(cast(int, item.rank) for item in exact_items)
+    remainders = tuple(
+        item.base
+        if item.rank == common_rank
+        else T.ExactList(item.base, cast(int, item.rank) - common_rank)
+        for item in exact_items
+    )
+    return T.normalize(T.ExactList(T.U(*remainders), common_rank))
+
 
 @_core.register(TupleLiteralNode)
 def _tuple_literal_node(
