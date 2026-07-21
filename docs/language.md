@@ -139,17 +139,17 @@ $brainrot = "6 7"
 
 ## 1.4. Anonymous Records
 
-  - Stores of `key->value` pairs.
+  - Stores of statically named key/value pairs.
   - `record{...}`
   - Items can be retrieved, if they are in the dictionary, by indexing by key.
   - Effectively anonymous objects
   - Basically hashmaps with bareword keys.
-- Type = `record[<name>: <ValueType>...]`. For example, `record[cmd: String, jump: Integer]` describes a record with exactly those statically known fields.
+- Records use ordinary row types. For example, `record(.cmd: String, .jump: Integer)` requires those fields on the `record` base.
 - Example:
 
 ```
-$store = record{a: 1, b: 2, c: 3}
-#? record[a: Number, b: Number, c: Number]
+$store = record{a => 1, b => 2, c => 3}
+#? record(.a: Integer, .b: Integer, .c: Integer)
 $store.a #? 1
 $store.c #? 3
 ```
@@ -159,9 +159,11 @@ $store.c #? 3
 - Records have static keys. Not good if you want computed keys.
 - `dict{...}` provides a hashmap where keys can be any value
 - Type = `Dict[<keytype>, <valuetype>]`
+- Every record field expression and every dictionary key/value expression runs on a fresh empty stack. It cannot consume the surrounding stack, and no entry expression can see another entry's result.
+- Immutable values such as strings, numbers, and tuples can be dictionary keys.
 
 ```
-dict{"a": 1, "b": 2, "c": 3}
+dict{"a" => 1, "b" => 2, "c" => 3}
 #? dict[String -> Number]
 ```
 
@@ -170,19 +172,19 @@ dict{"a": 1, "b": 2, "c": 3}
 - `record.extend{...}` adds statically written fields to the record on the top of the stack.
 
 ```
-record{x: 3} record.extend{y: 4}
+record{x => 3} record.extend{y => 4}
 #? Same as
-record{x: 3, y: 4}
+record{x => 3, y => 4}
 ```
 
 - `record.merge` combines two record values. Fields from the right record overwrite fields with the same name in the left record.
 
 ```
-record{x: 3} record.merge record{y: 4}
-#? record{x: 3, y: 4}
+record{x => 3} record.merge record{y => 4}
+#? record{x => 3, y => 4}
 
-record{x: 3} record.merge record{x: 4}
-#? record{x: 4}
+record{x => 3} record.merge record{x => 4}
+#? record{x => 4}
 ```
 
 - `record.extend` is rejected if a supplied field already exists.
@@ -1151,13 +1153,13 @@ fork: (sum, length) /
 -  Dictionary access too
 
 ```
-dict{"name": "Jeff", "age": 12} $["name"] #? "Jeff"
+dict{"name" => "Jeff", "age" => 12} $["name"] #? "Jeff"
 ```
 
 - Such indexing obviously isn't needed with records
 
 ```
-record{name: "Jeff", age: 12}
+record{name => "Jeff", age => 12}
 #? Just use
 $.name #? "Jeff" 
 ```

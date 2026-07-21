@@ -671,6 +671,12 @@ class RuntimeNumber:
 
         return self.real == other.real and self.imag == other.imag
 
+    def __hash__(self) -> int:
+        """Return a value-consistent hash for dictionary-key use."""
+        if self.imag.is_zero() and self.real.is_integer():
+            return hash(self.real.to_int())
+        return hash((self.real, self.imag))
+
     def _require_real(self, other):
         """Require that another value is a real number for ordering comparisons."""
         other = RuntimeNumber.from_value(other)

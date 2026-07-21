@@ -27,8 +27,8 @@ $tp: #TapePointer Integer = 0
 
 $program = input("Enter brainfuck program: ")
 
-$instructions: record[cmd: String, jump: Integer]+ = $program map fn (ch) =>
-  record{cmd: $ch, jump: -1}
+$instructions: record(.cmd: String, .jump: Integer)+ = $program map fn (ch) =>
+  record{cmd => $ch, jump => -1}
 end
 
 $stack: Integer+ = []

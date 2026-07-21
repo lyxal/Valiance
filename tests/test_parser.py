@@ -9,6 +9,7 @@ from valiance.asts import (
     CallArgument,
     CastNode,
     DefineNode,
+    DictLiteralNode,
     ElementExtension,
     ElementNode,
     FieldAccessNode,
@@ -32,6 +33,7 @@ from valiance.asts import (
     ObjectFieldNode,
     OrPatternNode,
     RestPatternNode,
+    RecordLiteralNode,
     SetVariableNode,
     SetVariablesNode,
     SourceLocation,
@@ -255,6 +257,15 @@ end
                 SetVariableNode(Symbol("answer")),
             ],
         )
+
+    def test_parses_record_and_dict_fat_arrow_entries(self):
+        self.assertEqual(parse('record{name => "Ada"}'), [RecordLiteralNode(((Symbol("name"), (StringLiteralNode("Ada"),)),))])
+        self.assertEqual(parse('dict{"name" => "Ada"}'), [DictLiteralNode((((StringLiteralNode("name"),), (StringLiteralNode("Ada"),)),))])
+
+    def test_record_and_dict_literals_reject_colon_entries(self):
+        for source in ('record{name: "Ada"}', 'dict{"name": "Ada"}'):
+            with self.subTest(source=source), self.assertRaises(ParseError):
+                parse(source)
 
     def test_parses_explicit_variable_type_annotation(self):
         program = parse("$n: Number? = 5")
@@ -779,6 +790,13 @@ end
             Row(N(Symbol("T")), Field(Symbol("bar"), N(Symbol("U")))),
         )
         self.assertEqual(node.returns, (N(Symbol("U")),))
+
+    def test_record_shapes_use_ordinary_row_type_syntax(self):
+        self.assertEqual(parse_type("record(.cmd: String)"), Row(N(Symbol("record")), Field(Symbol("cmd"), String)))
+
+    def test_rejects_removed_record_bracket_type_syntax(self):
+        with self.assertRaises(ParseError):
+            parse_type("record[cmd: String]")
 
     def test_parses_symbolic_anonymous_trait_generic_constraint(self):
         [node] = parse(

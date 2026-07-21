@@ -2564,7 +2564,7 @@ define kind(value: Dict[String, Integer] | String) -> String =>
     _ => \"preset\"
   end
 end |
-kind(dict{\"retries\": 3})
+kind(dict{\"retries\" => 3})
 """
             case = ("dict-workload", source)
             analyser = Analyser()

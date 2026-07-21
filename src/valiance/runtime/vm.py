@@ -373,6 +373,7 @@ class _Frame:
     is_global_scope: bool = False
     panic_handlers: list[_PanicHandler] = field(default_factory=list)
     cycle_scopes: list[tuple[tuple[Any, ...], int, int]] = field(default_factory=list)
+    isolated_stacks: list[list[Any]] = field(default_factory=list)
 
     def source_args(
         self,
@@ -2217,6 +2218,15 @@ class VirtualMachine:
                             frame.stack.append(
                                 DictValue(zip(values[::2], values[1::2], strict=True))
                             )
+                        case OpCode.ISOLATE_STACK_BEGIN:
+                            frame.isolated_stacks.append(frame.stack)
+                            frame.stack = []
+                        case OpCode.ISOLATE_STACK_END:
+                            if not frame.isolated_stacks or len(frame.stack) != 1:
+                                raise RuntimeError("isolated literal expression must leave exactly one value")
+                            value = frame.stack.pop()
+                            frame.stack = frame.isolated_stacks.pop()
+                            frame.stack.append(value)
                         case OpCode.MAKE_OBJECT_CONSTRUCTOR:
                             constructor = _object_constructor_reference(instruction.arg)
                             initializer = (
@@ -2537,6 +2547,9 @@ class VirtualMachine:
     def _discard_frame(self, frame: _Frame) -> None:
         """Update discard frame state during VM execution."""
         _release_stack_tail(frame.stack, len(frame.stack), self)
+        while frame.isolated_stacks:
+            saved = frame.isolated_stacks.pop()
+            _release_stack_tail(saved, len(saved), self)
         self._release_frame_locals(frame)
 
     def _release_frame_locals(self, frame: _Frame) -> None:

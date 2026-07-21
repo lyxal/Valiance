@@ -66,6 +66,7 @@ The runtime implementation is small, but several files must evolve together.
   iteration. Typed references carry an internal runtime name when a lexical
   import alias must remain distinct from the same alias in another block.
 - List literals and array literals currently both compile to `BUILD_LIST`.
+- Record fields and dictionary keys/values are wrapped in `ISOLATE_STACK_BEGIN` / `ISOLATE_STACK_END`; the VM hides the caller stack, requires one result, restores the caller stack, and appends that result.
 - Object and variant declarations compile constructor globals with
   `MAKE_OBJECT_CONSTRUCTOR`; enum members compile constants with
   `MAKE_ENUM_MEMBER` and optional backing-value globals.
@@ -163,7 +164,7 @@ collection-valued stopped parameter is not automatically vectorised again.
 `src/valiance/runtime/serialization.py`
 
 - Encodes `Program` as portable binary bytecode.
-- The current magic/version marker is `b"VLNCBC\x16"`.
+- The current magic/version marker is `b"VLNCBC\x17"`.
 - Opcodes are one byte each in `_OP_TO_BYTE`.
 - Instruction arguments are tagged binary values, not Python pickle, repr, or
   JSON.

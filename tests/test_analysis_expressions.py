@@ -33,7 +33,7 @@ class ExpressionBoundaryTests(unittest.TestCase):
     def test_record_literal_handler_emits_typed_node(self) -> None:
         """Record literal field typing remains available downstream."""
         analyser = Analyser()
-        typed = analyser.analyse(parse("record{name: \"Ada\", score: 10}"))
+        typed = analyser.analyse(parse("record{name => \"Ada\", score => 10}"))
         self.assertEqual(analyser.diagnostics, [])
         self.assertIsInstance(typed[-1], TypedLiteralNode)
         self.assertIsInstance(typed[-1].node, RecordLiteralNode)

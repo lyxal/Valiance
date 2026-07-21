@@ -86,7 +86,7 @@ define configKind(value: Dict[String, Integer] | String) -> String =>
     _ => "preset"
   end
 end |
-configKind(dict{"retries": 3}) |
+configKind(dict{"retries" => 3}) |
 configKind("default")
 """
 

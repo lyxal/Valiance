@@ -996,8 +996,7 @@ applied overload.
 
 ## Literals
 
-List, tuple, record, and dict literals analyse their item expressions from the
-same incoming branch. This is intentional: literals act like an implicit fork.
+List and tuple literals analyse their item expressions from the same incoming branch and act like an implicit fork. Record fields and dictionary key/value expressions instead begin from independent empty stacks. They cannot consume the outer stack, and a dictionary key cannot contribute stack values to its value. The outer stack is preserved unchanged and receives only the completed literal.
 
 For list literals:
 
@@ -1015,8 +1014,7 @@ literal as `Number+` and then validates it against the declared `Number*`
 return. The same contextualisation is applied to explicit `return` values and
 terminal `if`, `match`, and `try` branches.
 
-Tuple, record, and dict literals reuse the same literal item machinery but build
-different result types.
+Tuple literals reuse the forked item machinery. Record and dictionary literals use isolated item analysis and retain one typed body per independent expression.
 
 ### Explicit parameter cycling and caller-stack functions
 

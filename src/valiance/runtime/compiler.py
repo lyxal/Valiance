@@ -627,21 +627,21 @@ class _Compiler:
                 )
                 self.collection(compiled_items, OpCode.BUILD_TUPLE)
             case RecordLiteralNode(fields):
-                typed_items = (
-                    typed_node.items if isinstance(typed_node, TypedLiteralNode) else ()
-                )
+                typed_items = typed_node.items if isinstance(typed_node, TypedLiteralNode) else ()
                 keys = []
                 for index, (key, expr) in enumerate(fields):
+                    self.emit(OpCode.ISOLATE_STACK_BEGIN)
                     self.expression(typed_items[index] if typed_items else expr)
+                    self.emit(OpCode.ISOLATE_STACK_END)
                     keys.append(key.text)
                 self.emit(OpCode.BUILD_RECORD, tuple(keys))
             case DictLiteralNode(entries):
-                typed_items = (
-                    typed_node.items if isinstance(typed_node, TypedLiteralNode) else ()
-                )
+                typed_items = typed_node.items if isinstance(typed_node, TypedLiteralNode) else ()
                 expressions = tuple(expr for entry in entries for expr in entry)
                 for index, expr in enumerate(expressions):
+                    self.emit(OpCode.ISOLATE_STACK_BEGIN)
                     self.expression(typed_items[index] if typed_items else expr)
+                    self.emit(OpCode.ISOLATE_STACK_END)
                 self.emit(OpCode.BUILD_DICT, len(entries))
             case ObjectNode():
                 runtime_name = (

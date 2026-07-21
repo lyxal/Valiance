@@ -2504,7 +2504,7 @@ class Parser:
             return ()
         while True:
             name = self._symbol("expected record field")
-            self._expect(TokenKind.COLON)
+            self._expect(TokenKind.FAT_ARROW)
             fields.append(
                 (name, self._chain_until({TokenKind.COMMA, TokenKind.RBRACE}))
             )
@@ -2521,8 +2521,8 @@ class Parser:
         if self._match(TokenKind.RBRACE):
             return ()
         while True:
-            key = self._chain_until({TokenKind.COLON})
-            self._expect(TokenKind.COLON)
+            key = self._chain_until({TokenKind.FAT_ARROW})
+            self._expect(TokenKind.FAT_ARROW)
             value = self._chain_until({TokenKind.COMMA, TokenKind.RBRACE})
             entries.append((key, value))
             if self._match(TokenKind.RBRACE):
@@ -2903,25 +2903,6 @@ class Parser:
                     returns = self._type_list_until({TokenKind.RBRACKET})
                     self._expect(TokenKind.RBRACKET)
                     return _optionalize_type(Fn(params, returns), optional_depth)
-                if name == "record":
-                    fields: list[RowField] = []
-                    self._skip_newlines()
-                    if not self._match(TokenKind.RBRACKET):
-                        while True:
-                            field_name = self._symbol("expected record field name")
-                            self._expect(TokenKind.COLON)
-                            fields.append(
-                                Field(field_name, self.parse_type_expression())
-                            )
-                            self._skip_newlines()
-                            if self._match(TokenKind.RBRACKET):
-                                break
-                            self._expect(TokenKind.COMMA)
-                            self._skip_newlines()
-                    return _optionalize_type(
-                        Row(N(Symbol("record")), *fields),
-                        optional_depth,
-                    )
                 if not self._match(TokenKind.RBRACKET):
                     while True:
                         args.append(self.parse_type_expression())

@@ -91,7 +91,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 
 - [x] Implement anonymous records with statically known bareword keys.
 - [x] Parse `record{...}` literals.
-- [x] Represent record types as named key/type mappings.
+- [x] Represent record shapes with ordinary row types; no separate record type syntax.
 - [x] Support record member access.
 - [x] Support record member replacement using assignment syntax.
 - [x] Implement `record.extend{...}`.

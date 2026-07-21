@@ -342,18 +342,9 @@ the write at runtime.
 The stack spelling `$->field` has no leading variable node. It still supports a
 full member chain, for example `$->a->b->c`.
 
-### Record extension syntax and record types
+### Record literals and row types
 
-`record{...}` is a record literal. `record.extend{...}` is parsed as a qualified
-element call whose second argument is another record literal; it is not a new
-record-literal form. Anonymous record types use square brackets:
-
-```text
-record[cmd: String, jump: Integer]
-```
-
-Do not route `record[...]` through ordinary nominal generic parsing. Its entries
-are named row fields, not positional generic arguments.
+Record and dictionary entries use `=>`. Every field, key, and value expression is isolated on its own empty stack. Records use the ordinary row postfix: `record(.cmd: String, .jump: Integer)`. The removed bracketed record type spelling is a parse error.
 
 ### Control-chain ordering
 

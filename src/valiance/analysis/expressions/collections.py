@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import replace
-from typing import cast
+from typing import Callable, cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
 from valiance.analysis.lints import KNOWN_LINT_CODES, finding
 import valiance.vtypes as T
 from valiance.asts import (
     AnnotationNode,
+    ASTNode,
     ArrayLiteralNode,
     AssertNode,
     AtNode,
@@ -214,31 +215,62 @@ def _tuple_literal_node(
         self.env.context,
     )
 
+def _isolated_literal_item_options(
+    self: _core.Analyser,
+    branch: _core.AnalysisBranch,
+    expressions: tuple[tuple[ASTNode, ...], ...],
+    node: ASTNode,
+) -> tuple[tuple[_core.ListItemAnalysis, ...], ...] | None:
+    """Analyse each record/dictionary expression on its own empty stack."""
+    isolated = branch.with_stack(T.TypeStack())
+    return self._literal_item_options(
+        isolated,
+        expressions,
+        node,
+        message=(
+            "record/dictionary entry expression must produce a value without "
+            "reading the outer stack"
+        ),
+    )
+
+
+def _isolated_literal_results(
+    self: _core.Analyser,
+    branch: _core.AnalysisBranch,
+    item_options: tuple[tuple[_core.ListItemAnalysis, ...], ...],
+    node: ASTNode,
+    literal_type: Callable[[tuple[_core.ListItemAnalysis, ...]], T.Type],
+) -> _core.BranchSet:
+    """Build a literal while preserving the caller's complete outer stack."""
+    isolated = branch.with_stack(T.TypeStack())
+    outputs = _utils._literal_branch_results(
+        isolated, item_options, node, literal_type, self.env.context
+    )
+    return _core.BranchSet.collect(
+        replace(output, stack=branch.stack.push(output.stack[-1]))
+        for output in outputs
+    )
+
+
 @_core.register(RecordLiteralNode)
 def _record_literal_node(
     self: _core.Analyser,
     node: RecordLiteralNode,
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
-    """Analyse a `RecordLiteralNode` node and return the surviving branches."""
+    """Analyse each record field independently on an empty stack."""
     expressions = tuple(expr for _, expr in node.fields)
-    item_options = self._literal_item_options(branch, expressions, node)
+    item_options = _isolated_literal_item_options(self, branch, expressions, node)
     if item_options is None:
         return _core.BranchSet()
-
-    return _utils._literal_branch_results(
-        branch,
-        item_options,
-        node,
+    return _isolated_literal_results(
+        self, branch, item_options, node,
         lambda combo: T.Row(
             T.N(Symbol("record")),
-            *(
-                T.Field(name, item.typ)
-                for (name, _), item in zip(node.fields, combo, strict=True)
-            ),
+            *(T.Field(name, item.typ) for (name, _), item in zip(node.fields, combo, strict=True)),
         ),
-        self.env.context,
     )
+
 
 @_core.register(DictLiteralNode)
 def _dict_literal_node(
@@ -246,23 +278,20 @@ def _dict_literal_node(
     node: DictLiteralNode,
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
-    """Analyse a `DictLiteralNode` node and return the surviving branches."""
+    """Analyse every dictionary key and value independently on an empty stack."""
     expressions = tuple(expr for entry in node.entries for expr in entry)
-    item_options = self._literal_item_options(branch, expressions, node)
+    item_options = _isolated_literal_item_options(self, branch, expressions, node)
     if item_options is None:
         return _core.BranchSet()
-
-    return _utils._literal_branch_results(
-        branch,
-        item_options,
-        node,
+    return _isolated_literal_results(
+        self, branch, item_options, node,
         lambda combo: T.N(
             Symbol("Dict"),
             T.U(*(item.typ for item in combo[::2])),
             T.U(*(item.typ for item in combo[1::2])),
         ),
-        self.env.context,
     )
+
 
 @_core.register(ArrayLiteralNode)
 def _array_literal_node(

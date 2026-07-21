@@ -190,11 +190,11 @@ fibonacci3(8)
 
     def test_records(self):
         source = r"""
-$store = record{a: 1, b: 2, c: 3}
+$store = record{a => 1, b => 2, c => 3}
 $store.a
 $store.c
-record{x: 3} record.extend{y: 4}
-record{x: 3} record.merge record{y: 4}
+record{x => 3} record.extend{y => 4}
+record{x => 3} record.merge record{y => 4}
 """
         self.assertEqual(
             execute(source),

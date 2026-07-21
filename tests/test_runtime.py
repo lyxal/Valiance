@@ -180,7 +180,7 @@ end
     def test_scalar_record_updates_preserve_fast_ownership_metadata(self):
         """Keep scalar records out of recursive retain and release walks."""
         source = """
-$point = record{x: 0, y: 1}
+$point = record{x => 0, y => 1}
 $i: Integer = 0
 while ($i < 2) =>
   $point.x := + 1
@@ -204,7 +204,7 @@ end
 $list = [1, 2]
 $list_alias = $list
 $list[0] = 9
-$record = record{x: 1, y: 2}
+$record = record{x => 1, y => 2}
 $record_alias = $record
 $record.x = 9
 """
@@ -3231,8 +3231,25 @@ println
     def test_executes_list_tuple_record_and_dict_literals(self):
         self.assertEqual(execute("[1, 2, 3] length"), [RuntimeNumber("3")])
         self.assertEqual(execute('{1, "two"}'), [(RuntimeNumber("1"), "two")])
-        self.assertEqual(execute("record{x: 5}.x"), [RuntimeNumber("5")])
-        self.assertEqual(execute('dict{"x": 7}'), [{"x": RuntimeNumber("7")}])
+        self.assertEqual(execute("record{x => 5}.x"), [RuntimeNumber("5")])
+        self.assertEqual(execute('dict{"x" => 7}'), [{"x": RuntimeNumber("7")}])
+
+    def test_record_and_dict_expressions_cannot_read_outer_stack(self):
+        for source in ("3 5 record{foo => +}", "3 5 dict{top => top}", '3 5 dict{"key" => +}'):
+            with self.subTest(source=source):
+                analyser = Analyser(); analyser.analyse(parse(source)); self.assertTrue(analyser.diagnostics)
+
+    def test_dictionary_key_and_value_are_isolated_from_each_other(self):
+        analyser = Analyser(); analyser.analyse(parse('dict{3 => top}')); self.assertTrue(analyser.diagnostics)
+        self.assertEqual(execute('dict{3 => 4 5 +}'), [{RuntimeNumber("3"): RuntimeNumber("9")}])
+
+    def test_record_and_dict_preserve_the_outer_stack(self):
+        self.assertEqual(execute('3 5 record{foo => 7}'), [RuntimeNumber("3"), RuntimeNumber("5"), {"foo": RuntimeNumber("7")}])
+        self.assertEqual(execute('3 5 dict{"key" => 7}'), [RuntimeNumber("3"), RuntimeNumber("5"), {"key": RuntimeNumber("7")}])
+
+    def test_dictionary_keys_support_numbers_and_tuples(self):
+        self.assertEqual(execute('dict{3 => 5} $[3]'), [RuntimeNumber("5")])
+        self.assertEqual(execute('dict{{1, 2} => 7} $[{1, 2}]'), [RuntimeNumber("7")])
 
     def test_executes_conditionals_and_loops(self):
         self.assertEqual(execute("if (true) => 2 else => 3 end"), [RuntimeNumber("2")])
@@ -3541,7 +3558,7 @@ end
         self.assertEqual(
             execute("""
 try =>
-  dict{"present": 1} $["missing"]
+  dict{"present" => 1} $["missing"]
 handle KeyFault =>
   "handled"
 end
@@ -3600,7 +3617,7 @@ println(triple([1, 2, 3, 4, 5]))
     def test_dictionary_index_assignment_inserts_missing_key(self):
         self.assertEqual(
             execute("""
-                dict{"name": "Jeff", "age": 20}
+                dict{"name" => "Jeff", "age" => 20}
                 $["favColour"] = "Magenta"
                 """),
             [
@@ -3616,7 +3633,7 @@ println(triple([1, 2, 3, 4, 5]))
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             stack = execute("""
-                dict{"name": "Jeff", "age": 20}
+                dict{"name" => "Jeff", "age" => 20}
                 $["favColour"] = "Magenta"
                 println
                 """)
@@ -3646,7 +3663,7 @@ println(triple([1, 2, 3, 4, 5]))
                 ]
             ],
         )
-        self.assertEqual(execute('dict{"name": "Jeff"} $["name"]'), ["Jeff"])
+        self.assertEqual(execute('dict{"name" => "Jeff"} $["name"]'), ["Jeff"])
         self.assertEqual(
             execute("[5, 1, 6, 2, 7] ...$[3, 4]"),
             [RuntimeNumber("2"), RuntimeNumber("7")],
