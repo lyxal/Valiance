@@ -274,6 +274,29 @@ def _indexed_type(
     return T.V("Indexed")
 
 
+def _selectors_supported(
+    receiver_type: T.Type,
+    selectors: tuple[IndexSelector, ...],
+) -> bool:
+    """Return whether each selector form is supported by its receiver level."""
+    typ = T.normalize(receiver_type)
+    for selector in selectors:
+        if selector.is_slice and _type_contains_tuple(typ):
+            return False
+        typ = typ if selector.is_slice else _index_type(typ)
+    return True
+
+
+def _type_contains_tuple(typ: T.Type) -> bool:
+    """Return whether a normalized receiver may be a tuple value."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        return _type_contains_tuple(typ.inner)
+    if isinstance(typ, T.UnionType):
+        return any(_type_contains_tuple(item) for item in typ.items)
+    return isinstance(typ, T.TupleType)
+
+
 def _selectors_assignable(
     receiver_type: T.Type,
     selectors: tuple[IndexSelector, ...],

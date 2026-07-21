@@ -3587,6 +3587,20 @@ define f(value: #left #right Number) -> Number => $value
         self.assertEqual(branch.stack, TypeStack((optional(Number),)))
         self.assertIsNone(branch.break_type)
 
+    def test_tuple_slicing_is_rejected_during_analysis(self):
+        analyser = Analyser()
+        analyser.analyse(parse("{1, 2, 3} $[0:1]"))
+
+        self.assertTrue(analyser.diagnostics)
+        self.assertIn("tuple slicing is not supported", analyser.diagnostics[0])
+
+    def test_tuple_slice_assignment_is_rejected_during_analysis(self):
+        analyser = Analyser()
+        analyser.analyse(parse("$value = {1, 2, 3}\n$value[0:1] = 9"))
+
+        self.assertTrue(analyser.diagnostics)
+        self.assertIn("tuple slicing is not supported", analyser.diagnostics[0])
+
     def test_list_indexing_rejects_real_typed_indices(self):
         analyser = Analyser()
 

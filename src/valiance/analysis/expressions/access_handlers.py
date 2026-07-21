@@ -202,6 +202,9 @@ def _index_access_node(
         return _core.BranchSet()
 
     index_types = branch.stack.items[-selector_values:] if selector_values else ()
+    if not _patterns._selectors_supported(receiver_type, node.selectors):
+        self._diagnose("tuple slicing is not supported", node)
+        return _core.BranchSet()
     if not _patterns._selectors_assignable(
         receiver_type,
         node.selectors,
@@ -261,6 +264,9 @@ def _index_set_node(
     value_type = branch.stack[-required]
     receiver_type = branch.stack[-selector_values - 1]
     index_types = branch.stack.items[-selector_values:] if selector_values else ()
+    if not _patterns._selectors_supported(receiver_type, node.selectors):
+        self._diagnose("tuple slicing is not supported", node)
+        return _core.BranchSet()
     if not _patterns._selectors_assignable(
         receiver_type,
         node.selectors,
