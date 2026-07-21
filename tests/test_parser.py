@@ -575,6 +575,8 @@ end
         self.assertEqual(program[4], ElementNode(Symbol("+")))
         self.assertEqual(program[5], GetVariableNode(Symbol("data")))
         self.assertIsInstance(program[7], IndexSetNode)
+        self.assertTrue(program[2].grouped_update)
+        self.assertTrue(program[7].grouped_update)
         self.assertEqual(program[8], SetVariableNode(Symbol("data")))
 
 

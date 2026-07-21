@@ -1175,6 +1175,20 @@ $[1:3] = 4
 ```
 
 - Slice assignment accepts either a single replacement value, which is written to every selected item, or a list-shaped replacement with exactly one value for each selected item.
+- Normal `=` assignment remains replacement assignment.
+- For augmented assignment with a slice or several indices, Valiance gathers the selected values, runs the augmented-assignment code once on that whole selection, and scatters the result back pairwise in selector order.
+- Whole-selection augmented assignment is available for lists and strings. It must return the same collection kind and a compatible element type, with exactly one result item or character per selected position.
+- Repeated positions in a multiple-index augmented assignment are a runtime error; no replacement is stored.
+
+```
+$data = [0, 1, 2, 3, 4, 5]
+$data[2, 3, 5] := 1 rotate
+#? [0, 1, 3, 5, 4, 2]
+
+$text = "abcdef"
+$text[1, 3, 5] := 1 rotate
+#? "adcfeb"
+```
 - For zero-based FizzBuzz over `range(1, 100)`, use offsets 2, 4, and 14:
 
 ```

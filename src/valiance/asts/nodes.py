@@ -397,6 +397,7 @@ class IndexAccessNode(ASTNode):
 
     selectors: tuple[IndexSelector, ...] = ()
     spread: bool = False
+    grouped_update: bool = False
 
 
 @dataclass(frozen=True)
@@ -404,6 +405,7 @@ class IndexSetNode(ASTNode):
     """Return a copy of the receiver with an indexed item replaced."""
 
     selectors: tuple[IndexSelector, ...] = ()
+    grouped_update: bool = False
 
 
 @dataclass(frozen=True)

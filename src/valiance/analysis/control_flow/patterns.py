@@ -140,9 +140,18 @@ def _indexed_type(
     receiver_type: T.Type,
     selectors: tuple[IndexSelector, ...],
     spread: bool,
+    *,
+    grouped_update: bool = False,
 ) -> T.Type:
     """Return the result type of an indexed access."""
     typ = T.normalize(receiver_type)
+    if (
+        grouped_update
+        and len(selectors) > 1
+        and isinstance(typ, T.NominalType)
+        and typ.name.text == "String"
+    ):
+        return T.String
     for index, selector in enumerate(selectors):
         item = typ if selector.is_slice else _index_type(typ)
         if index + 1 < len(selectors):
@@ -196,15 +205,35 @@ def _selectors_assignable(
     )
 
 
+def _grouped_update_receiver(typ: T.Type) -> bool:
+    """Return whether a whole-selection update may target this type."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        return _grouped_update_receiver(typ.inner)
+    if isinstance(typ, T.UnionType):
+        return bool(typ.items) and all(_grouped_update_receiver(item) for item in typ.items)
+    return isinstance(
+        typ,
+        (T.ListExactType, T.ListMinType, T.ListRuggedType),
+    ) or (isinstance(typ, T.NominalType) and typ.name.text == "String")
+
+
 def _indexed_assignment_type(
     receiver_type: T.Type,
     selectors: tuple[IndexSelector, ...],
     value_type: T.Type,
     ctx: T.Context,
+    *,
+    grouped_update: bool = False,
 ) -> T.Type | None:
     """Return the receiver type after a valid indexed assignment."""
     if len(selectors) != 1:
-        item = _indexed_type(receiver_type, selectors, spread=False)
+        item = _indexed_type(
+            receiver_type,
+            selectors,
+            spread=False,
+            grouped_update=grouped_update,
+        )
         return receiver_type if T.assignable(value_type, item, ctx) else None
     if selectors[0].is_slice:
         slice_type = _indexed_type(receiver_type, selectors, spread=False)

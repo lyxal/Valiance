@@ -2031,7 +2031,9 @@ class Parser:
                                 location=_loc(start),
                             ),
                             *index_values,
-                            IndexAccessNode(selectors, location=_loc(start)),
+                            IndexAccessNode(
+                                selectors, grouped_update=True, location=_loc(start)
+                            ),
                             *rhs,
                             StackShuffleNode(
                                 Symbol("move"),
@@ -2040,7 +2042,9 @@ class Parser:
                                 location=_loc(start),
                             ),
                             *index_values,
-                            IndexSetNode(selectors, location=_loc(start)),
+                            IndexSetNode(
+                                selectors, grouped_update=True, location=_loc(start)
+                            ),
                         ),
                         True,
                     )
@@ -2149,9 +2153,20 @@ class Parser:
                 rhs = self._assignment_rhs()
                 nodes: list[ASTNode] = []
                 if op is TokenKind.AUG_ASSIGN:
-                    nodes.extend(self._variable_path_read(name, path, start))
+                    nodes.extend(
+                        self._variable_path_read(
+                            name, path, start, grouped_terminal=True
+                        )
+                    )
                 nodes.extend(rhs)
-                nodes.extend(self._variable_path_rebuild(name, path, start))
+                nodes.extend(
+                    self._variable_path_rebuild(
+                        name,
+                        path,
+                        start,
+                        grouped_terminal=op is TokenKind.AUG_ASSIGN,
+                    )
+                )
                 nodes.append(SetVariableNode(name, location=_loc(start)))
                 return _ChainPiece(tuple(nodes), True)
             return _ChainPiece(
@@ -2214,10 +2229,12 @@ class Parser:
         name: Symbol,
         path: list[tuple[str, object]],
         start: Token,
+        *,
+        grouped_terminal: bool = False,
     ) -> tuple[ASTNode, ...]:
         """Lower a variable access path into ordinary field/index reads."""
         nodes: list[ASTNode] = [GetVariableNode(name, location=_loc(start))]
-        for kind, payload in path:
+        for depth, (kind, payload) in enumerate(path):
             if kind in {"field", "safe_field"}:
                 nodes.append(
                     FieldAccessNode(
@@ -2229,7 +2246,13 @@ class Parser:
                 continue
             selectors = payload
             nodes.extend(self._selector_expressions(selectors))
-            nodes.append(IndexAccessNode(selectors, location=_loc(start)))
+            nodes.append(
+                IndexAccessNode(
+                    selectors,
+                    grouped_update=grouped_terminal and depth == len(path) - 1,
+                    location=_loc(start),
+                )
+            )
         return tuple(nodes)
 
     def _variable_path_rebuild(
@@ -2237,6 +2260,8 @@ class Parser:
         name: Symbol,
         path: list[tuple[str, object]],
         start: Token,
+        *,
+        grouped_terminal: bool = False,
     ) -> tuple[ASTNode, ...]:
         """Reconstruct every parent in a mixed field/index assignment path."""
         nodes: list[ASTNode] = []
@@ -2263,7 +2288,13 @@ class Parser:
                 continue
             selectors = payload
             nodes.extend(self._selector_expressions(selectors))
-            nodes.append(IndexSetNode(selectors, location=_loc(start)))
+            nodes.append(
+                IndexSetNode(
+                    selectors,
+                    grouped_update=grouped_terminal and depth == len(path) - 1,
+                    location=_loc(start),
+                )
+            )
         return tuple(nodes)
 
     def _multiple_assignment(

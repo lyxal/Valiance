@@ -25,7 +25,7 @@ from valiance.vtypes import (
     Variance,
 )
 
-MAGIC = b"VLNCBC\x17"
+MAGIC = b"VLNCBC\x18"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,

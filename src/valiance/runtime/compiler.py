@@ -658,9 +658,15 @@ class _Compiler:
                 argument = (name.text, "optional") if node.optional_safe else name.text
                 self.emit(OpCode.SET_FIELD, argument)
             case IndexAccessNode(selectors, spread):
-                self.emit(OpCode.GET_INDEX, _index_spec(selectors, spread))
+                self.emit(
+                    OpCode.GET_INDEX,
+                    _index_spec(selectors, spread, node.grouped_update),
+                )
             case IndexSetNode(selectors):
-                self.emit(OpCode.SET_INDEX, _index_spec(selectors, False))
+                self.emit(
+                    OpCode.SET_INDEX,
+                    _index_spec(selectors, False, node.grouped_update),
+                )
             case IfNode():
                 self.if_node(node, typed_node)
             case AssertNode():
@@ -2029,7 +2035,8 @@ def _compiled_element_extension(
 def _index_spec(
     selectors: tuple[IndexSelector, ...],
     spread: bool,
-) -> tuple[tuple[int, int, int, int], int]:
+    grouped_update: bool = False,
+) -> tuple[tuple[tuple[int, int, int, int], ...], int, int]:
     """Compute index spec during typed-AST bytecode lowering."""
     return (
         tuple(
@@ -2042,6 +2049,7 @@ def _index_spec(
             for selector in selectors
         ),
         int(spread),
+        int(grouped_update),
     )
 
 

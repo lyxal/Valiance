@@ -211,7 +211,21 @@ def _index_access_node(
         self._diagnose("list indexing requires Integer index value(s)", node)
         return _core.BranchSet()
 
-    result_type = _patterns._indexed_type(receiver_type, node.selectors, node.spread)
+    grouped = node.grouped_update and (
+        len(node.selectors) > 1 or any(item.is_slice for item in node.selectors)
+    )
+    if grouped and not _patterns._grouped_update_receiver(receiver_type):
+        self._diagnose(
+            "whole-selection augmented assignment requires a list or string",
+            node,
+        )
+        return _core.BranchSet()
+    result_type = _patterns._indexed_type(
+        receiver_type,
+        node.selectors,
+        node.spread,
+        grouped_update=grouped,
+    )
     return _core.BranchSet(
         (base_branch.push(result_type).emit(TypedNode(node, result_type)),)
     )
@@ -247,12 +261,27 @@ def _index_set_node(
         self._diagnose("list indexing requires Integer index value(s)", node)
         return _core.BranchSet()
 
-    item_type = _patterns._indexed_type(receiver_type, node.selectors, spread=False)
+    grouped = node.grouped_update and (
+        len(node.selectors) > 1 or any(item.is_slice for item in node.selectors)
+    )
+    if grouped and not _patterns._grouped_update_receiver(receiver_type):
+        self._diagnose(
+            "whole-selection augmented assignment requires a list or string",
+            node,
+        )
+        return _core.BranchSet()
+    item_type = _patterns._indexed_type(
+        receiver_type,
+        node.selectors,
+        spread=False,
+        grouped_update=grouped,
+    )
     updated_receiver_type = _patterns._indexed_assignment_type(
         receiver_type,
         node.selectors,
         value_type,
         self.env.context,
+        grouped_update=grouped,
     )
     if updated_receiver_type is None:
         self._diagnose(

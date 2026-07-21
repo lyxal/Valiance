@@ -5840,7 +5840,7 @@ def _bind_match_name(bindings: dict[str, Any], name: str, value: Any) -> bool:
 
 def _pop_index_values(
     stack: list[Any],
-    spec: tuple[tuple[tuple[int, int, int, int], ...], int],
+    spec: tuple[tuple[tuple[int, int, int, int], ...], int, int],
 ) -> list[tuple[bool, Any, Any, Any]]:
     """Pop index values during VM execution."""
     if spec[0] == ((0, 1, 0, 0),):
@@ -5877,14 +5877,21 @@ def _consume_receiver_result(
 
 def _get_index(
     receiver: Any,
-    spec: tuple[tuple[tuple[int, int, int, int], ...], int],
+    spec: tuple[tuple[tuple[int, int, int, int], ...], int, int],
     selectors: list[tuple[bool, Any, Any, Any]],
 ) -> Any:
     """Find the index for get during VM execution."""
     if len(selectors) > 1 and all(not item[0] for item in selectors):
+        grouped_update = len(spec) > 2 and bool(spec[2])
+        if grouped_update:
+            _validate_distinct_selection_indices(receiver, selectors)
         if is_list_like(receiver) and not is_eager_sequence(receiver):
-            return _index_many_lazy(receiver, tuple(item[1] for item in selectors))
-        return [_index_path(receiver, item[1]) for item in selectors]
+            result = _index_many_lazy(receiver, tuple(item[1] for item in selectors))
+        else:
+            result = [_index_path(receiver, item[1]) for item in selectors]
+        if grouped_update and isinstance(receiver, str):
+            return "".join(result)
+        return result
     result = receiver
     for is_slice, start, stop, step in selectors:
         if is_slice:
@@ -5896,19 +5903,127 @@ def _get_index(
 
 def _set_index(
     receiver: Any,
-    spec: tuple[tuple[tuple[int, int, int, int], ...], int],
+    spec: tuple[tuple[tuple[int, int, int, int], ...], int, int],
     selectors: list[tuple[bool, Any, Any, Any]],
     value: Any,
     *,
     in_place: bool = False,
 ) -> Any:
     """Update index during VM execution."""
+    grouped_update = len(spec) > 2 and bool(spec[2])
     if len(selectors) == 1 and selectors[0][0]:
         _, start, stop, step = selectors[0]
         return _set_slice_value(receiver, start, stop, step, value, in_place=in_place)
     if len(selectors) != 1:
+        if grouped_update and all(not item[0] for item in selectors):
+            _validate_distinct_selection_indices(receiver, selectors)
+            return _set_many_indices(receiver, selectors, value, in_place=in_place)
         raise RuntimeError("indexed assignment requires one non-slice index")
     return _set_index_path(receiver, selectors[0][1], value, in_place=in_place)
+
+
+def _validate_distinct_selection_indices(
+    receiver: Any,
+    selectors: list[tuple[bool, Any, Any, Any]],
+) -> None:
+    """Reject repeated positions in a whole-selection augmented assignment."""
+    if not (isinstance(receiver, str) or is_list_like(receiver)):
+        raise RuntimeError(
+            "whole-selection augmented assignment requires a list or string"
+        )
+    length = len(receiver) if isinstance(receiver, str) or is_eager_sequence(receiver) else None
+    normalized: list[int] = []
+    for _, index, _, _ in selectors:
+        if _is_path(index):
+            raise RuntimeError(
+                "whole-selection augmented assignment requires scalar indices"
+            )
+        target = _int_index(index)
+        if length is None:
+            if target < 0:
+                raise RuntimeError(
+                    "lazy whole-selection assignment does not support negative indices"
+                )
+            normalized.append(target)
+        else:
+            if not -length <= target < length:
+                raise PanicSignal(
+                    _fault_object(
+                        "IndexFault",
+                        _index_fault_message(target, length),
+                    )
+                )
+            normalized.append(_normal_index(target, length))
+    if len(set(normalized)) != len(normalized):
+        raise RuntimeError(
+            "whole-selection augmented assignment contains duplicate indices"
+        )
+
+
+def _set_many_indices(
+    receiver: Any,
+    selectors: list[tuple[bool, Any, Any, Any]],
+    value: Any,
+    *,
+    in_place: bool = False,
+) -> Any:
+    """Scatter one transformed selection back into its source positions."""
+    raw_indices = [_int_index(item[1]) for item in selectors]
+    if isinstance(receiver, str):
+        if not isinstance(value, str):
+            raise RuntimeError(
+                "whole-selection string assignment requires a string result"
+            )
+        replacements = list(value)
+        if len(replacements) != len(raw_indices):
+            raise RuntimeError("selection assignment replacement length mismatch")
+        normalized = [_normal_index(index, len(receiver)) for index in raw_indices]
+        updated = list(receiver)
+        for index, replacement in zip(normalized, replacements, strict=True):
+            updated[index] = replacement
+        return "".join(updated)
+    if not is_list_like(value):
+        raise RuntimeError("whole-selection list assignment requires a list result")
+    replacements = list(value)
+    if len(replacements) != len(raw_indices):
+        raise RuntimeError("selection assignment replacement length mismatch")
+    if is_eager_sequence(receiver):
+        normalized = [_normal_index(index, len(receiver)) for index in raw_indices]
+        updated = (
+            receiver
+            if in_place
+            and isinstance(receiver, ListValue)
+            and receiver.refcount == 1
+            and _list_ownership_is_trivial(receiver)
+            else _copy_eager_list(receiver, skip_indexes=frozenset(normalized))
+        )
+        for index, replacement in zip(normalized, replacements, strict=True):
+            list.__setitem__(updated, index, replacement)
+        _update_list_ownership_after_replacements(updated, replacements)
+        return updated
+    if is_list_like(receiver):
+        replacement_by_index = dict(zip(raw_indices, replacements, strict=True))
+
+        def updated_items():
+            """Yield a lazy list with selected positions replaced."""
+            seen: set[int] = set()
+            for offset, item in enumerate(receiver):
+                if offset in replacement_by_index:
+                    seen.add(offset)
+                    yield replacement_by_index[offset]
+                else:
+                    yield item
+            missing = set(replacement_by_index) - seen
+            if missing:
+                target = min(missing)
+                raise PanicSignal(
+                    _fault_object("IndexFault", _index_fault_message(target))
+                )
+
+        return LazyList(updated_items())
+    raise RuntimeError(
+        "whole-selection augmented assignment requires a list or string"
+    )
 
 
 def _index_path(receiver: Any, index: Any) -> Any:

@@ -3764,6 +3764,60 @@ println(triple([1, 2, 3, 4, 5]))
             [[RuntimeNumber("1"), RuntimeNumber("5"), RuntimeNumber("3")]],
         )
 
+    def test_multiple_index_augmented_assignment_transforms_selection_once(self):
+        source = (
+            "$data = [0, 1, 2, 3, 4, 5]\n"
+            "$data[2, 3, 5] := 1 rotate\n"
+            "$data"
+        )
+        expected = [[
+            RuntimeNumber("0"),
+            RuntimeNumber("1"),
+            RuntimeNumber("3"),
+            RuntimeNumber("5"),
+            RuntimeNumber("4"),
+            RuntimeNumber("2"),
+        ]]
+        self.assertEqual(execute(source), expected)
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        restored = loads(dumps(compile_program(typed, optimize=False)))
+        self.assertEqual(run(restored), expected)
+
+    def test_multiple_index_string_augmented_assignment_scatters_characters(self):
+        self.assertEqual(
+            execute(
+                '$text = "abcdef"\n'
+                "$text[1, 3, 5] := 1 rotate\n"
+                "$text"
+            ),
+            ["adcfeb"],
+        )
+
+    def test_multiple_index_augmented_assignment_rejects_duplicate_positions(self):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "whole-selection augmented assignment contains duplicate indices",
+        ):
+            execute(
+                "$data = [0, 1, 2]\n"
+                "$data[1, 1] := 1 rotate\n"
+                "$data"
+            )
+
+    def test_normal_slice_assignment_remains_replacement(self):
+        self.assertEqual(
+            execute("[1, 2, 3, 4]\n$[1:2] = 9"),
+            [[
+                RuntimeNumber("1"),
+                RuntimeNumber("9"),
+                RuntimeNumber("9"),
+                RuntimeNumber("4"),
+            ]],
+        )
+
     def test_multiple_assignment_stores_corresponding_values(self):
         self.assertEqual(
             execute("$(a, b, c) = 1 2 3\n$a $b $c"),
