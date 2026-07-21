@@ -1469,14 +1469,17 @@ def _tidy_source(
     if add_docstrings:
         rendered = add_missing_docstrings(rendered)
     if apply_format:
-        add_trailing_commas = True
         root = find_project_root(source_file or Path.cwd())
-        if root is not None:
-            add_trailing_commas = "trailing-commas" in load_manifest(root).formatting.add
+        settings = load_manifest(root).formatting if root is not None else None
+        add = settings.add if settings is not None else ("trailing-commas",)
+        remove = settings.remove if settings is not None else ()
         rendered = format_source(
             rendered,
-            indent_width=2,
-            add_trailing_commas=add_trailing_commas,
+            indent_width=settings.indent_width if settings is not None else 2,
+            add_trailing_commas="trailing-commas" in add,
+            add_final_newline="final-newline" in add,
+            trim_trailing_whitespace="trailing-whitespace" in remove,
+            max_blank_lines=(settings.max_blank_lines if settings is not None else None),
         )
     return rendered
 

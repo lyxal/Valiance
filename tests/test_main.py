@@ -333,6 +333,35 @@ class MainTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(source_file.read_text(encoding="utf-8"), "[\n1\n]\n")
 
+    def test_main_tidy_applies_extended_project_format_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "valiance.toml").write_text(
+                '[project]\nname = "demo"\nversion = "0.1.0"\n\n'
+                '[entries]\nmain = "src/main.vlnc"\n\n'
+                '[format]\n'
+                'indent-width = 4\n'
+                'add = ["final-newline"]\n'
+                'remove = ["trailing-whitespace"]\n'
+                'max-blank-lines = 1\n',
+                encoding="utf-8",
+            )
+            source_file = root / "src" / "main.vlnc"
+            source_file.parent.mkdir()
+            source_file.write_text(
+                "define value =>   \n1\nend\n\n\n",
+                encoding="utf-8",
+            )
+
+            with patch("pathlib.Path.cwd", return_value=root):
+                exit_code = main(["tidy", "--format"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                source_file.read_text(encoding="utf-8"),
+                "define value =>\n    1\nend\n\n",
+            )
+
     def test_main_tidy_without_file_rewrites_whole_project(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

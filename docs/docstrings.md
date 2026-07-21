@@ -58,10 +58,17 @@ select additive formatter rules in `valiance.toml`:
 
 ```toml
 [format]
-add = ["trailing-commas"]
+indent-width = 2
+add = ["trailing-commas", "final-newline"]
+remove = ["trailing-whitespace"]
+max-blank-lines = 1
 ```
 
-Use `add = []` to leave multiline-list commas unchanged.
+Available additive rules are `trailing-commas` and `final-newline`. The
+`trailing-whitespace` removal rule ignores multiline-string contents.
+`max-blank-lines` limits consecutive blank source lines, and `indent-width`
+controls block indentation. Omit a scalar setting to retain its default; use
+`add = []` or `remove = []` to disable the corresponding rule family.
 
 ## Generating an HTML reference
 

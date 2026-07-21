@@ -280,6 +280,9 @@ def format_source(
     *,
     indent_width: int = 2,
     add_trailing_commas: bool = True,
+    add_final_newline: bool = False,
+    trim_trailing_whitespace: bool = False,
+    max_blank_lines: int | None = None,
 ) -> str:
     """Normalize leading indentation while preserving source text otherwise.
 
@@ -290,6 +293,8 @@ def format_source(
 
     if indent_width < 0:
         raise ValueError("indent_width must not be negative")
+    if max_blank_lines is not None and max_blank_lines < 0:
+        raise ValueError("max_blank_lines must not be negative")
     tokens = lex(source)
     tokens_by_line: dict[int, list[Token]] = {}
     for token in tokens:
@@ -359,7 +364,52 @@ def format_source(
         frames.append(_FormatFrame(_format_frame_kind(identifiers), original_indent))
 
     rendered = "".join(rendered_lines)
-    return _add_multiline_list_trailing_commas(rendered) if add_trailing_commas else rendered
+    if add_trailing_commas:
+        rendered = _add_multiline_list_trailing_commas(rendered)
+    if trim_trailing_whitespace or max_blank_lines is not None:
+        rendered = _format_line_hygiene(
+            rendered,
+            trim_trailing_whitespace=trim_trailing_whitespace,
+            max_blank_lines=max_blank_lines,
+        )
+    if add_final_newline and rendered and not rendered.endswith(("\n", "\r")):
+        rendered += "\n"
+    return rendered
+
+
+def _format_line_hygiene(
+    source: str,
+    *,
+    trim_trailing_whitespace: bool,
+    max_blank_lines: int | None,
+) -> str:
+    """Apply safe line-level cleanup without changing multiline strings."""
+    source_tokens = lex(source)
+    continuation_lines = _string_continuation_lines(source_tokens)
+    string_lines = set(continuation_lines)
+    for token in source_tokens:
+        if token.kind is TokenKind.STRING and "\n" in (token.raw or token.value):
+            string_lines.update(
+                range(token.line, token.line + (token.raw or token.value).count("\n") + 1)
+            )
+    output: list[str] = []
+    blank_run = 0
+    for line_number, raw_line in enumerate(source.splitlines(keepends=True), start=1):
+        content, ending = _split_line_ending(raw_line)
+        if line_number in string_lines:
+            output.append(raw_line)
+            blank_run = 0
+            continue
+        if trim_trailing_whitespace:
+            content = content.rstrip(" \t")
+        if not content.strip():
+            blank_run += 1
+            if max_blank_lines is not None and blank_run > max_blank_lines:
+                continue
+        else:
+            blank_run = 0
+        output.append(content + ending)
+    return "".join(output)
 
 
 def _add_multiline_list_trailing_commas(source: str) -> str:

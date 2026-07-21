@@ -108,6 +108,33 @@ class SourceToolsTests(unittest.TestCase):
             source,
         )
 
+    def test_format_source_supports_additional_cleanup_options(self):
+        source = "define value =>   \n1\nend\n\n\n\n"
+
+        self.assertEqual(
+            format_source(
+                source.rstrip("\n"),
+                indent_width=4,
+                add_trailing_commas=False,
+                add_final_newline=True,
+                trim_trailing_whitespace=True,
+                max_blank_lines=1,
+            ),
+            "define value =>\n    1\nend\n",
+        )
+
+    def test_format_source_preserves_whitespace_inside_multiline_strings(self):
+        source = '"first   \nsecond   "'
+
+        self.assertEqual(
+            format_source(
+                source,
+                add_trailing_commas=False,
+                trim_trailing_whitespace=True,
+            ),
+            source,
+        )
+
     def test_format_source_preserves_multiline_string_contents(self):
         source = 'define text -> String =>\n"first\n    second"\nend\n'
 

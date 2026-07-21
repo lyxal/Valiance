@@ -129,7 +129,10 @@ class LintSettings:
 class FormatSettings:
     """Project-wide formatter policy loaded from ``valiance.toml``."""
 
+    indent_width: int = 2
     add: tuple[str, ...] = ("trailing-commas",)
+    remove: tuple[str, ...] = ()
+    max_blank_lines: int | None = None
 
 
 @dataclass(frozen=True)
@@ -236,17 +239,34 @@ def load_manifest(root: Path) -> Manifest:
         rendered = ", ".join(repr(code) for code in unknown_codes)
         raise PackageError(f"unknown lint code(s) in [lints].disable: {rendered}")
 
-    unknown_format_keys = set(formatting) - {"add"}
+    unknown_format_keys = set(formatting) - {"indent-width", "add", "remove", "max-blank-lines"}
     if unknown_format_keys:
         names = ", ".join(sorted(map(str, unknown_format_keys)))
         raise PackageError(f"unknown [format] setting(s): {names}")
+    indent_width = formatting.get("indent-width", 2)
+    if not isinstance(indent_width, int) or isinstance(indent_width, bool) or indent_width < 0:
+        raise PackageError("[format].indent-width must be a non-negative integer")
     format_add = formatting.get("add", ["trailing-commas"])
     if not isinstance(format_add, list) or not all(isinstance(option, str) for option in format_add):
         raise PackageError("[format].add must be an array of formatter option strings")
-    unknown_format_options = sorted(set(format_add) - {"trailing-commas"})
-    if unknown_format_options:
-        rendered = ", ".join(repr(option) for option in unknown_format_options)
+    unknown_add_options = sorted(set(format_add) - {"trailing-commas", "final-newline"})
+    if unknown_add_options:
+        rendered = ", ".join(repr(option) for option in unknown_add_options)
         raise PackageError(f"unknown formatter option(s) in [format].add: {rendered}")
+    format_remove = formatting.get("remove", [])
+    if not isinstance(format_remove, list) or not all(isinstance(option, str) for option in format_remove):
+        raise PackageError("[format].remove must be an array of formatter option strings")
+    unknown_remove_options = sorted(set(format_remove) - {"trailing-whitespace"})
+    if unknown_remove_options:
+        rendered = ", ".join(repr(option) for option in unknown_remove_options)
+        raise PackageError(f"unknown formatter option(s) in [format].remove: {rendered}")
+    max_blank_lines = formatting.get("max-blank-lines")
+    if max_blank_lines is not None and (
+        not isinstance(max_blank_lines, int)
+        or isinstance(max_blank_lines, bool)
+        or max_blank_lines < 0
+    ):
+        raise PackageError("[format].max-blank-lines must be a non-negative integer")
 
     parsed_entries: dict[str, str] = {}
     for entry_name, entry_path in entries.items():
@@ -321,7 +341,12 @@ def load_manifest(root: Path) -> Manifest:
             tuple(dict.fromkeys(code for code in resolved_lint_codes if code is not None)),
         ),
         parsed_builds,
-        FormatSettings(tuple(dict.fromkeys(format_add))),
+        FormatSettings(
+            indent_width,
+            tuple(dict.fromkeys(format_add)),
+            tuple(dict.fromkeys(format_remove)),
+            max_blank_lines,
+        ),
     )
 
 
@@ -934,7 +959,11 @@ def write_manifest(manifest: Manifest) -> None:
     lines.append(f"disable = {_toml_value(list(manifest.lints.disabled))}")
     lines.append("")
     lines.append("[format]")
+    lines.append(f"indent-width = {_toml_value(manifest.formatting.indent_width)}")
     lines.append(f"add = {_toml_value(list(manifest.formatting.add))}")
+    lines.append(f"remove = {_toml_value(list(manifest.formatting.remove))}")
+    if manifest.formatting.max_blank_lines is not None:
+        lines.append(f"max-blank-lines = {_toml_value(manifest.formatting.max_blank_lines)}")
     lines.append("")
     lines.append("[dependencies]")
     for dependency in sorted(manifest.dependencies, key=lambda item: item.local_name):
