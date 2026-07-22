@@ -35,6 +35,7 @@ from valiance.runtime.runtime_values import (
     PlannedLazyList,
     ListValue,
     RuntimeNumber,
+    RecordValue,
     ObjectRuntimeType,
     ObjectValue,
     PanicSignal,
@@ -2213,7 +2214,7 @@ class VirtualMachine:
                         case OpCode.BUILD_RECORD:
                             values = _pop_many(frame.stack, len(instruction.arg))
                             frame.stack.append(
-                                DictValue(zip(instruction.arg, values, strict=True))
+                                RecordValue(zip(instruction.arg, values, strict=True))
                             )
                         case OpCode.BUILD_DICT:
                             values = _pop_many(frame.stack, instruction.arg * 2)
@@ -6097,7 +6098,7 @@ def _set_selected_positions(
             )
         else:
             replacements = [value] * len(positions)
-        updated = DictValue(receiver) if isinstance(receiver, DictValue) else dict(receiver)
+        updated = type(receiver)(receiver) if isinstance(receiver, DictValue) else dict(receiver)
         for key, replacement in zip(positions, replacements, strict=True):
             updated[key] = replacement
         return updated
@@ -6643,7 +6644,7 @@ def _set_index_one(
             updated = receiver
         else:
             updated = (
-                DictValue(receiver)
+                type(receiver)(receiver)
                 if isinstance(receiver, DictValue)
                 else dict(receiver)
             )
@@ -6871,7 +6872,7 @@ def _set_field(
             fields = receiver
         else:
             fields = (
-                DictValue(receiver)
+                type(receiver)(receiver)
                 if isinstance(receiver, DictValue)
                 else dict(receiver)
             )

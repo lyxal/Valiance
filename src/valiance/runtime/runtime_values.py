@@ -372,6 +372,10 @@ class DictValue(dict[Any, Any]):
         return result
 
 
+class RecordValue(DictValue):
+    """A record mapping whose bareword keys are retained for display."""
+
+
 @dataclass(frozen=True, eq=False)
 class TaggedValue:
     """A runtime value carrying reified data-tag evidence."""
@@ -1049,6 +1053,12 @@ def format_runtime_value(
         if tuple_single_comma and len(value) == 1:
             inner += ","
         return f"({inner})"
+    if isinstance(value, RecordValue):
+        items = ", ".join(
+            f"{name} => {format_runtime_value(item, **options)}"
+            for name, item in value.items()
+        )
+        return f"record{{{items}}}"
     if isinstance(value, dict):
         items = []
         for key, item in value.items():
@@ -1058,7 +1068,7 @@ def format_runtime_value(
                 if isinstance(key, str)
                 else format_runtime_value(key, **(options | {"quote_strings": True}))
             )
-            items.append(f"{rendered_key}: {format_runtime_value(item, **options)}")
+            items.append(f"{rendered_key} => {format_runtime_value(item, **options)}")
         return "{" + ", ".join(items) + "}"
     if isinstance(value, ObjectValue):
         items = ", ".join(

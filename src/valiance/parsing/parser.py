@@ -2528,7 +2528,7 @@ class Parser:
         return FunctionNode(body=body, location=_loc(start))
 
     def _record_fields(self) -> tuple[tuple[Symbol, tuple[ASTNode, ...]], ...]:
-        """Parse record fields from the current token stream."""
+        """Parse record fields, including entries split across source lines."""
         fields: list[tuple[Symbol, tuple[ASTNode, ...]]] = []
         self._skip_newlines()
         if self._match(TokenKind.RBRACE):
@@ -2536,29 +2536,46 @@ class Parser:
         while True:
             name = self._symbol("expected record field")
             self._expect(TokenKind.FAT_ARROW)
-            fields.append(
-                (name, self._chain_until({TokenKind.COMMA, TokenKind.RBRACE}))
+            value = self._chain_until(
+                {TokenKind.COMMA, TokenKind.NEWLINE, TokenKind.RBRACE}
             )
+            if not value:
+                self._error("expected record field value")
+            fields.append((name, value))
+            self._skip_newlines()
             if self._match(TokenKind.RBRACE):
                 return tuple(fields)
             self._expect(TokenKind.COMMA)
+            self._skip_newlines()
+            if self._match(TokenKind.RBRACE):
+                return tuple(fields)
 
     def _dict_entries(
         self,
     ) -> tuple[tuple[tuple[ASTNode, ...], tuple[ASTNode, ...]], ...]:
-        """Parse dict entries from the current token stream."""
+        """Parse dictionary entries, including entries split across source lines."""
         entries: list[tuple[tuple[ASTNode, ...], tuple[ASTNode, ...]]] = []
         self._skip_newlines()
         if self._match(TokenKind.RBRACE):
             return ()
         while True:
             key = self._chain_until({TokenKind.FAT_ARROW})
+            if not key:
+                self._error("expected dictionary key")
             self._expect(TokenKind.FAT_ARROW)
-            value = self._chain_until({TokenKind.COMMA, TokenKind.RBRACE})
+            value = self._chain_until(
+                {TokenKind.COMMA, TokenKind.NEWLINE, TokenKind.RBRACE}
+            )
+            if not value:
+                self._error("expected dictionary value")
             entries.append((key, value))
+            self._skip_newlines()
             if self._match(TokenKind.RBRACE):
                 return tuple(entries)
             self._expect(TokenKind.COMMA)
+            self._skip_newlines()
+            if self._match(TokenKind.RBRACE):
+                return tuple(entries)
 
     def _annotations(self) -> tuple[ASTNode, ...]:
         """Parse annotations from the current token stream."""

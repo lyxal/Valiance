@@ -37,6 +37,8 @@ from valiance.runtime.runtime_values import (
     PlannedLazyList,
     PipelineTerminal,
     RuntimeNumber,
+    RecordValue,
+    format_runtime_value,
 )
 
 
@@ -3234,6 +3236,13 @@ println
         self.assertEqual(execute("record{x => 5}.x"), [RuntimeNumber("5")])
         self.assertEqual(execute('dict{"x" => 7}'), [{"x": RuntimeNumber("7")}])
 
+    def test_dict_and_record_print_with_fat_arrows(self):
+        dictionary = DictValue({"label": RuntimeNumber("1")})
+        record = RecordValue({"label": RuntimeNumber("1")})
+
+        self.assertEqual(format_runtime_value(dictionary), '{"label" => 1}')
+        self.assertEqual(format_runtime_value(record), 'record{label => 1}')
+
     def test_record_and_dict_expressions_cannot_read_outer_stack(self):
         for source in ("3 5 record{foo => +}", "3 5 dict{top => top}", '3 5 dict{"key" => +}'):
             with self.subTest(source=source):
@@ -3629,7 +3638,7 @@ println(triple([1, 2, 3, 4, 5]))
             ],
         )
 
-    def test_dictionary_printing_quotes_string_keys(self):
+    def test_dictionary_printing_uses_fat_arrows_and_quotes_string_keys(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             stack = execute("""
@@ -3641,7 +3650,7 @@ println(triple([1, 2, 3, 4, 5]))
         self.assertEqual(stack, [])
         self.assertEqual(
             output.getvalue(),
-            '{"name": Jeff, "age": 20, "favColour": Magenta}\n',
+            '{"name" => Jeff, "age" => 20, "favColour" => Magenta}\n',
         )
 
     def test_indexing_lists_slices_dicts_and_spread(self):

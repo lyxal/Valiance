@@ -267,6 +267,18 @@ end
             with self.subTest(source=source), self.assertRaises(ParseError):
                 parse(source)
 
+    def test_tuple_record_and_dict_literals_allow_multiline_closing_brace(self):
+        sources_and_types = (
+            ("{\n  1,\n  2,\n}\n", TupleLiteralNode),
+            ("record{\n  left => 1,\n  right => 2,\n}\n", RecordLiteralNode),
+            ('dict{\n  "left" => 1,\n  "right" => 2,\n}\n', DictLiteralNode),
+        )
+        for source, expected_type in sources_and_types:
+            with self.subTest(source=source):
+                parsed = parse(source)
+                self.assertEqual(len(parsed), 1)
+                self.assertIsInstance(parsed[0], expected_type)
+
     def test_parses_explicit_variable_type_annotation(self):
         program = parse("$n: Number? = 5")
 
