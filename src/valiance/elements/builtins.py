@@ -344,12 +344,6 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         category="Collections",
         see_also=("len",),
     ),
-    "head": element_documentation(
-        "Return the first item of a non-empty list.",
-        parameters=(("values", "Non-empty input list."),),
-        returns="The first list item.",
-        category="Collections",
-    ),
     "first": element_documentation(
         "Return the first item of a non-empty list or string.",
         parameters=(("values", "Non-empty input value."),),
@@ -2060,30 +2054,20 @@ def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (RuntimeNumber(len(value)),)
 
 
-@builtin("head", (T.ExactList(T.TypeVariable("Item")),), (T.TypeVariable("Item"),))
-def _head(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+@builtin("first", (T.ExactList(T.TypeVariable("Item")),), (T.TypeVariable("Item"),))
+@builtin("first", (T.String,), (T.String,))
+def _first(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return the first item, terminating a planned pipeline immediately."""
     values = args[0]
     if isinstance(values, PlannedLazyList):
         return (
             values.run_terminal(
-                PipelineTerminal.first("head requires a non-empty list")
+                PipelineTerminal.first("first requires a non-empty list")
             ),
         )
     for item in values:
         return (item,)
-    raise RuntimeError("head requires a non-empty list")
-
-
-@builtin("first", (T.ExactList(T.V("Item")),), (T.V("Item"),))
-@builtin("first", (T.String,), (T.String,))
-def _first_value(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Return the first item from a non-empty finite/list-like value."""
-
-    value = args[0]
-    for item in value:
-        return (item,)
-    raise RuntimeError("first requires a non-empty value")
+    raise RuntimeError("first requires a non-empty list")
 
 
 @builtin(

@@ -444,9 +444,7 @@ define pick(a: Number, b: Number = 2) -> Number => $a $b +
         )
 
     def test_drop_is_a_stateful_fused_pipeline_stage(self):
-        planned = execute(
-            "range(1, 10) map: fn (n) => $n * 2 end | drop 3"
-        )[0]
+        planned = execute("range(1, 10) map: fn (n) => $n * 2 end | drop 3")[0]
 
         self.assertIsInstance(planned, PlannedLazyList)
         self.assertEqual(
@@ -466,7 +464,7 @@ define pick(a: Number, b: Number = 2) -> Number => $a $b +
             ],
         )
 
-    def test_head_terminates_a_planned_pipeline_after_one_output(self):
+    def test_first_terminates_a_planned_pipeline_after_one_output(self):
         consumed: list[int] = []
 
         def source():
@@ -485,10 +483,8 @@ define pick(a: Number, b: Number = 2) -> Number => $a $b +
 
     def test_vector_membership_preparation_is_operand_order_invariant(self):
         sources = (
-            "range(1, 100) filter fn (n) => "
-            "$n % [3, 5] in swap 0 end sum",
-            "range(1, 100) filter fn (n) => "
-            "0 in swap ($n % [3, 5]) end sum",
+            "range(1, 100) filter fn (n) => " "$n % [3, 5] in swap 0 end sum",
+            "range(1, 100) filter fn (n) => " "0 in swap ($n % [3, 5]) end sum",
             "range(1, 100) filter fn (n) => "
             "[3, 5] | $n | swap | % | 0 | swap | in end sum",
         )
@@ -516,15 +512,11 @@ end
         prepared = vm.prepare_call(function, 1, 1)
         self.assertEqual(prepared.strategy, "symbolic-match")
         self.assertEqual(
-            prepared.invoke1(
-                [RuntimeNumber(1), RuntimeNumber(2), RuntimeNumber(3)]
-            ),
+            prepared.invoke1([RuntimeNumber(1), RuntimeNumber(2), RuntimeNumber(3)]),
             (RuntimeNumber(9),),
         )
         self.assertEqual(
-            prepared.invoke1(
-                [RuntimeNumber(1), RuntimeNumber(2), RuntimeNumber(1)]
-            ),
+            prepared.invoke1([RuntimeNumber(1), RuntimeNumber(2), RuntimeNumber(1)]),
             (RuntimeNumber(8),),
         )
 
@@ -556,15 +548,12 @@ end
         self.assertEqual(prepared.invoke1(RuntimeNumber(7)), ("7",))
         assert vm.optimization_stats is not None
         self.assertEqual(
-            vm.optimization_stats.snapshot()[
-                "prepared.strategy.match-dispatch"
-            ],
+            vm.optimization_stats.snapshot()["prepared.strategy.match-dispatch"],
             1,
         )
 
     def test_guarded_match_map_preserves_source_order(self):
-        result = execute(
-            """
+        result = execute("""
 range(1, 16) map fn (n: Integer) =>
   match =>
     if % 15 == 0 => "FizzBuzz"
@@ -573,14 +562,26 @@ range(1, 16) map fn (n: Integer) =>
     _ => "${top}"
   end
 end
-"""
-        )
+""")
         self.assertEqual(
             list(result[0]),
             [
-                "1", "2", "Fizz", "4", "Buzz", "Fizz", "7", "8",
-                "Fizz", "Buzz", "11", "Fizz", "13", "14",
-                "FizzBuzz", "16",
+                "1",
+                "2",
+                "Fizz",
+                "4",
+                "Buzz",
+                "Fizz",
+                "7",
+                "8",
+                "Fizz",
+                "Buzz",
+                "11",
+                "Fizz",
+                "13",
+                "14",
+                "FizzBuzz",
+                "16",
             ],
         )
 
@@ -589,9 +590,7 @@ end
 
     def test_optimization_stats_report_prepared_plan_reuse(self):
         analyser = Analyser()
-        typed = analyser.analyse(
-            parse("fn (value: Integer) -> Integer => $value end")
-        )
+        typed = analyser.analyse(parse("fn (value: Integer) -> Integer => $value end"))
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(
             output=lambda _value: None,
@@ -624,9 +623,7 @@ fn (cells: Integer+) -> Integer => $cells[1] end
         prepared = vm.prepare_call(function, 1, 1)
 
         self.assertEqual(
-            prepared.invoke1(
-                [RuntimeNumber(10), RuntimeNumber(20), RuntimeNumber(30)]
-            ),
+            prepared.invoke1([RuntimeNumber(10), RuntimeNumber(20), RuntimeNumber(30)]),
             (RuntimeNumber(20),),
         )
 
@@ -704,9 +701,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
     def test_user_function_vectorisation_reuses_prepared_scalar_plan(self):
         analyser = Analyser()
         typed = analyser.analyse(
-            parse(
-                "fn (n: Integer) -> Integer => ($n * 2) + 1 end"
-            )
+            parse("fn (n: Integer) -> Integer => ($n * 2) + 1 end")
         )
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
@@ -725,21 +720,15 @@ fn (cells: Integer+) -> Integer => $cells[0] end
         self.assertEqual(prepared.strategy, "straight-line")
 
     def test_length_fuses_a_finite_planned_pipeline(self):
-        result = execute(
-            "range(1, 20) filter: fn (n) => $n % 2 == 0 end | length"
-        )
+        result = execute("range(1, 20) filter: fn (n) => $n % 2 == 0 end | length")
         self.assertEqual(result, [RuntimeNumber(10)])
 
     def test_prepared_predicate_uses_general_plan_for_new_shapes(self):
-        result = execute(
-            "range(1, 10) filter: fn (n) => $n > 7 end | sum"
-        )
+        result = execute("range(1, 10) filter: fn (n) => $n > 7 end | sum")
         self.assertEqual(result, [RuntimeNumber(27)])
 
     def test_map_builds_a_fusible_lazy_pipeline(self):
-        result = execute(
-            "range(1, 5) map: fn (n) => $n % 3 end"
-        )[0]
+        result = execute("range(1, 5) map: fn (n) => $n % 3 end")[0]
 
         self.assertIsInstance(result, PlannedLazyList)
         self.assertEqual(tuple(stage.name for stage in result.stages), ("map",))
@@ -790,9 +779,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
 
     def test_prepared_unary_identity_uses_identity_strategy(self):
         analyser = Analyser()
-        typed = analyser.analyse(
-            parse("fn (value: Integer) -> Integer => $value end")
-        )
+        typed = analyser.analyse(parse("fn (value: Integer) -> Integer => $value end"))
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
         function = vm.run(compile_program(typed))[0]
@@ -803,9 +790,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
 
     def test_prepared_unary_wrapper_uses_resolved_builtin_strategy(self):
         analyser = Analyser()
-        typed = analyser.analyse(
-            parse("fn (n: Integer) -> Integer => $n % 7 end")
-        )
+        typed = analyser.analyse(parse("fn (n: Integer) -> Integer => $n % 7 end"))
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
         function = vm.run(compile_program(typed))[0]
@@ -820,10 +805,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
     def test_prepared_binary_wrapper_uses_resolved_builtin_strategy(self):
         analyser = Analyser()
         typed = analyser.analyse(
-            parse(
-                "fn (a: Integer, b: Integer) -> Integer => "
-                "$a $b + end"
-            )
+            parse("fn (a: Integer, b: Integer) -> Integer => " "$a $b + end")
         )
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
@@ -838,9 +820,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
 
     def test_prepared_wrapper_falls_back_for_collection_vectorisation(self):
         analyser = Analyser()
-        typed = analyser.analyse(
-            parse("fn (n: Integer) -> Integer => $n % 7 end")
-        )
+        typed = analyser.analyse(parse("fn (n: Integer) -> Integer => $n % 7 end"))
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
         function = vm.run(compile_program(typed))[0]
@@ -1000,7 +980,7 @@ end
             FunctionCode(
                 (
                     Instruction(OpCode.PUSH_CONST, count(1)),
-                    Instruction(OpCode.LOAD_ELEMENT, "head"),
+                    Instruction(OpCode.LOAD_ELEMENT, "first"),
                     Instruction(OpCode.CALL),
                 ),
                 name="<main>",
@@ -3241,24 +3221,40 @@ println
         record = RecordValue({"label": RuntimeNumber("1")})
 
         self.assertEqual(format_runtime_value(dictionary), '{"label" => 1}')
-        self.assertEqual(format_runtime_value(record), 'record{label => 1}')
+        self.assertEqual(format_runtime_value(record), "record{label => 1}")
 
     def test_record_and_dict_expressions_cannot_read_outer_stack(self):
-        for source in ("3 5 record{foo => +}", "3 5 dict{top => top}", '3 5 dict{"key" => +}'):
+        for source in (
+            "3 5 record{foo => +}",
+            "3 5 dict{top => top}",
+            '3 5 dict{"key" => +}',
+        ):
             with self.subTest(source=source):
-                analyser = Analyser(); analyser.analyse(parse(source)); self.assertTrue(analyser.diagnostics)
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertTrue(analyser.diagnostics)
 
     def test_dictionary_key_and_value_are_isolated_from_each_other(self):
-        analyser = Analyser(); analyser.analyse(parse('dict{3 => top}')); self.assertTrue(analyser.diagnostics)
-        self.assertEqual(execute('dict{3 => 4 5 +}'), [{RuntimeNumber("3"): RuntimeNumber("9")}])
+        analyser = Analyser()
+        analyser.analyse(parse("dict{3 => top}"))
+        self.assertTrue(analyser.diagnostics)
+        self.assertEqual(
+            execute("dict{3 => 4 5 +}"), [{RuntimeNumber("3"): RuntimeNumber("9")}]
+        )
 
     def test_record_and_dict_preserve_the_outer_stack(self):
-        self.assertEqual(execute('3 5 record{foo => 7}'), [RuntimeNumber("3"), RuntimeNumber("5"), {"foo": RuntimeNumber("7")}])
-        self.assertEqual(execute('3 5 dict{"key" => 7}'), [RuntimeNumber("3"), RuntimeNumber("5"), {"key": RuntimeNumber("7")}])
+        self.assertEqual(
+            execute("3 5 record{foo => 7}"),
+            [RuntimeNumber("3"), RuntimeNumber("5"), {"foo": RuntimeNumber("7")}],
+        )
+        self.assertEqual(
+            execute('3 5 dict{"key" => 7}'),
+            [RuntimeNumber("3"), RuntimeNumber("5"), {"key": RuntimeNumber("7")}],
+        )
 
     def test_dictionary_keys_support_numbers_and_tuples(self):
-        self.assertEqual(execute('dict{3 => 5} $[3]'), [RuntimeNumber("5")])
-        self.assertEqual(execute('dict{{1, 2} => 7} $[{1, 2}]'), [RuntimeNumber("7")])
+        self.assertEqual(execute("dict{3 => 5} $[3]"), [RuntimeNumber("5")])
+        self.assertEqual(execute("dict{{1, 2} => 7} $[{1, 2}]"), [RuntimeNumber("7")])
 
     def test_executes_conditionals_and_loops(self):
         self.assertEqual(execute("if (true) => 2 else => 3 end"), [RuntimeNumber("2")])
@@ -3301,7 +3297,7 @@ $n
         self.assertEqual(
             execute("""
 define first_generated(n: Number) -> Number =>
-  unfold (< 3) -> (x: Number) => 1 + end | #-infinite | head
+  unfold (< 3) -> (x: Number) => 1 + end | #-infinite | first
 end
 1 first_generated
 """),
@@ -3458,7 +3454,7 @@ end
     def test_executes_assert_and_unfold(self):
         self.assertEqual(execute("assert => true end 5"), [RuntimeNumber("5")])
         stack = execute(
-            "1 unfold (< 4) -> (n: Number) => $n 1 + end | #-infinite | head"
+            "1 unfold (< 4) -> (n: Number) => $n 1 + end | #-infinite | first"
         )
         self.assertEqual(stack, [RuntimeNumber("2")])
 
@@ -3681,14 +3677,27 @@ println(triple([1, 2, 3, 4, 5]))
     def test_multi_index_assignment_broadcasts_to_lists_and_dictionaries(self):
         self.assertEqual(
             execute("$list = [1, 2, 3, 4]\n$list[0, 3] = 8\n$list"),
-            [[RuntimeNumber("8"), RuntimeNumber("2"), RuntimeNumber("3"), RuntimeNumber("8")]],
+            [
+                [
+                    RuntimeNumber("8"),
+                    RuntimeNumber("2"),
+                    RuntimeNumber("3"),
+                    RuntimeNumber("8"),
+                ]
+            ],
         )
         self.assertEqual(
             execute(
                 '$dict = dict{"a" => 1, "b" => 2, "c" => 3}\n'
                 '$dict["a", "c"] = 8\n$dict'
             ),
-            [{"a": RuntimeNumber("8"), "b": RuntimeNumber("2"), "c": RuntimeNumber("8")}],
+            [
+                {
+                    "a": RuntimeNumber("8"),
+                    "b": RuntimeNumber("2"),
+                    "c": RuntimeNumber("8"),
+                }
+            ],
         )
 
     def test_indexing_lazy_lists_uses_absolute_indices(self):
@@ -3787,19 +3796,17 @@ println(triple([1, 2, 3, 4, 5]))
         )
 
     def test_multiple_index_augmented_assignment_transforms_selection_once(self):
-        source = (
-            "$data = [0, 1, 2, 3, 4, 5]\n"
-            "$data[2, 3, 5] := 1 rotate\n"
-            "$data"
-        )
-        expected = [[
-            RuntimeNumber("0"),
-            RuntimeNumber("1"),
-            RuntimeNumber("3"),
-            RuntimeNumber("5"),
-            RuntimeNumber("4"),
-            RuntimeNumber("2"),
-        ]]
+        source = "$data = [0, 1, 2, 3, 4, 5]\n" "$data[2, 3, 5] := 1 rotate\n" "$data"
+        expected = [
+            [
+                RuntimeNumber("0"),
+                RuntimeNumber("1"),
+                RuntimeNumber("3"),
+                RuntimeNumber("5"),
+                RuntimeNumber("4"),
+                RuntimeNumber("2"),
+            ]
+        ]
         self.assertEqual(execute(source), expected)
 
         analyser = Analyser()
@@ -3810,11 +3817,7 @@ println(triple([1, 2, 3, 4, 5]))
 
     def test_multiple_index_string_augmented_assignment_scatters_characters(self):
         self.assertEqual(
-            execute(
-                '$text = "abcdef"\n'
-                "$text[1, 3, 5] := 1 rotate\n"
-                "$text"
-            ),
+            execute('$text = "abcdef"\n' "$text[1, 3, 5] := 1 rotate\n" "$text"),
             ["adcfeb"],
         )
 
@@ -3823,25 +3826,19 @@ println(triple([1, 2, 3, 4, 5]))
             RuntimeError,
             "whole-selection augmented assignment contains duplicate indices",
         ):
-            execute(
-                "$data = [0, 1, 2]\n"
-                "$data[1, 1] := 1 rotate\n"
-                "$data"
-            )
+            execute("$data = [0, 1, 2]\n" "$data[1, 1] := 1 rotate\n" "$data")
 
     def test_list_valued_selector_gathers_indices_in_declared_order(self):
-        source = (
-            "$x = [1, 2, 3, 4, 5]\n"
-            "$y = [1, 2, 4, 3, 0]\n"
-            "$x[$y]"
-        )
-        expected = [[
-            RuntimeNumber("2"),
-            RuntimeNumber("3"),
-            RuntimeNumber("5"),
-            RuntimeNumber("4"),
-            RuntimeNumber("1"),
-        ]]
+        source = "$x = [1, 2, 3, 4, 5]\n" "$y = [1, 2, 4, 3, 0]\n" "$x[$y]"
+        expected = [
+            [
+                RuntimeNumber("2"),
+                RuntimeNumber("3"),
+                RuntimeNumber("5"),
+                RuntimeNumber("4"),
+                RuntimeNumber("1"),
+            ]
+        ]
         self.assertEqual(execute(source), expected)
 
         analyser = Analyser()
@@ -3872,12 +3869,14 @@ println(triple([1, 2, 3, 4, 5]))
                 "$data[$indices] = 9\n"
                 "$data"
             ),
-            [[
-                RuntimeNumber("9"),
-                RuntimeNumber("2"),
-                RuntimeNumber("9"),
-                RuntimeNumber("4"),
-            ]],
+            [
+                [
+                    RuntimeNumber("9"),
+                    RuntimeNumber("2"),
+                    RuntimeNumber("9"),
+                    RuntimeNumber("4"),
+                ]
+            ],
         )
         self.assertEqual(
             execute(
@@ -3886,12 +3885,14 @@ println(triple([1, 2, 3, 4, 5]))
                 "$data[$indices] := 1 rotate\n"
                 "$data"
             ),
-            [[
-                RuntimeNumber("3"),
-                RuntimeNumber("2"),
-                RuntimeNumber("1"),
-                RuntimeNumber("4"),
-            ]],
+            [
+                [
+                    RuntimeNumber("3"),
+                    RuntimeNumber("2"),
+                    RuntimeNumber("1"),
+                    RuntimeNumber("4"),
+                ]
+            ],
         )
 
     def test_list_valued_augmented_selector_rejects_duplicate_indices(self):
@@ -3927,10 +3928,12 @@ println(triple([1, 2, 3, 4, 5]))
                 "$matrix[[[0, 1], [1, 0]]] = 9\n"
                 "$matrix"
             ),
-            [[
-                [RuntimeNumber("1"), RuntimeNumber("9")],
-                [RuntimeNumber("9"), RuntimeNumber("4")],
-            ]],
+            [
+                [
+                    [RuntimeNumber("1"), RuntimeNumber("9")],
+                    [RuntimeNumber("9"), RuntimeNumber("4")],
+                ]
+            ],
         )
         self.assertEqual(
             execute(
@@ -3938,10 +3941,12 @@ println(triple([1, 2, 3, 4, 5]))
                 "$matrix[[[0, 1], [1, 0]]] := 1 rotate\n"
                 "$matrix"
             ),
-            [[
-                [RuntimeNumber("1"), RuntimeNumber("3")],
-                [RuntimeNumber("2"), RuntimeNumber("4")],
-            ]],
+            [
+                [
+                    [RuntimeNumber("1"), RuntimeNumber("3")],
+                    [RuntimeNumber("2"), RuntimeNumber("4")],
+                ]
+            ],
         )
 
     def test_integer_rank_two_augmented_selector_rejects_duplicate_paths(self):
@@ -3950,23 +3955,23 @@ println(triple([1, 2, 3, 4, 5]))
             "whole-selection augmented assignment contains duplicate indices",
         ):
             execute(
-                "$matrix = [[1, 2], [3, 4]]\n"
-                "$matrix[[[0, 1], [0, 1]]] := 1 rotate"
+                "$matrix = [[1, 2], [3, 4]]\n" "$matrix[[[0, 1], [0, 1]]] := 1 rotate"
             )
 
     def test_vectorised_comparison_result_is_a_boolean_mask(self):
         source = (
-            "$values = [5, 1, 2, 7, 8, 2, 4, 6, 7, 1, 4, 7, 8]\n"
-            "$values[$values < 5]"
+            "$values = [5, 1, 2, 7, 8, 2, 4, 6, 7, 1, 4, 7, 8]\n" "$values[$values < 5]"
         )
-        expected = [[
-            RuntimeNumber("1"),
-            RuntimeNumber("2"),
-            RuntimeNumber("2"),
-            RuntimeNumber("4"),
-            RuntimeNumber("1"),
-            RuntimeNumber("4"),
-        ]]
+        expected = [
+            [
+                RuntimeNumber("1"),
+                RuntimeNumber("2"),
+                RuntimeNumber("2"),
+                RuntimeNumber("4"),
+                RuntimeNumber("1"),
+                RuntimeNumber("4"),
+            ]
+        ]
         self.assertEqual(execute(source), expected)
 
         analyser = Analyser()
@@ -3999,16 +4004,12 @@ println(triple([1, 2, 3, 4, 5]))
     def test_selector_functions_index_lists_strings_and_dictionaries(self):
         self.assertEqual(
             execute(
-                "[1, 2, 3, 4] "
-                "$[fn (x: Number) -> #boolean Number => $x > 2 end]"
+                "[1, 2, 3, 4] " "$[fn (x: Number) -> #boolean Number => $x > 2 end]"
             ),
             [[RuntimeNumber("3"), RuntimeNumber("4")]],
         )
         self.assertEqual(
-            execute(
-                '"abcd" '
-                '$[fn (c: String) -> #boolean Number => $c in "bd" end]'
-            ),
+            execute('"abcd" ' '$[fn (c: String) -> #boolean Number => $c in "bd" end]'),
             ["bd"],
         )
         self.assertEqual(
@@ -4023,16 +4024,16 @@ println(triple([1, 2, 3, 4, 5]))
     def test_mask_and_function_selectors_support_normal_assignment(self):
         self.assertEqual(
             execute(
-                "$data = [1, 2, 3, 4]\n"
-                "$data[[true, false, true]] = 9\n"
-                "$data"
+                "$data = [1, 2, 3, 4]\n" "$data[[true, false, true]] = 9\n" "$data"
             ),
-            [[
-                RuntimeNumber("9"),
-                RuntimeNumber("2"),
-                RuntimeNumber("9"),
-                RuntimeNumber("4"),
-            ]],
+            [
+                [
+                    RuntimeNumber("9"),
+                    RuntimeNumber("2"),
+                    RuntimeNumber("9"),
+                    RuntimeNumber("4"),
+                ]
+            ],
         )
         self.assertEqual(
             execute(
@@ -4051,12 +4052,14 @@ println(triple([1, 2, 3, 4, 5]))
                 "$data[[true, false, true]] := 1 rotate\n"
                 "$data"
             ),
-            [[
-                RuntimeNumber("3"),
-                RuntimeNumber("2"),
-                RuntimeNumber("1"),
-                RuntimeNumber("4"),
-            ]],
+            [
+                [
+                    RuntimeNumber("3"),
+                    RuntimeNumber("2"),
+                    RuntimeNumber("1"),
+                    RuntimeNumber("4"),
+                ]
+            ],
         )
         self.assertEqual(
             execute(
@@ -4085,12 +4088,14 @@ println(triple([1, 2, 3, 4, 5]))
     def test_normal_slice_assignment_remains_replacement(self):
         self.assertEqual(
             execute("[1, 2, 3, 4]\n$[1:2] = 9"),
-            [[
-                RuntimeNumber("1"),
-                RuntimeNumber("9"),
-                RuntimeNumber("9"),
-                RuntimeNumber("4"),
-            ]],
+            [
+                [
+                    RuntimeNumber("1"),
+                    RuntimeNumber("9"),
+                    RuntimeNumber("9"),
+                    RuntimeNumber("4"),
+                ]
+            ],
         )
 
     def test_multiple_assignment_stores_corresponding_values(self):
@@ -4286,6 +4291,7 @@ end
 if __name__ == "__main__":
     unittest.main()
 
+
 class ImportedOverloadRuntimeTests(unittest.TestCase):
     def test_imported_recursive_definition_calls_hidden_runtime_binding(self):
         with TemporaryDirectory() as tmp:
@@ -4308,9 +4314,7 @@ class ImportedOverloadRuntimeTests(unittest.TestCase):
             )
             main = source_dir / "main.vlnc"
             analyser = Analyser(source_file=main)
-            typed = analyser.analyse(
-                parse("import {fib.fibonacci}\nfibonacci(10)")
-            )
+            typed = analyser.analyse(parse("import {fib.fibonacci}\nfibonacci(10)"))
             self.assertFalse(analyser.diagnostics)
 
             direct = run(compile_program(typed, optimize=False))
@@ -4330,15 +4334,11 @@ class ImportedOverloadRuntimeTests(unittest.TestCase):
             )
             (source_dir / "app.vlnc").write_text(
                 'public define greeting(name: String) -> String => "Hello, $name!"\n'
-                'public define greeting(x: Integer) -> Integer => $x + 1\n',
+                "public define greeting(x: Integer) -> Integer => $x + 1\n",
                 encoding="utf-8",
             )
             main = source_dir / "main.vlnc"
-            source = (
-                'import {app.greeting}\n'
-                'greeting("Valiance")\n'
-                'greeting(5)'
-            )
+            source = "import {app.greeting}\n" 'greeting("Valiance")\n' "greeting(5)"
             analyser = Analyser(source_file=main)
             typed = analyser.analyse(parse(source))
             self.assertFalse(analyser.diagnostics)
