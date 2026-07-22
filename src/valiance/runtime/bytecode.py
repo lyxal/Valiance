@@ -23,6 +23,7 @@ class OpCode(Enum):
     CALL = "call"
     CALL_RESOLVED_ELEMENT = "call_resolved_element"
     CHECK_CAST = "check_cast"
+    TRY_CAST = "try_cast"
     CANONICALIZE_TAGS = "canonicalize_tags"
     BUILD_LIST = "build_list"
     BUILD_STRING = "build_string"

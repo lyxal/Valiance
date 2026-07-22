@@ -465,6 +465,13 @@ end
             ],
         )
         self.assertEqual(
+            parse("value as? String"),
+            [
+                ElementNode(Symbol("value")),
+                CastNode(String, optional=True),
+            ],
+        )
+        self.assertEqual(
             parse("value as! String"),
             [
                 ElementNode(Symbol("value")),

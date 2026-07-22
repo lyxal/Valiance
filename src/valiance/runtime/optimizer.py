@@ -1020,6 +1020,7 @@ def _exact_straight_line_depth(
         return depth
     if instruction.op in {
         OpCode.CHECK_CAST,
+        OpCode.TRY_CAST,
         OpCode.CANONICALIZE_TAGS,
         OpCode.VALIDATE_TAG,
     }:

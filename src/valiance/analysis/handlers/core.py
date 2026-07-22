@@ -346,9 +346,9 @@ def _cast_node(
     node: CastNode,
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
-    """Analyse a `CastNode` node and return the surviving branches."""
+    """Analyse a coercing, checked, or optional cast."""
     # ``exact`` and ``atomic`` are callable-parameter policy, not value
-    # constructors.  A cast may target a callable whose own parameters carry
+    # constructors. A cast may target a callable whose own parameters carry
     # those policies, but a marker wrapped around the cast value itself is
     # erased.
     target = _functions._parameter_value_type(T.normalize(node.typ))
@@ -368,10 +368,10 @@ def _cast_node(
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
 
     source = branch.stack[-1]
-    if node.checked:
-        if T.assignable(source, target, self.env.context):
-            node = replace(node, checked=False)
-        elif (
+    statically_safe = T.assignable(source, target, self.env.context)
+    runtime_refinement = node.checked or node.optional
+    if runtime_refinement and not statically_safe:
+        if (
             invalid_runtime_type := _patterns._uncheckable_runtime_type(target)
         ) is not None:
             self._diagnose(
@@ -379,8 +379,8 @@ def _cast_node(
                 node,
             )
             return _core.BranchSet()
-        elif not _utils._types_overlap(source, target, self.env.context):
-            if _functions._type_contains_rank_var(target):
+        if not _utils._types_overlap(source, target, self.env.context):
+            if node.checked and _functions._type_contains_rank_var(target):
                 stack = T.TypeStack((*branch.stack.items[:-1], target))
                 return _core.BranchSet(
                     (branch.with_stack(stack).emit(TypedNode(node, target)),)
@@ -390,7 +390,7 @@ def _cast_node(
                 node,
             )
             return _core.BranchSet()
-    elif not T.assignable(source, target, self.env.context):
+    elif not runtime_refinement and not statically_safe:
         self._diagnose(
             f"cannot safely cast {T.show(source)} to {T.show(target)}",
             node,
@@ -403,9 +403,12 @@ def _cast_node(
         (target,),
         self.env.context,
     )[0]
-    stack = T.TypeStack((*branch.stack.items[:-1], flowed_target))
+    result_type = T.optional(flowed_target) if node.optional else flowed_target
+    if node.checked and statically_safe:
+        node = replace(node, checked=False)
+    stack = T.TypeStack((*branch.stack.items[:-1], result_type))
     return _core.BranchSet(
-        (branch.with_stack(stack).emit(TypedNode(node, flowed_target)),)
+        (branch.with_stack(stack).emit(TypedNode(node, result_type)),)
     )
 
 

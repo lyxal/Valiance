@@ -1511,7 +1511,11 @@ class Parser:
                         cast.typ if cast is not None else None,
                         location=_loc(token),
                     ),
-                    *((cast,) if cast is not None and cast.checked else ()),
+                    *(
+                        (cast,)
+                        if cast is not None and (cast.checked or cast.optional)
+                        else ()
+                    ),
                 ),
                 True,
             )
@@ -1652,6 +1656,8 @@ class Parser:
             return _ChainPiece((self._match_node(self._previous),), True)
         if self._match_ident("try"):
             return _ChainPiece((self._try(self._previous),), True)
+        if self._match_ident("as?"):
+            return self._cast(self._previous, optional_spelling=True)
         if self._match_ident("as"):
             return self._cast(self._previous)
         if self._match_ident("break"):
@@ -1944,20 +1950,36 @@ class Parser:
             return _EXPANDED_SKIP
         return Symbol(value)
 
-    def _cast(self, start: Token) -> _ChainPiece:
-        """Parse cast from the current token stream."""
+    def _cast(
+        self,
+        start: Token,
+        *,
+        optional_spelling: bool = False,
+    ) -> _ChainPiece:
+        """Parse coercing, checked, or optional cast syntax."""
         checked = self._check_op("!")
-        if checked:
+        optional = optional_spelling or self._check_op("?")
+        if checked or (optional and not optional_spelling):
             self._advance()
         return _ChainPiece(
-            (CastNode(self.parse_type_expression(), checked, location=_loc(start)),),
+            (
+                CastNode(
+                    self.parse_type_expression(),
+                    checked=checked,
+                    optional=optional,
+                    location=_loc(start),
+                ),
+            ),
         )
 
     def _empty_list_cast(self) -> CastNode | None:
         """Parse empty list cast from the current token stream."""
-        if self._check_ident("as"):
+        if self._check_ident("as", "as?"):
             start = self._advance()
-            [cast] = self._cast(start).nodes
+            [cast] = self._cast(
+                start,
+                optional_spelling=start.value == "as?",
+            ).nodes
             if not isinstance(cast, CastNode):
                 self._error("expected cast")
             return cast

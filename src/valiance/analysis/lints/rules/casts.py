@@ -50,6 +50,7 @@ def lint_cast(context: NodeLintContext):
 
     if (
         not node.checked
+        and not node.optional
         and T.assignable(source, target, context.env.context)
         and T.same(source, target)
     ):

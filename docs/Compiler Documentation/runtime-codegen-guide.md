@@ -1075,6 +1075,8 @@ These are known constraints of the current runtime/codegen layer:
 - Unresolved element calls still compile through `LOAD_ELEMENT` / `CALL` and
   are runtime-dispatched.
 - Runtime arrays are currently represented like lists.
+- Optional casts lower to `TRY_CAST`, which returns `Some[target]` on a match and
+  `None` on failure; asserted casts continue to lower to `CHECK_CAST`.
 - Multimethod runtime dispatch currently matches exact runtime nominal names
   recorded on compiled `multi` user-defined overloads.
 - Runtime vectorisation errors are plain runtime errors, not yet dedicated

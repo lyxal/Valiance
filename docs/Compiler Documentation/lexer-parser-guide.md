@@ -780,7 +780,8 @@ assuming syntax exists, check `docs/valiance-feature-checklist.md` and
 Known parser-facing gaps include:
 
 - `_` placeholders and parent-stack substitution.
-- Cast syntax such as `as Type` and `as! Type`.
+- Cast syntax uses `as Type` for statically proven coercions, `as? Type` for
+  optional runtime refinement, and `as! Type` for asserted runtime refinement.
 - Full environment exports for object/trait/variant/enum/tag imports. The parser
   accepts the advanced import spellings, and define overload selection/exclusion
   plus `root`, `std`, and `dep` module resolution are implemented, but the module

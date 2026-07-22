@@ -1595,6 +1595,34 @@ define keep_name(name: String, n: Number) -> String => $name
             run(program)
         self.assertIn("checked cast failed", str(error.exception))
 
+    def test_optional_cast_returns_some_on_success_and_none_on_failure(self):
+        success = execute('if false => 1 else => "x" end as? String')
+        failure = execute('if true => 1 else => "x" end as? String')
+
+        [some] = success
+        [none] = failure
+        self.assertIsInstance(some, ObjectValue)
+        self.assertEqual(some.type_name, "Some")
+        self.assertEqual(some.fields["value"], "x")
+        self.assertIsInstance(none, ObjectValue)
+        self.assertEqual(none.type_name, "None")
+
+    def test_optional_cast_bytecode_round_trip(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse('if false => 1 else => "x" end as? String'))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+
+        restored = loads(dumps(program))
+        self.assertIn(
+            OpCode.TRY_CAST,
+            tuple(instruction.op for instruction in restored.main.instructions),
+        )
+        [value] = run(restored)
+        self.assertEqual(value.type_name, "Some")
+        self.assertEqual(value.fields["value"], "x")
+
+
     def test_statically_safe_checked_cast_is_lowered_as_an_unchecked_upcast(self):
         analyser = Analyser()
         typed = analyser.analyse(parse('ValueError("x") as! Err'))

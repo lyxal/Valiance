@@ -2178,6 +2178,29 @@ class VirtualMachine:
                                     f"{_runtime_type_name(value)}"
                                 )
                             frame.stack.append(value)
+                        case OpCode.TRY_CAST:
+                            value = _pop(frame.stack, "optional cast")
+                            if (
+                                not isinstance(instruction.arg, tuple)
+                                or len(instruction.arg) != 2
+                            ):
+                                raise RuntimeError("invalid optional cast payload")
+                            raw_cast_spec, raw_contract_spec = instruction.arg
+                            cast_spec = _resolve_static_rank_variables(
+                                raw_cast_spec, frame.locals
+                            )
+                            if _matches_cast_type(value, cast_spec):
+                                contract_spec = _resolve_static_rank_variables(
+                                    raw_contract_spec, frame.locals
+                                )
+                                refined = _canonicalize_runtime_value_tag_contract(
+                                    value, contract_spec, self.tag_parents
+                                )
+                                frame.stack.append(
+                                    ObjectValue("Some", {"value": refined})
+                                )
+                            else:
+                                frame.stack.append(ObjectValue("None", {}))
                         case OpCode.CANONICALIZE_TAGS:
                             value = _pop(frame.stack, "tag canonicalization")
                             contract_spec = _resolve_static_rank_variables(

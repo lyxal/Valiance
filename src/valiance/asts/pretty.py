@@ -144,9 +144,9 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
     if isinstance(value, TagApplicationNode):
         return f"TagApplicationNode(tag={_tag_label(value)}{_location_arg(value)})"
     if isinstance(value, CastNode):
-        bang = "!" if value.checked else ""
+        suffix = "!" if value.checked else "?" if value.optional else ""
         return (
-            f"CastNode(as{bang} {_type_label(value.typ)}"
+            f"CastNode(as{suffix} {_type_label(value.typ)}"
             f"{_location_arg(value)})"
         )
     if isinstance(value, PopNNode):

@@ -291,10 +291,16 @@ class TagOverlayNode(ASTNode):
 
 @dataclass(frozen=True)
 class CastNode(ASTNode):
-    """Treat the top stack value as a target type."""
+    """Coerce or runtime-refine the top stack value to a target type.
+
+    Plain casts are statically proven coercions. Checked casts fail at runtime
+    when the value does not satisfy the target. Optional casts return ``T?``
+    instead of failing.
+    """
 
     typ: Type
     checked: bool = False
+    optional: bool = False
 
 
 @dataclass(frozen=True)

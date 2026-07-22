@@ -675,9 +675,12 @@ also attach an analysed exact runtime rank.
 - `GET_FIELD` / `SET_FIELD`
 - `GET_INDEX` / `SET_INDEX`
 - `CHECK_CAST`
+- `TRY_CAST`
 - `VALIDATE_TAG`
 
-Checked casts, tag validation, missing keys, invalid indexes, and other concrete
+`CHECK_CAST` raises on failure. `TRY_CAST` wraps a successful refinement in
+`Some` and returns `None` when the runtime type does not match. Checked casts,
+tag validation, missing keys, invalid indexes, and other concrete
 value failures happen here or in shared helpers.
 
 Field opcode payloads retain whether the source used ordinary `.` or optional-safe

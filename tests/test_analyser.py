@@ -3815,20 +3815,33 @@ end
         )
 
     def test_checked_cast_narrows_broader_static_type(self):
-        typed = analyse(
-            [
-                ListLiteralNode(
-                    (
-                        (NumberLiteralNode("1"),),
-                        (StringLiteralNode("x"),),
-                    )
-                ),
-                ElementNode(Symbol("head")),
-                CastNode(Number, checked=True),
-            ]
+        analyser = Analyser(Environment())
+        branches = analyser.analyse_block(
+            BranchSet(
+                (AnalysisBranch(stack=TypeStack((U(Number, String),))),)
+            ),
+            (CastNode(Number, checked=True),),
         )
 
-        self.assertEqual(typed[-1].typ, Number)
+        self.assertEqual(analyser.diagnostics, [])
+        [branch] = branches
+        self.assertEqual(branch.stack[-1], Number)
+        self.assertEqual(branch.typed_body[-1].typ, Number)
+
+    def test_optional_cast_returns_optional_target_type(self):
+        analyser = Analyser(Environment())
+        branches = analyser.analyse_block(
+            BranchSet(
+                (AnalysisBranch(stack=TypeStack((U(Number, String),))),)
+            ),
+            (CastNode(Number, optional=True),),
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        [branch] = branches
+        self.assertEqual(branch.stack[-1], optional(Number))
+        self.assertEqual(branch.typed_body[-1].typ, optional(Number))
+
 
     def test_list_literal_forks_stack_and_pops_max_consumed_inputs(self):
         analyser = Analyser(default_environment())

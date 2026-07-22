@@ -193,18 +193,20 @@ Current audit total: 546 / 779 items complete (70.1%).
 
 ## 13. Type casting
 
-- [ ] Parse safe casts using `as Type`.
-- [ ] Parse unsafe casts using `as! Type`.
-- [ ] Support trait upcasts.
-- [ ] Support valid trait downcasts where specified.
-- [ ] Support collection reranking casts.
-- [ ] Perform runtime validation for checked collection casts.
+- [x] Parse statically proven coercions using `as Type`.
+- [x] Parse optional runtime refinements using `as? Type`.
+- [x] Type `as? Type` as `Type?` and return `Some` or `None` at runtime.
+- [x] Parse asserted runtime refinements using `as! Type`.
+- [x] Perform runtime validation for `as?` and `as!`.
+- [x] Reject runtime refinements whose target cannot be checked.
+- [x] Reject casts whose source and target cannot overlap.
+- [x] Elide the runtime check when `as!` is statically safe.
+- [x] Preserve optional-cast bytecode through serialization.
+- [ ] Complete checked list-to-array rectangularity validation.
 - [ ] Preserve zero-cost array-to-list-to-array restoration where provenance permits.
-- [ ] Reject casts that cannot make sense under the type rules.
-- [ ] Reject `as!` when the corresponding cast is already statically safe.
 - [ ] Support inline parameter casts.
 - [ ] Support inline return-value casts.
-- [ ] Support user-defined cast rules through `cast`.
+
 
 ## 14. Variables and constants
 

@@ -318,20 +318,37 @@ range(1, 6) reshape {2, 3}     #? [[1, 2, 3], [4, 5, 6]]
 - Use array types if you really do need rectangularity. (`T^`, `T>`)
 
 
-## 2.4. Type Casting
-- A stack item with type `X` can be treated as type `Y` if and only if `X` makes sense as `Y`.
-	- That is, if `Y` is a trait implemented by `X` OR
-	- If `X` is a list type that could be flattened to `Y` (e.g. a `(Number|Number+)+` could be a `Number++` if there's no `Number`s, only `Number+`s) OR
-	- `X` is a collection type with exact rank being cast to minimum rank type `Y`. [This cast is only runtime checked if going from list to array.] [This cast is 0 cost if an array has been cast to a list and is being cast back to an array]
-- Two types of type casting:
-	- Safe - the conversion is checked at runtime. Only collection casting will be checked - trait upcasting doesn't need to be checked.
-	- Unsafe - the conversion is not checked at runtime. This also only really applies to collection casting. This is good for performance, but be careful that it is actually treatable as the intended type.
-- Safe = `as Type`
-	- `[[1, 2, 3], [4, 5, 6]] as Number*`
-	- `Circle as Shape` (assuming trait `Shape` and `Circle` implements `Shape`)
-- Unsafe = `as! Type`
-	- `[[1, 2, 3], [4, 5, 6]] as! Number*`
-	- Unsafe cast that is otherwise safe is a compile error (don't use `as!` where it isn't needed.)
+## 2.4. Type casting
+
+Valiance distinguishes three ways to change the known type of an existing
+runtime value. Casts do not parse, reshape, materialise, convert units, or invoke
+an ordinary transformation; those operations remain named elements such as
+`parseInt`, `reshape`, and `materialize`.
+
+- `as Type` is a statically proven coercion. The source type must be assignable
+  to the target, so the cast cannot fail at runtime.
+- `as? Type` is an optional runtime refinement. It returns `Some[Type]` when the
+  existing value satisfies the target and `None` otherwise, giving the
+  expression type `Type?`.
+- `as! Type` is an asserted runtime refinement. It returns the value as `Type`
+  when the check succeeds and raises a runtime cast failure otherwise.
+
+Examples:
+
+```valiance
+$circle as Shape
+$value as? Circle
+$value as! Circle
+```
+
+Both runtime-refining forms require a target whose shape can be checked without
+unsafe observation. For example, a cast cannot consume an otherwise lazy
+collection merely to discover erased element types. Casts whose source and
+target cannot overlap are rejected statically.
+
+Use the existing `match` type patterns for immediate type-directed branching;
+`as?` is intended for cases where the optional refinement is useful as a value.
+
 
 ## 2.5. Optional Types
 

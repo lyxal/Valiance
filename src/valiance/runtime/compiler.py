@@ -555,7 +555,16 @@ class _Compiler:
                 self._register_runtime_tag_declaration(node)
             case ElementTagDeclarationNode() | TagOverlayNode():
                 pass
-            case CastNode(typ, checked):
+            case CastNode(typ, checked, optional):
+                if optional:
+                    self.emit(
+                        OpCode.TRY_CAST,
+                        (
+                            _cast_type_spec(typ),
+                            _runtime_tag_contract_spec(typ),
+                        ),
+                    )
+                    return
                 if checked:
                     self.emit(OpCode.CHECK_CAST, _cast_type_spec(typ))
                 contract_type = (
