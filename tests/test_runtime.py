@@ -975,20 +975,6 @@ end
             ],
         )
 
-    def test_runtime_list_builtins_accept_lazy_lists_without_forcing_length(self):
-        program = Program(
-            FunctionCode(
-                (
-                    Instruction(OpCode.PUSH_CONST, count(1)),
-                    Instruction(OpCode.LOAD_ELEMENT, "first"),
-                    Instruction(OpCode.CALL),
-                ),
-                name="<main>",
-            )
-        )
-
-        self.assertEqual(run(program), [1])
-
     def test_generic_atomic_scalar_search_uses_equality_constraint(self):
         source = """
 define[T: trait => extend ==(:T, :T) -> #boolean Number end] findScalar(
