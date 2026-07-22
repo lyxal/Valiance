@@ -3630,6 +3630,21 @@ define f(value: #left #right Number) -> Number => $value
 
         self.assertEqual(analyser.diagnostics, [])
 
+    def test_list_multi_indexing_preserves_integer_item_type(self):
+        analyser = Analyser()
+
+        branches = analyser.analyse(parse("$lst = [1, 2, 3]\n$lst[0, 1]"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(branches[-1].typ, ExactList(Integer))
+
+    def test_list_multi_index_assignment_accepts_scalar_broadcast(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("$lst = [1, 2, 3]\n$lst[0, 2] = 10"))
+
+        self.assertEqual(analyser.diagnostics, [])
+
     def test_sum_accumulator_widens_from_integer_initializer(self):
         analyser = Analyser()
 

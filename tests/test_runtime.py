@@ -3678,6 +3678,20 @@ println(triple([1, 2, 3, 4, 5]))
             [RuntimeNumber("2"), RuntimeNumber("7")],
         )
 
+    def test_multi_index_assignment_broadcasts_scalar_value(self):
+        self.assertEqual(
+            execute("$lst = [1, 2, 3, 4, 5, 6, 7]\n$lst[0, 3, 5] = 10\n$lst"),
+            [[
+                RuntimeNumber("10"),
+                RuntimeNumber("2"),
+                RuntimeNumber("3"),
+                RuntimeNumber("10"),
+                RuntimeNumber("5"),
+                RuntimeNumber("10"),
+                RuntimeNumber("7"),
+            ]],
+        )
+
     def test_indexing_lazy_lists_uses_absolute_indices(self):
         self.assertEqual(
             execute("range(1, 100) $[0, 1, 2, 3, 4, 5]"),

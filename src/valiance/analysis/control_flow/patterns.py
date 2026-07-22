@@ -254,6 +254,9 @@ def _indexed_type(
 ) -> T.Type:
     """Return the result type of an indexed access."""
     typ = T.normalize(receiver_type)
+    if len(selectors) > 1 and all(not selector.is_slice for selector in selectors):
+        item = _index_type(typ)
+        return item if spread else T.ExactList(item)
     if (
         grouped_update
         and len(selectors) > 1
@@ -391,12 +394,15 @@ def _indexed_assignment_type(
 ) -> T.Type | None:
     """Return the receiver type after a valid indexed assignment."""
     if len(selectors) != 1:
-        item = _indexed_type(
-            receiver_type,
-            selectors,
-            spread=False,
-            grouped_update=grouped_update,
-        )
+        if all(not selector.is_slice for selector in selectors) and not grouped_update:
+            item = _index_type(receiver_type)
+        else:
+            item = _indexed_type(
+                receiver_type,
+                selectors,
+                spread=False,
+                grouped_update=grouped_update,
+            )
         return receiver_type if T.assignable(value_type, item, ctx) else None
     if selectors[0].is_slice:
         slice_type = _indexed_type(receiver_type, selectors, spread=False)

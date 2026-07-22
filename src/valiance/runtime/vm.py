@@ -5937,10 +5937,16 @@ def _set_index(
         _, start, stop, step = selectors[0]
         return _set_slice_value(receiver, start, stop, step, value, in_place=in_place)
     if len(selectors) != 1:
-        if grouped_update and all(not item[0] for item in selectors):
-            _validate_distinct_selection_indices(receiver, selectors)
-            return _set_many_indices(receiver, selectors, value, in_place=in_place)
-        raise RuntimeError("indexed assignment requires one non-slice index")
+        if all(not item[0] for item in selectors):
+            if grouped_update:
+                _validate_distinct_selection_indices(receiver, selectors)
+                replacements = value
+            else:
+                replacements = [value] * len(selectors)
+            return _set_many_indices(
+                receiver, selectors, replacements, in_place=in_place
+            )
+        raise RuntimeError("indexed assignment requires non-slice indices")
     return _set_index_path(receiver, selectors[0][1], value, in_place=in_place)
 
 
