@@ -405,7 +405,10 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
     ),
     "reshape": element_documentation(
         "Reshape a finite value using a list or tuple of dimensions.",
-        parameters=(("values", "Finite input value; nested lists are flattened first."), ("shape", "Non-empty list or tuple of non-negative integer dimensions.")),
+        parameters=(
+            ("values", "Finite input value; nested lists are flattened first."),
+            ("shape", "Non-empty list or tuple of non-negative integer dimensions."),
+        ),
         returns="A nested list whose rank equals the number of dimensions.",
         examples=(("[1, 2, 3, 4, 5, 6] reshape {2, 3}", "[[1, 2, 3], [4, 5, 6]]"),),
         category="Collections",
@@ -556,6 +559,12 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The filtered list.",
         category="Lists",
     ),
+    "reverse": element_documentation(
+        "Reverse the order of a list of items",
+        parameters=(("iterable", "The list to reverse"),),
+        returns="The reversed list.",
+        category="Lists",
+    ),
 }
 
 
@@ -584,9 +593,9 @@ class RuntimeContext:
     static_values: tuple[Any, ...] = ()
     type_args: tuple[str, ...] = ()
     test_predicate: Callable[[Any, Any], bool] | None = None
-    prepare_call: (
-        Callable[[Any, int, int], Callable[..., tuple[Any, ...]]] | None
-    ) = None
+    prepare_call: Callable[[Any, int, int], Callable[..., tuple[Any, ...]]] | None = (
+        None
+    )
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
@@ -891,13 +900,13 @@ def _present_value(value: Any) -> Any:
     return _MISSING
 
 
-
 def _runtime_parameter_preserves_value(parameter: T.Type) -> bool:
     """Return whether a built-in parameter receives the complete runtime value."""
     parameter = T.normalize(parameter)
     while isinstance(parameter, (T.ExactType, T.AtomicType, T.TaggedType)):
         parameter = T.normalize(parameter.inner)
     return isinstance(parameter, (T.VarType, T.FunctionType, T.OverloadSetType))
+
 
 def _runtime_implementation_arg(value: Any, parameter: T.Type) -> Any:
     """Return the runtime representation expected by a built-in parameter.
@@ -1578,7 +1587,7 @@ def _string_repeat_reverse(
 @builtin("**", (T.Number, T.Number), (T.Number,))
 def _power(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Raise one Valiance number to another numeric power."""
-    del ctx
+
     base, exponent = args
     try:
         return (base**exponent,)
@@ -1636,11 +1645,7 @@ def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         result = next(iterator)
     except StopIteration as exc:
         raise RuntimeError("reduce requires a non-empty list") from exc
-    prepared = (
-        ctx.prepare_call(reducer, 2, 1)
-        if ctx.prepare_call is not None
-        else None
-    )
+    prepared = ctx.prepare_call(reducer, 2, 1) if ctx.prepare_call is not None else None
 
     def reduce_item(accumulator: Any, item: Any) -> Any:
         """Reduce one item through the prepared or general callable path."""
@@ -1694,7 +1699,6 @@ def _sqrt(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("inc", (T.Number,), (T.Number,))
 def _inc(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Increase a numeric value by one."""
-    del ctx
     return (args[0] + RuntimeNumber(1),)
 
 
@@ -1717,7 +1721,7 @@ def _inc(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _in_range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return whether value is within the requested half-open interval."""
-    del ctx
+
     start, stop, value = args
     return (_truth(start <= value < stop),)
 
@@ -1754,14 +1758,14 @@ def _equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("!=", (T.String, T.String), (T.Boolean,))
 def _not_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return the negation of ordinary value equality."""
-    del ctx
+
     return (_truth(args[0] != args[1]),)
 
 
 @builtin("===", (T.V("T"), T.V("T")), (T.Boolean,))
 def _structural_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Compare two values using the runtime's structural value equality."""
-    del ctx
+
     return (_truth(args[0] == args[1]),)
 
 
@@ -1773,7 +1777,7 @@ def _structural_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any,
 )
 def _contains(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Test membership in a string or finite/list-like value."""
-    del ctx
+
     needle, haystack = args
     return (_truth(needle in haystack),)
 
@@ -1781,7 +1785,7 @@ def _contains(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("numeric?", (T.String,), (T.Boolean,))
 def _numeric(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return whether a string can be parsed as a base-ten integer."""
-    del ctx
+
     try:
         int(args[0].strip(), 10)
     except ValueError:
@@ -1867,9 +1871,7 @@ def _map_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Map a unary function over the characters of a finite string."""
     values, function = args
     prepared = (
-        ctx.prepare_call(function, 1, 1)
-        if ctx.prepare_call is not None
-        else None
+        ctx.prepare_call(function, 1, 1) if ctx.prepare_call is not None else None
     )
     return (
         [
@@ -1894,11 +1896,7 @@ def _map_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `map` built-in runtime overload."""
 
-    prepared = (
-        ctx.prepare_call(args[1], 1, 1)
-        if ctx.prepare_call is not None
-        else None
-    )
+    prepared = ctx.prepare_call(args[1], 1, 1) if ctx.prepare_call is not None else None
 
     def map_item(item: Any) -> Any:
         """Map one value through the prepared or general callable path."""
@@ -1965,23 +1963,16 @@ def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _map_niladic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Call a niladic mapping function once for every input-list item."""
-    prepared = (
-        ctx.prepare_call(args[1], 0, 1)
-        if ctx.prepare_call is not None
-        else None
-    )
+    prepared = ctx.prepare_call(args[1], 0, 1) if ctx.prepare_call is not None else None
     use_prepared = (
-        prepared is not None
-        and getattr(prepared, "strategy", None) == "constant"
+        prepared is not None and getattr(prepared, "strategy", None) == "constant"
     )
 
     def mapped_items():
         """Yield one niladic callable result for each input item."""
         for _item in args[0]:
             mapped = (
-                prepared.invoke0()
-                if use_prepared
-                else tuple(ctx.call(args[1], []))
+                prepared.invoke0() if use_prepared else tuple(ctx.call(args[1], []))
             )
             yield mapped[0]
 
@@ -2025,7 +2016,7 @@ def _map_eager_effect(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
 )
 def _overtake(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Cycle a non-empty finite list and take exactly the requested count."""
-    del ctx
+
     values, raw_count = args
     count = int(raw_count)
     if raw_count != raw_count.to_integral_value() or count < 0:
@@ -2088,7 +2079,7 @@ def _head(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("first", (T.String,), (T.String,))
 def _first_value(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return the first item from a non-empty finite/list-like value."""
-    del ctx
+
     value = args[0]
     for item in value:
         return (item,)
@@ -2103,7 +2094,7 @@ def _first_value(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("last", (T.String,), (T.String,))
 def _last_value(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return the final item from a non-empty finite list or string."""
-    del ctx
+
     value = args[0]
     if not value:
         raise RuntimeError("last requires a non-empty value")
@@ -2134,7 +2125,7 @@ def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("drop", (T.Integer, T.String), (T.String,))
 def _drop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Drop a non-negative number of leading items from a list or string."""
-    del ctx
+
     if isinstance(args[0], RuntimeNumber):
         raw_count, values = args
     else:
@@ -2162,7 +2153,7 @@ def _drop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _drop_last(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return a materialized list with its final item removed."""
-    del ctx
+
     values = list(args[0])
     if not values:
         raise RuntimeError("dropLast requires a non-empty list")
@@ -2178,7 +2169,7 @@ def _group_consecutive_list(
     args: tuple[Any, ...], ctx: RuntimeContext
 ) -> tuple[Any, ...]:
     """Group adjacent equal list items into materialized sublists."""
-    del ctx
+
     return ([[*items] for _key, items in groupby(args[0])],)
 
 
@@ -2187,7 +2178,7 @@ def _group_consecutive_string(
     args: tuple[Any, ...], ctx: RuntimeContext
 ) -> tuple[Any, ...]:
     """Group adjacent equal characters into strings."""
-    del ctx
+
     return (["".join(items) for _key, items in groupby(args[0])],)
 
 
@@ -2232,7 +2223,11 @@ def _remove_at(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),),
     param_names=("values", "shape"),
     vectorisable=False,
-    where_clause=(GetVariableNode(Symbol("shape")), ElementNode(Symbol("length")), SetVariableNode(Symbol("n"))),
+    where_clause=(
+        GetVariableNode(Symbol("shape")),
+        ElementNode(Symbol("length")),
+        SetVariableNode(Symbol("n")),
+    ),
 )
 def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Reshape a finite, possibly nested value to the requested dimensions."""
@@ -2242,12 +2237,16 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         raise RuntimeError("reshape shape must contain at least one dimension")
     shape: list[int] = []
     for raw_dimension in shape_values:
-        if not isinstance(raw_dimension, RuntimeNumber) or not raw_dimension.is_integer():
+        if (
+            not isinstance(raw_dimension, RuntimeNumber)
+            or not raw_dimension.is_integer()
+        ):
             raise RuntimeError("reshape dimensions must be integers")
         dimension = int(raw_dimension)
         if dimension < 0:
             raise RuntimeError("reshape dimensions must be non-negative")
         shape.append(dimension)
+
     def flatten(value: Any) -> Iterator[Any]:
         """Yield scalar leaves from a finite prefix of a nested value."""
         if is_list_like(value) or isinstance(value, tuple):
@@ -2255,6 +2254,7 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
                 yield from flatten(item)
         else:
             yield value
+
     expected = 1
     for dimension in shape:
         expected *= dimension
@@ -2262,8 +2262,11 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     if len(items) != expected:
         rendered_shape = ", ".join(str(dimension) for dimension in shape)
         received = f"more than {expected}" if len(items) > expected else str(len(items))
-        raise RuntimeError(f"reshape needs exactly {expected} items for shape ({rendered_shape}); received {received}")
+        raise RuntimeError(
+            f"reshape needs exactly {expected} items for shape ({rendered_shape}); received {received}"
+        )
     position = 0
+
     def build(depth: int) -> list[Any]:
         """Build one nested result level while advancing the flat position."""
         nonlocal position
@@ -2273,7 +2276,9 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
             position += dimension
             return result
         return [build(depth + 1) for _ in range(dimension)]
+
     return (build(0),)
+
 
 @builtin(
     "append",
@@ -2323,7 +2328,7 @@ def _join(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _split_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Split a string at every occurrence of a literal separator."""
-    del ctx
+
     separator, value = args
     if separator == "":
         return (list(value),)
@@ -2338,7 +2343,7 @@ def _split_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
 )
 def _rotate(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Rotate a finite sequence left by the requested signed amount."""
-    del ctx
+
     values, raw_amount = args
     materialized = values if isinstance(values, str) else list(values)
     if not materialized:
@@ -2350,7 +2355,7 @@ def _rotate(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("parseInt", (T.String,), (T.optional(T.Integer),))
 def _parse_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Parse a base-ten integer, returning `None` when parsing fails."""
-    del ctx
+
     try:
         return (RuntimeNumber(int(args[0].strip(), 10)),)
     except ValueError:
@@ -2370,7 +2375,7 @@ def _parse_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _record_merge(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Merge two anonymous records, preferring fields from the right record."""
-    del ctx
+
     left, right = args
     return ({**left, **right},)
 
@@ -2388,13 +2393,23 @@ def _record_merge(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]
 )
 def _record_extend(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Extend an anonymous record while rejecting duplicate field names."""
-    del ctx
+
     left, right = args
     duplicates = set(left).intersection(right)
     if duplicates:
         names = ", ".join(sorted(duplicates))
         raise RuntimeError(f"record.extend duplicates field(s): {names}")
     return ({**left, **right},)
+
+
+@builtin(
+    Symbol("reverse"),
+    (T.ExactList(T.TypeVariable("Item")),),
+    (T.ExactList(T.TypeVariable("Item")),),
+)
+def _reverse(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return a materialized copy of a finite list in reverse order."""
+    return (list(reversed(list(args[0]))),)
 
 
 # --------------------------------------------------------------------------
@@ -2587,7 +2602,7 @@ def _question_bang(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
 @builtin("input", (T.String,), (T.String,), element_tags=(EAGER_TAG, IO_TAG))
 def _input(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Read one line from standard input after displaying a prompt."""
-    del ctx
+
     return (python_builtins.input(args[0]),)
 
 
@@ -2636,7 +2651,7 @@ def _panic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @alias("fromCharCode")
 def _from_charcode(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Convert an integral Unicode code point to a character."""
-    del ctx
+
     raw_codepoint = args[0]
     if raw_codepoint != raw_codepoint.to_integral_value():
         raise RuntimeError("fromCharcode requires an integer code point")
