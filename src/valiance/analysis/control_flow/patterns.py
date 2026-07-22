@@ -310,6 +310,9 @@ def _selectors_assignable(
     typ = T.normalize(receiver_type)
     expected: list[T.Type] = []
     slice_bound = T.U(T.Integer, T.ExactList(T.Integer))
+    parallel_scalar_selectors = (
+        len(selectors) > 1 and all(not selector.is_slice for selector in selectors)
+    )
     for selector in selectors:
         if selector.start:
             expected.append(slice_bound if selector.is_slice else _index_type(typ, key=True))
@@ -317,7 +320,8 @@ def _selectors_assignable(
             expected.append(slice_bound)
         if selector.step:
             expected.append(T.Integer)
-        typ = typ if selector.is_slice else _index_type(typ)
+        if not parallel_scalar_selectors:
+            typ = typ if selector.is_slice else _index_type(typ)
     if len(expected) != len(index_types):
         return False
 

@@ -6224,7 +6224,18 @@ def _set_many_indices(
     in_place: bool = False,
 ) -> Any:
     """Scatter one transformed selection back into its source positions."""
-    raw_indices = [_int_index(item[1]) for item in selectors]
+    raw_keys = [item[1] for item in selectors]
+    if isinstance(receiver, dict):
+        if not is_list_like(value):
+            raise RuntimeError("whole-selection dictionary assignment requires a list result")
+        replacements = list(value)
+        if len(replacements) != len(raw_keys):
+            raise RuntimeError("selection assignment replacement length mismatch")
+        updated = receiver if in_place else DictValue(receiver)
+        for key, replacement in zip(raw_keys, replacements, strict=True):
+            updated[key] = replacement
+        return updated
+    raw_indices = [_int_index(key) for key in raw_keys]
     if isinstance(receiver, str):
         if not isinstance(value, str):
             raise RuntimeError(

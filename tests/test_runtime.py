@@ -3678,18 +3678,17 @@ println(triple([1, 2, 3, 4, 5]))
             [RuntimeNumber("2"), RuntimeNumber("7")],
         )
 
-    def test_multi_index_assignment_broadcasts_scalar_value(self):
+    def test_multi_index_assignment_broadcasts_to_lists_and_dictionaries(self):
         self.assertEqual(
-            execute("$lst = [1, 2, 3, 4, 5, 6, 7]\n$lst[0, 3, 5] = 10\n$lst"),
-            [[
-                RuntimeNumber("10"),
-                RuntimeNumber("2"),
-                RuntimeNumber("3"),
-                RuntimeNumber("10"),
-                RuntimeNumber("5"),
-                RuntimeNumber("10"),
-                RuntimeNumber("7"),
-            ]],
+            execute("$list = [1, 2, 3, 4]\n$list[0, 3] = 8\n$list"),
+            [[RuntimeNumber("8"), RuntimeNumber("2"), RuntimeNumber("3"), RuntimeNumber("8")]],
+        )
+        self.assertEqual(
+            execute(
+                '$dict = dict{"a" => 1, "b" => 2, "c" => 3}\n'
+                '$dict["a", "c"] = 8\n$dict'
+            ),
+            [{"a": RuntimeNumber("8"), "b": RuntimeNumber("2"), "c": RuntimeNumber("8")}],
         )
 
     def test_indexing_lazy_lists_uses_absolute_indices(self):
