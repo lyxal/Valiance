@@ -7,10 +7,20 @@ from pathlib import Path
 from unittest.mock import patch
 
 from valiance.analysis.diagnostics import Diagnostic, SourceLocation, render
-from valiance.main import _ReplSession, main
+from valiance.main import _ReplSession, _format_stack, main
 
 
 class MainTests(unittest.TestCase):
+    def test_format_stack_shows_values_from_top_to_bottom(self):
+        self.assertEqual(
+            _format_stack([1, 2, 3, 4, 5]),
+            "top\n┌ 5\n│ 4\n│ 3\n│ 2\n└ 1\nbottom",
+        )
+
+    def test_format_stack_handles_empty_and_singleton_stacks(self):
+        self.assertEqual(_format_stack([]), "Stack is empty")
+        self.assertEqual(_format_stack([42]), "top\n─ 42\nbottom")
+
     def test_main_without_command_starts_repl(self):
         output = io.StringIO()
         input_stream = io.StringIO(":quit\n")
@@ -42,7 +52,7 @@ class MainTests(unittest.TestCase):
             exit_code = main([])
 
         self.assertEqual(exit_code, 0)
-        self.assertIn("Stack [\n  0: 3\n]", output.getvalue())
+        self.assertIn("top\n─ 3\nbottom", output.getvalue())
 
     def test_repl_persists_stack_between_entries(self):
         output = io.StringIO()
@@ -51,8 +61,8 @@ class MainTests(unittest.TestCase):
             exit_code = main([])
 
         self.assertEqual(exit_code, 0)
-        self.assertIn("Stack [\n  0: 1\n]", output.getvalue())
-        self.assertIn("Stack [\n  0: 3\n]", output.getvalue())
+        self.assertIn("top\n─ 1\nbottom", output.getvalue())
+        self.assertIn("top\n─ 3\nbottom", output.getvalue())
 
     def test_repl_persists_variables_and_defines_between_entries(self):
         output = io.StringIO()
@@ -66,7 +76,7 @@ class MainTests(unittest.TestCase):
             exit_code = main([])
 
         self.assertEqual(exit_code, 0)
-        self.assertIn("Stack [\n  0: 42\n]", output.getvalue())
+        self.assertIn("top\n─ 42\nbottom", output.getvalue())
 
     def test_repl_reset_clears_stack_variables_and_defines(self):
         output = io.StringIO()
@@ -102,7 +112,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         rendered = output.getvalue()
         self.assertIn("Types: [] -> [Integer]", rendered)
-        self.assertNotIn("Stack [", rendered)
+        self.assertNotIn("top\n", rendered)
 
     def test_repl_type_command_uses_current_stack_without_mutating_it(self):
         output = io.StringIO()
@@ -113,7 +123,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         rendered = output.getvalue()
         self.assertIn("Types: [Integer] -> [Integer]", rendered)
-        self.assertIn("Stack [\n  0: 3\n]", rendered)
+        self.assertIn("top\n─ 3\nbottom", rendered)
 
     def test_help_flag_prints_help(self):
         output = io.StringIO()
@@ -479,7 +489,7 @@ class MainTests(unittest.TestCase):
             exit_code = main(["run", "--code", "1 2 +"])
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(output.getvalue(), "Stack [\n  0: 3\n]\n")
+        self.assertEqual(output.getvalue(), "top\n─ 3\nbottom\n")
 
     def test_main_formats_arbitrarily_large_integer(self):
         output = io.StringIO()
@@ -488,7 +498,7 @@ class MainTests(unittest.TestCase):
             exit_code = main(["run", "--code", value])
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(output.getvalue(), f"Stack [\n  0: {value}\n]\n")
+        self.assertEqual(output.getvalue(), f"top\n─ {value}\nbottom\n")
 
     def test_main_formats_lex_errors_with_source_context(self):
         error = io.StringIO()
@@ -618,7 +628,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(
             output.getvalue(),
-            "Stack [\n  0: [1, 2]\n  1: 'done'\n]\n",
+            "top\n┌ 'done'\n└ [1, 2]\nbottom\n",
         )
 
     def test_main_implicitly_prints_vectorised_stack_neatly(self):
@@ -634,7 +644,7 @@ class MainTests(unittest.TestCase):
             )
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(output.getvalue(), "Stack [\n  0: [6, 8, 10]\n]\n")
+        self.assertEqual(output.getvalue(), "top\n─ [6, 8, 10]\nbottom\n")
 
     def test_main_implicitly_prints_finite_lazy_range_as_full_list(self):
         output = io.StringIO()
@@ -650,7 +660,7 @@ class MainTests(unittest.TestCase):
 
         expected = "[" + ", ".join(str(index) for index in range(1, 101)) + "]"
         self.assertEqual(exit_code, 0)
-        self.assertEqual(output.getvalue(), f"Stack [\n  0: {expected}\n]\n")
+        self.assertEqual(output.getvalue(), f"top\n─ {expected}\nbottom\n")
 
     def test_main_preview_lists_caps_runtime_printing(self):
         output = io.StringIO()
@@ -710,7 +720,7 @@ class MainTests(unittest.TestCase):
         self.assertIn(f"Wrote bytecode: {bytecode}", emit_output.getvalue())
         self.assertTrue(bytecode_data.startswith(b"VLNCBC"))
         self.assertEqual(run_exit, 0)
-        self.assertEqual(run_output.getvalue(), "Stack [\n  0: [6, 8, 10]\n]\n")
+        self.assertEqual(run_output.getvalue(), "top\n─ [6, 8, 10]\nbottom\n")
 
     def test_main_compile_is_the_default_action(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -752,7 +762,7 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertFalse(output_path.exists())
-        self.assertEqual(output.getvalue(), "Stack [\n  0: [6, 8, 10]\n]\n")
+        self.assertEqual(output.getvalue(), "top\n─ [6, 8, 10]\nbottom\n")
 
     def test_main_compile_uses_main_project_entry_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:

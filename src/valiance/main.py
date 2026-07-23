@@ -1976,14 +1976,21 @@ class _OutputTracker:
 
 
 def _format_stack(stack: list[Any], *, preview_limit: int | None = None) -> str:
-    """Format stack for CLI and REPL orchestration."""
+    """Format stack from top to bottom for CLI and REPL output."""
     if not stack:
-        return "Stack []"
-    lines = ["Stack ["]
-    for index, value in enumerate(stack):
-        lines.append(f"  {index}: {_format_value(value, preview_limit=preview_limit)}")
-    lines.append("]")
-    return "\n".join(lines)
+        return "Stack is empty"
+
+    rendered = [
+        _format_value(value, preview_limit=preview_limit)
+        for value in reversed(stack)
+    ]
+    if len(rendered) == 1:
+        body = [f"─ {rendered[0]}"]
+    else:
+        body = [f"┌ {rendered[0]}"]
+        body.extend(f"│ {value}" for value in rendered[1:-1])
+        body.append(f"└ {rendered[-1]}")
+    return "\n".join(("top", *body, "bottom"))
 
 
 def _format_value(value: Any, *, preview_limit: int | None = None) -> str:
