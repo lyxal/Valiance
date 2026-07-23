@@ -271,7 +271,7 @@ must not parse lint messages or rediscover facts that belong to analysis.
 Every optimisation family has three test layers: focused bytecode/unit tests in
 `tests/test_optimizer.py`, differential generated cases in the `optimizer` fuzz
 target, and checked-in workload examples under `samples/optimizations/` tested
-by `tests/test_optimizer_programs.py`. Each layer compares unoptimised,
+by `tests/test_programs.py`. Each layer compares unoptimised,
 optimised, and serialized execution and also asserts that the intended rewrite
 actually happened.
 

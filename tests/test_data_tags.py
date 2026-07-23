@@ -191,7 +191,7 @@ define classify(value: #ascending Number) -> String => "ascending" end
         analyser, _ = analyse_source("""
 tag #sorted as computed
 tag #ascending as #sorted
-1 as! #ascending Number
+1 as![#ascending Number]
 """)
         self.assertIn("runtime-only", diagnostics_text(analyser))
 
@@ -479,7 +479,7 @@ tag #stream as constructed
     def test_constructed_tag_flows_through_widening_cast(self):
         source = """
 tag #sticky as constructed
-1 #sticky as Number
+1 #sticky as[Number]
 """
         typed, outputs = execute_all_modes(source)
         self.assertEqual(show(typed[-1].typ), "#sticky Number")
@@ -657,7 +657,7 @@ define invalid(value: #nested++ Number+) -> Number => 0 end
         source = """
 tag #sticky as constructed
 $values = [1 #sticky, 2]
-$plain = $values as Integer+
+$plain = $values as[Integer+]
 $plain $[0] |
 match =>
   as :#sticky Integer => "leaked"

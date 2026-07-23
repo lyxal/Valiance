@@ -252,6 +252,10 @@ class _ChainPiece:
 calls `_lower_chain_segment`.
 
 Current chain-breaking rules:
+- Every expression cast (`as[T]`, `as?[T]`, and `as![T]`) is an executable
+  chain separator. It lowers exactly as though a `|` appeared immediately
+  before and immediately after the cast: the chain to its left is completed,
+  the cast is emitted, and the chain to its right starts independently.
 
 - Literals break chains and are included in the segment they break.
 - Variables and parenthesized values break chains.
@@ -780,8 +784,7 @@ assuming syntax exists, check `docs/valiance-feature-checklist.md` and
 Known parser-facing gaps include:
 
 - `_` placeholders and parent-stack substitution.
-- Cast syntax uses `as Type` for statically proven coercions, `as? Type` for
-  optional runtime refinement, and `as! Type` for asserted runtime refinement.
+- Cast syntax such as `as Type` and `as![Type`.]
 - Full environment exports for object/trait/variant/enum/tag imports. The parser
   accepts the advanced import spellings, and define overload selection/exclusion
   plus `root`, `std`, and `dep` module resolution are implemented, but the module

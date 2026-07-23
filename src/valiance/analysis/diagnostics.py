@@ -242,10 +242,7 @@ def _help_for(message: str) -> str | None:
     if message.startswith("cannot cast ") or message.startswith(
         "cannot safely cast "
     ):
-        return (
-            "Use `as?` for an optional runtime refinement or `as!` when "
-            "failure should stop execution."
-        )
+        return "Use `as?[T]` for optional refinement or `as![T]` when failure should stop execution."
     if message.startswith("empty stack"):
         return "This operation needs a value first; place the producer before it."
     if message.startswith("expected "):

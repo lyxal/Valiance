@@ -91,7 +91,7 @@ $total
 
     def test_empty_foreach_returns_none_for_each_break_result(self):
         stack = execute("""
-[] as Integer+ foreach (n) =>
+[] as[Integer+] foreach (n) =>
   break (1, 2, 3)
 end
 """)

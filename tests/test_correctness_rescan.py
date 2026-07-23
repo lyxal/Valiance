@@ -107,7 +107,7 @@ retryDelay(None)
 
 RESULT_VALIDATION_GATEWAY = """
 define requireResult(value: Number | String | ValueError) -> Result[Number, ValueError] =>
-  $value as! Result[Number, ValueError]
+  $value as![Result[Number, ValueError]]
 end |
 define resultKind(value: Number | String | ValueError) -> String =>
   requireResult($value) |
@@ -169,9 +169,9 @@ optionalState(None)
 
 EMPTY_MATRIX_GUARD = """
 define requireMatrix(values: Number+ | Number+2) -> Number+2 =>
-  $values as! Number+2
+  $values as![Number+2]
 end |
-requireMatrix([] as Number+)
+requireMatrix([] as[Number+])
 """
 
 
@@ -409,7 +409,7 @@ end
     def test_non_reified_function_checked_cast_is_rejected_during_analysis(self):
         source = """
 define force(value: Function[Number -> Number] | String) -> Function[Number -> Number] =>
-  $value as! Function[Number -> Number]
+  $value as![Function[Number -> Number]]
 end
 """
         analyser, _typed = analyse(source)

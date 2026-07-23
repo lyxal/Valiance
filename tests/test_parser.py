@@ -458,29 +458,51 @@ end
 
     def test_parses_safe_and_checked_casts(self):
         self.assertEqual(
-            parse("1 as Number"),
-            [
-                NumberLiteralNode("1"),
-                CastNode(Number),
-            ],
+            parse("1 as[Number]"),
+            [NumberLiteralNode("1"), CastNode(Number)],
         )
         self.assertEqual(
-            parse("value as? String"),
-            [
-                ElementNode(Symbol("value")),
-                CastNode(String, optional=True),
-            ],
+            parse("value as? [String]"),
+            [ElementNode(Symbol("value")), CastNode(String, optional=True)],
         )
         self.assertEqual(
-            parse("value as! String"),
-            [
-                ElementNode(Symbol("value")),
-                CastNode(String, checked=True),
-            ],
+            parse("value as![String]"),
+            [ElementNode(Symbol("value")), CastNode(String, checked=True)],
+        )
+        with self.assertRaises(ParseError):
+            parse("value as String")
+
+
+    def test_all_cast_forms_separate_chains_like_pipes(self):
+        forms = ("as[Number]", "as?[Number]", "as![Number]")
+        for form in forms:
+            with self.subTest(form=form):
+                implicit = parse(f"println double {form} negate square")
+                explicit = parse(f"println double | {form} | negate square")
+                self.assertEqual(implicit, explicit)
+                self.assertEqual(
+                    [
+                        node.name
+                        for node in implicit
+                        if isinstance(node, ElementNode)
+                    ],
+                    [
+                        Symbol("double"),
+                        Symbol("println"),
+                        Symbol("square"),
+                        Symbol("negate"),
+                    ],
+                )
+                self.assertIsInstance(implicit[2], CastNode)
+
+    def test_cast_separator_ends_a_chain_segment_immediately(self):
+        self.assertEqual(
+            parse("println double as[Number]"),
+            parse("println double | as[Number]"),
         )
 
     def test_parses_empty_list_cast_as_literal_annotation(self):
-        [node] = parse("[] as Number+")
+        [node] = parse("[] as [Number+]")
 
         self.assertEqual(node, ListLiteralNode((), C(ListExactType, Number)))
 
@@ -860,7 +882,7 @@ define[T] sum(
     def test_parses_where_clause_and_rank_variables(self):
         [node] = parse(
             "define[T] reshape(xs: T*, shape: {Number, Number}) -> T+$n "
-            "where ($n = $shape length) => $xs as! T+$n"
+            "where ($n = $shape length) => $xs as![T+$n]"
         )
 
         self.assertIsInstance(node, DefineNode)

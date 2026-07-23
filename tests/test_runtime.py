@@ -1584,7 +1584,7 @@ define keep_name(name: String, n: Number) -> String => $name
 
     def test_checked_cast_emits_runtime_check(self):
         analyser = Analyser()
-        typed = analyser.analyse(parse('if true => 1 else => "x" end as! String'))
+        typed = analyser.analyse(parse('if true => 1 else => "x" end as![String]'))
         self.assertEqual(analyser.diagnostics, [])
 
         program = compile_program(typed, optimize=False)
@@ -1596,24 +1596,21 @@ define keep_name(name: String, n: Number) -> String => $name
         self.assertIn("checked cast failed", str(error.exception))
 
     def test_optional_cast_returns_some_on_success_and_none_on_failure(self):
-        success = execute('if false => 1 else => "x" end as? String')
-        failure = execute('if true => 1 else => "x" end as? String')
+        success = execute('if false => 1 else => "x" end as?[String]')
+        failure = execute('if true => 1 else => "x" end as?[String]')
 
         [some] = success
         [none] = failure
-        self.assertIsInstance(some, ObjectValue)
         self.assertEqual(some.type_name, "Some")
         self.assertEqual(some.fields["value"], "x")
-        self.assertIsInstance(none, ObjectValue)
         self.assertEqual(none.type_name, "None")
 
     def test_optional_cast_bytecode_round_trip(self):
         analyser = Analyser()
-        typed = analyser.analyse(parse('if false => 1 else => "x" end as? String'))
+        typed = analyser.analyse(parse('if false => 1 else => "x" end as?[String]'))
         self.assertEqual(analyser.diagnostics, [])
-        program = compile_program(typed, optimize=False)
+        restored = loads(dumps(compile_program(typed, optimize=False)))
 
-        restored = loads(dumps(program))
         self.assertIn(
             OpCode.TRY_CAST,
             tuple(instruction.op for instruction in restored.main.instructions),
@@ -1622,10 +1619,9 @@ define keep_name(name: String, n: Number) -> String => $name
         self.assertEqual(value.type_name, "Some")
         self.assertEqual(value.fields["value"], "x")
 
-
     def test_statically_safe_checked_cast_is_lowered_as_an_unchecked_upcast(self):
         analyser = Analyser()
-        typed = analyser.analyse(parse('ValueError("x") as! Err'))
+        typed = analyser.analyse(parse('ValueError("x") as![Err]'))
         self.assertEqual(analyser.diagnostics, [])
 
         program = compile_program(typed, optimize=False)
@@ -1674,7 +1670,7 @@ end
         self.assertEqual(execute(source), ["other"])
 
     def test_empty_list_cast_executes_as_empty_list(self):
-        self.assertEqual(execute("[] as Number+"), [[]])
+        self.assertEqual(execute("[] as[Number+]"), [[]])
 
     def test_element_disambiguation_controls_runtime_vectorisation_depth(self):
         self.assertEqual(
@@ -2017,7 +2013,7 @@ define ranks(xs: {Number+$n..., String+...}) -> Number => $n
 
     def test_where_rank_variable_resolves_in_checked_cast(self):
         source = """
-define cast_same(xs: Number+$n) -> Number+$n => $xs as! Number+$n
+define cast_same(xs: Number+$n) -> Number+$n => $xs as![Number+$n]
 [[1], [2]] cast_same
 """
         self.assertEqual(
@@ -2028,7 +2024,7 @@ define cast_same(xs: Number+$n) -> Number+$n => $xs as! Number+$n
     def test_where_output_rank_resolves_in_call_site_checked_cast(self):
         source = """
 define make_shape(shape: {Number...}) -> Number+$n
-where ($n = length $shape) => [[1]] as! Number+$n
+where ($n = length $shape) => [[1]] as![Number+$n]
 {1, 1} make_shape
 """
         self.assertEqual(

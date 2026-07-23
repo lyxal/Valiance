@@ -2114,8 +2114,8 @@ def _fuzz_smart_diagnostics(
     if mode == 4:
         source = rng.choice(
             (
-                "1 as Integer",
-                "1 as! Number",
+                "1 as[Integer]",
+                "1 as![Number]",
                 "1 move(value -> value)",
                 "1 copy(value ->)",
             )
@@ -2458,7 +2458,7 @@ end
             if analyser.diagnostics or run(compile_program(typed)) != ["other"]:
                 raise AssertionError(analyser.diagnostics)
         elif mode == 7:
-            source = 'ValueError("x") as! Err'
+            source = 'ValueError("x") as![Err]'
             case = ("safe-checked-upcast", source)
             analyser = Analyser()
             typed = analyser.analyse(parse(source))
@@ -2574,9 +2574,9 @@ kind(dict{\"retries\" => 3})
         elif mode == 3:
             source = """
 define requireMatrix(values: Number+ | Number+2) -> Number+2 =>
-  $values as! Number+2
+  $values as![Number+2]
 end |
-requireMatrix([] as Number+)
+requireMatrix([] as[Number+])
 """
             case = ("empty-rank-cast", source)
             analyser = Analyser()
@@ -2655,7 +2655,7 @@ delay({value})
             expected = "rejected" if argument.startswith("ValueError") else "accepted"
             source = f"""
 define requireResult(value: Number | String | ValueError) -> Result[Number, ValueError] =>
-  $value as! Result[Number, ValueError]
+  $value as![Result[Number, ValueError]]
 end |
 requireResult({argument}) |
 match =>
@@ -2674,7 +2674,7 @@ end
         elif mode == 10:
             source = """
 define force(value: Function[Number -> Number] | String) -> Function[Number -> Number] =>
-  $value as! Function[Number -> Number]
+  $value as![Function[Number -> Number]]
 end
 """
             case = ("non-reified-function-cast", source)
@@ -3133,7 +3133,7 @@ end
             source = """
 tag #sticky as constructed
 $values = [1 #sticky, 2]
-$plain = $values as Integer+
+$plain = $values as[Integer+]
 $plain $[0] |
 match =>
   as :#sticky Integer => "leaked"
@@ -3295,7 +3295,7 @@ tag #sorted as computed
             value = rng.randint(-50, 50)
             source = f"""
 tag #sticky as constructed
-{value} #sticky as Number
+{value} #sticky as[Number]
 """
             case = ("constructed-cast-flow", source)
             analyser = Analyser()

@@ -320,34 +320,38 @@ range(1, 6) reshape {2, 3}     #? [[1, 2, 3], [4, 5, 6]]
 
 ## 2.4. Type casting
 
-Valiance distinguishes three ways to change the known type of an existing
-runtime value. Casts do not parse, reshape, materialise, convert units, or invoke
-an ordinary transformation; those operations remain named elements such as
-`parseInt`, `reshape`, and `materialize`.
+Every cast encloses its target type in square brackets. Whitespace between the
+operator and the opening bracket is optional, so `as[T]` and `as [T]` are
+equivalent. The brackets give the type expression an explicit boundary; a
+following expression pipe is therefore unambiguously outside the cast.
 
-- `as Type` is a statically proven coercion. The source type must be assignable
+- `as[Type]` is a statically proven coercion. The source type must be assignable
   to the target, so the cast cannot fail at runtime.
-- `as? Type` is an optional runtime refinement. It returns `Some[Type]` when the
+- `as?[Type]` is an optional runtime refinement. It returns `Some[Type]` when the
   existing value satisfies the target and `None` otherwise, giving the
   expression type `Type?`.
-- `as! Type` is an asserted runtime refinement. It returns the value as `Type`
+- `as![Type]` is an asserted runtime refinement. It returns the value as `Type`
   when the check succeeds and raises a runtime cast failure otherwise.
 
-Examples:
-
 ```valiance
-$circle as Shape
-$value as? Circle
-$value as! Circle
+$circle as[Shape]
+$value as? [Circle]
+$value as![Circle]
+$value as[Shape] | println
 ```
 
-Both runtime-refining forms require a target whose shape can be checked without
-unsafe observation. For example, a cast cannot consume an otherwise lazy
-collection merely to discover erased element types. Casts whose source and
-target cannot overlap are rejected statically.
+Every cast form is also a chain separator. A cast behaves as though a `|`
+appeared on both sides of it: the chain before the cast is lowered completely,
+the cast executes, and a fresh chain begins after it. For example,
+`println double as[Number] negate square` has the same chain ordering as
+`println double | as[Number] | negate square`.
 
-Use the existing `match` type patterns for immediate type-directed branching;
-`as?` is intended for cases where the optional refinement is useful as a value.
+A cast only changes or checks the known type of an existing value. Parsing,
+reshaping, materialisation, unit conversion, and other transformations remain
+ordinary named elements such as `parseInt`, `reshape`, and `materialize`.
+
+Use existing `match` type patterns for immediate type-directed branching;
+`as?` is intended for cases where the optional refinement is useful as data.
 
 
 ## 2.5. Optional Types
@@ -3344,7 +3348,7 @@ define[T] reshape(xs: T*, shape: Number+) -> T* =>
 end
 
 define[T] reshape(xs: T*, shape: {Number...}) -> T+$n
-where ($n = length $shape) => $xs as! T+$n
+where ($n = length $shape) => $xs as![T+$n]
 
 [[1, 2, 3], [4, 5, 6]] reshape {4, 5, 6}
 ```
@@ -4985,7 +4989,7 @@ end
 ```
 cast n: Number -> FFI.int =>
   assert => $n inRange(-32_767, 32_767)
-  $n as! FFI.int
+  $n as![FFI.int]
 end
 ```
 

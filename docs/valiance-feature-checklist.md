@@ -193,14 +193,17 @@ Current audit total: 546 / 779 items complete (70.1%).
 
 ## 13. Type casting
 
-- [x] Parse statically proven coercions using `as Type`.
-- [x] Parse optional runtime refinements using `as? Type`.
-- [x] Type `as? Type` as `Type?` and return `Some` or `None` at runtime.
-- [x] Parse asserted runtime refinements using `as! Type`.
+- [x] Require bracket-delimited targets for every cast form.
+- [x] Make `as[T]`, `as?[T]`, and `as![T]` executable chain separators with
+  the same segmentation effect as a pipe on each side.
+- [x] Accept both `as[T]` and whitespace-separated `as [T]`.
+- [x] Parse statically proven coercions using `as[T]`.
+- [x] Parse optional runtime refinements using `as?[T]`.
+- [x] Type `as?[T]` as `T?` and return `Some` or `None` at runtime.
+- [x] Parse asserted runtime refinements using `as![T]`.
 - [x] Perform runtime validation for `as?` and `as!`.
 - [x] Reject runtime refinements whose target cannot be checked.
 - [x] Reject casts whose source and target cannot overlap.
-- [x] Elide the runtime check when `as!` is statically safe.
 - [x] Preserve optional-cast bytecode through serialization.
 - [ ] Complete checked list-to-array rectangularity validation.
 - [ ] Preserve zero-cost array-to-list-to-array restoration where provenance permits.

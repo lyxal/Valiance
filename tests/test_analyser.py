@@ -539,8 +539,8 @@ $myfun(10)
         typed = analyser.analyse(parse("""
 fn () -> Number atomic => 1
 fn () -> Number exact => 1
-1 as Number atomic
-1 as Number exact
+1 as[Number atomic]
+1 as[Number exact]
 """))
 
         self.assertEqual(analyser.diagnostics, [])
@@ -1705,7 +1705,7 @@ where ($n = $shape length) => [[1], [2]]
     def test_where_clause_computes_rank_from_variadic_tuple_length(self):
         source = """
 define[T] reshape(xs: T*, shape: {Number...}) -> T+$n
-where ($n = length $shape) => $xs as! T+$n
+where ($n = length $shape) => $xs as![T+$n]
 [[1, 2, 3], [4, 5, 6]] reshape {4, 5, 6}
 """
         analyser = Analyser()
@@ -3817,9 +3817,7 @@ end
     def test_checked_cast_narrows_broader_static_type(self):
         analyser = Analyser(Environment())
         branches = analyser.analyse_block(
-            BranchSet(
-                (AnalysisBranch(stack=TypeStack((U(Number, String),))),)
-            ),
+            BranchSet((AnalysisBranch(stack=TypeStack((U(Number, String),))),)),
             (CastNode(Number, checked=True),),
         )
 
@@ -3828,12 +3826,11 @@ end
         self.assertEqual(branch.stack[-1], Number)
         self.assertEqual(branch.typed_body[-1].typ, Number)
 
+
     def test_optional_cast_returns_optional_target_type(self):
         analyser = Analyser(Environment())
         branches = analyser.analyse_block(
-            BranchSet(
-                (AnalysisBranch(stack=TypeStack((U(Number, String),))),)
-            ),
+            BranchSet((AnalysisBranch(stack=TypeStack((U(Number, String),))),)),
             (CastNode(Number, optional=True),),
         )
 
@@ -3841,7 +3838,6 @@ end
         [branch] = branches
         self.assertEqual(branch.stack[-1], optional(Number))
         self.assertEqual(branch.typed_body[-1].typ, optional(Number))
-
 
     def test_list_literal_forks_stack_and_pops_max_consumed_inputs(self):
         analyser = Analyser(default_environment())
@@ -4486,26 +4482,26 @@ class SmartDiagnosticTests(unittest.TestCase):
     def test_identity_cast_is_a_lint_and_analysis_continues(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(parse("1 as Integer 2 +"))
+        typed = analyser.analyse(parse("1 as[Integer] 2 +"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             analyser.lints,
-            ["1:3: [L013/redundant-cast] unnecessary cast to Integer; remove `as Integer`"],
+            ["1:3: [L013/redundant-cast] unnecessary cast to Integer; remove `as[Integer]`"],
         )
         self.assertEqual(typed[-1].typ, Integer)
 
     def test_statically_safe_checked_cast_is_a_lint_with_replacement(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(parse("1 as! Number 2 +"))
+        typed = analyser.analyse(parse("1 as![Number] 2 +"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             analyser.lints,
             [
                 "1:3: [L015/safe-checked-cast] checked cast to Number is statically safe; "
-                "write `as Number` instead of `as! Number`"
+                "write `as[Number]` instead of `as![Number]`"
             ],
         )
         self.assertEqual(typed[-1].typ, Number)
@@ -4513,13 +4509,13 @@ class SmartDiagnosticTests(unittest.TestCase):
     def test_lint_findings_expose_structured_rewrite_metadata(self):
         analyser = Analyser()
 
-        analyser.analyse(parse("1 as Integer"))
+        analyser.analyse(parse("1 as[Integer]"))
 
         [finding] = analyser.lint_findings
         self.assertEqual(finding.code, "redundant-cast")
         self.assertEqual(
             finding.message,
-            "unnecessary cast to Integer; remove `as Integer`",
+            "unnecessary cast to Integer; remove `as[Integer]`",
         )
         self.assertIsInstance(finding.node, CastNode)
         self.assertIsNotNone(finding.rewrite)
@@ -4530,7 +4526,7 @@ class SmartDiagnosticTests(unittest.TestCase):
     def test_nested_function_propagates_structured_lint_findings(self):
         analyser = Analyser()
 
-        analyser.analyse(parse("fn => 1 as Integer end"))
+        analyser.analyse(parse("fn => 1 as[Integer] end"))
 
         self.assertEqual(len(analyser.lints), 1)
         self.assertEqual(len(analyser.lint_findings), 1)
@@ -5087,7 +5083,7 @@ class ForeachRefactoringLintTests(unittest.TestCase):
     def test_node_lint_off_can_suppress_only_prefer_fold(self):
         analyser = self._analyse(
             '$total = 0\n@lintOff("prefer-fold")\n'
-            "[1, 2, 3] foreach (n) => $total := + ($n as Integer) end"
+            "[1, 2, 3] foreach (n) => $total := + ($n as[Integer]) end"
         )
         codes = [finding.code for finding in analyser.lint_findings]
         self.assertNotIn("prefer-fold", codes)
@@ -5098,7 +5094,7 @@ class ForeachRefactoringLintTests(unittest.TestCase):
             '@lintFileOff("prefer-fold")\n'
             "$total = 0\n"
             "[1, 2, 3] foreach (n) => $total := + $n end\n"
-            "1 as Integer"
+            "1 as[Integer]"
         )
         codes = [finding.code for finding in analyser.lint_findings]
         self.assertNotIn("prefer-fold", codes)
@@ -5109,7 +5105,7 @@ class ForeachRefactoringLintTests(unittest.TestCase):
             "@lintFileOff\n"
             "$total = 0\n"
             "[1, 2, 3] foreach (n) => $total := + $n end\n"
-            "1 as Integer"
+            "1 as[Integer]"
         )
         self.assertEqual(analyser.lint_findings, [])
 

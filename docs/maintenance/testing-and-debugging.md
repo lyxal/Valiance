@@ -15,12 +15,12 @@ The repository uses `unittest`. Important suites include:
 - `tests/test_runtime.py`: compiled execution and user-visible behaviour.
 - `tests/test_optimizer.py`: focused pass behaviour, safety boundaries,
   control-flow retargeting, default optimisation, and compile-time opt-out.
-- `tests/test_optimizer_programs.py`: realistic checked-in workloads covering
-  every default optimisation family with differential and serialization checks.
 - `tests/test_bytecode_serialization.py`: portable bytecode round trips.
 - `tests/test_types.py`: type relationships and overload solving.
-- `tests/test_programs.py`: fundamental Valiance behaviour. Do not casually
-  edit these tests to accommodate a regression.
+- `tests/test_programs.py`: all end-to-end program regressions, including
+  fundamental behaviour, deterministic examples, checked-in samples, and
+  optimisation workloads with differential and serialization checks. Do not
+  casually edit these tests to accommodate a regression.
 - `tests/test_main.py` and `tests/test_repl.py`: CLI and persistent-session
   behaviour.
 - `tests/test_source_tools.py`: tidy and documentation generation.
@@ -229,7 +229,7 @@ Existing bytecode-shape and language regression tests compile with
 `optimize=False` so their historical instruction expectations remain stable. New
 optimiser tests must exercise the default path explicitly. For each pass, add a
 focused unit test, an `optimizer` fuzz mode, and a workload in
-`samples/optimizations/` covered by `tests/test_optimizer_programs.py`.
+`samples/optimizations/` covered by `tests/test_programs.py`.
 
 Also run the docstring coverage test after introducing helpers. A feature is not
 finished if maintainers cannot tell why its new functions exist.

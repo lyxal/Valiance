@@ -341,75 +341,38 @@ def _function_node(
 
 
 @_core.register(CastNode)
-def _cast_node(
-    self: _core.Analyser,
-    node: CastNode,
-    branch: _core.AnalysisBranch,
-) -> _core.BranchSet:
+def _cast_node(self: _core.Analyser, node: CastNode, branch: _core.AnalysisBranch) -> _core.BranchSet:
     """Analyse a coercing, checked, or optional cast."""
-    # ``exact`` and ``atomic`` are callable-parameter policy, not value
-    # constructors. A cast may target a callable whose own parameters carry
-    # those policies, but a marker wrapped around the cast value itself is
-    # erased.
     target = _functions._parameter_value_type(T.normalize(node.typ))
     self._validate_element_tags_in_types((target,), node)
-    if not self._validate_data_tags(
-        ((target,),),
-        node,
-        allow_variants=False,
-        require_declared=True,
-    ):
+    if not self._validate_data_tags(((target,),), node, allow_variants=False, require_declared=True):
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
     if not branch.stack:
-        self._diagnose(
-            f"empty stack when casting to {T.show(target)}",
-            node,
-        )
+        self._diagnose(f"empty stack when casting to {T.show(target)}", node)
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
-
     source = branch.stack[-1]
     statically_safe = T.assignable(source, target, self.env.context)
     runtime_refinement = node.checked or node.optional
     if runtime_refinement and not statically_safe:
-        if (
-            invalid_runtime_type := _patterns._uncheckable_runtime_type(target)
-        ) is not None:
-            self._diagnose(
-                f"{T.show(invalid_runtime_type)} cannot be checked at runtime",
-                node,
-            )
+        invalid = _patterns._uncheckable_runtime_type(target)
+        if invalid is not None:
+            self._diagnose(f"{T.show(invalid)} cannot be checked at runtime", node)
             return _core.BranchSet()
         if not _utils._types_overlap(source, target, self.env.context):
             if node.checked and _functions._type_contains_rank_var(target):
                 stack = T.TypeStack((*branch.stack.items[:-1], target))
-                return _core.BranchSet(
-                    (branch.with_stack(stack).emit(TypedNode(node, target)),)
-                )
-            self._diagnose(
-                f"cannot cast {T.show(source)} to {T.show(target)}",
-                node,
-            )
+                return _core.BranchSet((branch.with_stack(stack).emit(TypedNode(node, target)),))
+            self._diagnose(f"cannot cast {T.show(source)} to {T.show(target)}", node)
             return _core.BranchSet()
     elif not runtime_refinement and not statically_safe:
-        self._diagnose(
-            f"cannot safely cast {T.show(source)} to {T.show(target)}",
-            node,
-        )
+        self._diagnose(f"cannot safely cast {T.show(source)} to {T.show(target)}", node)
         return _core.BranchSet()
-
-    flowed_target = _calls._apply_data_tag_flow(
-        (source,),
-        (target,),
-        (target,),
-        self.env.context,
-    )[0]
-    result_type = T.optional(flowed_target) if node.optional else flowed_target
+    flowed = _calls._apply_data_tag_flow((source,), (target,), (target,), self.env.context)[0]
+    result = T.optional(flowed) if node.optional else flowed
     if node.checked and statically_safe:
         node = replace(node, checked=False)
-    stack = T.TypeStack((*branch.stack.items[:-1], result_type))
-    return _core.BranchSet(
-        (branch.with_stack(stack).emit(TypedNode(node, result_type)),)
-    )
+    stack = T.TypeStack((*branch.stack.items[:-1], result))
+    return _core.BranchSet((branch.with_stack(stack).emit(TypedNode(node, result)),))
 
 
 @_core.register(PopNNode)

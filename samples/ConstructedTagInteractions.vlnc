@@ -57,7 +57,7 @@ match =>
   _ => "constructed-missing"
 end
 
-$casted = 1 #cached as Number
+$casted = 1 #cached as[Number]
 $casted |
 match =>
   as :#cached Number => "cast-sticky"

@@ -146,7 +146,7 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
     if isinstance(value, CastNode):
         suffix = "!" if value.checked else "?" if value.optional else ""
         return (
-            f"CastNode(as{suffix} {_type_label(value.typ)}"
+            f"CastNode(as{suffix}[{_type_label(value.typ)}]"
             f"{_location_arg(value)})"
         )
     if isinstance(value, PopNNode):

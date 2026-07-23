@@ -124,13 +124,11 @@ not practical as ordinary `@test` definitions:
 
 - `tests/test_runtime.py` covers both Conway's Game of Life spellings and direct
   `std.grids.allNeighbors` edge/wrapping behavior.
-- `tests/test_tentative_examples.py` covers the guessing game, Caesar cipher,
-  run-length encoding, stack calculator, numeric examples, Fibonacci variants,
-  records, argument cycling, user-defined `dip`, trait inheritance, and generic
-  `find`.
-- `tests/test_brainfuck_example.py` compiles and serializes the complete
-  interpreter, replaces `input` deterministically, and checks successful and
-  failing programs.
+- `tests/test_programs.py` contains the canonical inline sources for the
+  guessing game, Caesar cipher, run-length encoding, stack calculator, numeric
+  examples, Fibonacci variants, records, argument cycling, user-defined `dip`,
+  trait inheritance, generic `find`, and the Brainfuck interpreter. It executes
+  them deterministically rather than loading program sources from the docs tree.
 - `tests/test_optional_member_access.py` covers named and stack safe access,
   assignment, flattening, vectorisation, deep/mixed chains, diagnostics, and
   bytecode round trips.

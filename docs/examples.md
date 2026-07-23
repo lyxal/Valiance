@@ -1,9 +1,8 @@
 # Worked language examples
 
 The programs in [`docs/tentative examples`](tentative%20examples/) are small,
-end-to-end examples of currently implemented Valiance features. They are also
-mirrored by Python regression tests under `tests/`, where interactive input and
-randomness are replaced with deterministic values.
+illustrative Valiance programs. They are documentation, not test fixtures; the
+canonical executable program regressions live directly in `tests/test_programs.py`.
 
 ## Running an example
 
@@ -20,7 +19,7 @@ the user. Their tests execute finite deterministic variants instead.
 The programs under `samples/optimizations/` are medium-sized deterministic
 workloads for the bytecode optimiser. They cover project estimation, shipment
 pricing, subscription forecasting, ledger reordering, and a payroll feature
-flag. `tests/test_optimizer_programs.py` runs each through direct codegen,
+flag. `tests/test_programs.py` runs each through direct codegen,
 default optimisation, and bytecode serialization while checking the intended
 rewrite family.
 

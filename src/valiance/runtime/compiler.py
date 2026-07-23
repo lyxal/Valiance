@@ -557,25 +557,12 @@ class _Compiler:
                 pass
             case CastNode(typ, checked, optional):
                 if optional:
-                    self.emit(
-                        OpCode.TRY_CAST,
-                        (
-                            _cast_type_spec(typ),
-                            _runtime_tag_contract_spec(typ),
-                        ),
-                    )
+                    self.emit(OpCode.TRY_CAST, (_cast_type_spec(typ), _runtime_tag_contract_spec(typ)))
                     return
                 if checked:
                     self.emit(OpCode.CHECK_CAST, _cast_type_spec(typ))
-                contract_type = (
-                    typed_node.typ
-                    if isinstance(typed_node, TypedNode) and typed_node.typ is not None
-                    else typ
-                )
-                self.emit(
-                    OpCode.CANONICALIZE_TAGS,
-                    _runtime_tag_contract_spec(contract_type),
-                )
+                contract_type = typed_node.typ if isinstance(typed_node, TypedNode) and typed_node.typ is not None else typ
+                self.emit(OpCode.CANONICALIZE_TAGS, _runtime_tag_contract_spec(contract_type))
             case PopNNode(count):
                 operand: object = (
                     count if isinstance(count, int) else ("static", count.text)

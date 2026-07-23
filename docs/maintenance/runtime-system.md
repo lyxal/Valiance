@@ -678,9 +678,7 @@ also attach an analysed exact runtime rank.
 - `TRY_CAST`
 - `VALIDATE_TAG`
 
-`CHECK_CAST` raises on failure. `TRY_CAST` wraps a successful refinement in
-`Some` and returns `None` when the runtime type does not match. Checked casts,
-tag validation, missing keys, invalid indexes, and other concrete
+Checked casts, tag validation, missing keys, invalid indexes, and other concrete
 value failures happen here or in shared helpers.
 
 Field opcode payloads retain whether the source used ordinary `.` or optional-safe

@@ -1511,11 +1511,7 @@ class Parser:
                         cast.typ if cast is not None else None,
                         location=_loc(token),
                     ),
-                    *(
-                        (cast,)
-                        if cast is not None and (cast.checked or cast.optional)
-                        else ()
-                    ),
+                    *((cast,) if cast is not None and (cast.checked or cast.optional) else ()),
                 ),
                 True,
             )
@@ -1950,36 +1946,31 @@ class Parser:
             return _EXPANDED_SKIP
         return Symbol(value)
 
-    def _cast(
-        self,
-        start: Token,
-        *,
-        optional_spelling: bool = False,
-    ) -> _ChainPiece:
-        """Parse coercing, checked, or optional cast syntax."""
+    def _cast(self, start: Token, *, optional_spelling: bool = False) -> _ChainPiece:
+        """Parse ``as[T]``, ``as?[T]``, or ``as![T]``."""
         checked = self._check_op("!")
-        optional = optional_spelling or self._check_op("?")
-        if checked or (optional and not optional_spelling):
+        if checked:
             self._advance()
+        self._expect(TokenKind.LBRACKET)
+        target = self.parse_type_expression()
+        self._expect(TokenKind.RBRACKET)
         return _ChainPiece(
             (
                 CastNode(
-                    self.parse_type_expression(),
+                    target,
                     checked=checked,
-                    optional=optional,
+                    optional=optional_spelling,
                     location=_loc(start),
                 ),
             ),
+            breaks_chain=True,
         )
 
     def _empty_list_cast(self) -> CastNode | None:
         """Parse empty list cast from the current token stream."""
         if self._check_ident("as", "as?"):
             start = self._advance()
-            [cast] = self._cast(
-                start,
-                optional_spelling=start.value == "as?",
-            ).nodes
+            [cast] = self._cast(start, optional_spelling=start.value == "as?").nodes
             if not isinstance(cast, CastNode):
                 self._error("expected cast")
             return cast
@@ -3453,6 +3444,7 @@ def _lower_chain_segment(
                 (
                     AssertNode,
                     AtNode,
+                    CastNode,
                     ForNode,
                     IfNode,
                     MatchNode,

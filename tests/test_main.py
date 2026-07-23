@@ -558,7 +558,7 @@ class MainTests(unittest.TestCase):
                 "Type error",
                 "cannot safely cast `Number` with `as!`",
                 SourceLocation(1, 1),
-                "Try `value as String` instead.",
+                "Try `value as[String]` instead.",
             ),
             'define value: Number => "text" #? note',
             color=True,
@@ -579,22 +579,22 @@ class MainTests(unittest.TestCase):
                 "Type error",
                 "cannot safely cast `Number`",
                 SourceLocation(1, 1),
-                "Try `value as String` instead.",
+                "Try `value as[String]` instead.",
             ),
-            "value as Number",
+            "value as[Number]",
             color=False,
         )
 
         self.assertNotIn("\033[", rendered)
         self.assertIn("Type error: cannot safely cast `Number`", rendered)
-        self.assertIn("1 | value as Number", rendered)
-        self.assertIn("help: Try `value as String` instead.", rendered)
+        self.assertIn("1 | value as[Number]", rendered)
+        self.assertIn("help: Try `value as[String]` instead.", rendered)
 
     def test_main_formats_runtime_errors_with_context(self):
         error = io.StringIO()
         with contextlib.redirect_stderr(error):
             exit_code = main(
-                ["run", "--code", 'if true => 1 else => "x" end as! String']
+                ["run", "--code", 'if true => 1 else => "x" end as![String]']
             )
 
         self.assertEqual(exit_code, 1)
@@ -1235,7 +1235,7 @@ class MainTests(unittest.TestCase):
     def test_main_renders_lints_with_actionable_replacement(self):
         error = io.StringIO()
         with contextlib.redirect_stderr(error):
-            exit_code = main(["compile", "--code", "1 as! Number"])
+            exit_code = main(["compile", "--code", "1 as![Number]"])
 
         self.assertEqual(exit_code, 0)
         rendered = error.getvalue()
@@ -1243,7 +1243,7 @@ class MainTests(unittest.TestCase):
             "Lint warning: [L015/safe-checked-cast] checked cast to Number is statically safe",
             rendered,
         )
-        self.assertIn("write `as Number` instead of `as! Number`", rendered)
+        self.assertIn("write `as[Number]` instead of `as![Number]`", rendered)
 
 
 if __name__ == "__main__":

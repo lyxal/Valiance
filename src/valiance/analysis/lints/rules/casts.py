@@ -29,7 +29,7 @@ def lint_cast(context: NodeLintContext):
                 finding(
                     "redundant-checked-cast",
                     f"unnecessary checked cast to {T.show(target)}; "
-                    f"remove `as! {T.show(target)}`",
+                    f"remove `as![{T.show(target)}]`",
                     node,
                     rewrite=LintRewrite(RewriteKind.REMOVE_NODE),
                 ),
@@ -38,12 +38,12 @@ def lint_cast(context: NodeLintContext):
             finding(
                 "safe-checked-cast",
                 f"checked cast to {T.show(target)} is statically safe; "
-                f"write `as {T.show(target)}` instead of "
-                f"`as! {T.show(target)}`",
+                f"write `as[{T.show(target)}]` instead of "
+                f"`as![{T.show(target)}]`",
                 node,
                 rewrite=LintRewrite(
                     RewriteKind.REPLACE_NODE,
-                    replacement=f"as {T.show(target)}",
+                    replacement=f"as[{T.show(target)}]",
                 ),
             ),
         )
@@ -58,7 +58,7 @@ def lint_cast(context: NodeLintContext):
             finding(
                 "redundant-cast",
                 f"unnecessary cast to {T.show(target)}; "
-                f"remove `as {T.show(target)}`",
+                f"remove `as[{T.show(target)}]`",
                 node,
                 rewrite=LintRewrite(RewriteKind.REMOVE_NODE),
             ),
