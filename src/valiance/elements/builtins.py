@@ -559,6 +559,12 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The reversed list.",
         category="Lists",
     ),
+    "unpair": element_documentation(
+        "Return the first two items of a finite list, raising if there are fewer than two.",
+        parameters=(("list", "The list to unpair"),),
+        returns="The two items of the list, pushed separately onto the stack.",
+        category="Lists",
+    ),
 }
 
 
@@ -2093,6 +2099,15 @@ def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     if start != start.to_integral_value() or stop != stop.to_integral_value():
         raise RuntimeError("range bounds must be integral numbers")
     return (LazyList(RuntimeNumber(item) for item in range(int(start), int(stop) + 1)),)
+
+
+@builtin("unpair", (T.ExactList(T.V("Item")),), (T.V("Item"), T.V("Item")))
+def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the first two items of a finite list, raising if there are fewer than two."""
+    values = args[0]
+    if len(values) != 2:
+        raise RuntimeError("unpair requires a list of exactly two items")
+    return (values[0], values[1])
 
 
 @builtin(
