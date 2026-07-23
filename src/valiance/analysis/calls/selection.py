@@ -262,38 +262,121 @@ class _CallSelection:
         node: ElementNode,
         overloads: tuple[T.Overload, ...],
     ) -> BranchSet:
-        """Compute call element call during static analysis."""
+        """Compute an explicit call of a callable value from the stack."""
         if node.modifier_args:
             self._diagnose("element 'call' does not accept ':' arguments", node)
             return BranchSet()
-        if any(arg.name is not None or arg.placeholder for arg in node.call_args):
+        if any(arg.name is not None for arg in node.call_args):
             self._diagnose(
                 "element 'call' explicit arguments must be positional",
                 node,
             )
             return BranchSet()
-
-        current = BranchSet((branch,))
-        for arg in node.call_args:
-            current = self.analyse_scoped_block(current, arg.value)
+        stack_function_overloads = (
+            _functions._callable_overloads(branch.stack.items[-1])
+            if branch.stack
+            else ()
+        )
+        if not stack_function_overloads:
+            current = BranchSet((branch,))
+            for arg in node.call_args:
+                current = self.analyse_scoped_block(current, arg.value)
+                if not current:
+                    return BranchSet()
+            terminal, current = _utils._split_terminal_branches(current)
             if not current:
-                return BranchSet()
-
-        terminal, current = _utils._split_terminal_branches(current)
-        if not current:
-            return terminal
-
-        call_arg_count = len(node.call_args)
-        candidates: list[CallCandidate] = []
-        for arg_branch in current:
-            candidates.extend(
-                self.call_element_candidates_for_branch(
-                    node,
-                    overloads[0],
-                    arg_branch,
-                    call_arg_count,
+                return terminal
+            positional_candidates: list[CallCandidate] = []
+            call_arg_count = len(node.call_args)
+            for arg_branch in current:
+                positional_candidates.extend(
+                    self.call_element_candidates_for_branch(
+                        node, overloads[0], arg_branch, call_arg_count
+                    )
                 )
+            winners = self.select_call_winners(
+                candidates=positional_candidates,
+                branch=branch,
+                node=node,
+                no_match_message=(
+                    "no overloads for element 'call' match explicit call syntax"
+                ),
+                ambiguous_message=(
+                    "ambiguous overloads for element 'call' with explicit call syntax"
+                ),
             )
+            if winners is None:
+                return terminal
+            results: list[AnalysisBranch] = list(terminal.branches)
+            for candidate in winners:
+                results.append(
+                    candidate.branch.push(*candidate.applied.actual_returns).emit(
+                        TypedElementNode(
+                            node,
+                            _calls._returns_result_type(
+                                candidate.applied.actual_returns
+                            ),
+                            candidate.applied,
+                            0,
+                            (),
+                            candidate.call_arg_order,
+                            candidate.callable_overload_index,
+                        )
+                    )
+                )
+            return BranchSet.collect(results)
+
+        function_type = branch.stack.items[-1]
+        base = branch.with_stack(T.TypeStack(branch.stack.items[:-1]))
+        candidates: list[CallCandidate] = []
+        terminal: list[AnalysisBranch] = []
+
+        for callable_index, callable_overload in enumerate(
+            _functions._callable_overloads(function_type)
+        ):
+            prepared = _calls._prepare_element_call_branches(
+                base, callable_overload, node.call_args, False, self
+            )
+            for preparation in prepared:
+                if preparation.branch.terminal:
+                    terminal.append(preparation.branch)
+                    continue
+                for args, popped, _modifiers in _calls._source_element_arguments(
+                    preparation.branch,
+                    callable_overload,
+                    (),
+                    self.env.context,
+                    preparation.call_arg_order,
+                    analyser=self,
+                ):
+                    stack_count = len(callable_overload.params) - sum(
+                        not arg.placeholder for arg in node.call_args
+                    )
+                    argument_order = preparation.call_arg_order or tuple(
+                        range(len(callable_overload.params))
+                    )
+                    runtime_order = tuple(
+                        index if index < stack_count else index + 1
+                        for index in argument_order
+                    ) + (stack_count,)
+                    identity = tuple(range(len(runtime_order)))
+                    planned = _calls._call_element_candidates(
+                        popped,
+                        overloads[0],
+                        function_type,
+                        args,
+                        popped.stack.items,
+                        () if runtime_order == identity else runtime_order,
+                        node.disambiguation,
+                        self.env.context,
+                        self.env,
+                        self,
+                    )
+                    candidates.extend(
+                        candidate
+                        for candidate in planned
+                        if candidate.callable_overload_index == callable_index
+                    )
 
         winners = self.select_call_winners(
             candidates=candidates,
@@ -307,9 +390,9 @@ class _CallSelection:
             ),
         )
         if winners is None:
-            return terminal
+            return BranchSet.collect(terminal)
 
-        results: list[AnalysisBranch] = list(terminal.branches)
+        results: list[AnalysisBranch] = list(terminal)
         for candidate in winners:
             extension = self._analyse_element_extension(
                 node.extension,

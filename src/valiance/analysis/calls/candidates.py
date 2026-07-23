@@ -650,7 +650,8 @@ def _element_call_argument_plan(
 
     ordered: list[tuple[ASTNode, ...]] = []
     current_slots: list[int] = []
-    stack_sourced_slots: list[int] = []
+    implicit_stack_slots: list[int] = []
+    placeholder_slots: list[int] = []
     explicit_slots: list[int] = []
     for index in range(param_count):
         if index in modifier_indexes:
@@ -658,7 +659,7 @@ def _element_call_argument_plan(
         assigned = assignments[index]
         if isinstance(assigned, CallArgument):
             if assigned.placeholder:
-                stack_sourced_slots.append(index)
+                placeholder_slots.append(index)
                 continue
             ordered.append(assigned.value)
             explicit_slots.append(index)
@@ -672,8 +673,12 @@ def _element_call_argument_plan(
             ordered.append(cast("tuple[ASTNode, ...]", default))
             explicit_slots.append(index)
             continue
-        stack_sourced_slots.append(index)
-    current_slots.extend(stack_sourced_slots)
+        implicit_stack_slots.append(index)
+    # Values omitted from the written call remain at the deep end of the
+    # consumed stack segment. Explicit placeholders then fill from the top
+    # right-to-left, which is their left-to-right order in the segment.
+    current_slots.extend(implicit_stack_slots)
+    current_slots.extend(placeholder_slots)
     current_slots.extend(explicit_slots)
     desired_slots = tuple(
         index for index in range(param_count) if index not in modifier_indexes

@@ -419,7 +419,8 @@ class _Compiler:
                     and typed_node.call_arg_order
                 ):
                     labels = tuple(
-                        f"_call_arg_{index}" for index in range(len(node.call_args))
+                        f"_call_arg_{index}"
+                        for index in range(len(typed_node.call_arg_order))
                     )
                     self.emit(
                         OpCode.STACK_SHUFFLE,

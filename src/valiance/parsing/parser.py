@@ -2219,12 +2219,28 @@ class Parser:
             self._current,
         ):
             self._advance()
-            args = self._comma_expressions(TokenKind.RPAREN)
+            call_args = (
+                ()
+                if self._match(TokenKind.RPAREN)
+                else self._call_arguments()
+            )
+            if not any(arg.placeholder or arg.name is not None for arg in call_args):
+                return _ChainPiece(
+                    (
+                        *(_flatten(tuple(arg.value for arg in call_args))),
+                        GetVariableNode(name, location=_loc(start)),
+                        ElementNode(Symbol("call"), location=_loc(start)),
+                    ),
+                    True,
+                )
             return _ChainPiece(
                 (
-                    *_flatten(args),
                     GetVariableNode(name, location=_loc(start)),
-                    ElementNode(Symbol("call"), location=_loc(start)),
+                    ElementNode(
+                        Symbol("call"),
+                        call_args=call_args,
+                        location=_loc(start),
+                    ),
                 ),
                 True,
             )
@@ -2459,7 +2475,8 @@ class Parser:
         while True:
             self._skip_newlines()
             if self._check(TokenKind.IDENT) and self._current.value == "_" and (
-                self._peek(1).kind in {TokenKind.COMMA, TokenKind.RPAREN}
+                self._peek(1).kind
+                in {TokenKind.COMMA, TokenKind.RPAREN, TokenKind.NEWLINE}
             ):
                 self._advance()
                 args.append(CallArgument(placeholder=True))
@@ -2469,12 +2486,16 @@ class Parser:
             ):
                 name = Symbol(self._advance().value)
                 self._expect(TokenKind.ASSIGN)
-                value = self._chain_until({TokenKind.COMMA, TokenKind.RPAREN})
+                value = self._chain_until(
+                    {TokenKind.COMMA, TokenKind.RPAREN, TokenKind.NEWLINE}
+                )
                 if not value:
                     self._error("expected named argument value")
                 args.append(CallArgument(name, value))
             else:
-                value = self._chain_until({TokenKind.COMMA, TokenKind.RPAREN})
+                value = self._chain_until(
+                    {TokenKind.COMMA, TokenKind.RPAREN, TokenKind.NEWLINE}
+                )
                 if not value:
                     self._error("expected argument")
                 args.append(CallArgument(None, value))

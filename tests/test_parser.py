@@ -1570,5 +1570,20 @@ end
         )
 
 
+    def test_variable_call_parses_stack_placeholders(self):
+        program = parse('$f(\n  _,\n  "second",\n  _\n)')
+
+        self.assertEqual(program[0], GetVariableNode(Symbol("f")))
+        self.assertEqual(program[1].name, Symbol("call"))
+        self.assertEqual(
+            program[1].call_args,
+            (
+                CallArgument(placeholder=True),
+                CallArgument(value=(StringLiteralNode("second"),)),
+                CallArgument(placeholder=True),
+            ),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

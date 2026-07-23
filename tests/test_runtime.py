@@ -4358,3 +4358,24 @@ class ImportedOverloadRuntimeTests(unittest.TestCase):
 
         self.assertEqual(direct, ["Hello, Valiance!", RuntimeNumber(6)])
         self.assertEqual(restored, direct)
+
+
+    def test_variable_call_placeholders_fill_right_to_left_before_leftovers(self):
+        source = r'''
+$f = fn (a: String, b: String, c: String, d: String, e: String) -> String+ =>
+  [$a, $b, $c, $d, $e]
+end
+"last"
+"first"
+"third"
+$f(
+  _,
+  "second",
+  _,
+  "fourth"
+)
+'''
+        self.assertEqual(
+            execute(source),
+            [["first", "second", "third", "fourth", "last"]],
+        )
