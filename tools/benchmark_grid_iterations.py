@@ -19,7 +19,7 @@ define step(board: Number++) -> Number++ =>
     end
   end
 end
-const ($WIDTH, $HEIGHT) = 10 | 10
+const $(WIDTH, HEIGHT) = 10 | 10
 $board = range(1, $WIDTH * $HEIGHT) | map: randbit | reshape(_, $WIDTH, $HEIGHT)
 range(1, __ITERATIONS__) foreach (n) => $board := step
 $board

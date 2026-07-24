@@ -306,8 +306,8 @@ end
         )
 
 
-    def test_parses_parenthesized_constant_multiple_assignment(self):
-        program = parse("const ($width, $height) = 10 | 20")
+    def test_parses_constant_multiple_assignment(self):
+        program = parse("const $(width, height) = 10 | 20")
 
         self.assertEqual(
             program,
@@ -322,6 +322,10 @@ end
                 ),
             ],
         )
+
+    def test_constant_multiple_assignment_requires_dollar_before_group(self):
+        with self.assertRaises(ParseError):
+            parse("const (width, height) = 10 | 20")
 
     def test_parses_multiple_assignment(self):
         program = parse("$(a, b: Number) = 1 2")

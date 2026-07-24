@@ -418,7 +418,7 @@ $c = 3
 Grouped constant declarations use the same target syntax:
 
 ```
-const ($WIDTH, $HEIGHT) = 10 | 20
+const $(WIDTH, HEIGHT) = 10 | 20
 ```
 
 ## 3.4. Variable Shadowing

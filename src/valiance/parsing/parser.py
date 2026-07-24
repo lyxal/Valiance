@@ -396,11 +396,10 @@ class Parser:
 
     def _constant(self, start: Token) -> tuple[ASTNode, ...]:
         """Parse constant from the current token stream."""
-        has_leading_dollar = self._match(TokenKind.DOLLAR)
+        if not self._match(TokenKind.DOLLAR):
+            self._error("expected $ after const")
         if self._check(TokenKind.LPAREN):
             return self._multiple_assignment(start, constant=True)
-        if not has_leading_dollar:
-            self._error("expected $ or '(' after const")
         name = self._symbol("expected constant name")
         declared_type = None
         if self._match(TokenKind.COLON):
