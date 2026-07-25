@@ -1,6 +1,8 @@
 # Valiance feature checklist
 
-Current audit total: 546 / 779 items complete (70.1%).
+Current audit total: 672 / 803 items complete (83.7%).
+
+Audit refreshed against the repository implementation and full test suite on 2026-07-25. Items remain unchecked where the feature is absent, deliberately deferred, only partially implemented, or too broad to treat as complete.
 
 ## 1. Lexer, parser, and general syntax
 
@@ -15,9 +17,9 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Implement the common single-line and multiline `=> ... end` block syntax.
 - [x] Determine block form from the first significant token following `=>`.
 - [x] Produce lexer errors for unterminated strings.
-- [ ] Produce syntax errors for unbalanced comments and blocks.
+- [x] Produce syntax errors for unbalanced comments and blocks.
 - [x] Parse element identifiers using the specified symbolic and alphanumeric character rules.
-- [ ] Require niladic element names to begin with `\`.
+- [x] Require niladic element names to begin with `\`.
 
 ## 2. Core execution and stack semantics
 
@@ -43,10 +45,10 @@ Current audit total: 546 / 779 items complete (70.1%).
 
 ## 3. Numbers and truthiness
 
-- [ ] Implement arbitrary-size, arbitrary-precision exact numbers.
+- [x] Implement arbitrary-size, arbitrary-precision exact numbers.
 - [x] Support integer runtime values.
 - [x] Support real-number runtime values.
-- [ ] Support complex numbers.
+- [x] Support complex numbers.
 - [ ] Support symbolic or exact representations involving π, e, surds, and similar values.
 - [x] Parse decimal and signed numeric literals.
 - [x] Parse complex-number literals.
@@ -63,7 +65,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 ## 4. Strings
 
 - [x] Implement strings as dedicated objects rather than character lists.
-- [ ] Store or process strings as UTF-8.
+- [x] Store or process strings as UTF-8.
 - [x] Parse double-quoted string literals.
 - [x] Allow literal newlines inside strings.
 - [x] Support escaping quotes, backslashes, and dollar signs.
@@ -105,23 +107,23 @@ Current audit total: 546 / 779 items complete (70.1%).
 
 ## 7. None, Some, and optional types
 
-- [ ] Provide a singleton absence value named `None`.
+- [x] Provide a singleton absence value named `None`.
 - [x] Provide the `None` type.
 - [x] Provide the `Some[T]` wrapper.
 - [x] Parse optional types using `T?`.
 - [x] Define `T?` as `Some[T] | None`.
 - [x] Support nested optional types such as `T??`.
-- [ ] Automatically wrap non-`None` values in `Some` when used as optional values.
-- [ ] Preserve explicitly wrapped `None` values.
+- [x] Automatically wrap non-`None` values in `Some` when used as optional values.
+- [x] Preserve explicitly wrapped `None` values.
 - [x] Implement optional-type union simplification.
 - [x] Canonicalise optional unions into the specified ordering.
-- [ ] Implement the specified `T | Some[U]` simplification rules.
+- [x] Implement the specified `T | Some[U]` simplification rules.
 
 ## 8. Lists
 
 - [x] Implement homogeneous lists whose element type may itself be a union.
 - [x] Support finite lists.
-- [ ] Support potentially infinite lists.
+- [x] Support potentially infinite lists.
 - [x] Parse list literals using `[...]`.
 - [x] Infer list base types and ranks.
 - [x] Implement list-construction stack fallback when an item expression underflows.
@@ -154,7 +156,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Support function types.
 - [x] Support overload-set types.
 - [x] Support generic types.
-- [ ] Support trait types.
+- [x] Support trait types.
 - [ ] Support object, variant, enum, record, dictionary, tuple, task, channel, result, and FFI types.
 - [x] Canonicalise union and intersection types.
 - [ ] Reject invalid or unsatisfiable type combinations where specified.
@@ -214,7 +216,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 ## 14. Variables and constants
 
 - [x] Parse inferred variable declarations.
-- [ ] Parse explicitly typed variable declarations.
+- [x] Parse explicitly typed variable declarations.
 - [x] Require every variable to be initialised.
 - [x] Preserve a variable’s declared or inferred type across later assignments.
 - [x] Implement mutable bindings over immutable stored values.
@@ -242,7 +244,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Give tagged matches priority over equivalent untagged matches.
 - [x] Require one overload to be strictly more specific across every corresponding parameter.
 - [x] Report ambiguous equally specific overloads as compile errors.
-- [ ] Support overload disambiguation using `element[Types]`.
+- [x] Support overload disambiguation using `element[Types]`.
 - [x] Support generic-equivalent matching.
 - [x] Support optional-substitution matching.
 - [x] Support vectorising matches.
@@ -271,7 +273,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 ## 17. Stack-shuffling operations
 
 - [x] Provide `dup`.
-- [ ] Provide `swap`.
+- [x] Provide `swap`.
 - [ ] Provide `pop`.
 - [x] Parse and execute `copy(prestack -> poststack)`.
 - [x] Parse and execute `move(prestack -> poststack)`.
@@ -299,7 +301,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Support named inferred parameters.
 - [x] Prevent writes to named function parameters.
 - [x] Prevent shadowing named function parameters.
-- [ ] Support function calls through the `call` element.
+- [x] Support function calls through the `call` element.
 - [x] Support call syntax on variables containing functions.
 - [x] Support explicit stack-fed function invocation.
 - [x] Implement argument cycling for explicitly declared parameters.
@@ -320,7 +322,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Produce overload-set function types when multiple alternatives remain.
 - [x] Infer untyped named parameters from use.
 - [ ] Reject unused untyped parameters.
-- [ ] Support generic `Function` parameters with unknown arity and multiplicity.
+- [x] Support generic `Function` parameters with unknown arity and multiplicity.
 - [x] Defer stack-polymorphic function validation to call sites.
 - [x] Validate each call independently using the concrete function argument type.
 - [x] Allow call-site-checked functions to consume additional outer-stack arguments.
@@ -345,7 +347,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Produce lists when all vectorised arguments are lists.
 - [x] Produce arrays when all arguments are arrays and the return type retains arrayness.
 - [x] Produce lists when vectorisation mixes lists and arrays.
-- [ ] Support fine-grained vectorisation depth through overload disambiguation.
+- [x] Support fine-grained vectorisation depth through overload disambiguation.
 - [x] Parse exact parameter types.
 - [x] Prevent vectorisation through exact parameters.
 - [x] Include exact in function types.
@@ -433,16 +435,16 @@ Current audit total: 546 / 779 items complete (70.1%).
 
 ## 25. Assertions and conditionals
 
-- [ ] Parse `assert` blocks.
-- [ ] Require assertion conditions to return `#boolean Number`.
-- [ ] Evaluate assertion conditions by peeking rather than consuming inputs.
-- [ ] Panic when a basic assertion is false.
-- [ ] Parse `assert ... else`.
-- [ ] Return an `AssertError` wrapping the else result when the condition fails.
+- [x] Parse `assert` blocks.
+- [x] Require assertion conditions to return `#boolean Number`.
+- [x] Evaluate assertion conditions by peeking rather than consuming inputs.
+- [x] Panic when a basic assertion is false.
+- [x] Parse `assert ... else`.
+- [x] Return an `AssertError` wrapping the else result when the condition fails.
 - [x] Parse single-branch `if`.
-- [ ] Peek condition inputs.
-- [ ] Optionalise the result of an `if` without `else`.
-- [ ] Return `None` when a single-branch `if` is not taken.
+- [x] Peek condition inputs.
+- [x] Optionalise the result of an `if` without `else`.
+- [x] Return `None` when a single-branch `if` is not taken.
 - [x] Parse `if/else`.
 - [x] Require compatible input signatures across branches.
 - [x] Resolve compatible overload sets across branches.
@@ -467,15 +469,15 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [ ] Parse optional explicit `foreach` break-return annotations.
 - [x] Parse `break value`.
 - [x] Parse multi-value `break (...)`.
-- [ ] Pad differing break multiplicities with `None`.
+- [x] Pad differing break multiplicities with `None`.
 - [x] Return break values from terminated loops.
 - [x] Parse `while`.
-- [ ] Require a boolean-number condition.
-- [ ] Feed previous iteration results into subsequent condition checks.
-- [ ] Require loop-body outputs to match condition inputs.
-- [ ] Return the values that caused loop termination.
-- [ ] Support explicitly declared `while` input parameters.
-- [ ] Cycle named and unnamed `while` inputs.
+- [x] Require a boolean-number condition.
+- [x] Feed previous iteration results into subsequent condition checks.
+- [x] Require loop-body outputs to match condition inputs.
+- [x] Return the values that caused loop termination.
+- [x] Support explicitly declared `while` input parameters.
+- [x] Cycle named and unnamed `while` inputs.
 - [x] Parse `unfold`.
 - [x] Maintain unfold state between iterations.
 - [x] Support optional unfold conditions.
@@ -493,7 +495,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Support optional parameter lists.
 - [x] Support optional return declarations.
 - [x] Create new executable elements from definitions.
-- [ ] Add module-scoped overloads to existing elements.
+- [x] Add module-scoped overloads to existing elements.
 - [x] Capture visible variables at definition evaluation time.
 - [x] Support trailing optional parameters with default expressions.
 - [x] Restrict optional element arguments to explicit call syntax.
@@ -510,7 +512,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Default omitted access modifiers to readable.
 - [x] Support typed fields without defaults.
 - [x] Support inferred fields with defaults.
-- [ ] Require every constructor path to initialise fields lacking defaults.
+- [x] Require every constructor path to initialise fields lacking defaults.
 - [x] Treat elements named after an object as constructors.
 - [x] Generate a default field-order constructor when none is declared.
 - [x] Support constructor invocation through normal element syntax.
@@ -540,12 +542,12 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Support default trait behavior where specified.
 - [x] Parse object-to-trait implementations.
 - [x] Validate that implementations satisfy all required members and elements.
-- [ ] Support generic traits and implementations.
+- [x] Support generic traits and implementations.
 - [x] Support trait inheritance or trait composition.
-- [ ] Support trait types in parameters and casts.
+- [x] Support trait types in parameters and casts.
 - [x] Support intersection types requiring multiple traits.
 - [x] Support static dispatch through trait-typed values.
-- [ ] Integrate traits with overload resolution and multimethods.
+- [x] Integrate traits with overload resolution and multimethods.
 
 ## 30. Variants
 
@@ -554,7 +556,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Support cases with and without associated values.
 - [x] Allow variants to be used as types.
 - [x] Construct variant values.
-- [ ] Access or destructure associated case values.
+- [x] Access or destructure associated case values.
 - [x] Integrate variants with exhaustive pattern matching.
 - [x] Support generic variants.
 
@@ -563,7 +565,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Parse enum declarations.
 - [x] Support enums without backing values.
 - [x] Support enums with a declared backing type.
-- [ ] Require every member to have a value when a backing type is declared.
+- [x] Require every member to have a value when a backing type is declared.
 - [x] Support member access through `Enum.Member`.
 - [x] Support backing-value access through `.value`.
 - [x] Allow enum names to be used as types.
@@ -669,16 +671,16 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [ ] Generate tuple-taking forms as specified.
 - [x] Implement `@error`.
 - [x] Emit compile errors using annotation-provided diagnostics.
-- [ ] Implement `@warn`.
-- [ ] Emit compile warnings using annotation-provided diagnostics.
-- [ ] Implement `@deprecated`.
-- [ ] Emit deprecation diagnostics at use sites.
+- [x] Implement `@warn`.
+- [x] Emit compile warnings using annotation-provided diagnostics.
+- [x] Implement `@deprecated`.
+- [x] Emit deprecation diagnostics at use sites.
 - [x] Implement `@returnAll`.
 - [x] Return all remaining function-stack values where requested.
 - [x] Implement `@errType`.
 - [x] Apply implemented error-type transformations or constraints.
 - [x] Implement `@mustcall`.
-- [ ] Warn or error when marked results are discarded.
+- [x] Warn or error when marked results are discarded.
 - [x] Implement `@commutative`.
 - [x] Generate every required argument-order overload permutation.
 - [x] Apply normal overload resolution to generated permutations.
@@ -724,7 +726,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Provide the `?` optional/result helper.
 - [x] Provide the `?!` helper.
 - [ ] Preserve nested optional and result semantics through these helpers.
-- [ ] Provide `AssertError`.
+- [x] Provide `AssertError`.
 - [x] Provide `VectorisationFault`.
 - [x] Provide `SliceFault`.
 - [x] Provide the standard general, system, and runtime built-in faults.
@@ -749,8 +751,8 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Support importing entire namespaces.
 - [x] Support importing individual components.
 - [x] Support importing several components using bracket syntax.
-- [ ] Support selective element-overload imports.
-- [ ] Support generic wildcard overload signatures in imports.
+- [x] Support selective element-overload imports.
+- [x] Support generic wildcard overload signatures in imports.
 - [ ] Support importing object-to-trait implementations.
 - [x] Support local relative module paths.
 - [x] Support project-root-relative paths using `~`.
@@ -763,21 +765,21 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [ ] Detect conflicting imported overloads.
 - [ ] Detect conflicting imported trait implementations.
 - [ ] Require explicit conflict resolution.
-- [ ] Parse overload exclusions using `except`.
-- [ ] Support concrete and generic exclusions.
-- [ ] Reject exclusions of nonexistent overloads.
-- [ ] Reject `except` after an already specific overload import.
+- [x] Parse overload exclusions using `except`.
+- [x] Support concrete and generic exclusions.
+- [x] Reject exclusions of nonexistent overloads.
+- [x] Reject `except` after an already specific overload import.
 - [ ] Continue detecting conflicts after exclusions.
-- [ ] Automatically import object-friendly elements with component object imports.
-- [ ] Avoid automatically importing object-friendly elements through namespace-only imports.
-- [ ] Import tag overlays and tag-associated elements.
-- [ ] Avoid importing unrelated elements that merely use an imported tag.
+- [x] Automatically import object-friendly elements with component object imports.
+- [x] Avoid automatically importing object-friendly elements through namespace-only imports.
+- [x] Import tag overlays and tag-associated elements.
+- [x] Avoid importing unrelated elements that merely use an imported tag.
 
 ## 40. Package management and CLI
 
 - [x] Recognise `valiance.toml` as the project manifest.
 - [x] Use the manifest location as the project root.
-- [ ] Support standalone scripts without a manifest.
+- [x] Support standalone scripts without a manifest.
 - [ ] Disable external packages for standalone scripts.
 - [x] Parse project metadata.
 - [x] Parse exact-version dependency declarations.
@@ -830,7 +832,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [ ] Integrate eagerness with vectorisation.
 - [x] Integrate eagerness with effect-tag propagation.
 - [ ] Enforce restrictions associated with eager functions.
-- [ ] Prevent direct user attachment of the `Eager` companion tag.
+- [x] Prevent direct user attachment of the `Eager` companion tag.
 
 ## 43. Foreign-function interface — deferred design area
 
@@ -886,24 +888,24 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Report invalid variable reassignment.
 - [x] Report writes to constants.
 - [x] Report writes to protected object members.
-- [ ] Report incomplete object construction.
-- [ ] Report non-exhaustive matches.
-- [ ] Report branch input-signature mismatches.
-- [ ] Report loop state-signature mismatches.
-- [ ] Report invalid casts.
-- [ ] Report unnecessary unsafe casts.
+- [x] Report incomplete object construction.
+- [x] Report non-exhaustive matches.
+- [x] Report branch input-signature mismatches.
+- [x] Report loop state-signature mismatches.
+- [x] Report invalid casts.
+- [x] Report unnecessary unsafe casts.
 - [x] Report missing generic solutions.
 - [x] Report conflicting generic solutions.
-- [ ] Report invalid rank relationships.
+- [x] Report invalid rank relationships.
 - [x] Report tag disjoint violations.
 - [x] Report missing tag validators.
 - [x] Report effect-tag violations.
 - [ ] Report import and implementation conflicts.
-- [ ] Report invalid package-version usage.
+- [x] Report invalid package-version usage.
 - [ ] Report discarded multi-value expression results.
 - [ ] Report ignored `@mustcall` results.
-- [ ] Emit annotation-driven warnings and errors.
-- [ ] Emit deprecation warnings.
+- [x] Emit annotation-driven warnings and errors.
+- [x] Emit deprecation warnings.
 - [ ] Emit list-to-array runtime-check warnings.
 - [x] Include runtime stack values in call-error diagnostics.
 - [x] Include runtime stack value types in call-error diagnostics.
@@ -937,9 +939,9 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Provide optional and result helper elements.
 - [ ] Provide `or` for extension selection.
 - [x] Provide tag application and removal operations.
-- [ ] Provide type inspection required by matching and multimethods.
+- [x] Provide type inspection required by matching and multimethods.
 - [ ] Provide standard fault, result, option, task, and channel types.
-- [ ] Provide the standard traits referenced by the language.
+- [x] Provide the standard traits referenced by the language.
 - [x] Provide the `std` module namespace and module-resolution behavior.
 - [x] Provide Python-backed standard-library modules using `@stdlib_element`.
 - [x] Support Valiance-only standard-library modules.
