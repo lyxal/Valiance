@@ -6496,7 +6496,14 @@ def _slice_lazy(receiver: Any, start: Any, stop: Any, step: Any) -> LazyList:
 
 
 def _slice_path(receiver: Any, start: Any, stop: Any, step: Any) -> Any:
-    """Slice path during VM execution."""
+    """Slice a multidimensional list path or raise a catchable slice fault."""
+    if not is_eager_sequence(receiver):
+        raise PanicSignal(
+            _fault_object(
+                "SliceFault",
+                "multidimensional slicing requires a list at every dimension",
+            )
+        )
     if not (_is_path(start) and _is_path(stop)):
         raise RuntimeError("multidimensional slices need start and stop paths")
     if len(start) != len(stop):

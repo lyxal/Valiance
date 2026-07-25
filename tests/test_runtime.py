@@ -3899,6 +3899,39 @@ println(triple([1, 2, 3, 4, 5]))
             [RuntimeNumber("2"), RuntimeNumber("7")],
         )
 
+    def test_invalid_multidimensional_slice_raises_catchable_slice_fault(self):
+        self.assertEqual(
+            execute("""
+try =>
+  "abc" $[[0, 0]:[1, 1]]
+handle SliceFault =>
+  "handled"
+end
+"""),
+            ["handled"],
+        )
+
+    def test_rugged_multidimensional_slice_faults_at_non_list_dimension(self):
+        self.assertEqual(
+            execute("""
+try =>
+  [[1, 2], 3] $[[0, 0]:[1, 1]]
+handle SliceFault =>
+  "handled"
+end
+"""),
+            ["handled"],
+        )
+
+    def test_uncaught_slice_fault_reports_fault_type(self):
+        with self.assertRaises(RuntimeError) as error:
+            execute('"abc" $[[0, 0]:[1, 1]]')
+        self.assertIn("uncaught panic: SliceFault", str(error.exception))
+        self.assertIn(
+            "multidimensional slicing requires a list at every dimension",
+            str(error.exception),
+        )
+
     def test_multi_index_assignment_broadcasts_to_lists_and_dictionaries(self):
         self.assertEqual(
             execute("$list = [1, 2, 3, 4]\n$list[0, 3] = 8\n$list"),

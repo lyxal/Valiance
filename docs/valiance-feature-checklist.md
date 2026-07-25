@@ -398,7 +398,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Support lazy list indexing and non-negative positive-step lazy slicing.
 - [x] Support multidimensional chained indices.
 - [x] Support multidimensional slices.
-- [ ] Raise `SliceFault` for invalid multidimensional slicing.
+- [x] Raise `SliceFault` for invalid multidimensional slicing.
 - [x] Parse record member access using `$.member`.
 - [x] Support indexed augmented assignment.
 - [x] Support sliced assignment and augmented sliced assignment.
@@ -715,7 +715,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Implement panic values and panic propagation.
 - [x] Require explicit panic values and typed handlers to implement `Fault`.
 - [x] Attach `Panic[T]` element tags to panicking operations.
-- [ ] Distinguish intrinsic runtime faults from explicit panic where specified.
+- [x] Distinguish intrinsic runtime faults from explicit panic where specified.
 - [x] Parse `try/handle`.
 - [x] Match handlers against panic or fault types.
 - [x] Support recovery values from handlers.
@@ -726,7 +726,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [ ] Preserve nested optional and result semantics through these helpers.
 - [ ] Provide `AssertError`.
 - [x] Provide `VectorisationFault`.
-- [ ] Provide `SliceFault`.
+- [x] Provide `SliceFault`.
 - [x] Provide the standard general, system, and runtime built-in faults.
 - [x] Raise catchable `IndexFault` and `KeyFault` values from indexing.
 

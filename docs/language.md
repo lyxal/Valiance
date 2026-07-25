@@ -3218,7 +3218,7 @@ and implements `Fault`:
 
 - General and data faults: `RuntimeFault`, `ValueFault`, `RangeFault`,
   `ParseFault`, `DivisionByZeroFault`, `IndexFault`, `KeyFault`, `ShapeFault`,
-  and `StateFault`.
+  `SliceFault`, and `StateFault`.
 - System and concurrency faults: `IOFault`, `NotFoundFault`,
   `AlreadyExistsFault`, `PermissionFault`, `ClosedFault`, `TimeoutFault`, and
   `CancelledFault`.

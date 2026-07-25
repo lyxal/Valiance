@@ -80,6 +80,7 @@ BUILTIN_FAULT_TYPES = tuple(
         "IndexFault",
         "KeyFault",
         "ShapeFault",
+        "SliceFault",
         "StateFault",
         "IOFault",
         "NotFoundFault",
