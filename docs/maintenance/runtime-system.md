@@ -107,6 +107,15 @@ A cached direct-leaf check lets functions containing only ownership-trivial
 resolved built-ins execute without entering the scheduler; any function that may
 call user code still uses the activation stack.
 
+Typed function returns are not an open-ended snapshot of the frame stack.
+Code generation records the analyser-selected return multiplicity on
+`FunctionCode`. At `RETURN`, the VM keeps exactly that many topmost values and
+releases any lower temporary values. Consequently, ordinary inferred functions
+return one value when analysis finds a non-empty final stack and zero values when
+analysis finds an empty final stack; explicit multi-return signatures and
+`@returnAll` retain their analysed multiplicity. The top-level `<main>` frame
+continues to expose its complete final stack.
+
 The runtime still performs genuinely dynamic work where values matter:
 
 - reading and writing concrete values;
@@ -255,6 +264,7 @@ new payload.
 A `FunctionCode` contains:
 
 - an instruction tuple;
+- the exact analysed return count for typed functions;
 - runtime parameter names;
 - an optional diagnostic name;
 - whether explicit parameters participate in input cycling;

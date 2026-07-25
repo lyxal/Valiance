@@ -253,7 +253,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x1a"))
+        self.assertTrue(data.startswith(b"VLNCBC\x1b"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)
@@ -267,6 +267,17 @@ class BytecodeSerializationTests(unittest.TestCase):
                     Instruction(OpCode.RETURN),
                 ),
                 name="<main>",
+            )
+        )
+
+        self.assertEqual(loads(dumps(program)), program)
+
+    def test_serializes_function_return_count(self):
+        program = Program(
+            FunctionCode(
+                (Instruction(OpCode.RETURN),),
+                name="one",
+                return_count=1,
             )
         )
 

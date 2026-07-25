@@ -300,6 +300,7 @@ class _Compiler:
         recursive: bool = False,
         multi: bool = False,
         dispatch_types: tuple[str | None, ...] = (),
+        return_count: int | None = None,
         return_tags: tuple[tuple[DataTag, ...], ...] = (),
         return_tag_specs: tuple[object, ...] = (),
         return_collection_ranks: tuple[int | None, ...] = (),
@@ -328,6 +329,7 @@ class _Compiler:
             recursive=recursive,
             multi=multi,
             dispatch_types=dispatch_types,
+            return_count=return_count,
             return_tags=return_tags,
             return_tag_specs=return_tag_specs,
             return_collection_ranks=return_collection_ranks,
@@ -1369,6 +1371,13 @@ def _compile_function_node(
         params = tuple(f"_{index}" for index in range(inferred_arity))
     cycle_params = bool(params)
     params = (*params, *_ast_static_param_names(ast))
+    analysed_type = node.typ if isinstance(node, TypedNode) else None
+    return_count = (
+        len(analysed_type.returns)
+        if isinstance(analysed_type, FunctionType)
+        and analysed_type.returns is not None
+        else None
+    )
     return _Compiler(
         break_as_signal=break_as_signal,
         return_as_signal=return_as_signal,
@@ -1382,6 +1391,7 @@ def _compile_function_node(
         recursive=_function_is_recursive(ast),
         multi=multi,
         dispatch_types=dispatch_types,
+        return_count=return_count,
     )
 
 
@@ -1485,6 +1495,7 @@ def _compile_function_overload(
         dispatch_types=tuple(
             _runtime_dispatch_type(item) for item in source.params
         ) if source is not None else (),
+        return_count=len(returns or ()),
         return_tags=tuple(_runtime_tags_for_type(item) for item in returns or ()),
         return_tag_specs=tuple(
             _runtime_tag_contract_spec(item) for item in returns or ()

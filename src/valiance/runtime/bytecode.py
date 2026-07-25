@@ -179,6 +179,7 @@ class FunctionCode:
     recursive: bool = False
     multi: bool = False
     dispatch_types: tuple[str | None, ...] = ()
+    return_count: int | None = None
     return_tags: tuple[tuple[DataTag, ...], ...] = ()
     return_tag_specs: tuple[object, ...] = ()
     return_collection_ranks: tuple[int | None, ...] = ()

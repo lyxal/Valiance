@@ -2497,7 +2497,7 @@ class VirtualMachine:
                             if _try_unwrap(frame.stack, self):
                                 result = frame.stack
                                 frame.stack = []
-                                return self._finalize_frame(frame, result)
+                                return self._finalize_frame(frame, result, code.return_count)
                         case OpCode.VALIDATE_TAG:
                             try:
                                 self._validate_tag(frame, instruction.arg)
@@ -2520,7 +2520,7 @@ class VirtualMachine:
                         case OpCode.RETURN:
                             result = frame.stack
                             frame.stack = []
-                            return self._finalize_frame(frame, result)
+                            return self._finalize_frame(frame, result, code.return_count)
                         case OpCode.RETURN_SIGNAL:
                             result = tuple(frame.stack)
                             frame.stack = []
@@ -2538,18 +2538,33 @@ class VirtualMachine:
                 activation.ip = ip
             result = frame.stack
             frame.stack = []
-            return self._finalize_frame(frame, result)
+            return self._finalize_frame(frame, result, code.return_count)
         except _FunctionReturn as signal:
             if code.name == "foreach.body":
                 self._discard_frame(frame)
                 raise
-            return self._finalize_frame(frame, list(signal.values))
+            return self._finalize_frame(frame, list(signal.values), code.return_count)
         except Exception:
             self._discard_frame(frame)
             raise
 
-    def _finalize_frame(self, frame: _Frame, result: list[Any]) -> list[Any]:
-        """Compute finalize frame during VM execution."""
+    def _finalize_frame(
+        self,
+        frame: _Frame,
+        result: list[Any],
+        return_count: int | None,
+    ) -> list[Any]:
+        """Apply the analysed return multiplicity and release the completed frame."""
+        if return_count is not None:
+            # Analysis fixes the maximum observable multiplicity. A smaller
+            # runtime stack is still possible for legacy/internal callable
+            # shapes whose conceptual inputs were never materialised.
+            discarded = max(len(result) - return_count, 0)
+            if discarded:
+                discarded_values = result[:discarded]
+                del result[:discarded]
+                for value in discarded_values:
+                    _release_value(value, self)
         self._release_frame_locals(frame)
         return result
 
@@ -7108,6 +7123,8 @@ def _apply_cached_runtime_return_tags(
 
 def _function_return_multiplicity(code: FunctionCode) -> int:
     """Return the statically reified number of values produced by a function."""
+    if code.return_count is not None:
+        return code.return_count
     widths = (
         len(code.return_tag_specs),
         len(code.return_collection_ranks),

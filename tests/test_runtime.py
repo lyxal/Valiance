@@ -1527,14 +1527,14 @@ define choose(i: Integer) -> String => "int"
 $f = fn => both: + end
 1 2 3 4 $f()
 """),
-            [RuntimeNumber("3"), RuntimeNumber("7")],
+            [RuntimeNumber("7")],
         )
         self.assertEqual(
             execute("""
 $f = fn => correspond: (double, +) end
 1 2 3 $f()
 """),
-            [RuntimeNumber("2"), RuntimeNumber("5")],
+            [RuntimeNumber("5")],
         )
 
     def test_correspond_serializes_its_call_site_arity_metadata(self):
@@ -2764,6 +2764,57 @@ showCycle("a", "b", "c")
                 stack = run(program)
             self.assertEqual(stack, [])
             self.assertEqual(output.getvalue(), "c\nb\na\nc\n")
+
+    def test_inferred_function_returns_only_the_analysed_top_value(self):
+        source = """
+$f = fn (a: Number, b: Number, c: Number) => dip: -
+$f(10, 20, 30)
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+
+        for program in (
+            compile_program(typed, optimize=False),
+            compile_program(typed),
+            loads(dumps(compile_program(typed))),
+        ):
+            self.assertEqual(run(program), [RuntimeNumber("30")])
+
+    def test_inferred_empty_function_returns_no_values(self):
+        source = """
+$f = fn () => println "done" end
+$f()
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+
+        for program in (
+            compile_program(typed, optimize=False),
+            compile_program(typed),
+            loads(dumps(compile_program(typed))),
+        ):
+            self.assertEqual(run(program), [])
+
+    def test_return_all_preserves_the_analysed_multiple_return_count(self):
+        source = """
+@returnAll define pair(a: Number, b: Number) => $a $b
+pair(10, 20)
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+
+        for program in (
+            compile_program(typed, optimize=False),
+            compile_program(typed),
+            loads(dumps(compile_program(typed))),
+        ):
+            self.assertEqual(
+                run(program),
+                [RuntimeNumber("10"), RuntimeNumber("20")],
+            )
 
     def test_dip_sources_cycled_parameters_beneath_held_value(self):
         source = """

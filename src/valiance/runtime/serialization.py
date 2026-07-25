@@ -27,7 +27,7 @@ from valiance.vtypes import (
     Variance,
 )
 
-MAGIC = b"VLNCBC\x1a"
+MAGIC = b"VLNCBC\x1b"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -375,6 +375,7 @@ class _Writer:
         self.u32(len(function.dispatch_types))
         for typ in function.dispatch_types:
             self.optional_string(typ)
+        self.optional_int(function.return_count)
         self.u32(len(function.return_tags))
         for tags in function.return_tags:
             self.u32(len(tags))
@@ -709,6 +710,9 @@ class _Reader:
         if multi not in {0, 1}:
             raise BytecodeFormatError(f"invalid function multi flag {multi}")
         dispatch_types = tuple(self.optional_string() for _ in range(self.u32()))
+        return_count = self.optional_int()
+        if return_count is not None and return_count < 0:
+            raise BytecodeFormatError("invalid function return count")
         return_tags = tuple(
             tuple(
                 DataTag(self.string(), self.i64(), self.bool())
@@ -747,6 +751,7 @@ class _Reader:
             recursive=bool(recursive),
             multi=bool(multi),
             dispatch_types=dispatch_types,
+            return_count=return_count,
             return_tags=return_tags,
             return_tag_specs=return_tag_specs,
             return_collection_ranks=return_collection_ranks,
