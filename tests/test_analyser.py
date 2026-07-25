@@ -2150,18 +2150,48 @@ define get(:Foo) => $f.x + 5
 
         self.assertEqual(typ, Fn((Row(V("@1"), Field(BAR, V("@2"))),), (V("@2"),)))
 
-    def test_explicit_return_arguments_infer_multiple_function_results(self):
+    def test_inferred_return_function_rejects_multiple_values(self):
         analyser = Analyser()
-        typed = analyser.analyse(parse("""
+        analyser.analyse(parse("""
 $f = fn (a: Number, b: String, c: Number) =>
   return ($a, $b)
 end
 """))
 
-        self.assertEqual(analyser.diagnostics, [])
-        function = typed[0]
-        self.assertIsInstance(function, TypedFunctionNode)
-        self.assertEqual(function.typ, Fn((Number, String, Number), (Number, String)))
+        self.assertTrue(
+            any(
+                "inferred-return functions may return at most one value" in message
+                for message in analyser.diagnostics
+            )
+        )
+
+    def test_explicit_return_branches_require_equal_multiplicity(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+fn (a: String, b: Integer) =>
+  if (0 == 0) => return ($a, $a)
+  else => return $b
+end
+"""))
+
+        self.assertTrue(
+            any(
+                "return branches must return the same number of values" in message
+                for message in analyser.diagnostics
+            )
+        )
+
+    def test_declared_and_return_all_functions_allow_multiple_values(self):
+        for source in (
+            "fn (a: String) -> String, String => return ($a, $a) end",
+            "@returnAll fn (a: String) => return ($a, $a) end",
+        ):
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            function = typed[0]
+            self.assertIsInstance(function, TypedFunctionNode)
+            self.assertEqual(function.typ, Fn((String,), (String, String)))
 
     def test_each_explicit_return_argument_must_produce_one_value(self):
         analyser = Analyser()

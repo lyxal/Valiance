@@ -1829,4 +1829,4 @@ question being asked, and keep each rule in its narrowest correct layer.
 
 ## Explicit return paths
 
-Return branches carry a dedicated selected result stack rather than exposing the residual branch stack.
+Return branches carry a dedicated selected result stack rather than exposing the residual branch stack. Explicit return branches must have identical multiplicity before their types are merged positionally; unlike ordinary expression branches, return exits are never padded with `None`. Functions without declared returns and without `@returnAll` are constrained to zero or one selected result.

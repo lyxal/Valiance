@@ -678,6 +678,8 @@ end
 - `return (<expression>, ...)` evaluates each comma-separated expression as one
   return slot and returns the resulting values in source order. Every expression
   must produce exactly one value. `return ()` explicitly returns no values.
+  Multiple values require declared return types or `@returnAll`; an ordinary
+  inferred-return function always returns zero or one value.
 - Bare `return` returns from the current function stack. An inferred function
   returns its top value, or no values when the stack is empty. A declared
   multi-return function selects the number of values named by its signature, and
@@ -689,6 +691,10 @@ $f = fn (a: Number, b: Number, c: Number) =>
 end
 $f(10, 20, 30) #? Pushes 10, then 20
 ```
+
+Every explicit return path in a function must return the same number of values.
+A mismatched pair such as `return ($a, $b)` and `return $c` is a compile error;
+return multiplicity is never optional-padded across explicit function exits.
 
 Explicit return expressions use ordinary expression syntax; no value kind has
 special return behaviour.

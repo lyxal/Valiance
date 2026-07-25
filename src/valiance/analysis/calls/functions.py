@@ -502,6 +502,40 @@ class _CallableValues:
             surviving_data_element_uses,
             node,
         )
+        return_all = annotation_hooks.has_annotation(node.annotations, "returnAll")
+
+        def selected_return_count(branch: AnalysisBranch) -> int | None:
+            """Return the observable multiplicity of one explicit return path."""
+            if branch.failed or branch.return_stack is None:
+                return None
+            if branch.return_exact or return_all:
+                return len(branch.return_stack)
+            if node.returns is not None:
+                return len(node.returns)
+            return min(len(branch.return_stack), 1)
+
+        explicit_counts = {
+            count
+            for branch in branches
+            if (count := selected_return_count(branch)) is not None
+        }
+        if len(explicit_counts) > 1:
+            counts = ", ".join(str(count) for count in sorted(explicit_counts))
+            self._diagnose(
+                "function return branches must return the same number of values; "
+                f"got {counts}",
+                node,
+            )
+            return {}
+        if node.returns is None and not return_all and any(
+            count > 1 for count in explicit_counts
+        ):
+            self._diagnose(
+                "inferred-return functions may return at most one value; "
+                "declare return types or use @returnAll for multiple values",
+                node,
+            )
+            return {}
         for branch in branches:
             if branch.failed:
                 continue

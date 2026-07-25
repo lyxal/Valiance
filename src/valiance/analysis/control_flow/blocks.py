@@ -128,6 +128,53 @@ def _if_node(
                         outputs.append(output.emit(TypedNode(node, typ)))
                     continue
 
+                if left.return_stack is not None and right.return_stack is not None:
+                    left_count = len(left.return_stack)
+                    right_count = len(right.return_stack)
+                    if left_count != right_count:
+                        self._diagnose(
+                            "function return branches must return the same number "
+                            f"of values; got {left_count} and {right_count}",
+                            node,
+                        )
+                        continue
+                    return_stack = merge_stacks(
+                        left.return_stack,
+                        right.return_stack,
+                        self.env.context,
+                    )
+                    base = (
+                        replace(
+                            _calls._refine_branch_like(branch, left),
+                            inputs=left.inputs,
+                            return_stack=None,
+                            return_exact=False,
+                        )
+                        .with_element_tags(right.element_tags)
+                        .with_data_element_uses(right.data_element_uses)
+                    )
+                    variables = left.variables.merge_against(
+                        right.variables,
+                        base.variables,
+                        self.env.context,
+                    )
+                    typed_if = TypedIfNode(
+                        node,
+                        _calls._returns_result_type(return_stack.items),
+                        condition=condition_body,
+                        then_branch=left.typed_body[len(body_input.typed_body) :],
+                        else_branch=right.typed_body[len(body_input.typed_body) :],
+                    )
+                    outputs.append(
+                        base.with_variables(variables)
+                        .emit(typed_if)
+                        .with_return(
+                            return_stack,
+                            exact=left.return_exact and right.return_exact,
+                        )
+                    )
+                    continue
+
                 stack = merge_stacks(left.stack, right.stack, self.env.context)
                 base = (
                     replace(

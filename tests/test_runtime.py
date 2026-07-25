@@ -2818,7 +2818,7 @@ pair(10, 20)
 
     def test_explicit_return_arguments_return_multiple_values(self):
         source = """
-$f = fn (a: Number, b: Number, c: Number) =>
+$f = fn (a: Number, b: Number, c: Number) -> Number, Number =>
   return ($a, $b)
 end
 $f(10, 20, 30)
@@ -2836,6 +2836,28 @@ $f(10, 20, 30)
                 run(program),
                 [RuntimeNumber("10"), RuntimeNumber("20")],
             )
+
+    def test_equal_explicit_return_branch_multiplicity_executes(self):
+        source = """
+$f = fn (a: String, b: Integer) -> String, String =>
+  if (0 == 0) => return ($a, $a)
+  else => return ("unused", "unused")
+end
+$f("yes", 1)
+"""
+        self.assertEqual(execute(source), ["yes", "yes"])
+
+    def test_return_all_allows_inferred_multiple_values(self):
+        source = """
+$f = @returnAll fn (a: Number, b: Number) =>
+  return ($a, $b)
+end
+$f(10, 20)
+"""
+        self.assertEqual(
+            execute(source),
+            [RuntimeNumber("10"), RuntimeNumber("20")],
+        )
 
     def test_return_chain_selects_its_top_value(self):
         source = """
