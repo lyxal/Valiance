@@ -1551,6 +1551,14 @@ Private helpers are exported from `valiance.types` for existing internal users,
 but new code should prefer the highest-level API that answers the whole
 question.
 
+### Optional display syntax
+
+The canonical optional representation remains `Some[T] | None` for analysis and
+relations. User-facing type rendering recognizes that exact normalized shape and
+prints `T?`; compound payloads are parenthesized, for example
+`(Integer | String)?`. This applies uniformly because the REPL, diagnostics,
+documentation, and stack previews all use the central `vtypes.show` formatter.
+
 ## Reading a type failure without getting lost
 
 When a program reports an overload error, write down these facts in order.

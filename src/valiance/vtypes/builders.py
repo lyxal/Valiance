@@ -740,6 +740,12 @@ def _show(
         args = ", ".join(_show(a, type_variable_name, bound) for a in t.args)
         return f"{t.name}[{args}]"
     if isinstance(t, UnionType):
+        optional_inner = _optional_inner(t)
+        if optional_inner is not None:
+            rendered = _show(optional_inner, type_variable_name, bound)
+            if isinstance(normalize(optional_inner), (UnionType, IntersectionType)):
+                rendered = f"({rendered})"
+            return f"{rendered}?"
         items = (
             _show(item, type_variable_name, bound) for item in sorted(t.items, key=repr)
         )

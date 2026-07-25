@@ -268,7 +268,7 @@ $root->branch.leaf
 
         self.assertTrue(analyser.diagnostics)
         self.assertIn(
-            "type None | Some[Branch] has no known field 'leaf'",
+            "type Branch? has no known field 'leaf'",
             str(analyser.diagnostics[-1]),
         )
 

@@ -474,6 +474,14 @@ class TypeLibraryTests(unittest.TestCase):
         )
         self.assertIsNone(collection_item_type(Number))
 
+    def test_optional_union_displays_with_question_mark_syntax(self):
+        self.assertEqual(str(optional(Integer)), "Integer?")
+        self.assertEqual(str(optional(U(Integer, String))), "(Integer | String)?")
+        self.assertEqual(
+            str(Fn((optional(Integer),), (optional(String),))),
+            "Function[Integer? -> String?]",
+        )
+
     def test_collection_display_parenthesizes_union_base(self):
         self.assertEqual(
             str(C(ListExactType, U(Number, C(ListExactType, Number)))),
