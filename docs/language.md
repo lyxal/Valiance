@@ -942,13 +942,6 @@ external("math.dll") define sqrt(:Number as FFI.float) -> FFI.float as Number =>
 
 - When one or more arguments to an element are of a higher rank than a parameter expects, those arguments are zipped together and the element applied to each combination. Arguments that have reached their expected rank are reused across all combinations. This process repeats until all parameters have received arguments at their expected rank. If no overload exists that can handle an argument at its given rank - either directly or through vectorisation - that is a compile error.
 
-- Examples of re-use:
-
-```py
-zip([1, 2, 3], 4) == [[1, 4], [2, 4], [3, 4]]
-zip([[1], [2], [3]], [1]) == [[[1], [1]], [[2], [1]], [[3], [1]]]
-```
-
 - When an element is applied to multiple array arguments, all arrays must have equal length at each corresponding dimension.
 - For example, `[1, 2, 3] + [4, 5]` is an error, because the `3` is unpaired.
   - While it would be possible to have a trimming/re-use/universal default fill option, these can lead to surprising results.
