@@ -2016,6 +2016,41 @@ def _wrap_vectorised_return(
     return C(collection_type, normalized, rank)
 
 
+def _has_heterogeneous_vector_shape(typ: Type) -> bool:
+    """Return whether a vector shape contains scalar and collection alternatives."""
+    normalized = normalize(typ)
+    if isinstance(normalized, TaggedType):
+        return _has_heterogeneous_vector_shape(normalized.inner)
+    if isinstance(normalized, UnionType):
+        collection_members = tuple(
+            member for member in normalized.items if _collection_view(member) is not None
+        )
+        if collection_members and len(collection_members) != len(normalized.items):
+            return True
+        return any(_has_heterogeneous_vector_shape(member) for member in normalized.items)
+    if isinstance(normalized, CollectionType):
+        return _has_heterogeneous_vector_shape(normalized.base)
+    return False
+
+
+def _project_vector_shape(shape: Type, return_type: Type) -> Type:
+    """Replace scalar leaves in a heterogeneous vector shape with one return type."""
+    normalized = normalize(shape)
+    if isinstance(normalized, TaggedType):
+        return _project_vector_shape(normalized.inner, return_type)
+    if isinstance(normalized, UnionType):
+        return U(
+            *(_project_vector_shape(member, return_type) for member in normalized.items)
+        )
+    if isinstance(normalized, CollectionType):
+        return C(
+            type(normalized),
+            _project_vector_shape(normalized.base, return_type),
+            normalized.rank,
+        )
+    return return_type
+
+
 def _wrap_returns_for_vector_depth(
     returns: tuple[Type, ...],
     args: tuple[Type, ...],
@@ -2026,19 +2061,79 @@ def _wrap_returns_for_vector_depth(
     if vector_rank <= 0:
         return returns
     vector_type: CollectionClass | None = None
+    heterogeneous_shape: Type | None = None
     for arg, depth in zip(args, depths, strict=False):
         if depth <= 0:
             continue
         arg_collection = _collection_view(arg)
         if arg_collection is None:
             continue
+        if depth == vector_rank and _has_heterogeneous_vector_shape(arg):
+            heterogeneous_shape = arg
         if vector_type is None:
             vector_type = type(arg_collection)
         elif vector_type is not type(arg_collection):
             vector_type = ListExactType
+    if heterogeneous_shape is not None:
+        return tuple(
+            _project_vector_shape(heterogeneous_shape, ret) for ret in returns
+        )
     out_type = ArrayExactType if vector_type is ArrayExactType else ListExactType
     return tuple(
         _wrap_vectorised_return(ret, out_type, vector_rank) for ret in returns
+    )
+
+
+def _union_argument_branches(typ: Type) -> tuple[Type, ...]:
+    """Return top-level alternatives that may choose different call adaptation."""
+    normalized = normalize(typ)
+    if isinstance(normalized, UnionType) and not _is_optional(normalized):
+        return tuple(sorted(normalized.items, key=_type_join_key))
+    return (normalized,)
+
+
+def _wrap_returns_for_union_vectorisation(
+    returns: tuple[Type, ...],
+    args: tuple[Type, ...],
+    params: tuple[Type, ...],
+    ctx: Context,
+) -> tuple[Type, ...] | None:
+    """Join results for union branches requiring different vectorisation depths."""
+    branch_sets = tuple(_union_argument_branches(arg) for arg in args)
+    if not any(len(branches) > 1 for branches in branch_sets):
+        return None
+
+    alternatives: list[tuple[Type, ...]] = []
+    for branch_args in product(*branch_sets):
+        if not all(
+            compatible(arg, param, ctx)
+            for arg, param in zip(branch_args, params, strict=False)
+        ):
+            continue
+        depths: list[int] = []
+        targets: list[int | None] = []
+        for arg, param in zip(branch_args, params, strict=False):
+            target = _dynamic_vectorisation_target_rank(arg, param, ctx)
+            excess = _vectorisation_excess(arg, param, ctx)
+            if excess is None:
+                break
+            depths.append(excess)
+            targets.append(target)
+        else:
+            alternatives.append(
+                _wrap_returns_for_vectorisation(
+                    returns,
+                    branch_args,
+                    tuple(depths),
+                    tuple(targets),
+                )
+            )
+
+    if not alternatives:
+        return None
+    return tuple(
+        U(*(alternative[index] for alternative in alternatives))
+        for index in range(len(returns))
     )
 
 
@@ -2411,7 +2506,12 @@ def try_apply_overload(
                 OverloadMismatch(OverloadMismatchReason.RESULT),
             )
         base_returns = inferred_returns
-    actual_returns = _wrap_returns_for_vectorisation(
+    actual_returns = _wrap_returns_for_union_vectorisation(
+        base_returns,
+        args,
+        params,
+        ctx,
+    ) or _wrap_returns_for_vectorisation(
         base_returns,
         args,
         vectorised_depths,

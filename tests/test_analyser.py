@@ -3870,6 +3870,61 @@ end
 
         self.assertEqual(typed[0].typ, C(ListExactType, U(Integer, String)))
 
+    def test_union_argument_preserves_scalar_or_vectorised_result(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse("(if true => 1 else => [2] end) + 3")
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, U(Integer, ExactList(Integer)))
+
+    def test_union_arguments_join_all_vectorised_result_ranks(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                "+((if true => 1 else => [2] end), "
+                "(if true => 3 else => [[4]] end))"
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            typed[-1].typ,
+            U(Integer, ExactList(Integer), ExactList(Integer, 2)),
+        )
+
+    def test_generic_vectorisation_preserves_nested_union_shape(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                "define[T] identity(value: T) -> T => $value end\n"
+                "identity([1, [2, 3]])"
+            )
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            typed[-1].typ,
+            ExactList(U(Integer, ExactList(Integer))),
+        )
+
+    def test_vectorised_addition_preserves_heterogeneous_list_shape(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse("[1, [2, 3, 4]] + [5, [6, 7, 8]]")
+        )
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            typed[-1].typ,
+            ExactList(U(Integer, ExactList(Integer))),
+        )
+
     def test_list_literal_factors_common_exact_list_rank(self):
         analyser = Analyser()
 

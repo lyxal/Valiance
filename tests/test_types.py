@@ -671,6 +671,75 @@ class TypeLibraryTests(unittest.TestCase):
             ),
         )
 
+    def test_union_argument_joins_scalar_and_vectorised_returns(self):
+        scalar_or_list = U(Integer, ExactList(Integer))
+
+        applied = apply_overload(
+            Overload((Integer, Integer), (Integer,)),
+            (scalar_or_list, Integer),
+        )
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.actual_returns, (scalar_or_list,))
+
+    def test_union_vectorisation_joins_every_rank_combination(self):
+        scalar_or_vector = U(
+            Integer,
+            ExactList(Integer),
+            ExactList(Integer, 2),
+        )
+        applied = apply_overload(
+            Overload((Integer, Integer), (String,)),
+            (scalar_or_vector, scalar_or_vector),
+        )
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(
+            applied.actual_returns,
+            (U(String, ExactList(String), ExactList(String, 2)),),
+        )
+
+    def test_union_vectorisation_preserves_list_and_array_alternatives(self):
+        argument = U(ExactList(Integer), ExactArray(Integer))
+        applied = apply_overload(Overload((Integer,), (String,)), (argument,))
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(
+            applied.actual_returns,
+            (U(ExactList(String), ExactArray(String)),),
+        )
+
+    def test_nested_union_vectorisation_substitutes_every_scalar_leaf(self):
+        shape = ExactList(
+            U(
+                Integer,
+                ExactList(Integer),
+                ExactList(U(Integer, ExactList(Integer))),
+            )
+        )
+        expected = ExactList(
+            U(
+                String,
+                ExactList(String),
+                ExactList(U(String, ExactList(String))),
+            )
+        )
+        applied = apply_overload(Overload((Integer,), (String,)), (shape,))
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.actual_returns, (expected,))
+
+    def test_vectorised_return_preserves_heterogeneous_collection_shape(self):
+        rugged_shape = ExactList(U(Integer, ExactList(Integer)))
+
+        applied = apply_overload(
+            Overload((Integer, Integer), (Integer,)),
+            (rugged_shape, rugged_shape),
+        )
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.actual_returns, (rugged_shape,))
+
     def test_apply_overload_marks_vectorisation(self):
         overload = Overload((Number, Number), (Number,))
 
