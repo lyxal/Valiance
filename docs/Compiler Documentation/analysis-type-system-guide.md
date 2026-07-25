@@ -1051,11 +1051,16 @@ unsound: all possible condition branches must be valid.
 - uses `T.collection_item_type`
 - introduces block-local loop variable and optional index variable
 - drops loop-local variables after body analysis
-- returns `None` when no break value exists
-- optionalises/merges break result types when breaks are present
+- cycles the item and optional index as explicit loop inputs
+- validates optional declared break-result types and multiplicity
+- returns one `None` per declared/inferred break result when iteration completes
+- optionalises/merges inferred break result types when annotations are omitted
 
-`WhileNode` exists in the AST/runtime direction, but static-analysis support is
-not yet as complete as `IfNode` and `ForNode`. Be careful before marking it done.
+`WhileNode` analyses its condition and body as a state transition. It requires a
+Boolean condition, validates that every continuing body path rebuilds the next
+iteration state, supports explicit named and unnamed state parameters with
+cycling, preserves parent-scope writes, and carries terminating state or
+explicit `break` values through typed code generation and bytecode execution.
 
 ## Trait inheritance and structural requirements
 

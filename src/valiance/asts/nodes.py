@@ -494,11 +494,12 @@ class AtNode(ASTNode):
 
 @dataclass(frozen=True)
 class ForNode(ASTNode):
-    """A for loop."""
+    """A foreach loop with an optional declared break-result stack."""
 
     variable: Symbol
     index_variable: Symbol | None = None
     body: tuple[ASTNode, ...] = ()
+    returns: tuple[Type, ...] | None = None
 
 
 @dataclass(frozen=True)

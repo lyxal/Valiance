@@ -147,12 +147,14 @@ class _Compiler:
         *,
         break_as_signal: bool = False,
         return_as_signal: bool = False,
+        break_result_count: int | None = None,
     ) -> None:
         """Initialize this compiler."""
         self.instructions: list[Instruction] = []
         self.loops: list[_LoopPatch] = []
         self.break_as_signal = break_as_signal
         self.return_as_signal = return_as_signal
+        self.break_result_count = break_result_count
         self.object_runtime_metadata: dict[str, tuple[object, ...]] = {}
         self.runtime_type_facts: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
         self.runtime_supertype_templates: dict[
@@ -686,7 +688,7 @@ class _Compiler:
             case ForNode():
                 self.foreach_node(node, typed_node)
             case BreakNode():
-                self.break_node(node)
+                self.break_node(node, values_already_compiled=typed_node is not None)
             case ReturnNode():
                 expressions = (
                     typed_node.expressions
@@ -1092,6 +1094,9 @@ class _Compiler:
             body_code = _Compiler(
                 break_as_signal=True,
                 return_as_signal=True,
+                break_result_count=(
+                    len(node.returns) if node.returns is not None else None
+                ),
             ).compile_function(
                 typed_node.body,
                 params=tuple(
@@ -1108,7 +1113,11 @@ class _Compiler:
                 break_as_signal=True,
                 return_as_signal=True,
             )
-        completion_count = max(1, _max_break_values(node.body))
+        completion_count = (
+            len(node.returns)
+            if node.returns is not None
+            else max(1, _max_break_values(node.body))
+        )
         self.emit(
             OpCode.FOREACH,
             (body_code, 1 if node.index_variable else 0, completion_count),
@@ -1256,12 +1265,18 @@ class _Compiler:
         for jump in loop.break_jumps:
             self.patch(jump, loop_end)
 
-    def break_node(self, node: BreakNode) -> None:
-        """Lower a loop break and patch it to the current loop exit."""
+    def break_node(
+        self,
+        node: BreakNode,
+        *,
+        values_already_compiled: bool = False,
+    ) -> None:
+        """Lower one loop break without recompiling typed value expressions."""
         if self.break_as_signal:
-            for value in node.values:
-                self.node(value)
-            self.emit(OpCode.LOOP_BREAK)
+            if not values_already_compiled:
+                for value in node.values:
+                    self.node(value)
+            self.emit(OpCode.LOOP_BREAK, self.break_result_count)
             return
         if not self.loops:
             self.unsupported(node, "break outside a loop")

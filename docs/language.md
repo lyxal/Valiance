@@ -1453,7 +1453,7 @@ end
 
 #? Or
 
-foreach (<variable name>) -> (<return annotations>) =>
+foreach (<variable name>) -> <return annotations> =>
   <code>
 end
 ```

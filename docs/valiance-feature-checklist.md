@@ -1,6 +1,6 @@
 # Valiance feature checklist
 
-Current audit total: 672 / 803 items complete (83.7%).
+Current audit total: 674 / 803 items complete (83.9%).
 
 Audit refreshed against the repository implementation and full test suite on 2026-07-25. Items remain unchecked where the feature is absent, deliberately deferred, only partially implemented, or too broad to treat as complete.
 
@@ -463,10 +463,10 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Pop the iterable before iteration.
 - [x] Support iteration-value bindings.
 - [x] Support optional index bindings.
-- [ ] Cycle iteration inputs within each loop body.
+- [x] Cycle iteration inputs within each loop body.
 - [x] Permit loop bodies to write parent-scope variables.
 - [x] Return `None` when a `foreach` completes normally.
-- [ ] Parse optional explicit `foreach` break-return annotations.
+- [x] Parse optional explicit `foreach` break-return annotations.
 - [x] Parse `break value`.
 - [x] Parse multi-value `break (...)`.
 - [x] Pad differing break multiplicities with `None`.

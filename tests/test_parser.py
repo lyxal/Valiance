@@ -68,6 +68,7 @@ from valiance.vtypes import (
     ListExactType,
     ListMinType,
     ListRuggedType,
+    Integer,
     N,
     Number,
     RankVariable,
@@ -1337,6 +1338,15 @@ end
         self.assertEqual(len(try_node.handlers), 2)
         self.assertEqual(try_node.handlers[0].typ, N(Symbol("String")))
         self.assertIsNone(try_node.handlers[1].typ)
+
+    def test_parses_foreach_break_return_annotations(self):
+        program = parse(
+            '[1, 2] foreach (item, index) -> Integer, String => break ($item, "done") end'
+        )
+        node = program[-1]
+
+        self.assertIsInstance(node, ForNode)
+        self.assertEqual(node.returns, (Integer, String))
 
     def test_parses_function_literal_and_foreach_break(self):
         program = parse("""

@@ -1123,9 +1123,15 @@ class Parser:
         if self._match(TokenKind.COMMA):
             index_variable = self._symbol("expected foreach index variable")
         self._expect(TokenKind.RPAREN)
-        self._returns()
+        returns = self._returns()
         self._expect(TokenKind.FAT_ARROW)
-        return ForNode(variable, index_variable, self._body(), location=_loc(start))
+        return ForNode(
+            variable,
+            index_variable,
+            self._body(),
+            returns,
+            location=_loc(start),
+        )
 
     def _match_node(self, start: Token) -> MatchNode:
         """Parse match node from the current token stream."""
