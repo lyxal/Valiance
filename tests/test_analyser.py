@@ -2150,6 +2150,34 @@ define get(:Foo) => $f.x + 5
 
         self.assertEqual(typ, Fn((Row(V("@1"), Field(BAR, V("@2"))),), (V("@2"),)))
 
+    def test_explicit_return_arguments_infer_multiple_function_results(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse("""
+$f = fn (a: Number, b: String, c: Number) =>
+  return ($a, $b)
+end
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+        function = typed[0]
+        self.assertIsInstance(function, TypedFunctionNode)
+        self.assertEqual(function.typ, Fn((Number, String, Number), (Number, String)))
+
+    def test_each_explicit_return_argument_must_produce_one_value(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+$f = fn (a: Number, b: Number) =>
+  return (1 2, $b)
+end
+"""))
+
+        self.assertTrue(
+            any(
+                "return argument 1 must produce exactly one value" in message
+                for message in analyser.diagnostics
+            )
+        )
+
     def test_declared_return_refines_inferred_row_field_type(self):
         details = analyse_function_details(
             FunctionNode(body=(FieldAccessNode(NAME),), returns=(String,)),

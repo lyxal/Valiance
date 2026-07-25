@@ -44,6 +44,7 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedIfNode,
     TypedNode,
+    TypedReturnNode,
     TypedTagApplicationNode,
     TypedUnfoldNode,
     TypedWhileNode,
@@ -386,6 +387,92 @@ def _return_node(
     node: ReturnNode,
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
-    """Analyse a `ReturnNode` node and return the surviving branches."""
-    return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+    """Analyse a return and retain its exact selected result expressions."""
+    if not node.values:
+        selected = T.TypeStack() if node.explicit_values else branch.stack
+        typed = TypedReturnNode(
+            node,
+            None,
+            expressions=(),
+            explicit_values=node.explicit_values,
+        )
+        return _core.BranchSet((branch.emit(typed).with_return(selected, exact=node.explicit_values),))
+
+    if not node.explicit_values:
+        before = len(branch.typed_body)
+        outputs = self.analyse_from(branch, node.values[0])
+        returned: list[_core.AnalysisBranch] = []
+        for output in outputs:
+            if not output.stack:
+                self._diagnose(
+                    "return expression must produce a value",
+                    node,
+                )
+                returned.append(
+                    output.error(
+                        "return expression must produce a value",
+                        node.location,
+                        code="return-value-count",
+                    )
+                )
+                continue
+            expression = output.typed_body[before:]
+            typed = TypedReturnNode(
+                node,
+                output.top,
+                expressions=(expression,),
+                explicit_values=False,
+            )
+            returned.append(
+                replace(output, typed_body=output.typed_body[:before])
+                .emit(typed)
+                .with_return(T.TypeStack((output.top,)), exact=True)
+            )
+        return _core.BranchSet.collect(returned)
+
+    states: list[tuple[_core.AnalysisBranch, tuple[tuple[TypedNode, ...], ...], tuple[T.Type, ...]]] = [
+        (branch, (), ())
+    ]
+    for index, expression in enumerate(node.values):
+        next_states: list[tuple[_core.AnalysisBranch, tuple[tuple[TypedNode, ...], ...], tuple[T.Type, ...]]] = []
+        for current, expressions, types in states:
+            before = len(current.typed_body)
+            isolated = current.with_stack(T.TypeStack())
+            for output in self.analyse_from(isolated, expression):
+                if len(output.stack) != 1:
+                    message = (
+                        f"return argument {index + 1} must produce exactly one value"
+                    )
+                    self._diagnose(message, node)
+                    failed = output.error(
+                        message,
+                        node.location,
+                        code="return-value-count",
+                    )
+                    next_states.append((failed, expressions, types))
+                    continue
+                typed_expression = output.typed_body[before:]
+                cleaned = replace(
+                    output,
+                    typed_body=output.typed_body[:before],
+                    stack=current.stack,
+                )
+                next_states.append(
+                    (cleaned, (*expressions, typed_expression), (*types, output.top))
+                )
+        states = next_states
+
+    returned = []
+    for output, expressions, types in states:
+        if output.failed:
+            returned.append(output)
+            continue
+        typed = TypedReturnNode(
+            node,
+            types[-1] if len(types) == 1 else None,
+            expressions=expressions,
+            explicit_values=True,
+        )
+        returned.append(output.emit(typed).with_return(T.TypeStack(types), exact=True))
+    return _core.BranchSet.collect(returned)
 

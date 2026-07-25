@@ -84,10 +84,10 @@ $value()
         self.assertIsInstance(optimized_function, FunctionCode)
         self.assertIsInstance(unoptimized_function, FunctionCode)
         self.assertEqual(len(optimized_function.instructions), 2)
-        self.assertEqual(len(unoptimized_function.instructions), 4)
+        self.assertEqual(len(unoptimized_function.instructions), 3)
         custom_function = custom.main.instructions[0].arg
         self.assertIsInstance(custom_function, FunctionCode)
-        self.assertEqual(len(custom_function.instructions), 4)
+        self.assertEqual(len(custom_function.instructions), 3)
         self.assertIn("<main>", seen)
         self.assertEqual(run(optimized), [RuntimeNumber("1")])
         self.assertEqual(run(unoptimized), [RuntimeNumber("1")])
@@ -579,7 +579,7 @@ $value()
         self.assertIsInstance(optimized_function, FunctionCode)
         self.assertIsInstance(unoptimized_function, FunctionCode)
         self.assertEqual(len(optimized_function.instructions), 2)
-        self.assertEqual(len(unoptimized_function.instructions), 4)
+        self.assertEqual(len(unoptimized_function.instructions), 3)
 
 
 if __name__ == "__main__":

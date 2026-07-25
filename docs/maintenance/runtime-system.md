@@ -107,6 +107,11 @@ A cached direct-leaf check lets functions containing only ownership-trivial
 resolved built-ins execute without entering the scheduler; any function that may
 call user code still uses the activation stack.
 
+Explicit `return` instructions may carry a site-specific result count. The VM
+keeps that many topmost values before unwinding the frame; `RETURN_SIGNAL` uses
+the same selection before propagating through loop helper frames. Bare returns
+fall back to the enclosing `FunctionCode.return_count`.
+
 Typed function returns are not an open-ended snapshot of the frame stack.
 Code generation records the analyser-selected return multiplicity on
 `FunctionCode`. At `RETURN`, the VM keeps exactly that many topmost values and

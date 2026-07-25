@@ -562,14 +562,18 @@ class _CallableValues:
         branch: AnalysisBranch,
     ) -> tuple[tuple[T.Type, ...], AnalysisBranch] | None:
         """Determine the return types for function during static analysis."""
-        if annotation_hooks.has_annotation(node.annotations, "returnAll"):
-            return branch.stack.items, branch
-        if node.returns is None:
-            return (branch.stack.items[-1:] if branch.stack else ()), branch
+        result_stack = branch.return_stack if branch.return_stack is not None else branch.stack
+        if branch.return_stack is not None and branch.return_exact:
+            if node.returns is None:
+                return result_stack.items, branch
+        elif annotation_hooks.has_annotation(node.annotations, "returnAll"):
+            return result_stack.items, branch
+        elif node.returns is None:
+            return (result_stack.items[-1:] if result_stack else ()), branch
 
         checked_returns = tuple(_utils._return_value_shape(typ) for typ in node.returns)
         expected = T.TypeStack(checked_returns)
-        actual_returns = _utils._stack_returns(branch.stack, expected)
+        actual_returns = _utils._stack_returns(result_stack, expected)
         if len(actual_returns) != len(node.returns):
             return None
         substitution = _calls._branch_argument_substitution(
@@ -585,7 +589,12 @@ class _CallableValues:
             return node.returns, branch
         if substitution is not None:
             branch = _calls._specialize_branch_arguments(branch, substitution)
-        if not _utils._stack_assignable(branch.stack, expected, self.env.context):
+            result_stack = (
+                branch.return_stack
+                if branch.return_stack is not None
+                else branch.stack
+            )
+        if not _utils._stack_assignable(result_stack, expected, self.env.context):
             if node.where_clause and _functions._contains_rank_var(node.returns):
                 return node.returns, branch
             return None

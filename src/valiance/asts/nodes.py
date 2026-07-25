@@ -153,6 +153,14 @@ class FunctionOverloadTyping:
 
 
 @dataclass(frozen=True, slots=True)
+class TypedReturnNode(TypedNode):
+    """A return retaining its analysed expression groups."""
+
+    expressions: tuple[tuple[TypedNode, ...], ...] = ()
+    explicit_values: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class TypedFunctionNode(TypedNode):
     overloads: tuple[FunctionOverloadTyping, ...] = ()
     dispatch_plan: UnionDispatchPlan | None = None
@@ -626,7 +634,8 @@ class AnnotationNode(ASTNode):
 class ReturnNode(ASTNode):
     """Return early from the current function."""
 
-    values: tuple[ASTNode, ...] = ()
+    values: tuple[tuple[ASTNode, ...], ...] = ()
+    explicit_values: bool = False
 
 
 @dataclass(frozen=True)

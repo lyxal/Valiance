@@ -66,6 +66,8 @@ class AnalysisBranch:
     cycle_stack_remaining: int = 0
     cycle_from_top: bool = False
     break_type: T.Type | None = None
+    return_stack: T.TypeStack | None = None
+    return_exact: bool = False
     errors: tuple[Diagnostic, ...] = ()
     warnings: tuple[Diagnostic, ...] = ()
     origin: int = field(default_factory=lambda: next(_branch_ids))
@@ -83,7 +85,7 @@ class AnalysisBranch:
     @property
     def terminal(self) -> bool:
         """Return whether this path cannot continue because it contains ``Never``."""
-        return any(_ops._is_never(typ) for typ in self.stack)
+        return self.return_stack is not None or any(_ops._is_never(typ) for typ in self.stack)
 
     def with_stack(self, stack: T.TypeStack) -> AnalysisBranch:
         """Return a branch with its type stack replaced."""
@@ -209,11 +211,25 @@ class AnalysisBranch:
         """Return a branch carrying the merged type of a break value."""
         return replace(self, break_type=typ)
 
+    def with_return(
+        self,
+        stack: T.TypeStack,
+        *,
+        exact: bool,
+    ) -> AnalysisBranch:
+        """Return a terminal branch carrying a selected function result stack."""
+        return replace(self, return_stack=stack, return_exact=exact)
+
     def refine_type(self, old: T.Type, new: T.Type) -> AnalysisBranch:
         """Replace one inferred/generic type fact across the branch."""
         return replace(
             self,
             stack=_ops._refine_stack(self.stack, old, new),
+            return_stack=(
+                None
+                if self.return_stack is None
+                else _ops._refine_stack(self.return_stack, old, new)
+            ),
             inputs=tuple(_ops._refine_type(item, old, new) for item in self.inputs),
             variables=self.variables.refine_type(old, new),
             typed_body=_ops._refine_typed_body(self.typed_body, old, new),

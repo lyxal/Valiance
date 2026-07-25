@@ -72,6 +72,7 @@ from valiance.asts import (
     TypedNode,
     TypedTagApplicationNode,
     TypedTryNode,
+    TypedReturnNode,
     TypedUnfoldNode,
     TypedWhileNode,
     TypePatternNode,
@@ -686,11 +687,33 @@ class _Compiler:
                 self.foreach_node(node, typed_node)
             case BreakNode():
                 self.break_node(node)
-            case ReturnNode(values):
-                for value in values:
-                    self.node(value)
+            case ReturnNode():
+                expressions = (
+                    typed_node.expressions
+                    if isinstance(typed_node, TypedReturnNode)
+                    else node.values
+                )
+                if node.explicit_values:
+                    temporaries: list[str] = []
+                    for expression in expressions:
+                        name = f"\x00return_{self._temporary_index}"
+                        self._temporary_index += 1
+                        self.emit(OpCode.CYCLE_BEGIN, ("current", 0))
+                        self.expression(expression)
+                        self.emit(OpCode.CYCLE_END)
+                        self.emit(OpCode.STORE_VAR, name)
+                        temporaries.append(name)
+                    for name in temporaries:
+                        self.emit(OpCode.LOAD_VAR, name)
+                    count: int | None = len(expressions)
+                elif expressions:
+                    self.expression(expressions[0])
+                    count = 1
+                else:
+                    count = None
                 self.emit(
-                    OpCode.RETURN_SIGNAL if self.return_as_signal else OpCode.RETURN
+                    OpCode.RETURN_SIGNAL if self.return_as_signal else OpCode.RETURN,
+                    count,
                 )
             case _:
                 self.unsupported(node, type(node).__name__)

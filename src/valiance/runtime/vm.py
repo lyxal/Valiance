@@ -2520,11 +2520,22 @@ class VirtualMachine:
                         case OpCode.RETURN:
                             result = frame.stack
                             frame.stack = []
-                            return self._finalize_frame(frame, result, code.return_count)
+                            count = (
+                                instruction.arg
+                                if isinstance(instruction.arg, int)
+                                else code.return_count
+                            )
+                            return self._finalize_frame(frame, result, count)
                         case OpCode.RETURN_SIGNAL:
-                            result = tuple(frame.stack)
+                            result = frame.stack
                             frame.stack = []
-                            raise _FunctionReturn(result)
+                            count = (
+                                instruction.arg
+                                if isinstance(instruction.arg, int)
+                                else code.return_count
+                            )
+                            result = self._select_return_values(result, count)
+                            raise _FunctionReturn(tuple(result))
                 except _py_builtins.RuntimeError as exc:
                     error = exc if isinstance(exc, RuntimeError) else RuntimeError(exc)
                     error.add_execution_context(
@@ -2555,17 +2566,24 @@ class VirtualMachine:
         return_count: int | None,
     ) -> list[Any]:
         """Apply the analysed return multiplicity and release the completed frame."""
-        if return_count is not None:
-            # Analysis fixes the maximum observable multiplicity. A smaller
-            # runtime stack is still possible for legacy/internal callable
-            # shapes whose conceptual inputs were never materialised.
-            discarded = max(len(result) - return_count, 0)
-            if discarded:
-                discarded_values = result[:discarded]
-                del result[:discarded]
-                for value in discarded_values:
-                    _release_value(value, self)
+        result = self._select_return_values(result, return_count)
         self._release_frame_locals(frame)
+        return result
+
+    def _select_return_values(
+        self,
+        result: list[Any],
+        return_count: int | None,
+    ) -> list[Any]:
+        """Keep exactly the selected topmost return values and release the rest."""
+        if return_count is None:
+            return result
+        discarded = max(len(result) - return_count, 0)
+        if discarded:
+            discarded_values = result[:discarded]
+            del result[:discarded]
+            for value in discarded_values:
+                _release_value(value, self)
         return result
 
     def _discard_frame(self, frame: _Frame) -> None:

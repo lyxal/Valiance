@@ -669,6 +669,30 @@ fn (x: Number) =>
 end
 ```
 
+### Explicit return
+
+`return` exits the nearest function. It has three forms:
+
+- `return <expression>` evaluates the chain to its right and returns its top
+  value. Other values left beneath that result are discarded.
+- `return (<expression>, ...)` evaluates each comma-separated expression as one
+  return slot and returns the resulting values in source order. Every expression
+  must produce exactly one value. `return ()` explicitly returns no values.
+- Bare `return` returns from the current function stack. An inferred function
+  returns its top value, or no values when the stack is empty. A declared
+  multi-return function selects the number of values named by its signature, and
+  `@returnAll` selects the complete stack.
+
+```
+$f = fn (a: Number, b: Number, c: Number) =>
+  return ($a, $b)
+end
+$f(10, 20, 30) #? Pushes 10, then 20
+```
+
+Explicit return expressions use ordinary expression syntax; no value kind has
+special return behaviour.
+
 ## 6.1. Calling Functions
 - Functions can be called in a few ways:
 	- Using the `call` element. This takes a function, and calls it. Note that ECS on `call` will set the arguments passed to the function.

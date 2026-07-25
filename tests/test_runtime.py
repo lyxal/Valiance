@@ -2816,6 +2816,60 @@ pair(10, 20)
                 [RuntimeNumber("10"), RuntimeNumber("20")],
             )
 
+    def test_explicit_return_arguments_return_multiple_values(self):
+        source = """
+$f = fn (a: Number, b: Number, c: Number) =>
+  return ($a, $b)
+end
+$f(10, 20, 30)
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+
+        for program in (
+            compile_program(typed, optimize=False),
+            compile_program(typed),
+            loads(dumps(compile_program(typed))),
+        ):
+            self.assertEqual(
+                run(program),
+                [RuntimeNumber("10"), RuntimeNumber("20")],
+            )
+
+    def test_return_chain_selects_its_top_value(self):
+        source = """
+$f = fn (a: Number, b: Number) =>
+  return $a $b +
+end
+$f(10, 20)
+"""
+        self.assertEqual(execute(source), [RuntimeNumber("30")])
+
+    def test_explicit_empty_and_bare_return_follow_distinct_policies(self):
+        self.assertEqual(
+            execute("$f = fn () => 10 return () end\n$f()"),
+            [],
+        )
+        self.assertEqual(
+            execute("$f = fn (a: Number, b: Number) => $a $b return end\n$f(10, 20)"),
+            [RuntimeNumber("20")],
+        )
+
+    def test_return_values_propagate_out_of_foreach_body(self):
+        source = """
+$f = fn (a: Number, b: Number) -> Number, Number =>
+  [1] foreach (item) =>
+    return ($a, $b)
+  end
+end
+$f(10, 20)
+"""
+        self.assertEqual(
+            execute(source),
+            [RuntimeNumber("10"), RuntimeNumber("20")],
+        )
+
     def test_dip_sources_cycled_parameters_beneath_held_value(self):
         source = """
 @returnAll define subtractUnder(

@@ -34,6 +34,7 @@ from valiance.asts import (
     OrPatternNode,
     RestPatternNode,
     RecordLiteralNode,
+    ReturnNode,
     SetVariableNode,
     SetVariablesNode,
     SourceLocation,
@@ -1352,6 +1353,33 @@ end
         self.assertEqual(loop.index_variable, Symbol("i"))
         self.assertIsInstance(loop.body[0], IfNode)
         self.assertIsInstance(loop.body[0].then_branch[0], BreakNode)
+
+    def test_parses_return_chain_and_explicit_value_arguments(self):
+        function, = parse("""
+fn (a: Number, b: Number) =>
+  return ($a, $b double)
+end
+""")
+        self.assertIsInstance(function, FunctionNode)
+        returned = function.body[0]
+        self.assertIsInstance(returned, ReturnNode)
+        self.assertTrue(returned.explicit_values)
+        self.assertEqual(len(returned.values), 2)
+        self.assertIsInstance(returned.values[0][0], GetVariableNode)
+        self.assertEqual(len(returned.values[1]), 2)
+
+        function, = parse("fn (a: Number, b: Number) => return $a $b + end")
+        returned = function.body[0]
+        self.assertIsInstance(returned, ReturnNode)
+        self.assertFalse(returned.explicit_values)
+        self.assertEqual(len(returned.values), 1)
+        self.assertEqual(len(returned.values[0]), 3)
+
+        function, = parse("fn () => return () end")
+        returned = function.body[0]
+        self.assertIsInstance(returned, ReturnNode)
+        self.assertTrue(returned.explicit_values)
+        self.assertEqual(returned.values, ())
 
     def test_parses_match_type_and_default_cases(self):
         [node] = parse("""

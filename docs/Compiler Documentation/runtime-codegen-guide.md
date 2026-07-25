@@ -43,6 +43,9 @@ The runtime implementation is small, but several files must evolve together.
 - `FunctionCode.multi` and `FunctionCode.dispatch_types` mark compiled
   multimethod bodies and record the exact runtime nominal type names used by VM
   dispatch.
+- Explicit `RETURN` and `RETURN_SIGNAL` instructions carry the selected return
+  count when syntax chooses values directly. Bare returns defer to
+  `FunctionCode.return_count`.
 - `FunctionCode.return_count` records the exact result multiplicity selected by
   analysis. `RETURN` keeps only those topmost frame values, so inferred 0/1-return
   functions cannot leak lower temporaries to their caller.
@@ -167,7 +170,7 @@ collection-valued stopped parameter is not automatically vectorised again.
 `src/valiance/runtime/serialization.py`
 
 - Encodes `Program` as portable binary bytecode.
-- The current magic/version marker is `b"VLNCBC\x1b"`.
+- The current magic/version marker is `b"VLNCBC\x1c"`.
 - Opcodes are one byte each in `_OP_TO_BYTE`.
 - Instruction arguments are tagged binary values, not Python pickle, repr, or
   JSON.

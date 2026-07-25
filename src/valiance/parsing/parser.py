@@ -330,7 +330,7 @@ class Parser:
             return (BreakNode(self._optional_values(), location=_loc(start)),)
         if self._match_ident("return"):
             start = self._previous
-            return (ReturnNode(self._optional_values(), location=_loc(start)),)
+            return (ReturnNode(*self._return_values(), location=_loc(start)),)
         if self._match_ident("match"):
             return (self._match_node(self._previous),)
         if self._match_ident("try"):
@@ -1384,6 +1384,18 @@ class Parser:
             return condition
         return self._chain_until({TokenKind.FAT_ARROW})
 
+    def _return_values(
+        self,
+    ) -> tuple[tuple[tuple[ASTNode, ...], ...], bool]:
+        """Parse bare, chained, or explicit argument-list return values."""
+        if self._check(TokenKind.NEWLINE, TokenKind.EOF) or self._check_ident(
+            "end", "else"
+        ):
+            return (), False
+        if self._match(TokenKind.LPAREN):
+            return self._comma_expressions(TokenKind.RPAREN), True
+        return (self._chain_until(_LINE_TERMINATORS),), False
+
     def _optional_values(self) -> tuple[ASTNode, ...]:
         """Parse optional values from the current token stream."""
         if self._check(TokenKind.NEWLINE, TokenKind.EOF) or self._check_ident(
@@ -1664,7 +1676,7 @@ class Parser:
         if self._match_ident("return"):
             token = self._previous
             return _ChainPiece(
-                (ReturnNode(self._optional_values(), location=_loc(token)),),
+                (ReturnNode(*self._return_values(), location=_loc(token)),),
                 True,
             )
         if self._check_ident("copy", "move") and self._peek(1).kind is TokenKind.LPAREN:

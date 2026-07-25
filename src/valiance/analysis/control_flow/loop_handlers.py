@@ -215,16 +215,24 @@ def _for_node(
     body_data_element_uses = frozenset(
         use for output in body_outputs for use in output.data_element_uses
     )
-    return _core.BranchSet(
-        (
-            _calls._refine_branch_like(branch, body_branch)
-            .with_element_tags(body_element_tags)
-            .with_data_element_uses(body_data_element_uses)
-            .with_stack(body_branch.stack.push(result_type))
-            .with_variables(variables)
-            .emit(typed_for),
-        )
+    completed = (
+        _calls._refine_branch_like(branch, body_branch)
+        .with_element_tags(body_element_tags)
+        .with_data_element_uses(body_data_element_uses)
+        .with_stack(body_branch.stack.push(result_type))
+        .with_variables(variables)
+        .emit(typed_for)
     )
+    returned = tuple(
+        _calls._refine_branch_like(branch, output)
+        .with_element_tags(body_element_tags)
+        .with_data_element_uses(body_data_element_uses)
+        .emit(typed_for)
+        .with_return(output.return_stack, exact=output.return_exact)
+        for output in body_outputs
+        if output.return_stack is not None
+    )
+    return _core.BranchSet.collect((completed, *returned))
 
 @_core.register(UnfoldNode)
 def _unfold_node(

@@ -146,12 +146,16 @@ def _contextualize_explicit_return(
     returns: tuple[T.Type, ...],
 ) -> ASTNode:
     """Compute contextualize explicit return during static analysis."""
-    if isinstance(node, ReturnNode) and len(node.values) == len(returns):
+    if (
+        isinstance(node, ReturnNode)
+        and node.explicit_values
+        and len(node.values) == len(returns)
+    ):
         return replace(
             node,
             values=tuple(
-                _contextualize_return_expression(value, expected)
-                for value, expected in zip(node.values, returns, strict=True)
+                _contextualize_return_block(expression, (expected,))
+                for expression, expected in zip(node.values, returns, strict=True)
             ),
         )
     return node

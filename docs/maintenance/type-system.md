@@ -1825,3 +1825,8 @@ When changing type analysis, ask:
 The system is large because the language is expressive, not because each
 operation is mathematically mysterious. Follow the data records, identify the
 question being asked, and keep each rule in its narrowest correct layer.
+
+
+## Explicit return paths
+
+Return branches carry a dedicated selected result stack rather than exposing the residual branch stack.
