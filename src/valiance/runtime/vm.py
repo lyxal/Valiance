@@ -4027,6 +4027,16 @@ def _fault_object(type_name: str, message: str) -> ObjectValue:
     return ObjectValue(type_name, {"message": message})
 
 
+def _vectorisation_fault() -> PanicSignal:
+    """Build the intrinsic fault used for unequal vectorisation lengths."""
+    return PanicSignal(
+        _fault_object(
+            "VectorisationFault",
+            "cannot vectorise lists with different lengths",
+        )
+    )
+
+
 def _mark_mustcall_method(
     args: tuple[Any, ...],
     result: list[Any] | tuple[Any, ...],
@@ -5292,7 +5302,7 @@ def _vectorize_eager_kernel(
     )
     lengths = {len(vector) for vector in vectors}
     if len(lengths) != 1:
-        raise RuntimeError("cannot vectorise lists with different lengths")
+        raise _vectorisation_fault()
     length = next(iter(lengths), 0)
     result_items: list[tuple[Any, ...]] = []
     if kernel.arity == 1 and depths == (1,):
@@ -5343,7 +5353,7 @@ def _vectorize_eager_resolved_depths(
     if not vector_lengths:
         raise _CannotVectorize
     if extension is None and len(set(vector_lengths)) != 1:
-        raise RuntimeError("cannot vectorise lists with different lengths")
+        raise _vectorisation_fault()
 
     item_depths = tuple(max(depth - 1, 0) for depth in depths)
     result_items = []
@@ -5391,7 +5401,7 @@ def _vectorize_lazy_resolved_depths(
         fillvalue=_MISSING_VECTOR_ITEM,
     ):
         if extension is None and _MISSING_VECTOR_ITEM in items:
-            raise RuntimeError("cannot vectorise lists with different lengths")
+            raise _vectorisation_fault()
         item_iter = iter(items)
         item_args = tuple(
             next(item_iter) if depth > 0 and is_list_like(arg) else arg
@@ -5423,7 +5433,7 @@ def _extend_vector_args(
     if not missing_positions:
         return args
     if extension is None:
-        raise RuntimeError("cannot vectorise lists with different lengths")
+        raise _vectorisation_fault()
 
     substitutions: tuple[Any, ...]
     if extension.default is not _NO_EXTENSION_DEFAULT:

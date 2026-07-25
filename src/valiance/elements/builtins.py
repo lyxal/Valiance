@@ -92,6 +92,7 @@ BUILTIN_FAULT_TYPES = tuple(
         "UnwrappedResultFault",
         "DuplicationFault",
         "CleanupFault",
+        "VectorisationFault",
     )
 )
 
@@ -2455,7 +2456,10 @@ def _register_builtin_message_type(type_name: Symbol) -> None:
         return (ObjectValue(_type_name.text, {"message": args[0]}),)
 
 
-for _message_type in (*BUILTIN_ERROR_TYPES, *BUILTIN_FAULT_TYPES):
+for _message_type in (
+    *BUILTIN_ERROR_TYPES,
+    *(fault for fault in BUILTIN_FAULT_TYPES if fault != Symbol("VectorisationFault")),
+):
     _register_builtin_message_type(_message_type)
 
 

@@ -338,10 +338,10 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Reuse arguments that have reached their expected ranks.
 - [x] Reject calls with no direct or vectorised matching overload.
 - [x] Require equal lengths at each paired vectorisation dimension by default.
-- [ ] Raise `VectorisationFault` for runtime length mismatches.
-- [ ] Make `VectorisationFault` catchable by `try/handle`.
-- [ ] Prevent user code from producing `VectorisationFault` through `panic`.
-- [ ] Exclude the `Panic` element tag from intrinsic `VectorisationFault`s.
+- [x] Raise `VectorisationFault` for runtime length mismatches.
+- [x] Make `VectorisationFault` catchable by `try/handle`.
+- [x] Prevent user code from producing `VectorisationFault` through `panic`.
+- [x] Exclude the `Panic` element tag from intrinsic `VectorisationFault`s.
 - [x] Produce lists when all vectorised arguments are lists.
 - [x] Produce arrays when all arguments are arrays and the return type retains arrayness.
 - [x] Produce lists when vectorisation mixes lists and arrays.
@@ -725,7 +725,7 @@ Current audit total: 546 / 779 items complete (70.1%).
 - [x] Provide the `?!` helper.
 - [ ] Preserve nested optional and result semantics through these helpers.
 - [ ] Provide `AssertError`.
-- [ ] Provide `VectorisationFault`.
+- [x] Provide `VectorisationFault`.
 - [ ] Provide `SliceFault`.
 - [x] Provide the standard general, system, and runtime built-in faults.
 - [x] Raise catchable `IndexFault` and `KeyFault` values from indexing.

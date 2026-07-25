@@ -2629,10 +2629,30 @@ getName $joe
                 )
                 self.assertTrue(assignable(fault_type, N(Symbol("Fault")), env.context))
 
-                [constructor] = env.overloads_for(fault_name)
-                self.assertEqual(constructor.params, (String,))
-                self.assertEqual(constructor.returns, (fault_type,))
-                self.assertEqual(constructor.param_names, (Symbol("message"),))
+                constructors = env.overloads_for(fault_name)
+                if fault_name == Symbol("VectorisationFault"):
+                    self.assertEqual(constructors, ())
+                else:
+                    [constructor] = constructors
+                    self.assertEqual(constructor.params, (String,))
+                    self.assertEqual(constructor.returns, (fault_type,))
+                    self.assertEqual(constructor.param_names, (Symbol("message"),))
+
+    def test_vectorisation_fault_is_intrinsic_but_handleable(self):
+        constructor = Analyser()
+        constructor.analyse(parse('VectorisationFault("forged")'))
+        self.assertTrue(constructor.diagnostics)
+        self.assertIn("unknown element 'VectorisationFault'", constructor.diagnostics[0])
+
+        handler = Analyser()
+        handler.analyse(parse("""
+try =>
+  [1, 2, 3] + [4, 5]
+handle VectorisationFault =>
+  "handled"
+end
+"""))
+        self.assertEqual(handler.diagnostics, [])
 
     def test_panic_requires_fault_and_preserves_concrete_fault_tag(self):
         invalid = Analyser()

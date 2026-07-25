@@ -1083,8 +1083,10 @@ These are known constraints of the current runtime/codegen layer:
 - Runtime arrays are currently represented like lists.
 - Multimethod runtime dispatch currently matches exact runtime nominal names
   recorded on compiled `multi` user-defined overloads.
-- Runtime vectorisation errors are plain runtime errors, not yet dedicated
-  catchable `VectorisationFault` panic values.
+- Runtime vectorisation length mismatches raise intrinsic, catchable
+  `VectorisationFault` values. The type has no user-callable constructor, so user
+  code cannot manufacture one through `panic`, and intrinsic raises do not add a
+  static `Panic` element tag.
 - Only resolved object/variant constructor calls currently preserve instantiated
   generic type arguments in runtime values.
 

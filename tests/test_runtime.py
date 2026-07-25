@@ -2601,14 +2601,19 @@ message
         )
 
     def test_builtin_fault_types_construct_and_expose_messages(self):
+        constructible_fault_types = tuple(
+            fault_type
+            for fault_type in BUILTIN_FAULT_TYPES
+            if fault_type.text != "VectorisationFault"
+        )
         constructors = "\n".join(
             f'{fault_type.text}("{fault_type.text}")'
-            for fault_type in BUILTIN_FAULT_TYPES
+            for fault_type in constructible_fault_types
         )
         values = execute(constructors)
 
-        self.assertEqual(len(values), len(BUILTIN_FAULT_TYPES))
-        for fault_type, value in zip(BUILTIN_FAULT_TYPES, values, strict=True):
+        self.assertEqual(len(values), len(constructible_fault_types))
+        for fault_type, value in zip(constructible_fault_types, values, strict=True):
             with self.subTest(fault_type=fault_type.text):
                 self.assertIsInstance(value, ObjectValue)
                 self.assertEqual(value.type_name, fault_type.text)
@@ -2616,11 +2621,11 @@ message
 
         messages = "\n".join(
             f'{fault_type.text}("{fault_type.text}") message'
-            for fault_type in BUILTIN_FAULT_TYPES
+            for fault_type in constructible_fault_types
         )
         self.assertEqual(
             execute(messages),
-            [fault_type.text for fault_type in BUILTIN_FAULT_TYPES],
+            [fault_type.text for fault_type in constructible_fault_types],
         )
         self.assertEqual(
             execute('IndexFault("bad index") getMessage'),
@@ -3713,6 +3718,39 @@ handle RuntimeFault =>
   "handled"
 handle =>
   "default"
+end
+"""),
+            ["handled"],
+        )
+
+    def test_vectorisation_length_mismatch_raises_catchable_fault(self):
+        self.assertEqual(
+            execute("""
+try =>
+  [1, 2, 3] + [4, 5]
+handle VectorisationFault =>
+  "handled"
+end
+"""),
+            ["handled"],
+        )
+
+    def test_uncaught_vectorisation_fault_reports_fault_type(self):
+        with self.assertRaises(RuntimeError) as error:
+            execute("[1, 2, 3] + [4, 5]")
+        self.assertIn("uncaught panic: VectorisationFault", str(error.exception))
+        self.assertIn(
+            "cannot vectorise lists with different lengths",
+            str(error.exception),
+        )
+
+    def test_nested_vectorisation_length_mismatch_is_catchable(self):
+        self.assertEqual(
+            execute("""
+try =>
+  [[1, 2], [3, 4, 5]] + [[6, 7], [8, 9]]
+handle VectorisationFault =>
+  "handled"
 end
 """),
             ["handled"],
