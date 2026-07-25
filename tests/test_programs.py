@@ -606,7 +606,7 @@ $doubleArg(6, 7)
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             self.assertEqual(execute(source), [])
-        self.assertEqual(output.getvalue(), "5\n5\n6\n7\n6\n")
+        self.assertEqual(output.getvalue(), "5\n5\n7\n6\n7\n")
 
     def test_user_defined_dip(self):
         source = r"""
@@ -660,8 +660,8 @@ tag #TapePointer as unit
 define #TapePointer(:Integer) => inRange(0, \TAPE_SIZE)
 
 define get(tape: Integer+, ind: #TapePointer Integer) => $tape[#-TapePointer $ind]
-define apply(:#TapePointer Integer, fn: Function[Integer -> Integer]) =>
-  #-TapePointer | #TapePointer $fn()
+define apply(value: #TapePointer Integer, fn: Function[Integer -> Integer]) =>
+  #-TapePointer $value | #TapePointer $fn()
 end
 
 $tp: #TapePointer Integer = 0

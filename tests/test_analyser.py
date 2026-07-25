@@ -2278,6 +2278,35 @@ getName $joe
         self.assertEqual(branch.stack, TypeStack((String,)))
         self.assertEqual([node.typ for node in branch.typed_body], [String])
 
+    def test_explicit_parameter_cycle_pops_from_the_conceptual_stack_top(self):
+        branch = AnalysisBranch(
+            input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
+            cycle_params=(Integer, Real, String),
+            cycle_stack_remaining=3,
+            cycle_from_top=True,
+        )
+
+        observed = []
+        for _ in range(4):
+            sourced = branch.source_arguments((String,))
+            self.assertIsNotNone(sourced)
+            args, branch = sourced
+            observed.extend(args)
+
+        self.assertEqual(observed, [String, Real, Integer, String])
+
+    def test_dip_modifier_can_source_explicit_parameter_cycle(self):
+        analyser = Analyser()
+        branches = analyser.analyse_block(
+            BranchSet((AnalysisBranch(),)),
+            tuple(parse("fn (a: Number, b: Number, c: Number) => dip: -")),
+        )
+
+        self.assertTrue(branches)
+        self.assertEqual(analyser.diagnostics, [])
+        function_type = next(iter(branches)).stack[-1]
+        self.assertEqual(function_type, Fn((Number, Number, Number), (Number,)))
+
     def test_explicit_non_niladic_function_cycles_params_on_underflow(self):
         env = Environment()
         env.define_overload(PLUS, Overload((Number, Number), (Number,)))

@@ -372,10 +372,11 @@ class _Frame:
     cycle_values: tuple[Any, ...] = ()
     cycle_index: int = 0
     cycle_stack_remaining: int = 0
+    cycle_from_top: bool = False
     retained_locals: frozenset[str] = frozenset()
     is_global_scope: bool = False
     panic_handlers: list[_PanicHandler] = field(default_factory=list)
-    cycle_scopes: list[tuple[tuple[Any, ...], int, int]] = field(default_factory=list)
+    cycle_scopes: list[tuple[tuple[Any, ...], int, int, bool]] = field(default_factory=list)
     isolated_stacks: list[list[Any]] = field(default_factory=list)
 
     def source_args(
@@ -388,60 +389,49 @@ class _Frame:
 
         stack_length = len(self.stack)
         if stack_length >= arity:
-            if arity == 1:
-                return (
-                    (self.stack[-1],),
-                    1,
-                    self.cycle_index,
-                    self.cycle_stack_remaining,
-                )
-            if arity == 2:
-                return (
-                    (self.stack[-2], self.stack[-1]),
-                    2,
-                    self.cycle_index,
-                    self.cycle_stack_remaining,
-                )
             return (
                 tuple(self.stack[-arity:]),
                 arity,
                 self.cycle_index,
                 self.cycle_stack_remaining,
             )
+
         stack_count = stack_length
         stack_args = tuple(self.stack) if stack_count else ()
-        if arity == 1 and stack_count == 0 and self.cycle_values:
-            value = self.cycle_values[self.cycle_index % len(self.cycle_values)]
-            return (
-                (value,),
-                0,
-                (self.cycle_index + 1) % len(self.cycle_values),
-                0,
-            )
-        initial_count = min(
-            self.cycle_stack_remaining,
-            arity - stack_count,
-        )
-        initial_start = self.cycle_stack_remaining - initial_count
-        initial_args = self.cycle_values[initial_start : self.cycle_stack_remaining]
-        missing = arity - stack_count - initial_count
+        missing = arity - stack_count
         if missing and not self.cycle_values:
             raise _StackUnderflow
-        cycle_args = tuple(
-            self.cycle_values[(self.cycle_index + index) % len(self.cycle_values)]
-            for index in range(missing)
+
+        cycle_len = len(self.cycle_values)
+        if not self.cycle_from_top:
+            cycle_args = tuple(
+                self.cycle_values[(self.cycle_index + index) % cycle_len]
+                for index in range(missing)
+            )
+            return (
+                cycle_args + stack_args,
+                stack_count,
+                (self.cycle_index + missing) % cycle_len,
+                self.cycle_stack_remaining,
+            )
+
+        initial_count = min(self.cycle_stack_remaining, missing)
+        initial_start = self.cycle_stack_remaining - initial_count
+        initial_args = self.cycle_values[initial_start:self.cycle_stack_remaining]
+        cyclic_count = missing - initial_count
+        cyclic_popped = tuple(
+            self.cycle_values[(-1 - self.cycle_index - offset) % cycle_len]
+            for offset in range(cyclic_count)
         )
-        next_cycle_index = (
-            (self.cycle_index + missing) % len(self.cycle_values)
-            if self.cycle_values
-            else self.cycle_index
-        )
+        cyclic_args = tuple(reversed(cyclic_popped))
+        next_cycle_index = (self.cycle_index + cyclic_count) % cycle_len
         return (
-            cycle_args + initial_args + stack_args,
+            cyclic_args + initial_args + stack_args,
             stack_count,
             next_cycle_index,
             initial_start,
         )
+
 
 
 @dataclass(slots=True)
@@ -2019,6 +2009,7 @@ class VirtualMachine:
                 globals=globals_,
                 cycle_values=cycle_values,
                 cycle_stack_remaining=(len(cycle_values) if code.cycle_params else 0),
+                cycle_from_top=bool(code.cycle_params),
                 retained_locals=retained_locals,
                 is_global_scope=code.name == "<main>",
             ),
@@ -2437,11 +2428,13 @@ class VirtualMachine:
                                         frame.cycle_values,
                                         frame.cycle_index,
                                         frame.cycle_stack_remaining,
+                                        frame.cycle_from_top,
                                     )
                                 )
                                 frame.cycle_values = values
                                 frame.cycle_index = 0
                                 frame.cycle_stack_remaining = 0
+                                frame.cycle_from_top = False
                                 ip = target
                                 continue
                         case OpCode.MATCH_ERROR:
@@ -3605,11 +3598,13 @@ def _enter_cycle(frame: _Frame, spec: object) -> None:
             frame.cycle_values,
             frame.cycle_index,
             frame.cycle_stack_remaining,
+            frame.cycle_from_top,
         )
     )
     frame.cycle_values = values
     frame.cycle_index = 0
     frame.cycle_stack_remaining = 0
+    frame.cycle_from_top = False
     if seed_stack:
         frame.stack.extend(values)
 
@@ -3622,6 +3617,7 @@ def _exit_cycle(frame: _Frame) -> None:
         frame.cycle_values,
         frame.cycle_index,
         frame.cycle_stack_remaining,
+        frame.cycle_from_top,
     ) = frame.cycle_scopes.pop()
 
 

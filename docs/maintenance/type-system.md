@@ -956,7 +956,7 @@ fields are:
 - `variables`: branch-local variable facts;
 - `typed_body`: typed AST emitted along this path;
 - `input_mode`: how missing stack arguments may be sourced;
-- `cycle_params` and `cycle_index`;
+- `cycle_params`, `cycle_index`, and `cycle_stack_remaining`;
 - element/data-tag effects;
 - loop break type;
 - whether a direct `Never` stack value makes the path terminal; and

@@ -1429,8 +1429,19 @@ def _apply_call_site_checked_overload(
             returns=specialized_source.returns,
             generic_constraints=specialized_source.generic_constraints,
         )
-        for extra_count in range(len(branch.stack) + 1):
-            stack_args = branch.stack.items[-extra_count:] if extra_count else ()
+        conceptual_count = (
+            len(branch.cycle_params)
+            if branch.input_mode is _core.InputMode.CYCLE_EXPLICIT_PARAMS
+            else 0
+        )
+        for extra_count in range(len(branch.stack) + conceptual_count + 1):
+            if extra_count <= len(branch.stack):
+                stack_args = branch.stack.items[-extra_count:] if extra_count else ()
+            else:
+                preview = branch.source_arguments((branch.cycle_params[0],) * extra_count)
+                if preview is None:
+                    continue
+                stack_args, _ = preview
             call_params = stack_args + args
             concrete = _call_site_checked_overload_signature(
                 deferred,

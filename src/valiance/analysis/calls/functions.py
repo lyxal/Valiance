@@ -328,6 +328,10 @@ class _CallableValues:
             variables=variables,
             input_mode=mode,
             cycle_params=body_params if mode is InputMode.CYCLE_EXPLICIT_PARAMS else (),
+            cycle_stack_remaining=(
+                len(body_params) if mode is InputMode.CYCLE_EXPLICIT_PARAMS else 0
+            ),
+            cycle_from_top=mode is InputMode.CYCLE_EXPLICIT_PARAMS,
             atomic_type_vars=(
                 outer.atomic_type_vars
                 | _functions._atomic_parameter_type_vars(params)

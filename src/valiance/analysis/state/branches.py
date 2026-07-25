@@ -63,6 +63,8 @@ class AnalysisBranch:
     cycle_params: tuple[T.Type, ...] = ()
     atomic_type_vars: frozenset[str] = field(default_factory=frozenset)
     cycle_index: int = 0
+    cycle_stack_remaining: int = 0
+    cycle_from_top: bool = False
     break_type: T.Type | None = None
     errors: tuple[Diagnostic, ...] = ()
     warnings: tuple[Diagnostic, ...] = ()
@@ -308,17 +310,43 @@ class AnalysisBranch:
                 )
             case InputMode.CYCLE_EXPLICIT_PARAMS if self.cycle_params:
                 cycle_len = len(self.cycle_params)
-                cycled = tuple(
-                    self.cycle_params[(self.cycle_index + index) % cycle_len]
-                    for index in range(missing)
+                if not self.cycle_from_top:
+                    cycled = tuple(
+                        self.cycle_params[(self.cycle_index + index) % cycle_len]
+                        for index in range(missing)
+                    )
+                    return (
+                        cycled + stack_args,
+                        replace(
+                            self,
+                            stack=remaining,
+                            cycle_index=(self.cycle_index + missing) % cycle_len,
+                        ),
+                    )
+
+                initial_count = min(self.cycle_stack_remaining, missing)
+                initial_start = self.cycle_stack_remaining - initial_count
+                initial_args = self.cycle_params[
+                    initial_start : self.cycle_stack_remaining
+                ]
+                cyclic_count = missing - initial_count
+                # Explicit parameters form a conceptual stack in declaration
+                # order. Pop right to left, then restore the group to ordinary
+                # lower-to-upper call argument order.
+                cyclic_popped = tuple(
+                    self.cycle_params[
+                        (-1 - self.cycle_index - offset) % cycle_len
+                    ]
+                    for offset in range(cyclic_count)
                 )
+                cyclic_args = tuple(reversed(cyclic_popped))
                 return (
-                    cycled + stack_args,
+                    cyclic_args + initial_args + stack_args,
                     replace(
                         self,
                         stack=remaining,
-                        cycle_index=(self.cycle_index + missing)
-                        % len(self.cycle_params),
+                        cycle_index=(self.cycle_index + cyclic_count) % cycle_len,
+                        cycle_stack_remaining=initial_start,
                     ),
                 )
             case _:

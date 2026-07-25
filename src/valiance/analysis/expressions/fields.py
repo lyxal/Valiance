@@ -133,13 +133,10 @@ class _FieldExpressions:
             branch.input_mode is InputMode.CYCLE_EXPLICIT_PARAMS
             and branch.cycle_params
         ):
-            receiver_type = branch.cycle_params[
-                branch.cycle_index % len(branch.cycle_params)
-            ]
-            popped = replace(
-                branch,
-                cycle_index=(branch.cycle_index + 1) % len(branch.cycle_params),
-            )
+            sourced = branch.source_arguments((branch.cycle_params[0],))
+            if sourced is None:
+                return None
+            (receiver_type,), popped = sourced
             resolver = self._safe_field_type if optional_safe else self._field_type
             field_type, refined_receiver = resolver(
                 receiver_type,

@@ -895,21 +895,19 @@ def _source_cycle_names(
     """Mirror ``_Frame.source_args`` for an empty physical stack."""
     if arity == 0:
         return (), cycle_index, cycle_remaining
-    if arity == 1:
-        return (
-            (params[cycle_index % len(params)],),
-            (cycle_index + 1) % len(params),
-            0,
-        )
     initial_count = min(cycle_remaining, arity)
     initial_start = cycle_remaining - initial_count
     initial = params[initial_start:cycle_remaining]
-    missing = arity - initial_count
-    cycled = tuple(
-        params[(cycle_index + offset) % len(params)] for offset in range(missing)
+    cyclic_count = arity - initial_count
+    cycle_len = len(params)
+    cyclic_popped = tuple(
+        params[(-1 - cycle_index - offset) % cycle_len]
+        for offset in range(cyclic_count)
     )
-    next_index = (cycle_index + missing) % len(params) if params else cycle_index
+    cycled = tuple(reversed(cyclic_popped))
+    next_index = (cycle_index + cyclic_count) % cycle_len
     return cycled + initial, next_index, initial_start
+
 
 
 def _constant_inline_body(

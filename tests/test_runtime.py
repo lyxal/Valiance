@@ -2740,6 +2740,56 @@ incCount | println
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "8\n4\n")
 
+    def test_parameter_cycle_runs_right_to_left_and_wraps(self):
+        source = """
+define showCycle(a: String, b: String, c: String) -> =>
+  println
+  println
+  println
+  println
+end
+showCycle("a", "b", "c")
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+
+        for program in (
+            compile_program(typed, optimize=False),
+            compile_program(typed),
+            loads(dumps(compile_program(typed))),
+        ):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                stack = run(program)
+            self.assertEqual(stack, [])
+            self.assertEqual(output.getvalue(), "c\nb\na\nc\n")
+
+    def test_dip_sources_cycled_parameters_beneath_held_value(self):
+        source = """
+@returnAll define subtractUnder(
+  a: Number,
+  b: Number,
+  c: Number
+) =>
+  dip: -
+end
+subtractUnder(10, 3, 99)
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+
+        for program in (
+            compile_program(typed, optimize=False),
+            compile_program(typed),
+            loads(dumps(compile_program(typed))),
+        ):
+            self.assertEqual(
+                run(program),
+                [RuntimeNumber("7"), RuntimeNumber("99")],
+            )
+
     def test_parameter_cycle_starts_at_top_of_conceptual_input_stack(self):
         self.assertEqual(
             execute(

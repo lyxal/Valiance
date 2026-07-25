@@ -589,6 +589,13 @@ cycling. It also preserves argument order: the right side of the Python list is
 the top of the Valiance stack, while `_pop_many` and `source_args` return values
 in the left-to-right parameter order expected by implementations.
 
+Explicit parameters form that conceptual stack in declaration order, so the
+last declared parameter is initially on top. Underflow sourcing therefore pops
+parameters from right to left and wraps back to the last parameter. For
+`(a, b, c)`, four consecutive unary operations source `c`, `b`, `a`, then `c`.
+When one operation needs several arguments, the popped values are restored to
+normal lower-to-upper argument order before the selected implementation runs.
+
 ### What input cycling should not do
 
 Input cycling should supply values for an already known arity. It should not:
