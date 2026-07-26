@@ -64,6 +64,17 @@ python -m tools.fuzz --target malformed-bytecode --iterations 10000 --seed 42
 Each failure prints a one-case reproduction command. See
 [fuzzing.md](../fuzzing.md) for target descriptions and campaign guidance.
 
+Stage-aware performance baselines and comparisons use:
+
+```powershell
+$env:PYTHONPATH = "src;."
+python -m tools.performance --runs 5 --output .performance/baseline.json
+python -m tools.performance --runs 5 --compare .performance/baseline.json
+```
+
+See [Performance baselines](performance-benchmarking.md) for workload coverage,
+threshold semantics, and same-machine CI guidance.
+
 When working in an environment whose available interpreter is older but still
 parses the checkout, direct `python -m unittest ...` can be useful for local
 feedback. Release and CI validation should still use the version declared in

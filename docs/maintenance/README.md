@@ -39,6 +39,8 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   work such as adding syntax, an element, a runtime value, or a CLI command.
 - [Testing and debugging](testing-and-debugging.md) explains the test layers,
   useful inspection commands, and a practical fault-isolation workflow.
+- [Performance baselines](performance-benchmarking.md) documents the
+  stage-aware benchmark runner, same-machine comparisons, and CI policy.
 - [Lints and optimisation passes](lints-and-rewrites.md) documents the
   structured lint API, the bytecode optimisation pipeline, and the safety
   boundary for future typed rewrites.
