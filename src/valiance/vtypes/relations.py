@@ -1901,6 +1901,34 @@ def _overload_callable_compatible(
     )
 
 
+def _join_vector_collection_type(
+    current: CollectionClass | None,
+    incoming: CollectionClass,
+) -> CollectionClass:
+    """Join vector shapes without claiming more uniformity than inputs prove."""
+    if current is None or current is incoming:
+        return incoming
+    if ListRuggedType in {current, incoming}:
+        return ListRuggedType
+    if current in {ListExactType, ListMinType} or incoming in {
+        ListExactType,
+        ListMinType,
+    }:
+        return ListExactType
+    return ArrayExactType
+
+
+def _vector_result_collection_type(
+    vector_type: CollectionClass | None,
+) -> CollectionClass:
+    """Return the safe result collection class for a fixed vector shape."""
+    if vector_type is ListRuggedType:
+        return ListRuggedType
+    if vector_type is ArrayExactType:
+        return ArrayExactType
+    return ListExactType
+
+
 def _overload_result_for_args(
     overload: Overload, args: tuple[Type, ...], ctx: Context
 ) -> tuple[Type, ...] | None:
@@ -1928,15 +1956,15 @@ def _overload_result_for_args(
         if excess > vector_rank:
             vector_rank = excess
         if excess > 0:
-            if vector_type is None:
-                vector_type = type(arg_collection)
-            elif vector_type is not type(arg_collection):
-                vector_type = ListExactType
+            vector_type = _join_vector_collection_type(
+                vector_type,
+                type(arg_collection),
+            )
 
     if vector_rank <= 0:
         return overload.returns
 
-    out_type = ArrayExactType if vector_type is ArrayExactType else ListExactType
+    out_type = _vector_result_collection_type(vector_type)
     return tuple(C(out_type, ret, vector_rank) for ret in overload.returns)
 
 
@@ -2070,15 +2098,15 @@ def _wrap_returns_for_vector_depth(
             continue
         if depth == vector_rank and _has_heterogeneous_vector_shape(arg):
             heterogeneous_shape = arg
-        if vector_type is None:
-            vector_type = type(arg_collection)
-        elif vector_type is not type(arg_collection):
-            vector_type = ListExactType
+        vector_type = _join_vector_collection_type(
+            vector_type,
+            type(arg_collection),
+        )
     if heterogeneous_shape is not None:
         return tuple(
             _project_vector_shape(heterogeneous_shape, ret) for ret in returns
         )
-    out_type = ArrayExactType if vector_type is ArrayExactType else ListExactType
+    out_type = _vector_result_collection_type(vector_type)
     return tuple(
         _wrap_vectorised_return(ret, out_type, vector_rank) for ret in returns
     )

@@ -885,6 +885,12 @@ define[T] sum(
         self.assertEqual(node.function.params[0].typ, Atomic(N(Symbol("T"))))
         self.assertEqual(node.function.params[1].typ, C(ListExactType, N(Symbol("T"))))
 
+    def test_collection_rank_zero_is_rejected(self):
+        for source in ("Number+0", "Number*0", "Number~0", "Number^0", "Number>0"):
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(ParseError, "positive integer"):
+                    parse_type(source)
+
     def test_parses_where_clause_and_rank_variables(self):
         [node] = parse(
             "define[T] reshape(xs: T*, shape: {Number, Number}) -> T+$n "

@@ -2859,7 +2859,14 @@ class Parser:
                     line=token.line,
                     column=token.column,
                 )
-            return int(token.value)
+            rank = int(token.value)
+            if rank < 1:
+                raise ParseError(
+                    "type rank must be a positive integer",
+                    line=token.line,
+                    column=token.column,
+                )
+            return rank
         if op != "?" and self._match(TokenKind.DOLLAR):
             return RankVariable(self._expect(TokenKind.IDENT).value)
 

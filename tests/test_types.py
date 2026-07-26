@@ -762,7 +762,7 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(atomic.vectorised_depths, (2,))
         self.assertEqual(
             atomic.actual_returns,
-            (C(ListExactType, Number, 2),),
+            (C(ListRuggedType, Number, 2),),
         )
 
         for parameter in (
@@ -775,6 +775,44 @@ class TypeLibraryTests(unittest.TestCase):
                 self.assertIsNone(
                     apply_overload(Overload((parameter,), (Number,)), (argument,))
                 )
+
+    def test_mixed_rugged_vectorisation_keeps_the_weakest_shape(self):
+        rugged = C(ListRuggedType, Number, 2)
+        uniform = C(ListExactType, Number, 2)
+
+        applied = apply_overload(
+            Overload((Number, Number), (Number,)),
+            (rugged, uniform),
+        )
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(
+            applied.actual_returns,
+            (C(ListRuggedType, Number, 2),),
+        )
+
+    def test_collection_ranks_must_be_positive(self):
+        for collection in (
+            ListExactType,
+            ListMinType,
+            ListRuggedType,
+        ):
+            for rank in (0, -1):
+                with self.subTest(collection=collection, rank=rank):
+                    with self.assertRaisesRegex(ValueError, "positive integer"):
+                        C(collection, Number, rank)
+
+    def test_rugged_sources_never_subsume_uniform_collection_targets(self):
+        for source_rank in (1, 2, 3):
+            source = C(ListRuggedType, Number, source_rank)
+            for target in (
+                C(ListExactType, Number),
+                C(ListMinType, Number),
+            ):
+                with self.subTest(source=source, target=target):
+                    self.assertFalse(subtype(source, target))
+                    self.assertFalse(assignable(source, target))
+                    self.assertFalse(compatible(source, target))
 
     def test_uniform_collection_can_still_vectorise_to_collection_parameter(self):
         parameter = C(ListExactType, Number)

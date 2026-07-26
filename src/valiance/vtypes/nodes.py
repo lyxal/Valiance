@@ -122,10 +122,15 @@ class RowType(Type):
 
 @dataclass(frozen=True)
 class CollectionType(Type):
-    """Base class for collection types with a base type and rank."""
+    """Base class for collection types with a base type and positive rank."""
 
     base: Type
     rank: int | RankVariable = 1
+
+    def __post_init__(self) -> None:
+        """Reject malformed ranks before they can enter relation algorithms."""
+        if isinstance(self.rank, int) and self.rank < 1:
+            raise ValueError("collection rank must be a positive integer")
 
 
 @dataclass(frozen=True, order=True)
