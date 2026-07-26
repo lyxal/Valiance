@@ -28,6 +28,7 @@ from valiance.runtime.bytecode import (
     Program,
     ResolvedElementReference,
 )
+from valiance.runtime.vm import FunctionValue
 from valiance.runtime.runtime_values import (
     DictValue,
     LazyList,
@@ -696,6 +697,28 @@ fn (cells: Integer+) -> Integer => $cells[1] end
             prepared.invoke1([RuntimeNumber(10), RuntimeNumber(20), RuntimeNumber(30)]),
             (RuntimeNumber(20),),
         )
+
+    def test_vectorisation_failure_is_not_retried_as_scalar(self):
+        """A fixed vectorisation policy must propagate its real execution failure."""
+        vm = VirtualMachine(output=lambda _value: None)
+        function = FunctionValue(
+            FunctionCode((Instruction(OpCode.RETURN),), params=("value",)),
+            {},
+        )
+        failure = RuntimeError("vector execution failed")
+
+        with (
+            patch(
+                "valiance.runtime.vm._vectorize_function",
+                side_effect=failure,
+            ) as vectorize,
+            patch.object(vm, "call") as scalar_call,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "vector execution failed"):
+                vm.call_value(function, [[RuntimeNumber(1)]])
+
+        vectorize.assert_called_once()
+        scalar_call.assert_not_called()
 
     def test_prepared_leaf_still_vectorises_above_parameter_rank(self):
         source = """

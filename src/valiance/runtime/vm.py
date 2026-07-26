@@ -1731,59 +1731,70 @@ class VirtualMachine:
         return test
 
     def call_value(self, value: Any, args: list[Any]) -> list[Any]:
-        """Invoke a runtime callable, resolving overload and vectorisation behaviour."""
+        """Invoke a callable through its statically established interface policy."""
         if isinstance(value, FunctionValue):
-            if any(is_list_like(arg) for arg in args):
-                try:
-                    ranks = value.code.param_collection_ranks
-                    if ranks and all(rank is not None for rank in ranks):
-                        return list(
-                            _vectorize_function(
-                                self,
-                                value,
-                                tuple(args),
-                                target_ranks=ranks,
-                            )
-                        )
-                    return list(_vectorize_function(self, value, tuple(args)))
-                except PanicSignal:
-                    raise
-                except Exception:
-                    pass
+            ranks = value.code.param_collection_ranks
+            has_collections = any(is_list_like(arg) for arg in args)
+            collections_match_parameters = (
+                has_collections
+                and len(ranks) == len(args)
+                and all(
+                    not is_list_like(arg)
+                    or target_rank is None
+                    or runtime_collection_rank(arg) == target_rank
+                    or _minimum_runtime_collection_rank(arg) < target_rank
+                    for arg, target_rank in zip(args, ranks, strict=True)
+                )
+            )
+            if has_collections and not collections_match_parameters:
+                if self.optimization_stats is not None:
+                    self.optimization_stats.increment("call.policy.interface-vectorised")
+                target_ranks = ranks if ranks and all(rank is not None for rank in ranks) else ()
+                return list(
+                    _vectorize_function(
+                        self,
+                        value,
+                        tuple(args),
+                        target_ranks=target_ranks,
+                    )
+                )
+            if self.optimization_stats is not None:
+                self.optimization_stats.increment("call.policy.interface-scalar")
             if self._can_execute_direct_leaf(value):
                 return self._execute_direct_leaf(value, tuple(args))
             return self.call(value, args)
         if isinstance(value, OverloadedFunctionValue):
             if len(value.overloads) == 1:
-                return self.call(value.overloads[0], args)
-            if value.dispatch_plan:
-                selected = _select_union_dispatch_overload(value, tuple(args))
-                return self.call(selected, args)
-            matches = tuple(
-                overload
-                for overload in value.overloads
-                if len(overload.code.params) == len(args)
+                return self.call_value(value.overloads[0], args)
+            representative_ranks = value.overloads[0].code.param_collection_ranks
+            requires_vectorisation = any(
+                is_list_like(arg)
+                and (
+                    index >= len(representative_ranks)
+                    or (
+                        representative_ranks[index] is not None
+                        and runtime_collection_rank(arg) != representative_ranks[index]
+                    )
+                )
+                for index, arg in enumerate(args)
             )
-            if len(matches) == 1:
-                return self.call(matches[0], args)
-            errors: list[Exception] = []
-            if any(is_list_like(arg) for arg in args):
-                for overload in matches:
-                    try:
-                        return list(_vectorize_function(self, overload, tuple(args)))
-                    except PanicSignal:
-                        raise
-                    except Exception as exc:
-                        errors.append(exc)
-            for overload in matches:
-                try:
-                    return self.call(overload, args)
-                except PanicSignal:
-                    raise
-                except Exception as exc:
-                    errors.append(exc)
-            if errors:
-                raise RuntimeError(errors[-1]) from errors[-1]
+            if requires_vectorisation:
+                if self.optimization_stats is not None:
+                    self.optimization_stats.increment(
+                        "call.policy.declared-vectorised"
+                    )
+                return list(
+                    _vectorize_declared_callable(self, value, tuple(args))
+                )
+            if value.dispatch_plan:
+                if self.optimization_stats is not None:
+                    self.optimization_stats.increment("call.policy.union-dispatch")
+                selected = _select_union_dispatch_overload(value, tuple(args))
+                return self.call_value(selected, args)
+            selected = _select_declared_dispatch_overload(value, tuple(args))
+            if self.optimization_stats is not None:
+                self.optimization_stats.increment("call.policy.declared-dispatch")
+            return self.call_value(selected, args)
         raise RuntimeError(f"cannot call value {_format_value(value)}")
 
     def call_value_overload(
@@ -1813,7 +1824,11 @@ class VirtualMachine:
 
         call_args = (*args, *static_values)
         if not vectorised:
+            if self.optimization_stats is not None:
+                self.optimization_stats.increment("call.policy.fixed-scalar")
             return self.call(selected, list(call_args))
+        if self.optimization_stats is not None:
+            self.optimization_stats.increment("call.policy.fixed-vectorised")
         static_count = len(static_values)
         depths = (
             (*vectorised_depths, *(0 for _ in range(static_count)))
@@ -4287,6 +4302,28 @@ def _function_overloads(
     return value.overloads
 
 
+def _select_declared_dispatch_overload(
+    value: OverloadedFunctionValue,
+    args: tuple[Any, ...],
+) -> FunctionValue:
+    """Apply compiled overload dispatch types without speculative execution."""
+    matches = tuple(
+        overload
+        for overload in value.overloads
+        if len(overload.code.params) == len(args)
+        and overload.code.dispatch_types
+        and _runtime_multimethod_types_match(args, overload.code.dispatch_types)
+    )
+    if not matches:
+        raise RuntimeError(
+            "cannot dispatch overloaded function for runtime types "
+            f"{tuple(_runtime_type_name(arg) for arg in args)}"
+        )
+    # Analysis emits overloads in specificity order. Runtime applies that order;
+    # it never executes candidates to discover which body happens to succeed.
+    return matches[0]
+
+
 def _select_union_dispatch_overload(
     value: OverloadedFunctionValue,
     args: tuple[Any, ...],
@@ -5323,6 +5360,49 @@ def _parameter_stops_vectorisation(typ: Any) -> bool:
     if isinstance(typ, (TaggedType, NoVecType, ExactType)):
         return _parameter_stops_vectorisation(typ.inner)
     return isinstance(typ, CollectionType)
+
+
+def _minimum_runtime_collection_rank(value: Any) -> int:
+    """Return the shallowest leaf rank without consuming lazy collections."""
+    if not is_list_like(value):
+        return 0
+    if not is_eager_sequence(value):
+        return runtime_collection_rank(value)
+    if not value:
+        return 1
+    return 1 + min(_minimum_runtime_collection_rank(item) for item in value)
+
+
+def _vectorize_declared_callable(
+    vm: VirtualMachine,
+    callee: OverloadedFunctionValue,
+    args: tuple[Any, ...],
+) -> tuple[Any, ...]:
+    """Vectorize an overload set, applying compiled dispatch at scalar leaves."""
+    ranks = callee.overloads[0].code.param_collection_ranks
+    depths = _resolve_vectorisation_depths(args, (), ranks)
+    context = RuntimeContext(
+        vm.output,
+        vm.call_value,
+        vm.format_value,
+        vm.call_value_overload,
+    )
+
+    def implementation(
+        item_args: tuple[Any, ...],
+        _context: RuntimeContext,
+    ) -> tuple[Any, ...]:
+        """Dispatch one scalar leaf without trying candidate bodies."""
+        return tuple(vm.call_value(callee, list(item_args)))
+
+    return _vectorize_resolved_depths(
+        implementation,
+        args,
+        context,
+        depths,
+        None,
+        stop_at_zero=True,
+    )
 
 
 def _vectorize_function(

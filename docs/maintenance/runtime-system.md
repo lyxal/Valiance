@@ -1634,3 +1634,32 @@ tag-free. Runtime return-contract canonicalisation can then skip recursive walks
 only when the static contract also declares no tags. Every mutating list method
 invalidates the proof. Tagged contracts and collections without proof continue
 through full recursive canonicalisation.
+
+## Callable execution policy
+
+Compiler-produced callables have a known invocation contract. The VM applies
+that contract; it does not discover behavior by executing candidates.
+
+`VirtualMachine.call_value` now follows these policies:
+
+- collection arguments are scalar only when they satisfy the compiled
+  `param_collection_ranks`; otherwise the callable is vectorised;
+- vectorisation failures propagate directly and are never swallowed before a
+  scalar retry;
+- overloaded values use an analyser-produced union dispatch plan when present;
+- declarations whose alternatives carry `dispatch_types` use those compiled
+  types in specificity order;
+- overload bodies are never tried speculatively to see which one succeeds.
+
+The distinction is between a runtime-varying closure value and an unknown call
+contract. A closure may vary, but its parameter ranks, overload alternatives,
+and dispatch policy must already be represented in bytecode.
+
+Optimization statistics expose the applied contract through:
+
+- `call.policy.interface-scalar`
+- `call.policy.interface-vectorised`
+- `call.policy.fixed-scalar`
+- `call.policy.fixed-vectorised`
+- `call.policy.union-dispatch`
+- `call.policy.declared-dispatch`
