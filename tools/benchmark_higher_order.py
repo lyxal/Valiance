@@ -68,9 +68,9 @@ WORKLOADS = (
         "map: fn (n) => $n * 2 end | drop 50 | take 100 | sum",
     ),
     Workload(
-        "filter-head",
+        "filter-first",
         "range(1, 1000000) "
-        "filter: fn (n) => $n > 100 end | head",
+        "filter: fn (n) => $n > 100 end | first",
     ),
     Workload(
         "guarded-match-map",

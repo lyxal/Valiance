@@ -711,7 +711,8 @@ class RuntimeNumber:
     def __add__(self, other):
         """Add this runtime number to another value."""
         other = RuntimeNumber.from_value(other)
-
+        if self.imag.is_zero() and other.imag.is_zero():
+            return RuntimeNumber(self.real + other.real)
         return RuntimeNumber(
             (
                 self.real + other.real,
@@ -726,7 +727,8 @@ class RuntimeNumber:
     def __sub__(self, other):
         """Subtract another value from this runtime number."""
         other = RuntimeNumber.from_value(other)
-
+        if self.imag.is_zero() and other.imag.is_zero():
+            return RuntimeNumber(self.real - other.real)
         return RuntimeNumber((self.real - other.real, self.imag - other.imag))
 
     def __rsub__(self, other):
@@ -736,7 +738,8 @@ class RuntimeNumber:
     def __mul__(self, other):
         """Multiply this runtime number by another value."""
         other = RuntimeNumber.from_value(other)
-
+        if self.imag.is_zero() and other.imag.is_zero():
+            return RuntimeNumber(self.real * other.real)
         return RuntimeNumber(
             (
                 self.real * other.real - self.imag * other.imag,

@@ -118,6 +118,8 @@ class BigDecimal:
 
     def __lt__(self, other):
         """Check if this BigDecimal is less than another."""
+        if self.exponent == other.exponent:
+            return self.coefficient < other.coefficient
         a, b = self._align(other)
         return a < b
 
@@ -132,26 +134,22 @@ class BigDecimal:
 
     def __add__(self, other):
         """Add two BigDecimal numbers."""
+        if self.exponent == other.exponent:
+            return BigDecimal(self.coefficient + other.coefficient, self.exponent)
         a, b = self._align(other)
-        exponent = min(self.exponent, other.exponent)
-
-        return BigDecimal(
-            a + b,
-            exponent,
-        )
+        return BigDecimal(a + b, min(self.exponent, other.exponent))
 
     def __sub__(self, other):
         """Subtract two BigDecimal numbers."""
+        if self.exponent == other.exponent:
+            return BigDecimal(self.coefficient - other.coefficient, self.exponent)
         a, b = self._align(other)
-        exponent = min(self.exponent, other.exponent)
-
-        return BigDecimal(
-            a - b,
-            exponent,
-        )
+        return BigDecimal(a - b, min(self.exponent, other.exponent))
 
     def __mul__(self, other):
         """Multiply two BigDecimal numbers."""
+        if self.coefficient == 0 or other.coefficient == 0:
+            return BigDecimal(0)
         return BigDecimal(
             self.coefficient * other.coefficient,
             self.exponent + other.exponent,
