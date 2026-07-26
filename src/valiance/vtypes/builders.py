@@ -10,11 +10,11 @@ from valiance.vtypes.nodes import (
     AnonymousTraitType,
     ArrayExactType,
     ArrayMinType,
-    AtomicType,
+    ExactType,
     CollectionType,
     DataTag,
     ElementTag,
-    ExactType,
+    NoVecType,
     FunctionType,
     IntersectionType,
     ListExactType,
@@ -210,14 +210,14 @@ def WithoutTag(inner: Type, name: str, *, depth: int = 0) -> Type:
     return Tagged(inner, DataTag(name, depth=depth, absent=True))
 
 
-def Exact(inner: Type) -> Type:
+def NoVec(inner: Type) -> Type:
     """Create call-policy metadata that disables parameter vectorisation."""
-    return ExactType(inner)
+    return NoVecType(inner)
 
 
-def Atomic(var: Type) -> Type:
+def Exact(var: Type) -> Type:
     """Create call-policy metadata requiring a scalar argument position."""
-    return AtomicType(var)
+    return ExactType(var)
 
 
 def optional(inner: Type) -> Type:
@@ -369,17 +369,17 @@ def normalize(t: Type) -> Type:
                 *(set(t.tags) | set(inner.tags)),
                 exact=t.exact or inner.exact,
             )
-        if isinstance(inner, ExactType):
-            return Exact(Tagged(inner.inner, *t.tags, exact=t.exact))
+        if isinstance(inner, NoVecType):
+            return NoVec(Tagged(inner.inner, *t.tags, exact=t.exact))
         return TaggedType(inner, t.tags, exact=t.exact)
+
+    if isinstance(t, NoVecType):
+        inner = normalize(t.inner)
+        return inner if isinstance(inner, NoVecType) else NoVecType(inner)
 
     if isinstance(t, ExactType):
         inner = normalize(t.inner)
         return inner if isinstance(inner, ExactType) else ExactType(inner)
-
-    if isinstance(t, AtomicType):
-        inner = normalize(t.inner)
-        return inner if isinstance(inner, AtomicType) else AtomicType(inner)
 
     return t
 
@@ -655,10 +655,10 @@ def _alpha_canonicalize(
             t.tags,
             exact=t.exact,
         )
+    if isinstance(t, NoVecType):
+        return NoVecType(_alpha_canonicalize(t.inner, scope, depth))
     if isinstance(t, ExactType):
         return ExactType(_alpha_canonicalize(t.inner, scope, depth))
-    if isinstance(t, AtomicType):
-        return AtomicType(_alpha_canonicalize(t.inner, scope, depth))
     return t
 
 
@@ -831,10 +831,10 @@ def _show(
         if t.exact:
             tags = f"[{tags}]"
         return f"{tags} {_show(t.inner, type_variable_name, bound)}"
+    if isinstance(t, NoVecType):
+        return f"{_show(t.inner, type_variable_name, bound)} novec"
     if isinstance(t, ExactType):
         return f"{_show(t.inner, type_variable_name, bound)} exact"
-    if isinstance(t, AtomicType):
-        return f"{_show(t.inner, type_variable_name, bound)} atomic"
     if isinstance(t, OverloadSetType):
         entries = ", ".join(
             _show_overload(overload, type_variable_name, bound)

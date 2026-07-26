@@ -1229,7 +1229,7 @@ def _uncheckable_runtime_type(typ: T.Type) -> T.Type | None:
         ),
     ):
         return typ
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _uncheckable_runtime_type(typ.inner)
     if isinstance(typ, T.UnionType):
         for item in typ.items:

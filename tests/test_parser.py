@@ -58,11 +58,11 @@ from valiance.asts import (
 from valiance.parsing import LexError, ParseError, TokenKind, lex, parse, parse_type
 from valiance.vtypes import (
     AnonymousTraitType,
-    Atomic,
+    Exact,
     C,
     DataTag,
     ElementTag,
-    Exact,
+    NoVec,
     Field,
     Fn,
     ListExactType,
@@ -880,9 +880,9 @@ define[T] sum(
         self.assertEqual(node.function.returns, (N(Symbol("T")),))
 
     def test_parses_atomic_generic_type_marker(self):
-        [node] = parse("define find(needle: T atomic, haystack: T+) => $needle")
+        [node] = parse("define find(needle: T exact, haystack: T+) => $needle")
 
-        self.assertEqual(node.function.params[0].typ, Atomic(N(Symbol("T"))))
+        self.assertEqual(node.function.params[0].typ, Exact(N(Symbol("T"))))
         self.assertEqual(node.function.params[1].typ, C(ListExactType, N(Symbol("T"))))
 
     def test_collection_rank_zero_is_rejected(self):
@@ -1567,25 +1567,25 @@ end
 
     def test_duplicate_atomic_type_marker_is_rejected(self):
         with self.assertRaises(ParseError):
-            parse_type("Number atomic atomic")
+            parse_type("Number exact exact")
 
     def test_parses_exact_type_marker(self):
-        self.assertTrue(same(parse_type("Number exact"), Exact(Number)))
+        self.assertTrue(same(parse_type("Number novec"), NoVec(Number)))
         self.assertTrue(
             same(
                 parse_type("#sorted Number+ exact"),
-                Exact(Tagged(C(ListExactType, Number), "sorted")),
+                Tagged(Exact(C(ListExactType, Number)), "sorted"),
             )
         )
         self.assertTrue(
             same(
-                parse_type("Function[Number exact -> Number]"),
-                Fn((Exact(Number),), (Number,)),
+                parse_type("Function[Number novec -> Number]"),
+                Fn((NoVec(Number),), (Number,)),
             )
         )
 
-        [node] = parse("fn (:Number exact) -> Number => double")
-        self.assertEqual(node.params[0].typ, Exact(Number))
+        [node] = parse("fn (:Number novec) -> Number => double")
+        self.assertEqual(node.params[0].typ, NoVec(Number))
 
     def test_parses_numeric_rank_postfix_shorthand(self):
         self.assertTrue(same(parse_type("Number++"), parse_type("Number+2")))

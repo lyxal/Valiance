@@ -1,11 +1,11 @@
 #? A small batch-risk scoring workload. The weight vector must stay whole while
 #? the row parameter vectorises over the matrix. The generic copy then verifies
 #? that the resulting labels are a rank-1 list of scalar values.
-define dot(weights: Number+ exact, row: Number+) -> Number =>
+define dot(weights: Number+ novec, row: Number+) -> Number =>
   $weights $row * | sum
 end
 
-define scoreRows(weights: Number+ exact, rows: Number++) -> Number+ =>
+define scoreRows(weights: Number+ novec, rows: Number++) -> Number+ =>
   $weights $rows dot
 end
 
@@ -15,7 +15,7 @@ define band(score: Number) -> String =>
   else => "low"
 end
 
-define[T] rankOneCopy(values: T atomic +) -> T+ => $values end
+define[T] rankOneCopy(values: T+ exact) -> T+ => $values end
 
 $weights = [2, 1, 3]
 $rows = [[1, 2, 3], [0, 4, 1], [2, 0, 0]]

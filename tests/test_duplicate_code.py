@@ -8,7 +8,7 @@ from pathlib import Path
 
 class DuplicateCodeTests(unittest.TestCase):
     def test_production_functions_do_not_duplicate_substantial_bodies(self):
-        """Reject exact duplicate function bodies large enough to require one owner."""
+        """Reject novec duplicate function bodies large enough to require one owner."""
         source_root = Path(__file__).parents[1] / "src" / "valiance"
         implementations: dict[str, list[str]] = {}
         for path in source_root.rglob("*.py"):

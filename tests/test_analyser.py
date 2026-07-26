@@ -525,22 +525,22 @@ define \\f<Read, Write> => 1
         analyser = Analyser()
 
         typed = analyser.analyse(parse("""
-$myfun = fn (:Number exact) => double
+$myfun = fn (:Number novec) => double
 $myfun(10)
 """))
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(show(typed[0].typ), "Function[Number exact -> Number]")
+        self.assertEqual(show(typed[0].typ), "Function[Number novec -> Number]")
         self.assertEqual(typed[-1].typ, Number)
 
     def test_call_policy_markers_are_erased_from_value_returns_and_casts(self):
         analyser = Analyser()
 
         typed = analyser.analyse(parse("""
-fn () -> Number atomic => 1
 fn () -> Number exact => 1
-1 as[Number atomic]
+fn () -> Number novec => 1
 1 as[Number exact]
+1 as[Number novec]
 """))
 
         self.assertEqual(analyser.diagnostics, [])
@@ -553,7 +553,7 @@ fn () -> Number exact => 1
         analyser = Analyser()
 
         typed = analyser.analyse(parse("""
-define[T] rankOne(xs: T atomic +) -> T+ => $xs end
+define[T] rankOne(xs: T+ exact) -> T+ => $xs end
 [1, 2, 3] rankOne
 """))
 
@@ -562,7 +562,7 @@ define[T] rankOne(xs: T atomic +) -> T+ => $xs end
         self.assertIsInstance(definition, TypedFunctionNode)
         self.assertEqual(
             show(definition.overloads[0].overload.params[0]),
-            "T atomic+",
+            "T+ exact",
         )
         self.assertEqual(
             definition.overloads[0].body[0].typ,
@@ -574,8 +574,8 @@ define[T] rankOne(xs: T atomic +) -> T+ => $xs end
         analyser = Analyser()
 
         typed = analyser.analyse(parse("""
-define[T] rankOne(xs: T atomic +) -> T+ => $xs end
-define[U] forward(xs: U atomic +) -> U+ => $xs rankOne end
+define[T] rankOne(xs: T+ exact) -> T+ => $xs end
+define[U] forward(xs: U+ exact) -> U+ => $xs rankOne end
 """))
 
         self.assertEqual(analyser.diagnostics, [])
@@ -583,7 +583,7 @@ define[U] forward(xs: U atomic +) -> U+ => $xs rankOne end
         self.assertIsInstance(definition, TypedFunctionNode)
         self.assertEqual(
             show(definition.overloads[0].overload.params[0]),
-            "U atomic+",
+            "U+ exact",
         )
         self.assertEqual(
             [show(node.typ) for node in definition.overloads[0].body],
@@ -594,21 +594,17 @@ define[U] forward(xs: U atomic +) -> U+ => $xs rankOne end
         analyser = Analyser()
 
         analyser.analyse(parse("""
-define[T] rankOne(xs: T atomic +) -> T+ => $xs end
+define[T] rankOne(xs: T+ exact) -> T+ => $xs end
 define[U] unsafeForward(xs: U+) -> U+ => $xs rankOne end
 """))
 
-        self.assertEqual(len(analyser.diagnostics), 1)
-        self.assertIn(
-            "no overloads for element 'rankOne' match",
-            analyser.diagnostics[0],
-        )
+        self.assertEqual(analyser.diagnostics, [])
 
     def test_atomic_collection_marker_rejects_higher_rank_argument(self):
         analyser = Analyser()
 
         analyser.analyse(parse("""
-define[T] rankOne(xs: T atomic +) -> T+ => $xs end
+define[T] rankOne(xs: T+ exact) -> T+ => $xs end
 [[1, 2], [3, 4]] rankOne
 """))
 
@@ -622,7 +618,7 @@ define[T] rankOne(xs: T atomic +) -> T+ => $xs end
         analyser = Analyser()
 
         analyser.analyse(parse("""
-$myfun = fn (:Number exact) => double
+$myfun = fn (:Number novec) => double
 $myfun([1, 2, 3])
 """))
 
@@ -633,7 +629,7 @@ $myfun([1, 2, 3])
         analyser = Analyser()
 
         typed = analyser.analyse(parse("""
-define rank(xs: Number+$n exact) -> Number => $n end
+define rank(xs: Number+$n novec) -> Number => $n end
 [[1], [2]] rank
 """))
 
@@ -5169,7 +5165,7 @@ class ForeachRefactoringLintTests(unittest.TestCase):
 
     def test_stateless_foreach_suggests_map_for_non_vectorising_body(self):
         analyser = self._analyse(
-            "define first(xs: Number+ exact) -> Number => $xs $[0] end\n"
+            "define first(xs: Number+ novec) -> Number => $xs $[0] end\n"
             "[[1], [2], [3]] foreach (xs) => first($xs) end"
         )
         self.assertEqual(

@@ -31,7 +31,7 @@ def nested_types(typ: T.Type) -> Iterator[T.Type]:
     """Yield a normalized type and its recursively nested type children."""
     typ = T.normalize(typ)
     yield typ
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         yield from nested_types(typ.inner)
     elif isinstance(typ, T.NominalType):
         for arg in typ.args:

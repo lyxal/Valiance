@@ -5,7 +5,7 @@ from valiance.vtypes.symbols import Symbol
 from valiance.vtypes import (
     AnonymousTrait,
     AnonymousTraitRequirement,
-    Atomic,
+    Exact,
     AtLeastArray,
     AtLeastList,
     C,
@@ -16,7 +16,7 @@ from valiance.vtypes import (
     ElementTagDefinition,
     ElementTagKind,
     Environment,
-    Exact,
+    NoVec,
     ExactArray,
     ExactList,
     Field,
@@ -90,7 +90,7 @@ ParseError = N(PARSE_ERROR)
 
 class TypeLibraryTests(unittest.TestCase):
     def test_atomic_marker_normalization_is_idempotent(self):
-        self.assertEqual(normalize(Atomic(Atomic(Integer))), Atomic(Integer))
+        self.assertEqual(normalize(Exact(Exact(Integer))), Exact(Integer))
 
     def test_intersection_with_never_normalizes_to_bottom(self):
         self.assertEqual(I(Integer, Never()), Never())
@@ -832,7 +832,7 @@ class TypeLibraryTests(unittest.TestCase):
                 self.assertEqual(applied.vectorised_depths, (1,))
 
     def test_exact_parameter_disables_vectorisation(self):
-        overload = Overload((Exact(Number),), (Number,))
+        overload = Overload((NoVec(Number),), (Number,))
 
         scalar = apply_overload(overload, (Integer,))
         vector = apply_overload(overload, (C(ListExactType, Integer),))
@@ -842,7 +842,7 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertIsNone(vector)
 
     def test_exact_collection_requires_the_declared_rank(self):
-        overload = Overload((Exact(C(ListExactType, Number)),), (Number,))
+        overload = Overload((NoVec(C(ListExactType, Number)),), (Number,))
 
         matching = apply_overload(overload, (C(ListExactType, Integer),))
         higher_rank = apply_overload(overload, (C(ListExactType, Integer, 2),))
@@ -853,20 +853,20 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertIsNone(higher_rank)
 
     def test_generic_exact_parameter_treats_collection_as_one_value(self):
-        overload = Overload((Exact(V("T")),), (V("T"),))
+        overload = Overload((NoVec(V("T")),), (V("T"),))
         argument = C(ListExactType, Integer)
 
         applied = apply_overload(overload, (argument,))
 
         self.assertIsNotNone(applied)
         self.assertEqual(applied.substitution["T"], argument)
-        self.assertEqual(applied.params, (Exact(argument),))
+        self.assertEqual(applied.params, (NoVec(argument),))
         self.assertEqual(applied.actual_returns, (argument,))
         self.assertFalse(applied.vectorised)
 
     def test_exact_argument_broadcasts_when_another_argument_vectorises(self):
         overload = Overload(
-            (Exact(C(ListExactType, Number)), Number),
+            (NoVec(C(ListExactType, Number)), Number),
             (Number,),
         )
 
@@ -885,7 +885,7 @@ class TypeLibraryTests(unittest.TestCase):
 
     def test_atomic_marker_can_supply_the_only_generic_evidence(self):
         applied = apply_overload(
-            Overload((Atomic(V("T")),), (V("T"),)),
+            Overload((Exact(V("T")),), (V("T"),)),
             (Integer,),
         )
 
@@ -894,14 +894,14 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(applied.actual_returns, (Integer,))
         self.assertIsNone(
             apply_overload(
-                Overload((Atomic(V("T")),), (V("T"),)),
+                Overload((Exact(V("T")),), (V("T"),)),
                 (C(ListExactType, Integer),),
             )
         )
 
     def test_atomic_collection_base_requires_scalar_items_and_declared_rank(self):
         overload = Overload(
-            (C(ListExactType, Atomic(V("T"))),),
+            (C(ListExactType, Exact(V("T"))),),
             (C(ListExactType, V("T")),),
         )
 
@@ -925,7 +925,7 @@ class TypeLibraryTests(unittest.TestCase):
 
     def test_atomic_list_pattern_preserves_direct_array_to_list_compatibility(self):
         overload = Overload(
-            (C(ListExactType, Atomic(V("T"))),),
+            (C(ListExactType, Exact(V("T"))),),
             (C(ListExactType, V("T")),),
         )
 
@@ -937,7 +937,7 @@ class TypeLibraryTests(unittest.TestCase):
 
     def test_atomic_evidence_validates_without_overriding_regular_evidence(self):
         overload = Overload(
-            (C(ListExactType, V("T")), Atomic(V("T"))),
+            (C(ListExactType, V("T")), Exact(V("T"))),
             (V("T"),),
         )
 

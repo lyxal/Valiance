@@ -52,7 +52,7 @@ def _declared_params(node: FunctionNode) -> tuple[T.Type, ...]:
 def _parameter_value_type(typ: T.Type) -> T.Type:
     """Remove parameter-only markers from a value type."""
     typ = T.normalize(typ)
-    if isinstance(typ, (T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.NoVecType, T.ExactType)):
         return _parameter_value_type(typ.inner)
     return typ
 
@@ -199,7 +199,7 @@ def _contextualize_return_expression(node: ASTNode, expected: T.Type) -> ASTNode
 def _empty_list_return_type(expected: T.Type) -> T.Type | None:
     """Determine the type of empty list return during static analysis."""
     expected = T.normalize(expected)
-    if isinstance(expected, (T.TaggedType, T.ExactType)):
+    if isinstance(expected, (T.TaggedType, T.NoVecType)):
         return _empty_list_return_type(expected.inner)
     if isinstance(expected, (T.ListExactType, T.ListMinType, T.ListRuggedType)):
         return T.C(T.ListExactType, expected.base, expected.rank)
@@ -401,10 +401,10 @@ def _transform_type_children(
         )
     if isinstance(typ, T.TaggedType):
         return T.Tagged(transform(typ.inner), *typ.tags, exact=typ.exact)
+    if isinstance(typ, T.NoVecType):
+        return T.NoVec(transform(typ.inner))
     if isinstance(typ, T.ExactType):
         return T.Exact(transform(typ.inner))
-    if isinstance(typ, T.AtomicType):
-        return T.Atomic(transform(typ.inner))
     return typ
 
 def _genericize_type(typ: T.Type, generics: tuple[Symbol, ...]) -> T.Type:
@@ -497,7 +497,7 @@ def _first_type_var_name(typ: T.Type) -> str | None:
                     return name
     if isinstance(typ, T.AnonymousTraitType):
         return anonymous_trait_subject_name(typ)
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _first_type_var_name(typ.inner)
     return None
 
@@ -526,7 +526,7 @@ def _contains_anonymous_trait(typ: T.Type) -> bool:
         return any(_contains_anonymous_trait(item) for item in typ.params) or any(
             _contains_anonymous_trait(item) for item in typ.returns
         )
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _contains_anonymous_trait(typ.inner)
     return False
 
@@ -573,7 +573,7 @@ def _collect_anonymous_trait_overloads(
         for item in typ.params + typ.returns:
             _collect_anonymous_trait_overloads(item, overloads)
         return
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         _collect_anonymous_trait_overloads(typ.inner, overloads)
 
 def _genericize_element_tags(
@@ -696,7 +696,7 @@ def _record_variance_use(
             for ret in requirement.overload.returns:
                 _record_variance_use(ret, polarity, usage)
         return
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         _record_variance_use(typ.inner, polarity, usage)
 
 def _anonymous_type_var(branch: _core.AnalysisBranch, offset: int) -> T.Type:
@@ -759,5 +759,5 @@ def _collect_anonymous_type_indices(typ: T.Type, indices: set[int]) -> None:
             for item in requirement.overload.params + requirement.overload.returns:
                 _collect_anonymous_type_indices(item, indices)
         return
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         _collect_anonymous_type_indices(typ.inner, indices)

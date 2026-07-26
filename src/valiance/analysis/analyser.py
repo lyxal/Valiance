@@ -233,7 +233,7 @@ def _nested_types(typ: T.Type) -> Iterator[T.Type]:
             for arg in element_tag.args:
                 yield from _nested_types(arg)
         return
-    if isinstance(typ, (T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.NoVecType, T.ExactType)):
         yield from _nested_types(typ.inner)
         return
     if isinstance(typ, T.AnonymousTraitType):

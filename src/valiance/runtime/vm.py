@@ -53,10 +53,10 @@ from valiance.runtime.runtime_values import (
 from valiance.elements.stdlib_native import runtime_stdlib_elements
 from valiance.analysis.contracts.where_clauses import MAX_COMPILE_TIME_RANK
 from valiance.vtypes import (
-    AtomicType,
+    ExactType,
     CollectionType,
     DataTag,
-    ExactType,
+    NoVecType,
     RankVariable,
     RuntimeTypePattern,
     TaggedType,
@@ -5228,7 +5228,7 @@ def _resolve_vectorisation_depths(
 def _parameter_stops_vectorisation(typ: Any) -> bool:
     """Return the Boolean result of parameter stops vectorisation during virtual-machine execution."""
     typ = normalize(typ)
-    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
+    if isinstance(typ, (TaggedType, NoVecType, ExactType)):
         return _parameter_stops_vectorisation(typ.inner)
     return isinstance(typ, CollectionType)
 

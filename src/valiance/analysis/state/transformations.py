@@ -77,10 +77,10 @@ def transform_type_children(
         return T.Fn(tuple(transform(item) for item in typ.params), tuple(transform(item) for item in typ.returns), element_tags(typ.element_tags))
     if isinstance(typ, T.TaggedType):
         return T.Tagged(transform(typ.inner), *typ.tags, exact=typ.exact)
+    if isinstance(typ, T.NoVecType):
+        return T.NoVec(transform(typ.inner))
     if isinstance(typ, T.ExactType):
         return T.Exact(transform(typ.inner))
-    if isinstance(typ, T.AtomicType):
-        return T.Atomic(transform(typ.inner))
     return typ
 
 
@@ -107,7 +107,7 @@ def present_data_tags(typ: T.Type) -> Iterator[T.DataTag]:
         for tag in typ.element_tags:
             for arg in tag.args: yield from present_data_tags(arg)
         for item in (*(typ.params or ()), *(typ.returns or ())): yield from present_data_tags(item)
-    elif isinstance(typ, (T.ExactType, T.AtomicType)):
+    elif isinstance(typ, (T.NoVecType, T.ExactType)):
         yield from present_data_tags(typ.inner)
     elif isinstance(typ, T.AnonymousTraitType):
         for requirement in typ.requirements:
@@ -307,8 +307,8 @@ def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
                 for requirement in typ.requirements
             ),
         )
-    if isinstance(typ, T.AtomicType):
-        return T.Atomic(_refine_type(typ.inner, old, new))
+    if isinstance(typ, T.ExactType):
+        return T.Exact(_refine_type(typ.inner, old, new))
     return transform_type_children(
         typ,
         lambda child: _refine_type(child, old, new),
@@ -334,8 +334,8 @@ def _refine_input_requirement(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
                 for requirement in typ.requirements
             ),
         )
-    if isinstance(typ, T.AtomicType):
-        return T.Atomic(_refine_input_requirement(typ.inner, old, new))
+    if isinstance(typ, T.ExactType):
+        return T.Exact(_refine_input_requirement(typ.inner, old, new))
     return transform_type_children(
         typ,
         lambda child: _refine_input_requirement(child, old, new),

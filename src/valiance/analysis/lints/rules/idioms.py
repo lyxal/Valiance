@@ -274,7 +274,7 @@ def _element_call_vectorisable(node: TypedElementNode) -> bool:
         applied is None
         or not applied.overload.params
         or any(
-            isinstance(T.normalize(param), T.ExactType)
+            isinstance(T.normalize(param), T.NoVecType)
             for param in applied.overload.params
         )
     ):

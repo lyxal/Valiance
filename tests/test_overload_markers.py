@@ -39,7 +39,7 @@ class OverloadMarkerIntegrationTests(unittest.TestCase):
 
     def test_first_class_generic_atomic_callable_enforces_rank(self):
         scalar_source = """
-$f = fn[T] (values: T atomic +) -> T+ => $values end
+$f = fn[T] (values: T+ exact) -> T+ => $values end
 $f([1, 2, 3])
 """
         analyser = Analyser()
@@ -53,7 +53,7 @@ $f([1, 2, 3])
 
         matrix_analyser = Analyser()
         matrix_analyser.analyse(parse("""
-$f = fn[T] (values: T atomic +) -> T+ => $values end
+$f = fn[T] (values: T+ exact) -> T+ => $values end
 $f([[1, 2], [3, 4]])
 """))
         self.assertEqual(len(matrix_analyser.diagnostics), 1)
@@ -66,7 +66,7 @@ $f([[1, 2], [3, 4]])
         analyser = Analyser()
 
         analyser.analyse(parse("""
-define[T] rankOneCopy(values: T atomic +) -> T+ => $values end
+define[T] rankOneCopy(values: T+ exact) -> T+ => $values end
 [[1, 2], [3, 4]] rankOneCopy
 """))
 

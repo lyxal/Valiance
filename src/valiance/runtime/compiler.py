@@ -103,10 +103,10 @@ from valiance.vtypes import (
     AppliedOverload,
     ArrayExactType,
     ArrayMinType,
-    AtomicType,
+    ExactType,
     CollectionType,
     DataTag,
-    ExactType,
+    NoVecType,
     FunctionType,
     IntersectionType,
     ListExactType,
@@ -1563,7 +1563,7 @@ def _ast_static_param_names(ast: FunctionNode) -> tuple[str, ...]:
 def _runtime_parameter_rank(typ: Type) -> int | None:
     """Return the collection rank a dynamic function parameter accepts."""
     typ = normalize(typ)
-    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
+    if isinstance(typ, (TaggedType, NoVecType, ExactType)):
         return _runtime_parameter_rank(typ.inner)
     if isinstance(typ, CollectionType):
         return typ.rank if isinstance(typ.rank, int) else None
@@ -1575,7 +1575,7 @@ def _runtime_parameter_rank(typ: Type) -> int | None:
 def _runtime_dispatch_type(typ: Type) -> str | None:
     """Determine the type of runtime dispatch during typed-AST bytecode lowering."""
     typ = normalize(typ)
-    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
+    if isinstance(typ, (TaggedType, NoVecType, ExactType)):
         return _runtime_dispatch_type(typ.inner)
     if isinstance(typ, NominalType):
         return show(typ)
@@ -1781,7 +1781,7 @@ def _record_runtime_variance_use(
             for ret in requirement.overload.returns:
                 _record_runtime_variance_use(ret, polarity, usage)
         return
-    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
+    if isinstance(typ, (TaggedType, NoVecType, ExactType)):
         _record_runtime_variance_use(typ.inner, polarity, usage)
 
 
@@ -1998,7 +1998,7 @@ def _runtime_collection_rank(typ: Type | None) -> int | None:
     if typ is None:
         return None
     typ = normalize(typ)
-    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
+    if isinstance(typ, (TaggedType, NoVecType, ExactType)):
         return _runtime_collection_rank(typ.inner)
     if isinstance(typ, (ListExactType, ArrayExactType)) and isinstance(typ.rank, int):
         return typ.rank
@@ -2040,7 +2040,7 @@ def _type_contains_data_tags(typ: Type) -> bool:
         return any(_type_contains_data_tags(item) for item in typ.items)
     if isinstance(typ, TupleType):
         return any(_type_contains_data_tags(item) for item in typ.params)
-    if isinstance(typ, (ExactType, AtomicType)):
+    if isinstance(typ, (NoVecType, ExactType)):
         return _type_contains_data_tags(typ.inner)
     return False
 
@@ -2220,7 +2220,7 @@ def _runtime_tag_contract_spec(typ: Type) -> object:
             typ.rank,
             _runtime_tag_contract_spec(typ.base),
         )
-    if isinstance(typ, (ExactType, AtomicType)):
+    if isinstance(typ, (NoVecType, ExactType)):
         return _runtime_tag_contract_spec(typ.inner)
     return ("any",)
 
@@ -2261,6 +2261,6 @@ def _cast_type_spec(typ: Type) -> object:
             ArrayMinType: "array_min",
         }[type(typ)]
         return ("collection", kind, typ.rank, _cast_type_spec(typ.base))
-    if isinstance(typ, (ExactType, AtomicType)):
+    if isinstance(typ, (NoVecType, ExactType)):
         return _cast_type_spec(typ.inner)
     raise CompileError(f"cannot compile checked cast to {typ}")

@@ -33,11 +33,11 @@ from valiance.vtypes.nodes import (
     AppliedOverload,
     ArrayExactType,
     ArrayMinType,
-    AtomicType,
+    ExactType,
     CollectionType,
     DataTag,
     ElementTag,
-    ExactType,
+    NoVecType,
     FunctionType,
     GenericConstraint,
     IntersectionType,
@@ -311,7 +311,7 @@ def _first_type_var_name(typ: Type) -> str | None:
                     return name
     if isinstance(typ, AnonymousTraitType):
         return anonymous_trait_subject_name(typ)
-    if isinstance(typ, (TaggedType, ExactType, AtomicType)):
+    if isinstance(typ, (TaggedType, NoVecType, ExactType)):
         return _first_type_var_name(typ.inner)
     return None
 
@@ -540,6 +540,40 @@ def _rank_ge(left: object, right: object) -> bool:
     return isinstance(left, int) and isinstance(right, int) and left >= right
 
 
+def _exact_pattern_shape_matches(pattern: Type, actual: Type) -> bool:
+    """Return whether ``actual`` has the complete structural shape of ``pattern``.
+
+    This is a pre-unification candidate filter. Type variables are wildcards at
+    their position, but they cannot absorb collection rank outside that position.
+    """
+    pattern, actual = normalize(pattern), normalize(actual)
+    if isinstance(pattern, (NoVecType, ExactType)):
+        return _exact_pattern_shape_matches(pattern.inner, actual)
+    if isinstance(pattern, TaggedType):
+        pattern = pattern.inner
+    if isinstance(actual, TaggedType):
+        actual = actual.inner
+    if isinstance(pattern, VarType):
+        return not isinstance(actual, CollectionType)
+    if isinstance(pattern, CollectionType):
+        if not isinstance(actual, CollectionType):
+            return False
+        if not isinstance(pattern.rank, int) or not isinstance(actual.rank, int):
+            return False
+        if pattern.rank != actual.rank:
+            return False
+        if isinstance(pattern, ListExactType):
+            if not isinstance(actual, (ListExactType, ArrayExactType)):
+                return False
+        elif isinstance(pattern, ArrayExactType):
+            if not isinstance(actual, ArrayExactType):
+                return False
+        elif type(pattern) is not type(actual):
+            return False
+        return _exact_pattern_shape_matches(pattern.base, actual.base)
+    return not isinstance(actual, CollectionType)
+
+
 def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
     """Return whether a value of ``source`` can be stored in ``target``."""
     ctx = ctx or Context()
@@ -551,10 +585,12 @@ def assignable(source: Type, target: Type, ctx: Context | None = None) -> bool:
 
     if same(source, target):
         return True
-    if isinstance(target, ExactType):
+    if isinstance(target, NoVecType):
         return assignable(source, target.inner, ctx)
-    if isinstance(target, AtomicType):
-        return _is_scalar_type(source) and assignable(source, target.inner, ctx)
+    if isinstance(target, ExactType):
+        return _exact_pattern_shape_matches(target.inner, source) and assignable(
+            source, target.inner, ctx
+        )
 
     if subtype(source, target, ctx):
         return True
@@ -770,19 +806,12 @@ def _solve(
             return True
         if same(p, a):
             return True
+        if isinstance(p, NoVecType):
+            return rec(p.inner, a)
         if isinstance(p, ExactType):
-            return rec(p.inner, a)
-        if isinstance(p, AtomicType):
-            if not _is_scalar_type(a):
-                return False
-            if isinstance(p.inner, VarType):
-                # Atomic occurrences are validation evidence, not ordinary
-                # unification evidence.  A non-atomic occurrence of the same
-                # variable wins when present; when this is the only evidence,
-                # the scalar actual still provides a useful fallback solution.
-                add(p.inner.name, AtomicType(a))
-                return True
-            return rec(p.inner, a)
+            # Exact is a structural gate only. Once the complete argument shape
+            # passes, ordinary unification runs against the unmarked pattern.
+            return _exact_pattern_shape_matches(p.inner, a) and rec(p.inner, a)
         if _is_optional(p):
             if isinstance(a, NoneTypeNode):
                 # None does not constrain T in T?. Another argument or context
@@ -952,7 +981,7 @@ def _solve(
         if isinstance(a, TaggedType):
             return rec(p, a.inner)
         if isinstance(p, CollectionType) and isinstance(a, CollectionType):
-            if isinstance(p.base, AtomicType):
+            if isinstance(p.base, ExactType):
                 return _atomic_collection_shape_matches(p, a) and rec(
                     p.base,
                     a.base,
@@ -1129,7 +1158,7 @@ def collection_item_type(t: Type) -> Type | None:
 def _collection_view(t: Type) -> CollectionType | None:
     """Return a collection node through transparent wrappers, if present."""
     t = normalize(t)
-    if isinstance(t, (TaggedType, ExactType)):
+    if isinstance(t, (TaggedType, NoVecType)):
         return _collection_view(t.inner)
     if isinstance(t, CollectionType):
         return t
@@ -1214,17 +1243,6 @@ def _combine_all(
     vals = list(dict.fromkeys(normalize(value) for value in values))
     if not vals:
         return None
-
-    # ``AtomicType`` values are solver-only evidence.  They must not narrow or
-    # widen a solution supplied by an ordinary occurrence of the generic.  If
-    # every occurrence is atomic, however, their scalar payloads are sufficient
-    # to infer the generic rather than leaving the overload permanently
-    # underconstrained (for example ``T atomic +``).
-    ordinary = [value for value in vals if not isinstance(value, AtomicType)]
-    if ordinary:
-        vals = ordinary
-    else:
-        vals = [value.inner for value in vals if isinstance(value, AtomicType)]
 
     # Prefer an evidence type that already accepts every other observation.
     # This handles chains such as Integer -> Real -> Number and bridge types
@@ -1462,10 +1480,10 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
         )
     if isinstance(t, TaggedType):
         return Tagged(_substitute(t.inner, subst), *t.tags, exact=t.exact)
+    if isinstance(t, NoVecType):
+        return NoVecType(_substitute(t.inner, subst))
     if isinstance(t, ExactType):
         return ExactType(_substitute(t.inner, subst))
-    if isinstance(t, AtomicType):
-        return AtomicType(_substitute(t.inner, subst))
     return t
 
 
@@ -1524,7 +1542,7 @@ def _generic_constraints_met(
 def _is_scalar_type(t: Type) -> bool:
     """Return whether every value represented by ``t`` has collection rank zero."""
     t = normalize(t)
-    if isinstance(t, (TaggedType, ExactType, AtomicType)):
+    if isinstance(t, (TaggedType, NoVecType, ExactType)):
         return _is_scalar_type(t.inner)
     if isinstance(t, CollectionType):
         return False
@@ -1547,7 +1565,7 @@ def compatible(argument: Type, parameter: Type, ctx: Context | None = None) -> b
         return True
     if (
         isinstance(parameter, VarType)
-        and isinstance(argument, AtomicType)
+        and isinstance(argument, ExactType)
         and _contains_named_type_var(argument.inner, parameter.name)
     ):
         return True
@@ -1728,7 +1746,7 @@ def _runtime_dispatch_pattern(
 ) -> RuntimeTypePattern | None:
     """Compute runtime dispatch pattern during type and overload solving."""
     typ = normalize(typ)
-    if isinstance(typ, (ExactType, AtomicType)):
+    if isinstance(typ, (NoVecType, ExactType)):
         return _runtime_dispatch_pattern(typ.inner, ctx)
     if isinstance(typ, TaggedType):
         inner = _runtime_dispatch_pattern(typ.inner, ctx)
@@ -1971,7 +1989,7 @@ def _overload_result_for_args(
 def _vectorisation_excess(argument: Type, expected: Type, ctx: Context) -> int | None:
     """Compute vectorisation excess during type and overload solving."""
     expected = normalize(expected)
-    if isinstance(expected, ExactType):
+    if isinstance(expected, NoVecType):
         return 0 if assignable(argument, expected.inner, ctx) else None
     argument_collection = _collection_view(argument)
     if argument_collection is None:
@@ -2204,7 +2222,7 @@ def _wrap_returns_for_vectorisation(
 
 def _can_vectorise(argument: Type, parameter: Type, ctx: Context) -> bool:
     """Return whether compatibility can be achieved through vectorisation."""
-    if isinstance(parameter, ExactType):
+    if isinstance(parameter, (NoVecType, ExactType)):
         return False
     argument_collection = _collection_view(argument)
     parameter_collection = _collection_view(parameter)
@@ -2276,7 +2294,7 @@ def _match_specificity(
         return Specificity.UNION
     if isinstance(parameter, UnionType) and compatible(argument, parameter, ctx):
         return Specificity.UNION
-    if isinstance(parameter, ExactType) and compatible(argument, parameter.inner, ctx):
+    if isinstance(parameter, NoVecType) and compatible(argument, parameter.inner, ctx):
         return Specificity.EXACT_GENERIC
     if _can_vectorise(argument, parameter, ctx):
         return Specificity.VECTORISED
@@ -2755,7 +2773,7 @@ def _contains_type_var(t: Type) -> bool:
             for requirement in t.requirements
             for item in requirement.overload.params + requirement.overload.returns
         )
-    if isinstance(t, (TaggedType, ExactType, AtomicType)):
+    if isinstance(t, (TaggedType, NoVecType, ExactType)):
         return _contains_type_var(t.inner)
     return False
 
@@ -2791,7 +2809,7 @@ def _contains_named_type_var(t: Type, name: str) -> bool:
             for requirement in t.requirements
             for item in requirement.overload.params + requirement.overload.returns
         )
-    if isinstance(t, (TaggedType, ExactType, AtomicType)):
+    if isinstance(t, (TaggedType, NoVecType, ExactType)):
         return _contains_named_type_var(t.inner, name)
     return False
 

@@ -48,7 +48,7 @@ def _declared_params(node: FunctionNode) -> tuple[T.Type, ...]:
 def _atomic_type_var_names(typ: T.Type) -> frozenset[str]:
     """Collect generics whose own rank determines an atomic position."""
     typ = T.normalize(typ)
-    if isinstance(typ, T.AtomicType):
+    if isinstance(typ, T.ExactType):
         return _atomic_subject_type_var_names(typ.inner)
     if isinstance(typ, T.NominalType):
         children = typ.args
@@ -66,7 +66,7 @@ def _atomic_type_var_names(typ: T.Type) -> frozenset[str]:
         # Markers in a nested callable signature constrain calls through that
         # value, not the outer function's generic arguments.
         children = ()
-    elif isinstance(typ, (T.TaggedType, T.ExactType)):
+    elif isinstance(typ, (T.TaggedType, T.NoVecType)):
         children = (typ.inner,)
     else:
         children = ()
@@ -81,7 +81,7 @@ def _atomic_subject_type_var_names(typ: T.Type) -> frozenset[str]:
     typ = T.normalize(typ)
     if isinstance(typ, T.VarType):
         return frozenset((typ.name,))
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _atomic_subject_type_var_names(typ.inner)
     if isinstance(typ, (T.UnionType, T.IntersectionType)):
         names: set[str] = set()
@@ -106,7 +106,7 @@ def _atomic_parameter_type_vars(
 def _parameter_value_type(typ: T.Type) -> T.Type:
     """Return the type visible inside a function body for one parameter."""
     typ = T.normalize(typ)
-    if isinstance(typ, (T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.NoVecType, T.ExactType)):
         return _parameter_value_type(typ.inner)
     if isinstance(typ, T.NominalType):
         return T.N(
@@ -169,10 +169,10 @@ def _restore_type_markers(declared: T.Type, inferred: T.Type) -> T.Type:
     """Overlay parameter-only markers from ``declared`` onto ``inferred``."""
     declared = T.normalize(declared)
     inferred = T.normalize(inferred)
+    if isinstance(declared, T.NoVecType):
+        return T.NoVec(_restore_type_markers(declared.inner, inferred))
     if isinstance(declared, T.ExactType):
         return T.Exact(_restore_type_markers(declared.inner, inferred))
-    if isinstance(declared, T.AtomicType):
-        return T.Atomic(_restore_type_markers(declared.inner, inferred))
     if isinstance(declared, T.NominalType) and isinstance(inferred, T.NominalType):
         if declared.name == inferred.name and len(declared.args) == len(inferred.args):
             return T.N(
@@ -389,7 +389,7 @@ def _is_call_site_checked_type(typ: T.Type) -> bool:
         return any(
             _is_call_site_checked_type(item) for item in typ.params + typ.returns
         )
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _is_call_site_checked_type(typ.inner)
     return False
 
@@ -483,7 +483,7 @@ def _type_contains_rank_var(typ: T.Type) -> bool:
         return any(_type_contains_rank_var(item.typ) for item in typ.items)
     if isinstance(typ, T.FunctionType):
         return _contains_rank_var(typ.params) or _contains_rank_var(typ.returns)
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _type_contains_rank_var(typ.inner)
     return False
 
@@ -507,7 +507,7 @@ def _contains_type_var(typ: T.Type) -> bool:
         return any(_contains_type_var(item) for item in typ.params or ()) or any(
             _contains_type_var(item) for item in typ.returns or ()
         )
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _contains_type_var(typ.inner)
     return False
 
@@ -543,7 +543,7 @@ def _contains_named_type_var(typ: T.Type, name: str) -> bool:
             for requirement in typ.requirements
             for item in requirement.overload.params + requirement.overload.returns
         )
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _contains_named_type_var(typ.inner, name)
     return False
 
@@ -910,7 +910,7 @@ def _function_type_element_tag_sets(
     if isinstance(typ, T.CollectionType):
         yield from _function_type_element_tag_sets(typ.base)
         return
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         yield from _function_type_element_tag_sets(typ.inner)
         return
     if isinstance(typ, T.AnonymousTraitType):
@@ -964,7 +964,7 @@ def _present_data_tags(typ: T.Type) -> Iterator[T.DataTag]:
         for item in (*(typ.params or ()), *(typ.returns or ())):
             yield from _present_data_tags(item)
         return
-    if isinstance(typ, (T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.NoVecType, T.ExactType)):
         yield from _present_data_tags(typ.inner)
         return
     if isinstance(typ, T.AnonymousTraitType):

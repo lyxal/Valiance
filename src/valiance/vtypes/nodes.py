@@ -260,15 +260,15 @@ class TaggedType(Type):
 
 
 @dataclass(frozen=True)
-class ExactType(Type):
+class NoVecType(Type):
     """Call-policy metadata that disables parameter vectorisation."""
 
     inner: Type
 
 
 @dataclass(frozen=True)
-class AtomicType(Type):
-    """Call-policy metadata requiring a scalar argument position."""
+class ExactType(Type):
+    """Call-policy metadata requiring an exact structural argument match."""
 
     inner: Type
 

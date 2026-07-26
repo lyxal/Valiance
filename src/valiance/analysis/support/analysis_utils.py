@@ -644,8 +644,8 @@ def _refine_type(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
                 for requirement in typ.requirements
             ),
         )
-    if isinstance(typ, T.AtomicType):
-        return T.Atomic(_refine_type(typ.inner, old, new))
+    if isinstance(typ, T.ExactType):
+        return T.Exact(_refine_type(typ.inner, old, new))
     return _functions._transform_type_children(
         typ,
         lambda child: _refine_type(child, old, new),
@@ -671,8 +671,8 @@ def _refine_input_requirement(typ: T.Type, old: T.Type, new: T.Type) -> T.Type:
                 for requirement in typ.requirements
             ),
         )
-    if isinstance(typ, T.AtomicType):
-        return T.Atomic(_refine_input_requirement(typ.inner, old, new))
+    if isinstance(typ, T.ExactType):
+        return T.Exact(_refine_input_requirement(typ.inner, old, new))
     return _functions._transform_type_children(
         typ,
         lambda child: _refine_input_requirement(child, old, new),

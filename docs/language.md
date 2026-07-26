@@ -999,25 +999,25 @@ fn (:Number+, :Number+) => +
 ## 7.2. Disabling Vectorisation in an Overload
 
 - By default, parameters vectorise. Marking a parameter with the postfix
-  call-policy marker `exact` prevents that parameter from being used as a
+  call-policy marker `novec` prevents that parameter from being used as a
   vectorisation target. An argument must be directly compatible with the
   marked type; vectorisation cannot peel collection ranks from it to make the
   call fit.
-- `exact` is not a runtime type and does not change the value received by the
+- `novec` is not a runtime type and does not change the value received by the
   function body. It is retained in overload and `Function[...]` signatures so
   direct calls and calls through function values enforce the same policy, then
   erased from the parameter type visible inside the body.
-- `exact` does not require the runtime value to have exactly the same nominal
+- `novec` does not require the runtime value to have novecly the same nominal
   type. Ordinary assignability still applies, so an `Integer` can satisfy
-  `Number exact`. It only disables the vectorisation fallback for that
+  `Number novec`. It only disables the vectorisation fallback for that
   parameter.
-- `exact` is a terminal postfix for the type expression it marks. Put rank,
-  optional, and tag syntax before it, such as `Number+ exact`, `Number? exact`,
-  or `#sorted Number+ exact`.
+- `novec` is a terminal postfix for the type expression it marks. Put rank,
+  optional, and tag syntax before it, such as `Number+ novec`, `Number? novec`,
+  or `#sorted Number+ novec`.
 
 ```
-$myfun = fn (:Number exact) => double
-#? A Function[Number exact -> Number]
+$myfun = fn (:Number novec) => double
+#? A Function[Number novec -> Number]
 $myfun(10)        #? 20
 $myfun([1, 2, 3]) #? Compile error: No overload found
 
@@ -1027,33 +1027,33 @@ $myfunvec(10)        #? 20
 $myfunvec([1, 2, 3]) #? [2, 4, 6]
 ```
 
-- Marking a collection type exact makes the collection itself one argument and
-  requires its declared rank. `Number+ exact` accepts a rank-1 number list but
+- Marking a collection type novec makes the collection itself one argument and
+  requires its declared rank. `Number+ novec` accepts a rank-1 number list but
   rejects a rank-2 list instead of vectorising over its outer rank.
 
 ```
-$first = fn (xs: Number+ exact) -> Number => $xs head
+$first = fn (xs: Number+ novec) -> Number => $xs head
 $first([1, 2, 3])        #? 1
 $first([[1, 2], [3, 4]]) #? Compile error: No overload found
 ```
 
-- Exact arguments broadcast unchanged when another parameter causes the call
+- Novec arguments broadcast unchanged when another parameter causes the call
   to vectorise. Only arguments whose parameters permit vectorisation are
   indexed at each vectorised depth.
 
 ```
-define keep(xs: Number+ exact, x: Number) -> Number+ => $xs end
+define keep(xs: Number+ novec, x: Number) -> Number+ => $xs end
 
 [10, 20, 30] [1, 2] keep
 #? [[10, 20, 30], [10, 20, 30]]
 ```
 
-- A generic exact parameter binds the whole argument type. For example,
-  `T exact` given a `Number+` argument binds `T` to `Number+`; it does not bind
+- A generic novec parameter binds the whole argument type. For example,
+  `T novec` given a `Number+` argument binds `T` to `Number+`; it does not bind
   `T` to `Number` and vectorise the call.
 
 ```
-$identity = fn[T] (value: T exact) -> T => $value
+$identity = fn[T] (value: T novec) -> T => $value
 $identity([1, 2, 3]) #? [1, 2, 3]
 ```
 
@@ -2356,52 +2356,26 @@ define[T] sum(
 ) -> T => fold: +
 ```
 
-## 16.1. `atomic` type marker
+## 16.1. `exact` type marker
+- `exact` is a terminal postfix overload-candidate filter applied to the complete
+  type pattern. It is retained in callable parameter signatures, erased from the
+  value type visible inside the body, and does not itself supply a generic
+  solution.
+- Exact filtering happens before ordinary unification. The argument must have
+  the complete structural shape named by the pattern; only after that check
+  succeeds are generics unified normally against the unmarked pattern.
+- `T+4 exact` therefore accepts only an exact-rank 4 list (or compatible
+  exact-rank 4 array view) whose scalar leaves can bind `T`. Rank 3 and rank 5
+  arguments are removed from the candidate set, so `T` cannot absorb excess
+  rank.
 
-- `atomic` is an overload-resolution marker that requires the marked position
-  to be scalar (rank zero). Like `exact`, it is retained in callable parameter
-  signatures, but it is not a runtime type and is erased from the value type
-  visible inside the function body. A top-level marker written on a return or
-  cast target is likewise erased; it cannot create a distinct value type.
-- Its main use is preventing a collection pattern from absorbing extra rank
-  into a generic. Without the marker, `T+` accepts a rank-2 list by binding `T`
-  to a rank-1 list type. `T atomic +` instead requires `T` itself to be scalar,
-  so the argument must be a rank-1 list of scalar values.
-
-```
-define[T] rankOne(values: T atomic +) -> T+ =>
-  #? $values has type T+ here, not an "atomic type"
-  $values
-end
-
-[1, 2, 3] rankOne        #? accepted
-[[1, 2], [3, 4]] rankOne #? compile error
+```valiance
+define[T] rankFour(values: T+4 exact) -> T+4 => $values end
 ```
 
-- `atomic` never changes what `T` means. If another parameter solves `T` as a
-  collection type, a separate `T atomic` parameter cannot reinterpret `T` as
-  that collection's scalar base; the overload is inconsistent and is rejected.
-- An atomic occurrence can provide fallback evidence when it is the only place
-  a generic appears. For example, a scalar argument to `T atomic` can still
-  infer `T`. If ordinary occurrences also provide evidence, they determine the
-  generic and the atomic occurrence validates that same solution.
-- A generic function that forwards a value to an atomic parameter must expose
-  the same guarantee in its own signature. An unmarked `U+` parameter cannot
-  safely be forwarded to `T atomic +`, because a later call could instantiate
-  `U` with a collection type.
-
-```
-define[T] rankOne(values: T atomic +) -> T+ => $values end
-
-define[U] safeForward(values: U atomic +) -> U+ =>
-  $values rankOne
-end
-
-# This is rejected at its definition, not deferred until a bad call:
-define[U] unsafeForward(values: U+) -> U+ =>
-  $values rankOne
-end
-```
+- `T exact` requires a scalar argument. `T+ exact` requires an exact-rank 1
+  collection of scalar values. Write the marker after rank, optional, and tag
+  syntax.
 
 ## 16.2. Generics and Unification
 

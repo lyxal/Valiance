@@ -614,7 +614,7 @@ def _runtime_return_tags(typ: T.Type) -> tuple[T.DataTag, ...]:
 def _runtime_type_is_ownership_trivial(typ: T.Type) -> bool:
     """Conservatively identify values that never need retain/release work."""
     typ = T.normalize(typ)
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _runtime_type_is_ownership_trivial(typ.inner)
     if isinstance(typ, T.NominalType):
         return not typ.args and typ.name.text in {
@@ -905,7 +905,7 @@ def _present_value(value: Any) -> Any:
 def _runtime_parameter_preserves_value(parameter: T.Type) -> bool:
     """Return whether a built-in parameter receives the complete runtime value."""
     parameter = T.normalize(parameter)
-    while isinstance(parameter, (T.ExactType, T.AtomicType, T.TaggedType)):
+    while isinstance(parameter, (T.NoVecType, T.ExactType, T.TaggedType)):
         parameter = T.normalize(parameter.inner)
     return isinstance(parameter, (T.VarType, T.FunctionType, T.OverloadSetType))
 
@@ -920,7 +920,7 @@ def _runtime_implementation_arg(value: Any, parameter: T.Type) -> Any:
     value; tag validation and propagation remain VM responsibilities.
     """
     parameter = T.normalize(parameter)
-    if isinstance(parameter, (T.ExactType, T.AtomicType)):
+    if isinstance(parameter, (T.NoVecType, T.ExactType)):
         return _runtime_implementation_arg(value, parameter.inner)
     if isinstance(parameter, (T.VarType, T.FunctionType, T.OverloadSetType)):
         return value
@@ -935,7 +935,7 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
     typ = T.normalize(typ)
     if isinstance(typ, T.VarType):
         return True
-    if isinstance(typ, T.ExactType):
+    if isinstance(typ, T.NoVecType):
         return _runtime_assignable(value, typ.inner)
     if isinstance(typ, T.TaggedType):
         if any(
@@ -971,7 +971,7 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
 def _runtime_vector_arg_matches(value: Any, typ: T.Type) -> bool:
     """Return the Boolean result of runtime vector arg matches for the built-in catalogue and runtime."""
     typ = T.normalize(typ)
-    if isinstance(typ, T.ExactType):
+    if isinstance(typ, T.NoVecType):
         return _runtime_assignable(value, typ.inner)
     if is_list_like(value) and not _is_collection_parameter(typ):
         return True

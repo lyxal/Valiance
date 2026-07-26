@@ -49,13 +49,13 @@ from valiance.vtypes.symbols import Symbol
 from valiance.vtypes import (
     AnonymousTrait,
     AnonymousTraitRequirement,
-    Atomic,
+    Exact,
     AtLeastArray,
     AtLeastList,
     Boolean,
     Context,
     DataTag,
-    Exact,
+    NoVec,
     ExactArray,
     ExactTags,
     Environment,
@@ -128,7 +128,7 @@ class FuzzStats:
 
 
 class FuzzFailure(AssertionError):
-    """A fuzz failure carrying the exact case needed for reproduction."""
+    """A fuzz failure carrying the novec case needed for reproduction."""
 
     def __init__(
         self,
@@ -994,7 +994,7 @@ def _fuzz_serialization_roundtrip(
         encoded = dumps(program)
         decoded = loads(encoded)
         if decoded != program:
-            raise AssertionError("bytecode serialization is not an exact round trip")
+            raise AssertionError("bytecode serialization is not an novec round trip")
         if dumps(decoded) != encoded:
             raise AssertionError("bytecode serialization is not canonical")
         return program
@@ -1284,7 +1284,7 @@ def _fuzz_type_relations(
             raise AssertionError("tagged normalization is not stable")
 
         row = Row(left)
-        exact = Exact(left)
+        exact = NoVec(left)
         show(row)
         show(exact)
         return case
@@ -1393,78 +1393,30 @@ def _fuzz_overload_markers(
     iteration: int,
     _config: FuzzConfig,
 ) -> object:
-    """Exercise atomic/exact call policy without leaking markers into values."""
+    """Exercise exact/novec call policy without leaking markers into values."""
     scalar = rng.choice((Integer, Real, Number, String))
-    other = String if scalar != String else Integer
     rank = rng.randint(1, 3)
     collection_type = rng.choice((ExactList, ExactArray))
     collection = collection_type(scalar, rank)
     case = (scalar, rank, type(collection).__name__, iteration)
     try:
-        atomic_scalar = Overload((Atomic(V("T")),), (V("T"),))
-        applied = apply_overload(atomic_scalar, (scalar,))
+        exact_pattern = Overload((Exact(type(collection)(V("T"), rank)),), (V("T"),))
+        applied = apply_overload(exact_pattern, (collection,))
         if applied is None or not same(applied.substitution["T"], scalar):
-            raise AssertionError("atomic-only generic evidence did not solve")
-        if apply_overload(atomic_scalar, (collection,)) is not None:
-            raise AssertionError("atomic scalar parameter accepted a collection")
+            raise AssertionError("exact pattern did not unify after shape filtering")
+        if apply_overload(exact_pattern, (type(collection)(scalar, rank + 1),)) is not None:
+            raise AssertionError("exact pattern accepted excess rank")
 
-        atomic_collection = Overload(
-            (type(collection)(Atomic(V("T")), rank),),
-            (type(collection)(V("T"), rank),),
-        )
-        applied = apply_overload(atomic_collection, (collection,))
-        if applied is None or not same(applied.substitution["T"], scalar):
-            raise AssertionError("atomic collection base did not solve its scalar")
-        if apply_overload(
-            atomic_collection,
-            (type(collection)(scalar, rank + 1),),
-        ) is not None:
-            raise AssertionError("atomic collection marker accepted excess rank")
-        if apply_overload(
-            atomic_collection,
-            (type(collection)(ExactList(scalar), rank),),
-        ) is not None:
-            raise AssertionError("atomic collection marker accepted collection items")
-
-        list_view = Overload(
-            (ExactList(Atomic(V("T")), rank),),
-            (ExactList(V("T"), rank),),
-        )
-        array_view = apply_overload(list_view, (ExactArray(scalar, rank),))
-        if array_view is None or not same(array_view.substitution["T"], scalar):
-            raise AssertionError("atomic list pattern rejected an exact array view")
-
-        # A normal occurrence determines T; atomic occurrences validate its
-        # scalar view without changing that solution.
-        evidence_overload = Overload(
-            (ExactList(V("T")), Atomic(V("T"))),
-            (V("T"),),
-        )
-        direct = ExactList(scalar)
-        applied = apply_overload(evidence_overload, (direct, scalar))
-        if applied is None or not same(applied.substitution["T"], scalar):
-            raise AssertionError("atomic evidence overrode ordinary evidence")
-        if apply_overload(evidence_overload, (direct, other)) is not None:
-            raise AssertionError("inconsistent atomic evidence was accepted")
-        nested = ExactList(scalar, 2)
-        if apply_overload(evidence_overload, (nested, scalar)) is not None:
-            raise AssertionError(
-                "atomic marker changed a collection-valued generic to its base"
-            )
-
-        exact_overload = Overload((Exact(collection),), (scalar,))
-        exact_applied = apply_overload(exact_overload, (collection,))
-        if exact_applied is None or exact_applied.vectorised:
-            raise AssertionError("exact parameter did not accept a direct value")
-        if apply_overload(
-            exact_overload,
-            (type(collection)(scalar, rank + 1),),
-        ) is not None:
-            raise AssertionError("exact parameter accepted vectorisation")
+        novec_pattern = Overload((NoVec(collection),), (scalar,))
+        applied = apply_overload(novec_pattern, (collection,))
+        if applied is None or applied.vectorised:
+            raise AssertionError("novec rejected a direct match")
+        if apply_overload(novec_pattern, (type(collection)(scalar, rank + 1),)) is not None:
+            raise AssertionError("novec accepted vectorisation")
 
         values = ", ".join(str(rng.randint(0, 9)) for _ in range(rng.randint(1, 5)))
         source = f"""
-define[T] rankOne(xs: T atomic +) -> T+ => $xs end
+define[T] rankOne(xs: T+ exact) -> T+ => $xs end
 [{values}] rankOne
 """
         analyser = Analyser()
@@ -1474,9 +1426,9 @@ define[T] rankOne(xs: T atomic +) -> T+ => $xs end
         direct = run(compile_program(typed, optimize=False))
         restored = run(loads(dumps(compile_program(typed, optimize=False))))
         if direct != restored:
-            raise AssertionError("marker program changed after serialization")
+            raise AssertionError("marker bytecode round trip changed execution")
         return case
-    except BaseException as exc:
+    except Exception as exc:
         raise _GeneratedCaseFailure(case, exc) from exc
 
 _STRUCT_FOO = Symbol("FuzzFoo")

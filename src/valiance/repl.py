@@ -25,7 +25,7 @@ _KEYWORDS = frozenset(
         "as",
         "assert",
         "at",
-        "atomic",
+        "novec",
         "break",
         "companion",
         "computed",

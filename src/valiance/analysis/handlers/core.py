@@ -181,7 +181,7 @@ def _string_literal(
 def _at_collection_view(typ: T.Type) -> T.CollectionType | None:
     """Build the view of at collection during static analysis."""
     typ = T.normalize(typ)
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _at_collection_view(typ.inner)
     return typ if isinstance(typ, T.CollectionType) else None
 
@@ -189,7 +189,7 @@ def _at_collection_view(typ: T.Type) -> T.CollectionType | None:
 def _at_level_type(source: T.Type, target_rank: int) -> T.Type | None:
     """Determine the type of at level during static analysis."""
     source = T.normalize(source)
-    if isinstance(source, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(source, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _at_level_type(source.inner, target_rank)
     if not isinstance(source, T.CollectionType):
         return source if target_rank == 0 else None

@@ -237,7 +237,7 @@ def _call_permits_vectorisation(typed: TypedNode) -> bool:
     applied = getattr(typed, "overload", None)
     if not isinstance(applied, T.AppliedOverload):
         return False
-    if any(isinstance(T.normalize(param), T.ExactType) for param in applied.overload.params):
+    if any(isinstance(T.normalize(param), T.NoVecType) for param in applied.overload.params):
         return False
     if not isinstance(typed, TypedElementNode) or typed.overload_index is None:
         return True

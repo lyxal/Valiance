@@ -110,7 +110,7 @@ def rank_variable_names_in_type(typ: T.Type) -> set[str]:
             for tag in overload.element_tags:
                 for arg in tag.args:
                     names.update(rank_variable_names_in_type(arg))
-    elif isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    elif isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         names.update(rank_variable_names_in_type(typ.inner))
     return names
 
@@ -781,7 +781,7 @@ def _contains_result_type(typ: T.Type) -> bool:
             _overload_contains_result(requirement.overload)
             for requirement in typ.requirements
         )
-    if isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _contains_result_type(typ.inner)
     return False
 
@@ -931,8 +931,8 @@ def _substitute_type(
             *typ.tags,
             exact=typ.exact,
         )
+    if isinstance(typ, T.NoVecType):
+        return T.NoVec(_substitute_type(typ.inner, ranks, types))
     if isinstance(typ, T.ExactType):
         return T.Exact(_substitute_type(typ.inner, ranks, types))
-    if isinstance(typ, T.AtomicType):
-        return T.Atomic(_substitute_type(typ.inner, ranks, types))
     return typ

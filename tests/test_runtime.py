@@ -844,7 +844,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
     def test_exact_parameter_executes_as_ordinary_scalar_value(self):
         self.assertEqual(
             execute("""
-$myfun = fn (:Number exact) => double
+$myfun = fn (:Number novec) => double
 $myfun(10)
 """),
             [RuntimeNumber("20")],
@@ -853,7 +853,7 @@ $myfun(10)
     def test_exact_collection_broadcasts_while_other_parameter_vectorises(self):
         self.assertEqual(
             execute("""
-define keep(xs: Number+ exact, x: Number) -> Number+ => $xs end
+define keep(xs: Number+ novec, x: Number) -> Number+ => $xs end
 [10, 20, 30] [1, 2] keep
 """),
             [
@@ -979,7 +979,7 @@ end
         source = """
 define[T: trait => extend ==(:T, :T) -> #boolean Number end] findScalar(
   xs: T+,
-  x: T atomic
+  x: T exact
 ) -> Integer? =>
   $xs foreach (item, pos) =>
     if ($item == $x) => return $pos
@@ -996,7 +996,7 @@ end
         definition = """
 define[T: trait => extend ==(:T, :T) -> #boolean Number end] findScalar(
   xs: T+,
-  x: T atomic
+  x: T exact
 ) -> Integer? =>
   $xs foreach (item, pos) =>
     if ($item == $x) => return $pos
@@ -1016,7 +1016,7 @@ end
     def test_generic_atomic_rank_one_list_executes_with_unmarked_body_type(self):
         self.assertEqual(
             execute("""
-define[T] rankOne(xs: T atomic +) -> T+ => $xs end
+define[T] rankOne(xs: T+ exact) -> T+ => $xs end
 [1, 2, 3] rankOne
 """),
             [[RuntimeNumber("1"), RuntimeNumber("2"), RuntimeNumber("3")]],

@@ -42,80 +42,8 @@ def _atomic_call_requirements_satisfied(
     params: tuple[T.Type, ...],
     scalar_generics: frozenset[str],
 ) -> bool:
-    """Check analysis-only scalar guarantees required by atomic markers."""
-    return len(args) == len(params) and all(
-        _atomic_requirement_satisfied(actual, expected, scalar_generics)
-        for actual, expected in zip(args, params, strict=True)
-    )
-
-
-def _atomic_requirement_satisfied(
-    actual: T.Type,
-    expected: T.Type,
-    scalar_generics: frozenset[str],
-) -> bool:
-    """Check one parameter tree without exposing markers as value types."""
-    actual = T.normalize(actual)
-    expected = T.normalize(expected)
-    if isinstance(expected, T.AtomicType):
-        return _analysis_type_is_scalar(actual, scalar_generics)
-    if isinstance(actual, (T.TaggedType, T.ExactType, T.AtomicType)):
-        return _atomic_requirement_satisfied(
-            actual.inner,
-            expected,
-            scalar_generics,
-        )
-    if isinstance(expected, (T.TaggedType, T.ExactType)):
-        return _atomic_requirement_satisfied(
-            actual,
-            expected.inner,
-            scalar_generics,
-        )
-    if isinstance(actual, T.CollectionType) and isinstance(
-        expected,
-        T.CollectionType,
-    ):
-        return _atomic_requirement_satisfied(
-            actual.base,
-            expected.base,
-            scalar_generics,
-        )
-    if isinstance(actual, T.NominalType) and isinstance(expected, T.NominalType):
-        if actual.name != expected.name or len(actual.args) != len(expected.args):
-            return True
-        return all(
-            _atomic_requirement_satisfied(left, right, scalar_generics)
-            for left, right in zip(actual.args, expected.args, strict=True)
-        )
-    if isinstance(actual, T.TupleType) and isinstance(expected, T.TupleType):
-        if len(actual.params) != len(expected.params):
-            return True
-        return all(
-            _atomic_requirement_satisfied(left, right, scalar_generics)
-            for left, right in zip(actual.params, expected.params, strict=True)
-        )
-    if isinstance(actual, T.RowType) and isinstance(expected, T.RowType):
-        if not _atomic_requirement_satisfied(
-            actual.base,
-            expected.base,
-            scalar_generics,
-        ):
-            return False
-        actual_fields = {field.name: field.typ for field in actual.fields}
-        return all(
-            field.name not in actual_fields
-            or _atomic_requirement_satisfied(
-                actual_fields[field.name],
-                field.typ,
-                scalar_generics,
-            )
-            for field in expected.fields
-        )
-    # Compound alternatives are resolved by the normal overload solver. Atomic
-    # constraints in the common collection/nominal/tuple paths above are the
-    # ones that can otherwise be erased by symbolic generic substitution.
-    return True
-
+    """Return true; exact-shape filtering is owned by overload application."""
+    return len(args) == len(params)
 
 def _analysis_type_is_scalar(
     typ: T.Type,
@@ -123,9 +51,9 @@ def _analysis_type_is_scalar(
 ) -> bool:
     """Return whether analysis proves a type has rank zero."""
     typ = T.normalize(typ)
-    if isinstance(typ, T.AtomicType):
+    if isinstance(typ, T.ExactType):
         return True
-    if isinstance(typ, (T.TaggedType, T.ExactType)):
+    if isinstance(typ, (T.TaggedType, T.NoVecType)):
         return _analysis_type_is_scalar(typ.inner, scalar_generics)
     if isinstance(typ, T.VarType):
         return typ.name in scalar_generics
@@ -387,7 +315,7 @@ def _type_variable_names(typ: T.Type) -> frozenset[str]:
             if typ.params is None or typ.returns is None
             else typ.params + typ.returns
         )
-    elif isinstance(typ, (T.TaggedType, T.ExactType, T.AtomicType)):
+    elif isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
         children = (typ.inner,)
     else:
         children = ()
@@ -1242,7 +1170,7 @@ def _contains_absent_data_tag(typ: T.Type) -> bool:
             _contains_absent_data_tag(item)
             for item in (*(typ.params or ()), *(typ.returns or ()))
         )
-    if isinstance(typ, (T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.NoVecType, T.ExactType)):
         return _contains_absent_data_tag(typ.inner)
     if isinstance(typ, T.AnonymousTraitType):
         return any(
@@ -1359,10 +1287,10 @@ def _erase_overlay_owned_tag(typ: T.Type, name: str) -> T.Type:
         return T.I(*(_erase_overlay_owned_tag(item, name) for item in typ.items))
     if isinstance(typ, T.TupleType):
         return T.Tup(*(_erase_overlay_owned_tag(item, name) for item in typ.params))
+    if isinstance(typ, T.NoVecType):
+        return T.NoVec(_erase_overlay_owned_tag(typ.inner, name))
     if isinstance(typ, T.ExactType):
         return T.Exact(_erase_overlay_owned_tag(typ.inner, name))
-    if isinstance(typ, T.AtomicType):
-        return T.Atomic(_erase_overlay_owned_tag(typ.inner, name))
     return typ
 
 

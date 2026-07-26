@@ -314,9 +314,9 @@ def _rank_value_candidates(
         )
     if isinstance(pattern, T.VariadicTupleType) and isinstance(actual, T.TupleType):
         return _variadic_tuple_rank_candidates(pattern, actual, values)
-    if isinstance(pattern, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(pattern, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _rank_value_candidates(pattern.inner, actual, values)
-    if isinstance(actual, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(actual, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _rank_value_candidates(pattern, actual.inner, values)
     return (dict(values),)
 
@@ -668,7 +668,7 @@ def _guaranteed_constructed_tag_sources(
                 if current is None or rank < current:
                     result[name] = rank
         return result
-    if isinstance(typ, (T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.NoVecType, T.ExactType)):
         return _guaranteed_constructed_tag_sources(typ.inner, ctx)
     return {}
 
@@ -692,7 +692,7 @@ def _has_exact_tag_contract(typ: T.Type) -> bool:
     typ = T.normalize(typ)
     if isinstance(typ, T.TaggedType):
         return typ.exact
-    if isinstance(typ, (T.ExactType, T.AtomicType)):
+    if isinstance(typ, (T.NoVecType, T.ExactType)):
         return _has_exact_tag_contract(typ.inner)
     return False
 
@@ -969,9 +969,9 @@ def _collect_static_element_bindings(
     """Bind generic collection bases to compile-time element types."""
     pattern = T.normalize(pattern)
     actual = T.normalize(actual)
-    if isinstance(pattern, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(pattern, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _collect_static_element_bindings(pattern.inner, actual, bindings)
-    if isinstance(actual, (T.TaggedType, T.ExactType, T.AtomicType)):
+    if isinstance(actual, (T.TaggedType, T.NoVecType, T.ExactType)):
         return _collect_static_element_bindings(pattern, actual.inner, bindings)
     if isinstance(pattern, T.CollectionType) and isinstance(actual, T.CollectionType):
         if isinstance(pattern.base, T.VarType):
@@ -1212,10 +1212,10 @@ def _substitute_branch_type(typ: T.Type, substitution: dict[str, T.Type]) -> T.T
             *typ.tags,
             exact=typ.exact,
         )
+    if isinstance(typ, T.NoVecType):
+        return T.NoVec(_substitute_branch_type(typ.inner, substitution))
     if isinstance(typ, T.ExactType):
         return T.Exact(_substitute_branch_type(typ.inner, substitution))
-    if isinstance(typ, T.AtomicType):
-        return T.Atomic(_substitute_branch_type(typ.inner, substitution))
     return typ
 
 def _substitute_branch_element_tags(

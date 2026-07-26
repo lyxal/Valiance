@@ -84,15 +84,15 @@ from valiance.vtypes import (
     AnonymousTraitRequirement,
     ArrayExactType,
     ArrayMinType,
-    Atomic,
-    AtomicType,
+    NoVec,
+    ExactType,
     C,
     CollectionType,
     DataTag,
     ElementTag,
     Exact,
     ExactTags,
-    ExactType,
+    NoVecType,
     Field,
     Fn,
     FunctionType,
@@ -2803,15 +2803,15 @@ class Parser:
                     self._error("element tags can only be attached to function types")
                 typ = FunctionType(typ.params, typ.returns, self._element_tag_list())
                 continue
-            if self._match_ident("atomic"):
-                if isinstance(typ, AtomicType):
-                    self._error("type is already marked atomic")
-                typ = Atomic(typ)
-                continue
             if self._match_ident("exact"):
                 if isinstance(typ, ExactType):
                     self._error("type is already marked exact")
                 typ = Exact(typ)
+                break
+            if self._match_ident("novec"):
+                if isinstance(typ, NoVecType):
+                    self._error("type is already marked novec")
+                typ = NoVec(typ)
                 break
             if self._check(TokenKind.OP) and self._current.value in {
                 "+",
@@ -3386,10 +3386,10 @@ def _local_generic_type(typ: Type, generics: tuple[Symbol, ...]) -> Type:
             *typ.tags,
             exact=typ.exact,
         )
+    if isinstance(typ, NoVecType):
+        return NoVec(_local_generic_type(typ.inner, generics))
     if isinstance(typ, ExactType):
         return Exact(_local_generic_type(typ.inner, generics))
-    if isinstance(typ, AtomicType):
-        return Atomic(_local_generic_type(typ.inner, generics))
     return typ
 
 
