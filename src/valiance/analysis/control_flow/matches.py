@@ -150,6 +150,7 @@ class _MatchAnalysis:
 
         joined: AnalysisBranch | None = None
         typed_case_bodies: list[tuple[ASTNode | TypedNode, ...]] = []
+        typed_case_guards: list[tuple[tuple[ASTNode | TypedNode, ...], ...]] = []
         subject_variables = _patterns._match_subject_variables(branch, arity)
         previous_patterns: list[tuple[MatchPatternNode, ...]] = []
         for case in node.cases:
@@ -175,8 +176,12 @@ class _MatchAnalysis:
                 cycle_params=subject_types,
                 cycle_index=0,
             )
-            if not self._match_guards_are_valid(subject_types, case.patterns, node):
+            typed_guards = self._analyse_match_guards(
+                subject_types, case.patterns, node
+            )
+            if typed_guards is None:
                 return BranchSet()
+            typed_case_guards.append(typed_guards)
             case_outputs = self.analyse_scoped_block(
                 BranchSet((case_input,)),
                 case.body,
@@ -211,19 +216,21 @@ class _MatchAnalysis:
                         node,
                         _calls._returns_result_type(joined.stack.items),
                         case_bodies=tuple(typed_case_bodies),
+                        case_guards=tuple(typed_case_guards),
                     )
                 ),
             )
         )
 
-    def _match_guards_are_valid(
+    def _analyse_match_guards(
         self,
         subject_types: tuple[T.Type, ...],
         patterns: tuple[MatchPatternNode, ...],
         node: MatchNode,
-    ) -> bool:
-        """Return whether every match guard is valid."""
+    ) -> tuple[tuple[ASTNode | TypedNode, ...], ...] | None:
+        """Validate guards and retain their analysed nodes in traversal order."""
         guards = tuple(_patterns._match_pattern_guards(patterns, subject_types))
+        typed_guards: list[tuple[ASTNode | TypedNode, ...]] = []
         for guard, subject_type in guards:
             diagnostics_before = len(self.diagnostics)
             guard_input = AnalysisBranch(
@@ -235,10 +242,17 @@ class _MatchAnalysis:
             terminal, outputs = _utils._split_terminal_branches(outputs)
             if not outputs:
                 if terminal:
+                    typed_guards.append(
+                        _patterns._typed_block(
+                            terminal,
+                            len(guard_input.typed_body),
+                            guard,
+                        )
+                    )
                     continue
                 if len(self.diagnostics) == diagnostics_before:
                     self._diagnose("match guard must be a boolean value", node)
-                return False
+                return None
             outputs = self.require_stack_top_assignable(
                 outputs,
                 expected=Boolean,
@@ -248,8 +262,15 @@ class _MatchAnalysis:
             )
             if not outputs or any(output.failed for output in outputs):
                 self._diagnose("match guard must be a boolean value", node)
-                return False
-        return True
+                return None
+            typed_guards.append(
+                _patterns._typed_block(
+                    outputs,
+                    len(guard_input.typed_body),
+                    guard,
+                )
+            )
+        return tuple(typed_guards)
 
     def _match_patterns_are_valid(
         self,

@@ -116,9 +116,12 @@ class TypedTryNode(TypedNode):
 
 @dataclass(frozen=True, slots=True)
 class TypedMatchNode(TypedNode):
-    """A typed match retaining the analysed body for every source case."""
+    """A typed match retaining analysed case bodies and pattern guards."""
 
     case_bodies: tuple[tuple[ASTNode | TypedNode, ...], ...] = ()
+    case_guards: tuple[
+        tuple[tuple[ASTNode | TypedNode, ...], ...], ...
+    ] = ()
 
 
 @dataclass(frozen=True, slots=True)

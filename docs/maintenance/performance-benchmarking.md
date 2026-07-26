@@ -103,3 +103,54 @@ A reliable performance job should:
 Do not use a developer-machine JSON file as a universal threshold. Cross-machine
 trend data can be useful telemetry, but it should not be a merge gate without a
 controlled normalization system.
+
+## Guarded-match profiling and Patch B
+
+The guarded-control-flow workload should report
+`prepared.strategy.match-dispatch`. Patch B also exposes counters such as
+`prepared.rejected.constant`, `prepared.rejected.straight-line`, and
+`prepared.rejected.symbolic-match` when optimization statistics are enabled.
+These are preparation-time diagnostics only; normal VMs do not allocate or
+increment them.
+
+Guard programs may contain dynamically loaded built-ins because their compact
+bytecode predates ordinary resolved-call lowering. The prepared dispatcher
+selects a pure ownership-trivial overload once for each complete runtime shape
+and then invokes the cached implementation directly. A shape includes numeric
+integer/real category and runtime tags, so caching does not collapse overloads
+that differ on those facts. Less common aggregate values retain the conservative
+canonical runtime-type description.
+
+Profile guarded workloads with:
+
+```text
+PYTHONPATH=src:. python -m cProfile -o .performance/guarded.prof \
+  -m tools.performance --filter control-flow --runs 1 --warmups 1
+```
+
+The current suite contains two independent guarded classifiers. Improvements
+must benefit both or preserve the second within ordinary paired-run variance;
+a result tied only to the original constants or branch labels is not considered
+a general optimization.
+
+## Static-call metadata audit
+
+Patch C preserves the analyser's selected element overloads inside match-guard
+bytecode. Guard lowering now emits `CALL_RESOLVED_ELEMENT` rather than discarding
+typed nodes and rebuilding `LOAD_ELEMENT` plus dynamic `CALL` instructions.
+The prepared match dispatcher therefore binds the selected pure implementation
+without runtime overload discovery.
+
+Audit a program recursively, including nested functions and pattern guards:
+
+```text
+PYTHONPATH=src:. python -m tools.audit_runtime_calls --file program.vlnc
+PYTHONPATH=src:. python -m tools.audit_runtime_calls --code '1 2 +'
+```
+
+`resolved-element` is the desired category for statically selected element
+calls. `dynamic-loaded-element` identifies a loaded named element followed by a
+generic call, while `dynamic-callable` covers first-class or otherwise dynamic
+callee values. The latter categories are not automatically defects, but they
+provide a focused inventory for deciding whether more analysis metadata is lost
+during lowering.

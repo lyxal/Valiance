@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, Iterator, NoReturn
 
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.elements.builtins import BUILTIN_ELEMENTS, runtime_elements
@@ -1128,6 +1128,9 @@ class _Compiler:
         typed_bodies = (
             typed_node.case_bodies if isinstance(typed_node, TypedMatchNode) else ()
         )
+        typed_guards = (
+            typed_node.case_guards if isinstance(typed_node, TypedMatchNode) else ()
+        )
         body_by_case = {
             id(case): typed_bodies[index]
             for index, case in enumerate(node.cases)
@@ -1139,22 +1142,33 @@ class _Compiler:
         # Emit every pattern test in source order. Catch-all patterns are still
         # ordinary matches at runtime: hoisting them to a synthetic fallback
         # changes first-match semantics and can drop earlier guarded patterns.
-        case_jumps = [
-            (
-                self.emit(
-                    OpCode.JUMP_IF_MATCH,
-                    (
-                        tuple(
-                            _compile_match_pattern(pattern)
-                            for pattern in case.patterns
-                        ),
-                        None,
-                    ),
-                ),
-                case,
+        case_jumps: list[tuple[int, MatchCaseNode]] = []
+        for case_index, case in enumerate(node.cases):
+            guard_blocks = (
+                iter(typed_guards[case_index])
+                if case_index < len(typed_guards)
+                else None
             )
-            for case in node.cases
-        ]
+            compiled_patterns = tuple(
+                _compile_match_pattern(pattern, guard_blocks)
+                for pattern in case.patterns
+            )
+            if guard_blocks is not None:
+                try:
+                    next(guard_blocks)
+                except StopIteration:
+                    pass
+                else:
+                    raise CompileError("typed match guard count exceeds source patterns")
+            case_jumps.append(
+                (
+                    self.emit(
+                        OpCode.JUMP_IF_MATCH,
+                        (compiled_patterns, None),
+                    ),
+                    case,
+                )
+            )
         self.emit(OpCode.MATCH_ERROR)
 
         end_jumps: list[int] = []
@@ -2129,15 +2143,19 @@ def _number(value: str, node: ASTNode) -> RuntimeNumber:
         raise CompileError(message) from exc
 
 
-def _compile_match_pattern(pattern: MatchPatternNode) -> object:
-    """Compile match pattern during typed-AST bytecode lowering."""
+def _compile_match_pattern(
+    pattern: MatchPatternNode,
+    typed_guards: Iterator[tuple[ASTNode | TypedNode, ...]] | None = None,
+) -> object:
+    """Compile one pattern, consuming analysed guards in traversal order."""
     match pattern:
         case LiteralPatternNode(value):
             return ("literal", _literal_pattern_value(value))
         case ExpressionPatternNode(expression):
             return ("literal", _literal_expression_value(expression))
         case GuardPatternNode(condition):
-            return ("guard", _compile_guard(condition))
+            guard = _next_typed_guard(typed_guards, condition)
+            return ("guard", _compile_guard(guard))
         case WildcardPatternNode():
             return ("wildcard",)
         case RestPatternNode(name):
@@ -2145,21 +2163,58 @@ def _compile_match_pattern(pattern: MatchPatternNode) -> object:
         case BindingPatternNode(name, inner):
             if isinstance(inner, RestPatternNode):
                 return ("rest", name.text)
-            return ("bind", name.text, _compile_match_pattern(inner))
+            return (
+                "bind",
+                name.text,
+                _compile_match_pattern(inner, typed_guards),
+            )
         case OrPatternNode(options):
-            return ("or", tuple(_compile_match_pattern(option) for option in options))
+            return (
+                "or",
+                tuple(
+                    _compile_match_pattern(option, typed_guards)
+                    for option in options
+                ),
+            )
         case ListPatternNode(items):
-            return ("list", tuple(_compile_match_pattern(item) for item in items))
+            return (
+                "list",
+                tuple(
+                    _compile_match_pattern(item, typed_guards)
+                    for item in items
+                ),
+            )
         case TypePatternNode(typ, name, fields, guard):
+            compiled_guard = None
+            if guard:
+                compiled_guard = _compile_guard(
+                    _next_typed_guard(typed_guards, guard)
+                )
             return (
                 "type",
                 None if typ is None else _cast_type_spec(typ),
                 None if name is None else name.text,
-                tuple(_compile_match_pattern(field) for field in fields),
-                _compile_guard(guard) if guard else None,
+                tuple(
+                    _compile_match_pattern(field, typed_guards)
+                    for field in fields
+                ),
+                compiled_guard,
             )
         case _:
             raise CompileError(f"cannot compile match pattern {pattern!r}")
+
+
+def _next_typed_guard(
+    typed_guards: Iterator[tuple[ASTNode | TypedNode, ...]] | None,
+    source: tuple[ASTNode, ...],
+) -> tuple[ASTNode | TypedNode, ...]:
+    """Return the analysed guard when available, otherwise preserve raw lowering."""
+    if typed_guards is None:
+        return source
+    try:
+        return next(typed_guards)
+    except StopIteration as exc:
+        raise CompileError("typed match guard count is below source patterns") from exc
 
 
 def _literal_pattern_value(node: ASTNode) -> object:
@@ -2175,8 +2230,10 @@ def _literal_pattern_value(node: ASTNode) -> object:
             raise CompileError(f"cannot compile literal pattern {node!r}")
 
 
-def _compile_guard(condition: tuple[ASTNode, ...]) -> FunctionCode:
-    """Compile guard during typed-AST bytecode lowering."""
+def _compile_guard(
+    condition: tuple[ASTNode | TypedNode, ...],
+) -> FunctionCode:
+    """Compile an analysed guard while preserving selected call metadata."""
     return _Compiler().compile_function(condition, params=("_",), name="<match guard>")
 
 

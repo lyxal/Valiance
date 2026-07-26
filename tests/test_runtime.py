@@ -552,6 +552,75 @@ end
             1,
         )
 
+    def test_guard_bytecode_retains_statically_selected_overloads(self):
+        """Do not discard analysed element slots while lowering match guards."""
+        source = """
+fn (n: Integer) -> String =>
+  match =>
+    if % 3 == 0 => "multiple"
+    _ => "other"
+  end
+end
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        function = next(
+            instruction.arg
+            for instruction in program.main.instructions
+            if isinstance(instruction.arg, FunctionCode)
+        )
+        jump = next(
+            instruction
+            for instruction in function.instructions
+            if instruction.op is OpCode.JUMP_IF_MATCH
+        )
+        guard = jump.arg[0][0][1]
+        guard_ops = tuple(instruction.op for instruction in guard.instructions)
+
+        self.assertEqual(guard_ops.count(OpCode.CALL_RESOLVED_ELEMENT), 2)
+        self.assertNotIn(OpCode.LOAD_ELEMENT, guard_ops)
+        self.assertNotIn(OpCode.CALL, guard_ops)
+
+    def test_guarded_match_cache_separates_integer_and_real_runtime_shapes(self):
+        """Keep adaptive guard overload caching correct across numeric categories."""
+        source = """
+fn (n: Number) -> String =>
+  match =>
+    if % 2 == 0 => "even"
+    _ => "other"
+  end
+end
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(output=lambda _value: None)
+        function = vm.run(compile_program(typed))[0]
+        prepared = vm.prepare_call(function, 1, 1)
+
+        self.assertEqual(prepared.invoke1(RuntimeNumber(4)), ("even",))
+        self.assertEqual(prepared.invoke1(RuntimeNumber("4.5")), ("other",))
+        self.assertEqual(prepared.invoke1(RuntimeNumber(6)), ("even",))
+
+    def test_prepared_stats_report_structural_rejection_reasons(self):
+        """Expose attempted prepared strategies only when statistics are enabled."""
+        analyser = Analyser()
+        typed = analyser.analyse(parse("fn (n: Integer) => $n + 1 end"))
+        self.assertEqual(analyser.diagnostics, [])
+        vm = VirtualMachine(
+            output=lambda _value: None,
+            collect_optimization_stats=True,
+        )
+        function = vm.run(compile_program(typed))[0]
+        vm.prepare_call(function, 1, 1)
+        assert vm.optimization_stats is not None
+        snapshot = vm.optimization_stats.snapshot()
+
+        self.assertGreaterEqual(snapshot["prepared.rejected.constant"], 1)
+        self.assertIn("prepared.strategy.resolved-builtin", snapshot)
+
     def test_guarded_match_map_preserves_source_order(self):
         result = execute("""
 range(1, 16) map fn (n: Integer) =>
@@ -606,6 +675,7 @@ end
             vm.optimization_stats.snapshot(),
             {
                 "prepared.created": 1,
+                "prepared.rejected.constant": 1,
                 "prepared.strategy.identity": 2,
                 "prepared.reused": 1,
             },

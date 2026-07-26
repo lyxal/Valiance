@@ -629,6 +629,13 @@ class VirtualMachine:
             )
             for builder in builders:
                 plan = builder(value, arity, multiplicity)
+                if plan is None:
+                    if self.optimization_stats is not None:
+                        builder_name = builder.__name__.removeprefix("_prepare_").removesuffix("_call")
+                        self.optimization_stats.increment(
+                            f"prepared.rejected.{builder_name.replace('_', '-')}"
+                        )
+                    continue
                 if plan is not None:
                     if not plan.parameter_ranks:
                         plan = replace(
@@ -1104,6 +1111,37 @@ class VirtualMachine:
                 if not isinstance(candidate, BuiltinValue):
                     return None
                 pending_builtin = candidate
+            elif instruction.op is OpCode.CALL_RESOLVED_ELEMENT:
+                reference = instruction.arg
+                if not isinstance(reference, ResolvedElementReference):
+                    return None
+                if (
+                    reference.vectorised
+                    or reference.extension is not None
+                    or reference.static_values
+                    or reference.type_args
+                    or reference.multidispatch
+                    or reference.arity_override is not None
+                    or reference.consumed_override is not None
+                    or reference.return_tags
+                    or reference.return_tag_specs
+                    or reference.return_collection_ranks
+                ):
+                    return None
+                builtin = globals_.get(reference.name)
+                if not isinstance(builtin, BuiltinValue):
+                    return None
+                try:
+                    overload = builtin.element.definitions[reference.overload_index]
+                except IndexError:
+                    return None
+                if (
+                    overload.implementation is None
+                    or not overload.ownership_trivial
+                    or overload.signature.element_tags
+                ):
+                    return None
+                operations.append(("resolved", (overload, builtin.context)))
             elif instruction.op is OpCode.CALL:
                 if pending_builtin is None:
                     return None
@@ -1116,13 +1154,20 @@ class VirtualMachine:
         if pending_builtin is not None:
             return None
 
-        selection_cache: dict[
-            tuple[int, tuple[type[Any], ...]],
-            BuiltinOverload,
-        ] = {}
+        selection_cache: dict[tuple[int, tuple[object, ...]], BuiltinOverload] = {}
+
+        def runtime_shape(value: Any) -> object:
+            """Return inexpensive runtime facts that affect nominal overload matching."""
+            tags = runtime_value_tags(value)
+            plain = unwrap_runtime_value(value)
+            if isinstance(plain, RuntimeNumber):
+                return (RuntimeNumber, plain.is_integer(), tags)
+            if isinstance(plain, (str, bool, type(None))):
+                return (type(plain), tags)
+            return (_runtime_type_name(value), tags)
 
         def test(subject: Any) -> bool:
-            """Run one prepared guard using direct selected built-in implementations."""
+            """Run one prepared guard using cached shape-selected implementations."""
             stack: list[Any] = [subject]
             for kind, payload in operations:
                 if kind == "const":
@@ -1130,6 +1175,23 @@ class VirtualMachine:
                     continue
                 if kind == "arg":
                     stack.append(subject)
+                    continue
+                if kind == "resolved":
+                    selected, context = payload
+                    width = len(selected.signature.params)
+                    if len(stack) < width:
+                        raise RuntimeError("prepared resolved guard stack underflow")
+                    selected_args = tuple(stack[-width:]) if width else ()
+                    if width:
+                        del stack[-width:]
+                    implementation = selected.implementation
+                    assert implementation is not None
+                    stack.extend(
+                        implementation(
+                            selected.runtime_arguments(selected_args),
+                            context,
+                        )
+                    )
                     continue
                 builtin = payload
                 selected: BuiltinOverload | None = None
@@ -1139,9 +1201,12 @@ class VirtualMachine:
                     if len(stack) < width:
                         continue
                     call_args = tuple(stack[-width:]) if width else ()
-                    cache_key = (id(builtin), tuple(type(arg) for arg in call_args))
+                    cache_key = (
+                        id(builtin),
+                        tuple(runtime_shape(arg) for arg in call_args),
+                    )
                     cached = selection_cache.get(cache_key)
-                    if cached is not None and cached.runtime_matches(call_args):
+                    if cached is not None:
                         selected = cached
                         selected_args = call_args
                         break
@@ -1431,6 +1496,10 @@ class VirtualMachine:
                     ),
                     None,
                 )
+                if prepared_test is None and self.optimization_stats is not None:
+                    self.optimization_stats.increment("predicate.rejected.symbolic")
+                elif prepared_test is not None and self.optimization_stats is not None:
+                    self.optimization_stats.increment("predicate.prepared.symbolic")
                 if prepared_test is None and self._can_execute_direct_leaf(value):
                     def prepared_test(argument: Any) -> bool:
                         """Execute a proved predicate leaf without return-tag rebuilding."""

@@ -13,18 +13,23 @@ from valiance.asts import (
     ListLiteralNode,
     StringLiteralNode,
     TypedAtNode,
+    TypedAssertNode,
     TypedCallNode,
     TypedElementExtension,
     TypedElementNode,
     TypedExtensionPatternRule,
     TypedFunctionNode,
+    TypedForNode,
     TypedIfNode,
     TypedImportedFunctionNode,
     TypedImportedObjectNode,
     TypedLiteralNode,
+    TypedMatchNode,
     TypedNode,
     TypedTagApplicationNode,
+    TypedTryNode,
     TypedUnfoldNode,
+    TypedWhileNode,
 )
 from valiance.vtypes.symbols import Symbol
 
@@ -215,6 +220,36 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.then_padding,
             typed_node.else_padding,
         )
+    if isinstance(typed_node, TypedAssertNode):
+        return TypedAssertNode(
+            typed_node.node,
+            typ,
+            _refine_typed_body(typed_node.condition, old, new),
+            _refine_typed_body(typed_node.else_branch, old, new),
+        )
+    if isinstance(typed_node, TypedWhileNode):
+        return TypedWhileNode(
+            typed_node.node,
+            typ,
+            _refine_typed_body(typed_node.condition, old, new),
+            _refine_typed_body(typed_node.body, old, new),
+        )
+    if isinstance(typed_node, TypedTryNode):
+        return TypedTryNode(
+            typed_node.node,
+            typ,
+            _refine_typed_body(typed_node.body, old, new),
+            tuple(
+                _refine_typed_body(body, old, new)
+                for body in typed_node.handler_bodies
+            ),
+        )
+    if isinstance(typed_node, TypedForNode):
+        return TypedForNode(
+            typed_node.node,
+            typ,
+            _refine_typed_body(typed_node.body, old, new),
+        )
     if isinstance(typed_node, TypedUnfoldNode):
         function = typed_node.function
         refined_function = (
@@ -247,6 +282,13 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             refined_function,
             typed_node.overload,
             typed_node.function_overload_index,
+        )
+    if isinstance(typed_node, TypedMatchNode):
+        return TypedMatchNode(
+            typed_node.node,
+            typ,
+            typed_node.case_bodies,
+            typed_node.case_guards,
         )
     if isinstance(typed_node, TypedImportedObjectNode):
         return TypedImportedObjectNode(

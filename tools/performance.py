@@ -96,6 +96,18 @@ WORKLOADS = (
 end | length""",
     ),
     PerformanceWorkload(
+        "guarded-risk-bands",
+        "control-flow",
+        """range(1, 10000) map fn (n: Integer) =>
+  match =>
+    if % 10 == 0 => "round"
+    if > 9000 => "high"
+    if % 2 == 0 => "even"
+    _ => "odd"
+  end
+end | length""",
+    ),
+    PerformanceWorkload(
         "string-processing",
         "text",
         'range(1, 3000) map: fn (n) => "item-${$n}" end | "," join | length',
