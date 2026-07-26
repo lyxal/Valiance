@@ -1559,82 +1559,105 @@ class VirtualMachine:
             return None
         expression = stack[0]
 
-        def evaluate(node: object, argument: Any) -> Any:
-            """Evaluate one normalized symbolic expression node."""
+        def compile_expression(node: object) -> Callable[[Any], Any]:
+            """Compile one normalized symbolic node into a reusable evaluator."""
             if not isinstance(node, tuple) or not node:
                 raise RuntimeError("invalid prepared expression node")
             kind = node[0]
             if kind == "arg":
-                return argument
+                return lambda argument: argument
             if kind == "const":
-                return node[1]
+                return lambda _argument, value=node[1]: value
             if kind == "list":
-                return [evaluate(item, argument) for item in node[1]]
+                items = tuple(compile_expression(item) for item in node[1])
+                return lambda argument: [evaluate(argument) for evaluate in items]
             if kind == "vector-call":
                 _kind, overload, context, arguments, reference = node
-                values = tuple(evaluate(item, argument) for item in arguments)
-                result = _call_vectorized_resolved_builtin(
-                    overload,
-                    values,
-                    context,
-                    reference.vectorised_depths,
-                    reference.vectorised_target_ranks,
-                )
-                if len(result) != 1:
-                    raise RuntimeError("prepared expression call must return one value")
-                return result[0]
+                operands = tuple(compile_expression(item) for item in arguments)
+
+                def evaluate_vector(argument: Any) -> Any:
+                    """Evaluate one compiled symbolic vector call."""
+                    values = tuple(evaluate(argument) for evaluate in operands)
+                    result = _call_vectorized_resolved_builtin(
+                        overload,
+                        values,
+                        context,
+                        reference.vectorised_depths,
+                        reference.vectorised_target_ranks,
+                    )
+                    if len(result) != 1:
+                        raise RuntimeError("prepared expression call must return one value")
+                    return result[0]
+
+                return evaluate_vector
             if kind == "call":
                 _kind, overload, context, arguments, _reference = node
-                # Fuse generic membership over a symbolic vector call. This rule
-                # depends on expression semantics, not source or bytecode order.
+                implementation = overload.implementation
+                assert implementation is not None
                 if (
                     overload.signature.params
                     and len(arguments) == 2
-                    and getattr(overload, "implementation", None) is not None
                     and isinstance(arguments[1], tuple)
                     and arguments[1]
                     and arguments[1][0] == "vector-call"
                 ):
-                    needle = evaluate(arguments[0], argument)
+                    needle_evaluator = compile_expression(arguments[0])
                     vector_node = arguments[1]
                     _, projected, projected_context, projected_args, reference = vector_node
-                    evaluated = tuple(evaluate(item, argument) for item in projected_args)
+                    projected_operands = tuple(
+                        compile_expression(item) for item in projected_args
+                    )
                     depths = reference.vectorised_depths
                     vector_positions = tuple(
                         index for index, depth in enumerate(depths) if depth == 1
                     )
                     if len(vector_positions) == 1:
                         position = vector_positions[0]
-                        vector = evaluated[position]
-                        for item in vector:
-                            scalar_args = tuple(
-                                item if index == position else value
-                                for index, value in enumerate(evaluated)
+                        projected_implementation = projected.implementation
+                        assert projected_implementation is not None
+
+                        def evaluate_fused_search(argument: Any) -> bool:
+                            """Search a symbolic scalar projection without a temporary vector."""
+                            needle = needle_evaluator(argument)
+                            evaluated = tuple(
+                                evaluate(argument) for evaluate in projected_operands
                             )
-                            produced = projected.implementation(
-                                projected.runtime_arguments(scalar_args),
-                                projected_context,
-                            )
-                            if len(produced) != 1:
-                                raise RuntimeError(
-                                    "prepared vector projection must return one value"
+                            for item in evaluated[position]:
+                                scalar_args = tuple(
+                                    item if index == position else value
+                                    for index, value in enumerate(evaluated)
                                 )
-                            if unwrap_runtime_value(produced[0]) == unwrap_runtime_value(needle):
-                                return True
-                        return False
-                values = tuple(evaluate(item, argument) for item in arguments)
-                result = overload.implementation(
-                    overload.runtime_arguments(values),
-                    context,
-                )
-                if len(result) != 1:
-                    raise RuntimeError("prepared expression call must return one value")
-                return result[0]
+                                produced = projected_implementation(
+                                    projected.runtime_arguments(scalar_args),
+                                    projected_context,
+                                )
+                                if len(produced) != 1:
+                                    raise RuntimeError(
+                                        "prepared vector projection must return one value"
+                                    )
+                                if unwrap_runtime_value(produced[0]) == unwrap_runtime_value(needle):
+                                    return True
+                            return False
+
+                        return evaluate_fused_search
+                operands = tuple(compile_expression(item) for item in arguments)
+
+                def evaluate_call(argument: Any) -> Any:
+                    """Evaluate one compiled symbolic scalar call."""
+                    values = tuple(evaluate(argument) for evaluate in operands)
+                    result = implementation(overload.runtime_arguments(values), context)
+                    if len(result) != 1:
+                        raise RuntimeError("prepared expression call must return one value")
+                    return result[0]
+
+                return evaluate_call
             raise RuntimeError(f"unknown prepared expression node {kind!r}")
 
+        evaluate = compile_expression(expression)
+
         def test(argument: Any) -> bool:
-            """Evaluate the symbolic predicate graph for one scalar argument."""
-            return _truthy(evaluate(expression, argument))
+            """Evaluate the compiled symbolic predicate for one scalar argument."""
+            return _truthy(evaluate(argument))
 
         return test
 
