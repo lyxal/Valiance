@@ -69,7 +69,7 @@ Stage-aware performance baselines and comparisons use:
 ```powershell
 $env:PYTHONPATH = "src;."
 python -m tools.performance --runs 5 --output .performance/baseline.json
-python -m tools.performance --runs 5 --compare .performance/baseline.json
+python -m tools.performance_compare ../target ../candidate --runs 3 --passes 2
 ```
 
 See [Performance baselines](performance-benchmarking.md) for workload coverage,
