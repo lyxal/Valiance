@@ -133,7 +133,12 @@ class _FunctionDeclarations:
                 declared_overload,
             )
         ):
-            self.env.define_overload(name, declared_overload)
+            if not self._define_overload_with_diagnostic(
+                name,
+                declared_overload,
+                node,
+            ):
+                return BranchSet((branch.emit(TypedNode(node, None)),))
         result = self._analyse_overloaded_function_literal(
             branch,
             function_node,
@@ -162,7 +167,10 @@ class _FunctionDeclarations:
                 continue
             overload_typings[typing_index] = replace(typing, overload=overload)
             if not self.env.has_local_non_object_friendly_overload(name, overload):
-                self.env.define_overload(name, overload)
+                if not self._define_overload_with_diagnostic(name, overload, node):
+                    return BranchSet(
+                        (typed_branch.emit(TypedNode(node, None)),)
+                    )
             original_index = self.env.non_object_friendly_overload_index(
                 name,
                 overload,
@@ -181,7 +189,14 @@ class _FunctionDeclarations:
                         name,
                         generated,
                     ):
-                        self.env.define_overload(name, generated)
+                        if not self._define_overload_with_diagnostic(
+                            name,
+                            generated,
+                            node,
+                        ):
+                            return BranchSet(
+                                (typed_branch.emit(TypedNode(node, None)),)
+                            )
                     overload_typings.append(
                         annotation_hooks.commutative_overload_typing(
                             name,
@@ -200,6 +215,69 @@ class _FunctionDeclarations:
             self.env.define_tag_attached_element(node.attached_tag.name, name)
         typed_node = TypedFunctionNode(node, function.typ, tuple(overload_typings))
         return BranchSet((typed_branch.emit(typed_node),))
+
+    def _define_overload_with_diagnostic(
+        self,
+        name: Symbol,
+        overload: T.Overload,
+        node: DefineNode,
+    ) -> bool:
+        """Register an overload or turn a shape conflict into a diagnostic."""
+        try:
+            self.env.define_overload(name, overload)
+        except ValueError as exc:
+            self._diagnose(
+                self._definition_overload_diagnostic(
+                    str(exc),
+                    name,
+                    overload,
+                ),
+                node,
+            )
+            return False
+        return True
+
+    def _definition_overload_diagnostic(
+        self,
+        message: str,
+        name: Symbol,
+        overload: T.Overload,
+    ) -> str:
+        """Add concrete fixes for a local definition's overload conflict."""
+        imported = self._imported_definition_sources.get(name)
+        visible = self.env.overloads_for(name)
+        shape_help = ""
+        if visible:
+            existing = visible[0]
+            if len(existing.params) != len(overload.params):
+                expected = len(existing.params)
+                shape_help = (
+                    f"\nhelp: or change the local definition to take "
+                    f"{expected} {_counted_word(expected, 'input')}"
+                )
+            elif len(existing.returns) != len(overload.returns):
+                expected = len(existing.returns)
+                shape_help = (
+                    f"\nhelp: or change the local definition to return "
+                    f"{expected} {_counted_word(expected, 'value')}"
+                )
+        if imported is None:
+            return (
+                f"{message}\n"
+                f"help: rename the local definition `{name}` so each "
+                f"overload set has a consistent shape"
+                f"{shape_help}"
+            )
+        module = imported.rsplit(".", 1)[0]
+        namespace = module.rsplit(".", 1)[-1]
+        return (
+            f"{message}\n"
+            f"help: either rename the local definition `{name}` or remove "
+            f"the import `{imported}`\n"
+            f"help: or keep the import namespaced with "
+            f"`import {{ {module} }}` and use `{namespace}.{name.text}`"
+            f"{shape_help}"
+        )
 
     def prepare_defined_overload(
         self,
@@ -260,3 +338,8 @@ class _FunctionDeclarations:
         )
         return None
 
+
+
+def _counted_word(count: int, singular: str) -> str:
+    """Return a noun inflected for ``count`` in analyser help text."""
+    return singular if count == 1 else f"{singular}s"

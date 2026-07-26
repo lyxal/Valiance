@@ -611,10 +611,26 @@ def _import_node(
                 definition.typed,
                 definition.name,
             )
-            self._register_imported_definition(
-                definition.name,
-                definition.typed,
-                runtime_name,
+            try:
+                self._register_imported_definition(
+                    definition.name,
+                    definition.typed,
+                    runtime_name,
+                )
+            except ValueError as exc:
+                self._diagnose(
+                    self._import_arity_diagnostic(
+                        str(exc),
+                        resolved_spec,
+                        definition.name,
+                    ),
+                    node,
+                )
+                return _core.BranchSet(
+                    (branch.emit(TypedNode(node, None)),)
+                )
+            self._imported_definition_sources[definition.name] = (
+                self._import_source_text(resolved_spec, definition.name)
             )
 
     return _core.BranchSet((branch.emit(TypedNode(node, None)),))

@@ -176,6 +176,11 @@ class TagOverlayDefinition:
     public: bool = False
 
 
+def _counted_word(count: int, singular: str) -> str:
+    """Return a noun inflected for ``count`` in environment diagnostics."""
+    return singular if count == 1 else f"{singular}s"
+
+
 @dataclass
 class Environment:
     """Compiler-facing registry for symbols and type relationship facts."""
@@ -480,8 +485,9 @@ class Environment:
             expected_arity = len(candidates[0].params)
             if len(overload.params) != expected_arity:
                 raise ValueError(
-                    f"overloads for {name!r} must all take {expected_arity} "
-                    f"inputs, got {len(overload.params)}"
+                    f"overloads for '{name}' must all take {expected_arity} "
+                    f"{_counted_word(expected_arity, 'input')}, got "
+                    f"{len(overload.params)}"
                 )
             if (
                 fixed_candidates
@@ -490,8 +496,9 @@ class Environment:
             ):
                 expected_returns = len(fixed_candidates[0].returns)
                 raise ValueError(
-                    f"overloads for {name!r} must all return {expected_returns} "
-                    f"values, got {len(overload.returns)}"
+                    f"overloads for '{name}' must all return {expected_returns} "
+                    f"{_counted_word(expected_returns, 'value')}, got "
+                    f"{len(overload.returns)}"
                 )
         overload_index = len(candidates)
         candidates.append(overload)

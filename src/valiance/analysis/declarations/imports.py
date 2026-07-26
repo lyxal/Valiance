@@ -117,6 +117,50 @@ class _ImportDeclarations:
             )
             return exports, split_spec, import_definitions(exports, split_spec)
 
+    def _import_source_text(
+        self,
+        spec: ImportSpec,
+        visible_name: Symbol,
+    ) -> str:
+        """Render the source component that introduced an imported name."""
+        path = _show_import_path(spec.path)
+        for component in spec.components:
+            if (component.alias or component.name) == visible_name:
+                return f"{path}.{component.name}"
+        return f"{path}.{visible_name.text}"
+
+    def _import_arity_diagnostic(
+        self,
+        message: str,
+        spec: ImportSpec,
+        name: Symbol,
+    ) -> str:
+        """Add concrete removal and namespacing fixes to an import conflict."""
+        current = self._import_source_text(spec, name)
+        previous = self._imported_definition_sources.get(name)
+        current_module = _show_import_path(spec.path)
+        current_namespace = spec.alias or Symbol(spec.path.parts[-1])
+        if previous is None:
+            return (
+                f"{message}\n"
+                f"help: rename the imported element with "
+                f"`import {{ {current} as {name}Imported }}`\n"
+                f"help: or keep it namespaced with "
+                f"`import {{ {current_module} }}` and use "
+                f"`{current_namespace}.{name.text}`"
+            )
+        previous_module = previous.rsplit(".", 1)[0]
+        previous_namespace = previous_module.rsplit(".", 1)[-1]
+        return (
+            f"{message}\n"
+            f"help: either remove one of these imports: "
+            f"`{previous}` or `{current}`\n"
+            f"help: or keep both namespaced with "
+            f"`import {{ {previous_module}, {current_module} }}` and use "
+            f"`{previous_namespace}.{name.text}` or "
+            f"`{current_namespace}.{name.text}`"
+        )
+
     def _register_imported_definition(
         self,
         name: Symbol,
@@ -217,3 +261,9 @@ class _ImportDeclarations:
                 friendly_definitions,
             )
 
+
+
+def _show_import_path(path: ImportPath) -> str:
+    """Render an import path using source-level root syntax."""
+    prefix = "" if path.root is None else f"{path.root}."
+    return prefix + ".".join(path.parts)

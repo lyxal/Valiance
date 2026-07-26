@@ -4056,6 +4056,63 @@ end
         self.assertEqual(typed[-1].typ, Number)
         self.assertIsInstance(typed[0], TypedFunctionNode)
 
+    def test_imported_overloads_with_different_arities_report_diagnostic(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.vlnc").write_text(
+                "public define foo(:Number) => 1\n",
+                encoding="utf-8",
+            )
+            (root / "b.vlnc").write_text(
+                "public define foo(:Number, :Number) => 2\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = "import { a.foo, b.foo }\n"
+            main.write_text(source, encoding="utf-8")
+
+            analyser = Analyser(source_file=main)
+            analyser.analyse(parse(source))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "1:1: overloads for 'foo' must all take 1 input, got 2\n"
+                "help: either remove one of these imports: `a.foo` or `b.foo`\n"
+                "help: or keep both namespaced with `import { a, b }` and use "
+                "`a.foo` or `b.foo`"
+            ],
+        )
+
+    def test_local_definition_conflicting_with_imported_arity_reports_diagnostic(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.vlnc").write_text(
+                "public define foo(:Number) => 1\n",
+                encoding="utf-8",
+            )
+            main = root / "main.vlnc"
+            source = (
+                "import { a.foo }\n"
+                "define foo(:Number, :Number, :Number) => 3\n"
+            )
+            main.write_text(source, encoding="utf-8")
+
+            analyser = Analyser(source_file=main)
+            analyser.analyse(parse(source))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "2:1: overloads for 'foo' must all take 1 input, got 3\n"
+                "help: either rename the local definition `foo` or remove the "
+                "import `a.foo`\n"
+                "help: or keep the import namespaced with `import { a }` and "
+                "use `a.foo`\n"
+                "help: or change the local definition to take 1 input"
+            ],
+        )
+
     def test_import_inside_define_is_visible_only_in_define_body(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

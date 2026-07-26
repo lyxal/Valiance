@@ -307,6 +307,7 @@ class Analyser:
         self.attempted_lint_codes: set[str] = set()
         self.file_lint_suppressions: dict[str, ASTNode] = {}
         self._friendly_owners: tuple[Symbol, ...] = ()
+        self._imported_definition_sources: dict[Symbol, str] = {}
         self._reported_data_element_disjoints: set[
             tuple[int, Symbol, Symbol]
         ] = set()
@@ -439,11 +440,13 @@ class Analyser:
     ) -> BranchSet:
         """Analyse a nested block with declarations local to that block."""
         outer = self.env
+        imported_sources = self._imported_definition_sources.copy()
         self.env = outer.lexical_child_scope()
         try:
             return self.analyse_block(initial, nodes)
         finally:
             self.env = outer
+            self._imported_definition_sources = imported_sources
 
     def _child_analyser(self, env: T.Environment) -> Analyser:
         """Create a nested analyser sharing module resolution and import prelude."""
@@ -455,6 +458,9 @@ class Analyser:
             _prelude=self._prelude,
         )
         child._friendly_owners = self._friendly_owners
+        child._imported_definition_sources = (
+            self._imported_definition_sources.copy()
+        )
         child.project_lints_enabled = self.project_lints_enabled
         child.project_disabled_lint_codes = self.project_disabled_lint_codes
         child.disabled_lint_codes = (
