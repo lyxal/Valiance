@@ -1075,6 +1075,7 @@ def _run_repl() -> int:
         prompt=lambda line_number: _repl_prompt(line_number, color=color),
         completion_provider=session.completion_items,
         type_hint_provider=session.type_hint,
+        documentation_provider=session.element_documentation,
     )
     line_number = 1
     _print_repl_banner(color=color, fancy=frontend.fancy)
@@ -1129,7 +1130,10 @@ def _run_repl() -> int:
             else:
                 print(session.type_hint(expression) or "No type information available.")
             continue
-        session.run(source)
+        type_preview = session.type_hint(source)
+        succeeded = session.run(source)
+        if succeeded and type_preview and type_preview.startswith("Types:"):
+            print(type_preview)
         line_number += 1
 
 
@@ -1240,6 +1244,29 @@ class _ReplSession:
             items[text] = ReplCompletion(text, f"variable: {T.show(typ)}")
         return tuple(items.values())
 
+    def element_documentation(self, name: str, source: str) -> str | None:
+        """Render every loaded docstring available for a selected element."""
+        normalized = name.strip().removeprefix("\\")
+        sections: list[str] = []
+        for definition in extract_documented_defines(source):
+            if definition.name != normalized:
+                continue
+            doc = definition.docstring
+            lines = [definition.signature, *doc.description]
+            lines.extend(f"Parameter {item.name}: {item.description}" for item in doc.params)
+            if doc.returns is not None: lines.append(f"Returns: {doc.returns}")
+            lines.extend(doc.extra_fields); sections.append("\n".join(lines))
+        visible = {item.text.removeprefix("\\") for item in self.completion_items()}
+        if normalized in visible:
+            for reference in collect_language_references(strict=False):
+                if normalized not in {reference.name, reference.qualified_name, *reference.aliases}:
+                    continue
+                lines = [reference.qualified_name, *reference.overloads, reference.summary, *reference.description]
+                lines.extend(f"Parameter {item.name}: {item.description}" for item in reference.parameters)
+                if reference.returns is not None: lines.append(f"Returns: {reference.returns}")
+                sections.append("\n".join(lines))
+        return ("\n\n" + "-" * 72 + "\n\n").join(dict.fromkeys(sections)) or None
+
     def type_hint(self, source: str) -> str | None:
         """Preview the resulting type stack without mutating REPL state."""
         source = source.strip()
@@ -1312,22 +1339,24 @@ class _ReplSession:
                 BranchSet((replace(self.branch, typed_body=()),)),
                 tuple(program),
             )
+            if self.analyser.diagnostics:
+                for diagnostic in self.analyser.diagnostics:
+                    _print_diagnostic(from_message("Type error", diagnostic), source)
+                return False
             if len(final) != 1:
-                for node in program:
-                    _print_diagnostic(
-                        from_message("Type error", f"could not analyse {node!r}"),
-                        source,
-                    )
+                _print_diagnostic(
+                    from_message(
+                        "Type error",
+                        "source has no single valid stack effect",
+                    ),
+                    source,
+                )
                 return False
             next_branch = next(iter(final))
             for lint in self.analyser.lints:
                 _print_diagnostic(from_message("Lint warning", lint), source)
             for warning in self.analyser.warnings:
                 _print_diagnostic(from_message("Type warning", warning), source)
-            if self.analyser.diagnostics:
-                for diagnostic in self.analyser.diagnostics:
-                    _print_diagnostic(from_message("Type error", diagnostic), source)
-                return False
             bytecode = compile_program(list(next_branch.typed_body))
             stack = self.vm.execute(
                 bytecode.main,
