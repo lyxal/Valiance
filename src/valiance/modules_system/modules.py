@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 from pathlib import Path
 
 import valiance.vtypes as T
@@ -73,6 +74,27 @@ class ModuleLoadError(Exception):
     """Raised when an import cannot be resolved or analysed."""
 
 
+# Immutable analysed stdlib exports are safe to share between loader instances.
+_PROCESS_INTERFACE_CACHE: dict[tuple[str, str], ModuleExports] = {}
+
+
+def collect_module_exports(
+    module_name: str,
+    program: list,
+    typed: list[TypedNode],
+    analyser: object,
+) -> ModuleExports:
+    """Collect the complete analysed static and runtime-facing module interface."""
+    return ModuleExports(
+        module_name,
+        _module_definitions(program, typed),
+        _module_objects(typed),
+        _module_tags(program, analyser.env),
+        _module_overlays(program, analyser.env),
+        analyser.runtime_prelude,
+    )
+
+
 @dataclass
 class ModuleLoader:
     """Resolve and analyse source modules, caching by absolute file path."""
@@ -88,85 +110,100 @@ class ModuleLoader:
         *,
         current_file: Path | None = None,
     ) -> ModuleExports:
-        """Load, analyse, and cache a module and its exported facts."""
+        """Load a module, preferring a valid persisted analysed interface."""
         source_file = self.resolve(path, current_file=current_file)
         compiled_file = source_file.with_suffix(".vbcm")
         native_exports = _native_std_exports(path)
         cache_key = source_file if source_file.exists() else compiled_file
         if cache_key in self._cache:
             return self._cache[cache_key]
-        if source_file in self._loading:
+        if cache_key in self._loading:
             return ModuleExports(_module_name(path))
-        if native_exports is not None and not source_file.exists():
+        if native_exports is not None and not source_file.exists() and not compiled_file.exists():
             return native_exports
+
         self._loading.add(cache_key)
         try:
             compiled_module = None
+            if compiled_file.exists():
+                from valiance.runtime.compiled_module import load_module_file
+
+                try:
+                    candidate = load_module_file(compiled_file)
+                except Exception as exc:
+                    if not source_file.exists():
+                        raise ModuleLoadError(f"could not load module {compiled_file}: {exc}") from exc
+                else:
+                    source_matches = not source_file.exists() or hashlib.sha256(
+                        source_file.read_bytes()
+                    ).hexdigest() == candidate.source_hash
+                    if source_matches and candidate.analysed_interface is not None:
+                        expected_name = _module_name(path)
+                        if candidate.module_name != expected_name:
+                            raise ModuleLoadError(
+                                f"compiled module {compiled_file} declares "
+                                f"{candidate.module_name!r}, expected {expected_name!r}"
+                            )
+                        shared_key = (candidate.module_name, candidate.interface_hash)
+                        exports = _PROCESS_INTERFACE_CACHE.get(shared_key)
+                        if exports is None:
+                            exports = candidate.analysed_interface
+                            if not isinstance(exports, ModuleExports):
+                                raise ModuleLoadError(
+                                    f"compiled module {compiled_file} has an invalid analysed interface"
+                                )
+                            _PROCESS_INTERFACE_CACHE[shared_key] = exports
+                        self._cache[cache_key] = exports
+                        return exports
+                    if source_matches:
+                        compiled_module = candidate
+
             if source_file.resolve() in self.source_overrides:
                 source = self.source_overrides[source_file.resolve()]
             elif source_file.exists():
                 source = source_file.read_text(encoding="utf-8")
+            elif compiled_module is not None:
+                source = compiled_module.interface_source
+                source_file = compiled_file
             elif compiled_file.exists():
                 from valiance.runtime.compiled_module import load_module_file
-
-                try:
-                    compiled_module = load_module_file(compiled_file)
-                except Exception as exc:
-                    raise ModuleLoadError(f"could not load module {compiled_file}: {exc}") from exc
-                expected_name = _module_name(path)
-                if compiled_module.module_name != expected_name:
-                    raise ModuleLoadError(
-                        f"compiled module {compiled_file} declares "
-                        f"{compiled_module.module_name!r}, expected {expected_name!r}"
-                    )
+                compiled_module = load_module_file(compiled_file)
                 source = compiled_module.interface_source
                 source_file = compiled_file
             else:
                 source = source_file.read_text(encoding="utf-8")
+
             program = parse(source)
             if path.parts and path.parts[0] == "std":
                 from valiance.elements.stdlib_native import attach_native_object_elements
-
-                try:
-                    program = attach_native_object_elements(program, path.parts[-1])
-                except ValueError as exc:
-                    raise ModuleLoadError(f"{source_file}: {exc}") from exc
+                program = attach_native_object_elements(program, path.parts[-1])
             from valiance.analysis import Analyser
             from valiance.elements.builtins import default_environment
             from valiance.elements.stdlib_native import install_native_stdlib
 
             env = None
             if path.parts and path.parts[0] == "std":
-                env = install_native_stdlib(
-                    default_environment().child_scope(),
-                    path.parts[-1],
-                )
+                env = install_native_stdlib(default_environment().child_scope(), path.parts[-1])
             analyser = Analyser(env=env, module_loader=self, source_file=source_file)
             typed = analyser.analyse(program)
             if analyser.diagnostics:
-                joined = "; ".join(analyser.diagnostics)
-                raise ModuleLoadError(f"{source_file}: {joined}")
-            definitions = _module_definitions(program, typed)
-            objects = _module_objects(typed)
-            tags = _module_tags(program, analyser.env)
-            overlays = _module_overlays(program, analyser.env)
+                raise ModuleLoadError(f"{source_file}: {'; '.join(analyser.diagnostics)}")
+            exports = collect_module_exports(_module_name(path), program, typed, analyser)
             if native_exports is not None:
-                definitions = native_exports.definitions + definitions
-            exports = ModuleExports(
-                _module_name(path),
-                definitions,
-                objects,
-                tags,
-                overlays,
-                analyser.runtime_prelude,
-            )
+                exports = ModuleExports(
+                    exports.module_name,
+                    native_exports.definitions + exports.definitions,
+                    exports.objects,
+                    exports.tags,
+                    exports.overlays,
+                    exports.runtime_prelude,
+                )
             self._cache[cache_key] = exports
             return exports
         except OSError as exc:
             if native_exports is not None:
                 return native_exports
-            message = f"could not read module {source_file}: {exc}"
-            raise ModuleLoadError(message) from exc
+            raise ModuleLoadError(f"could not read module {source_file}: {exc}") from exc
         finally:
             self._loading.discard(cache_key)
 

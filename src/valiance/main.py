@@ -1727,7 +1727,23 @@ def _compile_module_artifact(
     if analyser.diagnostics:
         raise CompileError("; ".join(analyser.diagnostics))
     bytecode = compile_program(typed, optimize=optimize)
-    artifact = build_module(module_name, source, bytecode)
+    from valiance.modules_system.modules import collect_module_exports
+
+    interface = collect_module_exports(module_name, program, typed, analyser)
+    dependencies = tuple(
+        sorted(
+            (exports.module_name, "source")
+            for path, exports in analyser.module_loader._cache.items()
+            if path.resolve() != source_file.resolve()
+        )
+    )
+    artifact = build_module(
+        module_name,
+        source,
+        bytecode,
+        analysed_interface=interface,
+        dependency_hashes=dependencies,
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(dumps_module(artifact))
 

@@ -82,6 +82,66 @@ class CompiledModuleTests(unittest.TestCase):
             self.assertTrue(artifact.is_file())
             self.assertEqual(loads_module(artifact.read_bytes()).module_name, "library")
 
+    def test_valid_analysed_interface_skips_reanalysis(self):
+        from unittest.mock import patch
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / "cached.vlnc"
+            library.write_text(
+                "public define identity(n: Number) -> Number => $n\n",
+                encoding="utf-8",
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln(["compile-module", "--file", str(library)]), 0)
+            main = root / "main.vlnc"
+            with patch("valiance.analysis.Analyser.analyse", side_effect=AssertionError("reanalyzed")):
+                exports = ModuleLoader().load(parse("import { cached }")[0].specs[0].path, current_file=main)
+            self.assertEqual(exports.module_name, "cached")
+
+    def test_interface_hash_is_canonical_and_detects_tampering(self):
+        from valiance.runtime import dumps_module
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / "hashes.vlnc"
+            library.write_text(
+                "public define identity(n: Number) -> Number => $n\n",
+                encoding="utf-8",
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln(["compile-module", "--file", str(library)]), 0)
+            data = library.with_suffix(".vbcm").read_bytes()
+            module = loads_module(data)
+            self.assertTrue(module.interface_hash)
+            self.assertEqual(dumps_module(module), data)
+            import struct
+            damaged = bytearray(data)
+            header = len(b"VLNCBM\x02")
+            metadata_size, interface_size, _ = struct.unpack(">III", data[header:header + 12])
+            self.assertGreater(interface_size, 0)
+            damaged[header + 12 + metadata_size] ^= 1
+            with self.assertRaises(BytecodeFormatError):
+                loads_module(bytes(damaged))
+
+    def test_source_hash_invalidates_persisted_interface(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / "invalidate.vlnc"
+            library.write_text(
+                "public define old(n: Number) -> Number => $n\n",
+                encoding="utf-8",
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main_vln(["compile-module", "--file", str(library)]), 0)
+            library.write_text(
+                "public define fresh(n: Number) -> Number => $n\n",
+                encoding="utf-8",
+            )
+            analyser = Analyser(source_file=root / "main.vlnc")
+            analyser.analyse(parse("import { invalidate.[fresh] }"))
+            self.assertEqual(analyser.diagnostics, [])
+
     def test_vbcm_is_not_plain_vbc(self):
         with self.assertRaises(BytecodeFormatError):
             loads_module(b"VLNCBC\\x16")
