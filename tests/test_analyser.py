@@ -2757,6 +2757,26 @@ end
 
         self.assertEqual(substitution, {"T": Number})
 
+    def test_call_node_named_arguments_explain_function_value_rule(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse(
+                "$double = fn (v: Integer) => * 2\n"
+                "$double(v = 5)"
+            )
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "2:1: named arguments are not supported when calling a function "
+                "value; function values use positional arguments, so remove the "
+                "argument names. Named arguments are available when calling a "
+                "named element directly"
+            ],
+        )
+
     def test_call_node_falls_back_to_stack_values_for_missing_arguments(self):
         typed = analyse(
             [

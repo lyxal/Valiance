@@ -268,7 +268,10 @@ class _CallSelection:
             return BranchSet()
         if any(arg.name is not None for arg in node.call_args):
             self._diagnose(
-                "element 'call' explicit arguments must be positional",
+                "named arguments are not supported when calling a function value; "
+                "function values use positional arguments, so remove the argument "
+                "names. Named arguments are available when calling a named element "
+                "directly",
                 node,
             )
             return BranchSet()
