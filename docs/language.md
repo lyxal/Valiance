@@ -607,7 +607,7 @@ Thus, parameters may be equally specific in some positions. It is not necessary 
 
 When match-category scores are equal, the applied parameter types may also be compared. One parameter list is more specific than another if all of its parameter types are the same as or narrower than the corresponding types in the other list, and at least one is strictly narrower.
 
-If multiple distinct, non-dominated candidates remain, the call is ambiguous and produces a compile-time error. Candidates may be ambiguous because they are equally specific or because they are incomparable—for example, when each candidate is more specific for a different argument.
+If multiple distinct, non-dominated candidates remain, the call is ambiguous and produces a compile-time error. Candidates may be ambiguous because they are equally specific. 
 
 An element can be disambiguated using positional type hints in `[]` after its name:
 
