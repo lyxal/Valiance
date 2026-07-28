@@ -1355,6 +1355,15 @@ ParseError
 
         self.assertEqual(list(ecs_stack[0]), list(postfix_stack[0]))
 
+    def test_map_prefers_exact_rank_for_inferred_function(self):
+        self.assertEqual(
+            execute(
+                '[["this", "is", "a"], ["matrix", "of"], ["strings"]] '
+                'map fn (s) => first | length end'
+            ),
+            [[RuntimeNumber("4"), RuntimeNumber("6"), RuntimeNumber("7")]],
+        )
+
     def test_map_dispatches_overloaded_functions_across_union_items(self):
         output = io.StringIO()
         source = """

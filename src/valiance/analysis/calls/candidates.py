@@ -334,6 +334,8 @@ def _deferred_stack_function_argument(
     overloads = (
         normalized.overloads if isinstance(normalized, T.OverloadSetType) else ()
     )
+    if not overloads:
+        return None
     source_nodes = tuple(
         overload.call_site_body[1]
         for overload in overloads
@@ -341,12 +343,10 @@ def _deferred_stack_function_argument(
         and len(overload.call_site_body) == 2
         and isinstance(overload.call_site_body[1], FunctionNode)
     )
-    if not source_nodes:
-        return None
     for typed_node in reversed(branch.typed_body):
         if not isinstance(typed_node, TypedFunctionNode):
             continue
-        if any(
+        if T.same(typed_node.typ, typ) or any(
             typed_node.node is source or typed_node.node == source
             for source in source_nodes
         ):
@@ -728,6 +728,9 @@ def _modifier_variants_for_expected(
                 return
 
     overloads = _contextual_modifier_overloads(modifier, expected, analyser, ctx)
+    matches: list[
+        tuple[_core.ModifierArgumentAnalysis, dict[str, T.Type], bool]
+    ] = []
     for overload in overloads:
         typ = T.normalize(overload.typ)
         if not isinstance(typ, T.FunctionType):
@@ -740,17 +743,23 @@ def _modifier_variants_for_expected(
             continue
         if not _function_overload_matches_type(overload, concrete_expected, ctx):
             continue
-        yield (
-            _core.ModifierArgumentAnalysis(
-                concrete_expected,
-                TypedFunctionNode(
-                    modifier.typed_node.node,
+        matches.append(
+            (
+                _core.ModifierArgumentAnalysis(
                     concrete_expected,
-                    (overload,),
+                    TypedFunctionNode(
+                        modifier.typed_node.node,
+                        concrete_expected,
+                        (overload,),
+                    ),
                 ),
-            ),
-            substitution,
+                substitution,
+                T.same(typ, concrete_expected),
+            )
         )
+    exact = tuple(match for match in matches if match[2])
+    for specialized, substitution, _ in exact or tuple(matches):
+        yield specialized, substitution
 
 
 def _contextual_modifier_overloads(
