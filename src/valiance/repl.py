@@ -766,10 +766,14 @@ class _PromptToolkitFrontend:
         @bindings.add(
             "escape",
             filter=Condition(lambda: self._mode == "scratch"),
-            eager=True,
         )
         def _escape_menu(event) -> None:
-            """Close any open menu and return focus to the editor."""
+            """Close an open menu without preempting Alt access-key sequences.
+
+            Terminals encode Alt+key as Escape followed by that key.  Keeping the
+            bare Escape binding non-eager lets prompt-toolkit wait for a possible
+            second key before falling back to this handler.
+            """
             menu.selected_menu = [0]
             if event.app.layout.has_focus(menu.window):
                 event.app.layout.focus(self._session.default_buffer)

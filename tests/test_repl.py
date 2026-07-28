@@ -117,6 +117,30 @@ class ReplFrontendTests(unittest.TestCase):
         self.assertIn('self._mode = "repl"', source)
         self.assertIn('self._last_submitted_source = ""', source)
 
+    def test_scratchpad_alt_menu_shortcuts_are_not_preempted_by_escape(self):
+        from prompt_toolkit.keys import Keys
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            frontend = repl_module._PromptToolkitFrontend(
+                completion_provider=tuple,
+                type_hint_provider=lambda source: None,
+            )
+
+        escape_bindings = [
+            binding
+            for binding in frontend._session.app.key_bindings.bindings
+            if binding.keys == (Keys.Escape,)
+        ]
+        alt_menu_keys = {
+            binding.keys[1]
+            for binding in frontend._session.app.key_bindings.bindings
+            if len(binding.keys) == 2 and binding.keys[0] == Keys.Escape
+        }
+
+        self.assertTrue(escape_bindings)
+        self.assertTrue(all(not binding.eager() for binding in escape_bindings))
+        self.assertTrue({"f", "e", "v", "h"}.issubset(alt_menu_keys))
+
     def test_enhanced_editor_restores_last_program_after_running(self):
         class FakePromptSession:
             def __init__(self):
