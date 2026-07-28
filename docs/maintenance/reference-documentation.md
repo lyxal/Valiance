@@ -64,7 +64,7 @@ matter to callers.
 
 `analysis/builtins.py` remains the single static/runtime declaration source.
 `BuiltinElement` now carries `documentation` and `canonical_name` fields.
-Aliases such as `len` and `fold` are registered normally but generated as aliases
+Aliases such as `len` and `reduce` are registered normally but generated as aliases
 of their canonical entries rather than duplicated as unrelated pages.
 
 Core built-in metadata is stored in `_BUILTIN_DOCUMENTATION`; generated error

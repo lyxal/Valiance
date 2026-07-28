@@ -473,14 +473,14 @@ define[T] sum(
   :trait[T] =>
     extend +(:T, :T) -> T
   end +
-) -> T => fold: +
+) -> T => reduce: +
 ```
 
 The first anonymous-trait generic is treated as the subject type. During function
 body analysis the parameter is viewed as that subject type, while the declared
 overload keeps the anonymous structural requirement. The analyser also installs
 the inline requirements as local-only overloads while checking the function body,
-so operations such as `fold: +` type-check against the required behavior. At
+so operations such as `reduce: +` type-check against the required behavior. At
 call sites, relation checks use the visible overload catalogue in `Context` to
 verify that the actual subject type has matching element overloads.
 

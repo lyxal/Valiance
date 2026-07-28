@@ -1401,7 +1401,7 @@ entering a repeated loop. `RuntimeContext.prepare_call(callable, arity,
 multiplicity)` returns an invocation closure that validates the fixed call shape,
 uses direct-leaf execution when the compiled body proves that safe, and otherwise
 falls back to the general callable path. Unary `map` and string mapping use
-prepared unary calls, while `fold` uses prepared binary calls. `filter` additionally uses the
+prepared unary calls, while `reduce` and `fold` use prepared binary calls. `filter` additionally uses the
 predicate service so Boolean-only structural specialisations can avoid temporary
 vectors and function frames.
 
@@ -1509,7 +1509,7 @@ all. Stage results carry both keep/drop and stop-after-item signals, so future
 early-terminating stages can preserve ordering without bespoke generator nests.
 
 Eager higher-order `map`, optional/Result continuation through `&`, and explicit
-`call` now use the same prepared-call entrypoint as lazy map, filter, fold, and
+`call` now use the same prepared-call entrypoint as lazy map, filter, reduce, fold, and
 stack combinators. This broadens optimisation coverage by callable shape rather
 than by benchmark or element implementation.
 

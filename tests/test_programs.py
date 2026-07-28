@@ -232,12 +232,28 @@ class ProgramTests(unittest.TestCase):
             ],
         )
 
+    def test_reduce_and_slash_use_first_item_as_seed(self):
+        self.assertEqual(execute("[1, 2, 3, 4] reduce: +"), [RuntimeNumber("10")])
+        self.assertEqual(execute("[1, 2, 3, 4] /: +"), [RuntimeNumber("10")])
+
+    def test_reduce_rejects_empty_list(self):
+        with self.assertRaisesRegex(Exception, "reduce requires a non-empty list"):
+            execute("([] as[Integer+]) reduce: +")
+
+    def test_fold_uses_explicit_seed_and_accepts_empty_list(self):
+        self.assertEqual(execute("[1, 2, 3] 10 fold: +"), [RuntimeNumber("16")])
+        self.assertEqual(execute("([] as[Integer+]) 10 fold: +"), [RuntimeNumber("10")])
+
+    def test_fold_supports_distinct_accumulator_and_item_types(self):
+        source = '[1, 2, 3] "" fold fn (text: String, n: Integer) -> String => "$text$n" end'
+        self.assertEqual(execute(source), ["123"])
+
     # The intersection of generics and rank polymorphism
 
     def test_reduce_sum_matrix_modifier(self):
         result = execute("""
             [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
-            fold: +           
+            reduce: +           
         """)
         self.assertEqual(
             result, [[RuntimeNumber("12"), RuntimeNumber("15"), RuntimeNumber("18")]]
@@ -246,7 +262,7 @@ class ProgramTests(unittest.TestCase):
     def test_reduce_sum_matrix_inferred_lambda(self):
         result = execute("""
             [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
-            fold fn => +           
+            reduce fn => +           
         """)
         self.assertEqual(
             result, [[RuntimeNumber("12"), RuntimeNumber("15"), RuntimeNumber("18")]]
@@ -255,7 +271,7 @@ class ProgramTests(unittest.TestCase):
     def test_reduce_sum_matrix_inferred_return_lambda(self):
         result = execute("""
             [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
-            fold fn (:Integer+, :Integer+) => +           
+            reduce fn (:Integer+, :Integer+) => +           
         """)
         self.assertEqual(
             result, [[RuntimeNumber("12"), RuntimeNumber("15"), RuntimeNumber("18")]]
@@ -264,7 +280,7 @@ class ProgramTests(unittest.TestCase):
     def test_reduce_sum_matrix_fully_typed_lambda(self):
         result = execute("""
             [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
-            fold fn (:Integer+, :Integer+) -> Integer+ => +           
+            reduce fn (:Integer+, :Integer+) -> Integer+ => +           
         """)
         self.assertEqual(
             result, [[RuntimeNumber("12"), RuntimeNumber("15"), RuntimeNumber("18")]]
@@ -356,9 +372,9 @@ class ProgramTests(unittest.TestCase):
         """)
         self.assertEqual(result, [RuntimeNumber("120")])
 
-    def test_factorial_as_fold(self):
+    def test_factorial_as_reduce(self):
         result = execute("""
-        define factorial => range(1, _) fold: *
+        define factorial => range(1, _) reduce: *
         factorial 5
         """)
         self.assertEqual(result, [RuntimeNumber("120")])
@@ -473,7 +489,7 @@ define encode(:String) -> {Integer, String}+ =>
 end
 
 define decode(:{Integer, String}+) -> String =>
-  map: fold: *
+  map: reduce: *
   join ""
 end
 "aaabbc" encode
@@ -505,7 +521,7 @@ define evaluate(expr: String)<Panic[UnwrappedNoneFault]>
           "-" => fn => -
           "*" => fn => *
           "/" => fn => /
-        fold($stack[-1, -2])
+        reduce($stack[-1, -2])
         $stack := drop(2) | append
       if numeric? => $stack := append (parseInt $token ?!)
       _ => return ValueError("Unexpected Token")

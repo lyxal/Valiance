@@ -40,7 +40,7 @@ WORKLOADS = (
         "unary-map",
         "range(1, 10000) map: fn (n) => $n % 7 end sum",
     ),
-    Workload("binary-fold", "range(1, 10000) fold: +"),
+    Workload("binary-reduce", "range(1, 10000) reduce: +"),
     Workload(
         "map-filter-sum",
         "range(1, 10000) "

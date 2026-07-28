@@ -498,6 +498,7 @@ ElementChar := ElementFirstChar | <0-9>
 ```
 length([1, 2, 3]) #? 3
 reduce([1, 2, 3], fn => + end) #? 6
+fold([1, 2, 3], 10, fn => + end) #? 16
 +(6, 7) #? 13
 #? The above is valid, but is goofy-ahh
 ```
@@ -509,6 +510,13 @@ reduce([1, 2, 3], fn => + end) #? 6
 [1, 2, 3] reduce(fn => + end)
 #? Equivalent to
 [1, 2, 3] reduce fn => + end
+```
+
+- `reduce` has two inputs: a non-empty list and a reducer. It starts with the list's first item. `/` is an alias for this list overload.
+- `fold` has three inputs: an explicit seed, a list, and a folder. It returns the seed for an empty list and permits the accumulator type to differ from the item type.
+
+```
+[1, 2, 3] 10 fold: + #? 16
 ```
 
 - If arguments would pop from the stack, they do so left to right, and pop as many as needed. For example (assuming `double` pops 1 item, and `+` pops 2):
@@ -1732,7 +1740,7 @@ the following function declaration.
 ```valiance
 overload(Number+ -> Number)
 overload(String+ -> String)
-define sum(xs) => fold: +
+define sum(xs) => reduce: +
 ```
 
 For an otherwise untyped function, these signatures replace ordinary function
@@ -2188,7 +2196,7 @@ trait[T] Addable =>
   extend +(:T, :T) -> T
 end
 
-define[T] sum(:Addable[T]+) -> T => fold: +
+define[T] sum(:Addable[T]+) -> T => reduce: +
 ```
 
 - The same requirement can be written structurally with an anonymous trait:
@@ -2198,11 +2206,11 @@ define[T] sum(
   :trait[T] =>
     extend +(:T, :T) -> T
   end +
-) -> T => fold: +
+) -> T => reduce: +
 ```
 
 - This accepts any type that has a visible `+` overload taking two `T` values and returning `T`; the type does not need to explicitly implement a named `Addable` trait.
-- The requirements of an anonymous trait are available inside the element body, so calls like `fold: +` can type-check against the inline requirement.
+- The requirements of an anonymous trait are available inside the element body, so calls like `reduce: +` can type-check against the inline requirement.
 - Anonymous traits can have generic parameters just like named traits, but they do not have a name and cannot be implemented directly with an `object ... as ...` block.
 - Structural requirements can refer to the constrained type directly. For example, a generic find operation can require structural equality without requiring a named equality trait:
 
@@ -2347,13 +2355,13 @@ TokenType.NUMBER.value
 - Generic constraints are expressed where the constrained value is typed. Use named traits for nominal constraints, or anonymous traits for structural constraints.
 
 ```
-define[T] sum(:Addable[T]+) -> T => fold: +
+define[T] sum(:Addable[T]+) -> T => reduce: +
 
 define[T] sum(
   :trait[T] =>
     extend +(:T, :T) -> T
   end +
-) -> T => fold: +
+) -> T => reduce: +
 ```
 
 ## 16.1. `exact` type marker

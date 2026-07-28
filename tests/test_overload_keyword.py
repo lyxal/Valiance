@@ -14,7 +14,7 @@ class OverloadKeywordTests(unittest.TestCase):
 overload(Number+ -> Number)
 #? the signatures remain attached across comments and whitespace
 overload(String+ -> String)
-define sharedSum(xs) => fold: +
+define sharedSum(xs) => reduce: +
 """)
         self.assertEqual(len(nodes), 1)
         self.assertIsInstance(nodes[0], DefineNode)
@@ -40,7 +40,7 @@ define sharedSum(xs) => fold: +
         node = parse("""
 overload(Number+ -> Number)
 overload(String+ -> String)
-define sharedSum(xs) => fold: +
+define sharedSum(xs) => reduce: +
 """)[0]
         analyser = Analyser()
         typed = analyser.analyse([node])
@@ -51,7 +51,7 @@ define sharedSum(xs) => fold: +
     def test_typed_define_keeps_own_signature_and_adds_overloads(self):
         node = parse("""
 overload(String+ -> String)
-define sum(xs: Number+) -> Number => fold: +
+define sum(xs: Number+) -> Number => reduce: +
 """)[0]
         analyser = Analyser()
         analyser.analyse([node])
@@ -73,7 +73,7 @@ define identity(value) => top
         source = """
 overload(Number+ -> Number)
 overload(String+ -> String)
-define sharedSum(xs) => fold: +
+define sharedSum(xs) => reduce: +
 sharedSum([1, 2, 3])
 sharedSum(["a", "b", "c"])
 """

@@ -1326,7 +1326,7 @@ define[T] sum(
   :trait[T] =>
     extend +(:T, :T) -> T
   end +
-) -> T => fold: +
+) -> T => reduce: +
 [1, 2, 3]
 sum
 """))
@@ -1345,7 +1345,7 @@ define[T, U] dotProd(
   end +,
   right: U+
 ) =>
-  * | fold: +
+  * | reduce: +
 end
 
 [1, 2, 3] dotProd [4, 5, 6]
@@ -3040,7 +3040,7 @@ pick(_, 4)
 
         typed = analyser.analyse(
             parse(
-                "define f => [sum, length] | fold: /\n"
+                "define f => [sum, length] | reduce: /\n"
                 "f([1, 2, 3, 4])"
             )
         )

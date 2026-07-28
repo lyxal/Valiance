@@ -17,4 +17,4 @@ define factorial3(n: Number) -> Number =>
   $res
 end
 
-define factorial4(n: Number) -> Number => fold(range(1, $n)): *
+define factorial4(n: Number) -> Number => reduce(range(1, $n)): *

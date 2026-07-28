@@ -865,7 +865,7 @@ define[T] sum(
   :trait[T] =>
     extend +(:T, :T) -> T
   end +
-) -> T => fold: +
+) -> T => reduce: +
 """
         )
 

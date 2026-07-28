@@ -10,5 +10,5 @@ end
 range(1, 100) at (n) =>
   % [3, 5] == 0
   * ["Fizz", "Buzz"]
-  fold: + | or toString $n
+  reduce: + | or toString $n
 end

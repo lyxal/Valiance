@@ -9,7 +9,7 @@ define evaluate(expr: String)<Panic[UnwrappedNoneFault]>
           "-" => fn => -
           "*" => fn => *
           "/" => fn => /
-        fold($stack[-1, -2])
+        reduce($stack[-1, -2])
         $stack := drop(2) | append
       if numeric? => $stack := append (parseInt $token ?!)
       _ => return ValueError("Unexpected Token")

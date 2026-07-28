@@ -18,7 +18,9 @@ class ReferenceDocumentationTests(unittest.TestCase):
 
         self.assertIn("dup", by_name)
         self.assertIn("/", by_name)
-        self.assertIn("fold", by_name["/"].aliases)
+        self.assertIn("reduce", by_name["/"].aliases)
+        self.assertIn("fold", by_name)
+        self.assertNotIn("fold", by_name["/"].aliases)
         self.assertIn("len", by_name["length"].aliases)
         self.assertIn("getMessage", by_name["message"].aliases)
         self.assertTrue(all(reference.summary for reference in references))

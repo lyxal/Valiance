@@ -223,18 +223,23 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         category="Arithmetic",
     ),
     "/": element_documentation(
-        "Divide numbers or fold a non-empty list with a reducer.",
+        "Divide numbers or reduce a non-empty list.",
         description=(
-            "Numeric overloads divide the value beneath the top of the stack by the top value.",
-            "The list overload, also available as `fold`, uses the first item as the accumulator and applies the reducer to every remaining item.",
+            "Numeric overloads perform division.",
+            "The list overload, also available as `reduce`, starts with the first item and reduces the remainder.",
         ),
-        parameters=(
-            ("left_or_values", "Dividend or non-empty list."),
-            ("right_or_reducer", "Divisor or two-input reducer."),
-        ),
-        returns="The quotient or final accumulated value.",
+        parameters=(("left_or_values", "Dividend or non-empty list."), ("right_or_reducer", "Divisor or reducer.")),
+        returns="The quotient or final reduced value.",
         category="Arithmetic",
-        see_also=("fold",),
+        see_also=("reduce", "fold"),
+    ),
+    "fold": element_documentation(
+        "Fold a list from an explicit seed value.",
+        description=("Applies the folder to the accumulator and every item in order.", "An empty list returns the seed."),
+        parameters=(("values", "Values to fold."), ("seed", "Initial accumulator."), ("folder", "Accumulator and item callable.")),
+        returns="The final accumulator.",
+        category="Collections",
+        see_also=("reduce", "/"),
     ),
     "double": element_documentation(
         "Multiply a number by two.",
@@ -1636,9 +1641,9 @@ def _slash(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     ),
     (T.String,),
 )
-@alias("fold")
-def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `/` built-in runtime overload."""
+@alias("reduce")
+def _reduce(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Reduce a non-empty list; `/` is its operator alias."""
     values, reducer = args
     if hasattr(values, "code") or hasattr(values, "overloads"):
         values, reducer = reducer, values
@@ -1665,6 +1670,25 @@ def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         return (result,)
     for item in iterator:
         result = reduce_item(result, item)
+    return (result,)
+
+
+@builtin(
+    "fold",
+    (
+        T.ExactList(T.TypeVariable("Item")),
+        T.TypeVariable("Accumulator"),
+        T.Fn((T.TypeVariable("Accumulator"), T.TypeVariable("Item")), (T.TypeVariable("Accumulator"),)),
+    ),
+    (T.TypeVariable("Accumulator"),),
+)
+def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Fold every list item into an explicit seed accumulator."""
+    values, result, folder = args
+    prepared = ctx.prepare_call(folder, 2, 1) if ctx.prepare_call is not None else None
+    for item in values:
+        called = prepared.invoke2(result, item) if prepared is not None else tuple(ctx.call(folder, [result, item]))
+        result = called[0]
     return (result,)
 
 

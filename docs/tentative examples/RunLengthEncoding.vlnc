@@ -4,6 +4,6 @@ define encode(:String) -> {Integer, String}+ =>
 end
 
 define decode(:{Integer, String}+) -> String =>
-  map: fold: *
+  map: reduce: *
   join ""
 end

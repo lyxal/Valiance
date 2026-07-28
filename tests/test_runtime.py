@@ -1032,7 +1032,7 @@ define[T, U] dotProd(
   end +,
   right: U+
 ) =>
-  * | fold: +
+  * | reduce: +
 end
 
 ["Fizz", "Buzz"] dotProd [0, 1]

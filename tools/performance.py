@@ -70,7 +70,7 @@ end | "\n" join | length"""
 
 WORKLOADS = (
     PerformanceWorkload("startup-small", "startup", "1 2 +"),
-    PerformanceWorkload("arithmetic-loop", "numeric", "range(1, 10000) fold: +"),
+    PerformanceWorkload("arithmetic-loop", "numeric", "range(1, 10000) reduce: +"),
     PerformanceWorkload(
         "lazy-pipeline",
         "higher-order",
