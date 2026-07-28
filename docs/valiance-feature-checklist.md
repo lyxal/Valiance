@@ -328,7 +328,7 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Allow call-site-checked functions to consume additional outer-stack arguments.
 - [x] Trigger call-site checking for variadic tuple parameters.
 - [x] Type-check `both` against two same-arity stack groups at each call site.
-- [x] Type-check `correspond` against independently sized stack groups at each
+- [x] Type-check `sequence` against independently sized stack groups at each
   call site.
 - [x] Preserve call-site-selected group arities in resolved bytecode metadata.
 

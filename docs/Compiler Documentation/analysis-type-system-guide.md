@@ -968,7 +968,7 @@ Important invariants:
 
 - The analyser detects CSTC structurally from overload parameter types. Do not
   add element-name checks for built-ins such as `peek`, `dip`, `fork`, `both`,
-  or `correspond`.
+  or `sequence`.
 - A single element can have both ordinary overloads and CSTC overloads.
 - User-defined functions and built-ins use the same CSTC path. Built-ins provide
   a small static helper through `@builtin(..., call_site=...)`; user functions
@@ -979,7 +979,7 @@ Important invariants:
   permute modifier arguments when applying a call-site checked overload.
 - The concrete applied overload records the runtime arity and consumed-count
   details that codegen needs. It may also carry hidden runtime constants such
-  as the group arities selected for `both` and `correspond`. This lets `peek`
+  as the group arities selected for `both` and `sequence`. This lets `peek`
   pass stack values without consuming them and lets unequal-arity combinators
   reproduce the analyser's exact stack partition at runtime.
 - A CSTC call may source missing values through ordinary input inference or

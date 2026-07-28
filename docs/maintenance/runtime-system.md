@@ -316,7 +316,7 @@ Call-site checked built-ins can attach `runtime_static_values` to their concrete
 applied overload. Codegen copies those values into `ResolvedElementReference`,
 and the VM exposes them through `RuntimeContext.static_values`. This is the
 correct way to preserve an analysis-only partition decision such as
-`correspond` choosing an `n`-argument lower group and an `m`-argument upper
+`sequence` choosing an `n`-argument lower group and an `m`-argument upper
 group, or a `where` clause computing a hidden numeric constant; the runtime
 must not rediscover those values from an overloaded callable.
 
@@ -1472,7 +1472,7 @@ semantics.
 `PlannedLazyList` likewise exposes generic `reduce_terminal` and
 `count_terminal` operations. `sum` and `length` are current consumers, but future
 terminals can fuse without adding a new list wrapper or a source-specific opcode.
-Stack combinators (`peek`, `dip`, `fork`, `both`, and `correspond`) now prepare
+Stack combinators (`peek`, `dip`, `fork`, `both`, and `sequence`) now prepare
 their concrete callables using reified runtime arity and multiplicity, so future
 callable implementations benefit from the same plan selection rather than from
 combinator-specific fast paths.

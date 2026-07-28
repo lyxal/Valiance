@@ -563,66 +563,59 @@ double 6 + halve 7
 
 ## 4.2. Overload Resolution and Disambiguation
 
-When several overloads are applicable, Valiance selects the non-dominated applicable overload with the most specific argument matches.
-
+- When picking an overload to execute, the "most specific" overload is chosen.
+	- That is, the overload that has the most specific matches to the element arguments is chosen.
+ 
 Consider:
 
-```text
-F (Number) -> Number
-F (Number | String) -> Number
+```
+F (Number) -> Number  #? Overload 1
+F (Number|String) -> Number #? Overload 2
 ```
 
-If `F` is given a `Number`, both overloads are applicable, but the first overload is selected because `Number` is narrower than `Number | String`.
+- If `F` is given `Number`, then overload 1 is chosen. Although both overloads match, the first is more specific, as `Number` is a narrower match than `Number|String`.
+- Order of narrowness (or specificness):
 
-Match categories are ordered from most to least specific:
-
+```md
 1. exact match
-2. exact generic match
-3. tagged match
-4. optional match
-5. intersection match
-6. trait match
+2. exact generic-equivalent match
+3. optional substitution (T where T? expected)
+4. vectorising match
+5. intersection type match
+6. trait implmentation match
 7. rank match
-8. union match
-9. vectorised match
-10. call-site-checked match
-
-A non-match is not an applicable candidate.
-
-Specificity is compared per argument. Overload X dominates overload Y when:
-
-- every argument match for X is at least as specific as the corresponding argument match for Y; and
-- at least one argument match for X is strictly more specific.
-
-In pseudocode, where lower specificity scores are better:
-
-```text
-dominates(X, Y) =
-  all(X.score[i] <= Y.score[i] for each i)
-  and
-  any(X.score[i] < Y.score[i] for some i)
+8. union type match
 ```
 
-Thus, parameters may be equally specific in some positions. It is not necessary for X to be strictly more specific in every position.
+- Note that tagged versions of matches take priority over untagged matches.
+	- A tag match is narrower than an untagged value
+ 
+- Overload X is more specific than overload Y if and only if:
 
-When match-category scores are equal, the applied parameter types may also be compared. One parameter list is more specific than another if all of its parameter types are the same as or narrower than the corresponding types in the other list, and at least one is strictly narrower.
+```
+For all parameter pairs (Px, Py) in zip(X.params, Y.params):
+  specificity(Px) > specificity(Py) in the specificity chain
 
-If multiple distinct, non-dominated candidates remain, the call is ambiguous and produces a compile-time error. Candidates may be ambiguous because they are equally specific. 
-
-An element can be disambiguated using positional type hints in `[]` after its name:
-
-```text
-$n F[T]
-$n F[U]
+(All parameters must be strictly more specific)
 ```
 
-Each entry provides a type hint for the corresponding consumed argument. `_` may be used when a position should remain unconstrained:
+- If multiple overloads are just as specific, that's a compile error
+- Overloads can be disambiguated by specifying how to treat types.
+  - `[]` before `()`
 
-```text
-$x $y F[Number, _]
+Say:
+
+```
+F Overload 1: (T) -> Number
+F Overload 2: (U) -> Number
+$n = Type X implements T and U
 ```
 
-The hints restrict or adapt the argument types used during overload matching; they do not select an overload by declaration number.
+```
+$n F #? Compile error: ambiguous whether overload 1 or 2 desired
+$n F[T] #? Use overload 1
+$n F[U] #? Use overload 2
+```
 
 # 5. Stack Shuffling
 - 3 fundamental elements
@@ -851,7 +844,7 @@ end
 
 ### 6.6.1. Call-Site Checked Stack Combinators
 
-`both` and `correspond` are built-in call-site checked elements. Their stack
+`both` and `sequence` are built-in call-site checked elements. Their stack
 effects are derived from the concrete callable types at each use, so they work
 with any fixed callable arity and multiplicity.
 
@@ -872,16 +865,16 @@ A niladic callable is invoked twice and consumes no stack values. A callable
 that returns multiple values contributes all of its results for each group.
 Each group must independently satisfy the callable's parameter types.
 
-`correspond` applies two callables to two distinct consecutive groups. If the
+`sequence` applies two callables to two distinct consecutive groups. If the
 first callable takes `n` inputs and the second takes `m`, the first callable
 receives the lower `n` values and the second callable receives the upper `m`
 values. Their arities and multiplicities do not need to match. Results from the
 first callable are placed below results from the second callable.
 
 ```valiance
-1 2 correspond: (double, squared)  #? 2 4
-1 2 3 correspond: (double, +)      #? 2 5
-1 2 3 4 5 correspond: (
+1 2 sequence: (double, squared)  #? 2 4
+1 2 3 sequence: (double, +)      #? 2 5
+1 2 3 4 5 sequence: (
   +,
   fn (a, b, c) => $a $b + $c + end
 )                                      #? 3 12

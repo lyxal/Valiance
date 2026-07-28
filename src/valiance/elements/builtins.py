@@ -166,7 +166,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The first call's results followed by the second call's results.",
         category="Functions",
     ),
-    "correspond": element_documentation(
+    "sequence": element_documentation(
         "Apply two callables to two distinct consecutive groups of stack values.",
         description=(
             "The first callable consumes the lower group and the second "
@@ -1221,7 +1221,7 @@ def _both_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     return None
 
 
-def _correspond_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+def _sequence_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     """Type-check two callables against completed consecutive input groups."""
     if len(call_params) < 2:
         return None
@@ -1385,14 +1385,14 @@ def _both(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @builtin(
-    "correspond",
+    "sequence",
     (T.Fn(), T.Fn()),
-    call_site=_correspond_call_site,
+    call_site=_sequence_call_site,
 )
-def _correspond(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+def _sequence(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Apply two callables to their statically sized argument groups."""
     if len(args) < 2:
-        raise RuntimeError("correspond requires two callables")
+        raise RuntimeError("sequence requires two callables")
     *values, lower, upper = args
     if len(ctx.static_values) >= 2:
         lower_arity = int(ctx.static_values[0])
@@ -1401,7 +1401,7 @@ def _correspond(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         lower_arity = _runtime_callable_arity(lower)
         upper_arity = _runtime_callable_arity(upper)
     if lower_arity < 0 or upper_arity < 0 or len(values) != lower_arity + upper_arity:
-        raise RuntimeError("invalid correspond call-site arity metadata")
+        raise RuntimeError("invalid sequence call-site arity metadata")
     split = lower_arity
     lower_args = tuple(values[:split])
     upper_args = tuple(values[split:])

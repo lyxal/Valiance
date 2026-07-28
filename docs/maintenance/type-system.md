@@ -1191,7 +1191,7 @@ source. This layer combines type-level overload application with branch
 specialization, call-site checking, tag overlays, and multidispatch marking.
 For call-site checked built-ins, the concrete overload may also record
 `runtime_static_values`: hidden constants derived during analysis, such as the
-two independently selected argument-group arities for `correspond` or numeric
+two independently selected argument-group arities for `sequence` or numeric
 results produced by a `where` clause. These are compiler metadata, not
 source-visible values or part of semantic type identity.
 

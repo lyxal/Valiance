@@ -534,7 +534,7 @@ a concrete `T.Overload` or `None`. The returned overload must:
 4. Return `None` when the concrete function(s) cannot apply to the proposed
    stack types.
 
-`peek`, `dip`, `fork`, `both`, and `correspond` demonstrate the common
+`peek`, `dip`, `fork`, `both`, and `sequence` demonstrate the common
 consumption patterns:
 
 - `peek` passes the inspected stack values and function to runtime, but consumes
@@ -545,7 +545,7 @@ consumption patterns:
   slice once, so it uses `call_site_body=arity`.
 - `both` consumes two adjacent groups of one callable's arity and records that
   arity as `runtime_static_values=(arity,)`.
-- `correspond` consumes one group for each callable and records
+- `sequence` consumes one group for each callable and records
   `runtime_static_values=(lower_arity, upper_arity)`.
 
 Call-site helpers must use the centralized group applicators in `builtins.py`:
@@ -553,7 +553,7 @@ Call-site helpers must use the centralized group applicators in `builtins.py`:
 - `_apply_consecutive_call_site_callables(stack, overloads)` completes missing
   lower inputs, partitions consecutive argument groups, and applies every
   callable. Use it for one callable and for combinators such as `both` and
-  `correspond`.
+  `sequence`.
 - `_shared_call_site_applications(stack, overloads)` completes one coherent
   shared suffix and applies every callable to the suffix matching its arity. Use
   it for fan-out combinators such as `fork`.
@@ -569,7 +569,7 @@ primitive used by those applicators. New CSTC helpers should not normally call
 it or `_apply_callable(...)` directly.
 
 For unequal group sizes, the analyser's partition must be preserved rather than
-recomputed from runtime function values. `correspond` returns a concrete overload
+recomputed from runtime function values. `sequence` returns a concrete overload
 with the selected arities attached:
 
 ```python
@@ -595,8 +595,8 @@ T.Overload(
 `RuntimeContext.static_values`:
 
 ```python
-@builtin("correspond", (T.Fn(), T.Fn()), call_site=_correspond_call_site)
-def _correspond(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+@builtin("sequence", (T.Fn(), T.Fn()), call_site=_sequence_call_site)
+def _sequence(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     *values, lower, upper = args
     lower_arity, upper_arity = map(int, ctx.static_values[:2])
     return (
@@ -718,7 +718,7 @@ Resolved calls may also include hidden analysis results in
 `ResolvedElementReference.static_values`. User-defined elements use this for
 numeric results produced by a `where` clause, including solved rank values and
 other compile-time constants; call-site checked built-ins use it for
-execution-plan constants such as `both`/`correspond` group arities.
+execution-plan constants such as `both`/`sequence` group arities.
 
 If a resolved user-defined fallback call needs runtime multimethod selection,
 set `ResolvedElementReference.multidispatch`. Call-site checked built-ins can

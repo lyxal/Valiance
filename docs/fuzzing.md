@@ -18,7 +18,7 @@ base seed, and iteration number.
   lists, and tuples. Excessive nesting must either parse successfully or fail
   with a language diagnostic rather than leaking Python recursion failures.
 - `valid-programs` generates grammar-valid arithmetic, variables, conditionals,
-  functions, `both`/`correspond` call-site partitions, flat vectors, and nested
+  functions, `both`/`sequence` call-site partitions, flat vectors, and nested
   vectors. It compares execution with an
   independent `Decimal` model and requires direct bytecode execution to equal a
   serialize/deserialize execution.
