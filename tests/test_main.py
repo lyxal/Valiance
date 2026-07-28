@@ -472,7 +472,7 @@ class MainTests(unittest.TestCase):
             rendered = output_file.read_text(encoding="utf-8")
             self.assertIn('"qualified_name": "println"', rendered)
             self.assertIn('"qualified_name": "both"', rendered)
-            self.assertIn('"qualified_name": "correspond"', rendered)
+            self.assertIn('"qualified_name": "sequence"', rendered)
             self.assertIn('"qualified_name": "std.regex.matches"', rendered)
 
     def test_main_runs_inline_code(self):

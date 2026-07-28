@@ -1593,28 +1593,28 @@ define choose(i: Integer) -> String => "int"
             [RuntimeNumber("6"), RuntimeNumber("15")],
         )
 
-    def test_executes_correspond_with_distinct_callable_arities(self):
+    def test_executes_sequence_with_distinct_callable_arities(self):
         self.assertEqual(
-            execute("1 2 correspond: (double, squared)"),
+            execute("1 2 sequence: (double, squared)"),
             [RuntimeNumber("2"), RuntimeNumber("4")],
         )
         self.assertEqual(
-            execute("1 2 3 correspond: (double, +)"),
+            execute("1 2 3 sequence: (double, +)"),
             [RuntimeNumber("2"), RuntimeNumber("5")],
         )
         self.assertEqual(
             execute(
-                "1 2 3 4 5 correspond: "
+                "1 2 3 4 5 sequence: "
                 "(+, fn (:Number, :Number, :Number) => + + end)"
             ),
             [RuntimeNumber("3"), RuntimeNumber("12")],
         )
         self.assertEqual(
-            execute("1 correspond: (fn => 9 end, double)"),
+            execute("1 sequence: (fn => 9 end, double)"),
             [RuntimeNumber("9"), RuntimeNumber("2")],
         )
 
-    def test_both_and_correspond_can_infer_enclosing_function_inputs(self):
+    def test_both_and_sequence_can_infer_enclosing_function_inputs(self):
         self.assertEqual(
             execute("""
 $f = fn => both: + end
@@ -1624,15 +1624,15 @@ $f = fn => both: + end
         )
         self.assertEqual(
             execute("""
-$f = fn => correspond: (double, +) end
+$f = fn => sequence: (double, +) end
 1 2 3 $f()
 """),
             [RuntimeNumber("5")],
         )
 
-    def test_correspond_serializes_its_call_site_arity_metadata(self):
+    def test_sequence_serializes_its_call_site_arity_metadata(self):
         analyser = Analyser()
-        typed = analyser.analyse(parse("1 2 3 correspond: (double, +)"))
+        typed = analyser.analyse(parse("1 2 3 sequence: (double, +)"))
         self.assertEqual(analyser.diagnostics, [])
 
         program = compile_program(typed, optimize=False)
@@ -1641,7 +1641,7 @@ $f = fn => correspond: (double, +) end
             for instruction in program.main.instructions
             if instruction.op is OpCode.CALL_RESOLVED_ELEMENT
             and isinstance(instruction.arg, ResolvedElementReference)
-            and instruction.arg.name == "correspond"
+            and instruction.arg.name == "sequence"
         )
 
         self.assertEqual(len(references), 1)

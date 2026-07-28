@@ -535,7 +535,7 @@ def _program_case(rng: random.Random, max_depth: int) -> _ProgramCase:
         upper_source = _sum_callable_source(upper_arity, upper_niladic)
         prefix = " ".join(map(str, values))
         source = (
-            f"{prefix} correspond: ({lower_source}, {upper_source})".strip()
+            f"{prefix} sequence: ({lower_source}, {upper_source})".strip()
         )
         lower_values = values[:lower_arity]
         upper_values = values[lower_arity:]
