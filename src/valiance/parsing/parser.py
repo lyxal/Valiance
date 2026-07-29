@@ -1647,12 +1647,6 @@ class Parser:
             )
         if self._match_ident("fn"):
             return _ChainPiece((self._function(self._previous),), True)
-        if self._match(TokenKind.QUOTE):
-            start = self._previous
-            body = self._chain_segment_until(_LINE_TERMINATORS | {TokenKind.PIPE})
-            if not body:
-                self._error("expected quick function body")
-            return _ChainPiece((FunctionNode(body=body, location=_loc(start)),), True)
         if self._match_ident("if"):
             return _ChainPiece((self._if(self._previous),), True)
         if self._match_ident("assert"):

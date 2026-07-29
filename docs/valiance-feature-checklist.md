@@ -311,8 +311,6 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Preserve captured values after the defining scope exits.
 - [x] Reject captures of top-level assignments.
 - [x] Restore captured values at the start of each closure call.
-- [x] Parse quick functions using `'chain`.
-- [x] Make quick functions equivalent to `fn => chain`.
 
 ## 19. Function type inference and call-site checking
 

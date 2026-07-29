@@ -928,18 +928,6 @@ external("math.dll") define sqrt(:Number as FFI.float) -> FFI.float as Number =>
 
 - More on FFI later.
 
-## 6.8. Quick Functions
-
-- `'` before the next chain segment wraps that segment in a function
-- `'chain` == `fn => chain`
-- E.g.
-
-```
-[1, 2, 4, 5, 8] '< 5 filter
-#? Same as
-[1, 2, 4, 5, 8] filter fn => < 5
-```
-
 # 7. Vectorisation
 
 - High level:
@@ -1139,7 +1127,7 @@ extend: <selector>
 - For example:
 
 ```
-[1, 2, 3, 4] '+ reduce
+[1, 2, 3, 4] fn => + end reduce
 ```
 
 - That can get majorly inconvenient and also has readability problems
@@ -1148,18 +1136,16 @@ extend: <selector>
 - You _could_ write:
 
 ```
-[1, 2, 3, 4] reduce '+
-#? or
 [1, 2, 3, 4] reduce fn => +
 ```
 
-- But that, even by Valiance philosophical standards, is rather ceremonious.
+- But that is rather ceremonious.
 - `:` after an element allows you to specify that the next chain should be automatically wrapped as a function argument.
 - For example:
 
 ```
 [1, 2, 3, 4] reduce: +
-#? No need for `fn => +`, `'+` or E.C.S or postfix application
+#? No need for `fn => +` or E.C.S or postfix application
 ```
 
 - If an element takes multiple function arguments, chains must be wrapped in `()` and separated by `,`.
@@ -1769,20 +1755,20 @@ function.
 - Example:
 
 ```
-define[T] sort(:T+, key: Function[T -> Comparable] = 'top) -> T+ => ... end
+define[T] sort(:T+, key: Function[T -> Comparable] = fn => top end) -> T+ => ... end
 
 [4, 1, 3] sort(_) #? Calls with default key
 [4, 1, 3] sort #? Compile error - plain calls still expect full stack arity
 [4, 1, 3] sort: negate #? Overwrite key
-[4, 1, 3] sort(_, 'negate) #? Overwrite key
-[4, 1, 3] sort(key = 'negate) #? Explicit name
+[4, 1, 3] sort(_, fn => negate end) #? Overwrite key
+[4, 1, 3] sort(key = fn => negate end) #? Explicit name
 ```
 
 - Note that with ECS, not all optional args must be specified
 - A named argument does not need to account for the position of other non-optional args
 - Passing an optional as an unnamed arg _must_ account for non-optional args
-	- Like with `sort(_, 'negate)`
-	- Otherwise, `'negate` is treated as the thing to sort, which is a compile error.
+	- Like with `sort(_, fn => negate end)`
+	- Otherwise, `fn => negate end` is treated as the thing to sort, which is a compile error.
  
 ## 11.3. Overloads and Arity Consistency
 
@@ -1790,7 +1776,7 @@ define[T] sort(:T+, key: Function[T -> Comparable] = 'top) -> T+ => ... end
 	- Compile error if there are overloads with different arities and/or multiplicities
 - While mixed arity is possible in Valiance's type system, mixed-arity overloads are typically indicative of elements that should have different names.
 	- Instead of `sort(T+)` and `sort(T+, Function[T -> U])`, consider `sort(T+)` and `sortBy(T+, Function[T -> U])`
-	- Alternatively, `sort(T+, Function[T -> U] = 'top`
+	- Alternatively, `sort(T+, Function[T -> U] = fn => top end)`
 
  ## 11.3. `define` and Capturing
 
@@ -2878,7 +2864,7 @@ end
 ```
 #? Ignore the fact that this never terminates.
 @recursive fn => #? Call this function A
-  $outer = 'this
+  $outer = fn => this end
   @recursive fn => #? Call this function B
     this #? Calls function B
     $outer() #? Calls function A

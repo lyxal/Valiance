@@ -156,6 +156,10 @@ class LexerTests(unittest.TestCase):
         with self.assertRaisesRegex(LexError, r"invalid string escape"):
             lex(r'"bad\qescape"')
 
+    def test_rejects_apostrophe(self):
+        with self.assertRaisesRegex(LexError, r"unexpected character"):
+            lex("'")
+
     def test_deeply_nested_source_fails_with_parse_error_not_recursion_error(self):
         source = "[" * 2_000 + "0" + "]" * 2_000
 
@@ -558,18 +562,6 @@ end
                 ElementNode(Symbol("*")),
             ],
         )
-
-    def test_parses_quick_function(self):
-        program = parse("[1, 2, 3] '< 5 filter")
-
-        self.assertIsInstance(program[0], ListLiteralNode)
-        self.assertEqual(
-            program[1],
-            FunctionNode(
-                body=(NumberLiteralNode("5"), ElementNode(Symbol("<"))),
-            ),
-        )
-        self.assertEqual(program[2], ElementNode(Symbol("filter")))
 
     def test_parses_braced_tuple_literal(self):
         [node] = parse("{1, 2, 3, 4}")

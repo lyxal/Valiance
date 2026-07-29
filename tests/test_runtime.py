@@ -1568,18 +1568,18 @@ define label(x: #right Integer) -> String => "right"
             [RuntimeNumber("13")],
         )
         self.assertEqual(
-            execute("'+ | call(6, 7)"),
+            execute("fn => + end | call(6, 7)"),
             [RuntimeNumber("13")],
         )
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            self.assertEqual(execute("'+ | call(6, 7) | println"), [])
+            self.assertEqual(execute("fn => + end | call(6, 7) | println"), [])
         self.assertEqual(output.getvalue(), "13\n")
         self.assertEqual(
             execute("""
 define choose(n: Number) -> Number => $n 1 +
 define choose(i: Integer) -> String => "int"
-'choose | call[Number](6)
+fn => choose end | call[Number](6)
 """),
             [RuntimeNumber("7")],
         )
@@ -4504,7 +4504,7 @@ end
     def test_runtime_diagnostics_format_functions_compactly(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            execute("'+ | println")
+            execute("fn => + end | println")
 
         self.assertEqual(
             output.getvalue(),
