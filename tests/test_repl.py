@@ -4,6 +4,7 @@ import io
 import tempfile
 from pathlib import Path
 import unittest
+import unittest.mock
 
 from valiance import repl as repl_module
 from valiance.main import _ReplSession
@@ -200,6 +201,21 @@ class ReplFrontendTests(unittest.TestCase):
         self.assertTrue(frontend.set_mode("scratch"))
         self.assertEqual(frontend._editor_source, "define answer -> Number => 42")
         self.assertEqual(frontend._session.defaults, ["", ""])
+
+    def test_scratch_run_waits_before_restoring_editor(self):
+        frontend = repl_module._PromptToolkitFrontend.__new__(
+            repl_module._PromptToolkitFrontend
+        )
+        output = io.StringIO()
+        with (
+            contextlib.redirect_stdout(output),
+            unittest.mock.patch("builtins.input", return_value=""),
+        ):
+            frontend.wait_for_scratch_result()
+
+        rendered = output.getvalue()
+        self.assertIn("Press Enter to return to the scratchpad", rendered)
+        self.assertTrue(rendered.endswith("\033[2J\033[3J\033[H"))
 
     def test_enhanced_editor_saves_scratchpad_with_vlnc_extension(self):
         class FakePromptSession:

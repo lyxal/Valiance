@@ -124,6 +124,12 @@ class ReplFrontend(Protocol):
     def save_scratchpad(self) -> str | None:
         """Save scratch source and return its path, or return ``None``."""
 
+    def submission_kind(self) -> str:
+        """Return ``repl``, ``scratch-run``, or ``scratch-switch`` for the last read."""
+
+    def wait_for_scratch_result(self) -> None:
+        """Keep an explicit scratch run's output visible until the user continues."""
+
 
 @dataclass(slots=True)
 class PlainReplFrontend:
@@ -143,6 +149,13 @@ class PlainReplFrontend:
     def save_scratchpad(self) -> str | None:
         """Report that the portable frontend has no scratch buffer to save."""
         return None
+
+    def submission_kind(self) -> str:
+        """Report that plain input always comes from the one-line REPL."""
+        return "repl"
+
+    def wait_for_scratch_result(self) -> None:
+        """Do nothing because the plain frontend has no scratch screen."""
 
 
 def create_repl_frontend(
@@ -365,6 +378,8 @@ class _PromptToolkitFrontend:
         self._last_submitted_source = ""
         self._mode = "repl"
         self._pending_mode: str | None = None
+        self._scratch_submission_kind: str | None = None
+        self._last_submission_kind = "repl"
         self._theme_name = "Midnight"
         bindings = KeyBindings()
 
@@ -500,6 +515,7 @@ class _PromptToolkitFrontend:
         def _submit(event) -> None:
             """Run the scratch buffer; Ctrl-Enter is commonly encoded as Ctrl-J."""
             if self._mode == "scratch":
+                self._scratch_submission_kind = "run"
                 event.current_buffer.validate_and_handle()
 
         @bindings.add("c-r")
@@ -510,6 +526,7 @@ class _PromptToolkitFrontend:
                 self._editor_source = source
                 self._mode = "repl"
                 if source.strip() and source != self._last_submitted_source:
+                    self._scratch_submission_kind = "switch"
                     # Submit the changed scratch program through the ordinary REPL
                     # pipeline.  Its definitions, variables, imports, and stack
                     # effects therefore become available in one-line mode.
@@ -568,6 +585,7 @@ class _PromptToolkitFrontend:
                     buffer.text = ":__save_scratchpad__"
                     buffer.validate_and_handle()
                 elif action == "run":
+                    self._scratch_submission_kind = "run"
                     buffer.validate_and_handle()
                 elif action == "switch":
                     self._editor_source = buffer.text
@@ -874,13 +892,19 @@ class _PromptToolkitFrontend:
         if source == ":__mode_switched__" and self._pending_mode is not None:
             self._mode = self._pending_mode
             self._pending_mode = None
-        if (
+        is_scratch_source = (
             prompt_mode == "scratch"
-            and source.strip()
+            and bool(source.strip())
             and not source.lstrip().startswith(":")
-        ):
+        )
+        if is_scratch_source:
             self._editor_source = source
             self._last_submitted_source = source
+            kind = getattr(self, "_scratch_submission_kind", None) or "run"
+            self._last_submission_kind = f"scratch-{kind}"
+        else:
+            self._last_submission_kind = "repl"
+        self._scratch_submission_kind = None
         return source
 
     def set_mode(self, mode: str) -> bool:
@@ -889,6 +913,19 @@ class _PromptToolkitFrontend:
             return False
         self._mode = mode
         return True
+
+    def submission_kind(self) -> str:
+        """Return the origin and intent of the source returned by ``read``."""
+        return self._last_submission_kind
+
+    def wait_for_scratch_result(self) -> None:
+        """Pause before restoring the full-screen editor after an explicit run."""
+        print("\n\033[2mPress Enter to return to the scratchpad...\033[0m", end="", flush=True)
+        try:
+            input()
+        except EOFError:
+            pass
+        print("\033[2J\033[3J\033[H", end="", flush=True)
 
     def save_scratchpad(self) -> str | None:
         """Prompt for a ``.vlnc`` path and write the retained scratch source."""
