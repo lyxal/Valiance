@@ -2638,7 +2638,9 @@ getName $joe
         constructor = Analyser()
         constructor.analyse(parse('VectorisationFault("forged")'))
         self.assertTrue(constructor.diagnostics)
-        self.assertIn("unknown element 'VectorisationFault'", constructor.diagnostics[0])
+        self.assertIn(
+            "unknown element 'VectorisationFault'", constructor.diagnostics[0]
+        )
 
         handler = Analyser()
         handler.analyse(parse("""
@@ -2760,12 +2762,7 @@ end
     def test_call_node_named_arguments_explain_function_value_rule(self):
         analyser = Analyser()
 
-        analyser.analyse(
-            parse(
-                "$double = fn (v: Integer) => * 2\n"
-                "$double(v = 5)"
-            )
-        )
+        analyser.analyse(parse("$double = fn (v: Integer) => * 2\n" "$double(v = 5)"))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -2813,7 +2810,7 @@ end
         self.assertEqual(len(typed[-1].overload.params), 3)
 
     def test_call_element_with_ecs_can_use_function_from_stack(self):
-        typed = analyse(parse("'+ | call(1, 2)"))
+        typed = analyse(parse("fn => + end | call(1, 2)"))
 
         self.assertIsInstance(typed[-1], TypedElementNode)
         self.assertEqual(typed[-1].typ, Integer)
@@ -3010,10 +3007,7 @@ pick(_, 4)
         analyser = Analyser()
 
         typed = analyser.analyse(
-            parse(
-                "$avg = fn => fork: (sum, length) /\n"
-                "println $avg([4, 6, 1, 7])"
-            )
+            parse("$avg = fn => fork: (sum, length) /\n" "println $avg([4, 6, 1, 7])")
         )
 
         self.assertFalse(analyser.diagnostics)
@@ -3039,10 +3033,7 @@ pick(_, 4)
         analyser = Analyser()
 
         typed = analyser.analyse(
-            parse(
-                "define f => [sum, length] | reduce: /\n"
-                "f([1, 2, 3, 4])"
-            )
+            parse("define f => [sum, length] | reduce: /\n" "f([1, 2, 3, 4])")
         )
 
         self.assertFalse(analyser.diagnostics)
@@ -3052,10 +3043,7 @@ pick(_, 4)
         analyser = Analyser()
 
         typed = analyser.analyse(
-            parse(
-                "$f = fn => 1 peek: "
-                "fn (a: Number, b: Number) => + end end"
-            )
+            parse("$f = fn => 1 peek: " "fn (a: Number, b: Number) => + end end")
         )
 
         self.assertFalse(analyser.diagnostics)
@@ -3065,10 +3053,7 @@ pick(_, 4)
         analyser = Analyser()
 
         typed = analyser.analyse(
-            parse(
-                '$f = fn => "held" dip: sum end\n'
-                '$f([1, 2, 3])'
-            )
+            parse('$f = fn => "held" dip: sum end\n' "$f([1, 2, 3])")
         )
 
         self.assertFalse(analyser.diagnostics)
@@ -3756,10 +3741,12 @@ define f(value: #left #right Number) -> Number => $value
     def test_multi_index_access_and_assignment_preserve_item_types(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(parse(
-            '$list = [1, 2, 3]\n$list[0, 1]\n'
-            '$dict = dict{"a" => 1, "b" => 2}\n$dict["a", "b"] = 8'
-        ))
+        typed = analyser.analyse(
+            parse(
+                "$list = [1, 2, 3]\n$list[0, 1]\n"
+                '$dict = dict{"a" => 1, "b" => 2}\n$dict["a", "b"] = 8'
+            )
+        )
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[1].typ, ExactList(Integer))
@@ -3889,9 +3876,7 @@ end
     def test_union_argument_preserves_scalar_or_vectorised_result(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse("(if true => 1 else => [2] end) + 3")
-        )
+        typed = analyser.analyse(parse("(if true => 1 else => [2] end) + 3"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, U(Integer, ExactList(Integer)))
@@ -3901,8 +3886,7 @@ end
 
         typed = analyser.analyse(
             parse(
-                "+((if true => 1 else => [2] end), "
-                "(if true => 3 else => [[4]] end))"
+                "+((if true => 1 else => [2] end), " "(if true => 3 else => [[4]] end))"
             )
         )
 
@@ -3931,9 +3915,7 @@ end
     def test_vectorised_addition_preserves_heterogeneous_list_shape(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse("[1, [2, 3, 4]] + [5, [6, 7, 8]]")
-        )
+        typed = analyser.analyse(parse("[1, [2, 3, 4]] + [5, [6, 7, 8]]"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
@@ -3944,9 +3926,7 @@ end
     def test_list_literal_factors_common_exact_list_rank(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(
-            parse("[[[1, 2, 3]], [[4, 5, 6], 7], [8, [[9]], 10]]")
-        )
+        typed = analyser.analyse(parse("[[[1, 2, 3]], [[4, 5, 6], 7], [8, [[9]], 10]]"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
@@ -4003,7 +3983,6 @@ end
         [branch] = branches
         self.assertEqual(branch.stack[-1], Number)
         self.assertEqual(branch.typed_body[-1].typ, Number)
-
 
     def test_optional_cast_returns_optional_target_type(self):
         analyser = Analyser(Environment())
@@ -4112,10 +4091,7 @@ end
                 encoding="utf-8",
             )
             main = root / "main.vlnc"
-            source = (
-                "import { a.foo }\n"
-                "define foo(:Number, :Number, :Number) => 3\n"
-            )
+            source = "import { a.foo }\n" "define foo(:Number, :Number, :Number) => 3\n"
             main.write_text(source, encoding="utf-8")
 
             analyser = Analyser(source_file=main)
@@ -4722,7 +4698,9 @@ class SmartDiagnosticTests(unittest.TestCase):
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             analyser.lints,
-            ["1:3: [L013/redundant-cast] unnecessary cast to Integer; remove `as[Integer]`"],
+            [
+                "1:3: [L013/redundant-cast] unnecessary cast to Integer; remove `as[Integer]`"
+            ],
         )
         self.assertEqual(typed[-1].typ, Integer)
 
@@ -5218,6 +5196,7 @@ end
 if __name__ == "__main__":
     unittest.main()
 
+
 class ForeachRefactoringLintTests(unittest.TestCase):
     def _analyse(self, source: str):
         analyser = Analyser()
@@ -5234,9 +5213,7 @@ class ForeachRefactoringLintTests(unittest.TestCase):
         self.assertIn("prefer vectorisation", analyser.lints[0])
 
     def test_length_foreach_suggests_map_not_vectorisation(self):
-        analyser = self._analyse(
-            "[[1], [2], [3], [4]] foreach (n) => length $n end"
-        )
+        analyser = self._analyse("[[1], [2], [3], [4]] foreach (n) => length $n end")
         self.assertIn("prefer map", analyser.lints[0])
         self.assertNotIn("prefer vectorisation", analyser.lints[0])
 
@@ -5310,8 +5287,7 @@ class ForeachRefactoringLintTests(unittest.TestCase):
 
     def test_node_lint_off_suppresses_all_lints_for_foreach(self):
         analyser = self._analyse(
-            "$total = 0\n@lintOff\n"
-            "[1, 2, 3] foreach (n) => $total := + $n end"
+            "$total = 0\n@lintOff\n" "[1, 2, 3] foreach (n) => $total := + $n end"
         )
         self.assertEqual(analyser.lint_findings, [])
 
@@ -5349,6 +5325,7 @@ class ForeachRefactoringLintTests(unittest.TestCase):
         codes = [finding.code for finding in analyser.lint_findings]
         self.assertNotIn("prefer-vectorisation-or-map", codes)
         self.assertNotIn("prefer-fold", codes)
+
 
 class BareParameterElementDiagnosticTests(unittest.TestCase):
     def test_bare_parameter_name_is_suggested_and_prioritised(self):
