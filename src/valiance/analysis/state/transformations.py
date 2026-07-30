@@ -233,6 +233,7 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typ,
             _refine_typed_body(typed_node.condition, old, new),
             _refine_typed_body(typed_node.body, old, new),
+            typed_node.input_count,
         )
     if isinstance(typed_node, TypedTryNode):
         return TypedTryNode(

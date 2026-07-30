@@ -104,6 +104,7 @@ class TypedWhileNode(TypedNode):
 
     condition: tuple[ASTNode | TypedNode, ...] = ()
     body: tuple[ASTNode | TypedNode, ...] = ()
+    input_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)

@@ -3547,6 +3547,20 @@ $n
             [RuntimeNumber("0")],
         )
 
+    def test_implicit_while_cycles_condition_input_through_body(self):
+        output = []
+        source = """0 while (< 10) =>
+  println("Count is ${top}")
+  + 1
+end"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed)
+        result = VirtualMachine(output=output.append).run(program)
+        self.assertEqual(result, [RuntimeNumber("10")])
+        self.assertEqual(output, [f"Count is {index}\n" for index in range(10)])
+
     def test_runtime_loop_forms_cycle_explicit_inputs(self):
         self.assertEqual(
             run(

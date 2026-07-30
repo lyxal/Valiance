@@ -366,8 +366,40 @@ def _while_node(
         self._diagnose("while condition must be a boolean value", node)
         return terminal
 
-    body_outputs = self.analyse_scoped_block(body_inputs, node.body)
+    input_count = 0
+    body_seeds = body_inputs
+    if node.params is None:
+        # A simple while condition observes the current loop state without
+        # consuming it.  Restore the suffix consumed by the condition so the
+        # body receives the same values and can produce the next state.
+        input_count = max(
+            (len(loop_input.stack) - len(output.stack) for output in body_inputs),
+            default=0,
+        )
+        if any(
+            len(loop_input.stack) - len(output.stack) != input_count
+            for output in body_inputs
+        ):
+            self._diagnose("while condition inferred different inputs", node)
+            return _core.BranchSet()
+        cycle_params = tuple(loop_input.stack.items[-input_count:]) if input_count else ()
+        body_seeds = _core.BranchSet.collect(
+            replace(
+                output.with_stack(loop_input.stack),
+                input_mode=_core.InputMode.CYCLE_EXPLICIT_PARAMS,
+                cycle_params=cycle_params,
+            )
+            for output in body_inputs
+        )
+
+    body_outputs = self.analyse_scoped_block(body_seeds, node.body)
     if not body_outputs:
+        return _core.BranchSet()
+
+    if node.params is None and input_count and any(
+        len(output.stack) != len(loop_input.stack) for output in body_outputs
+    ):
+        self._diagnose("while body must return its loop inputs", node)
         return _core.BranchSet()
 
     joined: _core.AnalysisBranch | None = None
@@ -423,6 +455,7 @@ def _while_node(
                     _calls._returns_result_type(result.stack.items),
                     condition=condition_body,
                     body=body,
+                    input_count=input_count,
                 )
             ),
         )

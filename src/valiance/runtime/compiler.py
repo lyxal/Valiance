@@ -1221,6 +1221,31 @@ class _Compiler:
         if isinstance(typed_node, TypedWhileNode):
             condition = typed_node.condition
             body = typed_node.body
+        if (
+            node.params is None
+            and isinstance(typed_node, TypedWhileNode)
+            and typed_node.input_count
+        ):
+            params = tuple(
+                f"_while_input_{index}" for index in range(typed_node.input_count)
+            )
+            condition_code = _Compiler().compile_function(
+                condition,
+                params=params,
+                name="while.condition",
+                cycle_params=True,
+            )
+            body_code = _Compiler(break_as_signal=True).compile_function(
+                body,
+                params=params,
+                name="while.body",
+                cycle_params=True,
+            )
+            self.emit(
+                OpCode.WHILE,
+                (condition_code, body_code, typed_node.input_count),
+            )
+            return
         if node.params is not None:
             params = tuple(
                 f"_{index}" if param.name is None else param.name.text
@@ -1263,6 +1288,14 @@ class _Compiler:
             return
         loop_start = len(self.instructions)
         self.loops.append(_LoopPatch([]))
+        input_count = (
+            typed_node.input_count
+            if isinstance(typed_node, TypedWhileNode)
+            else 0
+        )
+        if input_count:
+            labels = tuple(f"_while_input_{index}" for index in range(input_count))
+            self.emit(OpCode.STACK_SHUFFLE, ("copy", labels, labels))
         self.expression(condition)
         jump_to_end = self.emit(OpCode.JUMP_IF_FALSE, None)
         self.expression(body)

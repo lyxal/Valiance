@@ -55,6 +55,17 @@ end"""))
         self.assertEqual(analyser.diagnostics, [])
         self.assertIsInstance(typed[-1], TypedForNode)
 
+    def test_implicit_while_input_is_reused_by_condition_and_body(self) -> None:
+        """The condition observes loop state without consuming it from the body."""
+        analyser = Analyser()
+        typed = analyser.analyse(parse("""0 while (< 10) =>
+  println("Count is ${top}")
+  + 1
+end"""))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertIsInstance(typed[-1], TypedWhileNode)
+        self.assertEqual(typed[-1].input_count, 1)
+
     def test_control_flow_service_survives_session_copy(self) -> None:
         """REPL preview copies preserve control-flow context delegation."""
         analyser = copy.deepcopy(Analyser())
