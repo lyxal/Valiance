@@ -420,6 +420,85 @@ The relation layer owns generic solving. If a feature needs to know what `T`
 became in `Function[T -> U]`, use solved overload/application results rather
 than re-solving in the analyser.
 
+### Directional Generic Inference
+
+Generic evidence is directional. A type variable does not merely collect a bag
+of candidate types; each occurrence describes a flow relationship:
+
+- a value-producing, positive occurrence contributes a lower bound,
+  `actual <: T`;
+- a consuming, negative occurrence contributes an upper bound,
+  `T <: actual`; and
+- an invariant occurrence contributes both bounds.
+
+The relation layer represents these observations per variable as lower and
+upper evidence. Lower evidence is joined with the existing order-independent
+`_combine_all(...)` rules. This preserves established behaviour such as
+`Integer` plus `Number` solving to `Number`, along with the existing exact,
+minimum-rank, rugged, array, optional, `Result`, row, and tag-aware joins.
+Unrelated lower evidence is not silently converted into a union: generic
+unification still requires one coherent shared value type.
+
+Upper evidence is met. If one existing type satisfies every upper requirement,
+that narrowest existing type is used. Otherwise the requirements are represented
+by a normalized intersection. Consequently:
+
+```text
+T <: Number
+```
+
+solves to `Number`, while:
+
+```text
+T <: Printable
+T <: Serializable
+```
+
+solves to `Printable & Serializable`.
+
+When both directions are present, the joined lower bound is preferred when it
+satisfies the upper meet:
+
+```text
+Integer <: T
+T <: Number
+```
+
+solves to `Integer`. A lower join outside the upper meet rejects the overload
+candidate.
+
+Higher-order parameters are where this distinction matters most. Given:
+
+```text
+fold(Item+, Accumulator,
+     Function[Accumulator, Item -> Accumulator]) -> Accumulator
+```
+
+an integer seed contributes a lower bound for `Accumulator`, the folder return
+contributes another lower bound, and the folder input contributes an upper
+bound. For example:
+
+```text
+{Integer, #boolean Integer} <: Accumulator
+{Number, #boolean Number}  <: Accumulator
+Accumulator <: {Number, #boolean Number}
+```
+
+solves to `{Number, #boolean Number}`. The source does not need a cast merely
+to force the seed to the eventual accumulator type.
+
+Directional collection is deliberately integrated with, rather than a
+replacement for, Valiance call adaptation. Concrete scalar-shaped callable
+arguments can contribute directional evidence immediately. Unresolved function
+literals, overload sets, collection-valued callables, and rank-polymorphic
+callables continue through the established contextual, overload-search, and
+vectorisation paths. Final applicability is always revalidated against the
+fully substituted overload.
+
+Do not use `compatible(...)` as the definition of a bound. Compatibility
+includes call adaptation such as vectorisation. Bounds describe directional
+type flow; compatibility validates the completed call plan.
+
 ### Generic Variance
 
 Nominal generic constructors get declaration-site variance metadata from
@@ -435,9 +514,30 @@ inferring usage:
 - public writable fields count as both positive and negative uses
 - function parameters are negative uses
 - nested function positions flip polarity through parameters
+- nominal generic arguments compose with the nested constructor variance
+  recorded in `Context`
+
+Variance composition follows the ordinary polarity algebra:
+
+```text
+covariant     x covariant       = covariant
+covariant     x contravariant   = contravariant
+contravariant x covariant       = contravariant
+contravariant x contravariant   = covariant
+anything      x invariant       = invariant
+invariant     x anything        = invariant
+```
+
+For example, a readable field of type `Consumer[T]` makes the enclosing type
+contravariant in `T` when `Consumer` is contravariant. Placing that same
+`Consumer[T]` inside a function parameter flips the polarity again and makes
+the enclosing use covariant. This composition is automatic; source authors do
+not need to calculate or annotate it for ordinary declarations.
 
 Both positive and negative use makes the parameter invariant. Keep this
-conservative: unknown or unsupported uses should not silently become variant.
+conservative: unknown constructors, arity mismatches, and unsupported uses must
+not silently become variant. `Context.variance_for(...)` already supplies an
+invariant fallback for those cases.
 Type syntax parses bare `T` as a nominal name, so the analyser rewrites type
 names that match the active generic parameters into `VarType` before
 registering object attributes, constructors, function definitions, function

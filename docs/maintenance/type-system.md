@@ -799,18 +799,48 @@ that hint. The analyser records vectorisation depth and any dynamic target rank.
 
 ### Step 3: collect generic evidence
 
-Each parameter pattern is solved against its argument. Function-shaped
-arguments may be deferred until ordinary arguments solve shared generics.
+Each parameter pattern is solved against its argument. Ordinary positive
+occurrences contribute lower bounds. Function input positions reverse polarity
+and contribute upper bounds; function return positions preserve polarity.
+Nested nominal arguments compose polarity through
+`Context.variance_for(...)`.
 
-### Step 4: combine evidence
+Concrete scalar-shaped function arguments can provide directional evidence in
+this phase. Unresolved function literals, overload sets, and collection/rank
+adapted callables remain on their established contextual or deferred paths.
+This distinction preserves contextual function inference and vectorisation.
 
-Every generic variable receives one substitution through `_combine_all(...)`.
-Conflicting evidence becomes a `GENERIC_CONSTRAINT` mismatch.
+### Step 4: solve lower and upper evidence
+
+For each generic variable:
+
+1. join lower evidence using `_combine_all(...)`;
+2. meet upper evidence, materialising a normalized intersection when no one
+   existing requirement satisfies every upper bound;
+3. choose the lower join when it exists and is assignable to the upper meet;
+4. otherwise choose the upper meet when only upper evidence exists; and
+5. reject incompatible intervals.
+
+Examples:
+
+```text
+Integer <: T                      => T = Integer
+T <: Number                       => T = Number
+T <: Printable, T <: Serializable => T = Printable & Serializable
+Integer <: T, T <: Number         => T = Integer
+```
+
+Generic lower evidence remains stricter than a control-flow join. Branch result
+merging may create unions, while unrelated lower evidence for one shared
+generic still rejects the candidate.
 
 ### Step 5: revisit deferred callables
 
-Expected function types are substituted and overloaded callable arguments are
-checked with the now-concrete input information.
+Expected function types are substituted and overloaded or unresolved callable
+arguments are checked with the now-concrete input information. Evidence from a
+selected deferred callable is incorporated into the candidate before the final
+substitution is validated. Conflicting directional evidence becomes a
+`GENERIC_CONSTRAINT` mismatch.
 
 ### Step 6: substitute parameters and returns
 

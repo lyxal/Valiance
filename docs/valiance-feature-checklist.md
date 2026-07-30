@@ -577,6 +577,14 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Support declaration-site covariance and contravariance metadata.
 - [x] Infer object-like declaration variance from readable, writable, return,
       and function-parameter usage.
+- [x] Compose inferred variance through nested nominal generic constructors.
+- [x] Collect directional lower and upper evidence for concrete higher-order
+      generic arguments.
+- [x] Infer upper-only generics from their upper meet.
+- [x] Infer normalized intersections from multiple unrelated upper bounds.
+- [x] Prefer a compatible lower join when both lower and upper evidence exist.
+- [x] Preserve contextual and rank/vectorisation-aware callable inference while
+      applying directional solving to concrete scalar-shaped callables.
 - [x] Support covariant collection item assignability.
 - [x] Support trait constraints on generic parameters.
 - [x] Parse the atomic overload-resolution marker.
