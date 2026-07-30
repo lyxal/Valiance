@@ -932,21 +932,33 @@ def _branch_argument_substitution(
         ):
             deferred.append((arg, param))
             continue
-        arg = _substitute_branch_type(arg, substitution)
-        param = _substitute_branch_type(param, substitution)
-        constraints = _solve_branch_argument(arg, param, ctx)
+        # A direct variable parameter contributes independent lower evidence;
+        # committing it before later arguments would make choose(1, "hello")
+        # order-dependent. Structured patterns still consume provisional
+        # substitutions because traits, rows, and nested constructors can depend
+        # on generics solved by earlier arguments.
+        solve_arg = arg
+        solve_param = param
+        if not isinstance(T.normalize(param), T.VarType):
+            solve_arg = _substitute_branch_type(arg, substitution)
+            solve_param = _substitute_branch_type(param, substitution)
+        constraints = _solve_branch_argument(solve_arg, solve_param, ctx)
         if constraints is None or (
-            not constraints and _functions._contains_type_var(param)
+            not constraints and _functions._contains_type_var(solve_param)
         ):
-            constraints = _solve_type_argument(arg, param, ctx)
+            constraints = _solve_type_argument(solve_arg, solve_param, ctx)
         if constraints is None:
-            if T.compatible(arg, param, ctx):
+            if T.compatible(solve_arg, solve_param, ctx):
                 continue
             return None
         for name, typ in constraints.items():
             existing = substitution.get(name)
             if existing is not None and not T.same(existing, typ):
-                return None
+                combined = T._combine_all((existing, typ), ctx)
+                if combined is None:
+                    return None
+                substitution[name] = combined
+                continue
             substitution[name] = typ
 
     for arg, original_param in deferred:

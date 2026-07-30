@@ -436,8 +436,11 @@ upper evidence. Lower evidence is joined with the existing order-independent
 `_combine_all(...)` rules. This preserves established behaviour such as
 `Integer` plus `Number` solving to `Number`, along with the existing exact,
 minimum-rank, rugged, array, optional, `Result`, row, and tag-aware joins.
-Unrelated lower evidence is not silently converted into a union: generic
-unification still requires one coherent shared value type.
+If no existing or structural common supertype represents all lower evidence,
+the lower join becomes a reduced union. For example, `Integer` and `String`
+solve a shared covariant `T` as `Integer | String`. Redundant union members are
+removed by assignability, so `Integer` and `Real` solve to `Real`, following the
+numeric hierarchy `Integer <: Real <: Number`.
 
 Upper evidence is met. If one existing type satisfies every upper requirement,
 that narrowest existing type is used. Otherwise the requirements are represented
@@ -455,6 +458,19 @@ T <: Serializable
 ```
 
 solves to `Printable & Serializable`.
+
+Covariant value arguments therefore support heterogeneous generic calls:
+
+```valiance
+define[T] choose(left: T, right: T) => $left
+choose(1, "hello")  # T = Integer | String
+choose(1, 2.5)      # T = Real
+```
+
+Literal typing happens before generic joining. Integral literals contribute
+`Integer`, decimal literals contribute `Real`, and genuinely complex literals
+contribute `Number`; zero imaginary components retain their normalized real or
+integer type.
 
 When both directions are present, the joined lower bound is preferred when it
 satisfies the upper meet:

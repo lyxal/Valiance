@@ -165,8 +165,12 @@ class RowPolymorphismTests(unittest.TestCase):
         constraints = _solve(pattern, actual)
 
         self.assertIsNotNone(constraints)
-        self.assertIsNone(_combine_all(constraints["@2"]))
-        self.assertIsNone(apply_overload(overload, (actual,)))
+        self.assertTrue(
+            same(_combine_all(constraints["@2"]), U(Number, String))
+        )
+        applied = apply_overload(overload, (actual,))
+        self.assertIsNotNone(applied)
+        self.assertTrue(same(applied.substitution["@2"], U(Number, String)))
 
     def test_row_fields_support_union_optional_and_intersection_targets(self):
         source = Row(Foo, Field(VALUE, Integer))
@@ -733,7 +737,10 @@ class AnonymousGenericIntegrationTests(unittest.TestCase):
 
         self.assertIsNotNone(accepted)
         self.assertEqual(accepted.substitution["@1"], Number)
-        self.assertIsNone(rejected)
+        self.assertIsNotNone(rejected)
+        self.assertTrue(
+            same(rejected.substitution["@1"], U(Number, String))
+        )
 
 
 if __name__ == "__main__":

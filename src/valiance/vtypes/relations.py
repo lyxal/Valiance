@@ -546,7 +546,7 @@ def _combined_substitution(
     """Compute a coherent substitution for accumulated generic evidence."""
     substitution: dict[str, Type] = {}
     for key, values in constraints.items():
-        combined = _combine_all(values, ctx)
+        combined = _combine_all_strict(values, ctx)
         if combined is None:
             return None
         substitution[key] = combined
@@ -1460,8 +1460,43 @@ def _combine_all(
                 return candidate
         return common[0]
 
-    # Some collection joins synthesize a rank-widened type that is not already
-    # present in the evidence. A canonical ordering keeps that fold stable.
+    # Some structural joins synthesize a more precise type that is not already
+    # present in the evidence, notably collection rank widening and recursive
+    # item joins. A canonical ordering keeps that fold stable. If no structural
+    # join exists, the least representable upper bound is a reduced union.
+    vals.sort(key=_type_join_key)
+    out = vals[0]
+    for value in vals[1:]:
+        combined = _combine(out, value, ctx)
+        out = combined if combined is not None else _reduced_union(out, value, ctx=ctx)
+    return out
+
+
+def _combine_all_strict(
+    values: Iterable[Type],
+    ctx: Context | None = None,
+) -> Type | None:
+    """Combine evidence without inventing a union for ambiguity-sensitive uses."""
+    ctx = ctx or Context()
+    vals = list(dict.fromkeys(normalize(value) for value in values))
+    if not vals:
+        return None
+    common = [
+        candidate
+        for candidate in vals
+        if all(assignable(value, candidate, ctx) for value in vals)
+    ]
+    if common:
+        common.sort(key=_type_join_key)
+        for candidate in common:
+            if not any(
+                not same(other, candidate)
+                and assignable(other, candidate, ctx)
+                and not assignable(candidate, other, ctx)
+                for other in common
+            ):
+                return candidate
+        return common[0]
     vals.sort(key=_type_join_key)
     out = vals[0]
     for value in vals[1:]:
@@ -2578,7 +2613,11 @@ def try_apply_overload(
     deferred_function_args: list[
         tuple[FunctionType, FunctionType | OverloadSetType]
     ] = []
+    deferred_exact_args: list[tuple[ExactType, Type]] = []
     for index, (param, arg) in enumerate(zip(overload.params, base_args, strict=False)):
+        if isinstance(param, ExactType) and _contains_type_var(param.inner):
+            deferred_exact_args.append((param, arg))
+            continue
         if isinstance(param, FunctionType) and isinstance(
             arg, (FunctionType, OverloadSetType)
         ):
@@ -2615,6 +2654,37 @@ def try_apply_overload(
                 ),
             )
         substitution[key] = combined
+
+    for param, arg in deferred_exact_args:
+        name = _first_type_var_name(param.inner)
+        names = () if name is None else (name,)
+        if names and all(name in substitution for name in names):
+            continue
+        result = _solve(param, arg, ctx)
+        if result is None:
+            return OverloadAttempt(
+                None,
+                OverloadMismatch(
+                    OverloadMismatchReason.ARGUMENT_TYPE,
+                    expected=param,
+                    actual=arg,
+                ),
+            )
+        for key, values in result.items():
+            constraints.setdefault(key, []).extend(values)
+    if deferred_exact_args:
+        substitution = {}
+        for key, values in constraints.items():
+            combined = _combine_all(values, ctx)
+            if combined is None:
+                return OverloadAttempt(
+                    None,
+                    OverloadMismatch(
+                        OverloadMismatchReason.GENERIC_CONSTRAINT,
+                        detail=f"generic '{key}' has incompatible inferred bounds",
+                    ),
+                )
+            substitution[key] = combined
 
     directional_indexes: set[int] = set()
     directional_bounds = _TypeBounds()

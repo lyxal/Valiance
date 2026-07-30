@@ -830,9 +830,11 @@ T <: Printable, T <: Serializable => T = Printable & Serializable
 Integer <: T, T <: Number         => T = Integer
 ```
 
-Generic lower evidence remains stricter than a control-flow join. Branch result
-merging may create unions, while unrelated lower evidence for one shared
-generic still rejects the candidate.
+Generic lower evidence forms a least representable upper bound. It first uses
+an existing common supertype, then existing structural joins such as collection
+widening, and finally a reduced union. Thus `Integer` plus `Real` becomes
+`Real`, while `Integer` plus `String` becomes `Integer | String`. This join is
+order-independent.
 
 ### Step 5: revisit deferred callables
 

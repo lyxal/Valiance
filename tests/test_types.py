@@ -1028,8 +1028,13 @@ class TypeLibraryTests(unittest.TestCase):
         solved = _solve(pattern, widenable)
         self.assertIsNotNone(solved)
         self.assertEqual(_combine_all(solved["T"]), Real)
-        self.assertIsNone(_combine_all(_solve(pattern, conflicting)["T"]))
-        self.assertFalse(compatible(conflicting, pattern))
+        self.assertTrue(
+            same(
+                _combine_all(_solve(pattern, conflicting)["T"]),
+                U(Integer, String),
+            )
+        )
+        self.assertTrue(compatible(conflicting, pattern))
 
     def test_row_nested_in_covariant_generic_preserves_field_rules(self):
         ctx = Context()
@@ -1458,6 +1463,29 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertTrue(
             same(applied.substitution["T"], I(Number, String))
         )
+
+
+    def test_generic_lower_bounds_form_reduced_union_when_unrelated(self):
+        choose = Overload((V("T"), V("T")), (V("T"),))
+        applied = apply_overload(choose, (Integer, String))
+        self.assertIsNotNone(applied)
+        self.assertTrue(same(applied.substitution["T"], U(Integer, String)))
+        self.assertTrue(same(applied.returns[0], U(Integer, String)))
+
+    def test_generic_numeric_lower_bounds_choose_real_for_integer_and_real(self):
+        choose = Overload((V("T"), V("T")), (V("T"),))
+        applied = apply_overload(choose, (Integer, Real))
+        self.assertIsNotNone(applied)
+        self.assertTrue(same(applied.substitution["T"], Real))
+        self.assertEqual(applied.returns, (Real,))
+
+    def test_generic_lower_bound_union_is_order_independent(self):
+        choose = Overload((V("T"), V("T")), (V("T"),))
+        forward = apply_overload(choose, (Integer, String))
+        reverse = apply_overload(choose, (String, Integer))
+        self.assertIsNotNone(forward)
+        self.assertIsNotNone(reverse)
+        self.assertTrue(same(forward.substitution["T"], reverse.substitution["T"]))
 
 
 

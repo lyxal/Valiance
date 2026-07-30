@@ -4466,6 +4466,28 @@ end
         )
 
 
+    def test_generic_arguments_infer_union_for_unrelated_lower_bounds(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse(
+            'define[T] choose(left: T, right: T) => $left\n'
+            'choose(1, "hello")'
+        ))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            typed[-1].typ,
+            U(Integer, String),
+        )
+
+    def test_generic_numeric_arguments_infer_real_for_integer_and_decimal(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse(
+            'define[T] choose(left: T, right: T) => $left\n'
+            'choose(1, 2.5)'
+        ))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Real)
+
+
 class NeverDiagnosticRecoveryTests(unittest.TestCase):
     def _analyser_with_halt(self) -> Analyser:
         env = default_environment().child_scope()

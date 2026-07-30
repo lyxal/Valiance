@@ -580,6 +580,9 @@ Audit refreshed against the repository implementation and full test suite on 202
       generic arguments.
 - [x] Infer upper-only generics from their upper meet.
 - [x] Infer normalized intersections from multiple unrelated upper bounds.
+- [x] Infer reduced unions from unrelated covariant lower bounds.
+- [x] Preserve the narrow numeric join `Integer | Real -> Real` during generic
+      inference.
 - [x] Prefer a compatible lower join when both lower and upper evidence exist.
 - [x] Preserve contextual and rank/vectorisation-aware callable inference while
       applying directional solving to concrete scalar-shaped callables.

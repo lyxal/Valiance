@@ -1653,8 +1653,16 @@ def _fuzz_structural_types(
             Field(_STRUCT_FIELDS[0], String),
             Field(_STRUCT_FIELDS[1], Number),
         )
-        if apply_overload(Overload((shared,), (V("@item"),)), (conflict_actual,), ctx):
-            raise AssertionError("conflicting row generic escaped overload solving")
+        conflict_applied = apply_overload(
+            Overload((shared,), (V("@item"),)),
+            (conflict_actual,),
+            ctx,
+        )
+        if conflict_applied is None or not same(
+            conflict_applied.substitution["@item"],
+            U(Number, String),
+        ):
+            raise AssertionError("conflicting row generic did not infer a union")
 
         # Structural types must respect declaration-site variance.
         if not assignable(N(_STRUCT_BOX, row_source), N(_STRUCT_BOX, row_target), ctx):
