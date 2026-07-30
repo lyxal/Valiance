@@ -24,7 +24,7 @@ WORKLOADS = (
     Workload(
         "filter-vector-membership-prefix-needle",
         "range(1, 10000) filter: fn (n) => "
-        "0 in swap ($n % [3, 5]) end sum",
+        "[3, 5] | $n | swap | % | 0 | swap | in end sum",
     ),
     Workload(
         "filter-vector-membership-suffix-needle",

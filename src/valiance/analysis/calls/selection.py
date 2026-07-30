@@ -338,7 +338,12 @@ class _CallSelection:
             _functions._callable_overloads(function_type)
         ):
             prepared = _calls._prepare_element_call_branches(
-                base, callable_overload, node.call_args, False, self
+                base,
+                callable_overload,
+                node.call_args,
+                False,
+                self,
+                align_positional_right=False,
             )
             for preparation in prepared:
                 if preparation.branch.terminal:

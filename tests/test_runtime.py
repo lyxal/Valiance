@@ -386,7 +386,7 @@ min $sorted
     def test_tagged_values_remain_operational_through_stack_shuffles(self):
         source = """
 range(1, 100) filter: fn (n) =>
-  0 in swap ($n % [3, 5])
+  [3, 5] | $n | swap | % | 0 | swap | in
 end sum
 """
         analyser = Analyser()
@@ -485,7 +485,7 @@ define pick(a: Number, b: Number = 2) -> Number => $a $b +
     def test_vector_membership_preparation_is_operand_order_invariant(self):
         sources = (
             "range(1, 100) filter fn (n) => " "$n % [3, 5] in swap 0 end sum",
-            "range(1, 100) filter fn (n) => " "0 in swap ($n % [3, 5]) end sum",
+            "range(1, 100) filter fn (n) => " "[3, 5] | $n | swap | % | 0 | swap | in end sum",
             "range(1, 100) filter fn (n) => "
             "[3, 5] | $n | swap | % | 0 | swap | in end sum",
         )
@@ -4710,3 +4710,21 @@ $f(
             execute(source),
             [["first", "second", "third", "fourth", "last"]],
         )
+
+
+    def test_partial_element_call_binds_explicit_argument_on_the_right(self):
+        self.assertEqual(execute("5 -(3)"), [RuntimeNumber(2)])
+
+    def test_split_uses_the_same_argument_order_in_stack_and_ecs_syntax(self):
+        stack_result = execute('"hello world" " " split')
+        ecs_result = execute('"hello world" split(" ")')
+
+        self.assertEqual(stack_result, [["hello", "world"]])
+        self.assertEqual(ecs_result, stack_result)
+
+    def test_fold_seed_can_be_supplied_by_partial_element_call(self):
+        stack_result = execute("[1, 2, 3, 4, 5] 0 fold: +")
+        ecs_result = execute("[1, 2, 3, 4, 5] fold(0): +")
+
+        self.assertEqual(stack_result, [RuntimeNumber(15)])
+        self.assertEqual(ecs_result, stack_result)

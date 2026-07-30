@@ -514,9 +514,16 @@ def _prepare_element_call_branches(
     call_args: tuple[CallArgument, ...],
     has_modifier_args: bool,
     analyser: _core.Analyser,
+    *,
+    align_positional_right: bool = True,
 ) -> tuple[_core.ElementCallPreparation, ...]:
     """Prepare element call branches during static analysis."""
-    plan = _element_call_argument_plan(overload, call_args, has_modifier_args)
+    plan = _element_call_argument_plan(
+        overload,
+        call_args,
+        has_modifier_args,
+        align_positional_right=align_positional_right,
+    )
     if plan is None:
         return ()
     current = _core.BranchSet((branch,))
@@ -534,6 +541,8 @@ def _element_call_argument_plan(
     overload: T.Overload,
     call_args: tuple[CallArgument, ...],
     has_modifier_args: bool,
+    *,
+    align_positional_right: bool = True,
 ) -> tuple[tuple[tuple[ASTNode, ...], ...], tuple[int, ...]] | None:
     """Build the plan for element call argument during static analysis."""
     param_count = len(overload.params)
@@ -550,31 +559,44 @@ def _element_call_argument_plan(
         set(_modifier_param_indexes(overload.params)) if has_modifier_args else set()
     )
     assignments: list[CallArgument | tuple[ASTNode, ...] | None] = [None] * param_count
-    cursor = 0
 
+    # Named arguments reserve their declared parameter positions first. Positional
+    # ECS arguments then occupy the rightmost remaining non-modifier positions.
+    # This makes `left element(right)` equivalent to `left right element` while
+    # still allowing a complete `element(first, second)` call to bind from the
+    # first parameter onward.
+    positional_args: list[CallArgument] = []
     for arg in call_args:
-        if arg.name is not None:
-            try:
-                index = next(
-                    candidate
-                    for candidate, name in enumerate(param_names)
-                    if name == arg.name
-                )
-            except StopIteration:
-                return None
-            if index in modifier_indexes or assignments[index] is not None:
-                return None
-            assignments[index] = arg
+        if arg.name is None:
+            positional_args.append(arg)
             continue
-
-        while cursor < param_count and (
-            cursor in modifier_indexes or assignments[cursor] is not None
-        ):
-            cursor += 1
-        if cursor >= param_count:
+        try:
+            index = next(
+                candidate
+                for candidate, name in enumerate(param_names)
+                if name == arg.name
+            )
+        except StopIteration:
             return None
-        assignments[cursor] = arg
-        cursor += 1
+        if index in modifier_indexes or assignments[index] is not None:
+            return None
+        assignments[index] = arg
+
+    positional_slots = [
+        index
+        for index in range(param_count)
+        if index not in modifier_indexes and assignments[index] is None
+    ]
+    if len(positional_args) > len(positional_slots):
+        return None
+    if positional_args:
+        positional_slots = (
+            positional_slots[-len(positional_args) :]
+            if align_positional_right
+            else positional_slots[: len(positional_args)]
+        )
+        for index, arg in zip(positional_slots, positional_args, strict=True):
+            assignments[index] = arg
 
     ordered: list[tuple[ASTNode, ...]] = []
     current_slots: list[int] = []

@@ -1732,14 +1732,14 @@ def _inc(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "inRange",
     (T.Number, T.Number, T.Number),
     (T.Boolean,),
-    param_names=("start", "stop", "value"),
+    param_names=("value", "start", "stop"),
     documentation=element_documentation(
         "Test whether a number lies in a half-open interval.",
         description="The start is included and the stop is excluded.",
         parameters=(
+            ("value", "Number to test, normally supplied from the stack."),
             ("start", "Inclusive lower bound."),
             ("stop", "Exclusive upper bound."),
-            ("value", "Number to test, normally supplied from the stack."),
         ),
         returns="A Boolean number indicating whether start <= value < stop.",
         category="Comparison",
@@ -1748,7 +1748,7 @@ def _inc(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _in_range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return whether value is within the requested half-open interval."""
 
-    start, stop, value = args
+    value, start, stop = args
     return (_truth(start <= value < stop),)
 
 
@@ -2349,12 +2349,12 @@ def _join(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "split",
     (T.String, T.String),
     (T.ExactList(T.String),),
-    param_names=("on", "value"),
+    param_names=("value", "on"),
 )
 def _split_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Split a string at every occurrence of a literal separator."""
 
-    separator, value = args
+    value, separator = args
     if separator == "":
         return (list(value),)
     return (value.split(separator),)

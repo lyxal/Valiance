@@ -492,6 +492,15 @@ This structure matters because optional defaults are an ECS-only feature. The
 parser should preserve which arguments were named, positional, or placeholders
 instead of flattening them into normal stack expressions.
 
+During analysis, positional ECS arguments for named elements align with the
+rightmost unbound non-modifier parameters. This makes `left element(right)`
+equivalent to `left right element`; a complete `element(first, second)` call
+still fills the complete parameter list in declaration order. Named arguments
+reserve their declared positions before positional alignment. Function-value
+calls retain their placeholder-aware left-to-right binding. Every named element
+uses the same ECS parameter-binding rule, regardless of what its implementation
+does to the stack.
+
 ## Type Parser
 
 `parse_type(source)` uses the same token stream but calls
