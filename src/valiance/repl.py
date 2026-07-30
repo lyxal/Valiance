@@ -8,8 +8,10 @@ terminal behaviour cannot change parsing, analysis, or execution semantics.
 
 from __future__ import annotations
 
+import base64
 import os
 import re
+import subprocess
 import sys
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -334,6 +336,98 @@ def _is_tty(stream: TextIO) -> bool:
         return False
 
 
+def _copy_to_system_clipboard(text: str) -> bool:
+    """Copy text using only operating-system or terminal facilities."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            encoded = (text + "\0").encode("utf-16-le")
+            kernel32 = ctypes.windll.kernel32
+            user32 = ctypes.windll.user32
+            kernel32.GlobalAlloc.restype = ctypes.c_void_p
+            kernel32.GlobalLock.argtypes = (ctypes.c_void_p,)
+            kernel32.GlobalLock.restype = ctypes.c_void_p
+            kernel32.GlobalUnlock.argtypes = (ctypes.c_void_p,)
+            kernel32.GlobalFree.argtypes = (ctypes.c_void_p,)
+            user32.SetClipboardData.argtypes = (ctypes.c_uint, ctypes.c_void_p)
+            user32.SetClipboardData.restype = ctypes.c_void_p
+            handle = kernel32.GlobalAlloc(0x0002, len(encoded))
+            if not handle:
+                return False
+            pointer = kernel32.GlobalLock(handle)
+            if not pointer:
+                kernel32.GlobalFree(handle)
+                return False
+            ctypes.memmove(pointer, encoded, len(encoded))
+            kernel32.GlobalUnlock(handle)
+            if not user32.OpenClipboard(None):
+                kernel32.GlobalFree(handle)
+                return False
+            try:
+                user32.EmptyClipboard()
+                if not user32.SetClipboardData(13, handle):
+                    kernel32.GlobalFree(handle)
+                    return False
+                handle = None  # The clipboard now owns the allocation.
+                return True
+            finally:
+                user32.CloseClipboard()
+        except (AttributeError, OSError):
+            return False
+
+    if sys.platform == "darwin":
+        try:
+            subprocess.run(
+                ["pbcopy"],
+                input=text,
+                text=True,
+                check=True,
+                timeout=2,
+            )
+            return True
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    # OSC 52 is supported by many modern Unix terminals and remote shells.
+    if _is_tty(sys.stdout):
+        encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
+        try:
+            sys.stdout.write(f"\033]52;c;{encoded}\a")
+            sys.stdout.flush()
+            return True
+        except OSError:
+            return False
+    return False
+
+
+def _system_clipboard(in_memory_clipboard):
+    """Wrap prompt-toolkit's clipboard with best-effort system clipboard writes."""
+    class SystemClipboard:
+        def set_data(self, data) -> None:
+            in_memory_clipboard.set_data(data)
+            _copy_to_system_clipboard(data.text)
+
+        def get_data(self):
+            return in_memory_clipboard.get_data()
+
+        def rotate(self) -> None:
+            in_memory_clipboard.rotate()
+
+    return SystemClipboard()
+
+
+def _cut_selection_to_clipboard(buffer, clipboard) -> None:
+    """Copy the active selection externally before deleting it from the buffer."""
+    if buffer.selection_state is None:
+        return
+    start, end = buffer.document.selection_range()
+    data = buffer.copy_selection()
+    clipboard.set_data(data)
+    buffer.cursor_position = start
+    buffer.delete(count=end - start)
+
+
 class _PromptToolkitFrontend:
     """Enhanced prompt-toolkit frontend loaded lazily as an optional boundary."""
 
@@ -390,12 +484,12 @@ class _PromptToolkitFrontend:
             buffer.cursor_position = len(buffer.text)
             buffer.selection_state = SelectionState(original_cursor_position=0)
 
-        @bindings.add("c-x")
+        @bindings.add("c-x", eager=True)
         def _cut(event) -> None:
             """Cut the active selection to the application clipboard."""
-            if event.current_buffer.selection_state is not None:
-                data = event.current_buffer.cut_selection()
-                event.app.clipboard.set_data(data)
+            _cut_selection_to_clipboard(
+                event.current_buffer, event.app.clipboard
+            )
 
         @bindings.add("c-z")
         def _undo(event) -> None:
@@ -567,7 +661,7 @@ class _PromptToolkitFrontend:
             complete_while_typing=True,
             auto_suggest=AutoSuggestFromHistory(),
             history=InMemoryHistory(),
-            clipboard=InMemoryClipboard(),
+            clipboard=_system_clipboard(InMemoryClipboard()),
             key_bindings=bindings,
             style=Style.from_dict(self._theme_styles("Midnight")),
             reserve_space_for_menu=6,
@@ -595,8 +689,8 @@ class _PromptToolkitFrontend:
                 elif action == "select-all":
                     buffer.cursor_position = len(buffer.text)
                     buffer.selection_state = SelectionState(original_cursor_position=0)
-                elif action == "cut" and buffer.selection_state is not None:
-                    app.clipboard.set_data(buffer.cut_selection())
+                elif action == "cut":
+                    _cut_selection_to_clipboard(buffer, app.clipboard)
                 elif action == "undo":
                     buffer.undo()
                 elif action == "redo":

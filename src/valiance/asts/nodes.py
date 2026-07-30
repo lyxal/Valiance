@@ -96,6 +96,7 @@ class TypedAssertNode(TypedNode):
 
     condition: tuple[ASTNode | TypedNode, ...] = ()
     else_branch: tuple[ASTNode | TypedNode, ...] = ()
+    top_level_result: bool = False
 
 
 @dataclass(frozen=True, slots=True)

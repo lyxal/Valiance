@@ -37,7 +37,9 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "prompt-toolkit", specifier = ">=3.0.52" }]
+requires-dist = [
+    { name = "prompt-toolkit", specifier = ">=3.0.52" },
+]
 
 [package.metadata.requires-dev]
 dev = [{ name = "isort", specifier = ">=8.0.1" }]

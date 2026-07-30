@@ -113,6 +113,30 @@ class ReplFrontendTests(unittest.TestCase):
         self.assertEqual(by_text["$count"], "variable: Integer")
         self.assertEqual(by_text["increment"], "element")
 
+
+    def test_cut_copies_before_deleting_selection(self):
+        from prompt_toolkit.buffer import Buffer
+        from prompt_toolkit.selection import SelectionState
+
+        class RecordingClipboard:
+            def __init__(self):
+                self.data = None
+
+            def set_data(self, data):
+                self.data = data
+
+        buffer = Buffer()
+        buffer.text = "alpha beta"
+        buffer.cursor_position = 5
+        buffer.selection_state = SelectionState(original_cursor_position=0)
+        clipboard = RecordingClipboard()
+
+        repl_module._cut_selection_to_clipboard(buffer, clipboard)
+
+        self.assertEqual(clipboard.data.text, "alpha")
+        self.assertEqual(buffer.text, " beta")
+        self.assertIsNone(buffer.selection_state)
+
     def test_enhanced_frontend_declares_repl_as_its_default_mode(self):
         source = Path(repl_module.__file__).read_text(encoding="utf-8")
         self.assertIn('self._mode = "repl"', source)
