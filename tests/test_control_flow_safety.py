@@ -108,35 +108,6 @@ $total
 """)
         self.assertEqual(stack, [RuntimeNumber("18")])
 
-    def test_foreach_declared_break_returns_validate_and_pad_empty_iteration(self):
-        source = """
-[] as[Integer+] foreach (item) -> Integer, String =>
-  break ($item, "found")
-end
-"""
-        expected = [ObjectValue("None", {}), ObjectValue("None", {})]
-        self.assertEqual(execute(source), expected)
-        self.assertEqual(execute(source, round_trip=True), expected)
-
-    def test_foreach_declared_break_returns_preserve_values(self):
-        source = """
-[4, 5, 6] foreach (item) -> Integer, String =>
-  break ($item, "found")
-end
-"""
-        expected = [RuntimeNumber("4"), "found"]
-        self.assertEqual(execute(source), expected)
-        self.assertEqual(execute(source, round_trip=True), expected)
-
-    def test_foreach_rejects_wrong_declared_break_arity_and_type(self):
-        for source in (
-            '[1] foreach (item) -> Integer, String => break ($item) end',
-            '[1] foreach (item) -> String => break ($item) end',
-        ):
-            with self.subTest(source=source):
-                analyser, _typed = analyse(source)
-                self.assertTrue(analyser.diagnostics)
-
     def test_lazy_foreach_can_break_without_forcing_remaining_items(self):
         stack = execute("""
 range(1, 1000000) foreach (n) =>

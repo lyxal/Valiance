@@ -464,7 +464,6 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Cycle iteration inputs within each loop body.
 - [x] Permit loop bodies to write parent-scope variables.
 - [x] Return `None` when a `foreach` completes normally.
-- [x] Parse optional explicit `foreach` break-return annotations.
 - [x] Parse `break value`.
 - [x] Parse multi-value `break (...)`.
 - [x] Pad differing break multiplicities with `None`.

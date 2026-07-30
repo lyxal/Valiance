@@ -1337,14 +1337,12 @@ end
         self.assertEqual(try_node.handlers[0].typ, N(Symbol("String")))
         self.assertIsNone(try_node.handlers[1].typ)
 
-    def test_parses_foreach_break_return_annotations(self):
-        program = parse(
-            '[1, 2] foreach (item, index) -> Integer, String => break ($item, "done") end'
-        )
-        node = program[-1]
-
-        self.assertIsInstance(node, ForNode)
-        self.assertEqual(node.returns, (Integer, String))
+    def test_rejects_foreach_break_return_annotations(self):
+        with self.assertRaises(ParseError):
+            parse(
+                '[1, 2] foreach (item, index) -> Integer, String => '
+                'break ($item, "done") end'
+            )
 
     def test_parses_function_literal_and_foreach_break(self):
         program = parse("""

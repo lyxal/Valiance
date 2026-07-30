@@ -1052,8 +1052,8 @@ unsound: all possible condition branches must be valid.
 - introduces block-local loop variable and optional index variable
 - drops loop-local variables after body analysis
 - cycles the item and optional index as explicit loop inputs
-- validates optional declared break-result types and multiplicity
-- returns one `None` per declared/inferred break result when iteration completes
+- infers break-result types and multiplicity from `break` sites
+- returns one `None` per inferred break result when iteration completes
 - optionalises/merges inferred break result types when annotations are omitted
 
 `WhileNode` analyses its condition and body as a state transition. It requires a

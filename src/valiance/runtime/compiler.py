@@ -1094,9 +1094,7 @@ class _Compiler:
             body_code = _Compiler(
                 break_as_signal=True,
                 return_as_signal=True,
-                break_result_count=(
-                    len(node.returns) if node.returns is not None else None
-                ),
+                break_result_count=None,
             ).compile_function(
                 typed_node.body,
                 params=tuple(
@@ -1113,11 +1111,7 @@ class _Compiler:
                 break_as_signal=True,
                 return_as_signal=True,
             )
-        completion_count = (
-            len(node.returns)
-            if node.returns is not None
-            else max(1, _max_break_values(node.body))
-        )
+        completion_count = max(1, _max_break_values(node.body))
         self.emit(
             OpCode.FOREACH,
             (body_code, 1 if node.index_variable else 0, completion_count),

@@ -190,38 +190,9 @@ def _for_node(
     break_outputs = tuple(
         output for output in body_outputs if output.break_type is not None
     )
-    if node.returns is not None:
-        declared_returns = tuple(T.normalize(typ) for typ in node.returns)
-        base_depth = len(body_branch.stack)
-        for output in break_outputs:
-            produced = output.stack.items[base_depth:]
-            if len(produced) != len(declared_returns):
-                self._diagnose(
-                    "foreach break result count does not match its declared returns: "
-                    f"expected {len(declared_returns)}, got {len(produced)}",
-                    node,
-                )
-                return _core.BranchSet()
-            for actual, expected in zip(produced, declared_returns, strict=True):
-                if not T.assignable(actual, expected, self.env.context):
-                    self._diagnose(
-                        "foreach break result does not match its declared return type: "
-                        f"expected {T.show(expected)}, got {T.show(actual)}",
-                        node,
-                    )
-                    return _core.BranchSet()
-        result_types = tuple(T.optional(typ) for typ in declared_returns)
-        result_type = (
-            T.NoneType()
-            if not result_types
-            else result_types[0]
-            if len(result_types) == 1
-            else T.Tup(*result_types)
-        )
-    else:
-        break_types = tuple(output.break_type for output in break_outputs)
-        result_type = _utils._loop_break_result_type(break_types)
-        result_types = (result_type,)
+    break_types = tuple(output.break_type for output in break_outputs)
+    result_type = _utils._loop_break_result_type(break_types)
+    result_types = (result_type,)
     loop_locals = (node.variable,) + (
         (node.index_variable,) if node.index_variable is not None else ()
     )

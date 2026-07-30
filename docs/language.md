@@ -1444,16 +1444,9 @@ else => println("No match")
 foreach (<variable name>) =>
   <code>
 end
-
-#? Or
-
-foreach (<variable name>) -> <return annotations> =>
-  <code>
-end
 ```
 
 - `variable name` can be either one name or two names. One name means just the iteration variable. Two names means iteration variable and index.
-- `return annotations` is optional and provides explicit type annotations for anything returned by any `break`s.
 - `code` inside a `foreach` loop can write to variables in the parent scope.
 - The input for each loop iteration is the item or `index, item` if index is specified.
 - These inputs will cycle.
