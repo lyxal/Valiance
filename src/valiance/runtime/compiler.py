@@ -1017,7 +1017,9 @@ class _Compiler:
             return
         jump_to_else = self.emit(OpCode.JUMP_IF_FALSE, None)
         if isinstance(typed_node, TypedAssertNode) and typed_node.top_level_result:
-            self.emit(OpCode.WRAP_ASSERT_OK)
+            # None is the canonical raw success value for
+            # Result[None, AssertError[E]].
+            self.emit(OpCode.PUSH_CONST, None)
         jump_to_end = self.emit(OpCode.JUMP, None)
         else_start = len(self.instructions)
         self.patch(jump_to_else, else_start)

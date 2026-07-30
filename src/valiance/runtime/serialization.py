@@ -80,7 +80,6 @@ _OP_TO_BYTE = {
     OpCode.APPLY_DISPATCH_PLAN: 0x2D,
     OpCode.ISOLATE_STACK_BEGIN: 0x2E,
     OpCode.ISOLATE_STACK_END: 0x2F,
-    OpCode.WRAP_ASSERT_OK: 0x33,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 

@@ -647,6 +647,52 @@ exactIn \\min
         self.assertEqual(typed[-1].overload.vectorised_depths, (0,))
         self.assertEqual(typed[-1].overload.vectorised_target_ranks, (1,))
 
+    def test_user_err_implementation_infers_result_signatures(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(parse("""
+object Problem => $message: String
+object Problem as Err => define message -> String => $self.message
+
+define choose(flag: #boolean Number) =>
+  if ($flag) => 1 else => Problem("bad") end
+end
+
+$chooseFn = fn (flag: #boolean Number) =>
+  if ($flag) => 1 else => Problem("bad") end
+end
+"""))
+
+        problem = N(Symbol("Problem"))
+        expected_result = N(Symbol("Result"), Integer, problem)
+        [choose] = analyser.env.overloads_for(Symbol("choose"))
+        self.assertEqual(choose.returns, (expected_result,))
+        function_nodes = [node for node in typed if isinstance(node, TypedFunctionNode)]
+        self.assertEqual(function_nodes[-1].typ.returns, (expected_result,))
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_explicit_non_result_return_requires_result_annotation(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+object Problem => $message: String
+object Problem as Err => define message -> String => $self.message
+
+define choose(flag: #boolean Number) -> Number =>
+  if ($flag) => 1 else => Problem("bad") end
+end
+"""))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "5:1: function body can return Result[Integer, Problem], but the "
+                "explicit return annotation is Number; declare a compatible Result "
+                "return type"
+            ],
+        )
+        self.assertEqual(analyser.env.overloads_for(Symbol("choose")), ())
+
     def test_empty_return_list_is_inferred_from_explicit_return_type(self):
         analyser = Analyser()
 

@@ -151,9 +151,7 @@ end
             '41 assert => + 1 == 42 else => "wrong value" end'
         )
         self.assertEqual(original, RuntimeNumber("41"))
-        self.assertIsInstance(success, ObjectValue)
-        self.assertEqual(success.type_name, "OK")
-        self.assertIsNone(success.fields["value"])
+        self.assertIsNone(success)
 
         [failure] = execute('assert => false else => "wrong value" end')
         self.assertEqual(failure.type_name, "AssertError")
@@ -1935,8 +1933,7 @@ end
         self.assertNotIn(OpCode.LOAD_ELEMENT, ops)
         result = run(program)
         self.assertEqual(result[0], RuntimeNumber("0"))
-        self.assertIsInstance(result[1], ObjectValue)
-        self.assertEqual(result[1].type_name, "OK")
+        self.assertIsNone(result[1])
         self.assertEqual(result[2], RuntimeNumber("2"))
 
 

@@ -1362,7 +1362,7 @@ end
 - `<condition>` peeks its arguments from the stack. i.e. does not pop them.
 
 ## 10.3. `assert...else`
-- Run a condition that returns a `#boolean Number`. The condition peeks its stack inputs. Inside a function, a failed assertion returns the `else` value wrapped in `AssertError`. At top level, the expression returns `Result[None, AssertError]`: an empty `OK` on success or the `AssertError` on failure.
+- Run a condition that returns a `#boolean Number`. The condition peeks its stack inputs. Inside a function, a failed assertion returns the `else` value wrapped in `AssertError`. At top level, the expression returns `Result[None, AssertError]`: the ordinary `None` success value or the `AssertError` on failure.
 
 ```
 assert =>

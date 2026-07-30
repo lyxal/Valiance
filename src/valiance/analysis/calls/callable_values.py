@@ -273,6 +273,16 @@ def _restore_type_markers(declared: T.Type, inferred: T.Type) -> T.Type:
     return inferred
 
 
+def _is_result_type(typ: T.Type) -> bool:
+    """Return whether ``typ`` is an explicit Result type."""
+    typ = T.normalize(typ)
+    return (
+        isinstance(typ, T.NominalType)
+        and typ.name == Symbol("Result")
+        and len(typ.args) == 2
+    )
+
+
 def _function_overload(
     node: FunctionNode,
     *,

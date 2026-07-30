@@ -631,6 +631,15 @@ class _CallableValues:
         if not _utils._stack_assignable(result_stack, expected, self.env.context):
             if node.where_clause and _functions._contains_rank_var(node.returns):
                 return node.returns, branch
+            for actual, declared in zip(actual_returns, checked_returns, strict=True):
+                if _functions._is_result_type(actual) and not _functions._is_result_type(declared):
+                    self._diagnose(
+                        "function body can return "
+                        f"{T.show(actual)}, but the explicit return annotation is "
+                        f"{T.show(declared)}; declare a compatible Result return type",
+                        node,
+                    )
+                    break
             return None
         return node.returns, branch
 

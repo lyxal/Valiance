@@ -1604,6 +1604,37 @@ def merge_types(a: Type, b: Type, ctx: Context | None = None) -> Type:
         return b
     if isinstance(b, NeverType):
         return a
+
+    # Result normalization needs the relationship context.  The context-free
+    # union builder can recognize built-in Error names, but only the relation
+    # layer can know that an arbitrary user type implements Err.
+    a_result = _result_parts(a)
+    b_result = _result_parts(b)
+    a_err = _implements_err(a, ctx)
+    b_err = _implements_err(b, ctx)
+    if a_result is not None or b_result is not None or a_err != b_err:
+        ok_items: list[Type] = []
+        err_items: list[Type] = []
+        for typ, parts, is_err in (
+            (a, a_result, a_err),
+            (b, b_result, b_err),
+        ):
+            if parts is not None:
+                ok_items.append(parts[0])
+                err_items.append(parts[1])
+            elif is_err:
+                err_items.append(typ)
+            else:
+                ok_items.append(typ)
+        if ok_items and err_items:
+            ok = ok_items[0]
+            for item in ok_items[1:]:
+                ok = merge_types(ok, item, ctx)
+            err = err_items[0]
+            for item in err_items[1:]:
+                err = merge_types(err, item, ctx)
+            return N(RESULT, ok, err)
+
     if isinstance(a, NoneTypeNode):
         return b if _is_optional(b) else optional(_present_payload(b))
     if isinstance(b, NoneTypeNode):
@@ -1627,6 +1658,19 @@ def merge_types(a: Type, b: Type, ctx: Context | None = None) -> Type:
     if b_to_a:
         return a
     return _reduced_union(a, b, ctx=ctx)
+
+
+def _result_parts(typ: Type) -> tuple[Type, Type] | None:
+    """Return the success and error arguments of an explicit Result type."""
+    typ = normalize(typ)
+    if isinstance(typ, NominalType) and typ.name == RESULT and len(typ.args) == 2:
+        return typ.args[0], typ.args[1]
+    return None
+
+
+def _implements_err(typ: Type, ctx: Context) -> bool:
+    """Return whether every value of ``typ`` implements the Err trait."""
+    return _result_parts(typ) is None and assignable(typ, N(ERR), ctx)
 
 
 def _present_payload(typ: Type) -> Type:

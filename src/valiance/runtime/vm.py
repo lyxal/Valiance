@@ -2583,10 +2583,6 @@ class VirtualMachine:
                                     },
                                 )
                             )
-                        case OpCode.WRAP_ASSERT_OK:
-                            frame.stack.append(
-                                ObjectValue("OK", {"value": None}, type_args=("None",))
-                            )
                         case OpCode.UNFOLD:
                             frame.stack.append(self._unfold(frame, instruction.arg))
                         case OpCode.WHILE:

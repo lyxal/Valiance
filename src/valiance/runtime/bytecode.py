@@ -46,7 +46,6 @@ class OpCode(Enum):
     ASSERT_PEEK_END = "assert_peek_end"
     ASSERT_TRUE = "assert_true"
     WRAP_ASSERT_ERROR = "wrap_assert_error"
-    WRAP_ASSERT_OK = "wrap_assert_ok"
     UNFOLD = "unfold"
     WHILE = "while"
     TRY_BEGIN = "try_begin"
