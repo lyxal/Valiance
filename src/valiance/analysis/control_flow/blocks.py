@@ -278,6 +278,7 @@ def _assert_node(
             len(branch.typed_body),
             node.else_branch,
         ),
+        top_level_result=branch.input_mode is _core.InputMode.TOP_LEVEL,
     )
     success = (
         replace(
@@ -294,7 +295,12 @@ def _assert_node(
     error_types = tuple(_utils._top_or_none(output.stack) for output in else_outputs)
     error_type = T.U(*error_types) if error_types else T.NoneType()
     assert_error = T.N(Symbol("AssertError"), error_type)
-    return _core.BranchSet.collect((*terminal.branches, success.push(assert_error)))
+    result_type = (
+        T.Result(T.NoneType(), assert_error)
+        if branch.input_mode is _core.InputMode.TOP_LEVEL
+        else assert_error
+    )
+    return _core.BranchSet.collect((*terminal.branches, success.push(result_type)))
 
 @_core.register(BreakNode)
 def _break_node(

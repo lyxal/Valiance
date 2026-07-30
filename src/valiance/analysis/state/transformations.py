@@ -226,6 +226,7 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typ,
             _refine_typed_body(typed_node.condition, old, new),
             _refine_typed_body(typed_node.else_branch, old, new),
+            typed_node.top_level_result,
         )
     if isinstance(typed_node, TypedWhileNode):
         return TypedWhileNode(

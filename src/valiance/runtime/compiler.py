@@ -1009,11 +1009,15 @@ class _Compiler:
         if isinstance(typed_node, TypedAssertNode):
             condition = typed_node.condition
             else_branch = typed_node.else_branch
+        self.emit(OpCode.ASSERT_PEEK_BEGIN)
         self.expression(condition)
+        self.emit(OpCode.ASSERT_PEEK_END)
         if not else_branch:
             self.emit(OpCode.ASSERT_TRUE)
             return
         jump_to_else = self.emit(OpCode.JUMP_IF_FALSE, None)
+        if isinstance(typed_node, TypedAssertNode) and typed_node.top_level_result:
+            self.emit(OpCode.WRAP_ASSERT_OK)
         jump_to_end = self.emit(OpCode.JUMP, None)
         else_start = len(self.instructions)
         self.patch(jump_to_else, else_start)

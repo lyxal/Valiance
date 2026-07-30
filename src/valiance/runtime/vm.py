@@ -378,6 +378,7 @@ class _Frame:
     panic_handlers: list[_PanicHandler] = field(default_factory=list)
     cycle_scopes: list[tuple[tuple[Any, ...], int, int, bool]] = field(default_factory=list)
     isolated_stacks: list[list[Any]] = field(default_factory=list)
+    assert_peek_stacks: list[tuple[list[Any], int, int, bool]] = field(default_factory=list)
 
     def source_args(
         self,
@@ -2546,6 +2547,28 @@ class VirtualMachine:
                                 continue
                         case OpCode.MATCH_ERROR:
                             raise RuntimeError("non-exhaustive match at runtime")
+                        case OpCode.ASSERT_PEEK_BEGIN:
+                            saved = [_retain_value(value) for value in frame.stack]
+                            frame.assert_peek_stacks.append(
+                                (
+                                    saved,
+                                    frame.cycle_index,
+                                    frame.cycle_stack_remaining,
+                                    frame.cycle_from_top,
+                                )
+                            )
+                        case OpCode.ASSERT_PEEK_END:
+                            if not frame.assert_peek_stacks or not frame.stack:
+                                raise RuntimeError("assert condition must leave a value")
+                            condition = _pop(frame.stack, "assert condition")
+                            _release_stack_tail(frame.stack, len(frame.stack), self)
+                            (
+                                frame.stack,
+                                frame.cycle_index,
+                                frame.cycle_stack_remaining,
+                                frame.cycle_from_top,
+                            ) = frame.assert_peek_stacks.pop()
+                            frame.stack.append(condition)
                         case OpCode.ASSERT_TRUE:
                             if not _truthy(_pop(frame.stack, "assert")):
                                 raise AssertionFailure("assertion failed")
@@ -2559,6 +2582,10 @@ class VirtualMachine:
                                         "message": self.format_value(value),
                                     },
                                 )
+                            )
+                        case OpCode.WRAP_ASSERT_OK:
+                            frame.stack.append(
+                                ObjectValue("OK", {"value": None}, type_args=("None",))
                             )
                         case OpCode.UNFOLD:
                             frame.stack.append(self._unfold(frame, instruction.arg))
@@ -2698,6 +2725,9 @@ class VirtualMachine:
         _release_stack_tail(frame.stack, len(frame.stack), self)
         while frame.isolated_stacks:
             saved = frame.isolated_stacks.pop()
+            _release_stack_tail(saved, len(saved), self)
+        while frame.assert_peek_stacks:
+            saved, _, _, _ = frame.assert_peek_stacks.pop()
             _release_stack_tail(saved, len(saved), self)
         self._release_frame_locals(frame)
 

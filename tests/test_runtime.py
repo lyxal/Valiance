@@ -140,6 +140,24 @@ end
         self.assertEqual(value.type_name, "AssertError")
         self.assertEqual(value.fields["value"], "wrong value")
 
+    def test_assert_peeks_condition_inputs(self):
+        self.assertEqual(
+            execute("41 assert => + 1 == 42 end"),
+            [RuntimeNumber("41")],
+        )
+
+    def test_top_level_assert_else_returns_result_on_both_paths(self):
+        original, success = execute(
+            '41 assert => + 1 == 42 else => "wrong value" end'
+        )
+        self.assertEqual(original, RuntimeNumber("41"))
+        self.assertIsInstance(success, ObjectValue)
+        self.assertEqual(success.type_name, "OK")
+        self.assertIsNone(success.fields["value"])
+
+        [failure] = execute('assert => false else => "wrong value" end')
+        self.assertEqual(failure.type_name, "AssertError")
+
     def test_std_testing_assertions(self):
         self.assertEqual(
             execute(
@@ -1915,7 +1933,11 @@ end
 
         self.assertGreaterEqual(ops.count(OpCode.CALL_RESOLVED_ELEMENT), 6)
         self.assertNotIn(OpCode.LOAD_ELEMENT, ops)
-        self.assertEqual(run(program), [RuntimeNumber("0"), RuntimeNumber("2")])
+        result = run(program)
+        self.assertEqual(result[0], RuntimeNumber("0"))
+        self.assertIsInstance(result[1], ObjectValue)
+        self.assertEqual(result[1].type_name, "OK")
+        self.assertEqual(result[2], RuntimeNumber("2"))
 
 
     def test_compiler_emits_every_user_defined_overload_body(self):

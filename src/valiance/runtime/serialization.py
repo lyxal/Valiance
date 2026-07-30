@@ -27,7 +27,7 @@ from valiance.vtypes import (
     Variance,
 )
 
-MAGIC = b"VLNCBC\x1c"
+MAGIC = b"VLNCBC\x1d"
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -53,6 +53,8 @@ _OP_TO_BYTE = {
     OpCode.JUMP_IF_MATCH: 0x15,
     OpCode.MATCH_ERROR: 0x16,
     OpCode.ASSERT_TRUE: 0x17,
+    OpCode.ASSERT_PEEK_BEGIN: 0x31,
+    OpCode.ASSERT_PEEK_END: 0x32,
     OpCode.UNFOLD: 0x18,
     OpCode.GET_INDEX: 0x19,
     OpCode.SET_INDEX: 0x1A,
@@ -78,6 +80,7 @@ _OP_TO_BYTE = {
     OpCode.APPLY_DISPATCH_PLAN: 0x2D,
     OpCode.ISOLATE_STACK_BEGIN: 0x2E,
     OpCode.ISOLATE_STACK_END: 0x2F,
+    OpCode.WRAP_ASSERT_OK: 0x33,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 
