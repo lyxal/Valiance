@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from itertools import product
+from dataclasses import dataclass, field
 
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.structural import anonymous_trait_subject_name
@@ -74,6 +75,201 @@ NUMBER = Symbol("Number")
 REAL = Symbol("Real")
 SOME = Symbol("Some")
 
+
+
+@dataclass
+class _VariableBounds:
+    """Directional evidence collected for one inferred type variable."""
+
+    lower: list[Type] = field(default_factory=list)
+    upper: list[Type] = field(default_factory=list)
+
+
+@dataclass
+class _TypeBounds:
+    """Directional generic evidence for one overload candidate."""
+
+    variables: dict[str, _VariableBounds] = field(default_factory=dict)
+
+    def add_lower(self, name: str, typ: Type) -> None:
+        """Record one value-producing lower bound."""
+        self.variables.setdefault(name, _VariableBounds()).lower.append(normalize(typ))
+
+    def add_upper(self, name: str, typ: Type) -> None:
+        """Record one consumer-provided upper bound."""
+        self.variables.setdefault(name, _VariableBounds()).upper.append(normalize(typ))
+
+    def extend(self, other: "_TypeBounds") -> None:
+        """Merge independently collected directional evidence."""
+        for name, bounds in other.variables.items():
+            target = self.variables.setdefault(name, _VariableBounds())
+            target.lower.extend(bounds.lower)
+            target.upper.extend(bounds.upper)
+
+
+def _compose_variance(outer: Variance, inner: Variance) -> Variance:
+    """Compose occurrence variance through one nested type constructor."""
+    if outer is Variance.INVARIANT or inner is Variance.INVARIANT:
+        return Variance.INVARIANT
+    if outer is inner:
+        return Variance.COVARIANT
+    return Variance.CONTRAVARIANT
+
+
+def _collect_directional_bounds(
+    pattern: Type,
+    actual: Type,
+    ctx: Context | None = None,
+    variance: Variance = Variance.COVARIANT,
+) -> _TypeBounds | None:
+    """Collect lower and upper generic bounds from one type relationship.
+
+    Positive occurrences describe values flowing into a generic and therefore
+    contribute lower bounds. Negative occurrences describe values accepted by
+    a consumer and therefore contribute upper bounds. Invariant occurrences
+    contribute both directions. Final callability is still validated by the
+    ordinary overload machinery, including vectorisation and effect tags.
+    """
+    ctx = ctx or Context()
+    bounds = _TypeBounds()
+
+    def rec(p: Type, a: Type, position: Variance) -> bool:
+        """Collect bounds recursively at one variance position."""
+        p, a = normalize(p), normalize(a)
+        if isinstance(p, VarType):
+            if _contains_named_type_var(a, p.name):
+                return True
+            if position in {Variance.COVARIANT, Variance.INVARIANT}:
+                bounds.add_lower(p.name, a)
+            if position in {Variance.CONTRAVARIANT, Variance.INVARIANT}:
+                bounds.add_upper(p.name, a)
+            return True
+        if same(p, a):
+            return True
+        if isinstance(p, (NoVecType, ExactType)):
+            return rec(p.inner, a, position)
+        if isinstance(a, (NoVecType, ExactType)):
+            return rec(p, a.inner, position)
+        if isinstance(p, TaggedType):
+            actual_inner = a.inner if isinstance(a, TaggedType) else a
+            return rec(p.inner, actual_inner, position)
+        if isinstance(a, TaggedType):
+            return rec(p, a.inner, position)
+        if _is_optional(p):
+            if isinstance(a, NoneTypeNode):
+                return True
+            inner = _optional_inner(p)
+            actual_inner = (
+                a.args[0]
+                if isinstance(a, NominalType) and a.name == SOME and len(a.args) == 1
+                else (_optional_inner(a) if _is_optional(a) else a)
+            )
+            return inner is not None and actual_inner is not None and rec(
+                inner, actual_inner, position
+            )
+        if isinstance(p, FunctionType) and isinstance(a, FunctionType):
+            if p.params is None or p.returns is None:
+                return True
+            if a.params is None or a.returns is None:
+                return False
+            if len(p.params) != len(a.params) or len(p.returns) != len(a.returns):
+                return False
+            parameter_position = _compose_variance(
+                position, Variance.CONTRAVARIANT
+            )
+            return all(
+                rec(expected, observed, parameter_position)
+                for expected, observed in zip(p.params, a.params, strict=True)
+            ) and all(
+                rec(expected, observed, position)
+                for expected, observed in zip(p.returns, a.returns, strict=True)
+            )
+        if isinstance(p, NominalType) and isinstance(a, NominalType):
+            if p.name != a.name or len(p.args) != len(a.args):
+                return False
+            variances = ctx.variance_for(p.name, len(p.args))
+            return all(
+                rec(expected, observed, _compose_variance(position, item_variance))
+                for expected, observed, item_variance in zip(
+                    p.args, a.args, variances, strict=True
+                )
+            )
+        if isinstance(p, TupleType) and isinstance(a, TupleType):
+            return len(p.params) == len(a.params) and all(
+                rec(expected, observed, position)
+                for expected, observed in zip(p.params, a.params, strict=True)
+            )
+        if isinstance(p, RowType) and isinstance(a, RowType):
+            if not rec(p.base, a.base, position):
+                return False
+            actual_fields = {item.name: item.typ for item in a.fields}
+            return all(
+                field.name in actual_fields
+                and rec(field.typ, actual_fields[field.name], position)
+                for field in p.fields
+            )
+        if isinstance(p, CollectionType) and isinstance(a, CollectionType):
+            return rec(p.base, a.base, position)
+        # Preserve the mature special cases for unions, traits, tags, Result,
+        # and variadic tuples. They currently contribute lower evidence; final
+        # validation below still prevents an unsound application.
+        solved = _solve(p, a, ctx)
+        if solved is None:
+            return not _contains_type_var(p)
+        for name, values in solved.items():
+            for value in values:
+                if position in {Variance.COVARIANT, Variance.INVARIANT}:
+                    bounds.add_lower(name, value)
+                if position in {Variance.CONTRAVARIANT, Variance.INVARIANT}:
+                    bounds.add_upper(name, value)
+        return True
+
+    return bounds if rec(pattern, actual, variance) else None
+
+
+def _meet_upper_bounds(values: Iterable[Type], ctx: Context) -> Type | None:
+    """Return the greatest representable type satisfying every upper bound."""
+    candidates = tuple(dict.fromkeys(normalize(value) for value in values))
+    if not candidates:
+        return None
+    existing = meet_required_inputs(candidates, ctx)
+    if existing is not None:
+        return existing
+    return normalize(I(*candidates))
+
+
+def _solve_directional_bounds(
+    bounds: _TypeBounds,
+    ctx: Context | None = None,
+) -> dict[str, Type] | None:
+    """Solve directional evidence using lower joins and upper intersections."""
+    ctx = ctx or Context()
+    substitution: dict[str, Type] = {}
+    for name, evidence in bounds.variables.items():
+        lower = _combine_all(evidence.lower, ctx) if evidence.lower else None
+        upper = _meet_upper_bounds(evidence.upper, ctx) if evidence.upper else None
+        if evidence.lower and lower is None:
+            return None
+        if lower is not None:
+            if upper is not None and not assignable(lower, upper, ctx):
+                return None
+            substitution[name] = lower
+        elif upper is not None:
+            substitution[name] = upper
+        else:
+            return None
+    return substitution
+
+
+def solve_directional_constraints(
+    pattern: Type,
+    actual: Type,
+    ctx: Context | None = None,
+) -> dict[str, Type] | None:
+    """Public relation helper for variance-aware call-site generic inference."""
+    ctx = ctx or Context()
+    bounds = _collect_directional_bounds(pattern, actual, ctx)
+    return None if bounds is None else _solve_directional_bounds(bounds, ctx)
 
 def _match_variadic_tuple(
     pattern: tuple[object, ...],
@@ -2420,7 +2616,50 @@ def try_apply_overload(
             )
         substitution[key] = combined
 
-    for param, arg in deferred_function_args:
+    directional_indexes: set[int] = set()
+    directional_bounds = _TypeBounds()
+    for name, values in constraints.items():
+        for value in values:
+            directional_bounds.add_lower(name, value)
+    for deferred_index, (param, arg) in enumerate(deferred_function_args):
+        if not (
+            isinstance(arg, FunctionType)
+            and not _contains_type_var(arg)
+            and arg.params is not None
+            and all(not isinstance(normalize(item), CollectionType) for item in arg.params)
+            and all(
+                not isinstance(normalize(value), CollectionType)
+                for value in substitution.values()
+            )
+        ):
+            continue
+        inferred = _collect_directional_bounds(param, arg, ctx)
+        if inferred is None:
+            continue
+        directional_bounds.extend(inferred)
+        directional_indexes.add(deferred_index)
+
+    if directional_indexes:
+        directional_substitution = _solve_directional_bounds(
+            directional_bounds,
+            ctx,
+        )
+        if directional_substitution is None:
+            return OverloadAttempt(
+                None,
+                OverloadMismatch(
+                    OverloadMismatchReason.GENERIC_CONSTRAINT,
+                    detail="incompatible inferred lower and upper bounds",
+                ),
+            )
+        substitution = directional_substitution
+        constraints = {
+            name: [typ] for name, typ in directional_substitution.items()
+        }
+
+    for deferred_index, (param, arg) in enumerate(deferred_function_args):
+        if deferred_index in directional_indexes:
+            continue
         substituted_param = _substitute(param, substitution)
         if isinstance(arg, OverloadSetType):
             result = _solve(substituted_param, arg, ctx)

@@ -224,6 +224,7 @@ class _ObjectDeclarations:
                 node.generic_variances,
                 attributes,
                 (),
+                self.env.context,
             ),
         )
         if annotation_hooks.has_annotation(node.annotations, "errType"):

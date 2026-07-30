@@ -137,6 +137,7 @@ class _VariantDeclarations:
                 node.generic_variances,
                 (),
                 requirements,
+                self.env.context,
             ),
             requirements=requirements,
         )

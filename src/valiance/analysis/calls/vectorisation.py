@@ -916,9 +916,22 @@ def _branch_argument_substitution(
     params: tuple[T.Type, ...],
     ctx: T.Context,
 ) -> dict[str, T.Type] | None:
-    """Compute branch argument substitution during static analysis."""
+    """Compute a coherent substitution without committing before callables.
+
+    Ordinary arguments retain the branch-aware inference path. Function-valued
+    arguments are deferred and solved against the original generic signature,
+    then their evidence is joined with the provisional substitution.
+    """
     substitution: dict[str, T.Type] = {}
+    deferred: list[tuple[T.Type, T.Type]] = []
     for arg, param in zip(args, params, strict=True):
+        if (
+            isinstance(T.normalize(param), T.FunctionType)
+            and isinstance(T.normalize(arg), (T.FunctionType, T.OverloadSetType))
+            and not _functions._contains_type_var(arg)
+        ):
+            deferred.append((arg, param))
+            continue
         arg = _substitute_branch_type(arg, substitution)
         param = _substitute_branch_type(param, substitution)
         constraints = _solve_branch_argument(arg, param, ctx)
@@ -935,6 +948,23 @@ def _branch_argument_substitution(
             if existing is not None and not T.same(existing, typ):
                 return None
             substitution[name] = typ
+
+    for arg, original_param in deferred:
+        constraints = _solve_type_argument(arg, original_param, ctx)
+        if constraints is None:
+            specialized = _substitute_branch_type(original_param, substitution)
+            if T.compatible(arg, specialized, ctx):
+                continue
+            return None
+        for name, typ in constraints.items():
+            existing = substitution.get(name)
+            if existing is None:
+                substitution[name] = typ
+                continue
+            combined = T._combine_all((existing, typ), ctx)
+            if combined is None:
+                return None
+            substitution[name] = combined
     return substitution
 
 def _static_type_substitution(

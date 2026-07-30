@@ -595,9 +595,10 @@ def _declared_or_inferred_variance(
     explicit: tuple[Symbol | None, ...],
     attributes: tuple[T.ObjectAttribute, ...],
     requirements: tuple[T.TraitRequirement, ...],
+    ctx: T.Context | None = None,
 ) -> tuple[T.Variance, ...]:
     """Compute declared or inferred variance during static analysis."""
-    inferred = _infer_generic_variance(generics, attributes, requirements)
+    inferred = _infer_generic_variance(generics, attributes, requirements, ctx)
     if len(explicit) != len(generics):
         return inferred
     return tuple(
@@ -617,18 +618,20 @@ def _infer_generic_variance(
     generics: tuple[Symbol, ...],
     attributes: tuple[T.ObjectAttribute, ...],
     requirements: tuple[T.TraitRequirement, ...],
+    ctx: T.Context | None = None,
 ) -> tuple[T.Variance, ...]:
     """Infer generic variance during static analysis."""
+    ctx = ctx or T.Context()
     usage = {generic.text: [False, False] for generic in generics}
     for attribute in attributes:
-        _record_variance_use(attribute.typ, +1, usage)
+        _record_variance_use(attribute.typ, +1, usage, ctx)
         if attribute.access.text == "public":
-            _record_variance_use(attribute.typ, -1, usage)
+            _record_variance_use(attribute.typ, -1, usage, ctx)
     for requirement in requirements:
         for param in requirement.overload.params:
-            _record_variance_use(param, -1, usage)
+            _record_variance_use(param, -1, usage, ctx)
         for ret in requirement.overload.returns:
-            _record_variance_use(ret, +1, usage)
+            _record_variance_use(ret, +1, usage, ctx)
     variances: list[T.Variance] = []
     for generic in generics:
         positive, negative = usage[generic.text]
@@ -644,6 +647,7 @@ def _record_variance_use(
     typ: T.Type,
     polarity: int,
     usage: dict[str, list[bool]],
+    ctx: T.Context,
 ) -> None:
     """Record variance use during static analysis."""
     typ = T.normalize(typ)
@@ -652,52 +656,59 @@ def _record_variance_use(
             usage[typ.name][0 if polarity > 0 else 1] = True
         return
     if isinstance(typ, T.NominalType):
-        for arg in typ.args:
-            _record_variance_use(arg, polarity, usage)
+        variances = ctx.variance_for(typ.name, len(typ.args))
+        for arg, variance in zip(typ.args, variances, strict=True):
+            if variance is T.Variance.INVARIANT:
+                _record_variance_use(arg, +1, usage, ctx)
+                _record_variance_use(arg, -1, usage, ctx)
+            elif variance is T.Variance.CONTRAVARIANT:
+                _record_variance_use(arg, -polarity, usage, ctx)
+            else:
+                _record_variance_use(arg, polarity, usage, ctx)
         return
     if isinstance(typ, (T.UnionType, T.IntersectionType)):
         for item in typ.items:
-            _record_variance_use(item, polarity, usage)
+            _record_variance_use(item, polarity, usage, ctx)
         return
     if isinstance(typ, T.TupleType):
         for item in typ.params:
-            _record_variance_use(item, polarity, usage)
+            _record_variance_use(item, polarity, usage, ctx)
         return
     if isinstance(typ, T.VariadicTupleType):
         for item in typ.items:
-            _record_variance_use(item.typ, polarity, usage)
+            _record_variance_use(item.typ, polarity, usage, ctx)
         return
     if isinstance(typ, T.RowType):
-        _record_variance_use(typ.base, polarity, usage)
+        _record_variance_use(typ.base, polarity, usage, ctx)
         for field in typ.fields:
-            _record_variance_use(field.typ, polarity, usage)
+            _record_variance_use(field.typ, polarity, usage, ctx)
         return
     if isinstance(typ, T.CollectionType):
-        _record_variance_use(typ.base, polarity, usage)
+        _record_variance_use(typ.base, polarity, usage, ctx)
         return
     if isinstance(typ, T.FunctionType):
         if typ.params is None or typ.returns is None:
             for tag in typ.element_tags:
                 for arg in tag.args:
-                    _record_variance_use(arg, polarity, usage)
+                    _record_variance_use(arg, polarity, usage, ctx)
             return
         for param in typ.params:
-            _record_variance_use(param, -polarity, usage)
+            _record_variance_use(param, -polarity, usage, ctx)
         for ret in typ.returns:
-            _record_variance_use(ret, polarity, usage)
+            _record_variance_use(ret, polarity, usage, ctx)
         for tag in typ.element_tags:
             for arg in tag.args:
-                _record_variance_use(arg, polarity, usage)
+                _record_variance_use(arg, polarity, usage, ctx)
         return
     if isinstance(typ, T.AnonymousTraitType):
         for requirement in typ.requirements:
             for param in requirement.overload.params:
-                _record_variance_use(param, -polarity, usage)
+                _record_variance_use(param, -polarity, usage, ctx)
             for ret in requirement.overload.returns:
-                _record_variance_use(ret, polarity, usage)
+                _record_variance_use(ret, polarity, usage, ctx)
         return
     if isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
-        _record_variance_use(typ.inner, polarity, usage)
+        _record_variance_use(typ.inner, polarity, usage, ctx)
 
 def _anonymous_type_var(branch: _core.AnalysisBranch, offset: int) -> T.Type:
     """Compute anonymous type var during static analysis."""

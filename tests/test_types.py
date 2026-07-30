@@ -61,6 +61,7 @@ from valiance.vtypes import (
     normalize,
     optional,
     resolve_overload_result,
+    same,
     subtype,
     try_apply_overload,
 )
@@ -1424,6 +1425,40 @@ class TypeLibraryTests(unittest.TestCase):
             _match_specificity(N(CIRCLE), N(SHAPE), ctx),
             Specificity.TRAIT,
         )
+
+    def test_upper_only_callable_evidence_chooses_upper_bound(self):
+        overload = Overload(
+            (Fn((V("T"),), (String,)),),
+            (V("T"),),
+        )
+        applied = apply_overload(
+            overload,
+            (Fn((Number,), (String,)),),
+        )
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.substitution["T"], Number)
+        self.assertEqual(applied.returns, (Number,))
+
+    def test_multiple_upper_bounds_infer_intersection(self):
+        overload = Overload(
+            (
+                Fn((V("T"),), (String,)),
+                Fn((V("T"),), (String,)),
+            ),
+            (V("T"),),
+        )
+        applied = apply_overload(
+            overload,
+            (
+                Fn((Number,), (String,)),
+                Fn((String,), (String,)),
+            ),
+        )
+        self.assertIsNotNone(applied)
+        self.assertTrue(
+            same(applied.substitution["T"], I(Number, String))
+        )
+
 
 
 if __name__ == "__main__":

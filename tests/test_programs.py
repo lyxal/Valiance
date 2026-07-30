@@ -248,6 +248,30 @@ class ProgramTests(unittest.TestCase):
         source = '[1, 2, 3] "" fold fn (text: String, n: Integer) -> String => "$text$n" end'
         self.assertEqual(execute(source), ["123"])
 
+    def test_fold_widens_seed_from_higher_order_accumulator_evidence(self):
+        source = """
+$findFold = fn (haystack: Number+, needle: Number) =>
+  fold($haystack, {0, false}): fn (
+    state: {Number, #boolean Number},
+    item: Number
+  ) -> {Number, #boolean Number} =>
+    if ($state[1] as![#boolean Number]) => $state
+    else if ($item == $needle) => {$state[0], true}
+    else => {$state[0] + 1, false}
+    end
+  end
+end
+$findFold([4, 7, 9], 7)
+$findFold([4, 7, 9], 5)
+"""
+        self.assertEqual(
+            execute(source),
+            [
+                (RuntimeNumber("1"), RuntimeNumber("1")),
+                (RuntimeNumber("3"), RuntimeNumber("0")),
+            ],
+        )
+
     # The intersection of generics and rank polymorphism
 
     def test_reduce_sum_matrix_modifier(self):

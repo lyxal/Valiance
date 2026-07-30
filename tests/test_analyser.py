@@ -5192,6 +5192,51 @@ end
             tuple(finding.code for finding in analyser.lint_findings),
         )
 
+    def test_nested_nominal_variance_composes_automatically(self):
+        from valiance.analysis.calls.signatures import _infer_generic_variance
+        from valiance.vtypes import Context, N, ObjectAttribute, V, Variance
+        from valiance.vtypes.symbols import Symbol
+
+        ctx = Context()
+        consumer = Symbol("Consumer")
+        ctx.set_generic_variance(consumer, (Variance.CONTRAVARIANT,))
+        inferred = _infer_generic_variance(
+            (Symbol("T"),),
+            (
+                ObjectAttribute(
+                    Symbol("consumer"),
+                    N(consumer, V("T")),
+                    Symbol("readable"),
+                ),
+            ),
+            (),
+            ctx,
+        )
+        self.assertEqual(inferred, (Variance.CONTRAVARIANT,))
+
+    def test_double_negative_nested_variance_becomes_covariant(self):
+        from valiance.analysis.calls.signatures import _infer_generic_variance
+        from valiance.vtypes import Context, Fn, N, ObjectAttribute, String, V, Variance
+        from valiance.vtypes.symbols import Symbol
+
+        ctx = Context()
+        consumer = Symbol("Consumer")
+        ctx.set_generic_variance(consumer, (Variance.CONTRAVARIANT,))
+        inferred = _infer_generic_variance(
+            (Symbol("T"),),
+            (
+                ObjectAttribute(
+                    Symbol("run"),
+                    Fn((N(consumer, V("T")),), (String,)),
+                    Symbol("readable"),
+                ),
+            ),
+            (),
+            ctx,
+        )
+        self.assertEqual(inferred, (Variance.COVARIANT,))
+
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -173,6 +173,7 @@ class _TraitDeclarations:
                 node.generic_variances,
                 (),
                 all_requirements,
+                self.env.context,
             ),
             requirements=all_requirements,
         )

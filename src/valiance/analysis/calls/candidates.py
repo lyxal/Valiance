@@ -660,17 +660,52 @@ def _specialized_modifier_orders(
             yield current_substitution, current_modifiers
             return
         param_index = modifier_indexes[position]
-        expected = _substitute_branch_type(params[param_index], current_substitution)
-        for modifier, modifier_substitution in _modifier_variants_for_expected(
-            modifiers[position],
-            expected,
-            ctx,
-            analyser,
+        original_expected = params[param_index]
+        specialized_expected = _substitute_branch_type(
+            original_expected,
+            current_substitution,
+        )
+        expectations = (specialized_expected,)
+        if (
+            not T.same(original_expected, specialized_expected)
+            and all(
+                not _functions._contains_type_var(value)
+                for value in current_substitution.values()
+            )
         ):
-            merged = _merge_substitutions(current_substitution, modifier_substitution)
-            if merged is None:
-                continue
-            yield from rec(position + 1, merged, current_modifiers + (modifier,))
+            # The ordinary arguments provide useful provisional evidence, but
+            # must not permanently fix a generic before a higher-order argument
+            # contributes its own bounds. Try the contextualized type first,
+            # then the original generic shape to permit a coherent widening.
+            expectations += (original_expected,)
+
+        seen: set[tuple[T.Type, tuple[tuple[str, T.Type], ...]]] = set()
+        for expected in expectations:
+            for modifier, modifier_substitution in _modifier_variants_for_expected(
+                modifiers[position],
+                expected,
+                ctx,
+                analyser,
+            ):
+                key = (
+                    modifier.typ,
+                    tuple(sorted(modifier_substitution.items())),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged = _merge_substitutions(
+                    current_substitution,
+                    modifier_substitution,
+                    ctx,
+                )
+                if merged is None:
+                    continue
+                yield from rec(
+                    position + 1,
+                    merged,
+                    current_modifiers + (modifier,),
+                )
 
     yield from rec(0, substitution, ())
 
@@ -860,13 +895,18 @@ def _modifier_param_rank_variants(typ: T.Type) -> tuple[T.Type, ...]:
 def _merge_substitutions(
     left: dict[str, T.Type],
     right: dict[str, T.Type],
+    ctx: T.Context | None = None,
 ) -> dict[str, T.Type] | None:
-    """Merge substitutions during static analysis."""
+    """Merge independently collected generic evidence coherently."""
     merged = dict(left)
     for name, typ in right.items():
         existing = merged.get(name)
         if existing is not None and not T.same(existing, typ):
-            return None
+            combined = T._combine_all((existing, typ), ctx)
+            if combined is None:
+                return None
+            merged[name] = combined
+            continue
         merged[name] = typ
     return merged
 
