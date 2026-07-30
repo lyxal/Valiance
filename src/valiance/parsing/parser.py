@@ -1027,12 +1027,10 @@ class Parser:
     def _while(self, start: Token) -> WhileNode:
         """Parse while from the current token stream."""
         condition = self._condition()
-        params = self._control_params()
         self._expect(TokenKind.FAT_ARROW)
         return WhileNode(
-            condition,
-            params,
-            self._body(owner_column=self._line_start_column(start)),
+            condition=condition,
+            body=self._body(owner_column=self._line_start_column(start)),
             location=_loc(start),
         )
 

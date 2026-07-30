@@ -70,12 +70,6 @@ end
                 analyser, _typed = analyse(source)
                 self.assertTrue(analyser.diagnostics)
 
-    def test_parameterised_while_rejects_body_that_does_not_rebuild_state(self):
-        analyser, _typed = analyse(
-            '0 while (< 3) -> (n: Integer) => pop end'
-        )
-        self.assertTrue(analyser.diagnostics)
-
     def test_nested_break_only_exits_innermost_loop(self):
         stack = execute("""
 $total: Integer = 0

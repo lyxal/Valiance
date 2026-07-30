@@ -46,7 +46,7 @@ end"""))
     def test_loop_handlers_live_under_control_flow(self) -> None:
         """While and foreach handlers still emit their established typed nodes."""
         analyser = Analyser()
-        typed = analyser.analyse(parse("0 while (< 1) -> (n: Number) => 1 + end"))
+        typed = analyser.analyse(parse("$n: Integer = 0\nwhile ($n < 1) =>\n$n := + 1\nend"))
         self.assertEqual(analyser.diagnostics, [])
         self.assertIsInstance(typed[-1], TypedWhileNode)
 

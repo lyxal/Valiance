@@ -1917,22 +1917,6 @@ end
         self.assertNotIn(OpCode.LOAD_ELEMENT, ops)
         self.assertEqual(run(program), [RuntimeNumber("0"), RuntimeNumber("2")])
 
-        parameterised = Analyser().analyse(
-            parse("0 while (< 3) -> (n: Number) => 1 + end")
-        )
-        while_instruction = next(
-            instruction
-            for instruction in compile_program(
-                parameterised,
-                optimize=False,
-            ).main.instructions
-            if instruction.op is OpCode.WHILE
-        )
-        condition_code, body_code, _arity = while_instruction.arg
-        for code in (condition_code, body_code):
-            nested_ops = tuple(instruction.op for instruction in code.instructions)
-            self.assertIn(OpCode.CALL_RESOLVED_ELEMENT, nested_ops)
-            self.assertNotIn(OpCode.LOAD_ELEMENT, nested_ops)
 
     def test_compiler_emits_every_user_defined_overload_body(self):
         source = """
@@ -3562,10 +3546,6 @@ $n
 """),
             [RuntimeNumber("0")],
         )
-        self.assertEqual(
-            execute("0 while (< 3) -> (n: Number) => 1 + end"),
-            [RuntimeNumber("3")],
-        )
 
     def test_runtime_loop_forms_cycle_explicit_inputs(self):
         self.assertEqual(
@@ -3681,11 +3661,12 @@ end
         )
         self.assertEqual(
             execute("""
-0 while (< 10) -> (n: Number) =>
+$n = 0
+while ($n < 10) =>
   if ($n 3 ==) =>
     break ($n)
   else =>
-    1 +
+    $n := + 1
   end
 end
 """),

@@ -1311,9 +1311,8 @@ end
         self.assertIsInstance(assert_node, AssertNode)
         self.assertEqual(assert_node.else_branch, (StringLiteralNode("nope"),))
 
-        [while_node] = parse("while (> 0) -> (count: Number) => $count 1 - end")
-        self.assertIsInstance(while_node, WhileNode)
-        self.assertEqual(while_node.params[0].name, Symbol("count"))
+        with self.assertRaises(ParseError):
+            parse("while (> 0) -> (count: Number) => $count 1 - end")
 
         [unfold_node] = parse("unfold (< 5) -> (n: Number) => $n 1 + end")
         self.assertIsInstance(unfold_node, UnfoldNode)

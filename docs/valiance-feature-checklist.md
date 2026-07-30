@@ -473,8 +473,6 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Feed previous iteration results into subsequent condition checks.
 - [x] Require loop-body outputs to match condition inputs.
 - [x] Return the values that caused loop termination.
-- [x] Support explicitly declared `while` input parameters.
-- [x] Cycle named and unnamed `while` inputs.
 - [x] Parse `unfold`.
 - [x] Maintain unfold state between iterations.
 - [x] Support optional unfold conditions.

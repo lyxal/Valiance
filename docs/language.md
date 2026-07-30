@@ -1520,25 +1520,6 @@ end
 end
 ```
 
-- Sometimes, a while loop may need to work with more values than popped by the condition (or it may be desirable to explicitly annotate types)
-
-```
-while (<condition>) -> (<inputs>) =>
-  <code>
-end
-```
-
-- If `inputs` is specified, `condition` will use those inputs and cycle them.
-- `code` must leave the expected inputs on the stack for the next iteration. Note that these will more often than not be computed from the results of the while loop. That is to say, the results of each loop are passed to the next. And thus the results must match the required number and types of inputs.
-- Inputs have the same syntax as function parameters.
-- Named inputs can be referred to as variables.
-
-```
-while (> 0) -> (count: Number) =>
-
-end
-```
-
 ## 10.7. `unfold`
 
 * `unfold` lazily generates a list while maintaining state between iterations in a functional programming manner.
