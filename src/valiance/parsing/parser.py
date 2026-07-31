@@ -220,6 +220,7 @@ class Parser:
         self.recovered_nodes: list[ASTNode] = []
         self._allow_variadic_tuple_type = False
         self._where_clause_depth = 0
+        self._temporary_index = 0
 
     def parse_program(self) -> list[ASTNode]:
         """Parse all top-level statements from the current token stream."""
@@ -2042,25 +2043,21 @@ class Parser:
                 rhs = self._assignment_rhs()
                 index_values = self._selector_expressions(selectors)
                 if op is TokenKind.AUG_ASSIGN:
+                    # A stack receiver must survive while the update body uses the
+                    # ambient stack. Stashing it internally keeps that receiver out
+                    # of the operand order, matching `$x := ...` semantics.
+                    temporary = Symbol(f"\x00index_receiver_{self._temporary_index}")
+                    self._temporary_index += 1
                     return _ChainPiece(
                         (
-                            StackShuffleNode(
-                                Symbol("copy"),
-                                (Symbol("receiver"),),
-                                (Symbol("receiver"),),
-                                location=_loc(start),
-                            ),
+                            SetVariableNode(temporary, location=_loc(start)),
+                            GetVariableNode(temporary, location=_loc(start)),
                             *index_values,
                             IndexAccessNode(
                                 selectors, grouped_update=True, location=_loc(start)
                             ),
                             *rhs,
-                            StackShuffleNode(
-                                Symbol("move"),
-                                (Symbol("receiver"), Symbol("value")),
-                                (Symbol("value"), Symbol("receiver")),
-                                location=_loc(start),
-                            ),
+                            GetVariableNode(temporary, location=_loc(start)),
                             *index_values,
                             IndexSetNode(
                                 selectors, grouped_update=True, location=_loc(start)

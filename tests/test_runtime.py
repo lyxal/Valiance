@@ -4258,6 +4258,28 @@ end
             ],
         )
 
+    def test_stack_index_augmented_assignment_uses_ambient_stack(self):
+        self.assertEqual(
+            execute("10 [1, 2, 3, 4] $[2] := *"),
+            [[
+                RuntimeNumber("1"),
+                RuntimeNumber("2"),
+                RuntimeNumber("30"),
+                RuntimeNumber("4"),
+            ]],
+        )
+
+    def test_stack_index_augmented_assignment_preserves_operand_order(self):
+        self.assertEqual(
+            execute("10 [1, 2, 3, 4] $[2] := -"),
+            [[
+                RuntimeNumber("1"),
+                RuntimeNumber("2"),
+                RuntimeNumber("7"),
+                RuntimeNumber("4"),
+            ]],
+        )
+
     def test_index_augmented_assignment_rebuilds_and_assigns_receiver(self):
         self.assertEqual(
             execute("$data = [1, 2, 3]\n$data[1] := + 3\n$data"),
