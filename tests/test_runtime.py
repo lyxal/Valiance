@@ -4878,3 +4878,51 @@ $f(
 
         self.assertEqual(stack_result, [RuntimeNumber(15)])
         self.assertEqual(ecs_result, stack_result)
+
+
+class StackValueUpdateTests(unittest.TestCase):
+    """Exercise value-producing indexed updates through the public elements."""
+
+    def test_update_replaces_a_scalar_index_without_mutating_input(self):
+        self.assertEqual(
+            execute("$xs = [1, 2, 3]\nupdate($xs, 1, 9)\n$xs"),
+            [[RuntimeNumber(1), RuntimeNumber(9), RuntimeNumber(3)],
+             [RuntimeNumber(1), RuntimeNumber(2), RuntimeNumber(3)]],
+        )
+
+    def test_update_accepts_integer_list_from_range(self):
+        self.assertEqual(
+            execute("update([1, 2, 3, 4], range(1, 2), 9)"),
+            [[RuntimeNumber(1), RuntimeNumber(9), RuntimeNumber(9), RuntimeNumber(4)]],
+        )
+
+    def test_update_by_applies_function_to_scalar_index(self):
+        self.assertEqual(
+            execute("updateBy([1, 2, 3], 1, fn (x) => $x + 10 end)"),
+            [[RuntimeNumber(1), RuntimeNumber(12), RuntimeNumber(3)]],
+        )
+
+    def test_update_by_applies_function_once_to_whole_selection(self):
+        self.assertEqual(
+            execute(
+                "updateBy([1, 2, 3, 4], range(1, 2), "
+                "fn (xs) => $xs + 10 end)"
+            ),
+            [[
+                RuntimeNumber(1),
+                RuntimeNumber(12),
+                RuntimeNumber(13),
+                RuntimeNumber(4),
+            ]],
+        )
+
+    def test_update_by_round_trips_through_bytecode(self):
+        source = "updateBy([1, 2, 3], 1, fn (x) => $x * 2 end)"
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertFalse(analyser.diagnostics)
+        program = compile_program(typed, optimize=False)
+        self.assertEqual(
+            run(loads(dumps(program))),
+            [[RuntimeNumber(1), RuntimeNumber(4), RuntimeNumber(3)]],
+        )

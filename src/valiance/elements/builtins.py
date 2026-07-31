@@ -392,6 +392,26 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         examples=(("[1, 2, 3] sum", "6"),),
         category="Collections",
     ),
+    "update": element_documentation(
+        "Return a copy of an iterable with an indexed selection replaced.",
+        parameters=(
+            ("iterable", "Input list or string."),
+            ("index", "An index or Integer+ selection."),
+            ("value", "Replacement value or selection-shaped replacement."),
+        ),
+        returns="The reconstructed iterable; the input binding is unchanged.",
+        category="Collections",
+    ),
+    "updateBy": element_documentation(
+        "Return a copy of an iterable after applying a function to an indexed selection.",
+        parameters=(
+            ("iterable", "Input list or string."),
+            ("index", "An index or Integer+ selection."),
+            ("function", "Unary function applied once to the indexed value or selection."),
+        ),
+        returns="The reconstructed iterable; the input binding is unchanged.",
+        category="Collections",
+    ),
     "removeAt": element_documentation(
         "Return a list without the item at one index.",
         parameters=(
@@ -603,6 +623,8 @@ class RuntimeContext:
     prepare_call: Callable[[Any, int, int], Callable[..., tuple[Any, ...]]] | None = (
         None
     )
+    index_get: Callable[[Any, Any, bool], Any] | None = None
+    index_set: Callable[[Any, Any, Any, bool], Any] | None = None
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
@@ -2222,6 +2244,110 @@ def _sum(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     if isinstance(values, PlannedLazyList):
         return (values.sum_terminal(zero),)
     return (sum(values, zero),)
+
+
+@builtin(
+    "update",
+    (T.ExactList(T.V("Item")), T.Integer, T.V("Item")),
+    (T.ExactList(T.V("Item")),),
+    param_names=("iterable", "index", "value"),
+    vectorisable=False,
+)
+@builtin(
+    "update",
+    (T.ExactList(T.V("Item")), T.ExactList(T.Integer), T.V("Item")),
+    (T.ExactList(T.V("Item")),),
+    param_names=("iterable", "index", "value"),
+    vectorisable=False,
+)
+@builtin(
+    "update",
+    (
+        T.ExactList(T.V("Item")),
+        T.ExactList(T.Integer),
+        T.ExactList(T.V("Item")),
+    ),
+    (T.ExactList(T.V("Item")),),
+    param_names=("iterable", "index", "value"),
+    vectorisable=False,
+)
+@builtin(
+    "update",
+    (T.String, T.Integer, T.String),
+    (T.String,),
+    param_names=("iterable", "index", "value"),
+    vectorisable=False,
+)
+@builtin(
+    "update",
+    (T.String, T.ExactList(T.Integer), T.String),
+    (T.String,),
+    param_names=("iterable", "index", "value"),
+    vectorisable=False,
+)
+def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return an indexed reconstruction without assigning it to a variable."""
+    if ctx.index_set is None:
+        raise RuntimeError("update requires indexed-update runtime support")
+    iterable, index, value = args
+    return (ctx.index_set(iterable, index, value, False),)
+
+
+@builtin(
+    "updateBy",
+    (
+        T.ExactList(T.V("Item")),
+        T.Integer,
+        T.Fn((T.V("Item"),), (T.V("Item"),)),
+    ),
+    (T.ExactList(T.V("Item")),),
+    param_names=("iterable", "index", "function"),
+    vectorisable=False,
+)
+@builtin(
+    "updateBy",
+    (
+        T.ExactList(T.V("Item")),
+        T.ExactList(T.Integer),
+        T.Fn(
+            (T.ExactList(T.V("Item")),),
+            (T.ExactList(T.V("Item")),),
+        ),
+    ),
+    (T.ExactList(T.V("Item")),),
+    param_names=("iterable", "index", "function"),
+    vectorisable=False,
+)
+@builtin(
+    "updateBy",
+    (T.String, T.Integer, T.Fn((T.String,), (T.String,))),
+    (T.String,),
+    param_names=("iterable", "index", "function"),
+    vectorisable=False,
+)
+@builtin(
+    "updateBy",
+    (T.String, T.ExactList(T.Integer), T.Fn((T.String,), (T.String,))),
+    (T.String,),
+    param_names=("iterable", "index", "function"),
+    vectorisable=False,
+)
+def _update_by(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Apply one unary callable to an indexed value or whole selection."""
+    if ctx.index_get is None or ctx.index_set is None:
+        raise RuntimeError("updateBy requires indexed-update runtime support")
+    iterable, index, function = args
+    grouped = is_list_like(index)
+    selected = ctx.index_get(iterable, index, grouped)
+    prepared = _prepared_runtime_call(ctx, function, 1)
+    result = (
+        prepared(selected)
+        if prepared is not None
+        else tuple(ctx.call(function, [selected]))
+    )
+    if len(result) != 1:
+        raise RuntimeError("updateBy function must return exactly one value")
+    return (ctx.index_set(iterable, index, result[0], grouped),)
 
 
 @builtin(

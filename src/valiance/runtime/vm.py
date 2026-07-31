@@ -508,12 +508,40 @@ class VirtualMachine:
                     self.call_value_overload,
                     test_predicate=self.test_predicate,
                     prepare_call=self.prepare_call,
+                    index_get=self._builtin_index_get,
+                    index_set=self._builtin_index_set,
                 ),
             )
             for name, element in (
                 runtime_elements() | runtime_stdlib_elements()
             ).items()
         }
+
+    def _builtin_index_get(
+        self, receiver: Any, selector: Any, grouped_update: bool
+    ) -> Any:
+        """Gather one scalar or collection-valued selector for a built-in."""
+        spec = IndexOperationSpec(
+            (IndexSelectorSpec(False, True, False, False),),
+            grouped_update=grouped_update,
+        )
+        return _get_index(receiver, spec, [(False, selector, None, None)], self)
+
+    def _builtin_index_set(
+        self, receiver: Any, selector: Any, value: Any, grouped_update: bool
+    ) -> Any:
+        """Reconstruct a value through one built-in-supplied selector."""
+        spec = IndexOperationSpec(
+            (IndexSelectorSpec(False, True, False, False),),
+            grouped_update=grouped_update,
+        )
+        return _set_index(
+            receiver,
+            spec,
+            [(False, selector, None, None)],
+            value,
+            vm=self,
+        )
 
     def run(self, program: Program) -> list[Any]:
         """Execute a compiled program and return the final stack."""
