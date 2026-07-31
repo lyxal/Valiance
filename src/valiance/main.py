@@ -34,7 +34,7 @@ from valiance.modules_system.packages import (
     upgrade_dependency,
 )
 from valiance.parsing import LexError, ParseError, ParseErrors, Parser, lex, parse
-from valiance.repl import ReplCompletion, create_repl_frontend
+from valiance.repl import ReplCompletion, create_repl_frontend, highlighted_fragments
 from valiance.elements.reference_docs import (
     DocumentationError,
     collect_language_references,
@@ -73,6 +73,8 @@ _ANSI_CYAN = "\033[36m"
 _ANSI_GREEN = "\033[32m"
 _ANSI_YELLOW = "\033[33m"
 _ANSI_RED = "\033[31m"
+_ANSI_BLUE = "\033[34m"
+_ANSI_MAGENTA = "\033[35m"
 
 _SOURCE_ACTIONS = {"compile", "run", "parse", "analyse", "analyze", "compile-module", "build"}
 _SOURCE_TOOL_ACTIONS = {"tidy", "annotate", "docs"}
@@ -1069,8 +1071,8 @@ def _run_package_command(parsed: argparse.Namespace) -> int:
 
 def _run_repl() -> int:
     """Run REPL for CLI and REPL orchestration."""
-    session = _ReplSession()
     color = should_color(sys.stdout)
+    session = _ReplSession(color=color)
     frontend = create_repl_frontend(
         prompt=lambda line_number: _repl_prompt(line_number, color=color),
         completion_provider=session.completion_items,
@@ -1105,6 +1107,7 @@ def _run_repl() -> int:
             return 0
         if source in {":reset", ":r", "reset"}:
             session.reset()
+            print("\033[2J\033[3J\033[H", end="", flush=True)
             print(
                 "Reset REPL state. Stack, variables, definitions, and imports cleared."
             )
@@ -1140,8 +1143,8 @@ def _run_repl() -> int:
             print("\033[2J\033[3J\033[H", end="", flush=True)
         type_preview = session.type_hint(source)
         succeeded = session.run(source)
-        if succeeded and type_preview and type_preview.startswith("Types:"):
-            print(type_preview)
+        if succeeded and type_preview and type_preview.startswith("Stack types:"):
+            print(_repl_style(type_preview, _ANSI_CYAN, color))
         if submission_kind == "scratch-run":
             frontend.wait_for_scratch_result()
         line_number += 1
@@ -1163,7 +1166,7 @@ def _print_repl_help(*, color: bool, fancy: bool = False) -> None:
     """Print REPL help for CLI and REPL orchestration."""
     print(_repl_style("REPL commands", _ANSI_BOLD, color))
     print("  :help   show this message")
-    print("  :reset  clear stack, variables, definitions, and imports")
+    print("  :reset  clear the screen, stack, variables, definitions, and imports")
     print("  :type   show stack types without executing source: :type <source>")
     print("  :clear    clear the terminal")
     print("  :repl     switch to one-line REPL mode")
@@ -1201,6 +1204,7 @@ def _repl_style(text: str, code: str, enabled: bool) -> str:
 
 @dataclass
 class _ReplSession:
+    color: bool = False
     analyser: Analyser | None = None
     branch: AnalysisBranch | None = None
     output: _OutputTracker | None = None
@@ -1320,8 +1324,7 @@ class _ReplSession:
         if next_branch.errors:
             return f"Type error: {next_branch.errors[0].message}"
         return (
-            f"Types: {_format_type_stack(self.branch.stack)} -> "
-            f"{_format_type_stack(next_branch.stack)}"
+            f"Stack types: {_format_type_stack(next_branch.stack)}"
         )
 
     def run(self, source: str) -> bool:
@@ -1379,7 +1382,7 @@ class _ReplSession:
             self._state_version += 1
             self._hint_cache = None
             if not self.output.did_print:
-                print(_format_stack(stack))
+                print(_format_stack(stack, color=self.color))
             return True
         except (
             BytecodeFormatError,
@@ -2030,13 +2033,17 @@ class _OutputTracker:
         print(value, end="")
 
 
-def _format_stack(stack: list[Any], *, preview_limit: int | None = None) -> str:
-    """Format stack from top to bottom for CLI and REPL output."""
+def _format_stack(
+    stack: list[Any], *, preview_limit: int | None = None, color: bool = False
+) -> str:
+    """Format and optionally syntax-highlight a stack from top to bottom."""
     if not stack:
-        return "Stack is empty"
+        return _repl_style("Stack is empty", _ANSI_DIM, color)
 
     rendered = [
-        _format_value(value, preview_limit=preview_limit)
+        _highlight_runtime_value(
+            _format_value(value, preview_limit=preview_limit), color=color
+        )
         for value in reversed(stack)
     ]
     if len(rendered) == 1:
@@ -2045,7 +2052,29 @@ def _format_stack(stack: list[Any], *, preview_limit: int | None = None) -> str:
         body = [f"┌ {rendered[0]}"]
         body.extend(f"│ {value}" for value in rendered[1:-1])
         body.append(f"└ {rendered[-1]}")
-    return "\n".join(("top", *body, "bottom"))
+    top = _repl_style("top", _ANSI_BOLD, color)
+    bottom = _repl_style("bottom", _ANSI_BOLD, color)
+    return "\n".join((top, *body, bottom))
+
+
+def _highlight_runtime_value(value: str, *, color: bool) -> str:
+    """Apply the REPL language palette to a formatted runtime value."""
+    if not color:
+        return value
+    styles = {
+        "class:keyword": _ANSI_BOLD + _ANSI_MAGENTA,
+        "class:type": _ANSI_CYAN,
+        "class:number": _ANSI_YELLOW,
+        "class:string": _ANSI_GREEN,
+        "class:comment": _ANSI_DIM,
+        "class:variable": _ANSI_BLUE,
+        "class:tag": _ANSI_RED,
+        "class:operator": _ANSI_BOLD,
+    }
+    return "".join(
+        _repl_style(text, styles.get(style, ""), bool(styles.get(style)))
+        for style, text in highlighted_fragments(value)
+    )
 
 
 def _format_value(value: Any, *, preview_limit: int | None = None) -> str:

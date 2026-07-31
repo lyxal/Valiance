@@ -93,7 +93,7 @@ _TYPE_NAMES = frozenset(
 
 _REPL_COMMANDS = (
     (":help", "show REPL help"),
-    (":reset", "clear REPL state"),
+    (":reset", "clear the screen and REPL state"),
     (":type", "show the stack types for source without executing it"),
     (":clear", "clear the terminal"),
     (":quit", "exit the REPL"),
@@ -256,7 +256,7 @@ def highlighted_fragments(line: str) -> list[tuple[str, str]]:
             fragments.append(("class:comment", line[index:end]))
             index = end
             continue
-        if char == '"':
+        if char in {'"', "'"}:
             end = _quoted_end(line, index)
             fragments.append(("class:string", line[index:end]))
             index = end
@@ -322,7 +322,7 @@ def _quoted_end(line: str, start: int) -> int:
         if line[index] == "\\":
             index = min(len(line), index + 2)
             continue
-        if line[index] == '"':
+        if line[index] == line[start]:
             return index + 1
         index += 1
     return len(line)
@@ -1096,9 +1096,9 @@ class _PromptToolkitFrontend:
         if self._mode != "scratch":
             source = document.text.strip()
             if not self._type_hints_enabled:
-                status = "Types off"
+                status = "Stack types off"
             elif not source:
-                status = "Types: waiting for input"
+                status = "Stack types: waiting for input"
             else:
                 try:
                     status = self._type_hint_provider(source) or "No type information"
@@ -1109,7 +1109,7 @@ class _PromptToolkitFrontend:
         row = document.cursor_position_row + 1
         column = document.cursor_position_col + 1
         modified = " *" if document.text != self._last_submitted_source else ""
-        status = "Types off" if not self._type_hints_enabled else "Ready"
+        status = "Stack types off" if not self._type_hints_enabled else "Ready"
         if self._type_hints_enabled and document.text.strip():
             try:
                 hint = self._type_hint_provider(document.text)

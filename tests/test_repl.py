@@ -268,7 +268,7 @@ class ReplFrontendTests(unittest.TestCase):
         session = _ReplSession()
         hint = session.type_hint("define temporary(n: Number) -> Number => $n")
 
-        self.assertEqual(hint, "Types: [] -> []")
+        self.assertEqual(hint, "Stack types: []")
         self.assertFalse(
             any(item.text == "temporary" for item in session.completion_items())
         )

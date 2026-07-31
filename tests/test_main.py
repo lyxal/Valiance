@@ -21,6 +21,14 @@ class MainTests(unittest.TestCase):
         self.assertEqual(_format_stack([]), "Stack is empty")
         self.assertEqual(_format_stack([42]), "top\n─ 42\nbottom")
 
+    def test_format_stack_highlights_values_and_labels_when_color_is_enabled(self):
+        rendered = _format_stack([1, "hello"], color=True)
+
+        self.assertIn("\033[1mtop\033[0m", rendered)
+        self.assertIn("\033[32m'hello'\033[0m", rendered)
+        self.assertIn("\033[33m1\033[0m", rendered)
+        self.assertIn("\033[1mbottom\033[0m", rendered)
+
     def test_main_without_command_starts_repl(self):
         output = io.StringIO()
         input_stream = io.StringIO(":quit\n")
@@ -42,7 +50,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         rendered = output.getvalue()
         self.assertIn("REPL commands", rendered)
-        self.assertIn(":reset  clear stack", rendered)
+        self.assertIn(":reset  clear the screen, stack", rendered)
         self.assertIn(":quit   exit the REPL", rendered)
 
     def test_repl_runs_inline_source_with_implicit_output(self):
@@ -90,6 +98,7 @@ class MainTests(unittest.TestCase):
             exit_code = main([])
 
         self.assertEqual(exit_code, 0)
+        self.assertIn("\033[2J\033[3J\033[H", output.getvalue())
         self.assertIn("Reset REPL state.", output.getvalue())
         self.assertIn("Type error: undefined variable 'x'", error.getvalue())
 
@@ -169,7 +178,7 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         rendered = output.getvalue()
-        self.assertIn("Types: [] -> [Integer]", rendered)
+        self.assertIn("Stack types: [Integer]", rendered)
         self.assertNotIn("top\n", rendered)
 
     def test_repl_type_command_uses_current_stack_without_mutating_it(self):
@@ -180,7 +189,7 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         rendered = output.getvalue()
-        self.assertIn("Types: [Integer] -> [Integer]", rendered)
+        self.assertIn("Stack types: [Integer]", rendered)
         self.assertIn("top\n─ 3\nbottom", rendered)
 
     def test_help_flag_prints_help(self):
