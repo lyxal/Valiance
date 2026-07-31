@@ -205,6 +205,18 @@ def _index_access_node(
     if not _patterns._selectors_supported(receiver_type, node.selectors):
         self._diagnose("tuple slicing is not supported", node)
         return _core.BranchSet()
+    if (
+        len(node.selectors) == 1
+        and not node.selectors[0].is_slice
+        and len(index_types) == 1
+        and isinstance(T.normalize(index_types[0]), T.NoneTypeNode)
+    ):
+        self._diagnose(
+            "None is not a valid scalar index; "
+            "use it inside a multidimensional index path",
+            node,
+        )
+        return _core.BranchSet()
     if not _patterns._selectors_assignable(
         receiver_type,
         node.selectors,
@@ -266,6 +278,18 @@ def _index_set_node(
     index_types = branch.stack.items[-selector_values:] if selector_values else ()
     if not _patterns._selectors_supported(receiver_type, node.selectors):
         self._diagnose("tuple slicing is not supported", node)
+        return _core.BranchSet()
+    if (
+        len(node.selectors) == 1
+        and not node.selectors[0].is_slice
+        and len(index_types) == 1
+        and isinstance(T.normalize(index_types[0]), T.NoneTypeNode)
+    ):
+        self._diagnose(
+            "None is not a valid scalar index; "
+            "use it inside a multidimensional index path",
+            node,
+        )
         return _core.BranchSet()
     if not _patterns._selectors_assignable(
         receiver_type,

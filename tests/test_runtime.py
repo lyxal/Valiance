@@ -4449,6 +4449,70 @@ end
                 "$matrix = [[1, 2], [3, 4]]\n" "$matrix[[[0, 1], [0, 1]]] := 1 rotate"
             )
 
+    def test_none_path_component_gathers_strict_wildcard_column(self):
+        self.assertEqual(
+            execute(
+                "$matrix = [[1, 2], [3, 4], [5, 6]]\n"
+                "$matrix[[None, 0]]"
+            ),
+            [[RuntimeNumber("1"), RuntimeNumber("3"), RuntimeNumber("5")]],
+        )
+
+    def test_index_underscore_is_none_path_shorthand(self):
+        self.assertEqual(
+            execute(
+                "$matrix = [[1, 2], [3, 4], [5, 6]]\n"
+                "$matrix[[_, 1]]"
+            ),
+            [[RuntimeNumber("2"), RuntimeNumber("4"), RuntimeNumber("6")]],
+        )
+
+    def test_none_path_component_supports_assignment_and_augmentation(self):
+        self.assertEqual(
+            execute(
+                "$matrix = [[1, 2], [3, 4], [5, 6]]\n"
+                "$matrix[[None, 0]] = 9\n$matrix"
+            ),
+            [[[RuntimeNumber("9"), RuntimeNumber("2")],
+              [RuntimeNumber("9"), RuntimeNumber("4")],
+              [RuntimeNumber("9"), RuntimeNumber("6")]]],
+        )
+        self.assertEqual(
+            execute(
+                "$matrix = [[1, 2], [3, 4], [5, 6]]\n"
+                "$matrix[[_, 0]] := 1 rotate\n$matrix"
+            ),
+            [[[RuntimeNumber("3"), RuntimeNumber("2")],
+              [RuntimeNumber("5"), RuntimeNumber("4")],
+              [RuntimeNumber("1"), RuntimeNumber("6")]]],
+        )
+
+    def test_none_path_component_works_with_update_and_update_by(self):
+        self.assertEqual(
+            execute("update([[1, 2], [3, 4]], [None, 0], 8)"),
+            [[[RuntimeNumber("8"), RuntimeNumber("2")],
+              [RuntimeNumber("8"), RuntimeNumber("4")]]],
+        )
+        self.assertEqual(
+            execute(
+                "updateBy([[1, 2], [3, 4]], [None, 0], "
+                "fn (xs) => $xs 1 rotate end)"
+            ),
+            [[[RuntimeNumber("3"), RuntimeNumber("2")],
+              [RuntimeNumber("1"), RuntimeNumber("4")]]],
+        )
+
+    def test_none_scalar_index_is_rejected(self):
+        with self.assertRaisesRegex(AssertionError, "None is not a valid scalar index"):
+            execute("$xs = [1, 2]\n$xs[None]")
+
+    def test_none_path_expansion_is_strict_for_ragged_lists(self):
+        with self.assertRaisesRegex(RuntimeError, "index 1 is out of range"):
+            execute(
+                "$xs = [[1, 2], [3], [4, 5]]\n"
+                "$xs[[None, 1]]"
+            )
+
     def test_vectorised_comparison_result_is_a_boolean_mask(self):
         source = (
             "$values = [5, 1, 2, 7, 8, 2, 4, 6, 7, 1, 4, 7, 8]\n" "$values[$values < 5]"

@@ -2248,6 +2248,17 @@ def _sum(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin(
     "update",
+    (
+        T.ExactList(T.V("Item")),
+        T.ExactList(T.optional(T.Integer)),
+        T.V("Replacement"),
+    ),
+    (T.ExactList(T.V("Item")),),
+    param_names=("iterable", "index", "value"),
+    vectorisable=False,
+)
+@builtin(
+    "update",
     (T.ExactList(T.V("Item")), T.Integer, T.V("Item")),
     (T.ExactList(T.V("Item")),),
     param_names=("iterable", "index", "value"),
@@ -2293,6 +2304,17 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (ctx.index_set(iterable, index, value, False),)
 
 
+@builtin(
+    "updateBy",
+    (
+        T.ExactList(T.V("Item")),
+        T.ExactList(T.optional(T.Integer)),
+        T.Fn((T.V("Item"),), (T.V("Item"),)),
+    ),
+    (T.ExactList(T.V("Item")),),
+    param_names=("iterable", "index", "function"),
+    vectorisable=False,
+)
 @builtin(
     "updateBy",
     (

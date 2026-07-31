@@ -2434,13 +2434,31 @@ class Parser:
         self,
         selectors: tuple[IndexSelector, ...],
     ) -> tuple[ASTNode, ...]:
-        """Parse selector expressions from the current token stream."""
+        """Return selector expressions with index-path wildcard shorthand lowered."""
         nodes: list[ASTNode] = []
         for selector in selectors:
-            nodes.extend(selector.start)
+            nodes.extend(
+                self._lower_index_wildcard_shorthand(node)
+                for node in selector.start
+            )
             nodes.extend(selector.stop)
             nodes.extend(selector.step)
         return tuple(nodes)
+
+    def _lower_index_wildcard_shorthand(self, node: ASTNode) -> ASTNode:
+        """Translate ``_`` list items to ``None`` only in direct index syntax."""
+        if not isinstance(node, ListLiteralNode):
+            return node
+        items = tuple(
+            tuple(
+                ElementNode(Symbol("None"), location=item.location)
+                if isinstance(item, ElementNode) and item.name.text == "_"
+                else self._lower_index_wildcard_shorthand(item)
+                for item in expression
+            )
+            for expression in node.items
+        )
+        return replace(node, items=items)
 
     def _comma_expressions(self, closer: TokenKind) -> tuple[tuple[ASTNode, ...], ...]:
         """Parse comma expressions from the current token stream."""

@@ -6261,7 +6261,10 @@ def _selection_positions(
             raise RuntimeError("Boolean mask is longer than the indexed value")
         return [index for index, flag in enumerate(mask) if _truthy(flag)]
     if is_list_like(selector):
-        return _sequence_selection_positions(receiver, selector)
+        requested = list(selector)
+        if any(_is_none_result_value(item) for item in requested):
+            return _expand_wildcard_path(receiver, requested)
+        return _sequence_selection_positions(receiver, requested)
     if not isinstance(selector, (FunctionValue, OverloadedFunctionValue)):
         return None
     if isinstance(receiver, dict):
@@ -6283,6 +6286,35 @@ def _selection_positions(
                 selected.append(index)
         return selected
     raise RuntimeError("function selectors require a list, string, or dictionary")
+
+
+def _expand_wildcard_path(receiver: Any, pattern: list[Any]) -> list[list[Any]]:
+    """Strictly expand ``None`` coordinates into validated concrete paths."""
+    if not pattern:
+        raise RuntimeError("multidimensional index paths cannot be empty")
+    paths: list[list[Any]] = []
+
+    def visit(current: Any, offset: int, concrete: list[Any]) -> None:
+        """Validate and collect every branch represented by one path pattern."""
+        if offset == len(pattern):
+            paths.append(concrete)
+            return
+        component = pattern[offset]
+        value = unwrap_runtime_value(current)
+        if _is_none_result_value(component):
+            if not (isinstance(value, (tuple, list)) or is_eager_sequence(value)):
+                raise RuntimeError(
+                    "wildcard path component requires a finite list receiver"
+                )
+            for index in range(len(value)):
+                child = _index_one(current, index)
+                visit(child, offset + 1, [*concrete, RuntimeNumber(index)])
+            return
+        child = _index_one(current, component)
+        visit(child, offset + 1, [*concrete, component])
+
+    visit(receiver, 0, [])
+    return paths
 
 
 def _selection_identity(value: Any) -> Any:
@@ -7027,6 +7059,11 @@ def _is_path(value: Any) -> bool:
 def _int_index(value: Any) -> int:
     """Find the index for int during VM execution."""
     value = unwrap_runtime_value(value)
+    if _is_none_result_value(value):
+        raise RuntimeError(
+            "None is not a valid scalar index; "
+            "use it inside a multidimensional index path"
+        )
     if isinstance(value, RuntimeNumber) and value == value.to_integral_value():
         return int(value)
     if isinstance(value, int):

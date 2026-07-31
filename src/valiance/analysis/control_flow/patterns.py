@@ -198,6 +198,13 @@ def _selector_mode(
 
     if (
         isinstance(receiver, (T.ListExactType, T.ListMinType, T.ListRuggedType))
+        and T.assignable(selector, T.ExactList(T.optional(T.Integer)), ctx)
+        and not T.assignable(selector, T.ExactList(T.Integer), ctx)
+    ):
+        return "path_pattern"
+
+    if (
+        isinstance(receiver, (T.ListExactType, T.ListMinType, T.ListRuggedType))
         and T.assignable(selector, T.ExactList(T.Integer, rank=2), ctx)
     ):
         return "paths"
@@ -227,7 +234,7 @@ def _selector_mode(
 
 def _selection_type(receiver_type: T.Type, mode: str | None) -> T.Type | None:
     """Return the gathered value type for a mask or predicate selector."""
-    if mode not in {"mask", "predicate", "sequence", "paths"}:
+    if mode not in {"mask", "predicate", "sequence", "paths", "path_pattern"}:
         return None
     typ = T.normalize(receiver_type)
     if isinstance(typ, T.TaggedType):
@@ -237,7 +244,7 @@ def _selection_type(receiver_type: T.Type, mode: str | None) -> T.Type | None:
         selected = tuple(_selection_type(item, mode) for item in typ.items)
         return None if any(item is None for item in selected) else T.U(*selected)
     if isinstance(typ, (T.ListExactType, T.ListMinType, T.ListRuggedType)):
-        if mode == "paths":
+        if mode in {"paths", "path_pattern"}:
             return T.ExactList(typ.base)
         return typ
     if isinstance(typ, T.NominalType) and typ.name.text in {"String", "Dict"}:
@@ -380,7 +387,11 @@ def _selection_replacement_item_type(
             _selection_replacement_item_type(item, mode) for item in typ.items
         ))
     if isinstance(typ, T.CollectionType):
-        return typ.base if mode == "paths" else T.collection_item_type(typ)
+        return (
+            typ.base
+            if mode in {"paths", "path_pattern"}
+            else T.collection_item_type(typ)
+        )
     if isinstance(typ, T.NominalType) and typ.name.text == "String":
         return T.String
     if isinstance(typ, T.NominalType) and typ.name.text == "Dict" and len(typ.args) == 2:

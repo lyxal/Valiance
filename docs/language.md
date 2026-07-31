@@ -1181,6 +1181,14 @@ fork: (sum, length) /
 - `[1, 2, 3, 4, 5, 6] $[::2]` == `[1, 3, 5]`
 - Multi-dimensional indices
 - `$data[[1, 2]]` == `$data[1][2]` == `$data[1] $[2]`
+- A multidimensional path may contain `None` as an unconstrained coordinate.
+  It expands across every valid index at that path depth. Expansion is strict:
+  every concrete path produced must be valid, or the complete access or update
+  fails before any replacement is stored.
+- Within direct index syntax, `_` in a path is shorthand for `None`; the
+  first-class path value used by `update` and `updateBy` uses `None`.
+- `None` is not a valid scalar index. `$xs[None]` is an error, while
+  `$matrix[[None, 0]]` selects the first item of every row.
 - You can multidimensional slice lists (runtime panic - `SliceFault` to try and multidim slice a non-list)
 
 ```
