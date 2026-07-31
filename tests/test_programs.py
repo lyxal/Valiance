@@ -589,7 +589,7 @@ define fibonacci1(n: Integer) =>
   else if ($n == 1) => 1
   else =>
     0 1 unfold => peek: +
-    $[$n - 2]
+    $[$n - 1]
   end
 end
 

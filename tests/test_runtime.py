@@ -828,6 +828,13 @@ fn (cells: Integer+) -> Integer => $cells[0] end
         prepared = function.prepared_calls[(1, 1)]
         self.assertEqual(prepared.strategy, "straight-line")
 
+    def test_length_counts_a_terminating_unfold_without_python_size(self):
+        result = execute(
+            "1 unfold (< 5) -> (n: Integer) => $n 1 + end | #-infinite | length"
+        )
+
+        self.assertEqual(result, [RuntimeNumber(5)])
+
     def test_length_fuses_a_finite_planned_pipeline(self):
         result = execute("range(1, 20) filter: fn (n) => $n % 2 == 0 end | length")
         self.assertEqual(result, [RuntimeNumber(10)])
@@ -3608,7 +3615,7 @@ define first_generated(n: Number) -> Number =>
 end
 1 first_generated
 """),
-            [RuntimeNumber("2")],
+            [RuntimeNumber("1")],
         )
         self.assertEqual(
             execute("[1, 2] foreach (n) => if ($n 10 >) => break ($n) end end"),
@@ -3764,7 +3771,7 @@ end
         stack = execute(
             "1 unfold (< 4) -> (n: Number) => $n 1 + end | #-infinite | first"
         )
-        self.assertEqual(stack, [RuntimeNumber("2")])
+        self.assertEqual(stack, [RuntimeNumber("1")])
 
     def test_unfold_cycles_state_and_supports_separate_emission(self):
         explicit = execute("""
@@ -3777,12 +3784,12 @@ end | #-infinite | 7 take
             explicit_prefix,
             [
                 RuntimeNumber("1"),
+                RuntimeNumber("1"),
                 RuntimeNumber("2"),
                 RuntimeNumber("3"),
                 RuntimeNumber("5"),
                 RuntimeNumber("8"),
                 RuntimeNumber("13"),
-                RuntimeNumber("21"),
             ],
         )
 
@@ -3812,11 +3819,17 @@ end | #-infinite | 4 take
             list(separate[0]),
             [
                 RuntimeNumber("1"),
+                RuntimeNumber("1"),
                 RuntimeNumber("3"),
                 RuntimeNumber("5"),
-                RuntimeNumber("7"),
             ],
         )
+
+    def test_unfold_condition_gatekeeps_initial_value(self):
+        stack = execute(
+            "5 unfold (< 5) -> (n: Integer) => $n 1 + end | #-infinite | 1 take"
+        )
+        self.assertEqual(list(stack[0]), [])
 
     def test_take_accepts_lazy_lists(self):
         stack = execute("1 5 range | 3 take")

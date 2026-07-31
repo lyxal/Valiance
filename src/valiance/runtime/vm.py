@@ -2990,11 +2990,15 @@ class VirtualMachine:
         def generated():
             """Handle generated during VM execution."""
             nonlocal state
+            emit_initial = True
             while True:
                 if condition is not None:
                     keep_going = _call_unfold_function(self, condition, state)
                     if not keep_going or not _truthy(keep_going[-1]):
                         return
+                if emit_initial:
+                    emit_initial = False
+                    yield state[-1]
                 outputs = _call_unfold_function(self, body, state)
                 if len(outputs) > arity + 1:
                     raise RuntimeError(

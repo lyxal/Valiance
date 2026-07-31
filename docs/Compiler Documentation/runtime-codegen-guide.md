@@ -922,8 +922,10 @@ List-consuming built-ins should preserve laziness when possible. For example,
 or lazy -- it does not eagerly materialise finite inputs, and callers that
 need an eager list can drive the `LazyList` themselves; `head` consumes only
 the first item; `length`'s parameter type is
-`T.WithoutTag(T.ExactList(...), "infinite")`, so a finite list-like value is
-already guaranteed by analysis and `length` does not re-check it at runtime.
+`T.WithoutTag(T.ExactList(...), "infinite")`, so the Valiance tag system
+rejects values known to be infinite. Python does not attempt to prove
+termination from protocols such as `Sized`: `length` iterates any lazy value
+until it ends, allowing runtime-terminating producers such as `unfold`.
 The exception is an eager callable argument: `map: println` is materialised at
 the call site because the callable carries the `Eager` element tag and must run
 immediately.

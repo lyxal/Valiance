@@ -943,9 +943,14 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
     if isinstance(typ, T.NoVecType):
         return _runtime_assignable(value, typ.inner)
     if isinstance(typ, T.TaggedType):
+        # The analyser and VM own Valiance tag semantics. A LazyList may
+        # terminate despite not implementing Sized, so Python must not reject it
+        # merely because its length is not known in advance. Unsized foreign
+        # iterables are not valid runtime list values and remain ineligible for
+        # an absent-infinite overload during legacy dynamic dispatch.
         if any(
             tag.absent and tag.name == "infinite" and tag.depth == 0 for tag in typ.tags
-        ) and not is_finite_list_like(value):
+        ) and not isinstance(value, LazyList) and not is_finite_list_like(value):
             return False
         return _runtime_assignable(value, typ.inner)
     if isinstance(typ, T.NominalType):
@@ -2079,10 +2084,12 @@ def _take(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin("length", (T.String,), (T.Integer,), vectorisable=False)
 @alias("len")
 def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Return the exact length, fusing any finite planned pipeline."""
+    """Return the exact length, evaluating lazy lists until they terminate."""
     value = args[0]
     if isinstance(value, PlannedLazyList):
         return (RuntimeNumber(value.count_terminal()),)
+    if isinstance(value, LazyList):
+        return (RuntimeNumber(sum(1 for _ in value)),)
     return (RuntimeNumber(len(value)),)
 
 

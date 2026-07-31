@@ -1544,10 +1544,12 @@ unfold -> (<parameters>) => <body>
   * The local stack is initialised with the current state.
   * Changes to the local stack do not affect the outer stack.
   * The outer stack only receives the resulting lazy list.
-* At each iteration, `unfold` evaluates `condition` using the current state.
+* Before generating any item, `unfold` evaluates `condition` using the initial state.
+* The top value of the accepted initial state is generated as the zeroth item.
+* At each later iteration, `unfold` evaluates `condition` using the current state.
 
   * Truthy means continue.
-  * Falsey means stop.
+  * Falsey means stop without generating an item, including for the initial state.
   * `condition` peeks its inputs and does not modify the state.
 * If `condition` is omitted, the list is generated infinitely.
 * If iteration continues, `body` is executed using the current state as its input.
@@ -1579,7 +1581,7 @@ prev next -> next (prev + next)
 ```
 1 unfold => + 1
 
-#? 2, 3, 4, 5, ...
+#? 1, 2, 3, 4, 5, ...
 ```
 
 * When arity and multiplicity are both 1, the generated value is also the entire next state.
