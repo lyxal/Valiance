@@ -929,9 +929,14 @@ until it ends, allowing runtime-terminating producers such as `unfold`.
 The exception is an eager callable argument: `map: println` is materialised at
 the call site because the callable carries the `Eager` element tag and must run
 immediately.
-Runtime value formatters fully iterate list-like values by default, including
-lazy and potentially infinite values. The CLI `--preview-lists` flag opts
-runtime output and implicit stack output into bounded list previews.
+`LazyList` and `PlannedLazyList` are replayable. They cache items as one shared
+source advances, and every traversal starts at index zero. Formatting, `dup`,
+`length`, and partial consumers therefore do not destructively advance later
+traversals or rerun already evaluated pipeline operations. Runtime value
+formatters still fully iterate list-like values by default, including lazy and
+potentially infinite values. The CLI `--preview-lists` flag opts runtime output
+and implicit stack output into bounded list previews; previewed items remain in
+the replay cache.
 
 ## Implicit Output
 

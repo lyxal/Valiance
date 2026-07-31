@@ -828,6 +828,88 @@ fn (cells: Integer+) -> Integer => $cells[0] end
         prepared = function.prepared_calls[(1, 1)]
         self.assertEqual(prepared.strategy, "straight-line")
 
+    def test_lazy_list_traversals_replay_cached_values(self):
+        consumed: list[int] = []
+
+        def source():
+            for value in range(1, 4):
+                consumed.append(value)
+                yield RuntimeNumber(value)
+
+        values = LazyList(source())
+
+        self.assertEqual(
+            list(values),
+            [RuntimeNumber(1), RuntimeNumber(2), RuntimeNumber(3)],
+        )
+        self.assertEqual(
+            list(values),
+            [RuntimeNumber(1), RuntimeNumber(2), RuntimeNumber(3)],
+        )
+        self.assertEqual(consumed, [1, 2, 3])
+
+    def test_lazy_preview_preserves_the_complete_later_traversal(self):
+        values = LazyList(RuntimeNumber(value) for value in range(1, 6))
+
+        self.assertEqual(
+            format_runtime_value(values, lazy_preview_limit=2),
+            "[1, 2, ...]",
+        )
+        self.assertEqual(
+            list(values),
+            [
+                RuntimeNumber(1),
+                RuntimeNumber(2),
+                RuntimeNumber(3),
+                RuntimeNumber(4),
+                RuntimeNumber(5),
+            ],
+        )
+
+    def test_dup_prints_the_same_lazy_range_twice(self):
+        output: list[str] = []
+        program = parse("range(1, 3) dup | println | println")
+        analyser = Analyser()
+        typed = analyser.analyse(program)
+        self.assertFalse(analyser.diagnostics)
+
+        run(compile_program(typed, optimize=False), output=output.append)
+
+        self.assertEqual(output, ["[1, 2, 3]\n", "[1, 2, 3]\n"])
+
+    def test_length_preserves_a_duplicated_lazy_range(self):
+        stack = execute("range(1, 10) dup | length")
+
+        self.assertIsInstance(stack[0], LazyList)
+        self.assertEqual(stack[1], RuntimeNumber(10))
+        self.assertEqual(
+            list(stack[0]),
+            [RuntimeNumber(value) for value in range(1, 11)],
+        )
+
+    def test_planned_lazy_pipeline_replays_without_reexecuting_operations(self):
+        mapped: list[int] = []
+        source = LazyList(RuntimeNumber(value) for value in range(1, 4))
+
+        def track(value):
+            mapped.append(int(value))
+            return value * 2
+
+        values = PlannedLazyList(
+            source,
+            (LazyPipelineStage.mapping(track),),
+        )
+
+        self.assertEqual(
+            list(values),
+            [RuntimeNumber(2), RuntimeNumber(4), RuntimeNumber(6)],
+        )
+        self.assertEqual(
+            list(values),
+            [RuntimeNumber(2), RuntimeNumber(4), RuntimeNumber(6)],
+        )
+        self.assertEqual(mapped, [1, 2, 3])
+
     def test_length_counts_a_terminating_unfold_without_python_size(self):
         result = execute(
             "1 unfold (< 5) -> (n: Integer) => $n 1 + end | #-infinite | length"

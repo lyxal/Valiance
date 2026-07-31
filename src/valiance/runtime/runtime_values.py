@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import cmath
-from collections.abc import Callable, Iterable, Mapping, Sequence, Sized
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence, Sized
 from dataclasses import dataclass, field
 from fractions import Fraction
 from functools import lru_cache
@@ -17,16 +17,49 @@ from valiance.vtypes import DataTag
 
 @dataclass
 class LazyList:
-    """A list-like value backed by an iterable that may be lazy or infinite."""
+    """A replayable list-like value backed by a lazy or infinite iterable.
+
+    Values are cached as the source advances. Every traversal starts at index
+    zero and reads cached values before requesting more from the shared source,
+    so duplication, formatting, and partial consumers do not destructively
+    advance other references to the same logical list.
+    """
 
     iterable: Iterable[Any]
     runtime_rank: int | None = field(default=None, compare=False, repr=False)
     owned_values: tuple[Any, ...] = field(default=(), compare=False, repr=False)
     refcount: int = field(default=1, compare=False, repr=False)
+    _cache: list[Any] = field(default_factory=list, init=False, compare=False, repr=False)
+    _source_iterator: Iterator[Any] | None = field(
+        default=None, init=False, compare=False, repr=False
+    )
+    _exhausted: bool = field(default=False, init=False, compare=False, repr=False)
+
+    def _iterate_uncached(self) -> Iterator[Any]:
+        """Return the source iterator used to populate the replay cache."""
+        return iter(self.iterable)
 
     def __iter__(self):
-        """Iterate over values stored by this lazy list."""
-        return iter(self.iterable)
+        """Iterate from the beginning while caching newly demanded values."""
+        index = 0
+        while True:
+            if index < len(self._cache):
+                yield self._cache[index]
+                index += 1
+                continue
+            if self._exhausted:
+                return
+            if self._source_iterator is None:
+                self._source_iterator = iter(self._iterate_uncached())
+            try:
+                item = next(self._source_iterator)
+            except StopIteration:
+                self._exhausted = True
+                self._source_iterator = None
+                return
+            self._cache.append(item)
+            index += 1
+            yield item
 
     def __eq__(self, other: object) -> bool:
         """Return whether this lazy list equals another value."""
@@ -168,8 +201,8 @@ class PlannedLazyList(LazyList):
         self.source = source
         self.stages = stages
 
-    def __iter__(self):
-        """Execute fresh instances of all registered stages in one loop."""
+    def _iterate_uncached(self) -> Iterator[Any]:
+        """Execute one set of pipeline stages to populate the replay cache."""
         operations = tuple(stage.build() for stage in self.stages)
         if any(stage.empty_without_source for stage in self.stages):
             # A zero-length prefix must not pull even one source item.
