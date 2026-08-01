@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import replace
+from decimal import DecimalException, InvalidOperation
 from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
@@ -16,6 +17,7 @@ from valiance.asts import (
     AtNode,
     CastNode,
     DictLiteralNode,
+    ElementNode,
     ElementTagDeclarationNode,
     FileLintSuppressionNode,
     FunctionNode,
@@ -68,6 +70,7 @@ from valiance.modules_system.modules import (
 )
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.default_types import Boolean
+from valiance.runtime.runtime_values import RuntimeNumber
 from valiance.vtypes.relations import merge_stacks
 
 from .. import analyser as _core
@@ -173,6 +176,97 @@ def _field_set_node(
         (branch.with_stack(stack).emit(TypedNode(node, result_type)),)
     )
 
+def _literal_integer_index(node: IndexAccessNode) -> int | None:
+    """Return a scalar index only when its source is one integer literal."""
+    expression = _scalar_index_expression(node)
+    if not isinstance(expression, tuple) or len(expression) != 1:
+        return None
+    literal = expression[0]
+    if not isinstance(literal, NumberLiteralNode):
+        return None
+    try:
+        value = RuntimeNumber(literal.value)
+    except InvalidOperation:
+        return None
+    return int(value) if value.is_integer() else None
+
+
+def _scalar_index_expression(node: IndexAccessNode) -> tuple[ASTNode, ...] | None:
+    """Return the AST chain for one non-slice scalar selector."""
+    if len(node.selectors) != 1 or node.selectors[0].is_slice:
+        return None
+    return node.selectors[0].start
+
+
+def _constant_integer_index(node: IndexAccessNode) -> int | None:
+    """Evaluate a conservative set of obviously constant index expressions."""
+    expression = _scalar_index_expression(node)
+    if expression is None or len(expression) == 1:
+        return None
+    stack: list[RuntimeNumber | int] = []
+    for item in expression:
+        if isinstance(item, NumberLiteralNode):
+            try:
+                stack.append(RuntimeNumber(item.value))
+            except InvalidOperation:
+                return None
+            continue
+        if isinstance(item, (ListLiteralNode, TupleLiteralNode)):
+            stack.append(len(item.items))
+            continue
+        if not isinstance(item, ElementNode) or item.name.namespace or item.call_args:
+            return None
+        name = item.name.text
+        if name == "length":
+            if not stack or not isinstance(stack[-1], int):
+                return None
+            stack[-1] = RuntimeNumber(stack[-1])
+            continue
+        if name not in {"+", "-", "*", "**"} or len(stack) < 2:
+            return None
+        right = stack.pop()
+        left = stack.pop()
+        if not isinstance(left, RuntimeNumber) or not isinstance(right, RuntimeNumber):
+            return None
+        try:
+            result = {
+                "+": lambda: left + right,
+                "-": lambda: left - right,
+                "*": lambda: left * right,
+                "**": lambda: left**right,
+            }[name]()
+        except (DecimalException, ValueError, ZeroDivisionError):
+            return None
+        stack.append(result)
+    if len(stack) != 1 or not isinstance(stack[0], RuntimeNumber):
+        return None
+    return int(stack[0]) if stack[0].is_integer() else None
+
+
+def _literal_tuple_index_type(
+    typ: T.Type,
+    index: int,
+) -> tuple[T.Type | None, bool]:
+    """Return an exact tuple item type and whether the index is out of bounds."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        result, out_of_bounds = _literal_tuple_index_type(typ.inner, index)
+        if result is None:
+            return None, out_of_bounds
+        carried = tuple(
+            T.DataTag(tag.name, tag.depth - 1, tag.absent)
+            for tag in typ.tags
+            if tag.depth > 0
+        )
+        return (T.Tagged(result, *carried) if carried else result), out_of_bounds
+    if not isinstance(typ, T.TupleType):
+        return None, False
+    normalized = index if index >= 0 else len(typ.params) + index
+    if normalized < 0 or normalized >= len(typ.params):
+        return None, True
+    return typ.params[normalized], False
+
+
 def _literal_path_pattern_depth(
     node: IndexAccessNode | IndexSetNode,
     selector_mode: str | None,
@@ -256,7 +350,35 @@ def _index_access_node(
             node,
         )
         return _core.BranchSet()
-    result_type = _patterns._selection_type(
+    literal_index = _literal_integer_index(node)
+    constant_index = (
+        None if literal_index is not None else _constant_integer_index(node)
+    )
+    checked_index = literal_index if literal_index is not None else constant_index
+    if checked_index is not None:
+        tuple_result, out_of_bounds = _literal_tuple_index_type(
+            receiver_type, checked_index
+        )
+        if out_of_bounds:
+            self._diagnose(
+                f"tuple index {checked_index} is out of bounds",
+                node,
+            )
+            return _core.BranchSet()
+        if constant_index is not None and tuple_result is not None:
+            self._warn(
+                "expression index will not return the exact type of item "
+                f"{constant_index}; try writing `$[{constant_index}]` instead. "
+                "It's simpler and clearer than an expression. Alternatively, "
+                "consider using a different data model",
+                node,
+            )
+    else:
+        tuple_result = None
+
+    result_type = (
+        tuple_result if literal_index is not None else None
+    ) or _patterns._selection_type(
         receiver_type,
         selector_mode,
         path_depth=_literal_path_pattern_depth(node, selector_mode),

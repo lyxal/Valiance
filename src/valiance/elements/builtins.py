@@ -228,25 +228,15 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
             "Numeric overloads perform division.",
             "The list overload, also available as `reduce`, starts with the first item and reduces the remainder.",
         ),
-        parameters=(
-            ("left_or_values", "Dividend or non-empty list."),
-            ("right_or_reducer", "Divisor or reducer."),
-        ),
+        parameters=(("left_or_values", "Dividend or non-empty list."), ("right_or_reducer", "Divisor or reducer.")),
         returns="The quotient or final reduced value.",
         category="Arithmetic",
         see_also=("reduce", "fold"),
     ),
     "fold": element_documentation(
         "Fold a list from an explicit seed value.",
-        description=(
-            "Applies the folder to the accumulator and every item in order.",
-            "An empty list returns the seed.",
-        ),
-        parameters=(
-            ("values", "Values to fold."),
-            ("seed", "Initial accumulator."),
-            ("folder", "Accumulator and item callable."),
-        ),
+        description=("Applies the folder to the accumulator and every item in order.", "An empty list returns the seed."),
+        parameters=(("values", "Values to fold."), ("seed", "Initial accumulator."), ("folder", "Accumulator and item callable.")),
         returns="The final accumulator.",
         category="Collections",
         see_also=("reduce", "/"),
@@ -417,10 +407,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         parameters=(
             ("iterable", "Input list or string."),
             ("index", "An index or Integer+ selection."),
-            (
-                "function",
-                "Unary function applied once to the indexed value or selection.",
-            ),
+            ("function", "Unary function applied once to the indexed value or selection."),
         ),
         returns="The reconstructed iterable; the input binding is unchanged.",
         category="Collections",
@@ -603,15 +590,6 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         "Return the first two items of a finite list, raising if there are fewer than two.",
         parameters=(("list", "The list to unpair"),),
         returns="The two items of the list, pushed separately onto the stack.",
-        category="Lists",
-    ),
-    "pair": element_documentation(
-        "Put two values into a list.",
-        parameters=(
-            ("first", "The first value to put into the list"),
-            ("second", "The second value to put into the list"),
-        ),
-        returns="A list containing the two values.",
         category="Lists",
     ),
 }
@@ -992,14 +970,9 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
         # merely because its length is not known in advance. Unsized foreign
         # iterables are not valid runtime list values and remain ineligible for
         # an absent-infinite overload during legacy dynamic dispatch.
-        if (
-            any(
-                tag.absent and tag.name == "infinite" and tag.depth == 0
-                for tag in typ.tags
-            )
-            and not isinstance(value, LazyList)
-            and not is_finite_list_like(value)
-        ):
+        if any(
+            tag.absent and tag.name == "infinite" and tag.depth == 0 for tag in typ.tags
+        ) and not isinstance(value, LazyList) and not is_finite_list_like(value):
             return False
         return _runtime_assignable(value, typ.inner)
     if isinstance(typ, T.NominalType):
@@ -1732,10 +1705,7 @@ def _reduce(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (
         T.ExactList(T.TypeVariable("Item")),
         T.TypeVariable("Accumulator"),
-        T.Fn(
-            (T.TypeVariable("Accumulator"), T.TypeVariable("Item")),
-            (T.TypeVariable("Accumulator"),),
-        ),
+        T.Fn((T.TypeVariable("Accumulator"), T.TypeVariable("Item")), (T.TypeVariable("Accumulator"),)),
     ),
     (T.TypeVariable("Accumulator"),),
 )
@@ -1744,11 +1714,7 @@ def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     values, result, folder = args
     prepared = ctx.prepare_call(folder, 2, 1) if ctx.prepare_call is not None else None
     for item in values:
-        called = (
-            prepared.invoke2(result, item)
-            if prepared is not None
-            else tuple(ctx.call(folder, [result, item]))
-        )
+        called = prepared.invoke2(result, item) if prepared is not None else tuple(ctx.call(folder, [result, item]))
         result = called[0]
     return (result,)
 
@@ -1919,20 +1885,6 @@ def _false(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 # --------------------------------------------------------------------------
 # Lists
 # --------------------------------------------------------------------------
-
-
-@builtin(
-    "pair",
-    (T.TypeVariable("Left"), T.TypeVariable("Right")),
-    (
-        T.ExactList(
-            T.UnionType(frozenset([T.TypeVariable("Left"), T.TypeVariable("Right")]))
-        ),
-    ),
-)
-def _pair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Construct a two-element list from two values."""
-    return ([args[0], args[1]],)
 
 
 @builtin(
@@ -2296,35 +2248,22 @@ def _sum(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin(
     "update",
-    (
-        T.C(T.ListMinType, T.V("Item")),
-        T.ExactList(T.optional(T.Integer)),
-        T.V("Replacement"),
-    ),
+    (T.C(T.ListMinType, T.V("Item")), T.ExactList(T.optional(T.Integer)), T.V("Replacement")),
     (T.C(T.ListMinType, T.V("Item")),),
-    param_names=("iterable", "index", "value"),
-    vectorisable=False,
+    param_names=("iterable", "index", "value"), vectorisable=False,
 )
 @builtin(
     "update",
-    (
-        T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),
-        T.TupRepeat(T.optional(T.Integer)),
-        T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),
-    ),
+    (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),
+     T.TupRepeat(T.optional(T.Integer)),
+     T.C(T.ListExactType, T.V("Item"), T.RankVariable("m"))),
     (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),),
-    param_names=("iterable", "index", "value"),
-    vectorisable=False,
+    param_names=("iterable", "index", "value"), vectorisable=False,
     where_clause=(
-        GetVariableNode(Symbol("index")),
-        ElementNode(Symbol("length")),
-        GetVariableNode(Symbol("m")),
-        ElementNode(Symbol("==")),
-        ElementNode(Symbol("?")),
-        GetVariableNode(Symbol("n")),
-        GetVariableNode(Symbol("m")),
-        ElementNode(Symbol(">=")),
-        ElementNode(Symbol("?")),
+        GetVariableNode(Symbol("index")), ElementNode(Symbol("length")),
+        GetVariableNode(Symbol("m")), ElementNode(Symbol("==")), ElementNode(Symbol("?")),
+        GetVariableNode(Symbol("n")), GetVariableNode(Symbol("m")),
+        ElementNode(Symbol(">=")), ElementNode(Symbol("?")),
     ),
 )
 @builtin(
@@ -2376,38 +2315,24 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin(
     "updateBy",
-    (
-        T.C(T.ListMinType, T.V("Item")),
-        T.ExactList(T.optional(T.Integer)),
-        T.Fn((T.C(T.ListMinType, T.V("Item")),), (T.C(T.ListMinType, T.V("Item")),)),
-    ),
+    (T.C(T.ListMinType, T.V("Item")), T.ExactList(T.optional(T.Integer)),
+     T.Fn((T.C(T.ListMinType, T.V("Item")),), (T.C(T.ListMinType, T.V("Item")),))),
     (T.C(T.ListMinType, T.V("Item")),),
-    param_names=("iterable", "index", "function"),
-    vectorisable=False,
+    param_names=("iterable", "index", "function"), vectorisable=False,
 )
 @builtin(
     "updateBy",
-    (
-        T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),
-        T.TupRepeat(T.optional(T.Integer)),
-        T.Fn(
-            (T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),),
-            (T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),),
-        ),
-    ),
+    (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),
+     T.TupRepeat(T.optional(T.Integer)),
+     T.Fn((T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),),
+          (T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),))),
     (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),),
-    param_names=("iterable", "index", "function"),
-    vectorisable=False,
+    param_names=("iterable", "index", "function"), vectorisable=False,
     where_clause=(
-        GetVariableNode(Symbol("index")),
-        ElementNode(Symbol("length")),
-        GetVariableNode(Symbol("m")),
-        ElementNode(Symbol("==")),
-        ElementNode(Symbol("?")),
-        GetVariableNode(Symbol("n")),
-        GetVariableNode(Symbol("m")),
-        ElementNode(Symbol(">=")),
-        ElementNode(Symbol("?")),
+        GetVariableNode(Symbol("index")), ElementNode(Symbol("length")),
+        GetVariableNode(Symbol("m")), ElementNode(Symbol("==")), ElementNode(Symbol("?")),
+        GetVariableNode(Symbol("n")), GetVariableNode(Symbol("m")),
+        ElementNode(Symbol(">=")), ElementNode(Symbol("?")),
     ),
 )
 @builtin(

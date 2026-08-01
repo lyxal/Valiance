@@ -3754,6 +3754,53 @@ define f(value: #left #right Number) -> Number => $value
         self.assertEqual(branch.stack, TypeStack((optional(Number),)))
         self.assertIsNone(branch.break_type)
 
+    def test_tuple_literal_index_returns_type_at_position(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse('{1, "two", 3} $[1]'))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(analyser.warnings, [])
+        self.assertEqual(typed[-1].typ, String)
+
+    def test_tuple_negative_literal_index_returns_type_at_position(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse('{1, "two", 3} $[-1]'))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Integer)
+
+    def test_tuple_literal_index_out_of_bounds_is_compile_error(self):
+        analyser = Analyser()
+        analyser.analyse(parse('{1, "two", 3} $[3]'))
+        self.assertIn("tuple index 3 is out of bounds", "\n".join(analyser.diagnostics))
+
+    def test_tuple_constant_expression_index_warns_and_returns_union(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse('{1, "two", 3} $[0 + 1]'))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, U(Integer, String))
+        self.assertIn(
+            "expression index will not return the exact type of item 1",
+            "\n".join(analyser.warnings),
+        )
+        self.assertIn("try writing `$[1]` instead", "\n".join(analyser.warnings))
+
+    def test_tuple_constant_expression_out_of_bounds_is_compile_error(self):
+        analyser = Analyser()
+        analyser.analyse(parse('{1, "two", 3} $[1 + 2]'))
+        self.assertIn("tuple index 3 is out of bounds", "\n".join(analyser.diagnostics))
+        self.assertEqual(analyser.warnings, [])
+
+    def test_tuple_constant_length_index_out_of_bounds_is_compile_error(self):
+        analyser = Analyser()
+        analyser.analyse(parse('{1, "two", 3} $[length [1, 2, 3]]'))
+        self.assertIn("tuple index 3 is out of bounds", "\n".join(analyser.diagnostics))
+
+    def test_tuple_dynamic_integer_index_returns_union_without_warning(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse('$i: Integer = 1\n{1, "two", 3} $[$i]'))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(analyser.warnings, [])
+        self.assertEqual(typed[-1].typ, U(Integer, String))
+
     def test_tuple_slicing_is_rejected_during_analysis(self):
         analyser = Analyser()
         analyser.analyse(parse("{1, 2, 3} $[0:1]"))

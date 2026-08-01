@@ -1165,6 +1165,8 @@ fork: (sum, length) /
 - `[1, 2, 3] $[1]` == `2`.
 - Negative index goes from end (`-1` == last).
 - Numeric indices must be integral at runtime. Tagged numeric values can be used as indices; their tags remain part of the source value but do not change the numeric index operation.
+- Indexing a fixed tuple with a single integer literal returns the exact type at that position. A literal outside the tuple's bounds is a compile-time error.
+- A non-literal integer expression retains the union of the tuple item types. If such an expression is visibly constant-foldable, the compiler warns that a literal index is simpler and would provide the exact item type. A constant-foldable index that is outside the tuple's bounds is a compile-time error.
 - Can also be multiple indices
 - `$data $[2, 4, 1]` == `[$data $[2], $data $[4], $data $[1]]`
 - Variables can be indexed directly
