@@ -67,6 +67,34 @@ class BuiltinLintRuleTests(unittest.TestCase):
         analyser.analyse(parse(source))
         return [item.code for item in analyser.lint_findings]
 
+    def test_minimum_rank_warns_when_type_is_never_wrapped(self) -> None:
+        self.assertIn(
+            "minimum-rank-never-wraps",
+            self._codes("fn (:Number+2) => ^+2"),
+        )
+
+    def test_minimum_rank_warns_only_when_every_union_branch_is_high_enough(self) -> None:
+        self.assertIn(
+            "minimum-rank-never-wraps",
+            self._codes("fn (:Number+2|Number*3) => ^+2"),
+        )
+        self.assertNotIn(
+            "minimum-rank-never-wraps",
+            self._codes("fn (:Number|Number+2) => ^+2"),
+        )
+
+    def test_minimum_rank_warning_has_remove_rewrite(self) -> None:
+        analyser = Analyser()
+        analyser.analyse(parse("fn (:Number+) => ^+"))
+        findings = [
+            item
+            for item in analyser.lint_findings
+            if item.code == "minimum-rank-never-wraps"
+        ]
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].rewrite.kind.value, "remove-node")
+        self.assertIn("never wraps this type", findings[0].message)
+
     def test_unused_foreach_index(self) -> None:
         """An unread index binding is removable."""
         self.assertIn(

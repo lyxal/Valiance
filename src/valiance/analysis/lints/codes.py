@@ -26,6 +26,7 @@ LINT_SHORT_CODES: dict[str, str] = {
     "unused-loop-index": "L020",
     "unicode-identifier-security": "L021",
     "while-can-be-foreach": "L022",
+    "minimum-rank-never-wraps": "L023",
 }
 
 LINT_LONG_CODES: dict[str, str] = {

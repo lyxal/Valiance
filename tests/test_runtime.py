@@ -5037,6 +5037,36 @@ class MinimumRankAssuranceTests(unittest.TestCase):
             [[[RuntimeNumber(1), RuntimeNumber(2)], [RuntimeNumber(3), RuntimeNumber(4)]]],
         )
 
+    def test_union_branches_below_target_resimplify_to_one_type(self):
+        import valiance.vtypes as T
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse("fn (:Number|Number+) => ^+2"))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(T.show(typed[0].typ), "Function[Number | Number+ -> Number+2]")
+
+    def test_union_keeps_branches_that_already_exceed_target(self):
+        import valiance.vtypes as T
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse("fn (:Number|Number+3) => ^+2"))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            T.show(typed[0].typ),
+            "Function[Number | Number+3 -> Number+2 | Number+3]",
+        )
+
+    def test_union_preserves_each_collection_rank_mode(self):
+        import valiance.vtypes as T
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse("fn (:String|String+|String*|String~) => ^+2"))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            T.show(typed[0].typ),
+            "Function[String | String* | String+ | String~ -> String*2 | String+2 | String~2]",
+        )
+
     def test_type_inference_preserves_rank_mode_and_maps_unions(self):
         import valiance.vtypes as T
 
