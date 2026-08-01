@@ -2390,7 +2390,7 @@ end
                 raise AssertionError(analyser.diagnostics)
         elif mode == 5:
             source = """
-None
+\\None
 match =>
   as :None => "none"
   _ => "other"

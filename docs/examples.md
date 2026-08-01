@@ -41,7 +41,7 @@ rewrite family.
 | `TraitInheritance.vlnc` | traits implementing traits, inherited requirements, inherited default methods |
 | `GenericFind.vlnc` | anonymous trait constraints and structural equality with `===` |
 | `Brainfuck.vlnc` | tags and validators, tagged indices, string mapping, nested record/list updates, `overtake`, `dropLast`, `fromCharcode` |
-| `OptionalMemberAccess.vlnc` | safe optional reads, deep chains, mixed `.`/`->`, and `None` propagation |
+| `OptionalMemberAccess.vlnc` | safe optional reads, deep chains, mixed `.`/`->`, and `\None` value propagation |
 
 ## Important semantic notes
 

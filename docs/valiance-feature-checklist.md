@@ -107,14 +107,14 @@ Audit refreshed against the repository implementation and full test suite on 202
 
 ## 7. None, Some, and optional types
 
-- [x] Provide a singleton absence value named `None`.
-- [x] Provide the `None` type.
+- [x] Provide the niladic element `\None`, which pushes the singleton absence value.
+- [x] Keep the absence type named `None`.
 - [x] Provide the `Some[T]` wrapper.
 - [x] Parse optional types using `T?`.
 - [x] Define `T?` as `Some[T] | None`.
 - [x] Support nested optional types such as `T??`.
 - [x] Automatically wrap non-`None` values in `Some` when used as optional values.
-- [x] Preserve explicitly wrapped `None` values.
+- [x] Preserve `None` values explicitly wrapped with `Some(\None)`.
 - [x] Implement optional-type union simplification.
 - [x] Canonicalise optional unions into the specified ordering.
 - [x] Implement the specified `T | Some[U]` simplification rules.
@@ -480,7 +480,7 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Infer state and generated values from body arity and multiplicity.
 - [x] Support explicit unfold state parameters.
 - [ ] Skip generated `None` values.
-- [ ] Preserve explicitly generated `Some[None]`.
+- [ ] Preserve explicitly generated `Some(\None)`.
 - [x] Tag unfold results as `#infinite`.
 
 ## 27. Custom element definitions

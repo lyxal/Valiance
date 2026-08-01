@@ -1,5 +1,5 @@
 define[T] makeOptional(x: T) =>
-  if (1 == 0) => None
+  if (1 == 0) => \None
   else => $x
   end
 end

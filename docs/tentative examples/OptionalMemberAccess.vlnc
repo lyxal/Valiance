@@ -13,7 +13,7 @@ end
 $root: Root? = Some(Root(Branch(Some(Leaf("deep")))))
 $root->branch->leaf->value #? Some("deep")
 
-$missing: Root? = Some(Root(Branch(None)))
+$missing: Root? = Some(Root(Branch(\None)))
 $missing->branch->leaf->value #? None
 
 $plain = Root(Branch(Some(Leaf("mixed"))))

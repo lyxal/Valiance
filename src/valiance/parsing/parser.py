@@ -2446,16 +2446,16 @@ class Parser:
         return tuple(nodes)
 
     def _lower_index_wildcard_shorthand(self, node: ASTNode) -> ASTNode:
-        """Translate ``_`` list items to ``None`` only in direct index syntax."""
+        """Translate ``_`` list items to ``\\None`` only in direct index syntax."""
         if not isinstance(node, ListLiteralNode):
             return node
         fixed_path = any(
-            isinstance(item, ElementNode) and item.name.text in {"_", "None"}
+            isinstance(item, ElementNode) and item.name.text in {"_", "\\None"}
             for expression in node.items for item in expression
         )
         items = tuple(
             tuple(
-                ElementNode(Symbol("None"), location=item.location)
+                ElementNode(Symbol("\\None"), location=item.location)
                 if isinstance(item, ElementNode) and item.name.text == "_"
                 else self._lower_index_wildcard_shorthand(item)
                 for item in expression

@@ -82,7 +82,7 @@ _TYPE_NAMES = frozenset(
         "Function",
         "Integer",
         "Never",
-        "None",
+        "\\None",
         "Number",
         "Real",
         "Result",
@@ -405,13 +405,16 @@ def _system_clipboard(in_memory_clipboard):
     """Wrap prompt-toolkit's clipboard with best-effort system clipboard writes."""
     class SystemClipboard:
         def set_data(self, data) -> None:
+            """Store clipboard data and mirror its text to the system clipboard."""
             in_memory_clipboard.set_data(data)
             _copy_to_system_clipboard(data.text)
 
         def get_data(self):
+            """Return the current in-memory clipboard payload."""
             return in_memory_clipboard.get_data()
 
         def rotate(self) -> None:
+            """Rotate the in-memory clipboard history."""
             in_memory_clipboard.rotate()
 
     return SystemClipboard()

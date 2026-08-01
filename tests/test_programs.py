@@ -724,7 +724,7 @@ $instructions foreach (instr, i) =>
       $stack := dropLast
       $instructions[$open].jump = $i + 1
       $instructions[$i].jump = $open
-    _ => None
+    _ => \\None
   end
 end
 

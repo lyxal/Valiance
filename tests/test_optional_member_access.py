@@ -135,7 +135,7 @@ $person $->age ?!
 
     def test_absent_optional_propagates_none(self):
         [result] = execute(PERSON + """
-$person: Person? = None
+$person: Person? = \\None
 $person->name
 """)
 
@@ -144,7 +144,7 @@ $person->name
 
     def test_access_vectorises_over_optional_values(self):
         [result] = execute(PERSON + """
-$people: Person?+ = [Some(Person("Ada", 36)), None]
+$people: Person?+ = [Some(Person("Ada", 36)), \\None]
 $people $->name
 """)
 
@@ -177,7 +177,7 @@ $person->age ?!
 
     def test_assignment_through_none_is_cancelled(self):
         [result] = execute(PERSON + """
-$person: Person? = None
+$person: Person? = \\None
 $person->age = 37
 $person
 """)
@@ -206,7 +206,7 @@ $root->branch->leaf->value ?!
 
     def test_multiple_safe_accesses_propagate_intermediate_none(self):
         [result] = execute(NESTED + """
-$root: Root? = Some(Root(Branch(None)))
+$root: Root? = Some(Root(Branch(\\None)))
 $root->branch->leaf->value
 """)
 

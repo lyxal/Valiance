@@ -1182,7 +1182,7 @@ define[T: trait => extend ==(:T, :T) -> #boolean Number end] findScalar(
   $xs foreach (item, pos) =>
     if ($item == $x) => return $pos
   end
-  None
+  \\None
 end
 
 [1, 2, 3, 4, 5] findScalar 3
@@ -1199,7 +1199,7 @@ define[T: trait => extend ==(:T, :T) -> #boolean Number end] findScalar(
   $xs foreach (item, pos) =>
     if ($item == $x) => return $pos
   end
-  None
+  \\None
 end
 """
 
@@ -1839,10 +1839,18 @@ define keep_name(name: String, n: Number) -> String => $name
         self.assertIsInstance(value, ObjectValue)
         self.assertEqual(value.type_name, "ValueError")
 
+    def test_niladic_none_element_pushes_none_value(self):
+        [value] = execute("\\None")
+        self.assertEqual(value, ObjectValue("None", {}))
+
+        analyser = Analyser()
+        analyser.analyse(parse("None"))
+        self.assertTrue(any("unknown element 'None'" in item for item in analyser.diagnostics))
+
     def test_none_type_patterns_match_the_runtime_none_value(self):
         self.assertEqual(
             execute("""
-None
+\\None
 match =>
   as :None => "none"
   _ => "other"
@@ -3892,7 +3900,7 @@ end | 7 take
         separate = execute("""
 1 unfold (< 10) -> (n: Integer) =>
   $n + 1
-  if ($n % 2 == 0) => None
+  if ($n % 2 == 0) => \\None
   else => $n Some
   end
 end | #-infinite | 4 take
@@ -4476,7 +4484,7 @@ end
         self.assertEqual(
             execute(
                 "$matrix = [[1, 2], [3, 4], [5, 6]]\n"
-                "$matrix[[None, 0]]"
+                "$matrix[[\\None, 0]]"
             ),
             [[RuntimeNumber("1"), RuntimeNumber("3"), RuntimeNumber("5")]],
         )
@@ -4494,7 +4502,7 @@ end
         self.assertEqual(
             execute(
                 "$matrix = [[1, 2], [3, 4], [5, 6]]\n"
-                "$matrix[[None, 0]] = 9\n$matrix"
+                "$matrix[[\\None, 0]] = 9\n$matrix"
             ),
             [[[RuntimeNumber("9"), RuntimeNumber("2")],
               [RuntimeNumber("9"), RuntimeNumber("4")],
@@ -4512,13 +4520,13 @@ end
 
     def test_none_path_component_works_with_update_and_update_by(self):
         self.assertEqual(
-            execute("update([[1, 2], [3, 4]], [None, 0], 8)"),
+            execute("update([[1, 2], [3, 4]], [\\None, 0], 8)"),
             [[[RuntimeNumber("8"), RuntimeNumber("2")],
               [RuntimeNumber("8"), RuntimeNumber("4")]]],
         )
         self.assertEqual(
             execute(
-                "updateBy([[1, 2], [3, 4]], [None, 0], "
+                "updateBy([[1, 2], [3, 4]], [\\None, 0], "
                 "fn (xs) => $xs 1 rotate end)"
             ),
             [[[RuntimeNumber("3"), RuntimeNumber("2")],
@@ -4527,13 +4535,13 @@ end
 
     def test_none_scalar_index_is_rejected(self):
         with self.assertRaisesRegex(AssertionError, "None is not a valid scalar index"):
-            execute("$xs = [1, 2]\n$xs[None]")
+            execute("$xs = [1, 2]\n$xs[\\None]")
 
     def test_none_path_expansion_is_strict_for_ragged_lists(self):
         with self.assertRaisesRegex(RuntimeError, "index 1 is out of range"):
             execute(
                 "$xs = [[1, 2], [3], [4, 5]]\n"
-                "$xs[[None, 1]]"
+                "$xs[[\\None, 1]]"
             )
 
     def test_vectorised_comparison_result_is_a_boolean_mask(self):

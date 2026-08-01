@@ -5418,9 +5418,9 @@ class WildcardPathSelectionAnalysisTests(unittest.TestCase):
     def test_wildcard_path_rank_is_gather_plus_unconsumed_receiver_rank(self):
         """Literal path depth consumes ranks before one gathered rank is added."""
         cases = (
-            ("$xs = [[[1]]]\n$xs[[None]]", 3),
-            ("$xs = [[[1]]]\n$xs[[None, None]]", 2),
-            ("$xs = [[[1]]]\n$xs[[None, None, None]]", 1),
+            ("$xs = [[[1]]]\n$xs[[\\None]]", 3),
+            ("$xs = [[[1]]]\n$xs[[\\None, \\None]]", 2),
+            ("$xs = [[[1]]]\n$xs[[\\None, \\None, \\None]]", 1),
         )
         for source, rank in cases:
             with self.subTest(source=source):

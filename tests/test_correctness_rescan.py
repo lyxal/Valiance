@@ -59,7 +59,7 @@ define retryStatus(value: Integer?) -> String =>
 end |
 retryStatus(3) |
 retryStatus(Some(5)) |
-retryStatus(None)
+retryStatus(\\None)
 """
 
 
@@ -101,7 +101,7 @@ define retryDelay(value: Integer?) -> Integer =>
 end |
 retryDelay(7) |
 retryDelay(Some(3)) |
-retryDelay(None)
+retryDelay(\\None)
 """
 
 
@@ -163,7 +163,7 @@ define optionalState(value: Integer?) -> String =>
   end
 end |
 optionalState(1) |
-optionalState(None)
+optionalState(\\None)
 """
 
 

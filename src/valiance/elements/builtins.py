@@ -505,8 +505,8 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="A `Some` optional containing the value.",
         category="Optionals and results",
     ),
-    "None": element_documentation(
-        "Create an empty optional value.",
+    "\\None": element_documentation(
+        "Push an empty optional value.",
         returns="The empty `None` optional.",
         category="Optionals and results",
     ),
@@ -2699,9 +2699,9 @@ def _some(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (ObjectValue("Some", {"value": args[0]}, type_args=ctx.type_args),)
 
 
-@builtin("None", (), (T.NoneType(),))
+@builtin("\\None", (), (T.NoneType(),))
 def _none(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `None` built-in runtime overload."""
+    """Implement the niladic `\\None` built-in runtime overload."""
     return (ObjectValue("None", {}),)
 
 

@@ -197,9 +197,10 @@ $instructions[$i].jump = $open
   This does not expose mutation. The containing record and list values are reconstructed and written back to `$instructions`.
 
 ## 1.5. None
-- A value representing the absence of any other values.
-- Always has the type `None`
-- Can be used where an optional type is expected.
+- `None` is the type of the absence value.
+- `\None` is the niladic element that pushes the absence value. Its stack effect is `[] -> [None]`.
+- The element is deliberately niladic because it consumes no stack inputs; spelling it as an ordinary element would invite meaningless chaining.
+- The value can be used where an optional type is expected.
 
 ## 1.6. Lists
 
@@ -1183,14 +1184,14 @@ fork: (sum, length) /
 - `[1, 2, 3, 4, 5, 6] $[::2]` == `[1, 3, 5]`
 - Multi-dimensional indices
 - `$data[[1, 2]]` == `$data[1][2]` == `$data[1] $[2]`
-- A multidimensional path may contain `None` as an unconstrained coordinate.
+- A multidimensional path may contain `\None` as an unconstrained coordinate.
   It expands across every valid index at that path depth. Expansion is strict:
   every concrete path produced must be valid, or the complete access or update
   fails before any replacement is stored.
-- Within direct index syntax, `_` in a path is shorthand for `None`; the
-  first-class path value used by `update` and `updateBy` uses `None`.
-- `None` is not a valid scalar index. `$xs[None]` is an error, while
-  `$matrix[[None, 0]]` selects the first item of every row.
+- Within direct index syntax, `_` in a path is shorthand for `\None`; the
+  first-class path value used by `update` and `updateBy` uses `\None`.
+- `\None` is not a valid scalar index. `$xs[\None]` is an error, while
+  `$matrix[[\None, 0]]` selects the first item of every row.
 - You can multidimensional slice lists (runtime panic - `SliceFault` to try and multidim slice a non-list)
 
 ```
@@ -1666,7 +1667,7 @@ at (list+, item) => append
 - Another example:
 
 ```
-[[[1, None, "s"], ["h", 5, None]]] #? (String|Number)?+3
+[[[1, \None, "s"], ["h", 5, \None]]] #? (String|Number)?+3
 #? You _could_ write
 getOrElse[(String|Number)?](0)
 #? Or, simply
@@ -2023,14 +2024,14 @@ Counter increment increment $.count #? 2
 ```
 object[T] Node =>
   #? Members declared public for convenience.
-  public $previous: Node? = None
-  public $next: Node? = None
+  public $previous: Node? = \None
+  public $next: Node? = \None
   $value: T
 end
 
 object[T] DoublyLinkedList =>
-  $head: Node? = None
-  $tail: Node? = None
+  $head: Node? = \None
+  $tail: Node? = \None
 
   define append(item: T) =>
     #? x <-- (temp) --> x
@@ -2059,14 +2060,14 @@ end
 ```
 object[T] &Node =>
   #? Members declared public for convenience.
-  public $previous: &Node? = None
-  public $next: &Node? = None
+  public $previous: &Node? = \None
+  public $next: &Node? = \None
   $value: T
 end
 
 object[T] DoublyLinkedList =>
-  $head: &Node? = None
-  $tail: &Node? = None
+  $head: &Node? = \None
+  $tail: &Node? = \None
 
   define append(item: T) =>
     $temp = &Node($item)
@@ -3230,7 +3231,7 @@ end
 define[T, U] &(x: T?, callable: Function[T -> U]) -> U? =>
   $x match =>
     as some: T => $callable($some)
-    _          => None
+    _          => \None
 end
 
 define[T, U, E] &(x: Result[T, E], callable: Function[T -> U]) -> Result[U, E] =>
@@ -4577,7 +4578,7 @@ Hello from a thread!
 
 ```
 object[T] Channel =>
-  $bufferSize: Number? = None
+  $bufferSize: Number? = \None
   #? No buffer size = no bounding
   define write(value: T) -> => ...
   define read() -> T? => ...
