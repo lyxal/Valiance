@@ -1,6 +1,19 @@
 import json
 import unittest
 
+import valiance.vtypes as T
+from valiance.elements.builtins import (
+    BuiltinElement,
+    BuiltinOverload,
+    RuntimeContext,
+    _CANONICAL_NAME_REGISTRY,
+    _DOCUMENTATION_REGISTRY,
+    _REGISTRY,
+    builtin,
+)
+from valiance.elements.documentation import element_documentation
+from valiance.vtypes.symbols import Symbol
+
 from valiance.elements.reference_docs import (
     collect_builtin_references,
     collect_language_references,
@@ -25,6 +38,30 @@ class ReferenceDocumentationTests(unittest.TestCase):
         self.assertIn("getMessage", by_name["message"].aliases)
         self.assertTrue(all(reference.summary for reference in references))
         self.assertTrue(all(reference.overloads for reference in references))
+
+    def test_builtin_decorator_keeps_documentation_per_overload(self):
+        numeric_doc = element_documentation("Handle numbers.")
+        string_doc = element_documentation("Handle strings.")
+        name = "__documentation_test_element__"
+
+        @builtin(name, (T.Number,), (T.Number,), documentation=numeric_doc)
+        def numeric(args: tuple[object, ...], _ctx: RuntimeContext) -> tuple[object, ...]:
+            """Return the numeric test argument."""
+            return args
+
+        @builtin(name, (T.String,), (T.String,), documentation=string_doc)
+        def string(args: tuple[object, ...], _ctx: RuntimeContext) -> tuple[object, ...]:
+            """Return the string test argument."""
+            return args
+
+        try:
+            element = BuiltinElement(Symbol(name), tuple(_REGISTRY[name]))
+            self.assertIs(element.documentation_for(element.overloads[0]), numeric_doc)
+            self.assertIs(element.documentation_for(element.overloads[1]), string_doc)
+        finally:
+            _REGISTRY.pop(name, None)
+            _DOCUMENTATION_REGISTRY.pop(name, None)
+            _CANONICAL_NAME_REGISTRY.pop(name, None)
 
     def test_every_native_and_valiance_stdlib_function_has_documentation(self):
         references = collect_stdlib_references()

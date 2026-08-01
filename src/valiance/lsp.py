@@ -398,6 +398,16 @@ class LanguageServer:
             if builtin is not None and builtin.documentation is not None
             else ""
         )
+        builtin_overload_documentation = (
+            tuple(
+                _element_documentation_markdown(documentation)
+                if (documentation := builtin.documentation_for(overload)) is not None
+                else ""
+                for overload in overloads
+            )
+            if builtin is not None
+            else tuple("" for _ in overloads)
+        )
         if selected is not None:
             selected_doc = self._selected_overload_documentation(
                 uri, lookup_name, position, selected
@@ -411,6 +421,12 @@ class LanguageServer:
                     ),
                     "",
                 )
+            if not selected_doc and builtin is not None:
+                selected_builtin_documentation = builtin.documentation_for(selected)
+                if selected_builtin_documentation is not None:
+                    selected_doc = _element_documentation_markdown(
+                        selected_builtin_documentation
+                    )
             if not selected_doc:
                 selected_doc = stdlib_documentation or builtin_documentation
             value = _render_single_overload_hover(
@@ -418,7 +434,9 @@ class LanguageServer:
             )
         else:
             shared_documentation = stdlib_documentation or builtin_documentation
-            if shared_documentation and not any(docs):
+            if not any(docs) and any(builtin_overload_documentation):
+                docs = builtin_overload_documentation
+            elif shared_documentation and not any(docs):
                 docs = tuple(shared_documentation for _ in overloads)
             value = _render_overload_hover(display_name, overloads, docs)
         return {

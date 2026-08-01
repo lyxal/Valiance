@@ -667,6 +667,7 @@ class BuiltinOverload:
     signature: T.Overload
     implementation: RuntimeImpl | None = None
     vectorisable: bool = True
+    documentation: ElementDocumentation | None = None
     runtime_return_tags: tuple[tuple[T.DataTag, ...], ...] = field(
         init=False,
         repr=False,
@@ -772,6 +773,13 @@ class BuiltinElement:
         """Return static overload signatures for the analyser."""
         return tuple(definition.signature for definition in self.definitions)
 
+    def documentation_for(self, overload: T.Overload) -> ElementDocumentation | None:
+        """Return documentation belonging to one exact overload signature."""
+        for definition in self.definitions:
+            if definition.signature == overload:
+                return definition.documentation
+        return self.documentation
+
 
 # --------------------------------------------------------------------------
 # Registration
@@ -825,25 +833,25 @@ def builtin(
             ),
             fn,
             vectorisable,
+            documentation or _BUILTIN_DOCUMENTATION.get(_name_key(name)),
         )
 
         aliases: tuple[str, ...] = getattr(fn, _ALIAS_ATTR, ())
         canonical_name = _name_key(name)
-        effective_documentation = documentation or _BUILTIN_DOCUMENTATION.get(
-            canonical_name
-        )
+        effective_documentation = overload.documentation
         names = dict.fromkeys((canonical_name, *aliases))
 
         for key in names:
             _REGISTRY.setdefault(key, []).append(overload)
             _CANONICAL_NAME_REGISTRY.setdefault(key, canonical_name)
             if effective_documentation is not None:
+                # Keep element-level metadata only while every documented overload
+                # agrees. Distinct overload documentation lives on BuiltinOverload.
                 existing = _DOCUMENTATION_REGISTRY.get(key)
-                if existing is not None and existing != effective_documentation:
-                    raise ValueError(
-                        f"conflicting documentation registered for built-in {key!r}"
-                    )
-                _DOCUMENTATION_REGISTRY[key] = effective_documentation
+                if existing is None:
+                    _DOCUMENTATION_REGISTRY[key] = effective_documentation
+                elif existing != effective_documentation:
+                    _DOCUMENTATION_REGISTRY.pop(key, None)
 
         return fn
 

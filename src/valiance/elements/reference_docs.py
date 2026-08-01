@@ -45,6 +45,7 @@ class ElementReference:
     notes: tuple[str, ...]
     see_also: tuple[str, ...]
     overloads: tuple[str, ...]
+    overload_documentation: tuple[ElementDocumentation, ...] = ()
     aliases: tuple[str, ...] = ()
     source_path: str | None = None
 
@@ -81,8 +82,16 @@ def collect_builtin_references(*, strict: bool = True) -> tuple[ElementReference
                 notes=documentation.notes,
                 see_also=documentation.see_also,
                 overloads=tuple(
-                    _overload_signature(element.name.text, overload, documentation)
-                    for overload in element.overloads
+                    _overload_signature(
+                        element.name.text,
+                        definition.signature,
+                        definition.documentation or documentation,
+                    )
+                    for definition in element.definitions
+                ),
+                overload_documentation=tuple(
+                    definition.documentation or documentation
+                    for definition in element.definitions
                 ),
                 aliases=tuple(sorted(aliases.get(element.name.text, ()), key=str.casefold)),
                 source_path="src/valiance/analysis/builtins.py",
@@ -261,7 +270,11 @@ def render_language_reference_markdown(
                 lines.extend((f"**Aliases:** {', '.join(f'`{item}`' for item in reference.aliases)}", ""))
             lines.append("**Overloads**")
             lines.append("")
-            lines.extend(f"- `{signature}`" for signature in reference.overloads)
+            for index, signature in enumerate(reference.overloads):
+                lines.append(f"- `{signature}`")
+                if index < len(reference.overload_documentation):
+                    overload_doc = reference.overload_documentation[index]
+                    lines.append(f"  {overload_doc.summary}")
             lines.append("")
             if reference.parameters:
                 lines.extend(("**Parameters**", ""))
@@ -347,6 +360,9 @@ def _native_reference(
                 documentation,
             )
             for candidate in functions
+        ),
+        overload_documentation=tuple(
+            candidate.documentation or documentation for candidate in functions
         ),
         source_path=f"src/valiance/std/{module_name}.py",
     )
@@ -478,7 +494,18 @@ def _reference_card(reference: ElementReference) -> str:
         (
             "  <h4>Overloads</h4>",
             "  <ul class=\"overloads\">",
-            *(f"    <li><code>{html.escape(signature)}</code></li>" for signature in reference.overloads),
+            *(
+                "    <li><code>"
+                + html.escape(signature)
+                + "</code>"
+                + (
+                    f"<p>{_inline_html(reference.overload_documentation[index].summary)}</p>"
+                    if index < len(reference.overload_documentation)
+                    else ""
+                )
+                + "</li>"
+                for index, signature in enumerate(reference.overloads)
+            ),
             "  </ul>",
         )
     )
