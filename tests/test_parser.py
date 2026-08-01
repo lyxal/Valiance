@@ -187,6 +187,27 @@ class MinimumRankParserTests(unittest.TestCase):
         with self.assertRaises(ParseError):
             parse("^+0")
 
+    def test_rank_literal_must_be_adjacent_and_integral(self):
+        self.assertEqual(
+            parse("^+ 2"),
+            [MinimumRankNode(1), NumberLiteralNode("2")],
+        )
+        for source in ("^+01", "^+1.5", "^+-1"):
+            with self.subTest(source=source), self.assertRaises(ParseError):
+                parse(source)
+
+    def test_breaks_chain_and_starts_a_fresh_following_chain(self):
+        nodes = parse("length ^+ square negate")
+        self.assertEqual(
+            nodes,
+            [
+                MinimumRankNode(1),
+                ElementNode(Symbol("length")),
+                ElementNode(Symbol("negate")),
+                ElementNode(Symbol("square")),
+            ],
+        )
+
 
 class ParserTests(unittest.TestCase):
     def test_incomplete_ellipsis_reports_parse_error_instead_of_index_error(self):

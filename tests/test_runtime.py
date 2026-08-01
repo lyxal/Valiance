@@ -5024,12 +5024,44 @@ class StackValueUpdateTests(unittest.TestCase):
 
 
 class MinimumRankAssuranceTests(unittest.TestCase):
+    def infer_type(self, source: str) -> str:
+        import valiance.vtypes as T
+
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        return T.show(typed[-1].typ)
+
+    def test_default_rank_is_equivalent_to_explicit_one(self):
+        self.assertEqual(execute("1 ^+"), execute("1 ^+1"))
+        self.assertEqual(self.infer_type("1 ^+"), "Integer+")
+        self.assertEqual(self.infer_type("1 ^+1"), "Integer+")
+
     def test_wraps_atomic_and_lower_rank_values(self):
         self.assertEqual(execute("1 ^+2"), [[[RuntimeNumber(1)]]])
         self.assertEqual(
             execute("[1, 2] ^+2"),
             [[[RuntimeNumber(1), RuntimeNumber(2)]]],
         )
+
+    def test_wraps_repeatedly_to_a_higher_requested_rank(self):
+        self.assertEqual(execute("1 ^+4"), [[[[[RuntimeNumber(1)]]]]])
+        self.assertEqual(self.infer_type("1 ^+4"), "Integer+4")
+
+    def test_wraps_ragged_runtime_value_by_its_shallowest_branch(self):
+        self.assertEqual(
+            execute("[1, [2, 3]] ^+2"),
+            [[[RuntimeNumber(1), [RuntimeNumber(2), RuntimeNumber(3)]]]],
+        )
+
+    def test_only_consumes_the_top_stack_value(self):
+        self.assertEqual(
+            execute("1 2 ^+2"),
+            [RuntimeNumber(1), [[RuntimeNumber(2)]]],
+        )
+
+    def test_chain_membership_applies_assurance_before_element(self):
+        self.assertEqual(execute("5 length ^+"), [RuntimeNumber(1)])
 
     def test_does_not_wrap_values_already_at_the_minimum(self):
         self.assertEqual(
@@ -5067,6 +5099,27 @@ class MinimumRankAssuranceTests(unittest.TestCase):
             "Function[String | String* | String+ | String~ -> String*2 | String+2 | String~2]",
         )
 
+    def test_exact_rank_is_raised_or_retained(self):
+        self.assertEqual(
+            self.infer_type("fn (:Number+) => ^+3"),
+            "Function[Number+ -> Number+3]",
+        )
+        self.assertEqual(
+            self.infer_type("fn (:Number+4) => ^+3"),
+            "Function[Number+4 -> Number+4]",
+        )
+
+    def test_minimum_and_rugged_rank_are_raised_or_retained(self):
+        cases = {
+            "fn (:Number*) => ^+3": "Function[Number* -> Number*3]",
+            "fn (:Number*4) => ^+3": "Function[Number*4 -> Number*4]",
+            "fn (:Number~) => ^+3": "Function[Number~ -> Number~3]",
+            "fn (:Number~4) => ^+3": "Function[Number~4 -> Number~4]",
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                self.assertEqual(self.infer_type(source), expected)
+
     def test_type_inference_preserves_rank_mode_and_maps_unions(self):
         import valiance.vtypes as T
 
@@ -5088,9 +5141,13 @@ class MinimumRankAssuranceTests(unittest.TestCase):
         self.assertTrue(analyser.diagnostics)
         self.assertIn("empty stack when assuring minimum rank", str(analyser.diagnostics[0]))
 
-    def test_round_trips_through_bytecode(self):
+    def test_round_trips_through_bytecode_in_all_execution_modes(self):
         analyser = Analyser()
-        typed = analyser.analyse(parse("1 ^+2"))
+        typed = analyser.analyse(parse("[1, 2] ^+3"))
         self.assertEqual(analyser.diagnostics, [])
-        program = compile_program(typed, optimize=False)
-        self.assertEqual(run(loads(dumps(program))), [[[RuntimeNumber(1)]]])
+        expected = [[[[RuntimeNumber(1), RuntimeNumber(2)]]]]
+        for optimize in (False, True):
+            with self.subTest(optimize=optimize):
+                program = compile_program(typed, optimize=optimize)
+                self.assertEqual(run(program), expected)
+                self.assertEqual(run(loads(dumps(program))), expected)

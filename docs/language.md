@@ -354,6 +354,77 @@ ordinary named elements such as `parseInt`, `reshape`, and `materialize`.
 Use existing `match` type patterns for immediate type-directed branching;
 `as?` is intended for cases where the optional refinement is useful as data.
 
+### 2.4.1. Minimum-rank assurance with `^+`
+
+`^+n` ensures that the top stack value has a list rank of at least `n`, where
+`n` is a positive integer literal. The rank may be omitted: `^+` is exactly the
+same operation as `^+1`.
+
+Unlike `as!`, minimum-rank assurance cannot fail because a value has too little
+rank. It repeatedly wraps the value in a single-item list until the requested
+rank is reached. If the value already has rank `n` or greater, it is returned
+unchanged.
+
+```valiance
+1 ^+                 #? [1]
+1 ^+2                #? [[1]]
+[1, 2] ^+2           #? [[1, 2]]
+[[1, 2], [3, 4]] ^+2 #? unchanged
+```
+
+The result type follows the input's rank mode:
+
+- An atomic `T` becomes an exact-rank `T+n`.
+- An exact-rank `T+m` becomes `T+max(m, n)`.
+- A minimum-rank `T*m` becomes `T*max(m, n)`.
+- A rugged-rank `T~m` becomes `T~max(m, n)`.
+
+The operation distributes over unions. Nested union expressions are flattened
+by normalisation, every resulting branch is assured separately, and the result
+is normalised again. Branches that become identical may therefore collapse into
+one type.
+
+```valiance
+fn (:Number*) => ^+2
+#? Function[Number* -> Number*2]
+
+fn (:Number|Number+) => ^+
+#? Function[Number | Number+ -> Number+]
+
+fn (:Number|Number+) => ^+2
+#? Function[Number | Number+ -> Number+2]
+
+fn (:String+|String*) => ^+2
+#? Function[String* | String+ -> String*2 | String+2]
+```
+
+`^+n` is a chain separator, but belongs to the chain it terminates. Accordingly,
+`length ^+` lowers as `length(^+(value))`, while the following chain begins
+afresh. This is the same placement rule used by casts, rather than the rule for
+control-flow forms that sit outside the preceding chain.
+
+The operator always requires an existing stack value. Using it on an empty stack
+is a compile error, including at the beginning of an inferred-parameter
+function. The analyser deliberately does not invent a parameter type because
+both exact-rank and minimum-rank inputs would satisfy that inference.
+
+```valiance
+fn => ^+
+#? compile error: empty stack when assuring minimum rank
+```
+
+When static analysis proves that every possible input branch already meets the
+requested rank, lint `minimum-rank-never-wraps` (`L023`) reports that the
+operator never wraps this type. The lint supplies a remove-node rewrite.
+
+```valiance
+fn (:Number+2|Number*3) => ^+2
+#? L023: ^+2 never wraps this type
+
+fn (:Number|Number+2) => ^+2
+#? no L023, because the Number branch is wrapped
+```
+
 
 ## 2.5. Optional Types
 

@@ -1675,6 +1675,13 @@ class Parser:
                 if not literal.value.isdecimal() or literal.value.startswith("0"):
                     self._error("minimum rank must be a positive integer literal")
                 rank = int(literal.value)
+            elif (
+                self._check_op("-")
+                and self._adjacent(plus, self._current)
+                and self._peek(1).kind is TokenKind.NUMBER
+                and self._adjacent(self._current, self._peek(1))
+            ):
+                self._error("minimum rank must be a positive integer literal")
             return _ChainPiece(
                 (MinimumRankNode(rank, location=_loc(start)),),
                 breaks_chain=True,
