@@ -915,7 +915,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
             "1 unfold (< 5) -> (n: Integer) => $n 1 + end | #-infinite | length"
         )
 
-        self.assertEqual(result, [RuntimeNumber(5)])
+        self.assertEqual(result, [RuntimeNumber(4)])
 
     def test_length_fuses_a_finite_planned_pipeline(self):
         result = execute("range(1, 20) filter: fn (n) => $n % 2 == 0 end | length")
@@ -3912,6 +3912,29 @@ end | #-infinite | 4 take
             "5 unfold (< 5) -> (n: Integer) => $n 1 + end | #-infinite | 1 take"
         )
         self.assertEqual(list(stack[0]), [])
+
+    def test_unfold_condition_gatekeeps_each_state_emission(self):
+        stack = execute("""
+0 1 unfold (< 100) -> (prev: Integer, next: Integer) =>
+  $prev + $next
+end | #-infinite | 20 take
+""")
+        self.assertEqual(
+            list(stack[0]),
+            [
+                RuntimeNumber("1"),
+                RuntimeNumber("1"),
+                RuntimeNumber("2"),
+                RuntimeNumber("3"),
+                RuntimeNumber("5"),
+                RuntimeNumber("8"),
+                RuntimeNumber("13"),
+                RuntimeNumber("21"),
+                RuntimeNumber("34"),
+                RuntimeNumber("55"),
+                RuntimeNumber("89"),
+            ],
+        )
 
     def test_take_accepts_lazy_lists(self):
         stack = execute("1 5 range | 3 take")

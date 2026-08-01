@@ -3018,14 +3018,13 @@ class VirtualMachine:
         def generated():
             """Handle generated during VM execution."""
             nonlocal state
-            emit_initial = True
+            emit_state = True
             while True:
                 if condition is not None:
                     keep_going = _call_unfold_function(self, condition, state)
                     if not keep_going or not _truthy(keep_going[-1]):
                         return
-                if emit_initial:
-                    emit_initial = False
+                if emit_state:
                     yield state[-1]
                 outputs = _call_unfold_function(self, body, state)
                 if len(outputs) > arity + 1:
@@ -3034,6 +3033,7 @@ class VirtualMachine:
                     )
                 if len(outputs) == arity + 1:
                     state = list(outputs[:arity])
+                    emit_state = False
                     emitted = _unfold_present_emission(outputs[-1])
                     if emitted is _SKIP_UNFOLD_EMISSION:
                         continue
@@ -3041,7 +3041,7 @@ class VirtualMachine:
                 else:
                     missing = arity - len(outputs)
                     state = list(state[-missing:] if missing else ()) + list(outputs)
-                    yield state[-1]
+                    emit_state = True
 
         return LazyList(generated())
 
