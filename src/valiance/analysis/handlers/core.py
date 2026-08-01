@@ -26,6 +26,7 @@ from valiance.asts import (
     ListLiteralNode,
     LintSuppressionNode,
     NumberLiteralNode,
+    MinimumRankNode,
     ObjectNode,
     PopNNode,
     RecordLiteralNode,
@@ -325,6 +326,10 @@ def _function_node(
     if not self._validate_annotations(node.annotations, "fn", node):
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
 
+    if node.params is None and node.body and isinstance(node.body[0], MinimumRankNode):
+        self._diagnose("empty stack when assuring minimum rank", node.body[0])
+        return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+
     function_node = (
         node
         if node.overloads
@@ -371,6 +376,33 @@ def _cast_node(self: _core.Analyser, node: CastNode, branch: _core.AnalysisBranc
     result = T.optional(flowed) if node.optional else flowed
     if node.checked and statically_safe:
         node = replace(node, checked=False)
+    stack = T.TypeStack((*branch.stack.items[:-1], result))
+    return _core.BranchSet((branch.with_stack(stack).emit(TypedNode(node, result)),))
+
+
+def _minimum_rank_type(typ: T.Type, rank: int) -> T.Type:
+    """Return the type produced by ensuring ``typ`` has at least ``rank``."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.UnionType):
+        return T.U(*(_minimum_rank_type(item, rank) for item in typ.items))
+    if isinstance(typ, (T.ListExactType, T.ListMinType, T.ListRuggedType)):
+        if isinstance(typ.rank, int) and typ.rank >= rank:
+            return typ
+        return T.C(type(typ), typ.base, rank)
+    return T.ExactList(typ, rank)
+
+
+@_core.register(MinimumRankNode)
+def _minimum_rank_node(
+    self: _core.Analyser,
+    node: MinimumRankNode,
+    branch: _core.AnalysisBranch,
+) -> _core.BranchSet:
+    """Analyse minimum-rank assurance without inferring an absent input."""
+    if not branch.stack:
+        self._diagnose("empty stack when assuring minimum rank", node)
+        return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+    result = _minimum_rank_type(branch.stack[-1], node.rank)
     stack = T.TypeStack((*branch.stack.items[:-1], result))
     return _core.BranchSet((branch.with_stack(stack).emit(TypedNode(node, result)),))
 

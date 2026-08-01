@@ -5021,3 +5021,46 @@ class StackValueUpdateTests(unittest.TestCase):
             run(loads(dumps(program))),
             [[RuntimeNumber(1), RuntimeNumber(4), RuntimeNumber(3)]],
         )
+
+
+class MinimumRankAssuranceTests(unittest.TestCase):
+    def test_wraps_atomic_and_lower_rank_values(self):
+        self.assertEqual(execute("1 ^+2"), [[[RuntimeNumber(1)]]])
+        self.assertEqual(
+            execute("[1, 2] ^+2"),
+            [[[RuntimeNumber(1), RuntimeNumber(2)]]],
+        )
+
+    def test_does_not_wrap_values_already_at_the_minimum(self):
+        self.assertEqual(
+            execute("[[1, 2], [3, 4]] ^+2"),
+            [[[RuntimeNumber(1), RuntimeNumber(2)], [RuntimeNumber(3), RuntimeNumber(4)]]],
+        )
+
+    def test_type_inference_preserves_rank_mode_and_maps_unions(self):
+        import valiance.vtypes as T
+
+        cases = {
+            "fn (:Number*) => ^+2": "Function[Number* -> Number*2]",
+            "fn (:Number|Number+) => ^+": "Function[Number | Number+ -> Number+]",
+            "fn (:String+|String*) => ^+2": "Function[String* | String+ -> String*2 | String+2]",
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+                self.assertEqual(T.show(typed[0].typ), expected)
+
+    def test_empty_inferred_function_stack_is_a_compile_error(self):
+        analyser = Analyser()
+        analyser.analyse(parse("fn => ^+"))
+        self.assertTrue(analyser.diagnostics)
+        self.assertIn("empty stack when assuring minimum rank", str(analyser.diagnostics[0]))
+
+    def test_round_trips_through_bytecode(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse("1 ^+2"))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        self.assertEqual(run(loads(dumps(program))), [[[RuntimeNumber(1)]]])

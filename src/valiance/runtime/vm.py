@@ -2327,6 +2327,16 @@ class VirtualMachine:
                                     value, contract_spec, self.tag_parents
                                 )
                             )
+                        case OpCode.ENSURE_MIN_RANK:
+                            target_rank = instruction.arg
+                            if not isinstance(target_rank, int) or target_rank < 1:
+                                raise RuntimeError("invalid minimum-rank operand")
+                            value = _pop(frame.stack, "minimum rank assurance")
+                            current_rank = _minimum_runtime_collection_rank(value)
+                            while current_rank < target_rank:
+                                current_rank += 1
+                                value = ListValue([value], runtime_rank=current_rank)
+                            frame.stack.append(value)
                         case OpCode.BUILD_LIST:
                             count, rank = (
                                 instruction.arg

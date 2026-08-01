@@ -26,6 +26,7 @@ class OpCode(Enum):
     TRY_CAST = "try_cast"
     CANONICALIZE_TAGS = "canonicalize_tags"
     BUILD_LIST = "build_list"
+    ENSURE_MIN_RANK = "ensure_min_rank"
     BUILD_STRING = "build_string"
     BUILD_TUPLE = "build_tuple"
     BUILD_RECORD = "build_record"

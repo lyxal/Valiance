@@ -46,6 +46,7 @@ from valiance.asts import (
     LiteralPatternNode,
     MatchCaseNode,
     MatchNode,
+    MinimumRankNode,
     MatchPatternNode,
     NumberLiteralNode,
     ObjectFieldNode,
@@ -1660,6 +1661,24 @@ class Parser:
             return _ChainPiece((self._match_node(self._previous),), True)
         if self._match_ident("try"):
             return _ChainPiece((self._try(self._previous),), True)
+        if (
+            self._check_op("^")
+            and self._peek(1).kind is TokenKind.OP
+            and self._peek(1).value == "+"
+            and self._adjacent(self._current, self._peek(1))
+        ):
+            start = self._advance()
+            plus = self._advance()
+            rank = 1
+            if self._check(TokenKind.NUMBER) and self._adjacent(plus, self._current):
+                literal = self._advance()
+                if not literal.value.isdecimal() or literal.value.startswith("0"):
+                    self._error("minimum rank must be a positive integer literal")
+                rank = int(literal.value)
+            return _ChainPiece(
+                (MinimumRankNode(rank, location=_loc(start)),),
+                breaks_chain=True,
+            )
         if self._match_ident("as?"):
             return self._cast(self._previous, optional_spelling=True)
         if self._match_ident("as"):

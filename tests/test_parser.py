@@ -29,6 +29,7 @@ from valiance.asts import (
     ListLiteralNode,
     ListPatternNode,
     MatchNode,
+    MinimumRankNode,
     NumberLiteralNode,
     ObjectFieldNode,
     OrPatternNode,
@@ -170,6 +171,21 @@ class LexerTests(unittest.TestCase):
         newline = next(token for token in lex("first\nsecond") if token.value == "\n")
 
         self.assertEqual((newline.line, newline.column, newline.offset), (1, 6, 5))
+
+
+class MinimumRankParserTests(unittest.TestCase):
+    def test_parses_default_and_explicit_rank(self):
+        self.assertEqual(parse("^+"), [MinimumRankNode(1)])
+        self.assertEqual(parse("^+2"), [MinimumRankNode(2)])
+
+    def test_assurance_belongs_to_chain_it_breaks(self):
+        nodes = parse("length ^+")
+        self.assertIsInstance(nodes[0], MinimumRankNode)
+        self.assertEqual(nodes[1], ElementNode(Symbol("length")))
+
+    def test_rejects_non_positive_rank(self):
+        with self.assertRaises(ParseError):
+            parse("^+0")
 
 
 class ParserTests(unittest.TestCase):

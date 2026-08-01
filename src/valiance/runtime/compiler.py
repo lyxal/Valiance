@@ -39,6 +39,7 @@ from valiance.asts import (
     LiteralPatternNode,
     MatchCaseNode,
     MatchNode,
+    MinimumRankNode,
     MatchPatternNode,
     NumberLiteralNode,
     ObjectNode,
@@ -569,6 +570,8 @@ class _Compiler:
                     self.emit(OpCode.CHECK_CAST, _cast_type_spec(typ))
                 contract_type = typed_node.typ if isinstance(typed_node, TypedNode) and typed_node.typ is not None else typ
                 self.emit(OpCode.CANONICALIZE_TAGS, _runtime_tag_contract_spec(contract_type))
+            case MinimumRankNode(rank):
+                self.emit(OpCode.ENSURE_MIN_RANK, rank)
             case PopNNode(count):
                 operand: object = (
                     count if isinstance(count, int) else ("static", count.text)

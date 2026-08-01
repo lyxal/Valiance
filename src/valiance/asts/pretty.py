@@ -16,6 +16,7 @@ from valiance.asts.nodes import (
     FunctionParam,
     GetVariableNode,
     ImportNode,
+    MinimumRankNode,
     NumberLiteralNode,
     SetVariableNode,
     SetVariablesNode,
@@ -149,6 +150,8 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
             f"CastNode(as{suffix}[{_type_label(value.typ)}]"
             f"{_location_arg(value)})"
         )
+    if isinstance(value, MinimumRankNode):
+        return f"MinimumRankNode(rank={value.rank}{_location_arg(value)})"
     if isinstance(value, PopNNode):
         return f"{prefix}PopNNode(count={value.count})"
     if isinstance(value, StackShuffleNode):

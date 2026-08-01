@@ -312,6 +312,13 @@ class CastNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class MinimumRankNode(ASTNode):
+    """Ensure the top stack value has at least the requested list rank."""
+
+    rank: int = 1
+
+
+@dataclass(frozen=True)
 class PopNNode(ASTNode):
     """Discard a statically known number of values from the stack."""
 
