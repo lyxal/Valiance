@@ -80,6 +80,7 @@ from valiance.vtypes import (
     WithTag,
     assignable,
     optional,
+    same,
     show,
 )
 from valiance.vtypes.default_types import Boolean
@@ -5305,6 +5306,39 @@ end
         self.assertEqual(inferred, (Variance.COVARIANT,))
 
 
+
+
+
+class WildcardPathSelectionAnalysisTests(unittest.TestCase):
+    """Keep wildcard-path ranks aligned with runtime path gathering."""
+
+    def test_two_component_wildcard_path_preserves_remaining_item_rank(self):
+        """A rank-three receiver selected through two levels returns rank two."""
+        source = """
+[
+  [[1,2,3],[4,5,6],[7,8,9]],
+  [[10,11,12],[13,14,15],[16,17,18]],
+  [[19,20,21],[22,23,24],[25,26,27]]
+] $[[_, _]]
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertTrue(same(typed[-1].typ, C(ListExactType, Integer, 2)))
+
+    def test_wildcard_path_rank_is_gather_plus_unconsumed_receiver_rank(self):
+        """Literal path depth consumes ranks before one gathered rank is added."""
+        cases = (
+            ("$xs = [[[1]]]\n$xs[[None]]", 3),
+            ("$xs = [[[1]]]\n$xs[[None, None]]", 2),
+            ("$xs = [[[1]]]\n$xs[[None, None, None]]", 1),
+        )
+        for source, rank in cases:
+            with self.subTest(source=source):
+                analyser = Analyser()
+                typed = analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+                self.assertTrue(same(typed[-1].typ, C(ListExactType, Integer, rank)))
 
 if __name__ == "__main__":
     unittest.main()

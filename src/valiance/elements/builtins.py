@@ -2297,13 +2297,35 @@ def _sum(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin(
     "update",
     (
-        T.ExactList(T.V("Item")),
+        T.C(T.ListMinType, T.V("Item")),
         T.ExactList(T.optional(T.Integer)),
         T.V("Replacement"),
     ),
-    (T.ExactList(T.V("Item")),),
+    (T.C(T.ListMinType, T.V("Item")),),
     param_names=("iterable", "index", "value"),
     vectorisable=False,
+)
+@builtin(
+    "update",
+    (
+        T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),
+        T.TupRepeat(T.optional(T.Integer)),
+        T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),
+    ),
+    (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),),
+    param_names=("iterable", "index", "value"),
+    vectorisable=False,
+    where_clause=(
+        GetVariableNode(Symbol("index")),
+        ElementNode(Symbol("length")),
+        GetVariableNode(Symbol("m")),
+        ElementNode(Symbol("==")),
+        ElementNode(Symbol("?")),
+        GetVariableNode(Symbol("n")),
+        GetVariableNode(Symbol("m")),
+        ElementNode(Symbol(">=")),
+        ElementNode(Symbol("?")),
+    ),
 )
 @builtin(
     "update",
@@ -2355,13 +2377,38 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin(
     "updateBy",
     (
-        T.ExactList(T.V("Item")),
+        T.C(T.ListMinType, T.V("Item")),
         T.ExactList(T.optional(T.Integer)),
-        T.Fn((T.V("Item"),), (T.V("Item"),)),
+        T.Fn((T.C(T.ListMinType, T.V("Item")),), (T.C(T.ListMinType, T.V("Item")),)),
     ),
-    (T.ExactList(T.V("Item")),),
+    (T.C(T.ListMinType, T.V("Item")),),
     param_names=("iterable", "index", "function"),
     vectorisable=False,
+)
+@builtin(
+    "updateBy",
+    (
+        T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),
+        T.TupRepeat(T.optional(T.Integer)),
+        T.Fn(
+            (T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),),
+            (T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),),
+        ),
+    ),
+    (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),),
+    param_names=("iterable", "index", "function"),
+    vectorisable=False,
+    where_clause=(
+        GetVariableNode(Symbol("index")),
+        ElementNode(Symbol("length")),
+        GetVariableNode(Symbol("m")),
+        ElementNode(Symbol("==")),
+        ElementNode(Symbol("?")),
+        GetVariableNode(Symbol("n")),
+        GetVariableNode(Symbol("m")),
+        ElementNode(Symbol(">=")),
+        ElementNode(Symbol("?")),
+    ),
 )
 @builtin(
     "updateBy",
@@ -2407,7 +2454,7 @@ def _update_by(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     if ctx.index_get is None or ctx.index_set is None:
         raise RuntimeError("updateBy requires indexed-update runtime support")
     iterable, index, function = args
-    grouped = is_list_like(index)
+    grouped = is_list_like(index) or isinstance(index, tuple)
     selected = ctx.index_get(iterable, index, grouped)
     prepared = _prepared_runtime_call(ctx, function, 1)
     result = (

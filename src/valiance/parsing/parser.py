@@ -2449,16 +2449,19 @@ class Parser:
         """Translate ``_`` list items to ``None`` only in direct index syntax."""
         if not isinstance(node, ListLiteralNode):
             return node
+        fixed_path = any(
+            isinstance(item, ElementNode) and item.name.text in {"_", "None"}
+            for expression in node.items for item in expression
+        )
         items = tuple(
             tuple(
                 ElementNode(Symbol("None"), location=item.location)
                 if isinstance(item, ElementNode) and item.name.text == "_"
                 else self._lower_index_wildcard_shorthand(item)
                 for item in expression
-            )
-            for expression in node.items
+            ) for expression in node.items
         )
-        return replace(node, items=items)
+        return TupleLiteralNode(items, location=node.location) if fixed_path else replace(node, items=items)
 
     def _comma_expressions(self, closer: TokenKind) -> tuple[tuple[ASTNode, ...], ...]:
         """Parse comma expressions from the current token stream."""

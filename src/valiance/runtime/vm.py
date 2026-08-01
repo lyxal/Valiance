@@ -6260,6 +6260,11 @@ def _selection_positions(
         if len(mask) > len(receiver):
             raise RuntimeError("Boolean mask is longer than the indexed value")
         return [index for index, flag in enumerate(mask) if _truthy(flag)]
+    if isinstance(selector, tuple):
+        requested = list(selector)
+        if any(_is_none_result_value(item) for item in requested):
+            return _expand_wildcard_path(receiver, requested)
+        return None
     if is_list_like(selector):
         requested = list(selector)
         if any(_is_none_result_value(item) for item in requested):
@@ -6608,7 +6613,7 @@ def _set_many_indices(
 
 def _index_path(receiver: Any, index: Any) -> Any:
     """Index path during VM execution."""
-    if _is_path(index):
+    if _is_path(index) or (isinstance(index, tuple) and not isinstance(receiver, dict)):
         result = receiver
         for item in index:
             result = _index_one(result, item)
@@ -6650,7 +6655,7 @@ def _lazy_index_request(index: Any) -> tuple[int, list[Any]]:
     """Compute lazy index request during VM execution."""
     tail: list[Any] = []
     target = index
-    if _is_path(index):
+    if _is_path(index) or (isinstance(index, tuple) and not isinstance(receiver, dict)):
         if not index:
             raise RuntimeError("empty index path is invalid")
         target = index[0]

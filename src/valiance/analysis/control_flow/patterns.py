@@ -198,6 +198,15 @@ def _selector_mode(
 
     if (
         isinstance(receiver, (T.ListExactType, T.ListMinType, T.ListRuggedType))
+        and isinstance(selector, T.TupleType)
+        and selector.params
+        and all(T.assignable(item, T.optional(T.Integer), ctx) for item in selector.params)
+        and any(not T.assignable(item, T.Integer, ctx) for item in selector.params)
+    ):
+        return "path_pattern"
+
+    if (
+        isinstance(receiver, (T.ListExactType, T.ListMinType, T.ListRuggedType))
         and T.assignable(selector, T.ExactList(T.optional(T.Integer)), ctx)
         and not T.assignable(selector, T.ExactList(T.Integer), ctx)
     ):
@@ -232,16 +241,36 @@ def _selector_mode(
     return "predicate" if T.compatible(selector, expected, ctx) else None
 
 
-def _selection_type(receiver_type: T.Type, mode: str | None) -> T.Type | None:
-    """Return the gathered value type for a mask or predicate selector."""
+def _selection_type(
+    receiver_type: T.Type,
+    mode: str | None,
+    *,
+    path_depth: int | None = None,
+) -> T.Type | None:
+    """Return the gathered type for one whole-selection selector.
+
+    A wildcard path is expanded to a flat sequence of concrete paths at
+    runtime. Each concrete path consumes ``path_depth`` receiver levels, and
+    gathering the path results contributes one outer list rank. Literal paths
+    expose their depth to analysis; dynamically sized path values retain the
+    conservative legacy fallback.
+    """
     if mode not in {"mask", "predicate", "sequence", "paths", "path_pattern"}:
         return None
+    if mode == "path_pattern" and path_depth is not None:
+        selected = receiver_type
+        for _ in range(path_depth):
+            selected = _index_type(selected)
+        return T.ExactList(selected)
     typ = T.normalize(receiver_type)
     if isinstance(typ, T.TaggedType):
-        selected = _selection_type(typ.inner, mode)
+        selected = _selection_type(typ.inner, mode, path_depth=path_depth)
         return None if selected is None else T.Tagged(selected, *typ.tags, exact=typ.exact)
     if isinstance(typ, T.UnionType):
-        selected = tuple(_selection_type(item, mode) for item in typ.items)
+        selected = tuple(
+            _selection_type(item, mode, path_depth=path_depth)
+            for item in typ.items
+        )
         return None if any(item is None for item in selected) else T.U(*selected)
     if isinstance(typ, (T.ListExactType, T.ListMinType, T.ListRuggedType)):
         if mode in {"paths", "path_pattern"}:

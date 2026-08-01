@@ -173,6 +173,20 @@ def _field_set_node(
         (branch.with_stack(stack).emit(TypedNode(node, result_type)),)
     )
 
+def _literal_path_pattern_depth(
+    node: IndexAccessNode | IndexSetNode,
+    selector_mode: str | None,
+) -> int | None:
+    """Return the component count of one literal wildcard path selector."""
+    if selector_mode != "path_pattern" or len(node.selectors) != 1:
+        return None
+    selector = node.selectors[0]
+    if selector.is_slice or len(selector.start) != 1:
+        return None
+    expression = selector.start[0]
+    return len(expression.items) if isinstance(expression, (ListLiteralNode, TupleLiteralNode)) else None
+
+
 @_core.register(IndexAccessNode)
 def _index_access_node(
     self: _core.Analyser,
@@ -242,7 +256,11 @@ def _index_access_node(
             node,
         )
         return _core.BranchSet()
-    result_type = _patterns._selection_type(receiver_type, selector_mode)
+    result_type = _patterns._selection_type(
+        receiver_type,
+        selector_mode,
+        path_depth=_literal_path_pattern_depth(node, selector_mode),
+    )
     if result_type is None:
         result_type = _patterns._indexed_type(
             receiver_type,
@@ -316,7 +334,11 @@ def _index_set_node(
             node,
         )
         return _core.BranchSet()
-    item_type = _patterns._selection_type(receiver_type, selector_mode)
+    item_type = _patterns._selection_type(
+        receiver_type,
+        selector_mode,
+        path_depth=_literal_path_pattern_depth(node, selector_mode),
+    )
     if item_type is None:
         item_type = _patterns._indexed_type(
             receiver_type,
