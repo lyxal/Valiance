@@ -268,42 +268,6 @@ def _unfold_node(
             )
             continue
 
-        if node.condition:
-            condition_function = FunctionNode(
-                params=(
-                    tuple(
-                        FunctionParam(param.name, typ)
-                        for param, typ in zip(
-                            node.params or (),
-                            overload.params,
-                            strict=False,
-                        )
-                    )
-                    if node.params is not None
-                    else tuple(FunctionParam(None, typ) for typ in overload.params)
-                ),
-                body=node.condition,
-                returns=(Boolean,),
-                element_tags=frozenset(),
-                location=node.location,
-            )
-            condition_result = self._analyse_function_literal(
-                branch,
-                condition_function,
-            )
-            if condition_result is None:
-                self._diagnose("unfold condition must return a boolean value", node)
-                continue
-            condition_analysis, _ = condition_result
-            condition_element_tags = frozenset(
-                tag
-                for candidate_overload in _functions._callable_overloads(
-                    condition_analysis.typ
-                )
-                for tag in candidate_overload.element_tags
-                if not tag.absent
-            )
-
         sourced = branch.source_arguments(overload.params)
         if sourced is None:
             self._diagnose("unfold inputs do not match stack", node)
@@ -312,10 +276,45 @@ def _unfold_node(
         applied = T.try_apply_overload(overload, args, self.env.context).applied
         if applied is None:
             continue
+
+        if node.condition:
+            condition_function = FunctionNode(
+                params=(
+                    tuple(
+                        FunctionParam(param.name, typ)
+                        for param, typ in zip(
+                            node.params or (),
+                            applied.params,
+                            strict=False,
+                        )
+                    )
+                    if node.params is not None
+                    else tuple(FunctionParam(None, typ) for typ in applied.params)
+                ),
+                body=node.condition,
+                returns=(Boolean,),
+                element_tags=frozenset(),
+                location=node.location,
+            )
+            condition_analysis = self._analyse_unfold_body_function(
+                popped,
+                condition_function,
+            )
+            if condition_analysis is None:
+                self._diagnose("unfold condition must return a boolean value", node)
+                continue
+            condition_element_tags = frozenset(
+                tag
+                for candidate_overload in _functions._callable_overloads(
+                    condition_analysis.typ
+                )
+                for tag in candidate_overload.element_tags
+                if not tag.absent
+            )
         candidates.append(
             _core.CallCandidate(
                 applied=applied,
-                branch=popped,
+                branch=popped.with_element_tags(condition_element_tags),
                 callable_overload_index=state_arity,
             )
         )
@@ -328,9 +327,7 @@ def _unfold_node(
         )
         list_type = T.WithTag(T.ExactList(generated), "infinite")
         results.append(
-            candidate.branch.with_element_tags(
-                (*candidate.applied.element_tags, *condition_element_tags)
-            )
+            candidate.branch.with_element_tags(candidate.applied.element_tags)
             .push(list_type)
             .emit(
                 TypedUnfoldNode(

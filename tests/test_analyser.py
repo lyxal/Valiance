@@ -3911,6 +3911,48 @@ $n
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, WithTag(ExactList(Integer), "infinite"))
 
+    def test_unfold_condition_uses_explicit_untyped_state_params(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse("""
+0 1 unfold (< 100) -> (prev, next) =>
+  $prev + $next
+end
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            typed[-1].typ,
+            WithTag(ExactList(Integer), "infinite"),
+        )
+
+    def test_unfold_condition_uses_inferred_state_params(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse("""
+0 1 unfold (< 100) =>
+  +
+end
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            typed[-1].typ,
+            WithTag(ExactList(Integer), "infinite"),
+        )
+
+    def test_unfold_condition_can_reference_named_state_param(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse("""
+0 1 unfold ($next < 100) -> (prev, next) =>
+  $prev + $next
+end
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            typed[-1].typ,
+            WithTag(ExactList(Integer), "infinite"),
+        )
+
     def test_at_binds_named_levels_and_tracks_stop_ranks(self):
         analyser = Analyser()
         typed = analyser.analyse(parse("""
