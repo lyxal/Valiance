@@ -467,7 +467,10 @@ def _param_type(param: FunctionParam, index: int) -> T.Type:
     if param.typ is not None:
         return param.typ
     name = param.name.text if param.name is not None else f"_{index}"
-    return T.V(name)
+    identity = param.inference_identity
+    if not isinstance(identity, T.MetaVarId):
+        identity = T.MetaVarId(id(param), index)
+    return T.M(name, identity)
 
 
 def _trait_requirement(node: TraitRequirementNode) -> T.TraitRequirement | None:
@@ -495,9 +498,19 @@ def _trait_requirements(node: ObjectNode) -> tuple[T.TraitRequirement, ...]:
     )
 
 
-def _declared_nominal(name: Symbol, generics: tuple[Symbol, ...]) -> T.Type:
-    """Compute declared nominal during static analysis."""
-    return T.N(name, *(T.V(generic.text) for generic in generics))
+def _declared_nominal(
+    name: Symbol,
+    generics: tuple[Symbol, ...],
+    scope: T.TypeVarScope | None = None,
+) -> T.Type:
+    """Build a declared nominal using one binder's variable identities."""
+    return T.N(
+        name,
+        *(
+            scope.variable(generic.text) if scope is not None else T.V(generic.text)
+            for generic in generics
+        ),
+    )
 
 
 def _types_overlap(source: T.Type, target: T.Type, ctx: T.Context) -> bool:

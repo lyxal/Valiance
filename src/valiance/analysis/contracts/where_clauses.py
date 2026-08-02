@@ -231,7 +231,7 @@ def substitute_static_type(
     typ: T.Type,
     *,
     ranks: Mapping[str, int] | None = None,
-    types: Mapping[str, T.Type] | None = None,
+    types: Mapping[T.TypeVarKey, T.Type] | None = None,
 ) -> T.Type:
     """Substitute solved rank and generic variables in one static type."""
     return _substitute_type(typ, ranks or {}, types or {})
@@ -245,7 +245,7 @@ def evaluate_where_clause(
     clause: tuple[object, ...],
     args: tuple[T.Type, ...],
     initial_ranks: Mapping[str, int],
-    type_substitution: Mapping[str, T.Type] | None = None,
+    type_substitution: Mapping[T.TypeVarKey, T.Type] | None = None,
 ) -> WhereEvaluation | None:
     """Execute a validated static program for one overload candidate."""
     shape, error = validate_where_clause(
@@ -504,7 +504,7 @@ def _evaluate_node(
     variables: dict[str, StaticValue],
     read_only: set[str],
     ranks: Mapping[str, int],
-    type_substitution: Mapping[str, T.Type],
+    type_substitution: Mapping[T.TypeVarKey, T.Type],
 ) -> bool:
     """Execute one static node without invoking arbitrary language elements."""
     match node:
@@ -808,7 +808,7 @@ def _overload_contains_result(overload: T.Overload) -> bool:
 def _substitute_overload(
     overload: T.Overload,
     ranks: Mapping[str, int],
-    types: Mapping[str, T.Type],
+    types: Mapping[T.TypeVarKey, T.Type],
 ) -> T.Overload:
     """Substitute free static type variables in one overload signature."""
     local_names = {
@@ -848,12 +848,15 @@ def _substitute_overload(
 def _substitute_type(
     typ: T.Type,
     ranks: Mapping[str, int],
-    types: Mapping[str, T.Type],
+    types: Mapping[T.TypeVarKey, T.Type],
 ) -> T.Type:
     """Substitute rank and generic variables inside a static type literal."""
     typ = T.normalize(typ)
     if isinstance(typ, T.VarType):
-        return types.get(typ.name, typ)
+        return types.get(
+            typ.identity if typ.identity is not None else typ.name,
+            typ,
+        )
     if isinstance(typ, T.CollectionType):
         rank = typ.rank
         if isinstance(rank, T.RankVariable):

@@ -60,6 +60,9 @@ from valiance.vtypes.nodes import (
     TaggedType,
     TupleType,
     Type,
+    TypeVarId,
+    TypeVarKey,
+    type_var_key,
     UnionDispatchBranch,
     UnionDispatchPlan,
     UnionType,
@@ -76,6 +79,15 @@ REAL = Symbol("Real")
 SOME = Symbol("Some")
 
 
+def _type_var_key_for_name(name: str, *types: Type) -> TypeVarKey:
+    """Resolve a declared generic name to its scoped key in a signature."""
+    for variable in _ordered_type_vars(*types):
+        if variable.name == name:
+            return type_var_key(variable)
+    return name
+
+
+
 
 @dataclass
 class _VariableBounds:
@@ -89,13 +101,13 @@ class _VariableBounds:
 class _TypeBounds:
     """Directional generic evidence for one overload candidate."""
 
-    variables: dict[str, _VariableBounds] = field(default_factory=dict)
+    variables: dict[TypeVarKey, _VariableBounds] = field(default_factory=dict)
 
-    def add_lower(self, name: str, typ: Type) -> None:
+    def add_lower(self, name: TypeVarKey, typ: Type) -> None:
         """Record one value-producing lower bound."""
         self.variables.setdefault(name, _VariableBounds()).lower.append(normalize(typ))
 
-    def add_upper(self, name: str, typ: Type) -> None:
+    def add_upper(self, name: TypeVarKey, typ: Type) -> None:
         """Record one consumer-provided upper bound."""
         self.variables.setdefault(name, _VariableBounds()).upper.append(normalize(typ))
 
@@ -137,12 +149,12 @@ def _collect_directional_bounds(
         """Collect bounds recursively at one variance position."""
         p, a = normalize(p), normalize(a)
         if isinstance(p, VarType):
-            if _contains_named_type_var(a, p.name):
+            if _contains_type_var_key(a, type_var_key(p)):
                 return True
             if position in {Variance.COVARIANT, Variance.INVARIANT}:
-                bounds.add_lower(p.name, a)
+                bounds.add_lower(type_var_key(p), a)
             if position in {Variance.CONTRAVARIANT, Variance.INVARIANT}:
-                bounds.add_upper(p.name, a)
+                bounds.add_upper(type_var_key(p), a)
             return True
         if same(p, a):
             return True
@@ -241,10 +253,10 @@ def _meet_upper_bounds(values: Iterable[Type], ctx: Context) -> Type | None:
 def _solve_directional_bounds(
     bounds: _TypeBounds,
     ctx: Context | None = None,
-) -> dict[str, Type] | None:
+) -> dict[TypeVarKey, Type] | None:
     """Solve directional evidence using lower joins and upper intersections."""
     ctx = ctx or Context()
-    substitution: dict[str, Type] = {}
+    substitution: dict[TypeVarKey, Type] = {}
     for name, evidence in bounds.variables.items():
         lower = _combine_all(evidence.lower, ctx) if evidence.lower else None
         upper = _meet_upper_bounds(evidence.upper, ctx) if evidence.upper else None
@@ -265,7 +277,7 @@ def solve_directional_constraints(
     pattern: Type,
     actual: Type,
     ctx: Context | None = None,
-) -> dict[str, Type] | None:
+) -> dict[TypeVarKey, Type] | None:
     """Public relation helper for variance-aware call-site generic inference."""
     ctx = ctx or Context()
     bounds = _collect_directional_bounds(pattern, actual, ctx)
@@ -413,25 +425,25 @@ def _solve_anonymous_trait(
     source: Type,
     target: AnonymousTraitType,
     ctx: Context,
-) -> dict[str, list[Type]] | None:
+) -> dict[TypeVarKey, list[Type]] | None:
     """Solve a trait across every coherent requirement/overload path."""
-    constraints: dict[str, list[Type]] = {}
+    constraints: dict[TypeVarKey, list[Type]] = {}
     subject = anonymous_trait_subject_name(target)
     if subject is not None:
         constraints[subject] = [source]
 
-    completed: list[dict[str, Type]] = []
+    completed: list[dict[TypeVarKey, Type]] = []
     seen: set[tuple[int, tuple[tuple[str, Type], ...]]] = set()
 
     def solve_requirement(
         index: int,
-        current: dict[str, list[Type]],
+        current: dict[TypeVarKey, list[Type]],
     ) -> None:
         """Collect complete paths while deduplicating equivalent solver states."""
         substitution = _combined_substitution(current, ctx)
         if substitution is None:
             return
-        state = (index, tuple(sorted(substitution.items())))
+        state = (index, tuple(sorted(substitution.items(), key=lambda item: repr(item[0]))))
         if state in seen:
             return
         seen.add(state)
@@ -450,13 +462,45 @@ def _solve_anonymous_trait(
     if not completed:
         return None
 
-    merged: dict[str, list[Type]] = {}
+    merged: dict[TypeVarKey, list[Type]] = {}
     for solution in completed:
         for name, typ in solution.items():
             merged.setdefault(name, []).append(typ)
     return merged if _combined_substitution(merged, ctx) is not None else None
 
 
+
+
+def _ordered_type_vars(*types: Type) -> tuple[VarType, ...]:
+    """Return nested variables in stable first-occurrence identity order."""
+    variables: list[VarType] = []
+    seen: set[TypeVarKey] = set()
+
+    def visit(typ: Type) -> None:
+        """Append unseen variables from one normalized type subtree."""
+        typ = normalize(typ)
+        if isinstance(typ, VarType):
+            key = type_var_key(typ)
+            if key not in seen:
+                seen.add(key)
+                variables.append(typ)
+            return
+        if isinstance(typ, NominalType): children = typ.args
+        elif isinstance(typ, (UnionType, IntersectionType)): children = tuple(typ.items)
+        elif isinstance(typ, TupleType): children = typ.params
+        elif isinstance(typ, VariadicTupleType): children = tuple(i.typ for i in typ.items)
+        elif isinstance(typ, RowType): children = (typ.base, *(f.typ for f in typ.fields))
+        elif isinstance(typ, CollectionType): children = (typ.base,)
+        elif isinstance(typ, FunctionType):
+            children = (*(typ.params or ()), *(typ.returns or ()), *(a for tag in typ.element_tags for a in tag.args))
+        elif isinstance(typ, AnonymousTraitType):
+            children = tuple(i for r in typ.requirements for i in r.overload.params + r.overload.returns)
+        elif isinstance(typ, (TaggedType, NoVecType, ExactType)): children = (typ.inner,)
+        else: children = ()
+        for child in children: visit(child)
+
+    for typ in types: visit(typ)
+    return tuple(variables)
 
 
 def _ordered_type_var_names(*types: Type) -> tuple[str, ...]:
@@ -567,11 +611,11 @@ def _first_type_var_name(typ: Type) -> str | None:
 
 def _anonymous_requirement_constraint_options(
     requirement: AnonymousTraitRequirement,
-    constraints: dict[str, list[Type]],
+    constraints: dict[TypeVarKey, list[Type]],
     ctx: Context,
-) -> tuple[dict[str, list[Type]], ...]:
+) -> tuple[dict[TypeVarKey, list[Type]], ...]:
     """Return every coherent candidate solution for one trait requirement."""
-    options: list[dict[str, list[Type]]] = []
+    options: list[dict[TypeVarKey, list[Type]]] = []
     for candidate in ctx.overloads_for_structural_trait(requirement.name):
         merged = {key: list(values) for key, values in constraints.items()}
         subst = _combined_substitution(merged, ctx)
@@ -593,11 +637,11 @@ def _anonymous_requirement_constraint_options(
 
 
 def _combined_substitution(
-    constraints: dict[str, list[Type]],
+    constraints: dict[TypeVarKey, list[Type]],
     ctx: Context | None = None,
-) -> dict[str, Type] | None:
+) -> dict[TypeVarKey, Type] | None:
     """Compute a coherent substitution for accumulated generic evidence."""
-    substitution: dict[str, Type] = {}
+    substitution: dict[TypeVarKey, Type] = {}
     for key, values in constraints.items():
         combined = _combine_all_strict(values, ctx)
         if combined is None:
@@ -610,13 +654,13 @@ def _solve_overload_shape(
     expected: Overload,
     candidate: Overload,
     ctx: Context,
-) -> dict[str, list[Type]] | None:
+) -> dict[TypeVarKey, list[Type]] | None:
     """Solve overload shape during type and overload solving."""
     if len(expected.params) != len(candidate.params) or len(expected.returns) != len(
         candidate.returns
     ):
         return None
-    constraints: dict[str, list[Type]] = {}
+    constraints: dict[TypeVarKey, list[Type]] = {}
     for pattern, actual in zip(
         expected.params + expected.returns,
         candidate.params + candidate.returns,
@@ -968,12 +1012,12 @@ def _solve(
     pattern: Type,
     actual: Type,
     ctx: Context | None = None,
-) -> dict[str, list[Type]] | None:
+) -> dict[TypeVarKey, list[Type]] | None:
     """Collect generic constraints by matching a parameter pattern to an argument."""
     ctx = ctx or Context()
-    constraints: dict[str, list[Type]] = {}
+    constraints: dict[TypeVarKey, list[Type]] = {}
 
-    def add(name: str, value: Type) -> None:
+    def add(name: TypeVarKey, value: Type) -> None:
         """Append a candidate solution for one type variable."""
         constraints.setdefault(name, []).append(normalize(value))
 
@@ -1007,7 +1051,7 @@ def _solve(
             if not requirement.args:
                 continue
 
-            matches: list[dict[str, list[Type]]] = []
+            matches: list[dict[TypeVarKey, list[Type]]] = []
             original = {key: list(values) for key, values in constraints.items()}
             for candidate in candidates:
                 constraints.clear()
@@ -1049,9 +1093,9 @@ def _solve(
         if isinstance(p, VarType):
             # Solving does not decide whether this is globally valid; it only
             # records what this one parameter says the generic must be.
-            if _contains_named_type_var(a, p.name):
+            if _contains_type_var_key(a, type_var_key(p)):
                 return True
-            add(p.name, a)
+            add(type_var_key(p), a)
             return True
         if same(p, a):
             return True
@@ -1092,7 +1136,7 @@ def _solve(
         if isinstance(p, UnionType):
             # Ordinary union solving is allowed only when exactly one branch
             # matches. Ambiguous generic unions should require explicit types.
-            matches: list[dict[str, list[Type]]] = []
+            matches: list[dict[TypeVarKey, list[Type]]] = []
             for branch in p.items:
                 saved = {key: list(values) for key, values in constraints.items()}
                 if rec(branch, a):
@@ -1194,7 +1238,7 @@ def _solve(
                         strict=False,
                     )
                 )
-            matches: list[dict[str, list[Type]]] = []
+            matches: list[dict[TypeVarKey, list[Type]]] = []
             for overload in a.overloads:
                 saved = {key: list(values) for key, values in constraints.items()}
                 candidate = Fn(overload.params, overload.returns, overload.element_tags)
@@ -1206,7 +1250,7 @@ def _solve(
                 constraints.update(saved)
             if not matches:
                 return False
-            merged: dict[str, list[Type]] = {}
+            merged: dict[TypeVarKey, list[Type]] = {}
             for match in matches:
                 for key, values in match.items():
                     merged.setdefault(key, []).extend(values)
@@ -1253,11 +1297,11 @@ def _solve(
 
     def solve_variadic_tuple(pattern: VariadicTupleType, actual: TupleType) -> bool:
         """Return the Boolean result of solve variadic tuple during type solving and overload resolution."""
-        def save() -> dict[str, list[Type]]:
+        def save() -> dict[TypeVarKey, list[Type]]:
             """Save the current backtracking state for later restoration."""
             return {key: list(values) for key, values in constraints.items()}
 
-        def restore(saved: dict[str, list[Type]]) -> None:
+        def restore(saved: dict[TypeVarKey, list[Type]]) -> None:
             """Restore the most recently saved backtracking state."""
             constraints.clear()
             constraints.update(saved)
@@ -1332,7 +1376,7 @@ def _atomic_collection_shape_matches(
 
 
 def _solve_collection(
-    pattern: Type, actual: Type, add: Callable[[str, Type], None]
+    pattern: Type, actual: Type, add: Callable[[TypeVarKey, Type], None]
 ) -> bool:
     """Solve a generic collection pattern against an actual collection type."""
     if not isinstance(pattern.base, VarType):
@@ -1350,7 +1394,7 @@ def _solve_collection(
 
     def bind_as(collection_type: CollectionClass) -> bool:
         """Bind the pattern base variable to the peeled actual collection type."""
-        add(pattern.base.name, _collection_remainder(collection_type, base, diff))
+        add(type_var_key(pattern.base), _collection_remainder(collection_type, base, diff))
         return True
 
     if pk is ListExactType and ak in {ListExactType, ArrayExactType}:
@@ -1751,11 +1795,11 @@ def merge_stacks(
     )
 
 
-def _substitute(t: Type, subst: dict[str, Type]) -> Type:
+def _substitute(t: Type, subst: dict[TypeVarKey, Type]) -> Type:
     """Replace type variables in ``t`` using a solved substitution map."""
     t = normalize(t)
     if isinstance(t, VarType):
-        return subst.get(t.name, t)
+        return subst.get(type_var_key(t), t)
     if isinstance(t, NominalType):
         return N(t.name, *(_substitute(a, subst) for a in t.args))
     if isinstance(t, UnionType):
@@ -1794,7 +1838,7 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
     if isinstance(t, AnonymousTraitType):
         bound_names = {generic.text for generic in t.generics}
         local_subst = {
-            name: typ for name, typ in subst.items() if name not in bound_names
+            name: typ for name, typ in subst.items() if not isinstance(name, str) or name not in bound_names
         }
         return AnonymousTraitType(
             t.generics,
@@ -1815,11 +1859,11 @@ def _substitute(t: Type, subst: dict[str, Type]) -> Type:
     return t
 
 
-def _substitute_overload(overload: Overload, subst: dict[str, Type]) -> Overload:
+def _substitute_overload(overload: Overload, subst: dict[TypeVarKey, Type]) -> Overload:
     """Substitute free overload variables without capturing local generics."""
     local_names = {constraint.name for constraint in overload.generic_constraints}
     local_subst = {
-        name: typ for name, typ in subst.items() if name not in local_names
+        name: typ for name, typ in subst.items() if not isinstance(name, str) or name not in local_names
     }
     constraints = tuple(
         GenericConstraint(
@@ -1845,14 +1889,28 @@ def _substitute_overload(overload: Overload, subst: dict[str, Type]) -> Overload
     )
 
 
+def _substitution_value_for_constraint(
+    substitution: dict[TypeVarKey, Type],
+    name: str,
+) -> Type | None:
+    """Read a constraint value by legacy name or scoped variable display name."""
+    if name in substitution:
+        return substitution[name]
+    matches = [
+        value for key, value in substitution.items()
+        if isinstance(key, TypeVarId)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _generic_constraints_met(
     generic_constraints: tuple[GenericConstraint, ...],
-    substitution: dict[str, Type],
+    substitution: dict[TypeVarKey, Type],
     ctx: Context,
 ) -> bool:
     """Return whether solved generic variables satisfy their declared bounds."""
     for constraint in generic_constraints:
-        solution = substitution.get(constraint.name)
+        solution = _substitution_value_for_constraint(substitution, constraint.name)
         if solution is None:
             return False
         bound = _substitute(constraint.bound, substitution)
@@ -2674,11 +2732,18 @@ def try_apply_overload(
 ) -> OverloadAttempt:
     """Apply one overload to concrete argument types with mismatch evidence."""
     ctx = ctx or Context()
-    generic_params = overload.generic_params or _ordered_type_var_names(
+    signature_types = (
         *overload.params,
         *overload.returns,
         *(constraint.bound for constraint in overload.generic_constraints),
         *(arg for tag in overload.element_tags for arg in tag.args),
+    )
+    generic_variables = _ordered_type_vars(*signature_types)
+    generic_params = overload.generic_params or tuple(
+        variable.name for variable in generic_variables
+    )
+    generic_keys = tuple(
+        _type_var_key_for_name(name, *signature_types) for name in generic_params
     )
     if generic_args and len(generic_args) > len(generic_params):
         return OverloadAttempt(
@@ -2693,7 +2758,7 @@ def try_apply_overload(
         )
     explicit_substitution = {
         name: typ
-        for name, typ in zip(generic_params, generic_args, strict=False)
+        for name, typ in zip(generic_keys, generic_args, strict=False)
         if typ is not None
     }
     solving_params = tuple(
@@ -2765,7 +2830,7 @@ def try_apply_overload(
         vectorised_depths = tuple(depths)
         vectorised_target_ranks = tuple(target_ranks)
 
-    constraints: dict[str, list[Type]] = {}
+    constraints: dict[TypeVarKey, list[Type]] = {}
     deferred_function_args: list[
         tuple[FunctionType, FunctionType | OverloadSetType]
     ] = []
@@ -2798,7 +2863,7 @@ def try_apply_overload(
         for key, values in result.items():
             constraints.setdefault(key, []).extend(values)
 
-    substitution: dict[str, Type] = dict(explicit_substitution)
+    substitution: dict[TypeVarKey, Type] = dict(explicit_substitution)
     for key, values in constraints.items():
         combined = _combine_all(values, ctx)
         if combined is None:
@@ -2812,7 +2877,8 @@ def try_apply_overload(
         substitution[key] = combined
 
     for param, arg in deferred_exact_args:
-        name = _first_type_var_name(param.inner)
+        variable = next(iter(_ordered_type_vars(param.inner)), None)
+        name = None if variable is None else type_var_key(variable)
         names = () if name is None else (name,)
         if names and all(name in substitution for name in names):
             continue
@@ -3250,6 +3316,11 @@ def _contains_type_var(t: Type) -> bool:
     return False
 
 
+def _contains_type_var_key(t: Type, key: TypeVarKey) -> bool:
+    """Return whether a type tree contains one exact variable identity key."""
+    return any(type_var_key(variable) == key for variable in _ordered_type_vars(t))
+
+
 def _contains_named_type_var(t: Type, name: str) -> bool:
     """Return whether a type tree contains the named generic type variable."""
     t = normalize(t)
@@ -3497,7 +3568,7 @@ def _types_may_overlap(left: Type, right: Type, ctx: Context) -> bool:
 
 def _substitute_element_tags(
     tags: frozenset[ElementTag],
-    subst: dict[str, Type],
+    subst: dict[TypeVarKey, Type],
 ) -> tuple[ElementTag, ...]:
     """Substitute element tags during type and overload solving."""
     return tuple(

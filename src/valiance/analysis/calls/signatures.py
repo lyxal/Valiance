@@ -14,6 +14,25 @@ _transform_overload_types = transform_overload_types
 from valiance.vtypes.structural import anonymous_trait_subject_name
 
 _anonymous_trait_subject_name = anonymous_trait_subject_name
+
+
+def _binder_scope_id(function: FunctionNode) -> int:
+    """Return a stable-in-session identity for one function generic binder."""
+    if function.generic_scope_id is not None:
+        return function.generic_scope_id
+    if function.location is not None:
+        return 1_000_000 + function.location.offset
+    return id(function)
+
+
+def _generic_scope(
+    generics: tuple[Symbol, ...],
+    scope_id: int | None,
+) -> T.TypeVarScope | None:
+    """Build the identity allocator for a generic binder when one is assigned."""
+    if not generics or scope_id is None:
+        return None
+    return T.TypeVarScope(scope_id, tuple(generic.text for generic in generics))
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.asts import (
     ASTNode,
@@ -59,52 +78,75 @@ def _parameter_value_type(typ: T.Type) -> T.Type:
 def _genericize_overload(
     overload: T.Overload,
     generics: tuple[Symbol, ...],
+    scope: T.TypeVarScope | None = None,
 ) -> T.Overload:
     """Generalize overload during static analysis."""
     if not generics:
         return overload
     return transform_overload_types(
         overload,
-        lambda typ: _genericize_type(typ, generics),
+        lambda typ: _genericize_type(typ, generics, scope),
     )
 
 def _genericize_function_node(
     function: FunctionNode,
     generics: tuple[Symbol, ...],
 ) -> FunctionNode:
-    """Generalize a function and erase call-policy markers from value returns."""
+    """Generalize a function and assign one identity scope to its binder."""
+    binder_id = _binder_scope_id(function)
+    has_structural_generic = any(
+        param.typ is not None and _contains_anonymous_trait(param.typ)
+        for param in function.params or ()
+    )
+    # Anonymous structural traits still bind their subject by source name in the
+    # structural solver. Keep that path unscoped until its substitution map is
+    # migrated to TypeVarId in the next phase.
+    scope_id = (
+        binder_id
+        if generics and not has_structural_generic
+        else function.generic_scope_id
+    )
+    scope = _generic_scope(generics, scope_id)
     params = None
     if function.params is not None:
         params = tuple(
-            cast(FunctionParam, _genericize_ast_value(param, generics))
-            for param in function.params
+            replace(
+                cast(FunctionParam, _genericize_ast_value(param, generics, scope)),
+                inference_identity=(
+                    param.inference_identity
+                    if param.inference_identity is not None
+                    else T.MetaVarId(binder_id, index)
+                ),
+            )
+            for index, param in enumerate(function.params)
         )
     returns = None
     if function.returns is not None:
         returns = tuple(
-            _parameter_value_type(_genericize_type(ret, generics))
+            _parameter_value_type(_genericize_type(ret, generics, scope))
             for ret in function.returns
         )
     generic_constraints = tuple(
-        None if bound is None else _genericize_type(bound, generics)
+        None if bound is None else _genericize_type(bound, generics, scope)
         for bound in function.generic_constraints
     )
     return FunctionNode(
         generics=function.generics,
+        generic_scope_id=scope_id,
         generic_variances=function.generic_variances,
         params=params,
-        body=tuple(_genericize_ast_node(node, generics) for node in function.body),
+        body=tuple(_genericize_ast_node(node, generics, scope) for node in function.body),
         returns=returns,
         where_clause=tuple(
-            _genericize_ast_node(node, generics) for node in function.where_clause
+            _genericize_ast_node(node, generics, scope) for node in function.where_clause
         ),
         element_tags=frozenset(
-            _genericize_element_tags(function.element_tags, generics)
+            _genericize_element_tags(function.element_tags, generics, scope)
         ),
         annotations=function.annotations,
         element_tags_explicit=function.element_tags_explicit,
         companion_tags_allowed=frozenset(
-            _genericize_element_tags(function.companion_tags_allowed, generics)
+            _genericize_element_tags(function.companion_tags_allowed, generics, scope)
         ),
         generic_constraints=generic_constraints,
         location=function.location,
@@ -210,7 +252,7 @@ def _empty_list_return_type(expected: T.Type) -> T.Type | None:
 def _substitute_rank_variables_in_ast(
     node: ASTNode,
     ranks: dict[str, int],
-    types: dict[str, T.Type] | None = None,
+    types: dict[T.TypeVarKey, T.Type] | None = None,
     *,
     root: bool = True,
 ) -> ASTNode:
@@ -244,7 +286,7 @@ def _substitute_rank_variables_in_ast(
 def _substitute_rank_variables_in_ast_value(
     value: object,
     ranks: dict[str, int],
-    types: dict[str, T.Type],
+    types: dict[T.TypeVarKey, T.Type],
 ) -> object:
     """Substitute static bindings through one recursively nested AST value."""
     if isinstance(value, T.Type):
@@ -266,7 +308,12 @@ def _substitute_rank_variables_in_ast_value(
         )
         if typ is value.typ and default == value.default:
             return value
-        return replace(value, typ=typ, default=default)
+        return replace(
+            value,
+            typ=typ,
+            default=default,
+            inference_identity=value.inference_identity,
+        )
     if isinstance(value, CallArgument):
         argument = tuple(
             cast(
@@ -292,7 +339,11 @@ def _substitute_rank_variables_in_ast_value(
         )
     return value
 
-def _genericize_ast_node(node: ASTNode, generics: tuple[Symbol, ...]) -> ASTNode:
+def _genericize_ast_node(
+    node: ASTNode,
+    generics: tuple[Symbol, ...],
+    scope: T.TypeVarScope | None = None,
+) -> ASTNode:
     """Generalize AST node during static analysis."""
     if isinstance(node, FunctionNode) and node.generics:
         shadowed = {generic.text for generic in node.generics}
@@ -304,19 +355,23 @@ def _genericize_ast_node(node: ASTNode, generics: tuple[Symbol, ...]) -> ASTNode
     updates: dict[str, object] = {}
     for item in fields(node):
         value = getattr(node, item.name)
-        updated = _genericize_ast_value(value, generics)
+        updated = _genericize_ast_value(value, generics, scope)
         if updated is not value:
             updates[item.name] = updated
     return replace(node, **updates) if updates else node
 
-def _genericize_ast_value(value: object, generics: tuple[Symbol, ...]) -> object:
+def _genericize_ast_value(
+    value: object,
+    generics: tuple[Symbol, ...],
+    scope: T.TypeVarScope | None = None,
+) -> object:
     """Generalize AST value during static analysis."""
     if isinstance(value, T.Type):
-        return _genericize_type(value, generics)
+        return _genericize_type(value, generics, scope)
     if isinstance(value, FunctionParam):
-        typ = None if value.typ is None else _genericize_type(value.typ, generics)
+        typ = None if value.typ is None else _genericize_type(value.typ, generics, scope)
         default = tuple(
-            cast(ASTNode, _genericize_ast_node(node, generics))
+            cast(ASTNode, _genericize_ast_node(node, generics, scope))
             for node in value.default
         )
         if typ is value.typ and default == value.default:
@@ -324,25 +379,26 @@ def _genericize_ast_value(value: object, generics: tuple[Symbol, ...]) -> object
         return replace(value, typ=typ, default=default)
     if isinstance(value, CallArgument):
         default = tuple(
-            cast(ASTNode, _genericize_ast_node(node, generics)) for node in value.value
+            cast(ASTNode, _genericize_ast_node(node, generics, scope)) for node in value.value
         )
         if default == value.value:
             return value
         return replace(value, value=default)
     if isinstance(value, ASTNode):
-        return _genericize_ast_node(value, generics)
+        return _genericize_ast_node(value, generics, scope)
     if isinstance(value, tuple):
-        return tuple(_genericize_ast_value(item, generics) for item in value)
+        return tuple(_genericize_ast_value(item, generics, scope) for item in value)
     return value
 
 def _genericize_attribute(
     attribute: T.ObjectAttribute,
     generics: tuple[Symbol, ...],
+    scope: T.TypeVarScope | None = None,
 ) -> T.ObjectAttribute:
     """Generalize attribute during static analysis."""
     return T.ObjectAttribute(
         attribute.name,
-        _genericize_type(attribute.typ, generics),
+        _genericize_type(attribute.typ, generics, scope),
         attribute.access,
         attribute.has_default,
     )
@@ -407,28 +463,32 @@ def _transform_type_children(
         return T.Exact(transform(typ.inner))
     return typ
 
-def _genericize_type(typ: T.Type, generics: tuple[Symbol, ...]) -> T.Type:
+def _genericize_type(
+    typ: T.Type,
+    generics: tuple[Symbol, ...],
+    scope: T.TypeVarScope | None = None,
+) -> T.Type:
     """Generalize type during static analysis."""
     names = {generic.text for generic in generics}
     typ = T.normalize(typ)
     if isinstance(typ, T.NominalType):
         if not typ.args and typ.name.text in names:
-            return T.V(typ.name.text)
+            return scope.variable(typ.name.text) if scope is not None else T.V(typ.name.text)
     if isinstance(typ, T.AnonymousTraitType):
         return T.AnonymousTrait(
             typ.generics,
             (
                 T.AnonymousTraitRequirement(
                     requirement.name,
-                    _genericize_overload(requirement.overload, generics),
+                    _genericize_overload(requirement.overload, generics, scope),
                 )
                 for requirement in typ.requirements
             ),
         )
     return _transform_type_children(
         typ,
-        lambda child: _genericize_type(child, generics),
-        element_tags=lambda tags: _genericize_element_tags(tags, generics),
+        lambda child: _genericize_type(child, generics, scope),
+        element_tags=lambda tags: _genericize_element_tags(tags, generics, scope),
     )
 
 def _anonymous_trait_overloads(*types: T.Type) -> tuple[tuple[Symbol, T.Overload], ...]:
@@ -579,12 +639,13 @@ def _collect_anonymous_trait_overloads(
 def _genericize_element_tags(
     tags: frozenset[T.ElementTag],
     generics: tuple[Symbol, ...],
+    scope: T.TypeVarScope | None = None,
 ) -> tuple[T.ElementTag, ...]:
     """Generalize element tags during static analysis."""
     return tuple(
         T.ElementTag(
             tag.name,
-            tuple(_genericize_type(arg, generics) for arg in tag.args),
+            tuple(_genericize_type(arg, generics, scope) for arg in tag.args),
             tag.absent,
         )
         for tag in tags
@@ -719,7 +780,10 @@ def _anonymous_type_var(branch: _core.AnalysisBranch, offset: int) -> T.Type:
         *(typ for _, typ in branch.variables.visible_items()),
     )
     start = max(taken, default=0)
-    return T.V(f"@{start + offset}")
+    return T.M(
+        f"@{start + offset}",
+        T.MetaVarId(branch.origin, start + offset),
+    )
 
 def _anonymous_type_indices(*types: T.Type) -> set[int]:
     """Compute anonymous type indices during static analysis."""
@@ -730,7 +794,7 @@ def _anonymous_type_indices(*types: T.Type) -> set[int]:
 
 def _collect_anonymous_type_indices(typ: T.Type, indices: set[int]) -> None:
     """Collect anonymous type indices during static analysis."""
-    if isinstance(typ, T.VarType) and typ.name.startswith("@"):
+    if isinstance(typ, T.MetaVarType) and typ.name.startswith("@"):
         suffix = typ.name[1:]
         if suffix.isdecimal():
             indices.add(int(suffix))

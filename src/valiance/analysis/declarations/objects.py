@@ -99,6 +99,13 @@ class _ObjectDeclarations:
         node: ObjectNode,
     ) -> BranchSet:
         """Build the definition for object during static analysis."""
+        if node.generics and node.generic_scope_id is None:
+            scope_id = (
+                2_000_000 + node.location.offset
+                if node.location is not None
+                else id(node)
+            )
+            node = replace(node, generic_scope_id=scope_id)
         if not self._validate_object_lifecycle(node):
             return BranchSet((branch.emit(TypedNode(node, None)),))
         if node.target is not None:
@@ -118,7 +125,9 @@ class _ObjectDeclarations:
             )
             return BranchSet((current,))
 
-        object_attributes = self._object_attributes(node.fields, node.generics)
+        object_attributes = self._object_attributes(
+            node.fields, node.generics, node.generic_scope_id
+        )
         if object_attributes is None:
             return BranchSet((branch.emit(TypedNode(node, None)),))
         defaults = frozenset(field.name for field in node.fields if field.default)
@@ -183,13 +192,19 @@ class _ObjectDeclarations:
         self,
         fields: tuple[ObjectFieldNode, ...],
         generics: tuple[Symbol, ...],
+        scope_id: int | None = None,
     ) -> tuple[T.ObjectAttribute, ...] | None:
         """Compute object attributes during static analysis."""
         attributes = tuple(self._object_attribute(field) for field in fields)
         if any(attribute is None for attribute in attributes):
             return None
+        scope = (
+            T.TypeVarScope(scope_id, tuple(generic.text for generic in generics))
+            if generics and scope_id is not None
+            else None
+        )
         return tuple(
-            _functions._genericize_attribute(attribute, generics)
+            _functions._genericize_attribute(attribute, generics, scope)
             for attribute in attributes
             if attribute is not None
         )
@@ -235,7 +250,18 @@ class _ObjectDeclarations:
                 attributes,
                 defaults=defaults,
                 result_type=result_type
-                or _utils._declared_nominal(name, node.generics),
+                or _utils._declared_nominal(
+                    name,
+                    node.generics,
+                    (
+                        T.TypeVarScope(
+                            node.generic_scope_id,
+                            tuple(generic.text for generic in node.generics),
+                        )
+                        if node.generics and node.generic_scope_id is not None
+                        else None
+                    ),
+                ),
                 generic_constraints=constraints,
             )
         else:
@@ -259,16 +285,25 @@ class _ObjectDeclarations:
 
         owner = owner_node.name
         owner_definition = self.env.lookup_object(owner)
-        self_type = _utils._declared_nominal(
-            owner,
-            owner_definition.generics if owner_definition is not None else (),
+        owner_generics = (
+            owner_definition.generics if owner_definition is not None else ()
         )
+        owner_scope = (
+            T.TypeVarScope(
+                owner_node.generic_scope_id,
+                tuple(generic.text for generic in owner_generics),
+            )
+            if owner_generics and owner_node.generic_scope_id is not None
+            else None
+        )
+        self_type = _utils._declared_nominal(owner, owner_generics, owner_scope)
         if definition.function.returns is not None and (
             len(definition.function.returns) != 1
             or not T.same(
                 _functions._genericize_type(
                     definition.function.returns[0],
                     (*owner_node.generics, *definition.generics),
+                    owner_scope if not definition.generics else None,
                 ),
                 self_type,
             )
@@ -302,6 +337,9 @@ class _ObjectDeclarations:
             element_tags_explicit=definition.function.element_tags_explicit,
             companion_tags_allowed=definition.function.companion_tags_allowed,
             location=definition.function.location,
+            generic_scope_id=(
+                owner_node.generic_scope_id if not definition.generics else None
+            ),
         )
         function_node = annotation_hooks.DEFAULT_REGISTRY.transform_function(
             function_node,

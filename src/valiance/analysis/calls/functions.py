@@ -480,7 +480,7 @@ class _CallableValues:
         call_params: tuple[T.Type, ...],
         *,
         rank_values: dict[str, int] | None = None,
-        type_values: dict[str, T.Type] | None = None,
+        type_values: dict[T.TypeVarKey, T.Type] | None = None,
         where_evaluated: bool = False,
         static_values: dict[str, int] | None = None,
     ) -> FunctionAnalysis | None:

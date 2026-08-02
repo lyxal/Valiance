@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
-from itertools import count, permutations
+from itertools import permutations
 from typing import cast
 
 import valiance.vtypes as T
@@ -24,76 +24,6 @@ from valiance.vtypes.symbols import Symbol
 from .. import analyser as _core
 from . import callable_values as _functions
 from ..support import analysis_utils as _utils
-
-
-_FRESH_OVERLOAD_GENERIC_IDS = count()
-
-
-def _freshen_overload_generics_for_args(
-    overload: T.Overload,
-    args: tuple[T.Type, ...],
-) -> T.Overload:
-    """Alpha-rename callee generics that collide with caller type variables.
-
-    VarType currently stores a source-facing name rather than a lexical identity.
-    Freshening at the call boundary keeps an overload's local ``T`` distinct from
-    a caller's unrelated ``T`` while preserving the displayed original overload.
-    """
-    overload_vars: set[str] = set(overload.generic_params)
-    for typ in (
-        *overload.params,
-        *overload.returns,
-        *(constraint.bound for constraint in overload.generic_constraints),
-        *(arg for tag in overload.element_tags for arg in tag.args),
-    ):
-        overload_vars.update(_type_variable_names(typ))
-    collisions: set[str] = set()
-    for arg, param in zip(args, overload.params, strict=False):
-        if T.same(arg, param):
-            continue
-        collisions.update(
-            overload_vars
-            & _type_variable_names(arg)
-            & _type_variable_names(param)
-        )
-    if not collisions:
-        return overload
-
-    nonce = next(_FRESH_OVERLOAD_GENERIC_IDS)
-    renames = {
-        name: T.V(f"@call{nonce}:{name}")
-        for name in sorted(collisions)
-    }
-    renamed_tags = frozenset(
-        T.ElementTag(
-            tag.name,
-            tuple(_substitute_branch_type(arg, renames) for arg in tag.args),
-            tag.absent,
-        )
-        for tag in overload.element_tags
-    )
-    return replace(
-        overload,
-        params=tuple(_substitute_branch_type(param, renames) for param in overload.params),
-        returns=tuple(_substitute_branch_type(ret, renames) for ret in overload.returns),
-        generic_constraints=tuple(
-            replace(
-                constraint,
-                name=(
-                    renames[constraint.name].name
-                    if constraint.name in renames
-                    else constraint.name
-                ),
-                bound=_substitute_branch_type(constraint.bound, renames),
-            )
-            for constraint in overload.generic_constraints
-        ),
-        element_tags=renamed_tags,
-        generic_params=tuple(
-            renames[name].name if name in renames else name
-            for name in overload.generic_params
-        ),
-    )
 
 
 def _overload_index(
@@ -262,7 +192,7 @@ def _contextual_stack_argument_variants(
             literal_substitution = {
                 name: typ
                 for name, typ in inferred.items()
-                if name in inferred_literal_vars
+                if isinstance(name, str) and name in inferred_literal_vars
             }
             if literal_substitution:
                 branch = _specialize_branch_arguments(branch, literal_substitution)
@@ -295,7 +225,7 @@ def _contextual_stack_argument_variants(
 
     def rec(
         position: int,
-        current_substitution: dict[str, T.Type],
+        current_substitution: dict[T.TypeVarKey, T.Type],
         replacements: tuple[TypedFunctionNode, ...],
     ) -> Iterator[tuple[tuple[T.Type, ...], _core.AnalysisBranch]]:
         """Recursively specialize each deferred stack function argument."""
@@ -733,10 +663,10 @@ def _specialized_modifier_orders(
     params: tuple[T.Type, ...],
     modifier_indexes: tuple[int, ...],
     modifiers: tuple[_core.ModifierArgumentAnalysis, ...],
-    substitution: dict[str, T.Type],
+    substitution: dict[T.TypeVarKey, T.Type],
     ctx: T.Context,
     analyser: _core.Analyser | None = None,
-) -> Iterator[tuple[dict[str, T.Type], tuple[_core.ModifierArgumentAnalysis, ...]]]:
+) -> Iterator[tuple[dict[T.TypeVarKey, T.Type], tuple[_core.ModifierArgumentAnalysis, ...]]]:
     """Compute specialized modifier orders during static analysis."""
     if not modifier_indexes:
         yield substitution, ()
@@ -744,9 +674,9 @@ def _specialized_modifier_orders(
 
     def rec(
         position: int,
-        current_substitution: dict[str, T.Type],
+        current_substitution: dict[T.TypeVarKey, T.Type],
         current_modifiers: tuple[_core.ModifierArgumentAnalysis, ...],
-    ) -> Iterator[tuple[dict[str, T.Type], tuple[_core.ModifierArgumentAnalysis, ...]]]:
+    ) -> Iterator[tuple[dict[T.TypeVarKey, T.Type], tuple[_core.ModifierArgumentAnalysis, ...]]]:
         """Recursively continue the specialized modifier orders algorithm."""
         if position == len(modifier_indexes):
             yield current_substitution, current_modifiers
@@ -781,7 +711,7 @@ def _specialized_modifier_orders(
             ):
                 key = (
                     modifier.typ,
-                    tuple(sorted(modifier_substitution.items())),
+                    tuple(sorted(modifier_substitution.items(), key=lambda item: repr(item[0]))),
                 )
                 if key in seen:
                     continue
@@ -807,7 +737,7 @@ def _modifier_variants_for_expected(
     expected: T.Type,
     ctx: T.Context,
     analyser: _core.Analyser | None = None,
-) -> Iterator[tuple[_core.ModifierArgumentAnalysis, dict[str, T.Type]]]:
+) -> Iterator[tuple[_core.ModifierArgumentAnalysis, dict[T.TypeVarKey, T.Type]]]:
     """Compute modifier variants for expected during static analysis."""
     expected = T.normalize(expected)
     if not isinstance(
@@ -856,7 +786,7 @@ def _modifier_variants_for_expected(
 
     overloads = _contextual_modifier_overloads(modifier, expected, analyser, ctx)
     matches: list[
-        tuple[_core.ModifierArgumentAnalysis, dict[str, T.Type], bool]
+        tuple[_core.ModifierArgumentAnalysis, dict[T.TypeVarKey, T.Type], bool]
     ] = []
     for overload in overloads:
         typ = T.normalize(overload.typ)
@@ -985,10 +915,10 @@ def _modifier_param_rank_variants(typ: T.Type) -> tuple[T.Type, ...]:
 
 
 def _merge_substitutions(
-    left: dict[str, T.Type],
-    right: dict[str, T.Type],
+    left: dict[T.TypeVarKey, T.Type],
+    right: dict[T.TypeVarKey, T.Type],
     ctx: T.Context | None = None,
-) -> dict[str, T.Type] | None:
+) -> dict[T.TypeVarKey, T.Type] | None:
     """Merge independently collected generic evidence coherently."""
     merged = dict(left)
     for name, typ in right.items():
@@ -1151,7 +1081,6 @@ def _apply_overload_to_branch(
         )
     args = _row_views_for_arguments(args, overload.params, env)
     original_overload = overload
-    overload = _freshen_overload_generics_for_args(overload, args)
     for initial_rank_values in _initial_rank_value_candidates(overload.params, args):
         rank_bound = _substitute_overload_ranks(overload, initial_rank_values)
         preliminary_substitution = (
@@ -1176,44 +1105,9 @@ def _apply_overload_to_branch(
         )
         if substitution is None:
             continue
-        # Branch solving may initially express a variable-to-variable match
-        # from the caller's point of view (for example U -> constructor T).
-        # Turn that into a callee-local binding (T -> U) before specializing
-        # either side, so nested generic calls cannot capture caller generics.
-        overload_type_vars = set(specialized_overload.generic_params)
-        for typ in (
-            *specialized_overload.params,
-            *specialized_overload.returns,
-            *(
-                constraint.bound
-                for constraint in specialized_overload.generic_constraints
-            ),
-            *(arg for tag in specialized_overload.element_tags for arg in tag.args),
-        ):
-            overload_type_vars.update(_type_variable_names(typ))
-        for caller_name, target in tuple(substitution.items()):
-            normalized_target = T.normalize(target)
-            if (
-                caller_name not in overload_type_vars
-                and isinstance(normalized_target, T.VarType)
-                and normalized_target.name in overload_type_vars
-            ):
-                substitution.pop(caller_name)
-                substitution.setdefault(normalized_target.name, T.V(caller_name))
-
-        # Overload-local generics specialize the selected callable, not the
-        # caller's branch. Generic variables currently use source names as
-        # their identity, so applying a callee substitution such as T -> U to
-        # the whole branch can accidentally rewrite an enclosing function's
-        # unrelated T. Concrete substitutions still refine inferred branches.
-        branch_substitution = {
-            name: typ
-            for name, typ in substitution.items()
-            if not (
-                name in overload_type_vars
-                and _functions._contains_type_var(typ)
-            )
-        }
+        # Identity-keyed substitutions can specialize caller state directly:
+        # callee and caller variables with the same display name are distinct keys.
+        branch_substitution = substitution
         specialized_branch = _specialize_branch_arguments(
             branch,
             branch_substitution,

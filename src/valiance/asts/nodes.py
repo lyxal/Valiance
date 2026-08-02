@@ -192,6 +192,7 @@ class FunctionParam:
     name: Symbol | None = None
     typ: Type | None = None
     default: tuple[ASTNode, ...] = ()
+    inference_identity: object | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -362,6 +363,7 @@ class FunctionNode(ASTNode):
     )
     generic_constraints: tuple[Type | None, ...] = ()
     overloads: tuple[OverloadSignature, ...] = ()
+    generic_scope_id: int | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -837,3 +839,4 @@ class ObjectNode(ASTNode):
     generic_variances: tuple[Symbol | None, ...] = ()
     generic_constraints: tuple[Type | None, ...] = ()
     visibility: Symbol | None = None
+    generic_scope_id: int | None = field(default=None, compare=False)

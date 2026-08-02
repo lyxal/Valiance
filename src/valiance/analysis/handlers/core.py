@@ -218,7 +218,10 @@ def _at_node(
 ) -> _core.BranchSet:
     """Analyse a `AtNode` node and return the surviving branches."""
     arity = len(node.levels)
-    source_hints = tuple(T.V(f"_at_{branch.origin}_{index}") for index in range(arity))
+    source_hints = tuple(T.V(
+        f"_at_{branch.origin}_{index}",
+        T.TypeVarId(branch.origin, 10_000 + index),
+    ) for index in range(arity))
     sourced = branch.source_arguments(source_hints)
     if sourced is None:
         self._diagnose(
@@ -420,7 +423,10 @@ def _pop_n_node(
             node,
         )
         return _core.BranchSet()
-    params = tuple(T.V(f"_pop_n_{index}") for index in range(node.count))
+    params = tuple(T.V(
+        f"_pop_n_{index}",
+        T.TypeVarId(branch.origin, 20_000 + index),
+    ) for index in range(node.count))
     sourced = branch.source_arguments(params)
     if sourced is None:
         self._diagnose(
@@ -440,7 +446,10 @@ def _stack_shuffle_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse a `StackShuffleNode` node and return the surviving branches."""
-    params = tuple(T.V(f"_shuffle_{index}") for index, _ in enumerate(node.prestack))
+    params = tuple(T.V(
+        f"_shuffle_{index}",
+        T.TypeVarId(branch.origin, 30_000 + index),
+    ) for index, _ in enumerate(node.prestack))
     sourced = branch.source_arguments(params)
     if sourced is None:
         self._diagnose(

@@ -61,11 +61,53 @@ class NominalType(Type):
     args: tuple[Type, ...] = ()
 
 
+@dataclass(frozen=True, order=True, slots=True)
+class TypeVarId:
+    """Lexical identity of one bound type variable.
+
+    ``scope`` identifies the binder and ``index`` identifies the variable inside
+    that binder. The source spelling is intentionally not part of identity.
+    """
+
+    scope: int
+    index: int
+
+
 @dataclass(frozen=True)
 class VarType(Type):
-    """A generic type variable."""
+    """A generic type variable with an optional lexical identity.
+
+    Unscoped variables remain available for compiler metadata that has not yet
+    migrated to binder identities. Bound source generics should use ``identity``.
+    """
 
     name: str
+    identity: TypeVarId | None = None
+
+
+@dataclass(frozen=True, order=True, slots=True)
+class MetaVarId:
+    """Identity of one compiler-created, refinable inference variable."""
+
+    origin: int
+    index: int
+
+
+@dataclass(frozen=True)
+class MetaVarType(VarType):
+    """A compiler-created inference variable that may be refined in a branch."""
+
+    meta_identity: MetaVarId = MetaVarId(0, 0)
+
+
+TypeVarKey = str | TypeVarId | MetaVarId
+
+
+def type_var_key(variable: VarType) -> TypeVarKey:
+    """Return the semantic identity key for a rigid or inference variable."""
+    if isinstance(variable, MetaVarType):
+        return variable.meta_identity
+    return variable.identity if variable.identity is not None else variable.name
 
 
 @dataclass(frozen=True)
@@ -318,7 +360,7 @@ class ResolvedOverload:
     """Chosen overload plus the substitution and instantiated signature."""
 
     overload: Overload
-    substitution: dict[str, Type]
+    substitution: dict[TypeVarKey, Type]
     params: tuple[Type, ...]
     returns: tuple[Type, ...]
     scores: tuple[Specificity, ...]
@@ -341,7 +383,7 @@ class AppliedOverload:
     """Result of applying one overload to concrete argument types."""
 
     overload: Overload
-    substitution: dict[str, Type]
+    substitution: dict[TypeVarKey, Type]
     params: tuple[Type, ...]
     returns: tuple[Type, ...]
     actual_returns: tuple[Type, ...]
@@ -412,6 +454,6 @@ class OverloadAttempt:
     mismatch: OverloadMismatch | None = None
 
 
-def _substitution_items(substitution: dict[str, Type]) -> tuple[tuple[str, Type], ...]:
+def _substitution_items(substitution: dict[TypeVarKey, Type]) -> tuple[tuple[str, Type], ...]:
     """Collect the items for substitution for immutable type-system records."""
-    return tuple(sorted(substitution.items()))
+    return tuple(sorted(substitution.items(), key=lambda item: repr(item[0])))

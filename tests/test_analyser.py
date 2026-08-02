@@ -1,4 +1,6 @@
 import unittest
+
+import valiance.vtypes as T
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -73,6 +75,7 @@ from valiance.vtypes import (
     TupleTypeItem,
     TupVariadic,
     TypeStack,
+    TypeVarId,
     U,
     UnknownElement,
     V,
@@ -565,10 +568,8 @@ define[T] rankOne(xs: T+ exact) -> T+ => $xs end
             show(definition.overloads[0].overload.params[0]),
             "T+ exact",
         )
-        self.assertEqual(
-            definition.overloads[0].body[0].typ,
-            C(ListExactType, Integer),
-        )
+        self.assertEqual(show(definition.overloads[0].body[0].typ), "T+")
+        self.assertIsNotNone(definition.overloads[0].body[0].typ.base.identity)
         self.assertEqual(typed[-1].typ, C(ListExactType, Integer))
 
     def test_atomic_requirement_is_retained_across_generic_forwarding(self):
@@ -748,9 +749,9 @@ choose[Number, _](1, "value")
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertIsInstance(typed[-1], TypedElementNode)
-        self.assertEqual(
-            typed[-1].overload.substitution,
-            {"T": Number, "U": String},
+        self.assertEqual(set(typed[-1].overload.substitution.values()), {Number, String})
+        self.assertTrue(
+            all(isinstance(key, TypeVarId) for key in typed[-1].overload.substitution)
         )
         self.assertEqual(typed[-1].overload.actual_returns, (Number,))
 
@@ -1303,6 +1304,24 @@ $.value
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Car")))
 
+    def test_generic_object_assigns_one_scope_to_fields_and_constructor(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+object[T] Box => $value: T
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+        definition = analyser.env.lookup_object(Symbol("Box"))
+        constructor = analyser.env.overloads_for(Symbol("Box"))[0]
+        field_var = definition.attributes[0].typ
+        parameter_var = constructor.params[0]
+        result_var = constructor.returns[0].args[0]
+        self.assertIsNotNone(field_var.identity)
+        self.assertEqual(field_var.identity, parameter_var.identity)
+        self.assertEqual(field_var.identity, result_var.identity)
+        self.assertEqual(field_var.name, "T")
+
     def test_nested_generic_calls_keep_caller_and_callee_variables_scoped(self):
         analyser = Analyser()
 
@@ -1319,19 +1338,19 @@ define[A] Nested(x: A) -> Box[Box[A]] => Box(Box($x))
         map_overload = analyser.env.overloads_for(Symbol("Map"))[0]
         nested_overload = analyser.env.overloads_for(Symbol("Nested"))[0]
         self.assertEqual(
-            Fn(map_overload.params, map_overload.returns),
-            Fn(
-                (N(Symbol("Box"), V("T")), Fn((V("T"),), (V("U"),))),
-                (N(Symbol("Box"), V("U")),),
-            ),
+            show(Fn(map_overload.params, map_overload.returns)),
+            "Function[Box[T], Function[T -> U] -> Box[U]]",
         )
         self.assertEqual(
-            Fn(nested_overload.params, nested_overload.returns),
-            Fn(
-                (V("A"),),
-                (N(Symbol("Box"), N(Symbol("Box"), V("A"))),),
-            ),
+            show(Fn(nested_overload.params, nested_overload.returns)),
+            "Function[A -> Box[Box[A]]]",
         )
+        map_t = map_overload.params[0].args[0]
+        nested_a = nested_overload.params[0]
+        self.assertIsInstance(map_t, V("T").__class__)
+        self.assertIsNotNone(map_t.identity)
+        self.assertIsNotNone(nested_a.identity)
+        self.assertNotEqual(map_t.identity, nested_a.identity)
         self.assertIsInstance(typed[-1], TypedFunctionNode)
 
     def test_labelled_generic_upper_bound_rejects_supertype_solution(self):
@@ -1523,20 +1542,21 @@ end
     def test_generic_function_literal_uses_declared_generics(self):
         [typed] = analyse(parse("fn[T] (item: T) -> T => $item"))
 
-        self.assertEqual(typed.typ, Fn((V("T"),), (V("T"),)))
+        self.assertEqual(show(typed.typ), "Function[T -> T]")
+        self.assertIsNotNone(typed.typ.params[0].identity)
+        self.assertEqual(typed.typ.params[0].identity, typed.typ.returns[0].identity)
 
     def test_generic_function_literal_uses_explicit_row_constraint(self):
         analyser = Analyser()
         [typed] = analyser.analyse(parse("fn[T, U] (x: T(.bar: U)) -> U => $x.bar"))
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(
-            typed.typ,
-            Fn(
-                (Row(V("T"), Field(Symbol("bar"), V("U"))),),
-                (V("U"),),
-            ),
-        )
+        self.assertEqual(show(typed.typ), "Function[T(.bar: U) -> U]")
+        row = typed.typ.params[0]
+        self.assertIsNotNone(row.base.identity)
+        self.assertIsNotNone(row.fields[0].typ.identity)
+        self.assertEqual(row.fields[0].typ.identity, typed.typ.returns[0].identity)
+        self.assertNotEqual(row.base.identity, row.fields[0].typ.identity)
 
     def test_match_infers_missing_inputs_from_multiple_patterns(self):
         typ = analyse_function(
@@ -2257,7 +2277,9 @@ define get(:Foo) => $f.x + 5
             Environment(),
         )
 
-        self.assertEqual(typ, Fn((Row(V("@1"), Field(BAR, V("@2"))),), (V("@2"),)))
+        self.assertEqual(show(typ), "Function[@1(.bar: @2) -> @2]")
+        self.assertIsInstance(typ.params[0].base, T.MetaVarType)
+        self.assertIsInstance(typ.params[0].fields[0].typ, T.MetaVarType)
 
     def test_later_collection_consumer_refines_implicit_function_input(self):
         analyser = Analyser()
@@ -2359,10 +2381,8 @@ end
         )
 
         self.assertIsNotNone(details)
-        self.assertEqual(
-            details.typ,
-            Fn((Row(V("@1"), Field(NAME, String)),), (String,)),
-        )
+        self.assertEqual(show(details.typ), "Function[@1(.name: String) -> String]")
+        self.assertIsInstance(details.typ.params[0].base, T.MetaVarType)
         typed_field = details.overloads[0].body[-1]
         self.assertEqual(typed_field.typ, String)
 
@@ -2384,10 +2404,8 @@ getName $joe
         self.assertEqual(analyser.diagnostics, [])
         definition = typed[1]
         self.assertIsInstance(definition, TypedFunctionNode)
-        self.assertEqual(
-            definition.typ,
-            Fn((Row(V("@1"), Field(NAME, String)),), (String,)),
-        )
+        self.assertEqual(show(definition.typ), "Function[@1(.name: String) -> String]")
+        self.assertIsInstance(definition.typ.params[0].base, T.MetaVarType)
         self.assertIsInstance(typed[-1], TypedElementNode)
         self.assertEqual(typed[-1].typ, String)
 
@@ -2398,11 +2416,17 @@ getName $joe
         )
 
         self.assertEqual(
-            typ,
-            Fn(
-                (Row(V("@1"), Field(BAR, Row(V("@2"), Field(NAME, V("@3"))))),),
-                (V("@3"),),
-            ),
+            show(typ),
+            "Function[@1(.bar: @2(.name: @3)) -> @3]",
+        )
+        outer = typ.params[0]
+        nested = outer.fields[0].typ
+        self.assertIsInstance(outer.base, T.MetaVarType)
+        self.assertIsInstance(nested.base, T.MetaVarType)
+        self.assertIsInstance(nested.fields[0].typ, T.MetaVarType)
+        self.assertEqual(
+            nested.fields[0].typ.meta_identity,
+            typ.returns[0].meta_identity,
         )
 
     def test_function_uses_explicit_row_parameter_for_field_access(self):
@@ -2432,7 +2456,8 @@ getName $joe
 
         typ = analyse_function(node, default_environment())
 
-        self.assertEqual(typ, Fn((Row(V("x"), Field(FOO_FIELD, Number)),), (Number,)))
+        self.assertEqual(show(typ), "Function[x(.foo: Number) -> Number]")
+        self.assertIsInstance(typ.params[0].base, T.MetaVarType)
 
     def test_if_branches_refine_row_field_collection_element_type(self):
         node = FunctionNode(
@@ -2459,12 +2484,10 @@ getName $joe
         typ = analyse_function(node, default_environment())
 
         self.assertEqual(
-            typ,
-            Fn(
-                (Row(V("x"), Field(FOO_FIELD, C(ListExactType, Number))),),
-                (C(ListExactType, Number),),
-            ),
+            show(typ),
+            "Function[x(.foo: Number+) -> Number+]",
         )
+        self.assertIsInstance(typ.params[0].base, T.MetaVarType)
 
     def test_field_access_uses_environment_object_attributes(self):
         env = Environment()
@@ -2523,6 +2546,30 @@ getName $joe
         typ = analyse_function(node, env)
 
         self.assertEqual(typ, Fn((Number, Number), (Number,)))
+
+    def test_branch_refinement_rejects_scoped_rigid_variable(self):
+        rigid = V("T", TypeVarId(900, 0))
+        branch = AnalysisBranch(
+            stack=TypeStack((rigid,)),
+            inputs=(rigid,),
+        )
+
+        refined = branch.refine_type(rigid, Number)
+
+        self.assertEqual(refined.stack, TypeStack((rigid,)))
+        self.assertEqual(refined.inputs, (rigid,))
+
+    def test_branch_refinement_accepts_metavariable(self):
+        inferred = T.M("@cleanup", T.MetaVarId(901, 0))
+        branch = AnalysisBranch(
+            stack=TypeStack((inferred,)),
+            inputs=(inferred,),
+        )
+
+        refined = branch.refine_type(inferred, Number)
+
+        self.assertEqual(refined.stack, TypeStack((Number,)))
+        self.assertEqual(refined.inputs, (Number,))
 
     def test_branch_variables_are_branch_local(self):
         number_vars = BranchVariables()

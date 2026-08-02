@@ -25,7 +25,7 @@ def lint_stack_shuffle(context: NodeLintContext):
         return ()
 
     params = tuple(
-        T.V(f"_lint_shuffle_{index}")
+        T.V(f"_lint_shuffle_{index}", T.TypeVarId(0, 80_000 + index))
         for index, _ in enumerate(node.prestack)
     )
     if context.branch.source_arguments(params) is None:

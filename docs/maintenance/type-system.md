@@ -1870,3 +1870,62 @@ question being asked, and keep each rule in its narrowest correct layer.
 ## Explicit return paths
 
 Return branches carry a dedicated selected result stack rather than exposing the residual branch stack. Explicit return branches must have identical multiplicity before their types are merged positionally; unlike ordinary expression branches, return exits are never padded with `None`. Functions without declared returns and without `@returnAll` are constrained to zero or one selected result.
+
+## Type-variable identity migration
+
+Type variables are gaining lexical identities so a source spelling is no longer
+used as compiler identity. The foundational representation is:
+
+```python
+TypeVarId(scope, index)
+VarType(name, identity)
+```
+
+`name` is presentation metadata. Equality and hashing include `identity` when a
+variable is scoped, so two unrelated binders may both display as `T` without
+comparing equal. `TypeVarScope(scope, names)` allocates stable positions for one
+binder. Existing unscoped `V("T")` values remain temporarily available while
+substitution maps and declaration genericization migrate from string keys.
+
+Migration order:
+
+1. Introduce identity-bearing type nodes and binder allocation.
+2. Change generic declaration rewriting to create one `TypeVarScope` per binder.
+   Ordinary function literals/definitions and object fields/constructors now do
+   this. Anonymous structural-trait binders remain name-keyed until their solver
+   is migrated.
+3. Key solver substitutions and bounds by `TypeVarId`, not source text.
+   Core type relations, overload application, branch specialization, field
+   projection, explicit generic arguments, and static where-clause type values
+   now use `TypeVarKey` (`TypeVarId` for scoped variables, `str` only for
+   not-yet-migrated metadata). The call-boundary alpha-renaming workaround has
+   been removed.
+4. Separate rigid declaration variables from refinable inference metavariables.
+   `VarType` is now rigid and uses `TypeVarId`; `MetaVarType` is compiler-owned,
+   refinable, and uses `MetaVarId`. Anonymous function-input and row inference
+   now allocate metavariables. Branch refinement refuses identity-bearing rigid
+   variables. Legacy unscoped placeholders remain temporarily refinable until
+   their individual producers migrate to `M(...)`.
+5. Remove call-boundary alpha-renaming once all solver paths are identity-aware.
+
+Do not add new name-based substitution paths during this migration. Any code that
+needs to correlate variables should use identity when present and treat `name` as
+display-only.
+
+### Inference-variable cleanup status
+
+The analyser now classifies compiler-created placeholders by behavior:
+
+- `MetaVarType` for branch-refinable inference holes, including anonymous
+  inputs, inferred rows, inferred assignments, and assignment targets.
+- identity-bearing `VarType` for rigid operation-local probes used by stack
+  shuffles, indexing source acquisition, tag application, and lint analysis.
+- source-bound `VarType` with `TypeVarId` for declaration generics.
+
+Untyped function and modifier parameters now own a stable `MetaVarId`, and that
+identity is preserved when their concrete call-site parameter is reconstructed.
+The former parameter-name compatibility path is removed. Branch specialization
+retains one legacy string fallback solely for environment and builtin overload
+metadata that still constructs unscoped `VarType` values. Removing `str` from
+`TypeVarKey` therefore requires binder identities for that metadata, not further
+function-parameter work. No new unscoped analyser producer should be added.

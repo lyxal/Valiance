@@ -221,7 +221,13 @@ class AnalysisBranch:
         return replace(self, return_stack=stack, return_exact=exact)
 
     def refine_type(self, old: T.Type, new: T.Type) -> AnalysisBranch:
-        """Replace one inferred/generic type fact across the branch."""
+        """Refine an inference variable or a concrete structural branch fact."""
+        if (
+            isinstance(old, T.VarType)
+            and not isinstance(old, T.MetaVarType)
+            and old.identity is not None
+        ):
+            return self
         return replace(
             self,
             stack=_ops._refine_stack(self.stack, old, new),

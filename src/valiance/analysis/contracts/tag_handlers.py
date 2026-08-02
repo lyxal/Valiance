@@ -241,7 +241,15 @@ def _tag_application_node(
     if definition is None:
         self._diagnose(f"unknown data tag '#{node.tag.name}'", node)
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
-    sourced = branch.source_arguments((T.V("_tagged_value"),))
+    sourced = branch.source_arguments((
+        T.V(
+            "_tagged_value",
+            T.TypeVarId(
+                branch.origin,
+                70_000 + (node.location.offset if node.location is not None else 0),
+            ),
+        ),
+    ))
     if sourced is None:
         self._diagnose(
             f"empty stack when applying tag '{_calls._show_tag(node.tag)}'",

@@ -26,6 +26,9 @@ from valiance.vtypes import (
     ListExactType,
     ListMinType,
     ListRuggedType,
+    M,
+    MetaVarId,
+    MetaVarType,
     N,
     Never,
     NoneType,
@@ -42,6 +45,8 @@ from valiance.vtypes import (
     TupVariadic,
     TypeStack,
     TypeVariable,
+    TypeVarId,
+    TypeVarScope,
     U,
     V,
     Variance,
@@ -651,6 +656,82 @@ class TypeLibraryTests(unittest.TestCase):
             WithoutTag(ExactList(TypeVariable("Item")), "infinite"),
             Tagged(C(ListExactType, V("Item")), DataTag("infinite", absent=True)),
         )
+
+    def test_type_variable_identity_is_distinct_from_display_name(self):
+        left = V("T", TypeVarId(10, 0))
+        right = V("T", TypeVarId(11, 0))
+
+        self.assertNotEqual(left, right)
+        self.assertEqual(str(left), "T")
+        self.assertEqual(str(right), "T")
+        self.assertEqual(len({left, right}), 2)
+
+    def test_type_variable_scope_allocates_stable_binder_positions(self):
+        outer = TypeVarScope(20, ("T", "U"))
+        inner = TypeVarScope(21, ("T",))
+
+        self.assertEqual(outer.variable("T"), outer.variable("T"))
+        self.assertEqual(outer.variable("T").identity, TypeVarId(20, 0))
+        self.assertEqual(outer.variable("U").identity, TypeVarId(20, 1))
+        self.assertNotEqual(outer.variable("T"), inner.variable("T"))
+        self.assertEqual(outer.bindings(), {
+            "T": outer.variable("T"),
+            "U": outer.variable("U"),
+        })
+        with self.assertRaises(KeyError):
+            outer.variable("Missing")
+
+    def test_solver_keys_scoped_variables_by_identity(self):
+        outer = V("T", TypeVarId(40, 0))
+        inner = V("T", TypeVarId(41, 0))
+        pattern = Tup(outer, inner)
+
+        solved = _solve(pattern, Tup(Integer, String))
+
+        self.assertEqual(solved, {
+            TypeVarId(40, 0): [Integer],
+            TypeVarId(41, 0): [String],
+        })
+
+    def test_substitution_targets_identity_not_display_name(self):
+        outer = V("T", TypeVarId(50, 0))
+        inner = V("T", TypeVarId(51, 0))
+
+        substituted = _substitute(
+            Tup(outer, inner),
+            {TypeVarId(50, 0): Integer},
+        )
+
+        self.assertEqual(substituted, Tup(Integer, inner))
+
+    def test_metavariable_has_distinct_refinable_identity(self):
+        first = M("@1", MetaVarId(70, 1))
+        second = M("@1", MetaVarId(71, 1))
+
+        self.assertIsInstance(first, MetaVarType)
+        self.assertNotEqual(first, second)
+        self.assertEqual(str(first), "@1")
+        self.assertEqual(
+            _substitute(first, {MetaVarId(70, 1): Integer}),
+            Integer,
+        )
+
+    def test_rigid_and_meta_variables_with_same_label_do_not_alias(self):
+        rigid = V("T", TypeVarId(80, 0))
+        inferred = M("T", MetaVarId(80, 0))
+
+        self.assertNotEqual(rigid, inferred)
+        self.assertEqual(
+            _substitute(
+                Tup(rigid, inferred),
+                {MetaVarId(80, 0): String},
+            ),
+            Tup(rigid, String),
+        )
+
+    def test_type_variable_scope_rejects_duplicate_binder_names(self):
+        with self.assertRaisesRegex(ValueError, "must be unique"):
+            TypeVarScope(30, ("T", "T"))
 
     def test_absent_tagged_collection_parameter_does_not_vectorise_return(self):
         overload = Overload(

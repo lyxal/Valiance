@@ -58,7 +58,7 @@ def _call_site_checked_overload_signature(
     analyser: _core.Analyser | None,
     *,
     rank_values: dict[str, int] | None = None,
-    type_values: dict[str, T.Type] | None = None,
+    type_values: dict[T.TypeVarKey, T.Type] | None = None,
     where_evaluated: bool = False,
     static_values: dict[str, int] | None = None,
 ) -> T.Overload | None:
@@ -209,7 +209,7 @@ def _call_site_consumed_count(
 def _propagated_element_tags(
     overload: T.Overload,
     args: tuple[T.Type, ...],
-    substitution: dict[str, T.Type] | None = None,
+    substitution: dict[T.TypeVarKey, T.Type] | None = None,
 ) -> frozenset[T.ElementTag]:
     """Compute propagated element tags during static analysis."""
     tags = {
@@ -478,7 +478,7 @@ def _evaluate_where_clause(
     overload: T.Overload,
     args: tuple[T.Type, ...],
     rank_values: dict[str, int],
-    type_substitution: dict[str, T.Type] | None = None,
+    type_substitution: dict[T.TypeVarKey, T.Type] | None = None,
 ) -> static_where.WhereEvaluation | None:
     """Evaluate one validated ``where`` clause for an overload candidate."""
     return static_where.evaluate_where_clause(
@@ -561,15 +561,45 @@ def _row_view_for_argument(
         ),
     )
 
+def _variables_with_key(
+    typ: T.Type,
+    key: T.TypeVarKey,
+) -> tuple[T.VarType, ...]:
+    """Collect variables matching one substitution key from a type tree."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.VarType):
+        return (typ,) if T.type_var_key(typ) == key else ()
+    if isinstance(typ, T.NominalType): children = typ.args
+    elif isinstance(typ, (T.UnionType, T.IntersectionType)): children = tuple(typ.items)
+    elif isinstance(typ, T.TupleType): children = typ.params
+    elif isinstance(typ, T.VariadicTupleType): children = tuple(i.typ for i in typ.items)
+    elif isinstance(typ, T.RowType): children = (typ.base, *(f.typ for f in typ.fields))
+    elif isinstance(typ, T.CollectionType): children = (typ.base,)
+    elif isinstance(typ, T.FunctionType): children = (*(typ.params or ()), *(typ.returns or ()))
+    elif isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)): children = (typ.inner,)
+    else: children = ()
+    return tuple(variable for child in children for variable in _variables_with_key(child, key))
+
+
 def _specialize_branch_arguments(
     branch: _core.AnalysisBranch,
-    substitution: dict[str, T.Type],
+    substitution: dict[T.TypeVarKey, T.Type],
 ) -> _core.AnalysisBranch:
     """Specialize branch arguments during static analysis."""
-    for name, typ in substitution.items():
-        if _functions._contains_named_type_var(typ, name):
+    for key, typ in substitution.items():
+        if isinstance(key, str) and _functions._contains_named_type_var(typ, key):
             continue
-        branch = branch.refine_type(T.V(name), typ)
+        variables = {
+            variable
+            for source in (*branch.inputs, *branch.stack.items)
+            for variable in _variables_with_key(source, key)
+        }
+        if not variables and isinstance(key, str):
+            # Environment and builtin overload metadata may still expose legacy
+            # string-keyed variables. Source/function inference no longer does.
+            variables = {T.V(key)}
+        for variable in variables:
+            branch = branch.refine_type(variable, typ)
     return branch
 
 def _apply_data_tag_flow(
@@ -895,11 +925,11 @@ def _refine_branch_like(
 def _branch_pair_substitution(
     source: tuple[T.Type, ...],
     target: tuple[T.Type, ...],
-) -> dict[str, T.Type] | None:
+) -> dict[T.TypeVarKey, T.Type] | None:
     """Compute branch pair substitution during static analysis."""
     if len(source) != len(target):
         return None
-    substitution: dict[str, T.Type] = {}
+    substitution: dict[T.TypeVarKey, T.Type] = {}
     for left, right in zip(source, target, strict=True):
         constraints = _solve_branch_argument(left, right, T.Context())
         if constraints is None:
@@ -915,14 +945,14 @@ def _branch_argument_substitution(
     args: tuple[T.Type, ...],
     params: tuple[T.Type, ...],
     ctx: T.Context,
-) -> dict[str, T.Type] | None:
+) -> dict[T.TypeVarKey, T.Type] | None:
     """Compute a coherent substitution without committing before callables.
 
     Ordinary arguments retain the branch-aware inference path. Function-valued
     arguments are deferred and solved against the original generic signature,
     then their evidence is joined with the provisional substitution.
     """
-    substitution: dict[str, T.Type] = {}
+    substitution: dict[T.TypeVarKey, T.Type] = {}
     deferred: list[tuple[T.Type, T.Type]] = []
     for arg, param in zip(args, params, strict=True):
         if (
@@ -983,12 +1013,12 @@ def _static_type_substitution(
     args: tuple[T.Type, ...],
     params: tuple[T.Type, ...],
     ctx: T.Context,
-) -> dict[str, T.Type] | None:
+) -> dict[T.TypeVarKey, T.Type] | None:
     """Infer static generic values with collection variables as element types."""
     substitution = _branch_argument_substitution(args, params, ctx)
     if substitution is None:
         return None
-    direct: dict[str, T.Type] = {}
+    direct: dict[T.TypeVarKey, T.Type] = {}
     for arg, param in zip(args, params, strict=True):
         if not _collect_static_element_bindings(param, arg, direct):
             return None
@@ -1006,7 +1036,7 @@ def _static_type_substitution(
 def _collect_static_element_bindings(
     pattern: T.Type,
     actual: T.Type,
-    bindings: dict[str, T.Type],
+    bindings: dict[T.TypeVarKey, T.Type],
 ) -> bool:
     """Bind generic collection bases to compile-time element types."""
     pattern = T.normalize(pattern)
@@ -1017,9 +1047,10 @@ def _collect_static_element_bindings(
         return _collect_static_element_bindings(pattern, actual.inner, bindings)
     if isinstance(pattern, T.CollectionType) and isinstance(actual, T.CollectionType):
         if isinstance(pattern.base, T.VarType):
-            previous = bindings.get(pattern.base.name)
+            key = T.type_var_key(pattern.base)
+            previous = bindings.get(key)
             if previous is None:
-                bindings[pattern.base.name] = actual.base
+                bindings[key] = actual.base
                 return True
             return T.same(previous, actual.base)
         return _collect_static_element_bindings(pattern.base, actual.base, bindings)
@@ -1066,12 +1097,12 @@ def _solve_type_argument(
     arg: T.Type,
     param: T.Type,
     ctx: T.Context | None = None,
-) -> dict[str, T.Type] | None:
+) -> dict[T.TypeVarKey, T.Type] | None:
     """Compute solve type argument during static analysis."""
     solved = T._solve(param, arg, ctx)
     if solved is None:
         return None
-    substitution: dict[str, T.Type] = {}
+    substitution: dict[T.TypeVarKey, T.Type] = {}
     for name, values in solved.items():
         combined = T._combine_all(values, ctx)
         if combined is None:
@@ -1083,11 +1114,11 @@ def _solve_branch_argument(
     arg: T.Type,
     param: T.Type,
     ctx: T.Context,
-) -> dict[str, T.Type] | None:
+) -> dict[T.TypeVarKey, T.Type] | None:
     """Compute solve branch argument during static analysis."""
-    constraints: dict[str, T.Type] = {}
+    constraints: dict[T.TypeVarKey, T.Type] = {}
 
-    def bind(name: str, typ: T.Type) -> bool:
+    def bind(name: T.TypeVarKey, typ: T.Type) -> bool:
         """Bind one inferred value during static analysis."""
         previous = constraints.get(name)
         if previous is None:
@@ -1099,14 +1130,20 @@ def _solve_branch_argument(
         """Recursively continue the solve branch argument algorithm."""
         actual = T.normalize(actual)
         expected = T.normalize(expected)
+        if isinstance(actual, T.VarType) and isinstance(expected, T.VarType):
+            if T.type_var_key(actual) == T.type_var_key(expected):
+                return True
+            # The expected variable belongs to the callee signature. Bind it to
+            # the caller's rigid variable without refining caller identity.
+            return bind(T.type_var_key(expected), actual)
         if isinstance(actual, T.VarType):
             if _functions._contains_named_type_var(expected, actual.name):
                 return True
-            return bind(actual.name, expected)
+            return bind(T.type_var_key(actual), expected)
         if isinstance(expected, T.VarType):
             if _functions._contains_named_type_var(actual, expected.name):
                 return True
-            return bind(expected.name, actual)
+            return bind(T.type_var_key(expected), actual)
         if (
             isinstance(actual, T.FunctionType)
             and isinstance(expected, T.FunctionType)
@@ -1195,11 +1232,11 @@ def _solve_branch_argument(
 
     return constraints if rec(arg, param) else None
 
-def _substitute_branch_type(typ: T.Type, substitution: dict[str, T.Type]) -> T.Type:
+def _substitute_branch_type(typ: T.Type, substitution: dict[T.TypeVarKey, T.Type]) -> T.Type:
     """Substitute branch type during static analysis."""
     typ = T.normalize(typ)
     if isinstance(typ, T.VarType):
-        return substitution.get(typ.name, typ)
+        return substitution.get(T.type_var_key(typ), typ)
     if isinstance(typ, T.NominalType):
         return T.N(
             typ.name,
@@ -1262,7 +1299,7 @@ def _substitute_branch_type(typ: T.Type, substitution: dict[str, T.Type]) -> T.T
 
 def _substitute_branch_element_tags(
     tags: frozenset[T.ElementTag],
-    substitution: dict[str, T.Type],
+    substitution: dict[T.TypeVarKey, T.Type],
 ) -> tuple[T.ElementTag, ...]:
     """Substitute branch element tags during static analysis."""
     return tuple(

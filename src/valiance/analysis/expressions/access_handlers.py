@@ -300,7 +300,15 @@ def _index_access_node(
         source_branch = branch.with_stack(
             T.TypeStack(branch.stack.items[: len(branch.stack) - selector_values])
         )
-        sourced = source_branch.source_arguments((T.V("IndexReceiver"),))
+        sourced = source_branch.source_arguments((
+            T.V(
+                "IndexReceiver",
+                T.TypeVarId(
+                    branch.origin,
+                    60_000 + (node.location.offset if node.location is not None else 0),
+                ),
+            ),
+        ))
         if sourced is None:
             self._diagnose("indexing requires receiver and index value(s)", node)
             return _core.BranchSet()

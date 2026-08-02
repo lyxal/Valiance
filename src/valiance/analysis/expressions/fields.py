@@ -77,6 +77,7 @@ from valiance.asts.object_constructors import (
     prepare_constructor_body,
 )
 from valiance.vtypes.symbols import Symbol
+from valiance.vtypes.structural import nested_types
 from valiance.vtypes.default_types import Boolean
 
 from ..calls import candidates as _calls
@@ -259,8 +260,18 @@ class _FieldExpressions:
                 write=write,
             ):
                 return None, None
+            field_variables = {
+                variable.name: variable
+                for variable in nested_types(attribute.typ)
+                if isinstance(variable, T.VarType)
+            }
             substitution = {
-                generic.text: arg
+                (
+                    field_variables[generic.text].identity
+                    if generic.text in field_variables
+                    and field_variables[generic.text].identity is not None
+                    else generic.text
+                ): arg
                 for generic, arg in zip(
                     definition.generics,
                     receiver_type.args,

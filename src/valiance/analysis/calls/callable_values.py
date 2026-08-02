@@ -417,7 +417,15 @@ def _call_site_substituted_params(
     for param, actual in zip(params, actuals, strict=True):
         typ = param.typ
         if typ is None:
-            substituted.append(FunctionParam(param.name, actual, param.default))
+            inferred = _utils._param_type(param, len(substituted))
+            identity = (
+                inferred.meta_identity
+                if isinstance(inferred, T.MetaVarType)
+                else param.inference_identity
+            )
+            substituted.append(
+                FunctionParam(param.name, actual, param.default, identity)
+            )
             continue
         if not _call_site_placeholder_accepts(typ, actual, ctx):
             return None
@@ -426,6 +434,7 @@ def _call_site_substituted_params(
                 param.name,
                 _call_site_substitute_type(typ, actual),
                 param.default,
+                param.inference_identity,
             )
         )
     return tuple(substituted)

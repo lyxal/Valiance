@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.nodes import (
@@ -20,6 +21,8 @@ from valiance.vtypes.nodes import (
     ListExactType,
     ListMinType,
     ListRuggedType,
+    MetaVarId,
+    MetaVarType,
     NeverType,
     NominalType,
     NoneTypeNode,
@@ -32,6 +35,7 @@ from valiance.vtypes.nodes import (
     TupleType,
     TupleTypeItem,
     Type,
+    TypeVarId,
     UnionType,
     VariadicTupleType,
     VarType,
@@ -62,15 +66,44 @@ def N(name: Symbol, *args: Type) -> Type:
     return NominalType(name, tuple(args))
 
 
-def V(name: str) -> Type:
-    """Create a generic type variable."""
-    return VarType(name)
+def V(name: str, identity: TypeVarId | None = None) -> Type:
+    """Create a generic type variable, optionally bound to a lexical identity."""
+    return VarType(name, identity)
 
 
-def TypeVariable(name: str) -> Type:
-    """Create a generic type variable with a readable constructor name."""
-    return V(name)
+def TypeVariable(name: str, identity: TypeVarId | None = None) -> Type:
+    """Create a rigid generic type variable with a readable constructor name."""
+    return V(name, identity)
 
+
+def M(name: str, identity: MetaVarId) -> Type:
+    """Create a compiler-owned, refinable inference metavariable."""
+    return MetaVarType(name, None, identity)
+
+
+@dataclass(frozen=True)
+class TypeVarScope:
+    """Deterministically allocate identities for one generic binder."""
+
+    scope: int
+    names: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        """Reject duplicate declarations inside a single generic binder."""
+        if len(set(self.names)) != len(self.names):
+            raise ValueError("type-variable names must be unique within one scope")
+
+    def variable(self, name: str) -> VarType:
+        """Return the variable bound to ``name`` in this lexical scope."""
+        try:
+            index = self.names.index(name)
+        except ValueError as exc:
+            raise KeyError(name) from exc
+        return VarType(name, TypeVarId(self.scope, index))
+
+    def bindings(self) -> dict[str, VarType]:
+        """Return all source names mapped to identity-bearing variables."""
+        return {name: self.variable(name) for name in self.names}
 
 def Some(inner: Type) -> Type:
     """Create the explicit ``Some[T]`` wrapper used by optional types."""
@@ -561,7 +594,8 @@ def _alpha_canonicalize(
     """Rename locally bound generics to deterministic, capture-free names."""
     scope = {} if scope is None else scope
     if isinstance(t, VarType):
-        return VarType(scope.get(t.name, t.name))
+        renamed = scope.get(t.name)
+        return VarType(renamed, None) if renamed is not None else t
     if isinstance(t, NominalType):
         return NominalType(
             t.name,

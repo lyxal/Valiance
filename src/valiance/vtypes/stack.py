@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from valiance.vtypes.nodes import Overload, Specificity, Type
+from valiance.vtypes.nodes import Overload, Specificity, Type, TypeVarKey
 
 if TYPE_CHECKING:
     from valiance.vtypes.context import Context
@@ -96,7 +96,7 @@ class StackApplication:
     """Result of applying an overload to a stack during checking/inference."""
 
     overload: Overload
-    substitution: dict[str, Type]
+    substitution: dict[TypeVarKey, Type]
     inputs: tuple[Type, ...]
     stack: TypeStack
     params: tuple[Type, ...]

@@ -122,7 +122,13 @@ def _set_variable(
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
     if not branch.stack:
         if branch.input_mode is _core.InputMode.INFER_INPUTS:
-            inferred = node.declared_type or T.V(f"_inferred_{node.name}")
+            inferred = node.declared_type or T.M(
+                f"_inferred_{node.name}",
+                T.MetaVarId(
+                    branch.origin,
+                    40_000 + (node.location.offset if node.location is not None else 0),
+                ),
+            )
             write = branch.variables.write(
                 node.name,
                 inferred,
@@ -249,7 +255,13 @@ def _set_variables_node(
         )
 
     inferred = tuple(
-        target.declared_type or T.V(f"_inferred_{target.name}")
+        target.declared_type or T.M(
+            f"_inferred_{target.name}",
+            T.MetaVarId(
+                branch.origin,
+                50_000 + (target.location.offset if target.location is not None else 0),
+            ),
+        )
         for target in node.targets[:missing]
     )
     value_types = inferred + branch.stack.items[len(branch.stack) - available :]
