@@ -26,6 +26,76 @@ from . import callable_values as _functions
 from ..support import analysis_utils as _utils
 
 
+_FRESH_OVERLOAD_GENERIC_IDS = count()
+
+
+def _freshen_overload_generics_for_args(
+    overload: T.Overload,
+    args: tuple[T.Type, ...],
+) -> T.Overload:
+    """Alpha-rename callee generics that collide with caller type variables.
+
+    VarType currently stores a source-facing name rather than a lexical identity.
+    Freshening at the call boundary keeps an overload's local ``T`` distinct from
+    a caller's unrelated ``T`` while preserving the displayed original overload.
+    """
+    overload_vars: set[str] = set(overload.generic_params)
+    for typ in (
+        *overload.params,
+        *overload.returns,
+        *(constraint.bound for constraint in overload.generic_constraints),
+        *(arg for tag in overload.element_tags for arg in tag.args),
+    ):
+        overload_vars.update(_type_variable_names(typ))
+    collisions: set[str] = set()
+    for arg, param in zip(args, overload.params, strict=False):
+        if T.same(arg, param):
+            continue
+        collisions.update(
+            overload_vars
+            & _type_variable_names(arg)
+            & _type_variable_names(param)
+        )
+    if not collisions:
+        return overload
+
+    nonce = next(_FRESH_OVERLOAD_GENERIC_IDS)
+    renames = {
+        name: T.V(f"@call{nonce}:{name}")
+        for name in sorted(collisions)
+    }
+    renamed_tags = frozenset(
+        T.ElementTag(
+            tag.name,
+            tuple(_substitute_branch_type(arg, renames) for arg in tag.args),
+            tag.absent,
+        )
+        for tag in overload.element_tags
+    )
+    return replace(
+        overload,
+        params=tuple(_substitute_branch_type(param, renames) for param in overload.params),
+        returns=tuple(_substitute_branch_type(ret, renames) for ret in overload.returns),
+        generic_constraints=tuple(
+            replace(
+                constraint,
+                name=(
+                    renames[constraint.name].name
+                    if constraint.name in renames
+                    else constraint.name
+                ),
+                bound=_substitute_branch_type(constraint.bound, renames),
+            )
+            for constraint in overload.generic_constraints
+        ),
+        element_tags=renamed_tags,
+        generic_params=tuple(
+            renames[name].name if name in renames else name
+            for name in overload.generic_params
+        ),
+    )
+
+
 def _overload_index(
     overloads: tuple[T.Overload, ...],
     overload: T.Overload,
@@ -1081,6 +1151,7 @@ def _apply_overload_to_branch(
         )
     args = _row_views_for_arguments(args, overload.params, env)
     original_overload = overload
+    overload = _freshen_overload_generics_for_args(overload, args)
     for initial_rank_values in _initial_rank_value_candidates(overload.params, args):
         rank_bound = _substitute_overload_ranks(overload, initial_rank_values)
         preliminary_substitution = (
@@ -1109,12 +1180,15 @@ def _apply_overload_to_branch(
         # from the caller's point of view (for example U -> constructor T).
         # Turn that into a callee-local binding (T -> U) before specializing
         # either side, so nested generic calls cannot capture caller generics.
-        overload_type_vars = set(original_overload.generic_params)
+        overload_type_vars = set(specialized_overload.generic_params)
         for typ in (
-            *original_overload.params,
-            *original_overload.returns,
-            *(constraint.bound for constraint in original_overload.generic_constraints),
-            *(arg for tag in original_overload.element_tags for arg in tag.args),
+            *specialized_overload.params,
+            *specialized_overload.returns,
+            *(
+                constraint.bound
+                for constraint in specialized_overload.generic_constraints
+            ),
+            *(arg for tag in specialized_overload.element_tags for arg in tag.args),
         ):
             overload_type_vars.update(_type_variable_names(typ))
         for caller_name, target in tuple(substitution.items()):
@@ -1131,8 +1205,7 @@ def _apply_overload_to_branch(
         # caller's branch. Generic variables currently use source names as
         # their identity, so applying a callee substitution such as T -> U to
         # the whole branch can accidentally rewrite an enclosing function's
-        # unrelated T. Only substitutions for variables not owned by this
-        # overload may refine caller state.
+        # unrelated T. Concrete substitutions still refine inferred branches.
         branch_substitution = {
             name: typ
             for name, typ in substitution.items()

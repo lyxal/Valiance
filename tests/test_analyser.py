@@ -1303,7 +1303,7 @@ $.value
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Car")))
 
-    def test_nested_generic_constructor_does_not_refine_caller_generics(self):
+    def test_nested_generic_calls_keep_caller_and_callee_variables_scoped(self):
         analyser = Analyser()
 
         typed = analyser.analyse(parse("""
@@ -1312,19 +1312,27 @@ define[T, U] Map(
   b: Box[T],
   f: Function[T -> U]
 ) -> Box[U] => Box($f($b.v))
+define[A] Nested(x: A) -> Box[Box[A]] => Box(Box($x))
 """))
 
         self.assertEqual(analyser.diagnostics, [])
+        map_overload = analyser.env.overloads_for(Symbol("Map"))[0]
+        nested_overload = analyser.env.overloads_for(Symbol("Nested"))[0]
+        self.assertEqual(
+            Fn(map_overload.params, map_overload.returns),
+            Fn(
+                (N(Symbol("Box"), V("T")), Fn((V("T"),), (V("U"),))),
+                (N(Symbol("Box"), V("U")),),
+            ),
+        )
+        self.assertEqual(
+            Fn(nested_overload.params, nested_overload.returns),
+            Fn(
+                (V("A"),),
+                (N(Symbol("Box"), N(Symbol("Box"), V("A"))),),
+            ),
+        )
         self.assertIsInstance(typed[-1], TypedFunctionNode)
-        self.assertEqual(
-            typed[-1].typ,
-            Fn((N(Symbol("Box"), V("T")), Fn((V("T"),), (V("U"),))),
-               (N(Symbol("Box"), V("U")),)),
-        )
-        self.assertEqual(
-            analyser.env.overloads_for(Symbol("Map"))[0].generic_params,
-            ("T", "U"),
-        )
 
     def test_labelled_generic_upper_bound_rejects_supertype_solution(self):
         analyser = Analyser(Environment())
