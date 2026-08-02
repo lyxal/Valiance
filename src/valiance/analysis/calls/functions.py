@@ -12,7 +12,7 @@ from dataclasses import (
 )
 from enum import Enum, auto
 from hashlib import sha1
-from itertools import count
+from itertools import count, product
 from pathlib import Path
 from typing import cast
 
@@ -348,18 +348,30 @@ class _CallableValues:
             *params,
             *(constraint.bound for constraint in generic_constraints),
         )
-        function_env = self.env.lexical_child_scope()
-        for name, overload in structural_overloads:
-            function_env.overloads.setdefault(name, []).append(overload)
-        if recursive_overload is not None and annotation_hooks.has_annotation(
-            node.annotations,
-            "recursive",
-        ):
-            function_env.define_overload(Symbol("this"), recursive_overload)
-        function_analyser = self._child_analyser(function_env)
+        def function_environment() -> T.Environment:
+            """Build an isolated lexical environment for one body-analysis pass."""
+            function_env = self.env.lexical_child_scope()
+            for name, overload in structural_overloads:
+                function_env.overloads.setdefault(name, []).append(overload)
+            if recursive_overload is not None and annotation_hooks.has_annotation(
+                node.annotations,
+                "recursive",
+            ):
+                function_env.define_overload(Symbol("this"), recursive_overload)
+            return function_env
+
+        function_analyser = self._child_analyser(function_environment())
         final = function_analyser.analyse_block(BranchSet((initial,)), node.body)
         signatures = self._function_signatures(node, final)
         analysis = _functions._function_analysis_from_signatures(signatures)
+        if analysis is None and mode is InputMode.INFER_INPUTS:
+            retry = self._retry_function_with_collection_inputs(
+                node,
+                initial,
+                function_environment,
+            )
+            if retry is not None:
+                analysis, function_analyser = retry
         if analysis is None:
             if (
                 node.params is not None
@@ -376,6 +388,71 @@ class _CallableValues:
         self.warnings.extend(function_analyser.warnings)
         self._extend_lint_findings(function_analyser.lint_findings)
         return analysis, outer
+
+    def _retry_function_with_collection_inputs(
+        self,
+        node: FunctionNode,
+        initial: AnalysisBranch,
+        function_environment: Callable[[], T.Environment],
+    ) -> tuple[FunctionAnalysis, object] | None:
+        """Retry failed implicit-input inference with minimum-rank input evidence.
+
+        A scalar operation at the start of an unannotated function may infer a
+        scalar input before a later collection consumer proves that the value
+        must have been vectorised. Probe the longest successful prefix, widen a
+        minimal non-empty subset of its inferred scalar inputs to minimum-rank
+        lists, then reanalyse the complete body so every typed call receives the
+        correct vectorisation plan.
+        """
+        probe = self._child_analyser(function_environment())
+        current = BranchSet((initial,))
+        last = current
+        for body_node in node.body:
+            current = probe.analyse_node(current, body_node)
+            if not current:
+                break
+            last = current
+        inferred = tuple(
+            dict.fromkeys(
+                branch.inputs
+                for branch in last
+                if branch.inputs
+            )
+        )
+        candidates: list[tuple[int, tuple[str, ...], tuple[T.Type, ...]]] = []
+        for inputs in inferred:
+            choices = tuple(
+                (False, True)
+                if not isinstance(T.normalize(typ), T.CollectionType)
+                else (False,)
+                for typ in inputs
+            )
+            for mask in product(*choices):
+                if not any(mask):
+                    continue
+                widened = tuple(
+                    T.AtLeastList(typ) if use_collection else typ
+                    for typ, use_collection in zip(inputs, mask, strict=True)
+                )
+                candidates.append(
+                    (sum(mask), tuple(T.show(typ) for typ in widened), widened)
+                )
+        for _count, _display, widened in sorted(candidates):
+            retry_initial = replace(
+                initial,
+                stack=T.TypeStack(widened),
+                inputs=widened,
+            )
+            retry_analyser = self._child_analyser(function_environment())
+            final = retry_analyser.analyse_block(
+                BranchSet((retry_initial,)),
+                node.body,
+            )
+            signatures = self._function_signatures(node, final)
+            analysis = _functions._function_analysis_from_signatures(signatures)
+            if analysis is not None:
+                return analysis, retry_analyser
+        return None
 
     def _call_site_checked_function(
         self,

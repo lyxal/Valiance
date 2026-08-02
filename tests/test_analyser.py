@@ -2213,6 +2213,41 @@ define get(:Foo) => $f.x + 5
 
         self.assertEqual(typ, Fn((Row(V("@1"), Field(BAR, V("@2"))),), (V("@2"),)))
 
+    def test_later_collection_consumer_refines_implicit_function_input(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(parse("fn => ** 2 | reduce: + | sqrt"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(
+            show(typed[0].typ),
+            "Function[Number* -> Number | Number*]",
+        )
+        function = typed[0]
+        self.assertIsInstance(function, TypedFunctionNode)
+        body = function.overloads[0].body
+        power = next(
+            node for node in body
+            if isinstance(node, TypedElementNode) and node.node.name == Symbol("**")
+        )
+        root = next(
+            node for node in body
+            if isinstance(node, TypedElementNode) and node.node.name == Symbol("sqrt")
+        )
+        self.assertTrue(power.overload.vectorised)
+        self.assertEqual(power.overload.vectorised_target_ranks, (0, None))
+        self.assertTrue(root.overload.vectorised)
+        self.assertEqual(root.overload.vectorised_target_ranks, (0,))
+
+    def test_successful_scalar_implicit_inference_is_not_widened(self):
+        typed = analyse(parse("fn => + 1 end"))
+
+        self.assertEqual(
+            show(typed[0].typ),
+            "OverloadSet[Function[Integer -> Integer], "
+            "Function[Number -> Number], Function[Real -> Real]]",
+        )
+
     def test_inferred_return_function_rejects_multiple_values(self):
         analyser = Analyser()
         analyser.analyse(parse("""

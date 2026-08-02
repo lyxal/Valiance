@@ -1919,6 +1919,24 @@ exactIn \\rank3
             ],
         )
 
+    def test_implicit_function_input_is_refined_by_later_collection_consumer(self):
+        source = """
+$mag = fn => ** 2 | reduce: + | sqrt
+$mag([3, 4])
+$mag([[3, 5], [4, 12]])
+"""
+
+        self.assertEqual(
+            execute(source),
+            [
+                RuntimeNumber("5"),
+                [
+                    RuntimeNumber("34") ** RuntimeNumber("0.5"),
+                    RuntimeNumber("160") ** RuntimeNumber("0.5"),
+                ],
+            ],
+        )
+
     def test_minimum_rank_pipeline_vectorises_scalar_stages_at_runtime(self):
         source = """
 define Mag(:Real*) => ** 2 | reduce: + | sqrt
