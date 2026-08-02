@@ -1919,6 +1919,34 @@ exactIn \\rank3
             ],
         )
 
+    def test_minimum_rank_pipeline_vectorises_scalar_stages_at_runtime(self):
+        source = """
+define Mag(:Real*) => ** 2 | reduce: + | sqrt
+Mag [3, 4]
+Mag [[3, 5], [4, 12]]
+"""
+
+        self.assertEqual(
+            execute(source),
+            [
+                RuntimeNumber("5"),
+                [RuntimeNumber("5"), RuntimeNumber("13")],
+            ],
+        )
+
+    def test_generic_println_consumes_minimum_rank_pipeline_result_whole(self):
+        source = """
+define Mag(:Real*) => ** 2 | reduce: + | sqrt
+println Mag [3, 4]
+println Mag [[3, 5], [4, 12]]
+"""
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            execute(source)
+
+        self.assertEqual(output.getvalue(), "5\n[5, 13]\n")
+
     def test_empty_list_return_inference_executes_for_all_rank_modes(self):
         self.assertEqual(
             execute("""

@@ -97,8 +97,12 @@ def from_message(stage: str, message: str) -> Diagnostic:
 
 
 def _split_specific_help(message: str) -> tuple[str, str | None]:
-    """Move an analyser suggestion out of the message and into diagnostic help."""
+    """Move analyser-provided guidance out of the message into diagnostic help."""
     lines = message.splitlines()
+    help_lines = [line.removeprefix("help: ") for line in lines if line.startswith("help: ")]
+    if help_lines:
+        message_lines = [line for line in lines if not line.startswith("help: ")]
+        return "\n".join(message_lines), " ".join(help_lines)
     if len(lines) == 2 and lines[1].startswith("did you mean "):
         return lines[0], lines[1]
     return message, None

@@ -2284,6 +2284,30 @@ def _vectorisation_excess(argument: Type, expected: Type, ctx: Context) -> int |
     return excess if excess >= 0 else None
 
 
+def _union_vectorisation_target_rank(
+    argument: Type,
+    parameter: Type,
+    ctx: Context,
+) -> int | None:
+    """Return the runtime stop rank for a union with scalar and collection branches."""
+    normalized = normalize(argument)
+    if not isinstance(normalized, UnionType) or _is_optional(normalized):
+        return None
+    if assignable(normalized, parameter, ctx):
+        return None
+    branches = _union_argument_branches(normalized)
+    if not any(_collection_view(branch) is not None for branch in branches):
+        return None
+    if not all(compatible(branch, parameter, ctx) for branch in branches):
+        return None
+    parameter_collection = _collection_view(parameter)
+    if parameter_collection is None:
+        return 0
+    if not isinstance(parameter_collection, (ListExactType, ArrayExactType)):
+        return None
+    return parameter_collection.rank if isinstance(parameter_collection.rank, int) else None
+
+
 def _dynamic_vectorisation_target_rank(
     argument: Type,
     parameter: Type,
@@ -2292,10 +2316,14 @@ def _dynamic_vectorisation_target_rank(
     """Return the exact parameter rank reached dynamically from a minimum rank."""
     argument_collection = _collection_view(argument)
     parameter_collection = _collection_view(parameter)
-    if argument_collection is None or parameter_collection is None:
+    if argument_collection is None:
         return None
     if not isinstance(argument_collection, (ListMinType, ArrayMinType)):
         return None
+    if parameter_collection is None:
+        if not isinstance(argument_collection.rank, int):
+            return None
+        return 0 if compatible(argument_collection.base, parameter, ctx) else None
     if not isinstance(parameter_collection, (ListExactType, ArrayExactType)):
         return None
     if not isinstance(argument_collection.rank, int) or not isinstance(
@@ -2422,6 +2450,11 @@ def _wrap_returns_for_union_vectorisation(
     """Join results for union branches requiring different vectorisation depths."""
     branch_sets = tuple(_union_argument_branches(arg) for arg in args)
     if not any(len(branches) > 1 for branches in branch_sets):
+        return None
+    if all(
+        assignable(arg, param, ctx)
+        for arg, param in zip(args, params, strict=False)
+    ):
         return None
 
     alternatives: list[tuple[Type, ...]] = []
@@ -2873,12 +2906,17 @@ def try_apply_overload(
         automatic_depths: list[int] = []
         automatic_target_ranks: list[int | None] = []
         for arg, param, score in zip(base_args, params, scores, strict=False):
-            if score != Specificity.VECTORISED:
+            union_target_rank = _union_vectorisation_target_rank(arg, param, ctx)
+            if score != Specificity.VECTORISED and union_target_rank is None:
                 automatic_depths.append(0)
                 automatic_target_ranks.append(None)
                 continue
             excess = _vectorisation_excess(arg, param, ctx)
-            target_rank = _dynamic_vectorisation_target_rank(arg, param, ctx)
+            target_rank = (
+                union_target_rank
+                if union_target_rank is not None
+                else _dynamic_vectorisation_target_rank(arg, param, ctx)
+            )
             if excess is None or (excess <= 0 and target_rank is None):
                 return OverloadAttempt(
                     None,

@@ -1365,6 +1365,26 @@ keep
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("no overloads for element 'keep'", analyser.diagnostics[0])
 
+    def test_fold_without_seed_suggests_reduce_when_reduce_matches(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("[4, 12] ** 2 | fold: +"))
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        diagnostic = analyser.diagnostics[0]
+        self.assertIn("no overloads for element 'fold' match stack [Number+]", diagnostic)
+        self.assertIn("help: `fold` requires an explicit accumulator seed", diagnostic)
+        self.assertIn("`0 fold: +`", diagnostic)
+        self.assertIn("`reduce: +`", diagnostic)
+
+    def test_fold_near_miss_help_is_not_shown_when_reduce_also_fails(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse('["a", "b"] | fold: *'))
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertNotIn("help: `fold` requires", analyser.diagnostics[0])
+
     def test_anonymous_trait_collection_parameter_solves_item_type(self):
         analyser = Analyser()
 
@@ -4016,6 +4036,18 @@ end
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, U(Integer, ExactList(Integer)))
+
+    def test_generic_consumer_does_not_vectorise_matching_union_argument(self):
+        typed = analyse(parse("""
+define Mag(:Real*) => ** 2 | reduce: + | sqrt
+println Mag [[3, 5], [4, 12]]
+"""))
+
+        println = typed[-1]
+        self.assertIsInstance(println, TypedElementNode)
+        self.assertEqual(println.node.name, Symbol("println"))
+        self.assertFalse(println.overload.vectorised)
+        self.assertEqual(println.overload.vectorised_target_ranks, ())
 
     def test_union_arguments_join_all_vectorised_result_ranks(self):
         analyser = Analyser()

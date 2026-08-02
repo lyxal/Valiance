@@ -254,6 +254,42 @@ class TypeLibraryTests(unittest.TestCase):
             (U(Integer, C(ListMinType, Integer)),),
         )
 
+    def test_minimum_rank_argument_vectorises_dynamically_to_atomic_parameter(self):
+        argument = C(ListMinType, Integer)
+
+        applied = apply_overload(Overload((Integer,), (String,)), (argument,))
+
+        self.assertIsNotNone(applied)
+        self.assertTrue(applied.vectorised)
+        self.assertEqual(applied.vectorised_depths, (1,))
+        self.assertEqual(applied.vectorised_target_ranks, (0,))
+        self.assertEqual(applied.actual_returns, (C(ListMinType, String),))
+
+    def test_union_vectorisation_records_runtime_target_rank(self):
+        scalar_or_list = U(Integer, C(ListMinType, Integer))
+
+        applied = apply_overload(Overload((Integer,), (String,)), (scalar_or_list,))
+
+        self.assertIsNotNone(applied)
+        self.assertTrue(applied.vectorised)
+        self.assertEqual(applied.vectorised_depths, (0,))
+        self.assertEqual(applied.vectorised_target_ranks, (0,))
+        self.assertEqual(applied.actual_returns, (U(String, C(ListMinType, String)),))
+
+    def test_matching_union_parameter_does_not_trigger_runtime_vectorisation(self):
+        scalar_or_list = U(Integer, C(ListMinType, Integer))
+
+        applied = apply_overload(
+            Overload((scalar_or_list,), (String,)),
+            (scalar_or_list,),
+        )
+
+        self.assertIsNotNone(applied)
+        self.assertFalse(applied.vectorised)
+        self.assertEqual(applied.vectorised_depths, ())
+        self.assertEqual(applied.vectorised_target_ranks, ())
+        self.assertEqual(applied.actual_returns, (String,))
+
     def test_higher_minimum_rank_preserves_minimum_vectorised_result_rank(self):
         applied = apply_overload(
             Overload((C(ListExactType, Number),), (Integer,)),

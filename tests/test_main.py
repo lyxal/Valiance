@@ -604,6 +604,21 @@ class MainTests(unittest.TestCase):
         self.assertIn("1 | missing", rendered)
         self.assertIn("help: Check the element name", rendered)
 
+    def test_main_formats_fold_near_miss_as_specific_help(self):
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            exit_code = main(
+                ["run", "--code", "[4, 12] ** 2 | fold: +"]
+            )
+
+        self.assertEqual(exit_code, 1)
+        rendered = error.getvalue()
+        self.assertIn("Type error: no overloads for element 'fold'", rendered)
+        self.assertIn("help: `fold` requires an explicit accumulator seed", rendered)
+        self.assertIn("`0 fold: +`", rendered)
+        self.assertIn("`reduce: +`", rendered)
+        self.assertNotIn("help: The values on the stack", rendered)
+
     def test_main_formats_type_warnings_without_failing(self):
         output = io.StringIO()
         error = io.StringIO()

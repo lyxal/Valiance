@@ -182,6 +182,10 @@ class _ElementCalls:
                 f"{_utils._show_stack(stack_before)}\n"
                 f"{_utils._show_overload_list(node.name, overloads)}"
             )
+            if not candidates:
+                near_miss_help = self._element_near_miss_help(node, branch)
+                if near_miss_help is not None:
+                    no_match_message += f"\nhelp: {near_miss_help}"
             ambiguous_message = (
                 f"ambiguous overloads for element '{node.name}' with stack "
                 f"{_utils._show_stack(stack_before)}"
@@ -291,6 +295,25 @@ class _ElementCalls:
         finally:
             del self._prelude.nodes[prelude_nodes:]
             del self._prelude.bindings[prelude_bindings:]
+
+    def _element_near_miss_help(
+        self,
+        node: ElementNode,
+        branch: AnalysisBranch,
+    ) -> str | None:
+        """Return guidance when a failed element call matches a close semantic peer."""
+        if (
+            node.name != Symbol("fold")
+            or node.call_args
+            or len(node.modifier_args) != 1
+        ):
+            return None
+        if not self._viable_suggestion_overloads(node, branch, Symbol("reduce")):
+            return None
+        return (
+            "`fold` requires an explicit accumulator seed; add one before the call, "
+            "for example `0 fold: +`, or use `reduce: +` to use the first item"
+        )
 
     def _explicit_call_shape_message(
         self,
