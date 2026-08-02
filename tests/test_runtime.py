@@ -1684,7 +1684,7 @@ define label(x: #right Integer) -> String => "right"
             execute("""
 define choose(n: Number) -> Number => $n 1 +
 define choose(i: Integer) -> String => "int"
-fn => choose end | call[Number](6)
+fn => choose end | call{Number}(6)
 """),
             [RuntimeNumber("7")],
         )
@@ -1889,7 +1889,7 @@ end
 
     def test_element_disambiguation_controls_runtime_vectorisation_depth(self):
         self.assertEqual(
-            execute("[[1, 2], [3, 4]] +[Number+, _] [10, 20]"),
+            execute("[[1, 2], [3, 4]] +{Number+, _} [10, 20]"),
             [
                 [
                     [RuntimeNumber("11"), RuntimeNumber("22")],

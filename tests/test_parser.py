@@ -758,8 +758,43 @@ end
         )
         self.assertEqual(program[2], ElementNode(Symbol("println")))
 
+    def test_parses_element_generic_arguments_before_disambiguation(self):
+        program = parse("convert[Integer, _]{Number}(1)")
+
+        self.assertEqual(
+            program[0],
+            ElementNode(
+                Symbol("convert"),
+                disambiguation=(Number,),
+                call_args=(CallArgument(value=(NumberLiteralNode("1"),)),),
+                generic_args=(Integer, None),
+            ),
+        )
+
+    def test_curly_disambiguation_leaves_angle_bracket_elements_unambiguous(self):
+        self.assertEqual(
+            parse("1 < 2\n1 > 2"),
+            [
+                NumberLiteralNode("1"),
+                NumberLiteralNode("2"),
+                ElementNode(Symbol("<")),
+                NumberLiteralNode("1"),
+                NumberLiteralNode("2"),
+                ElementNode(Symbol(">")),
+            ],
+        )
+
+    def test_disambiguation_braces_must_be_adjacent_to_the_element(self):
+        self.assertEqual(
+            parse("map {Number}"),
+            [
+                TupleLiteralNode(((ElementNode(Symbol("Number")),),)),
+                ElementNode(Symbol("map")),
+            ],
+        )
+
     def test_parses_element_disambiguation_before_call_and_modifier_syntax(self):
-        program = parse("+[Number+, _]([[1, 2]], [10, 20])\nmap[Number]: double")
+        program = parse("+{Number+, _}([[1, 2]], [10, 20])\nmap{Number}: double")
 
         self.assertEqual(
             program[0],

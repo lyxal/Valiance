@@ -148,6 +148,7 @@ class _CallSelection:
                 self.env,
                 node.disambiguation,
                 self,
+                node.generic_args,
             )
             if candidate is None:
                 candidate = _calls._apply_overload_via_unit_overlay(
@@ -159,6 +160,7 @@ class _CallSelection:
                     self.env,
                     node.disambiguation,
                     self,
+                    node.generic_args,
                 )
             if candidate is None:
                 continue

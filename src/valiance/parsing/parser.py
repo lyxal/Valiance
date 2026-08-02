@@ -1617,6 +1617,7 @@ class Parser:
                 if token.kind is TokenKind.OP
                 else self._qualified_symbol(token)
             )
+            generic_args = self._element_generic_arguments(self._previous)
             disambiguation = self._element_disambiguation(self._previous)
             call_anchor = self._previous
             return self._element_piece(
@@ -1626,6 +1627,7 @@ class Parser:
                     disambiguation,
                     (),
                     (annotation,),
+                    generic_args=generic_args,
                     location=_loc(token),
                 )
             )
@@ -1735,6 +1737,7 @@ class Parser:
                 if token.kind is TokenKind.OP
                 else self._qualified_symbol(token)
             )
+            generic_args = self._element_generic_arguments(self._previous)
             disambiguation = self._element_disambiguation(self._previous)
             call_anchor = self._previous
             call_args: tuple[CallArgument, ...] = ()
@@ -1756,6 +1759,7 @@ class Parser:
                     modifier_args,
                     disambiguation,
                     call_args,
+                    generic_args=generic_args,
                     location=_loc(token),
                 ),
                 breaks_chain=breaks_chain,
@@ -2048,6 +2052,12 @@ class Parser:
         parts = [start.value]
         last = start
         while self._check(TokenKind.OP) and self._adjacent(last, self._current):
+            if self._current.value == "<" and self._peek(1).kind in {
+                TokenKind.IDENT,
+                TokenKind.OP,
+                TokenKind.LBRACE,
+            }:
+                break
             last = self._advance()
             parts.append(last.value)
         name = "".join(parts)
@@ -2555,26 +2565,52 @@ class Parser:
                 return tuple(args)
             self._expect(TokenKind.COMMA)
 
-    def _element_disambiguation(self, start: Token) -> tuple[Type | None, ...]:
-        """Parse element disambiguation from the current token stream."""
-        if not self._check(TokenKind.LBRACKET) or self._current.offset != (
-            start.offset + len(start.value)
-        ):
+    def _element_generic_arguments(self, start: Token) -> tuple[Type | None, ...]:
+        """Parse caller-supplied generic arguments in square brackets."""
+        if not self._check(TokenKind.LBRACKET) or not self._adjacent(start, self._current):
             return ()
         self._advance()
-        hints: list[Type | None] = []
+        return self._element_type_arguments(
+            close_kind=TokenKind.RBRACKET,
+            empty_message="empty generic argument list is invalid",
+        )
+
+    def _element_disambiguation(self, start: Token) -> tuple[Type | None, ...]:
+        """Parse positional overload hints in adjacent curly braces."""
+        if not self._check(TokenKind.LBRACE) or not self._adjacent(start, self._current):
+            return ()
+        self._advance()
+        return self._element_type_arguments(
+            close_kind=TokenKind.RBRACE,
+            empty_message="empty element disambiguation is invalid",
+        )
+
+    def _element_type_arguments(
+        self,
+        *,
+        close_kind: TokenKind | None = None,
+        close_op: str | None = None,
+        empty_message: str,
+    ) -> tuple[Type | None, ...]:
+        """Parse a non-empty comma-separated type or underscore list."""
+        values: list[Type | None] = []
         self._skip_newlines()
-        if self._check(TokenKind.RBRACKET):
-            self._error("empty element disambiguation is invalid")
+        if (close_kind is not None and self._check(close_kind)) or (
+            close_op is not None and self._check_op(close_op)
+        ):
+            self._error(empty_message)
         while True:
             if self._check(TokenKind.IDENT) and self._current.value == "_":
                 self._advance()
-                hints.append(None)
+                values.append(None)
             else:
-                hints.append(self.parse_type_expression())
+                values.append(self.parse_type_expression())
             self._skip_newlines()
-            if self._match(TokenKind.RBRACKET):
-                return tuple(hints)
+            if close_kind is not None and self._match(close_kind):
+                return tuple(values)
+            if close_op is not None and self._check_op(close_op):
+                self._advance()
+                return tuple(values)
             self._expect(TokenKind.COMMA)
             self._skip_newlines()
 

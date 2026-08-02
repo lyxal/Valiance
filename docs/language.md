@@ -1058,11 +1058,20 @@ fn (:Number+, :Number+) => +
 ```
 
 - But this can lose array types - passing two `Number^`s to this function will result in a `Number+`, not a `Number^`
-- Thus you can also specify how to treat a higher-ranked argument using element overload disambiguation syntax:
+- Thus you can also specify how to treat a higher-ranked argument using element overload disambiguation syntax.
+  Curly braces contain positional parameter-type hints; `_` leaves a position
+  unconstrained:
 
 ```
-+[Number+, _]
++{Number+, _}
 ```
+
+- Disambiguation braces must be adjacent to the element name. This keeps a
+  spaced tuple expression distinct: `map{Number}` disambiguates `map`, while
+  `map {Number}` applies `map` to a tuple expression.
+- Square brackets have a separate meaning at a call site: they supply generic
+  arguments, as in `convert[Integer, _]{Number}(1)`. Generic arguments come
+  before overload disambiguation when both are present.
 
 ## 7.2. Disabling Vectorisation in an Overload
 

@@ -89,6 +89,12 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
         lines.append("])")
         return "\n".join(lines)
     if isinstance(value, ElementNode):
+        generic_args = ""
+        if value.generic_args:
+            args = ", ".join(
+                "_" if arg is None else str(arg) for arg in value.generic_args
+            )
+            generic_args = f", generic_args=[{args}]"
         disambiguation = ""
         if value.disambiguation:
             hints = ", ".join(
@@ -97,11 +103,11 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
             disambiguation = f", disambiguation=[{hints}]"
         if not value.modifier_args and not value.call_args and value.extension is None:
             return (
-                f"ElementNode(name={value.name}{disambiguation}"
+                f"ElementNode(name={value.name}{generic_args}{disambiguation}"
                 f"{_location_arg(value)})"
             )
         lines = [
-            f"ElementNode(name={value.name}{disambiguation}"
+            f"ElementNode(name={value.name}{generic_args}{disambiguation}"
             f"{_location_arg(value)}"
         ]
         if value.call_args:

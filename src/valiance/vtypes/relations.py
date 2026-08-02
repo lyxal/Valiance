@@ -459,6 +459,59 @@ def _solve_anonymous_trait(
 
 
 
+def _ordered_type_var_names(*types: Type) -> tuple[str, ...]:
+    """Return nested type-variable names in stable first-occurrence order."""
+    names: list[str] = []
+
+    def visit(typ: Type) -> None:
+        """Append variables found in one normalized type tree."""
+        typ = normalize(typ)
+        if isinstance(typ, VarType):
+            if typ.name not in names:
+                names.append(typ.name)
+            return
+        if isinstance(typ, NominalType):
+            for arg in typ.args:
+                visit(arg)
+        elif isinstance(typ, (UnionType, IntersectionType)):
+            for item in typ.items:
+                visit(item)
+        elif isinstance(typ, TupleType):
+            for item in typ.params:
+                visit(item)
+        elif isinstance(typ, VariadicTupleType):
+            for item in typ.items:
+                visit(item.typ)
+        elif isinstance(typ, RowType):
+            visit(typ.base)
+            for item in typ.fields:
+                visit(item.typ)
+        elif isinstance(typ, CollectionType):
+            visit(typ.base)
+        elif isinstance(typ, FunctionType):
+            if typ.params is not None:
+                for item in typ.params:
+                    visit(item)
+            if typ.returns is not None:
+                for item in typ.returns:
+                    visit(item)
+            for tag in typ.element_tags:
+                for arg in tag.args:
+                    visit(arg)
+        elif isinstance(typ, AnonymousTraitType):
+            for generic in typ.generics:
+                visit(generic)
+            for requirement in typ.requirements:
+                for item in requirement.overload.params + requirement.overload.returns:
+                    visit(item)
+        elif isinstance(typ, (TaggedType, NoVecType, ExactType)):
+            visit(typ.inner)
+
+    for typ in types:
+        visit(typ)
+    return tuple(names)
+
+
 def _first_type_var_name(typ: Type) -> str | None:
     """Return the first nested type-variable name, if any."""
     typ = normalize(typ)
@@ -2617,9 +2670,35 @@ def try_apply_overload(
     ctx: Context | None = None,
     *,
     disambiguation: tuple[Type | None, ...] = (),
+    generic_args: tuple[Type | None, ...] = (),
 ) -> OverloadAttempt:
     """Apply one overload to concrete argument types with mismatch evidence."""
     ctx = ctx or Context()
+    generic_params = overload.generic_params or _ordered_type_var_names(
+        *overload.params,
+        *overload.returns,
+        *(constraint.bound for constraint in overload.generic_constraints),
+        *(arg for tag in overload.element_tags for arg in tag.args),
+    )
+    if generic_args and len(generic_args) > len(generic_params):
+        return OverloadAttempt(
+            None,
+            OverloadMismatch(
+                OverloadMismatchReason.GENERIC_CONSTRAINT,
+                detail=(
+                    f"expected at most {len(generic_params)} generic argument(s), "
+                    f"received {len(generic_args)}"
+                ),
+            ),
+        )
+    explicit_substitution = {
+        name: typ
+        for name, typ in zip(generic_params, generic_args, strict=False)
+        if typ is not None
+    }
+    solving_params = tuple(
+        _substitute(param, explicit_substitution) for param in overload.params
+    )
     if len(overload.params) != len(args):
         return OverloadAttempt(
             None,
@@ -2691,7 +2770,7 @@ def try_apply_overload(
         tuple[FunctionType, FunctionType | OverloadSetType]
     ] = []
     deferred_exact_args: list[tuple[ExactType, Type]] = []
-    for index, (param, arg) in enumerate(zip(overload.params, base_args, strict=False)):
+    for index, (param, arg) in enumerate(zip(solving_params, base_args, strict=False)):
         if isinstance(param, ExactType) and _contains_type_var(param.inner):
             deferred_exact_args.append((param, arg))
             continue
@@ -2719,7 +2798,7 @@ def try_apply_overload(
         for key, values in result.items():
             constraints.setdefault(key, []).extend(values)
 
-    substitution: dict[str, Type] = {}
+    substitution: dict[str, Type] = dict(explicit_substitution)
     for key, values in constraints.items():
         combined = _combine_all(values, ctx)
         if combined is None:
@@ -2750,7 +2829,7 @@ def try_apply_overload(
         for key, values in result.items():
             constraints.setdefault(key, []).extend(values)
     if deferred_exact_args:
-        substitution = {}
+        substitution = dict(explicit_substitution)
         for key, values in constraints.items():
             combined = _combine_all(values, ctx)
             if combined is None:
@@ -2799,7 +2878,7 @@ def try_apply_overload(
                     detail="incompatible inferred lower and upper bounds",
                 ),
             )
-        substitution = directional_substitution
+        substitution = {**directional_substitution, **explicit_substitution}
         constraints = {
             name: [typ] for name, typ in directional_substitution.items()
         }
@@ -2833,7 +2912,7 @@ def try_apply_overload(
         for key, values in result.items():
             constraints.setdefault(key, []).extend(values)
 
-    substitution = {}
+    substitution = dict(explicit_substitution)
     for key, values in constraints.items():
         combined = _combine_all(values, ctx)
         if combined is None:
@@ -2984,6 +3063,7 @@ def apply_overload(
     ctx: Context | None = None,
     *,
     disambiguation: tuple[Type | None, ...] = (),
+    generic_args: tuple[Type | None, ...] = (),
 ) -> AppliedOverload | None:
     """Apply one overload to concrete argument types, returning details on success."""
     return try_apply_overload(
@@ -2991,6 +3071,7 @@ def apply_overload(
         args,
         ctx,
         disambiguation=disambiguation,
+        generic_args=generic_args,
     ).applied
 
 

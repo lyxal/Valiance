@@ -244,7 +244,7 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Give tagged matches priority over equivalent untagged matches.
 - [x] Require one overload to be strictly more specific across every corresponding parameter.
 - [x] Report ambiguous equally specific overloads as compile errors.
-- [x] Support overload disambiguation using `element[Types]`.
+- [x] Support overload disambiguation using `element{Types}`.
 - [x] Support generic-equivalent matching.
 - [x] Support optional-substitution matching.
 - [x] Support vectorising matches.

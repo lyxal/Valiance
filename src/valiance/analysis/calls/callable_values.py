@@ -296,6 +296,7 @@ def _function_overload(
     return T.Overload(
         params=params,
         returns=returns,
+        generic_params=tuple(generic.text for generic in node.generics),
         where_clause=where_clause,
         param_names=function_param_names_for_overload(node, params),
         call_site_body=call_site_body,

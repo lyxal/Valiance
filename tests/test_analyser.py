@@ -739,8 +739,23 @@ define choose(a: Integer?) -> Integer? => $a end
             ["3:14: extend selector arity must match the target element arity"],
         )
 
+    def test_explicit_element_generic_arguments_fix_and_partially_infer_types(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse("""
+define[T, U] choose(left: T, right: U) -> T => $left
+choose[Number, _](1, "value")
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertIsInstance(typed[-1], TypedElementNode)
+        self.assertEqual(
+            typed[-1].overload.substitution,
+            {"T": Number, "U": String},
+        )
+        self.assertEqual(typed[-1].overload.actual_returns, (Number,))
+
     def test_element_disambiguation_controls_vectorisation_depth(self):
-        typed = analyse(parse("[[1, 2], [3, 4]] +[Number+, _] [10, 20]"))
+        typed = analyse(parse("[[1, 2], [3, 4]] +{Number+, _} [10, 20]"))
 
         self.assertIsInstance(typed[-1], TypedElementNode)
         self.assertTrue(typed[-1].overload.vectorised)

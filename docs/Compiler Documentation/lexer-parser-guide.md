@@ -439,6 +439,26 @@ would create ambiguity. Use `_comma_expressions` for syntactically unambiguous
 empty argument lists such as variable function calls, and `_params(allow_empty=True)`
 for function literals.
 
+## Element generic arguments and overload disambiguation
+
+Element suffixes have separate, fixed meanings and are parsed in this order:
+
+```text
+element[generic arguments]{overload parameter hints}(call arguments): modifier
+```
+
+Square brackets bind declaration generics by position. An underscore leaves a
+position for inference. Adjacent curly braces provide positional parameter-type
+hints to overload selection and do not bind generics. For example,
+`convert[Integer, _]{Number}(1)` explicitly binds the first generic, infers the
+second, and asks overload selection to treat the first call parameter as
+`Number`.
+
+The generic and disambiguation suffixes must touch the element token. In
+particular, `map{Number}` is an element disambiguation, while `map {Number}`
+contains a normal tuple literal. Curly braces avoid conflicting with symbolic
+`<` and `>` element names and with function element-tag lists.
+
 ## Function-Argument Modifier
 
 The `:` modifier binds function arguments directly to the element node:

@@ -1065,6 +1065,7 @@ def _apply_overload_to_branch(
     env: T.Environment | None = None,
     disambiguation: tuple[T.Type | None, ...] = (),
     analyser: _core.Analyser | None = None,
+    generic_args: tuple[T.Type | None, ...] = (),
 ) -> _core.OverloadApplication | None:
     """Apply overload to branch during static analysis."""
     if _overload_needs_call_site_checking(overload):
@@ -1076,6 +1077,7 @@ def _apply_overload_to_branch(
             env,
             disambiguation,
             analyser,
+            generic_args,
         )
     args = _row_views_for_arguments(args, overload.params, env)
     original_overload = overload
@@ -1112,6 +1114,7 @@ def _apply_overload_to_branch(
             specialized_args,
             ctx,
             disambiguation=disambiguation,
+            generic_args=generic_args,
         )
         applied = attempt.applied
         if applied is None:
@@ -1307,6 +1310,7 @@ def _apply_overload_via_unit_overlay(
     env: T.Environment,
     disambiguation: tuple[T.Type | None, ...] = (),
     analyser: _core.Analyser | None = None,
+    generic_args: tuple[T.Type | None, ...] = (),
 ) -> _core.OverloadApplication | None:
     """Apply an implementation through a matching unit-tag overlay.
 
@@ -1332,6 +1336,7 @@ def _apply_overload_via_unit_overlay(
             env,
             disambiguation,
             analyser,
+            generic_args,
         )
         if candidate is not None:
             return candidate
@@ -1373,6 +1378,7 @@ def _apply_call_site_checked_overload(
     env: T.Environment | None,
     disambiguation: tuple[T.Type | None, ...],
     analyser: _core.Analyser | None,
+    generic_args: tuple[T.Type | None, ...] = (),
 ) -> _core.OverloadApplication | None:
     """Apply a deferred overload after solving its static program."""
     static_source = _call_site_static_overload(overload)
@@ -1478,7 +1484,9 @@ def _apply_call_site_checked_overload(
             concrete_args = concrete_stack_args + args
             if len(concrete.params) != len(concrete_args):
                 continue
-            candidate = T.try_apply_overload(concrete, concrete_args, ctx).applied
+            candidate = T.try_apply_overload(
+                concrete, concrete_args, ctx, generic_args=generic_args
+            ).applied
             if candidate is None:
                 continue
             actual_returns = _apply_data_tag_flow(

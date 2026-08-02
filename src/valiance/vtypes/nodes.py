@@ -310,6 +310,7 @@ class Overload:
         compare=False,
         hash=False,
     )
+    generic_params: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
