@@ -1303,6 +1303,29 @@ $.value
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, N(Symbol("Car")))
 
+    def test_nested_generic_constructor_does_not_refine_caller_generics(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(parse("""
+object[T] Box => $v: T
+define[T, U] Map(
+  b: Box[T],
+  f: Function[T -> U]
+) -> Box[U] => Box($f($b.v))
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertIsInstance(typed[-1], TypedFunctionNode)
+        self.assertEqual(
+            typed[-1].typ,
+            Fn((N(Symbol("Box"), V("T")), Fn((V("T"),), (V("U"),))),
+               (N(Symbol("Box"), V("U")),)),
+        )
+        self.assertEqual(
+            analyser.env.overloads_for(Symbol("Map"))[0].generic_params,
+            ("T", "U"),
+        )
+
     def test_labelled_generic_upper_bound_rejects_supertype_solution(self):
         analyser = Analyser(Environment())
 

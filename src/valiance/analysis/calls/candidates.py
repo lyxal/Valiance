@@ -1105,7 +1105,46 @@ def _apply_overload_to_branch(
         )
         if substitution is None:
             continue
-        specialized_branch = _specialize_branch_arguments(branch, substitution)
+        # Branch solving may initially express a variable-to-variable match
+        # from the caller's point of view (for example U -> constructor T).
+        # Turn that into a callee-local binding (T -> U) before specializing
+        # either side, so nested generic calls cannot capture caller generics.
+        overload_type_vars = set(original_overload.generic_params)
+        for typ in (
+            *original_overload.params,
+            *original_overload.returns,
+            *(constraint.bound for constraint in original_overload.generic_constraints),
+            *(arg for tag in original_overload.element_tags for arg in tag.args),
+        ):
+            overload_type_vars.update(_type_variable_names(typ))
+        for caller_name, target in tuple(substitution.items()):
+            normalized_target = T.normalize(target)
+            if (
+                caller_name not in overload_type_vars
+                and isinstance(normalized_target, T.VarType)
+                and normalized_target.name in overload_type_vars
+            ):
+                substitution.pop(caller_name)
+                substitution.setdefault(normalized_target.name, T.V(caller_name))
+
+        # Overload-local generics specialize the selected callable, not the
+        # caller's branch. Generic variables currently use source names as
+        # their identity, so applying a callee substitution such as T -> U to
+        # the whole branch can accidentally rewrite an enclosing function's
+        # unrelated T. Only substitutions for variables not owned by this
+        # overload may refine caller state.
+        branch_substitution = {
+            name: typ
+            for name, typ in substitution.items()
+            if not (
+                name in overload_type_vars
+                and _functions._contains_type_var(typ)
+            )
+        }
+        specialized_branch = _specialize_branch_arguments(
+            branch,
+            branch_substitution,
+        )
         specialized_args = tuple(
             _substitute_branch_type(arg, substitution) for arg in args
         )

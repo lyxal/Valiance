@@ -3406,6 +3406,27 @@ $.value = 2
         self.assertEqual(stack[0].type_args, ("Integer",))
         self.assertEqual(stack[0].fields["value"], RuntimeNumber("2"))
 
+    def test_nested_generic_constructor_inference_executes(self):
+        source = """
+object[T] Box => $v: T
+define[T, U] Map(
+  b: Box[T],
+  f: Function[T -> U]
+) -> Box[U] => Box($f($b.v))
+
+$b = Box[Integer](21)
+$doubled = $b Map: * 2
+$label = $doubled Map: "value = ${top}"
+println $label.v
+"""
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "value = 42\n")
+
     def test_generic_object_type_arguments_survive_bytecode_round_trip(self):
         source = """
 object[T] Box =>
