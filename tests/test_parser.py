@@ -1139,7 +1139,7 @@ import {
             parse("$c()"),
             [
                 GetVariableNode(Symbol("c")),
-                ElementNode(Symbol("call")),
+                ElementNode(Symbol("call"), explicit_call=True),
             ],
         )
 

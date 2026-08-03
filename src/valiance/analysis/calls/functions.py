@@ -236,6 +236,19 @@ class _CallableValues:
                 )
             return None
 
+        if (
+            not annotation_hooks.has_annotation(node.annotations, "recursive")
+            and not self.env.overloads_for(Symbol("this"))
+        ):
+            recursive_references = _functions._recursive_reference_nodes(node)
+            if recursive_references:
+                for reference in recursive_references:
+                    self._diagnose(
+                        "'this' is only available in functions annotated @recursive",
+                        reference,
+                    )
+                return None
+
         parameter_writes = _functions._parameter_write_nodes(node)
         if parameter_writes:
             for write, name in parameter_writes:

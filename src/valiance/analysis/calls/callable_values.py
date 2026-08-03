@@ -693,6 +693,28 @@ def _function_bound_variable_names(node: FunctionNode) -> frozenset[Symbol]:
     return frozenset(names)
 
 
+def _recursive_reference_nodes(node: FunctionNode) -> tuple[ElementNode, ...]:
+    """Return current-function ``this`` calls, including unreachable branches."""
+    references: list[ElementNode] = []
+
+    def visit(value: object) -> None:
+        """Walk one AST-owned value without entering nested function scopes."""
+        if isinstance(value, FunctionNode):
+            return
+        if isinstance(value, ElementNode) and value.name == Symbol("this"):
+            references.append(value)
+        if isinstance(value, ASTNode):
+            for field_info in fields(value):
+                visit(getattr(value, field_info.name))
+        elif isinstance(value, tuple):
+            for item in value:
+                visit(item)
+
+    for body_node in node.body:
+        visit(body_node)
+    return tuple(references)
+
+
 def _parameter_write_nodes(
     node: FunctionNode,
 ) -> tuple[tuple[ASTNode, Symbol], ...]:

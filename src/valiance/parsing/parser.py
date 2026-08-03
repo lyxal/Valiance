@@ -2269,7 +2269,11 @@ class Parser:
                     (
                         *(_flatten(tuple(arg.value for arg in call_args))),
                         GetVariableNode(name, location=_loc(start)),
-                        ElementNode(Symbol("call"), location=_loc(start)),
+                        ElementNode(
+                            Symbol("call"),
+                            explicit_call=True,
+                            location=_loc(start),
+                        ),
                     ),
                     True,
                 )
@@ -2279,6 +2283,7 @@ class Parser:
                     ElementNode(
                         Symbol("call"),
                         call_args=call_args,
+                        explicit_call=True,
                         location=_loc(start),
                     ),
                 ),

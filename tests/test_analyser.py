@@ -5738,3 +5738,35 @@ class BareParameterElementDiagnosticTests(unittest.TestCase):
             analyser.diagnostics[0],
             "1:48: unknown element 'c'\ndid you mean '$c'?",
         )
+
+
+class RecursiveBindingAnalysisTests(unittest.TestCase):
+    def test_unannotated_this_in_unreachable_match_case_is_rejected(self):
+        analyser = Analyser()
+        source = """define[T] flatten(list: T~) -> T+ =>
+  $flattened: T+ = []
+  $list foreach (item) =>
+    $item match =>
+      as lst: T+ => $lst
+      as scl: T => [$scl]
+      _ => this($item)
+    end
+    $flattened := addAll
+  end
+  $flattened
+end
+"""
+        analyser.analyse(parse(source))
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("'this' is only available in functions annotated @recursive", analyser.diagnostics[0])
+
+
+class FirstClassOverloadSetCallAnalysisTests(unittest.TestCase):
+    def test_empty_variable_call_selects_generic_list_overload_for_rank_two(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse("""
+$f = fn (xs) => $xs 1 rotate end
+[[1, 2], [3, 4], [5, 6]] $f()
+"""))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(T.show(typed[-1].typ), "Integer+2")

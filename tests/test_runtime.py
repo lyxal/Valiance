@@ -5218,3 +5218,16 @@ class MinimumRankAssuranceTests(unittest.TestCase):
                 program = compile_program(typed, optimize=optimize)
                 self.assertEqual(run(program), expected)
                 self.assertEqual(run(loads(dumps(program))), expected)
+
+
+class FirstClassOverloadSetCallRuntimeTests(unittest.TestCase):
+    def test_empty_variable_call_executes_generic_list_overload_at_higher_rank(self):
+        self.assertEqual(
+            execute("""
+$f = fn (xs) => $xs 1 rotate end
+[[1, 2], [3, 4], [5, 6]] $f()
+"""),
+            [[[RuntimeNumber(3), RuntimeNumber(4)],
+              [RuntimeNumber(5), RuntimeNumber(6)],
+              [RuntimeNumber(1), RuntimeNumber(2)]]],
+        )

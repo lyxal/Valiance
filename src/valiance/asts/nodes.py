@@ -273,6 +273,7 @@ class ElementNode(ASTNode):
     annotations: tuple[ASTNode, ...] = ()
     extension: ElementExtension | None = None
     generic_args: tuple[Type | None, ...] = ()
+    explicit_call: bool = False
 
 
 @dataclass(frozen=True)

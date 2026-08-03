@@ -144,7 +144,18 @@ class _ElementCalls:
             )
             return BranchSet()
 
-        if node.call_args and node.name == Symbol("call"):
+        stack_callable = T.normalize(branch.stack[-1]) if branch.stack else None
+        generic_overload_set = (
+            isinstance(stack_callable, T.OverloadSetType)
+            and any(
+                _functions._contains_type_var(item)
+                for overload in stack_callable.overloads
+                for item in (*overload.params, *overload.returns)
+            )
+        )
+        if node.name == Symbol("call") and (
+            node.call_args or (node.explicit_call and generic_overload_set)
+        ):
             return self._call_element_call(branch, node, overloads)
 
         diagnostics_before = len(self.diagnostics)
