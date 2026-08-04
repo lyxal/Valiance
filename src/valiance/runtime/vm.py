@@ -378,6 +378,7 @@ class _Frame:
     panic_handlers: list[_PanicHandler] = field(default_factory=list)
     cycle_scopes: list[tuple[tuple[Any, ...], int, int, bool]] = field(default_factory=list)
     isolated_stacks: list[list[Any]] = field(default_factory=list)
+    match_branch_stacks: list[list[Any]] = field(default_factory=list)
     assert_peek_stacks: list[tuple[list[Any], int, int, bool]] = field(default_factory=list)
 
     def source_args(
@@ -867,7 +868,10 @@ class VirtualMachine:
             ):
                 return None
             result_index = target
-            if instructions[result_index].op is OpCode.CYCLE_BEGIN:
+            if instructions[result_index].op in {
+                OpCode.CYCLE_BEGIN,
+                OpCode.MATCH_BRANCH_BEGIN,
+            }:
                 result_index += 1
             if (
                 result_index >= len(instructions)
@@ -1281,7 +1285,7 @@ class VirtualMachine:
     ) -> Callable[[Any], Any] | None:
         """Prepare a constant or scalar-formatting result for one match branch."""
         instruction = instructions[target]
-        if instruction.op is OpCode.CYCLE_BEGIN:
+        if instruction.op in {OpCode.CYCLE_BEGIN, OpCode.MATCH_BRANCH_BEGIN}:
             target += 1
             if target >= len(instructions):
                 return None
@@ -2391,6 +2395,16 @@ class VirtualMachine:
                             value = frame.stack.pop()
                             frame.stack = frame.isolated_stacks.pop()
                             frame.stack.append(value)
+                        case OpCode.MATCH_BRANCH_BEGIN:
+                            frame.match_branch_stacks.append(frame.stack)
+                            frame.stack = []
+                        case OpCode.MATCH_BRANCH_END:
+                            if not frame.match_branch_stacks:
+                                raise RuntimeError("match branch stack scope underflow")
+                            branch_results = frame.stack
+                            frame.stack = frame.match_branch_stacks.pop()
+                            frame.stack.extend(branch_results)
+                            _exit_cycle(frame)
                         case OpCode.MAKE_OBJECT_CONSTRUCTOR:
                             constructor = _object_constructor_reference(instruction.arg)
                             initializer = (
@@ -2771,6 +2785,9 @@ class VirtualMachine:
         _release_stack_tail(frame.stack, len(frame.stack), self)
         while frame.isolated_stacks:
             saved = frame.isolated_stacks.pop()
+            _release_stack_tail(saved, len(saved), self)
+        while frame.match_branch_stacks:
+            saved = frame.match_branch_stacks.pop()
             _release_stack_tail(saved, len(saved), self)
         while frame.assert_peek_stacks:
             saved, _, _, _ = frame.assert_peek_stacks.pop()

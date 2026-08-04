@@ -1180,19 +1180,13 @@ class _Compiler:
         end_jumps: list[int] = []
         for jump, case in case_jumps:
             self.patch_match(jump, len(self.instructions))
-            retained_arity = (
-                arity
-                if case.is_default
-                else sum(
-                    not isinstance(pattern, WildcardPatternNode)
-                    for pattern in case.patterns
-                )
-            )
-            # Consume retained match coordinates into a fresh conceptual input
-            # scope without seeding the physical case stack.
-            self.emit(OpCode.CYCLE_BEGIN, (retained_arity, 0))
+            # JUMP_IF_MATCH has already installed the retained coordinates as
+            # the conceptual input cycle. Execute the selected branch on an
+            # empty physical stack, then append every value it produces to the
+            # surrounding stack and restore the enclosing cycle scope.
+            self.emit(OpCode.MATCH_BRANCH_BEGIN)
             self.expression(body_by_case.get(id(case), case.body))
-            self.emit(OpCode.CYCLE_END)
+            self.emit(OpCode.MATCH_BRANCH_END)
             end_jumps.append(self.emit(OpCode.JUMP, None))
         end = len(self.instructions)
         for jump in end_jumps:

@@ -33,6 +33,8 @@ class OpCode(Enum):
     BUILD_DICT = "build_dict"
     ISOLATE_STACK_BEGIN = "isolate_stack_begin"
     ISOLATE_STACK_END = "isolate_stack_end"
+    MATCH_BRANCH_BEGIN = "match_branch_begin"
+    MATCH_BRANCH_END = "match_branch_end"
     MAKE_OBJECT_CONSTRUCTOR = "make_object_constructor"
     MAKE_ENUM_MEMBER = "make_enum_member"
     GET_FIELD = "get_field"

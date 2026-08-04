@@ -81,6 +81,8 @@ _OP_TO_BYTE = {
     OpCode.ISOLATE_STACK_BEGIN: 0x2E,
     OpCode.ISOLATE_STACK_END: 0x2F,
     OpCode.ENSURE_MIN_RANK: 0x33,
+    OpCode.MATCH_BRANCH_BEGIN: 0x34,
+    OpCode.MATCH_BRANCH_END: 0x35,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 

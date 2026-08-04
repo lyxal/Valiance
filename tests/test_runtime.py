@@ -3636,6 +3636,40 @@ end
             ["Captured 1 item"],
         )
 
+    def test_match_branch_isolates_outer_stack_and_preserves_all_results(self):
+        self.assertEqual(
+            execute("""
+10
+1 match =>
+  1 => 20 30
+  _ => 40
+end
+2 match =>
+  2 => 50 60
+  _ => 70
+end
+"""),
+            [
+                RuntimeNumber("10"),
+                RuntimeNumber("20"),
+                RuntimeNumber("30"),
+                RuntimeNumber("50"),
+                RuntimeNumber("60"),
+            ],
+        )
+
+    def test_match_branch_cycles_only_over_retained_coordinates(self):
+        self.assertEqual(
+            execute("""
+99
+2 1 match =>
+  1, 2 => +
+  _, _ => 0
+end
+"""),
+            [RuntimeNumber("99"), RuntimeNumber("3")],
+        )
+
     def test_executes_match_type_guards_destructure_and_stack_patterns(self):
         self.assertEqual(
             execute("""
