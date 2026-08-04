@@ -2564,6 +2564,14 @@ class Parser:
                 )
                 if not value:
                     self._error("expected argument")
+                prefix_count = 0
+                while (
+                    prefix_count < len(value)
+                    and isinstance(value[prefix_count], MinimumRankNode)
+                ):
+                    prefix_count += 1
+                if prefix_count and prefix_count < len(value):
+                    value = (*value[prefix_count:], *value[:prefix_count])
                 args.append(CallArgument(None, value))
             self._skip_newlines()
             if self._match(TokenKind.RPAREN):

@@ -864,10 +864,17 @@ class VirtualMachine:
                 or len(patterns) != 1
                 or not isinstance(target, int)
                 or not 0 <= target < len(instructions)
-                or instructions[target].op is not OpCode.PUSH_CONST
             ):
                 return None
-            branches.append((patterns, instructions[target].arg))
+            result_index = target
+            if instructions[result_index].op is OpCode.CYCLE_BEGIN:
+                result_index += 1
+            if (
+                result_index >= len(instructions)
+                or instructions[result_index].op is not OpCode.PUSH_CONST
+            ):
+                return None
+            branches.append((patterns, instructions[result_index].arg))
             index += 1
         if not branches:
             return None
@@ -924,7 +931,7 @@ class VirtualMachine:
             if not isinstance(pattern, tuple) or not pattern:
                 return False
             kind = pattern[0]
-            if kind == "wildcard":
+            if kind in {"wildcard", "default"}:
                 return True
             if kind == "literal":
                 literal = pattern[1]
@@ -1095,7 +1102,7 @@ class VirtualMachine:
                 guard = self._prepare_builtin_stack_test(guard_code, value.globals)
                 if guard is None:
                     return None
-            elif pattern[0] == "wildcard":
+            elif pattern[0] in {"wildcard", "default"}:
                 guard = lambda _subject: True
             else:
                 return None
@@ -1274,6 +1281,11 @@ class VirtualMachine:
     ) -> Callable[[Any], Any] | None:
         """Prepare a constant or scalar-formatting result for one match branch."""
         instruction = instructions[target]
+        if instruction.op is OpCode.CYCLE_BEGIN:
+            target += 1
+            if target >= len(instructions):
+                return None
+            instruction = instructions[target]
         if instruction.op is OpCode.PUSH_CONST:
             result = instruction.arg
             return lambda _subject: result
@@ -3340,15 +3352,20 @@ class VirtualMachine:
                         return None
                     return {"top": value}, (value,)
                 if pattern[0] == "wildcard":
+                    return {"top": value}, ()
+                if pattern[0] == "default":
                     return {"top": value}, (value,)
         bindings: dict[str, Any] = {}
-        values = tuple(reversed(frame.stack[-len(patterns) :]))
-        if values:
-            bindings["top"] = values[0]
-        for pattern, value in zip(patterns, values, strict=True):
+        subjects = tuple(reversed(frame.stack[-len(patterns) :]))
+        if subjects:
+            bindings["top"] = subjects[0]
+        retained: list[Any] = []
+        for pattern, value in zip(patterns, subjects, strict=True):
             if not self._match_pattern(value, pattern, bindings):
                 return None
-        return bindings, values
+            if not (isinstance(pattern, tuple) and pattern and pattern[0] == "wildcard"):
+                retained.append(value)
+        return bindings, tuple(retained)
 
     def _match_pattern(
         self,
@@ -3364,7 +3381,7 @@ class VirtualMachine:
             return value == pattern[1]
         if kind == "guard":
             return self._guard_truthy(pattern[1], value)
-        if kind == "wildcard":
+        if kind in {"wildcard", "default"}:
             return True
         if kind == "rest":
             name = pattern[1]
@@ -6117,8 +6134,13 @@ def _matches_collection_cast(
             for item in value
         )
     if kind == "list_rugged":
+        # Rugged rank is the minimum path depth to a scalar leaf. A T~2
+        # pattern must not accept a rank-one list merely because its leaves
+        # match T.
+        if _minimum_runtime_collection_rank(value) < rank:
+            return False
         return all(
-            _matches_cast_type(item, base)
+            _matches_collection_cast(item, kind, rank - 1, base)
             or _matches_collection_cast(item, kind, rank, base)
             for item in value
         )

@@ -571,6 +571,7 @@ class _Compiler:
                 contract_type = typed_node.typ if isinstance(typed_node, TypedNode) and typed_node.typ is not None else typ
                 self.emit(OpCode.CANONICALIZE_TAGS, _runtime_tag_contract_spec(contract_type))
             case MinimumRankNode(rank):
+                self.emit(OpCode.SOURCE_ARGS, 1)
                 self.emit(OpCode.ENSURE_MIN_RANK, rank)
             case PopNNode(count):
                 operand: object = (
@@ -1153,7 +1154,9 @@ class _Compiler:
                 else None
             )
             compiled_patterns = tuple(
-                _compile_match_pattern(pattern, guard_blocks)
+                ("default",)
+                if case.is_default and isinstance(pattern, WildcardPatternNode)
+                else _compile_match_pattern(pattern, guard_blocks)
                 for pattern in case.patterns
             )
             if guard_blocks is not None:
@@ -1177,6 +1180,17 @@ class _Compiler:
         end_jumps: list[int] = []
         for jump, case in case_jumps:
             self.patch_match(jump, len(self.instructions))
+            retained_arity = (
+                arity
+                if case.is_default
+                else sum(
+                    not isinstance(pattern, WildcardPatternNode)
+                    for pattern in case.patterns
+                )
+            )
+            # Consume retained match coordinates into a fresh conceptual input
+            # scope without seeding the physical case stack.
+            self.emit(OpCode.CYCLE_BEGIN, (retained_arity, 0))
             self.expression(body_by_case.get(id(case), case.body))
             self.emit(OpCode.CYCLE_END)
             end_jumps.append(self.emit(OpCode.JUMP, None))

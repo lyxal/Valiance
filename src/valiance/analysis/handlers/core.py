@@ -402,12 +402,15 @@ def _minimum_rank_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse minimum-rank assurance without inferring an absent input."""
-    if not branch.stack:
+    sourced = branch.source_arguments((T.V("_minimum_rank_input"),))
+    if sourced is None:
         self._diagnose("empty stack when assuring minimum rank", node)
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))
-    result = _minimum_rank_type(branch.stack[-1], node.rank)
-    stack = T.TypeStack((*branch.stack.items[:-1], result))
-    return _core.BranchSet((branch.with_stack(stack).emit(TypedNode(node, result)),))
+    (source_type,), sourced_branch = sourced
+    result = _minimum_rank_type(source_type, node.rank)
+    return _core.BranchSet(
+        (sourced_branch.push(result).emit(TypedNode(node, result)),)
+    )
 
 
 @_core.register(PopNNode)

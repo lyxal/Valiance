@@ -143,6 +143,9 @@ def _for_node(
         body_branch,
         input_mode=_core.InputMode.CYCLE_EXPLICIT_PARAMS,
         cycle_params=cycle_params,
+        cycle_index=0,
+        cycle_stack_remaining=len(cycle_params),
+        cycle_from_top=True,
     )
     body_branch = body_branch.with_variables(
         body_branch.variables.with_block_local(node.variable, item_type)

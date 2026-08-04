@@ -55,6 +55,7 @@ from valiance.asts import (
     TryHandlerNode,
     TryNode,
     TypePatternNode,
+    WildcardPatternNode,
     TypedCallNode,
     TypedElementExtension,
     TypedElementNode,
@@ -169,12 +170,40 @@ class _MatchAnalysis:
                     tuple(previous_patterns),
                     self.env,
                 )
+            refined_subject_types = tuple(
+                _patterns._match_case_subject_type(
+                    pattern,
+                    subject_type,
+                    tuple(previous[index] for previous in previous_patterns),
+                    self.env,
+                )
+                or subject_type
+                for index, (pattern, subject_type) in enumerate(
+                    zip(case.patterns, subject_types, strict=True)
+                )
+            )
+            retained_subject_types = (
+                refined_subject_types
+                if case.is_default
+                else tuple(
+                    typ
+                    for pattern, typ in zip(
+                        case.patterns, refined_subject_types, strict=True
+                    )
+                    if not isinstance(pattern, WildcardPatternNode)
+                )
+            )
+            # Matched subjects are conceptual case inputs, not physical stack
+            # values. A case therefore begins with the subjects removed, while
+            # ordinary underflow can cycle retained coordinates on demand.
             case_input = body_input.with_variables(case_variables)
             case_input = replace(
                 case_input,
                 input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
-                cycle_params=subject_types,
+                cycle_params=retained_subject_types,
                 cycle_index=0,
+                cycle_stack_remaining=0,
+                cycle_from_top=True,
             )
             typed_guards = self._analyse_match_guards(
                 subject_types, case.patterns, node

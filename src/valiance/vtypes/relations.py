@@ -789,13 +789,29 @@ def _direct_collection_subtype(source: Type, target: Type, ctx: Context) -> bool
                 type(source), source.base, source.rank - target.rank
             )
             return assignable(remainder, target.base, ctx)
-    if not assignable(source.base, target.base, ctx):
-        return False
     sk, tk = type(source), type(target)
     sr, tr = source.rank, target.rank
+    if tk is ListRuggedType:
+        # A rugged target describes arbitrary nesting over one scalar leaf
+        # type. Intermediate collection alternatives in the source base are
+        # structural, not values of the target base type.
+        source_leaf = _rugged_scalar_leaf_type(source)
+        same_rigid_name = (
+            isinstance(source_leaf, VarType)
+            and isinstance(target.base, VarType)
+            and source_leaf.name == target.base.name
+        )
+        if not same_rigid_name and not assignable(source_leaf, target.base, ctx):
+            return False
+    elif not assignable(source.base, target.base, ctx):
+        return False
 
     if sk is tk and sr == tr:
         return True
+    if sk is ListRuggedType and tk is ListRuggedType:
+        # Rugged ranks are minimum-depth guarantees. A value whose minimum
+        # leaf depth is n satisfies every rugged requirement m <= n.
+        return _rank_ge(sr, tr)
     if sk is ArrayExactType and tk is ListExactType and sr == tr:
         return True
     if sk is ArrayMinType and tk is ListMinType and sr == tr:
@@ -1375,6 +1391,18 @@ def _atomic_collection_shape_matches(
     return False
 
 
+def _rugged_scalar_leaf_type(typ: Type) -> Type:
+    """Return scalar leaf evidence from a possibly heterogeneous collection type."""
+    typ = normalize(typ)
+    if isinstance(typ, TaggedType):
+        return _rugged_scalar_leaf_type(typ.inner)
+    if isinstance(typ, UnionType):
+        return U(*(_rugged_scalar_leaf_type(item) for item in typ.items))
+    if isinstance(typ, CollectionType):
+        return _rugged_scalar_leaf_type(typ.base)
+    return typ
+
+
 def _solve_collection(
     pattern: Type, actual: Type, add: Callable[[TypeVarKey, Type], None]
 ) -> bool:
@@ -1407,12 +1435,19 @@ def _solve_collection(
         if ak in {ListMinType, ArrayMinType}:
             return bind_as(ListMinType)
     if pk is ListRuggedType:
-        if ak in {ListExactType, ArrayExactType}:
-            return bind_as(ListExactType)
-        if ak in {ListMinType, ArrayMinType}:
-            return bind_as(ListRuggedType)
-        if ak is ListRuggedType:
-            return bind_as(ListRuggedType)
+        if ak in {
+            ListExactType,
+            ArrayExactType,
+            ListMinType,
+            ArrayMinType,
+            ListRuggedType,
+        }:
+            # T~ owns every varying collection layer. Solve T only from the
+            # scalar leaves, not from intermediate list alternatives in a
+            # heterogeneous/rugged item union.
+            leaf = _rugged_scalar_leaf_type(actual)
+            add(type_var_key(pattern.base), leaf)
+            return True
     if pk is ArrayExactType and ak is ArrayExactType:
         return bind_as(ArrayExactType)
     if pk is ArrayMinType:

@@ -1523,8 +1523,8 @@ variant Maybe =>
 end
 Some(1)
 match =>
-  as :Some => "some"
-  as :None => "none"
+  as :Some => pop_n(1) "some"
+  as :None => pop_n(1) "none"
 end
 """))
 
@@ -5111,10 +5111,10 @@ end
     def test_match_case_after_default_is_linted_as_unreachable(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(parse("""
+        analyser.analyse(parse("""
 1
 match =>
-  _ => "first"
+  default => pop_n(1) "first"
   1 => "second"
 end
 """))
@@ -5131,7 +5131,6 @@ end
             analyser.lint_findings[0].rewrite.kind,
             RewriteKind.REMOVE_MATCH_CASE,
         )
-        self.assertEqual(typed[-1].typ, String)
 
     def test_duplicate_literal_match_case_is_linted(self):
         analyser = Analyser()
@@ -5307,10 +5306,10 @@ end
             ],
         )
 
-    def test_binding_wildcard_is_an_exhaustive_match_pattern(self):
+    def test_default_exposes_its_subject_as_a_cycle_input(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(parse("1\nmatch =>\n  $x = _ => $x\nend"))
+        typed = analyser.analyse(parse("1\nmatch =>\n  default => + 0\nend"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, Integer)
@@ -5362,7 +5361,7 @@ end
         typed = analyser.analyse(
             parse(
                 '$x = 1\n"abc"\nmatch =>\n'
-                "  as x: String => $x length\n"
+                "  as x: String => pop_n(1) $x length\n"
                 "  _ => 0\nend"
             )
         )
@@ -5455,7 +5454,7 @@ end
                 '$x = (if 0 1 == => 1 else => "x" end)\n'
                 '$y = (if 1 1 == => 1 else => "y" end)\n'
                 "$x $y\nmatch =>\n"
-                "  _, as :Number => 0\n"
+                "  _, as :Number => pop_n(1) 0\n"
                 "  _, _ => $x length\nend"
             )
         )

@@ -108,6 +108,23 @@ def _get_variable(
 
     return _core.BranchSet((branch.push(typ).emit(TypedNode(node, typ)),))
 
+
+
+def _declared_variable_type(
+    branch: _core.AnalysisBranch,
+    name: Symbol,
+) -> T.Type | None:
+    """Return the nearest explicit declaration governing a variable write."""
+    for typed in reversed(branch.typed_body):
+        source = typed.node
+        if (
+            isinstance(source, SetVariableNode)
+            and source.name == name
+            and source.declared_type is not None
+        ):
+            return source.declared_type
+    return None
+
 @_core.register(SetVariableNode)
 def _set_variable(
     self: _core.Analyser,
@@ -178,16 +195,17 @@ def _set_variable(
         )
 
     value_type = branch.stack[-1]
-    variable_type = node.declared_type or value_type
+    declared_type = node.declared_type or _declared_variable_type(branch, node.name)
+    variable_type = declared_type or value_type
 
-    if node.declared_type is not None and not T.assignable(
+    if declared_type is not None and not T.assignable(
         value_type,
-        node.declared_type,
+        declared_type,
         self.env.context,
     ):
         self._diagnose(
             f"cannot assign {T.show(value_type)} to variable '{node.name}' "
-            f"of declared type {T.show(node.declared_type)}",
+            f"of declared type {T.show(declared_type)}",
             node,
         )
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))

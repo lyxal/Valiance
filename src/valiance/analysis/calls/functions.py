@@ -98,6 +98,44 @@ from .models import (
 
 
 
+def _declared_type_var_keys(value: object) -> frozenset[T.TypeVarKey]:
+    """Collect variables declared in a function return contract."""
+    found: set[T.TypeVarKey] = set()
+    def visit(item: object) -> None:
+        """Collect rigid generic keys recursively from one type component."""
+        if isinstance(item, T.VarType):
+            found.add(T.type_var_key(item))
+        elif isinstance(item, T.Type):
+            for field_info in fields(item):
+                visit(getattr(item, field_info.name))
+        elif isinstance(item, (tuple, frozenset)):
+            for child in item:
+                visit(child)
+    visit(value)
+    return frozenset(found)
+
+
+def _rigidify_declared_generics(
+    value: object, keys: frozenset[T.TypeVarKey]
+) -> object:
+    """Replace declared type variables with opaque witnesses for body checking."""
+    if isinstance(value, T.VarType) and T.type_var_key(value) in keys:
+        return T.NominalType(Symbol(f"__rigid_{T.type_var_key(value)}"))
+    if isinstance(value, T.Type):
+        updates: dict[str, object] = {}
+        for item in fields(value):
+            current = getattr(value, item.name)
+            updated = _rigidify_declared_generics(current, keys)
+            if updated != current:
+                updates[item.name] = updated
+        return replace(value, **updates) if updates else value
+    if isinstance(value, tuple):
+        return tuple(_rigidify_declared_generics(item, keys) for item in value)
+    if isinstance(value, frozenset):
+        return frozenset(_rigidify_declared_generics(item, keys) for item in value)
+    return value
+
+
 class _CallableValues:
     """Own functions operations for call planning."""
 
@@ -700,10 +738,15 @@ class _CallableValues:
         actual_returns = _utils._stack_returns(result_stack, expected)
         if len(actual_returns) != len(node.returns):
             return None
-        substitution = _calls._branch_argument_substitution(
-            actual_returns,
-            checked_returns,
-            self.env.context,
+        rigid_keys = _declared_type_var_keys(checked_returns)
+        substitution = (
+            None
+            if rigid_keys
+            else _calls._branch_argument_substitution(
+                actual_returns,
+                checked_returns,
+                self.env.context,
+            )
         )
         if (
             substitution is None
@@ -718,7 +761,20 @@ class _CallableValues:
                 if branch.return_stack is not None
                 else branch.stack
             )
-        if not _utils._stack_assignable(result_stack, expected, self.env.context):
+        checked_stack = result_stack
+        checked_expected = expected
+        if rigid_keys:
+            checked_stack = T.TypeStack(tuple(
+                _rigidify_declared_generics(item, rigid_keys)
+                for item in result_stack.items
+            ))
+            checked_expected = T.TypeStack(tuple(
+                _rigidify_declared_generics(item, rigid_keys)
+                for item in expected.items
+            ))
+        if not _utils._stack_assignable(
+            checked_stack, checked_expected, self.env.context
+        ):
             if node.where_clause and _functions._contains_rank_var(node.returns):
                 return node.returns, branch
             for actual, declared in zip(actual_returns, checked_returns, strict=True):

@@ -1107,11 +1107,28 @@ def _subtract_match_types(
     subject_type = T.normalize(subject_type)
     if not isinstance(subject_type, T.UnionType):
         return subject_type
-    remaining = tuple(
-        item
-        for item in subject_type.items
-        if not any(T.assignable(item, typ, ctx) for typ in excluded)
-    )
+    remaining_items: list[T.Type] = []
+    for item in subject_type.items:
+        if any(T.assignable(item, typ, ctx) for typ in excluded):
+            continue
+        narrowed = item
+        for typ in excluded:
+            item_normal = T.normalize(item)
+            excluded_normal = T.normalize(typ)
+            if (
+                isinstance(item_normal, T.ListRuggedType)
+                and isinstance(excluded_normal, T.ListRuggedType)
+                and isinstance(item_normal.rank, int)
+                and isinstance(excluded_normal.rank, int)
+                and excluded_normal.rank == item_normal.rank + 1
+                and T.assignable(item_normal.base, excluded_normal.base, ctx)
+                and T.assignable(excluded_normal.base, item_normal.base, ctx)
+            ):
+                # Failing the next rugged minimum rank leaves the current
+                # boundary. At rank one this is the ordinary leaf list T+.
+                narrowed = T.ExactList(item_normal.base, rank=item_normal.rank)
+        remaining_items.append(narrowed)
+    remaining = tuple(remaining_items)
     if not remaining:
         return T.NeverType()
     return T.U(*remaining)

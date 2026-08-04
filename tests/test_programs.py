@@ -353,7 +353,7 @@ $findFold([4, 7, 9], 5)
             if % 15 == 0 => "FizzBuzz"
             if %  5 == 0 =>     "Buzz"
             if %  3 == 0 =>     "Fizz"
-                        _ => toString
+                  default => toString
         end 
         """)
         self.assertEqual(result, [FIZZBUZZ_TO_100])
@@ -378,7 +378,7 @@ $findFold([4, 7, 9], 5)
         define factorial(:Integer) -> Integer =>
             match =>
                 0 => 1
-                _ => factorial(- 1) *
+                default => factorial(- 1) *
             end
         end
         factorial 5

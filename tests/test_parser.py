@@ -183,6 +183,13 @@ class MinimumRankParserTests(unittest.TestCase):
         self.assertIsInstance(nodes[0], MinimumRankNode)
         self.assertEqual(nodes[1], ElementNode(Symbol("length")))
 
+    def test_prefix_assurance_in_explicit_argument_runs_after_its_value(self):
+        node = parse("f(^+ $x)")[0]
+        self.assertEqual(
+            node.call_args[0].value,
+            (GetVariableNode(Symbol("x")), MinimumRankNode(1)),
+        )
+
     def test_rejects_non_positive_rank(self):
         with self.assertRaises(ParseError):
             parse("^+0")

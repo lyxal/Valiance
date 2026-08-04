@@ -1357,8 +1357,10 @@ Collection compatibility has two related but distinct jobs.
 
 This asks whether one collection description can be viewed as another by kind,
 rank, and base type. Exact arrays may be viewed as exact lists of the same rank;
-exact ranks can satisfy compatible minimum-rank requirements; rugged list types
-are intentionally weaker.
+exact ranks can satisfy compatible minimum-rank requirements. Rugged ranks are
+also minimum-depth guarantees, so `T~n` is a subtype of `U~m` when `n >= m` and
+the scalar leaf type `T` is assignable to `U`. Rugged values remain weaker than
+uniform exact/minimum collection targets.
 
 ### Generic collection solving
 

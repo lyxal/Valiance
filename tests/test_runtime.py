@@ -107,6 +107,52 @@ $board
 """
 
 
+class RuggedFlattenRegressionTests(unittest.TestCase):
+    def test_t_double_rugged_match_flattens_recursively(self):
+        source = """
+        define[T] flatten(xs: T~) -> T+ =>
+          $res: T+ = []
+          $xs foreach (x) =>
+            match =>
+              as :T~~ => flatten
+              default => ^+
+            end
+            $res := addAll
+          end
+          $res
+        end
+        flatten [[1,2,3],4,[[5],[[6]],[[[7,8]]]]]
+        """
+        self.assertEqual(
+            execute(source),
+            [[RuntimeNumber(str(value)) for value in range(1, 9)]],
+        )
+
+    def test_higher_order_flat_map_over_rugged_input(self):
+        source = """
+        define[T, U] flatMap(
+          xs: T~,
+          f: Function[T -> U]
+        ) -> U+ =>
+          $res: U+ = []
+          $xs foreach (item) =>
+            match =>
+              as ls: T~~ => flatMap($ls, $f)
+              as x => $f(^+ $x)
+            end
+            $res := addAll
+          end
+          $res
+        end
+        flatMap(
+          [[1,2],3,[[4],[[5,6]]]],
+          fn (x: Integer) -> String => "v${$x}" end
+        )
+        """
+        self.assertEqual(execute(source), [["v1", "v2", "v3", "v4", "v5", "v6"]])
+
+
+
 class RuntimeTests(unittest.TestCase):
     def test_if_else_materializes_missing_branch_values_as_none(self):
         """Pad a shorter conditional branch to its analysed stack shape."""
@@ -544,7 +590,7 @@ fn (n: Integer) -> String =>
     if % 15 == 0 => "FizzBuzz"
     if % 5 == 0 => "Buzz"
     if % 3 == 0 => "Fizz"
-    _ => "${top}"
+    default => "${top}"
   end
 end
 """
@@ -645,7 +691,7 @@ range(1, 16) map fn (n: Integer) =>
     if % 15 == 0 => "FizzBuzz"
     if % 5 == 0 => "Buzz"
     if % 3 == 0 => "Fizz"
-    _ => "${top}"
+    default => "${top}"
   end
 end
 """)
@@ -3655,7 +3701,7 @@ range(1, 15) map {function}
     if % 15 == 0 => "FizzBuzz"
     if %  5 == 0 => "Buzz"
     if %  3 == 0 => "Fizz"
-               _ => "${{top}}"
+         default => "${{top}}"
   end
 end
 

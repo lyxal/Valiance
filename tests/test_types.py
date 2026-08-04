@@ -504,6 +504,18 @@ class TypeLibraryTests(unittest.TestCase):
         t = _combine_all(constraints["T"])
         self.assertEqual(t, C(ListExactType, Number))
 
+    def test_rugged_generic_solves_from_scalar_leaves(self):
+        actual = ExactList(
+            U(
+                Integer,
+                ExactList(Integer),
+                ExactList(ExactList(Integer)),
+            )
+        )
+        constraints = _solve(C(ListRuggedType, V("T")), actual)
+        self.assertIsNotNone(constraints)
+        self.assertEqual(_combine_all(constraints["T"]), Integer)
+
     def test_collection_item_type_peels_one_rank(self):
         self.assertEqual(collection_item_type(C(ListExactType, Number)), Number)
         self.assertEqual(
@@ -886,13 +898,62 @@ class TypeLibraryTests(unittest.TestCase):
         for parameter in (
             C(ListExactType, Number),
             C(ListMinType, Number),
-            C(ListRuggedType, Number),
         ):
             with self.subTest(parameter=parameter):
                 self.assertFalse(compatible(argument, parameter))
                 self.assertIsNone(
                     apply_overload(Overload((parameter,), (Number,)), (argument,))
                 )
+
+    def test_higher_rugged_rank_satisfies_lower_rugged_rank(self):
+        for source_rank in (1, 2, 3):
+            source = C(ListRuggedType, Integer, source_rank)
+            for target_rank in range(1, source_rank + 1):
+                target = C(ListRuggedType, Number, target_rank)
+                with self.subTest(
+                    source_rank=source_rank,
+                    target_rank=target_rank,
+                ):
+                    self.assertTrue(subtype(source, target))
+                    self.assertTrue(assignable(source, target))
+                    self.assertTrue(compatible(source, target))
+                    applied = apply_overload(
+                        Overload((target,), (Number,)),
+                        (source,),
+                    )
+                    self.assertIsNotNone(applied)
+                    self.assertFalse(applied.vectorised)
+
+    def test_generic_rugged_call_keeps_leaf_type_across_rank_widening(self):
+        caller_item = V("T", TypeVarId(100, 0))
+        callee_item = V("T", TypeVarId(200, 0))
+        overload = Overload(
+            (C(ListRuggedType, callee_item),),
+            (C(ListExactType, callee_item),),
+            generic_params=("T",),
+        )
+
+        applied = apply_overload(
+            overload,
+            (C(ListRuggedType, caller_item, 3),),
+        )
+
+        self.assertIsNotNone(applied)
+        self.assertEqual(applied.substitution, {callee_item.identity: caller_item})
+        self.assertEqual(
+            applied.actual_returns,
+            (C(ListExactType, caller_item),),
+        )
+        self.assertFalse(applied.vectorised)
+
+    def test_lower_rugged_rank_does_not_satisfy_higher_rugged_rank(self):
+        for source_rank in (1, 2):
+            source = C(ListRuggedType, Number, source_rank)
+            target = C(ListRuggedType, Number, source_rank + 1)
+            with self.subTest(source_rank=source_rank):
+                self.assertFalse(subtype(source, target))
+                self.assertFalse(assignable(source, target))
+                self.assertFalse(compatible(source, target))
 
     def test_mixed_rugged_vectorisation_keeps_the_weakest_shape(self):
         rugged = C(ListRuggedType, Number, 2)

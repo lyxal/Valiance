@@ -122,8 +122,7 @@ class _FunctionDeclarations:
         self._validate_function_element_tags(function_node, node)
         declared_overload = (
             _functions._fully_typed_overload(function_node)
-            if not node.generics
-            and _functions._body_references_element(function_node.body, name)
+            if _functions._body_references_element(function_node.body, name)
             else None
         )
         if (
