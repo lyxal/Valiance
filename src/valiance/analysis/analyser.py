@@ -47,6 +47,7 @@ from valiance.asts import (
     FunctionOverloadTyping,
     FunctionParam,
     ImportComponent,
+    ImportNode,
     ImportPath,
     ImportSpec,
     ListPatternNode,
@@ -54,6 +55,9 @@ from valiance.asts import (
     MatchNode,
     MatchPatternNode,
     ObjectNode,
+    TagDeclarationNode,
+    ElementTagDeclarationNode,
+    TagOverlayNode,
     OrPatternNode,
     PopNNode,
     SourceLocation,
@@ -75,7 +79,9 @@ from valiance.asts import (
     VariantMemberNode,
     is_default_match_case,
 )
-from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
+from valiance.asts.nodes import (
+    GetVariableNode, ObjectFieldNode, SetVariableNode, SetVariablesNode,
+)
 from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
 from valiance.asts.object_constructors import (
     constructor_definitions,
@@ -308,6 +314,9 @@ class Analyser:
         self.file_lint_suppressions: dict[str, ASTNode] = {}
         self._friendly_owners: tuple[Symbol, ...] = ()
         self._imported_definition_sources: dict[Symbol, str] = {}
+        self._top_level_declared_variable_names: frozenset[Symbol] = frozenset()
+        self._prescanned_definition_overloads: dict[int, list[tuple[Symbol, int]]] = {}
+        self._incomplete_recursive_definitions: tuple[DefineNode, ...] = ()
         self._reported_data_element_disjoints: set[
             tuple[int, Symbol, Symbol]
         ] = set()
@@ -374,7 +383,30 @@ class Analyser:
             self._prelude.nodes.clear()
             self._prelude.bindings.clear()
         initial = BranchSet((AnalysisBranch(input_mode=InputMode.TOP_LEVEL),))
-        final = self.analyse_block(initial, tuple(program))
+        setup, definitions, executable = self._top_level_analysis_phases(program)
+        self._top_level_declared_variable_names = frozenset(
+            target.name
+            for node in program
+            for target in (
+                (node,)
+                if isinstance(node, SetVariableNode)
+                else node.targets
+                if isinstance(node, SetVariablesNode)
+                else ()
+            )
+        )
+        current = self.analyse_block(initial, setup)
+        if current:
+            for definition in definitions:
+                self.declarations.prescan_define(definition)
+            for definition in self._incomplete_recursive_definitions:
+                self._diagnose(
+                    "recursive declaration cycles require complete parameter and "
+                    "return signatures",
+                    definition,
+                )
+            current = self.analyse_block(current, definitions)
+        final = self.analyse_block(current, executable) if current else current
         for code, directive in self.file_lint_suppressions.items():
             if code not in self.attempted_lint_codes:
                 self._record_lint_finding(
@@ -388,6 +420,177 @@ class Analyser:
         if len(final) != 1:
             return [TypedNode(node, None) for node in program]
         return [*self._prelude.nodes, *next(iter(final)).typed_body]
+
+
+    def _top_level_analysis_phases(
+        self,
+        program: list[ASTNode],
+    ) -> tuple[tuple[ASTNode, ...], tuple[DefineNode, ...], tuple[ASTNode, ...]]:
+        """Partition a module into prerequisite, function, and executable phases.
+
+        Top-level named definitions cannot capture top-level runtime variables, so
+        their declaration and inference may safely precede executable statements.
+        Type-level declarations are retained ahead of functions so signatures can
+        refer to objects, traits, and tags declared anywhere in the source file.
+        """
+        setup_types = (
+            ImportNode,
+            ObjectNode,
+            TagDeclarationNode,
+            ElementTagDeclarationNode,
+            TagOverlayNode,
+        )
+        setup: list[ASTNode] = []
+        definitions: list[DefineNode] = []
+        executable: list[ASTNode] = []
+        for node in program:
+            if isinstance(node, DefineNode):
+                definitions.append(node)
+            elif isinstance(node, setup_types):
+                setup.append(node)
+            else:
+                executable.append(node)
+        return (
+            tuple(setup),
+            self._order_top_level_definitions(definitions),
+            tuple(executable),
+        )
+
+    def _order_top_level_definitions(
+        self,
+        definitions: list[DefineNode],
+    ) -> tuple[DefineNode, ...]:
+        """Order acyclic definition dependencies before their consumers.
+
+        Complete recursive cycles are intentionally left in source order because
+        their prescanned signatures already make every member available. An
+        incomplete cycle consequently reaches normal analysis without a usable
+        declaration and is rejected rather than recursively inferred.
+        """
+        names = {definition.name for definition in definitions}
+        by_name: dict[Symbol, list[int]] = {}
+        for index, definition in enumerate(definitions):
+            by_name.setdefault(definition.name, []).append(index)
+
+        dependencies: list[set[int]] = []
+        for definition in definitions:
+            referenced = self._definition_element_references(definition.function)
+            dependencies.append({
+                index
+                for name in (referenced - {definition.name}) & names
+                for index in by_name[name]
+            })
+
+        self._incomplete_recursive_definitions = self._incomplete_cycle_members(
+            definitions,
+            dependencies,
+        )
+
+        ordered: list[int] = []
+        complete: set[int] = set()
+        visiting: set[int] = set()
+
+        def visit(index: int) -> None:
+            """Append one definition after recursively scheduling its dependencies."""
+            if index in complete:
+                return
+            if index in visiting:
+                return
+            visiting.add(index)
+            for dependency in sorted(dependencies[index]):
+                visit(dependency)
+            visiting.remove(index)
+            complete.add(index)
+            ordered.append(index)
+
+        for index in range(len(definitions)):
+            visit(index)
+        return tuple(definitions[index] for index in ordered)
+
+    @staticmethod
+    def _definition_has_complete_contract(definition: DefineNode) -> bool:
+        """Return whether a definition exposes complete callable signatures."""
+        function = definition.function
+        if function.overloads:
+            return True
+        explicit_params = function.params is not None or definition.name.text.startswith("\\")
+        return (
+            explicit_params
+            and function.returns is not None
+            and all(param.typ is not None for param in function.params or ())
+        )
+
+    def _incomplete_cycle_members(
+        self,
+        definitions: list[DefineNode],
+        dependencies: list[set[int]],
+    ) -> tuple[DefineNode, ...]:
+        """Return incomplete declarations belonging to recursive components."""
+        index = 0
+        indexes: dict[int, int] = {}
+        lowlinks: dict[int, int] = {}
+        stack: list[int] = []
+        on_stack: set[int] = set()
+        incomplete: list[DefineNode] = []
+
+        def connect(node_index: int) -> None:
+            """Visit one definition using Tarjan's component algorithm."""
+            nonlocal index
+            indexes[node_index] = index
+            lowlinks[node_index] = index
+            index += 1
+            stack.append(node_index)
+            on_stack.add(node_index)
+            for dependency in dependencies[node_index]:
+                if dependency not in indexes:
+                    connect(dependency)
+                    lowlinks[node_index] = min(
+                        lowlinks[node_index], lowlinks[dependency]
+                    )
+                elif dependency in on_stack:
+                    lowlinks[node_index] = min(
+                        lowlinks[node_index], indexes[dependency]
+                    )
+            if lowlinks[node_index] != indexes[node_index]:
+                return
+            component: list[int] = []
+            while True:
+                member = stack.pop()
+                on_stack.remove(member)
+                component.append(member)
+                if member == node_index:
+                    break
+            recursive = len(component) > 1 or node_index in dependencies[node_index]
+            if recursive:
+                incomplete.extend(
+                    definitions[member]
+                    for member in component
+                    if not self._definition_has_complete_contract(definitions[member])
+                )
+
+        for node_index in range(len(definitions)):
+            if node_index not in indexes:
+                connect(node_index)
+        return tuple(incomplete)
+
+    @staticmethod
+    def _definition_element_references(value: object) -> set[Symbol]:
+        """Collect named element references nested inside a definition body."""
+        references: set[Symbol] = set()
+
+        def walk(item: object) -> None:
+            """Visit AST and helper dataclasses while ignoring scalar metadata."""
+            if isinstance(item, ElementNode):
+                references.add(item.name)
+            if isinstance(item, ASTNode) or is_dataclass(item):
+                for data_field in fields(item):
+                    walk(getattr(item, data_field.name))
+            elif isinstance(item, (tuple, list, frozenset)):
+                for child in item:
+                    walk(child)
+
+        walk(value)
+        return references
 
     @property
     def runtime_prelude(self) -> tuple[TypedNode, ...]:

@@ -2235,6 +2235,12 @@ class VirtualMachine:
                                 (FunctionValue, OverloadedFunctionValue),
                             ):
                                 _bind_recursive_value(stored, instruction.arg)
+                                if code.name == "<main>":
+                                    _bind_global_function_declaration(
+                                        frame.globals,
+                                        instruction.arg,
+                                        stored,
+                                    )
                         case OpCode.LOAD_ELEMENT:
                             value = _load_element_name(
                                 instruction.arg,
@@ -3873,6 +3879,24 @@ def _store_value(existing: Any, value: Any) -> Any:
             _function_overloads(existing) + _function_overloads(value)
         )
     return value
+
+
+def _bind_global_function_declaration(
+    globals_: dict[str, Any],
+    name: str,
+    value: FunctionValue | OverloadedFunctionValue,
+) -> None:
+    """Make one top-level function visible to every top-level function closure."""
+    functions = tuple(
+        (existing_name, existing)
+        for existing_name, existing in globals_.items()
+        if isinstance(existing, (FunctionValue, OverloadedFunctionValue))
+    )
+    for existing_name, existing in functions:
+        for overload in _function_overloads(existing):
+            overload.globals.setdefault(name, value)
+        for overload in _function_overloads(value):
+            overload.globals.setdefault(existing_name, existing)
 
 
 def _bind_recursive_value(value: Any, name: str) -> None:

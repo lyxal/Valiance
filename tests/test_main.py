@@ -86,6 +86,26 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("top\n─ 42\nbottom", output.getvalue())
 
+    def test_repl_does_not_prescan_future_submissions_for_mutual_recursion(self):
+        """Keep declaration prescanning within one submitted compilation unit."""
+        output = io.StringIO()
+        error = io.StringIO()
+        input_stream = io.StringIO(
+            "define left(n: Integer) -> Integer => right($n) end\n"
+            "define right(n: Integer) -> Integer => left($n) end\n"
+            ":quit\n"
+        )
+        with (
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(error),
+            patch("sys.stdin", input_stream),
+        ):
+            exit_code = main([])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("unknown element 'right'", error.getvalue())
+        self.assertNotIn("unknown element 'left'", error.getvalue())
+
     def test_repl_reset_clears_stack_variables_and_defines(self):
         output = io.StringIO()
         error = io.StringIO()

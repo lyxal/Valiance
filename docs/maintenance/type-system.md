@@ -1248,6 +1248,17 @@ index later through structural equality can collapse distinct declarations.
 
 ## Function inference, step by step
 
+Top-level declarations are analysed separately from executable statements.
+Type-level declarations are established first, complete function signatures are
+prescanned, and acyclic function dependencies are ordered before their
+consumers. This permits forward calls and forward inference without allowing
+recursive type inference. A recursive group must therefore expose complete
+parameter and return contracts, either directly or through explicit
+`overload(...)` signatures. Each body is then checked against that published
+contract. Prescanned overloads are tracked by owning definition so a second
+definition with the same signature is still diagnosed as a duplicate.
+
+
 `_analyse_function_literal(...)` turns a function body into one or more typed
 signatures.
 

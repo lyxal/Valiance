@@ -147,5 +147,32 @@ class CompiledModuleTests(unittest.TestCase):
             loads_module(b"VLNCBC\\x16")
 
 
+    def test_compiled_module_exports_mutually_recursive_definitions(self):
+        """Preserve declaration prescanning through module compilation and import."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            library = root / "parity.vlnc"
+            library.write_text(
+                "public define even(n: Integer) -> #boolean Integer => "
+                "if ($n == 0) => true else => odd($n - 1) end end\n"
+                "public define odd(n: Integer) -> #boolean Integer => "
+                "if ($n == 0) => false else => even($n - 1) end end\n",
+                encoding="utf-8",
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = main_vln([
+                    "compile-module", "--file", str(library),
+                    "--output", str(root / "parity.vbcm"),
+                ])
+            self.assertEqual(result, 0)
+            library.unlink()
+
+            main = root / "main.vlnc"
+            analyser = Analyser(module_loader=ModuleLoader(), source_file=main)
+            typed = analyser.analyse(parse("import { parity }\nparity.even(8)"))
+            self.assertEqual(analyser.diagnostics, [])
+            self.assertIsNotNone(typed[-1].typ)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -94,6 +94,57 @@ class Analyser:
 class _FunctionDeclarations:
     """Own declaration operations for this domain."""
 
+    def prescan_define(self, node: DefineNode) -> None:
+        """Publish a complete definition signature before any body is analysed.
+
+        The normal definition handler recognizes the same overload and replaces
+        this provisional declaration with the body-validated overload. Definitions
+        whose parameters or returns require inference are deliberately skipped.
+        """
+        function_node = annotation_hooks.DEFAULT_REGISTRY.transform_function(
+            node.function,
+            node.annotations,
+        )
+        if not function_node.overloads:
+            function_node = _functions._genericize_function_node(
+                function_node,
+                node.generics,
+            )
+        function_node = replace(
+            function_node,
+            generics=node.generics,
+            generic_variances=node.generic_variances,
+            generic_constraints=node.generic_constraints,
+        )
+        variants = self._overload_function_variants(function_node, node)
+        if variants is None:
+            return
+        for variant in variants:
+            if node.name.text.startswith("\\") and variant.params is None:
+                variant = replace(variant, params=())
+            declared_overload = _functions._fully_typed_overload(variant)
+            if declared_overload is None:
+                continue
+            if self.env.has_local_non_object_friendly_overload(
+                node.name,
+                declared_overload,
+            ):
+                self._diagnose(
+                    f"duplicate definition for '{node.name}' with signature "
+                    f"{T.show(T.Fn(declared_overload.params, declared_overload.returns))}",
+                    node,
+                )
+                continue
+            if self._define_overload_with_diagnostic(
+                node.name,
+                declared_overload,
+                node,
+            ):
+                index = len(self.env.overloads.get(node.name, ())) - 1
+                self._prescanned_definition_overloads.setdefault(id(node), []).append(
+                    (node.name, index)
+                )
+
     def _define(
         self,
         node: DefineNode,
@@ -123,18 +174,20 @@ class _FunctionDeclarations:
         # A complete declared signature is an interface in its own right.
         # Publish it before body analysis so recursion and subsequent recovery
         # do not depend on finding a particular reference shape in the body.
-        declared_overload = _functions._fully_typed_overload(function_node)
+        declared_signature_node = function_node
+        if name.text.startswith("\\") and declared_signature_node.params is None:
+            declared_signature_node = replace(declared_signature_node, params=())
+        declared_overload = _functions._fully_typed_overload(declared_signature_node)
+        owned_declarations = self._prescanned_definition_overloads.get(id(node), ())
         declared_index: int | None = None
         if declared_overload is not None:
             declared_index = next(
                 (
                     index
-                    for index, candidate in enumerate(
-                        self.env.overloads.get(name, ())
-                    )
-                    if candidate == declared_overload
-                    and index
-                    not in self.env.object_friendly_overloads.get(name, set())
+                    for declared_name, index in owned_declarations
+                    if declared_name == name
+                    and index < len(self.env.overloads.get(name, ()))
+                    and self.env.overloads[name][index] == declared_overload
                 ),
                 None,
             )

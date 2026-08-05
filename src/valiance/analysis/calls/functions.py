@@ -261,11 +261,27 @@ class _CallableValues:
         ):
             return self._call_site_checked_function(outer, node), outer
 
-        top_level_captures = (
-            ()
-            if allow_top_level_captures
-            else _functions._top_level_capture_nodes(outer, node)
-        )
+        if allow_top_level_captures:
+            top_level_captures = ()
+        else:
+            top_level_captures = _functions._top_level_capture_nodes(outer, node)
+            declared_names = getattr(
+                self,
+                "_top_level_declared_variable_names",
+                frozenset(),
+            )
+            if declared_names:
+                known_captures = _functions._top_level_capture_reads_in_function(
+                    node,
+                    set(declared_names),
+                    frozenset(),
+                )
+                seen_capture_ids = {id(capture) for capture in top_level_captures}
+                top_level_captures = (*top_level_captures, *(
+                    capture
+                    for capture in known_captures
+                    if id(capture) not in seen_capture_ids
+                ))
         if top_level_captures:
             for capture in top_level_captures:
                 self._diagnose(
@@ -777,6 +793,7 @@ class _CallableValues:
         ):
             if node.where_clause and _functions._contains_rank_var(node.returns):
                 return node.returns, branch
+            diagnosed = False
             for actual, declared in zip(actual_returns, checked_returns, strict=True):
                 if _functions._is_result_type(actual) and not _functions._is_result_type(declared):
                     self._diagnose(
@@ -785,7 +802,16 @@ class _CallableValues:
                         f"{T.show(declared)}; declare a compatible Result return type",
                         node,
                     )
+                    diagnosed = True
                     break
+            if not diagnosed:
+                actual_text = ", ".join(T.show(item) for item in actual_returns) or "nothing"
+                declared_text = ", ".join(T.show(item) for item in checked_returns) or "nothing"
+                self._diagnose(
+                    f"function body returns {actual_text}, but the explicit return "
+                    f"annotation declares {declared_text}",
+                    node,
+                )
             return None
         return node.returns, branch
 
