@@ -693,7 +693,9 @@ end
                 "return type"
             ],
         )
-        self.assertEqual(analyser.env.overloads_for(Symbol("choose")), ())
+        [choose] = analyser.env.overloads_for(Symbol("choose"))
+        self.assertEqual(choose.params, (Tagged(Number, DataTag("boolean")),))
+        self.assertEqual(choose.returns, (Number,))
 
     def test_empty_return_list_is_inferred_from_explicit_return_type(self):
         analyser = Analyser()
@@ -5314,6 +5316,29 @@ end
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, Integer)
 
+    def test_match_result_can_supply_an_explicit_call_argument_above_outer_stack(self):
+        analyser = Analyser()
+        source = """
+        define[T] flatten(xs: T~) -> T+ =>
+          $res: T+ = []
+          $xs foreach (x) =>
+            $res := addAll($x match =>
+              as xss: T~~ => flatten $xss
+              default => ^+
+            end)
+          end
+          $res
+        end
+        """
+
+        analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertNotIn(
+            "minimum-rank-never-wraps",
+            tuple(finding.code for finding in analyser.lint_findings),
+        )
+
     def test_or_pattern_with_wildcard_is_exhaustive_and_hides_later_cases(self):
         analyser = Analyser()
 
@@ -5739,18 +5764,50 @@ class BareParameterElementDiagnosticTests(unittest.TestCase):
         )
 
 
+class DeclaredDefinitionInterfaceTests(unittest.TestCase):
+    def test_fully_typed_definition_is_visible_inside_nested_call_arguments(self):
+        analyser = Analyser()
+        source = """
+        define countdown(n: Integer) -> Integer =>
+          if ($n == 0) => 0
+          else => +(countdown($n - 1), 1)
+          end
+        end
+        countdown 5
+        """
+
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-1].typ, Integer)
+
+    def test_declared_interface_remains_visible_after_invalid_body(self):
+        analyser = Analyser()
+        typed = analyser.analyse(
+            parse(
+                "define bad(x: Integer) -> String => $x end\n"
+                "bad 1"
+            )
+        )
+
+        self.assertEqual(typed[-1].typ, String)
+        self.assertFalse(
+            any("unknown element 'bad'" in item for item in analyser.diagnostics)
+        )
+
+
 class RecursiveBindingAnalysisTests(unittest.TestCase):
     def test_unannotated_this_in_unreachable_match_case_is_rejected(self):
         analyser = Analyser()
         source = """define[T] flatten(list: T~) -> T+ =>
   $flattened: T+ = []
   $list foreach (item) =>
-    $item match =>
+    $piece = $item match =>
       as lst: T+ => $lst
       as scl: T => [$scl]
       _ => this($item)
     end
-    $flattened := addAll
+    $flattened := addAll($piece)
   end
   $flattened
 end

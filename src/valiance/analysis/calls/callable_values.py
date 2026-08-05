@@ -332,35 +332,6 @@ def _validate_define_niladic_name(name: Symbol, overload: T.Overload) -> bool:
     return is_named_nilad == is_inferred_nilad
 
 
-def _body_references_element(body: tuple[ASTNode, ...], name: Symbol) -> bool:
-    """Return the Boolean result of body references element during static analysis."""
-    return any(_node_references_element(node, name) for node in body)
-
-
-def _node_references_element(node: ASTNode, name: Symbol) -> bool:
-    """Return the Boolean result of node references element during static analysis."""
-    if isinstance(node, ElementNode) and node.name == name:
-        return True
-    for item in fields(node):
-        value = getattr(node, item.name)
-        if isinstance(value, ASTNode):
-            if _node_references_element(value, name):
-                return True
-        elif isinstance(value, tuple) and _tuple_references_element(value, name):
-            return True
-    return False
-
-
-def _tuple_references_element(value: tuple[object, ...], name: Symbol) -> bool:
-    """Return the Boolean result of tuple references element during static analysis."""
-    for item in value:
-        if isinstance(item, ASTNode) and _node_references_element(item, name):
-            return True
-        if isinstance(item, tuple) and _tuple_references_element(item, name):
-            return True
-    return False
-
-
 def _is_call_site_checked_param(typ: T.Type | None) -> bool:
     """Return whether the value is call site checked param."""
     if typ is None:

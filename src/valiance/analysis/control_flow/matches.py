@@ -196,7 +196,12 @@ class _MatchAnalysis:
             # Matched subjects are conceptual case inputs, not physical stack
             # values. A case therefore begins with the subjects removed, while
             # ordinary underflow can cycle retained coordinates on demand.
-            case_input = body_input.with_variables(case_variables)
+            # Case bodies operate on retained match subjects, not on values below
+            # the consumed subjects. Keep the outer stack isolated while analysing
+            # the case, then restore it when committing the case output.
+            case_input = body_input.with_variables(case_variables).with_stack(
+                T.TypeStack()
+            )
             case_input = replace(
                 case_input,
                 input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,

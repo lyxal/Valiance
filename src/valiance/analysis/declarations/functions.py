@@ -120,24 +120,32 @@ class _FunctionDeclarations:
             generic_constraints=node.generic_constraints,
         )
         self._validate_function_element_tags(function_node, node)
-        declared_overload = (
-            _functions._fully_typed_overload(function_node)
-            if _functions._body_references_element(function_node.body, name)
-            else None
-        )
-        if (
-            declared_overload is not None
-            and not self.env.has_local_non_object_friendly_overload(
-                name,
-                declared_overload,
+        # A complete declared signature is an interface in its own right.
+        # Publish it before body analysis so recursion and subsequent recovery
+        # do not depend on finding a particular reference shape in the body.
+        declared_overload = _functions._fully_typed_overload(function_node)
+        declared_index: int | None = None
+        if declared_overload is not None:
+            declared_index = next(
+                (
+                    index
+                    for index, candidate in enumerate(
+                        self.env.overloads.get(name, ())
+                    )
+                    if candidate == declared_overload
+                    and index
+                    not in self.env.object_friendly_overloads.get(name, set())
+                ),
+                None,
             )
-        ):
-            if not self._define_overload_with_diagnostic(
-                name,
-                declared_overload,
-                node,
-            ):
-                return BranchSet((branch.emit(TypedNode(node, None)),))
+            if declared_index is None:
+                if not self._define_overload_with_diagnostic(
+                    name,
+                    declared_overload,
+                    node,
+                ):
+                    return BranchSet((branch.emit(TypedNode(node, None)),))
+                declared_index = len(self.env.overloads.get(name, ())) - 1
         result = self._analyse_overloaded_function_literal(
             branch,
             function_node,
@@ -165,15 +173,22 @@ class _FunctionDeclarations:
             if overload is None:
                 continue
             overload_typings[typing_index] = replace(typing, overload=overload)
-            if not self.env.has_local_non_object_friendly_overload(name, overload):
-                if not self._define_overload_with_diagnostic(name, overload, node):
-                    return BranchSet(
-                        (typed_branch.emit(TypedNode(node, None)),)
-                    )
-            original_index = self.env.non_object_friendly_overload_index(
-                name,
-                overload,
-            )
+            if declared_index is not None and typing_index == 0:
+                # Replace the provisional interface with its validated form so
+                # inferred constraints, effects, tags, and runtime metadata do
+                # not create a duplicate overload.
+                self.env.overloads[name][declared_index] = overload
+                original_index = declared_index
+            else:
+                if not self.env.has_local_non_object_friendly_overload(name, overload):
+                    if not self._define_overload_with_diagnostic(name, overload, node):
+                        return BranchSet(
+                            (typed_branch.emit(TypedNode(node, None)),)
+                        )
+                original_index = self.env.non_object_friendly_overload_index(
+                    name,
+                    overload,
+                )
             if name.text.startswith("#") and original_index is not None:
                 static_result = _calls._static_validator_result(typing.body)
                 if static_result is not None:

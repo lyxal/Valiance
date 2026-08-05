@@ -444,8 +444,8 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
     "addAll": element_documentation(
         "Append every item from one list to another list.",
         parameters=(
-            ("items", "Items to append."),
             ("target", "List receiving the items."),
+            ("items", "Items to append."),
         ),
         returns="A combined list.",
         category="Collections",
@@ -2515,8 +2515,8 @@ def _append(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 def _add_all(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `addAll` built-in runtime overload."""
-    items, target = args
-    if isinstance(items, LazyList) or isinstance(target, LazyList):
+    target, items = args
+    if isinstance(target, LazyList) or isinstance(items, LazyList):
         return (LazyList(chain(target, items)),)
     return ([*target, *items],)
 

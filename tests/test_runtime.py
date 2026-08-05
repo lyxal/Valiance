@@ -113,11 +113,10 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
         define[T] flatten(xs: T~) -> T+ =>
           $res: T+ = []
           $xs foreach (x) =>
-            match =>
+            $res := addAll($x match =>
               as :T~~ => flatten
               default => ^+
-            end
-            $res := addAll
+            end)
           end
           $res
         end
@@ -136,11 +135,10 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
         ) -> U+ =>
           $res: U+ = []
           $xs foreach (item) =>
-            match =>
+            $res := addAll($item match =>
               as ls: T~~ => flatMap($ls, $f)
               as x => $f(^+ $x)
-            end
-            $res := addAll
+            end)
           end
           $res
         end
@@ -151,6 +149,55 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
         """
         self.assertEqual(execute(source), [["v1", "v2", "v3", "v4", "v5", "v6"]])
 
+
+
+    def test_minimum_rank_match_subtraction_expands_exact_interval(self):
+        source = """
+        define[T] accept(xs: T+2 | T+3 | T+4) -> Integer => 1 end
+        define[T] classify(xs: T*2) -> Integer =>
+          match =>
+            as :T*5 => 0
+            default => accept
+          end
+        end
+        classify [[1]]
+        classify [[[1]]]
+        classify [[[[1]]]]
+        classify [[[[[1]]]]]
+        """
+        self.assertEqual(
+            execute(source),
+            [
+                RuntimeNumber("1"),
+                RuntimeNumber("1"),
+                RuntimeNumber("1"),
+                RuntimeNumber("0"),
+            ],
+        )
+
+    def test_rugged_rank_match_subtraction_expands_exact_interval(self):
+        source = """
+        define[T] accept(xs: T+2 | T+3 | T+4) -> Integer => 1 end
+        define[T] classify(xs: T~2) -> Integer =>
+          match =>
+            as :T*5 => 0
+            default => accept
+          end
+        end
+        classify [[1]]
+        classify [[[1]]]
+        classify [[[[1]]]]
+        classify [[[[[1]]]]]
+        """
+        self.assertEqual(
+            execute(source),
+            [
+                RuntimeNumber("1"),
+                RuntimeNumber("1"),
+                RuntimeNumber("1"),
+                RuntimeNumber("0"),
+            ],
+        )
 
 
 class RuntimeTests(unittest.TestCase):
@@ -1266,9 +1313,22 @@ define[T] rankOne(xs: T+ exact) -> T+ => $xs end
             [[RuntimeNumber("1"), RuntimeNumber("2"), RuntimeNumber("3")]],
         )
 
-    def test_add_all_extends_top_stack_list_with_items(self):
+    def test_add_all_appends_items_to_target(self):
         self.assertEqual(
-            execute("[3, 4] [1, 2] addAll"),
+            execute("[1, 2] [3, 4] addAll"),
+            [
+                [
+                    RuntimeNumber("1"),
+                    RuntimeNumber("2"),
+                    RuntimeNumber("3"),
+                    RuntimeNumber("4"),
+                ]
+            ],
+        )
+
+    def test_add_all_explicit_items_follow_target(self):
+        self.assertEqual(
+            execute("[1, 2] addAll([3, 4])"),
             [
                 [
                     RuntimeNumber("1"),
@@ -1285,12 +1345,11 @@ define[T] rankOne(xs: T+ exact) -> T+ => $xs end
 $flatten = @recursive fn[T] (list: T~) -> T+ =>
   $flattened: T+ = []
   $list foreach (item) =>
-    $item match =>
+    $flattened := addAll($item match =>
       as lst: T+ => $lst
       as scl: T  => [$scl]
               _  => this($item)
-    end
-    $flattened := addAll
+    end)
   end
   $flattened
 end
@@ -3948,6 +4007,21 @@ while ($n < 10) =>
 end
 """),
             [RuntimeNumber("3")],
+        )
+
+    def test_named_recursion_inside_explicit_arguments_executes(self):
+        self.assertEqual(
+            execute(
+                """
+                define countdown(n: Integer) -> Integer =>
+                  if ($n == 0) => 0
+                  else => +(countdown($n - 1), 1)
+                  end
+                end
+                countdown 5
+                """
+            ),
+            [RuntimeNumber("5")],
         )
 
     def test_typed_recursive_definitions_call_themselves_at_runtime(self):

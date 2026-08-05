@@ -424,12 +424,11 @@ $findFold([4, 7, 9], 5)
         $flatten = @recursive fn[T] (list: T~) -> T+ =>
             $flattened: T+ = []
             $list foreach (item) =>
-                $item match =>
+                $flattened := addAll($item match =>
                 as lst: T+ => $lst
                 as scl: T  => [$scl]
                         _  => this($item)
-                end
-                $flattened := addAll
+                end)
             end
             $flattened
         end

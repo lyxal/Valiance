@@ -778,10 +778,16 @@ def _match_case_output(
         candidate = candidate.emit(TypedNode(node, typ))
     return replace(
         candidate,
+        # Match subjects are conceptual case inputs. The physical stack below
+        # them is isolated during case analysis and restored beneath every value
+        # produced by the selected case.
+        stack=T.TypeStack((*baseline.stack.items, *candidate.stack.items)),
         typed_body=baseline.typed_body,
         input_mode=baseline.input_mode,
         cycle_params=baseline.cycle_params,
         cycle_index=baseline.cycle_index,
+        cycle_stack_remaining=baseline.cycle_stack_remaining,
+        cycle_from_top=baseline.cycle_from_top,
     )
 
 
@@ -1103,35 +1109,50 @@ def _subtract_match_types(
     excluded: tuple[T.Type, ...],
     ctx: T.Context,
 ) -> T.Type:
-    """Determine the types used for subtract match during static analysis."""
-    subject_type = T.normalize(subject_type)
-    if not isinstance(subject_type, T.UnionType):
-        return subject_type
-    remaining_items: list[T.Type] = []
-    for item in subject_type.items:
-        if any(T.assignable(item, typ, ctx) for typ in excluded):
-            continue
-        narrowed = item
-        for typ in excluded:
-            item_normal = T.normalize(item)
-            excluded_normal = T.normalize(typ)
-            if (
-                isinstance(item_normal, T.ListRuggedType)
-                and isinstance(excluded_normal, T.ListRuggedType)
-                and isinstance(item_normal.rank, int)
-                and isinstance(excluded_normal.rank, int)
-                and excluded_normal.rank == item_normal.rank + 1
-                and T.assignable(item_normal.base, excluded_normal.base, ctx)
-                and T.assignable(excluded_normal.base, item_normal.base, ctx)
-            ):
-                # Failing the next rugged minimum rank leaves the current
-                # boundary. At rank one this is the ordinary leaf list T+.
-                narrowed = T.ExactList(item_normal.base, rank=item_normal.rank)
-        remaining_items.append(narrowed)
-    remaining = tuple(remaining_items)
-    if not remaining:
-        return T.NeverType()
-    return T.U(*remaining)
+    """Remove earlier pattern coverage and preserve finite rank intervals."""
+    subject_items = (
+        tuple(T.normalize(subject_type).items)
+        if isinstance(T.normalize(subject_type), T.UnionType)
+        else (T.normalize(subject_type),)
+    )
+    remaining: list[T.Type] = list(subject_items)
+    for excluded_type in excluded:
+        next_remaining: list[T.Type] = []
+        for item in remaining:
+            next_remaining.extend(
+                _subtract_match_type(item, T.normalize(excluded_type), ctx)
+            )
+        remaining = next_remaining
+        if not remaining:
+            return T.NeverType()
+    return T.U(*remaining) if remaining else T.NeverType()
+
+
+def _subtract_match_type(
+    subject: T.Type,
+    excluded: T.Type,
+    ctx: T.Context,
+) -> tuple[T.Type, ...]:
+    """Subtract one covered type, expanding bounded collection-rank gaps."""
+    subject = T.normalize(subject)
+    excluded = T.normalize(excluded)
+    if T.assignable(subject, excluded, ctx):
+        return ()
+    if (
+        isinstance(subject, (T.ListMinType, T.ListRuggedType))
+        and isinstance(excluded, (T.ListMinType, T.ListRuggedType))
+        and isinstance(subject.rank, int)
+        and isinstance(excluded.rank, int)
+        and T.assignable(subject.base, excluded.base, ctx)
+        and T.assignable(excluded.base, subject.base, ctx)
+    ):
+        if excluded.rank <= subject.rank:
+            return ()
+        return tuple(
+            T.ExactList(subject.base, rank=rank)
+            for rank in range(subject.rank, excluded.rank)
+        )
+    return (subject,)
 
 
 def _pattern_binding_types(
