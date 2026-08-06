@@ -354,6 +354,16 @@ Built-in implementations return stack fragments.
 A runtime implementation receives a tuple of arguments and returns a tuple of
 values to push. Niladic returns use `()`, not `None`.
 
+Built-ins are scheduler-atomic. `RuntimeContext` contains semantic runtime
+services, not fairness policy, and a built-in must never call `Scheduler.step()`
+directly or indirectly. Pending cancellation is checked by the VM after a
+successful built-in return and before the next ordinary instruction. If the
+built-in raises, its operation fault keeps precedence. Eager built-ins may delay
+siblings and cancellation, so they must consume finite input and must not sleep,
+block on host I/O or synchronization, await another task synchronously, or
+unrestrictedly exhaust an open-ended source. Lazy construction and ownership
+transitions must not introduce hidden suspension points.
+
 Vectorisation belongs in dispatch, not in each arithmetic built-in.
 
 Scalar built-ins such as `+` and `*` should remain simple scalar

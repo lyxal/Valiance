@@ -3,12 +3,128 @@ import unittest
 from valiance.analysis import Analyser
 from valiance.parsing import parse
 from valiance.runtime import compile_program
-from valiance.runtime.bytecode import FunctionCode, Instruction, OpCode
+from valiance.runtime.bytecode import (
+    FunctionCode, Instruction, OpCode, ResolvedElementReference,
+)
 from valiance.runtime.runtime_values import ListValue, RuntimeNumber
-from valiance.runtime.vm import FunctionValue, VirtualMachine
+from valiance.runtime.vm import BuiltinValue, FunctionValue, VirtualMachine
+from valiance.elements.builtins import (
+    BuiltinElement, BuiltinOverload, RuntimeContext,
+)
+from valiance import vtypes as T
+from valiance.vtypes.symbols import Symbol
 
 
 class VmActivationQuantumTests(unittest.TestCase):
+
+    def _install_test_builtin(self, vm, name, implementation):
+        overload = BuiltinOverload(T.Overload((), ()), implementation)
+        element = BuiltinElement(Symbol(name), (overload,))
+        vm.globals[name] = BuiltinValue(
+            element,
+            RuntimeContext(vm.output, vm.call_value, vm.format_value),
+        )
+
+    def test_builtin_call_is_scheduler_atomic(self):
+        vm = VirtualMachine(output=lambda _value: None)
+        vm.task_instruction_quantum = 100
+        events = []
+
+        def atomic(_args, _ctx):
+            events.append("builtin entered")
+            events.append("builtin completed")
+            return ()
+
+        self._install_test_builtin(vm, "test.atomic", atomic)
+        code = FunctionCode(
+            (
+                Instruction(
+                    OpCode.CALL_RESOLVED_ELEMENT,
+                    ResolvedElementReference("test.atomic", 0),
+                ),
+                Instruction(OpCode.CANCEL_POLL),
+                Instruction(OpCode.RETURN),
+            ),
+            name="<atomic-builtin>",
+            return_count=0,
+        )
+        task = vm.scheduler.root_scope.spawn(
+            lambda: vm._task_call_runner(FunctionValue(code, vm.globals), (), 0)
+        )
+        vm.scheduler.root_scope.spawn(lambda: (events.append("sibling ran"),))
+        self.assertEqual(vm.scheduler.wait(task), ())
+        self.assertEqual(
+            events[:3],
+            ["builtin entered", "builtin completed", "sibling ran"],
+        )
+
+    def test_cancellation_requested_in_builtin_is_observed_after_return(self):
+        vm = VirtualMachine(output=lambda _value: None)
+        vm.task_instruction_quantum = 100
+        events = []
+
+        def atomic(_args, _ctx):
+            events.append("builtin entered")
+            vm.scheduler.current_task.request_cancel()
+            events.append("builtin completed")
+            return ()
+
+        def later(_args, _ctx):
+            events.append("later instruction")
+            return ()
+
+        self._install_test_builtin(vm, "test.cancel.atomic", atomic)
+        self._install_test_builtin(vm, "test.cancel.later", later)
+        code = FunctionCode(
+            (
+                Instruction(
+                    OpCode.CALL_RESOLVED_ELEMENT,
+                    ResolvedElementReference("test.cancel.atomic", 0),
+                ),
+                Instruction(
+                    OpCode.CALL_RESOLVED_ELEMENT,
+                    ResolvedElementReference("test.cancel.later", 0),
+                ),
+                Instruction(OpCode.RETURN),
+            ),
+            name="<post-builtin-cancellation>",
+            return_count=0,
+        )
+        task = vm.scheduler.root_scope.spawn(
+            lambda: vm._task_call_runner(FunctionValue(code, vm.globals), (), 0)
+        )
+        self.assertTrue(vm.scheduler.step())
+        self.assertEqual(events, ["builtin entered", "builtin completed"])
+        self.assertEqual(task.control.state.name, "CANCELLED")
+        self.assertEqual(task.control.terminal_transition_count, 1)
+
+    def test_builtin_fault_precedes_pending_cancellation(self):
+        vm = VirtualMachine(output=lambda _value: None)
+
+        def failing(_args, _ctx):
+            vm.scheduler.current_task.request_cancel()
+            raise ValueError("operation failed")
+
+        self._install_test_builtin(vm, "test.cancel.fault", failing)
+        code = FunctionCode(
+            (
+                Instruction(
+                    OpCode.CALL_RESOLVED_ELEMENT,
+                    ResolvedElementReference("test.cancel.fault", 0),
+                ),
+                Instruction(OpCode.RETURN),
+            ),
+            name="<builtin-fault-precedence>",
+            return_count=0,
+        )
+        task = vm.scheduler.root_scope.spawn(
+            lambda: vm._task_call_runner(FunctionValue(code, vm.globals), (), 0)
+        )
+        self.assertTrue(vm.scheduler.step())
+        self.assertEqual(task.control.state.name, "FAILED")
+        self.assertRegex(str(task.control.terminal_fault), "operation failed")
+        self.assertEqual(task.control.terminal_transition_count, 1)
+
     def test_task_local_activation_yields_by_instruction_budget(self):
         vm = VirtualMachine(output=lambda _value: None)
         vm.task_instruction_quantum = 2

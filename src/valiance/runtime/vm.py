@@ -579,7 +579,6 @@ class VirtualMachine:
                     prepare_call=self.prepare_call,
                     index_get=self._builtin_index_get,
                     index_set=self._builtin_index_set,
-                    cooperative_poll=self._cooperative_builtin_poll,
                 ),
             )
             for name, element in (
@@ -587,13 +586,11 @@ class VirtualMachine:
             ).items()
         }
 
-    def _cooperative_builtin_poll(self) -> None:
-        """Bound cancellation latency and permit one sibling quantum in native loops."""
+    def _raise_pending_cancellation(self) -> None:
+        """Observe task cancellation after one synchronous VM call returns."""
         current = self.scheduler.current_task
         if current is not None and current.cancellation_requested:
             raise CancelledFault(f"task {current.id} was cancelled")
-        if self.scheduler.runnable:
-            self.scheduler.step()
 
     def _builtin_index_get(
         self, receiver: Any, selector: Any, grouped_update: bool
@@ -2754,6 +2751,7 @@ class VirtualMachine:
                                     activation.pending_call = request
                                     activation.ip = ip
                                     return request
+                                self._raise_pending_cancellation()
                             except PanicSignal as exc:
                                 target = self._handle_panic(frame, exc)
                                 if target is None:
@@ -2769,6 +2767,7 @@ class VirtualMachine:
                                     activation.pending_call = request
                                     activation.ip = ip
                                     return request
+                                self._raise_pending_cancellation()
                             except PanicSignal as exc:
                                 target = self._handle_panic(frame, exc)
                                 if target is None:
@@ -6360,7 +6359,6 @@ def _vectorize_declared_callable(
         vm.call_value,
         vm.format_value,
         vm.call_value_overload,
-        cooperative_poll=vm._cooperative_builtin_poll,
     )
 
     def implementation(
@@ -6423,7 +6421,6 @@ def _vectorize_function(
         vm.call_value,
         vm.format_value,
         vm.call_value_overload,
-        cooperative_poll=vm._cooperative_builtin_poll,
     )
     result = _vectorize_resolved_depths(
         implementation,

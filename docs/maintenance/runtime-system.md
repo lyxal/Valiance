@@ -240,6 +240,16 @@ static values recorded by codegen, including hidden numeric results from
 There is deliberately one built-in registry rather than separate analyser and
 VM registries.
 
+Built-in execution is one scheduler-atomic region from entry until return or
+fault. Scheduler fairness is not a `RuntimeContext` service, and built-ins must
+not enter the scheduler. Cancellation requested during a built-in remains
+pending; after a successful return the VM observes it before the next ordinary
+user-visible instruction. A built-in fault remains primary when cancellation is
+also pending. Explicit VM operations own suspension, while cleanup, ownership
+transfer, and other partially committed native operations remain atomic. Future
+long-running resumable work must use explicit VM machinery rather than adding
+polling callbacks to `RuntimeContext`.
+
 ### `stdlib_native.py`: Python-backed imported functions
 
 Native standard-library functions use the same runtime implementation shape as
@@ -1664,7 +1674,7 @@ Optimization statistics expose the applied contract through:
 - `call.policy.union-dispatch`
 - `call.policy.declared-dispatch`
 
-## Cooperative suspension and native-loop polling
+## Cooperative suspension and atomic built-ins
 
 The initial concurrency runtime uses one executor. Scheduler suspension sources
 therefore must never block the host thread. `Scheduler.register_timer` creates a
@@ -1677,11 +1687,15 @@ External calls declare `ExternalCallPolicy`: immediate, scheduler-suspending, or
 host-blocking. Host-blocking calls are rejected before concurrent execution.
 Cancellation awareness is explicit metadata rather than inferred behavior.
 
-Long-running built-in loops call `RuntimeContext.poll_work` every 64 items. The
-VM poll first observes task cancellation, then permits one runnable sibling
-quantum. Polls belong only at native-loop item boundaries. Retain/release,
-channel commit, copy-on-write detach, assignment reconstruction, and destructor
-execution remain atomic and must not call the poll.
+Built-in calls are scheduler-atomic from entry until return or fault.
+`RuntimeContext` does not expose scheduler fairness or polling, and built-ins
+must not enter the scheduler. Pending cancellation is observed by the VM after a
+successful built-in return and before the next ordinary instruction; a built-in
+fault remains primary when cancellation is also pending. Large finite eager
+operations may delay siblings by design. Retain/release, channel commit,
+copy-on-write detach, assignment reconstruction, and destructor execution also
+remain atomic. Potentially unbounded work must stay lazy, be explicitly bounded,
+use an explicit VM suspension mechanism, or be rejected.
 
 ## Task-aware concurrency diagnostics
 

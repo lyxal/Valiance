@@ -5056,7 +5056,7 @@ For a stream of values, use a bounded channel, have the producer close it when d
 
 ## 25.13. Cancellation and suspension behavior
 
-Cancellation is cooperative. It is observed at scheduler boundaries, waits, channel operations, supported timer and external-wakeup suspension points, and bounded polls inside long-running runtime operations.
+Cancellation is cooperative. Valiance builtins execute atomically with respect to the cooperative task scheduler: sibling tasks and pending cancellation are observed only after the builtin returns at an explicit VM scheduling or suspension boundary. Large eager builtins may therefore delay other tasks. Builtins must not perform host-blocking work, and operations over potentially unbounded sources must remain lazy, require an explicit bound, use explicit runtime suspension, or be rejected.
 
 The initial release does not expose a public cancellation function. Cancellation is currently driven by structured failure, scope cleanup, and runtime lifecycle management.
 
