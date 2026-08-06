@@ -53,7 +53,13 @@ from valiance.runtime import (
     build_module,
     dumps_module,
 )
-from valiance.runtime.runtime_values import DIAGNOSTIC_LIST_PREVIEW_LIMIT, format_runtime_value
+from valiance.runtime.runtime_values import (
+    DIAGNOSTIC_LIST_PREVIEW_LIMIT,
+    ObjectValue,
+    PanicSignal,
+    format_runtime_value,
+    object_type_name,
+)
 from valiance.source_tools import (
     DEFAULT_REFERENCE_FILENAME,
     add_missing_docstrings,
@@ -1743,6 +1749,9 @@ def _run_source(
         _write_bytecode_file(output_path, dumps(bytecode))
         print(f"Wrote bytecode: {output_path}")
         return 0
+    except PanicSignal as exc:
+        _print_panic_diagnostic(exc)
+        return 1
     except (
         BytecodeFormatError,
         LexError,
@@ -1905,6 +1914,9 @@ def _run_bytecode_file(
             implicit_output=implicit_output,
             preview_lists=preview_lists,
         )
+    except PanicSignal as exc:
+        _print_panic_diagnostic(exc)
+        return 1
     except (BytecodeFormatError, OSError, RuntimeError) as exc:
         _print_exception_diagnostic(exc)
         return 1
@@ -1942,6 +1954,20 @@ def _write_bytecode_file(filename: str | Path, data: bytes) -> None:
     path.write_bytes(data)
 
 
+def _print_panic_diagnostic(panic: PanicSignal) -> None:
+    """Render an uncaught language panic without exposing a Python traceback."""
+    value = panic.value
+    if isinstance(value, ObjectValue):
+        kind = object_type_name(value)
+        message = value.fields.get("message")
+        if message is not None:
+            rendered_message = format_runtime_value(message)
+            print(f"Uncaught panic: {kind}\n  {rendered_message}", file=sys.stderr)
+            return
+    rendered = format_runtime_value(value)
+    print(f"Uncaught panic\n  {rendered}", file=sys.stderr)
+
+
 def _print_exception_diagnostic(
     exc: BaseException,
     *,
@@ -1952,6 +1978,9 @@ def _print_exception_diagnostic(
     if isinstance(exc, ParseErrors):
         for error in exc.errors:
             _print_exception_diagnostic(error, source=source, source_file=source_file)
+        return
+    if isinstance(exc, RuntimeError) and isinstance(exc.__cause__, PanicSignal):
+        _print_panic_diagnostic(exc.__cause__)
         return
     if isinstance(exc, LexError):
         stage = "Lex error"

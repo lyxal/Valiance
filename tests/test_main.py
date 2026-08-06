@@ -248,6 +248,24 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 2)
         self.assertIn("Did you mean 'compile'?", error.getvalue())
 
+    def test_run_renders_uncaught_panic_without_python_traceback(self):
+        output = io.StringIO()
+        error = io.StringIO()
+        source = 'ValueFault("Insufficient funds on account DEMO") panic'
+
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
+            exit_code = main(["run", "--code", source])
+
+        rendered = error.getvalue()
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(
+            rendered,
+            "Uncaught panic: ValueFault\n"
+            "  Insufficient funds on account DEMO\n",
+        )
+        self.assertNotIn("Traceback", rendered)
+        self.assertNotIn("PanicSignal", rendered)
+
     def test_main_parses_inline_code(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
