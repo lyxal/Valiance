@@ -73,7 +73,7 @@ define step(board: Number++) -> Number++ =>
     [$cells[4], sum removeAt($cells, 4)] match =>
       [_, 3]  => 1
       [1, 2]  => 1
-      default => 0
+      _ => 0
     end
   end
 end
@@ -95,7 +95,7 @@ define step(board: Number++) -> Number++ =>
     [$cells[4], sum removeAt($cells, 4)] match =>
       [_, 3]  => 1
       [1, 2]  => 1
-      default => 0
+      _ => 0
     end
   end
 end
@@ -115,7 +115,7 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
           $xs foreach (x) =>
             $res := addAll($x match =>
               as :T~~ => flatten
-              default => ^+
+              _ => ^+
             end)
           end
           $res
@@ -157,7 +157,7 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
         define[T] classify(xs: T*2) -> Integer =>
           match =>
             as :T*5 => 0
-            default => accept
+            _ => accept
           end
         end
         classify [[1]]
@@ -181,7 +181,7 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
         define[T] classify(xs: T~2) -> Integer =>
           match =>
             as :T*5 => 0
-            default => accept
+            _ => accept
           end
         end
         classify [[1]]
@@ -637,7 +637,7 @@ fn (n: Integer) -> String =>
     if % 15 == 0 => "FizzBuzz"
     if % 5 == 0 => "Buzz"
     if % 3 == 0 => "Fizz"
-    default => "${top}"
+    _ => "${top}"
   end
 end
 """
@@ -738,7 +738,7 @@ range(1, 16) map fn (n: Integer) =>
     if % 15 == 0 => "FizzBuzz"
     if % 5 == 0 => "Buzz"
     if % 3 == 0 => "Fizz"
-    default => "${top}"
+    _ => "${top}"
   end
 end
 """)
@@ -3780,7 +3780,7 @@ end
 2 1
 match =>
   1, 2 => "Top of stack was 1 and then 2"
-  _, _ => "default case"
+  _, _ => "catch-all case"
 end
 """),
             ["Top of stack was 1 and then 2"],
@@ -3815,7 +3815,7 @@ range(1, 15) map {function}
     if % 15 == 0 => "FizzBuzz"
     if %  5 == 0 => "Buzz"
     if %  3 == 0 => "Fizz"
-         default => "${{top}}"
+         _ => "${{top}}"
   end
 end
 

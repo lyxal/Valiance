@@ -68,7 +68,7 @@ from valiance.asts import (
     TypedTagApplicationNode,
     TypedTryNode,
     VariantMemberNode,
-    is_default_match_case,
+    is_catch_all_match_case,
 )
 from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
 from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
@@ -184,7 +184,7 @@ class _MatchAnalysis:
             )
             retained_subject_types = (
                 refined_subject_types
-                if case.is_default
+                if is_catch_all_match_case(case.patterns)
                 else tuple(
                     typ
                     for pattern, typ in zip(

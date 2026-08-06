@@ -9,7 +9,7 @@ define step(board: Number++) -> Number++ =>
     [$cells[4], sum removeAt($cells, 4)] match =>
       [_, 3] => 1
       [1, 2] => 1
-      default => 0
+      _ => 0
     end
   end
 end

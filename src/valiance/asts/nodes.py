@@ -831,16 +831,16 @@ def has_repeated_match_bindings(patterns: tuple[MatchPatternNode, ...]) -> bool:
     return any(count > 1 for count in counts.values())
 
 
-def is_default_match_pattern(pattern: MatchPatternNode) -> bool:
+def is_catch_all_match_pattern(pattern: MatchPatternNode) -> bool:
     """Return whether a pattern unconditionally accepts every subject value."""
     if has_repeated_match_bindings((pattern,)):
         return False
     if isinstance(pattern, (WildcardPatternNode, RestPatternNode)):
         return True
     if isinstance(pattern, BindingPatternNode):
-        return is_default_match_pattern(pattern.pattern)
+        return is_catch_all_match_pattern(pattern.pattern)
     if isinstance(pattern, OrPatternNode):
-        return any(is_default_match_pattern(option) for option in pattern.options)
+        return any(is_catch_all_match_pattern(option) for option in pattern.options)
     return (
         isinstance(pattern, TypePatternNode)
         and pattern.typ is None
@@ -849,12 +849,12 @@ def is_default_match_pattern(pattern: MatchPatternNode) -> bool:
     )
 
 
-def is_default_match_case(patterns: tuple[MatchPatternNode, ...]) -> bool:
+def is_catch_all_match_case(patterns: tuple[MatchPatternNode, ...]) -> bool:
     """Return whether a case accepts every combination of subject values."""
     return (
         bool(patterns)
         and not has_repeated_match_bindings(patterns)
-        and all(is_default_match_pattern(pattern) for pattern in patterns)
+        and all(is_catch_all_match_pattern(pattern) for pattern in patterns)
     )
 
 
@@ -865,7 +865,6 @@ class MatchCaseNode(ASTNode):
     patterns: tuple[MatchPatternNode, ...] = ()
     pattern: tuple[ASTNode, ...] = ()
     pattern_type: Type | None = None
-    is_default: bool = False
     body: tuple[ASTNode, ...] = ()
 
 

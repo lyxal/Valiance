@@ -67,7 +67,7 @@ from valiance.asts import (
     TypedTagApplicationNode,
     TypedTryNode,
     VariantMemberNode,
-    is_default_match_case,
+    is_catch_all_match_case,
 )
 from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
 from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
@@ -107,14 +107,11 @@ class _ExhaustivenessAnalysis:
         node: MatchNode,
     ) -> bool:
         """Return the Boolean result of match is exhaustive during static analysis."""
-        if any(
-            case.is_default or is_default_match_case(case.patterns)
-            for case in node.cases
-        ):
+        if any(is_catch_all_match_case(case.patterns) for case in node.cases):
             return True
         if len(subject_types) != 1:
             self._diagnose(
-                "match without default requires one enum or variant value",
+                "match without `_` requires one enum or variant value",
                 node,
             )
             return False
@@ -170,11 +167,11 @@ class _ExhaustivenessAnalysis:
             return False
         closed_name = _patterns._nominal_name(subject_type)
         if closed_name is None:
-            self._diagnose("match without default requires enum or variant value", node)
+            self._diagnose("match without `_` requires enum or variant value", node)
             return False
         expected = _patterns._closed_match_members(self.env, closed_name)
         if expected is None:
-            self._diagnose("match without default requires enum or variant value", node)
+            self._diagnose("match without `_` requires enum or variant value", node)
             return False
         covered = {
             member

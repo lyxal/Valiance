@@ -1431,7 +1431,7 @@ match =>
   1, 2 => "Top of stack was 1 and then 2"
   3 || 4, 5 || 6 => "Top of stack was either 3 or 4, and then 5 or 6"
   if > 10 || if < 4, [1, 2, 3] => "Weird stack layout, but sure"
-  _, _ => "default case"
+  _, _ => "catch-all case"
 end
 ```
 
@@ -2323,7 +2323,7 @@ define typeOf(:Shape) =>
   match =>
     as :Rectangle => "Got a Rectangle"
     as :Circle    => "Got a Circle"
-    default       => "Huh?" #? default case required - trait is open
+    _             => "Huh?" #? catch-all case required - trait is open
   end
   #? If a Triangle were added to the trait,
   #? there would be no compiler error to
@@ -2336,7 +2336,7 @@ define typeOf(:Shape) =>
     as :Rectangle => "Got a Rectangle"
     as :Circle    => "Got a Circle"
   end
-  #? No default case needed - variant is closed
+  #? No catch-all case needed - variant is closed
   #? Adding a Triangle member to the variant
   #? will raise an exhaustivity error here,
   #? indicating changes are needed.

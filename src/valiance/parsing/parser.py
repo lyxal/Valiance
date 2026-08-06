@@ -1158,20 +1158,6 @@ class Parser:
             if cases and self._current.column < case_column:
                 break
             case_start = self._current
-            if self._match_ident("default"):
-                self._expect(TokenKind.FAT_ARROW)
-                cases.append(
-                    MatchCaseNode(
-                        (WildcardPatternNode(location=_loc(case_start)),),
-                        (),
-                        None,
-                        True,
-                        self._match_body(case_column),
-                        location=_loc(case_start),
-                    )
-                )
-                self._skip_newlines()
-                continue
             patterns = self._match_case_patterns()
             pattern_type = None
             if (
@@ -1186,7 +1172,6 @@ class Parser:
                     patterns,
                     (),
                     pattern_type,
-                    False,
                     self._match_body(case_column),
                     location=_loc(case_start),
                 )
@@ -1364,7 +1349,7 @@ class Parser:
 
     def _at_match_case_start(self) -> bool:
         """Return the Boolean result of at match case start from the current parser token stream."""
-        if self._check_ident("as", "default", "if", "_"):
+        if self._check_ident("as", "if", "_"):
             return True
         return self._check(TokenKind.NUMBER, TokenKind.STRING, TokenKind.LBRACKET)
 

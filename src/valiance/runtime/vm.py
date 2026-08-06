@@ -1038,7 +1038,7 @@ class VirtualMachine:
             if not isinstance(pattern, tuple) or not pattern:
                 return False
             kind = pattern[0]
-            if kind in {"wildcard", "default"}:
+            if kind in {"wildcard", "catch_all"}:
                 return True
             if kind == "literal":
                 literal = pattern[1]
@@ -1209,7 +1209,7 @@ class VirtualMachine:
                 guard = self._prepare_builtin_stack_test(guard_code, value.globals)
                 if guard is None:
                     return None
-            elif pattern[0] in {"wildcard", "default"}:
+            elif pattern[0] in {"wildcard", "catch_all"}:
                 guard = lambda _subject: True
             else:
                 return None
@@ -4135,7 +4135,7 @@ class VirtualMachine:
                     return {"top": value}, (value,)
                 if pattern[0] == "wildcard":
                     return {"top": value}, ()
-                if pattern[0] == "default":
+                if pattern[0] == "catch_all":
                     return {"top": value}, (value,)
         bindings: dict[str, Any] = {}
         subjects = tuple(reversed(frame.stack[-len(patterns) :]))
@@ -4163,7 +4163,7 @@ class VirtualMachine:
             return value == pattern[1]
         if kind == "guard":
             return self._guard_truthy(pattern[1], value)
-        if kind in {"wildcard", "default"}:
+        if kind in {"wildcard", "catch_all"}:
             return True
         if kind == "rest":
             name = pattern[1]

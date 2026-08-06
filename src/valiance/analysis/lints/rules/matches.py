@@ -16,7 +16,7 @@ from valiance.asts import (
     StringLiteralNode,
     TypePatternNode,
     WildcardPatternNode,
-    is_default_match_case,
+    is_catch_all_match_case,
 )
 from ..contexts import MatchLintContext
 from ..models import LintFinding, LintRewrite, RewriteKind, finding
@@ -64,7 +64,7 @@ def lint_match_patterns(context: MatchLintContext):
             else:
                 seen_literal_cases.add(key)
 
-        if is_default_match_case(case.patterns):
+        if is_catch_all_match_case(case.patterns):
             default_seen = True
     return findings
 

@@ -71,7 +71,7 @@ The built-in rule modules cover:
 - `move(...)` operations that leave the stack unchanged;
 - `copy(...)` operations with an empty output list;
 - code directly following an explicit `return` or `break` in the same block;
-- match cases following an unconditional/default case;
+- match cases following an unconditional catch-all case;
 - repeated all-literal match cases; and
 - repeated literal alternatives within an `||` pattern.
 

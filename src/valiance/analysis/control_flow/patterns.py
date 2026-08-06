@@ -26,8 +26,8 @@ from valiance.asts import (
     TypePatternNode,
     WildcardPatternNode,
     has_repeated_match_bindings,
-    is_default_match_case,
-    is_default_match_pattern,
+    is_catch_all_match_case,
+    is_catch_all_match_pattern,
 )
 from valiance.asts.nodes import GetVariableNode
 from valiance.vtypes.symbols import Symbol
@@ -1049,7 +1049,7 @@ def _match_case_subject_type(
     env: T.Environment,
 ) -> T.Type | None:
     """Determine the type of match case subject during static analysis."""
-    if not is_default_match_pattern(pattern):
+    if not is_catch_all_match_pattern(pattern):
         return _successful_pattern_subject_type(pattern, subject_type, env)
     excluded = tuple(
         typ

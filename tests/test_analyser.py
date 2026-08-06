@@ -5142,13 +5142,13 @@ end
             RewriteKind.REMOVE_UNREACHABLE_SUFFIX,
         )
 
-    def test_match_case_after_default_is_linted_as_unreachable(self):
+    def test_match_case_after_wildcard_is_linted_as_unreachable(self):
         analyser = Analyser()
 
         analyser.analyse(parse("""
 1
 match =>
-  default => pop_n(1) "first"
+  _ => pop_n(1) "first"
   1 => "second"
 end
 """))
@@ -5251,7 +5251,7 @@ end
 
         self.assertEqual(
             analyser.diagnostics,
-            ["2:1: match without default requires enum or variant value"],
+            ["2:1: match without `_` requires enum or variant value"],
         )
         self.assertEqual(analyser.lints, [])
 
@@ -5273,7 +5273,7 @@ end
 
         self.assertEqual(
             analyser.diagnostics,
-            ["2:1: match without default requires enum or variant value"],
+            ["2:1: match without `_` requires enum or variant value"],
         )
         self.assertEqual(analyser.lints, [])
 
@@ -5340,10 +5340,10 @@ end
             ],
         )
 
-    def test_default_exposes_its_subject_as_a_cycle_input(self):
+    def test_wildcard_exposes_its_subject_as_a_cycle_input(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(parse("1\nmatch =>\n  default => + 0\nend"))
+        typed = analyser.analyse(parse("1\nmatch =>\n  _ => + 0\nend"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, Integer)
@@ -5356,7 +5356,7 @@ end
           $xs foreach (x) =>
             $res := addAll($x match =>
               as xss: T~~ => flatten $xss
-              default => ^+
+              _ => ^+
             end)
           end
           $res
@@ -5426,7 +5426,7 @@ end
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(typed[-1].typ, Integer)
 
-    def test_guarded_type_pattern_does_not_narrow_the_default_branch(self):
+    def test_guarded_type_pattern_does_not_narrow_the_catch_all_branch(self):
         analyser = Analyser()
 
         analyser.analyse(
@@ -5442,7 +5442,7 @@ end
         self.assertIn("no overloads for element 'length'", analyser.diagnostics[0])
         self.assertIn("Integer | String", analyser.diagnostics[0])
 
-    def test_literal_pattern_does_not_narrow_the_default_branch_by_type(self):
+    def test_literal_pattern_does_not_narrow_the_catch_all_branch_by_type(self):
         analyser = Analyser()
 
         analyser.analyse(
@@ -5526,7 +5526,7 @@ end
 
         self.assertEqual(
             analyser.diagnostics,
-            ["2:1: match without default requires one enum or variant value"],
+            ["2:1: match without `_` requires one enum or variant value"],
         )
 
     def test_repeated_destructure_binding_does_not_cover_a_variant_member(self):

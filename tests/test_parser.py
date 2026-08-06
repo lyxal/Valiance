@@ -1477,11 +1477,11 @@ end
         self.assertTrue(returned.explicit_values)
         self.assertEqual(returned.values, ())
 
-    def test_parses_match_type_and_default_cases(self):
+    def test_parses_match_type_and_wildcard_cases(self):
         [node] = parse("""
 match =>
   as :Colour.RED => "red"
-  default => "other"
+  _ => "other"
 end
 """)
 
@@ -1490,8 +1490,7 @@ end
             node.cases[0].pattern_type,
             N(Symbol("RED", ("Colour",))),
         )
-        self.assertFalse(node.cases[0].is_default)
-        self.assertTrue(node.cases[1].is_default)
+        self.assertIsInstance(node.cases[1].patterns[0], WildcardPatternNode)
         self.assertEqual(node.cases[1].body, (StringLiteralNode("other"),))
 
     def test_parses_match_pattern_examples(self):

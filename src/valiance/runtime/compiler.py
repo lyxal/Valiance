@@ -84,6 +84,7 @@ from valiance.asts import (
     UnfoldNode,
     WhileNode,
     WildcardPatternNode,
+    is_catch_all_match_case,
 )
 from valiance.asts.object_constructors import (
     constructor_definitions,
@@ -1215,9 +1216,10 @@ class _Compiler:
                 if case_index < len(typed_guards)
                 else None
             )
+            catch_all = is_catch_all_match_case(case.patterns)
             compiled_patterns = tuple(
-                ("default",)
-                if case.is_default and isinstance(pattern, WildcardPatternNode)
+                ("catch_all",)
+                if catch_all and isinstance(pattern, WildcardPatternNode)
                 else _compile_match_pattern(pattern, guard_blocks)
                 for pattern in case.patterns
             )

@@ -67,7 +67,7 @@ from valiance.asts import (
     TypedTagApplicationNode,
     TypedTryNode,
     VariantMemberNode,
-    is_default_match_case,
+    is_catch_all_match_case,
 )
 from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
 from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
