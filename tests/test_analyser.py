@@ -4818,6 +4818,26 @@ end
         self.assertEqual(typed[-1].typ, Real)
 
 
+
+    def test_self_receiver_is_excluded_from_parameter_cycling(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object Account =>
+  $balance: Real = 0
+  $name: String
+  @self define withdraw(v: Real) =>
+    if (> $self.balance) =>
+      panic ValueFault("Insufficient funds")
+    else =>
+      $self.balance := - $v
+    end
+  end
+end
+"""))
+
+        self.assertFalse(analyser.diagnostics)
+
+
 class NeverDiagnosticRecoveryTests(unittest.TestCase):
     def _analyser_with_halt(self) -> Analyser:
         env = default_environment().child_scope()

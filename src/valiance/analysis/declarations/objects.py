@@ -445,6 +445,7 @@ class _ObjectDeclarations:
         )
         function_node = replace(
             function_node,
+            annotations=definition.annotations,
             params=(replace(function_node.params[0], name=None),)
             + function_node.params[1:],
         )

@@ -375,15 +375,26 @@ class _CallableValues:
                 self._diagnose(diagnostic, node)
                 return None
             variables = write.variables
+        self_annotated = annotation_hooks.has_annotation(node.annotations, "self")
         initial_stack = T.TypeStack(
             tuple(
                 typ
-                for param, typ in zip(node.params or (), body_params, strict=True)
-                if param.name is None
+                for index, (param, typ) in enumerate(
+                    zip(node.params or (), body_params, strict=True)
+                )
+                if param.name is None and not (self_annotated and index == 0)
             )
             if mode is InputMode.CYCLE_EXPLICIT_PARAMS
             else ()
         )
+        cycle_params = body_params if mode is InputMode.CYCLE_EXPLICIT_PARAMS else ()
+        if self_annotated:
+            # Object-friendly @self methods receive the receiver as their first
+            # declared parameter, but it is plumbing for member access and the
+            # returned fluent value, not an implicit stack operand. Keep it out
+            # of explicit-parameter cycling so underflow can only reuse the
+            # method's user-declared arguments.
+            cycle_params = cycle_params[1:]
         initial = AnalysisBranch(
             stack=initial_stack,
             inputs=body_params if mode is not InputMode.INFER_INPUTS else (),
@@ -394,10 +405,8 @@ class _CallableValues:
             ),
             variables=variables,
             input_mode=mode,
-            cycle_params=body_params if mode is InputMode.CYCLE_EXPLICIT_PARAMS else (),
-            cycle_stack_remaining=(
-                len(body_params) if mode is InputMode.CYCLE_EXPLICIT_PARAMS else 0
-            ),
+            cycle_params=cycle_params,
+            cycle_stack_remaining=len(cycle_params),
             cycle_from_top=mode is InputMode.CYCLE_EXPLICIT_PARAMS,
             atomic_type_vars=(
                 outer.atomic_type_vars

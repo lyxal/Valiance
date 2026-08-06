@@ -3098,6 +3098,34 @@ incCount | println
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "8\n4\n")
 
+
+    def test_self_receiver_is_not_used_as_an_implicit_operand(self):
+        source = """
+object Account =>
+  $balance: Real = 0
+  $name: String
+
+  @self define deposit(:Real) => $self.balance := +
+  @self define withdraw(v: Real) =>
+    if (> $self.balance) =>
+      panic ValueFault("Insufficient funds")
+    else =>
+      $self.balance := - $v
+    end
+  end
+
+end
+
+$a = Account("Demo")
+$a := deposit 1000.00
+$a := withdraw 100.00
+$a | $.balance
+"""
+
+        stack = execute(source)
+
+        self.assertEqual(stack, [RuntimeNumber("900")])
+
     def test_parameter_cycle_runs_right_to_left_and_wraps(self):
         source = """
 define showCycle(a: String, b: String, c: String) -> =>
