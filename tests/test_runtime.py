@@ -3099,6 +3099,45 @@ incCount | println
         self.assertEqual(output.getvalue(), "8\n4\n")
 
 
+    def test_account_methods_keep_receiver_out_of_body_stack_and_runtime_cycle(self):
+        output = io.StringIO()
+        source = """
+object Account =>
+  $balance: Real = 0
+  $name: String
+  @self define deposit(:Real) => $self.balance := +
+  @self define withdraw(:Real) =>
+    if (> $self.balance) => panic ValueFault("Insufficient funds")
+    else => $self.balance := -
+  end
+  define show(title: String) =>
+    println("$title ${$self.name} : ${$self.balance}")
+  end
+end
+
+$a = Account("Demo")
+$a show("After Creation")
+$a := deposit 1000.00
+$a show("After deposit")
+$a := withdraw 100.00
+$a show("After withdraw")
+"""
+        program = parse(source)
+        analyser = Analyser()
+        typed = analyser.analyse(program)
+        self.assertFalse(analyser.diagnostics)
+
+        bytecode = loads(dumps(compile_program(typed)))
+        stack = run(bytecode, output=output.write)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(
+            output.getvalue(),
+            "After Creation Demo : 0\n"
+            "After deposit Demo : 1000\n"
+            "After withdraw Demo : -900\n",
+        )
+
     def test_self_receiver_is_not_used_as_an_implicit_operand(self):
         source = """
 object Account =>

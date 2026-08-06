@@ -16,12 +16,7 @@ from typing import Any
 import valiance.vtypes as T
 from valiance.analysis import Analyser, AnalysisBranch, BranchSet, InputMode
 from valiance.asts import pretty_ast, typed_source
-from valiance.analysis.diagnostics import (
-    from_exception,
-    from_message,
-    render,
-    should_color,
-)
+from valiance.analysis.diagnostics import from_exception, from_message, render, should_color
 from valiance.modules_system.packages import (
     PackageError,
     PackageProgress,
@@ -88,15 +83,7 @@ _ANSI_RED = "\033[31m"
 _ANSI_BLUE = "\033[34m"
 _ANSI_MAGENTA = "\033[35m"
 
-_SOURCE_ACTIONS = {
-    "compile",
-    "run",
-    "parse",
-    "analyse",
-    "analyze",
-    "compile-module",
-    "build",
-}
+_SOURCE_ACTIONS = {"compile", "run", "parse", "analyse", "analyze", "compile-module", "build"}
 _SOURCE_TOOL_ACTIONS = {"tidy", "annotate", "docs"}
 _BYTECODE_ACTIONS = {"exec"}
 _PACKAGE_ACTIONS = {"init", "install", "add", "remove", "upgrade"}
@@ -122,6 +109,7 @@ def _version_text() -> str:
         return version("valiance")
     except PackageNotFoundError:
         return "0.1.0"
+
 
 
 def _help_text(prog: str) -> str:
@@ -244,9 +232,7 @@ def _command_help_text(prog: str, action: str) -> str:
         text += "\n\n" + package_details
     elif examples:
         text += f"\n\nEXAMPLE\n{examples}"
-    return (
-        text + f"\n\nUse `{prog} --help` for all commands.\nDocumentation: {DOCS_URL}\n"
-    )
+    return text + f"\n\nUse `{prog} --help` for all commands.\nDocumentation: {DOCS_URL}\n"
 
 
 def _run(vln_mode: bool, argv: Sequence[str] | None = None) -> int:
@@ -274,22 +260,13 @@ def _run(vln_mode: bool, argv: Sequence[str] | None = None) -> int:
 
     if "-h" in args or "--help" in args:
         action = "analyse" if args[0] == "analyze" else args[0]
-        print(
-            _command_help_text(prog, action) if action in _ACTIONS else _help_text(prog)
-        )
+        print(_command_help_text(prog, action) if action in _ACTIONS else _help_text(prog))
         return 0
 
-    if (
-        args[0] not in _ACTIONS
-        and args[0].isidentifier()
-        and not Path(args[0]).exists()
-    ):
+    if args[0] not in _ACTIONS and args[0].isidentifier() and not Path(args[0]).exists():
         matches = get_close_matches(args[0], sorted(_ACTIONS), n=1, cutoff=0.6)
         if matches:
-            print(
-                f"error: unknown command '{args[0]}'. Did you mean '{matches[0]}'?",
-                file=sys.stderr,
-            )
+            print(f"error: unknown command '{args[0]}'. Did you mean '{matches[0]}'?", file=sys.stderr)
             print(f"Try `{prog} --help` for available commands.", file=sys.stderr)
             return 2
 
@@ -300,7 +277,6 @@ def _run(vln_mode: bool, argv: Sequence[str] | None = None) -> int:
 
     if parsed.action == "lsp":
         from valiance.lsp import run_language_server
-
         return run_language_server()
     if parsed.action == "build":
         return _run_build_command(parsed)
@@ -394,9 +370,7 @@ def cli_entry() -> int:
     return _run(vln_mode=invoked_as.startswith("vln"))
 
 
-def _parse_args(
-    args: list[str], *, prog: str = DEFAULT_PROG
-) -> argparse.Namespace | None:
+def _parse_args(args: list[str], *, prog: str = DEFAULT_PROG) -> argparse.Namespace | None:
     """Parse args for CLI and REPL orchestration."""
     action = "compile"
     explicit_action: str | None = None
@@ -420,9 +394,7 @@ def _parse_args(
         parser = argparse.ArgumentParser(prog=prog, add_help=False)
         parser.add_argument("--file", dest="explicit_source_file")
         parser.add_argument("-o", "--output")
-        parser.add_argument(
-            "--no-optimize", "--no-optimise", dest="no_optimize", action="store_true"
-        )
+        parser.add_argument("--no-optimize", "--no-optimise", dest="no_optimize", action="store_true")
         parser.add_argument("name", nargs="?")
         try:
             parsed = parser.parse_args(args)
@@ -434,10 +406,7 @@ def _parse_args(
                 print("error: compile-module requires --file", file=sys.stderr)
                 return None
             if parsed.name is not None:
-                print(
-                    "error: compile-module does not accept a target name",
-                    file=sys.stderr,
-                )
+                print("error: compile-module does not accept a target name", file=sys.stderr)
                 return None
         elif parsed.explicit_source_file is not None or parsed.output is not None:
             print("error: build uses settings from valiance.toml", file=sys.stderr)
@@ -547,10 +516,7 @@ def _parse_args(
         or parsed.list_templates
         or parsed.init_tests is not None
     ):
-        print(
-            "error: init template and test options are only valid with init",
-            file=sys.stderr,
-        )
+        print("error: init template and test options are only valid with init", file=sys.stderr)
         return None
     if parsed.output is not None and parsed.action != "compile":
         print("error: bytecode output is only valid for compile", file=sys.stderr)
@@ -667,7 +633,9 @@ def _parse_tidy_args(
             return None
         parsed.tidy_types = True
         parsed.tidy_stdout = True
-    elif not (parsed.tidy_types or parsed.tidy_docstrings or parsed.tidy_format):
+    elif not (
+        parsed.tidy_types or parsed.tidy_docstrings or parsed.tidy_format
+    ):
         parsed.tidy_types = True
 
     if parsed.code is not None:
@@ -776,10 +744,7 @@ def _validate_package_args(parsed: argparse.Namespace) -> argparse.Namespace | N
             or parsed.list_templates
             or parsed.init_tests is not None
         ):
-            print(
-                "error: init template and test options are only valid with init",
-                file=sys.stderr,
-            )
+            print("error: init template and test options are only valid with init", file=sys.stderr)
             return None
         return parsed
     if parsed.locked:
@@ -804,10 +769,7 @@ def _validate_package_args(parsed: argparse.Namespace) -> argparse.Namespace | N
         or parsed.list_templates
         or parsed.init_tests is not None
     ):
-        print(
-            "error: init template and test options are only valid with init",
-            file=sys.stderr,
-        )
+        print("error: init template and test options are only valid with init", file=sys.stderr)
         return None
     if parsed.action == "remove":
         if len(args) != 1:
@@ -854,7 +816,7 @@ def _choose_project_options() -> tuple[str, bool]:
         return DEFAULT_PROJECT_TEMPLATE, True
     try:
         selected = _choose_project_options_tui()
-    except ImportError, OSError, RuntimeError, ValueError:
+    except (ImportError, OSError, RuntimeError, ValueError):
         selected = None
     if selected is not None:
         return selected
@@ -910,18 +872,14 @@ def _choose_project_options_tui() -> tuple[str, bool] | None:
         sentence=True,
     )
     while True:
-        template = (
-            session.prompt(
-                [("class:prompt", "Template: ")],
-                default="",
-                completer=template_completer,
-                complete_while_typing=True,
-                complete_in_thread=False,
-                pre_run=_open_completion_menu,
-            )
-            .strip()
-            .lower()
-        )
+        template = session.prompt(
+            [("class:prompt", "Template: ")],
+            default="",
+            completer=template_completer,
+            complete_while_typing=True,
+            complete_in_thread=False,
+            pre_run=_open_completion_menu,
+        ).strip().lower()
         try:
             template = normalize_project_template(template)
             break
@@ -940,18 +898,14 @@ def _choose_project_options_tui() -> tuple[str, bool] | None:
         sentence=True,
     )
     while True:
-        tests = (
-            session.prompt(
-                [("class:prompt", "Include tests: ")],
-                default="",
-                completer=tests_completer,
-                complete_while_typing=True,
-                complete_in_thread=False,
-                pre_run=_open_completion_menu,
-            )
-            .strip()
-            .lower()
-        )
+        tests = session.prompt(
+            [("class:prompt", "Include tests: ")],
+            default="",
+            completer=tests_completer,
+            complete_while_typing=True,
+            complete_in_thread=False,
+            pre_run=_open_completion_menu,
+        ).strip().lower()
         if tests in {"yes", "y"}:
             return template, True
         if tests in {"no", "n"}:
@@ -1081,7 +1035,9 @@ def _run_package_command(parsed: argparse.Namespace) -> int:
                 )
             if template == "empty":
                 include_tests = False
-            root = init_project(requested_path, template=template, tests=include_tests)
+            root = init_project(
+                requested_path, template=template, tests=include_tests
+            )
             print(f"Initialized Valiance project: {root}")
             print(f"Template: {template}")
             print(f"Tests: {'included' if include_tests else 'not included'}")
@@ -1198,7 +1154,6 @@ def _run_repl() -> int:
             print(_repl_style(type_preview, _ANSI_CYAN, color))
         if submission_kind == "scratch-run":
             frontend.wait_for_scratch_result()
-            session.reset()
         line_number += 1
 
 
@@ -1207,7 +1162,9 @@ def _print_repl_banner(*, color: bool, fancy: bool = False) -> None:
     print(_repl_style("Valiance REPL", _ANSI_BOLD + _ANSI_CYAN, color))
     print(_repl_style("-------------", _ANSI_DIM, color))
     if fancy:
-        print("One-line REPL ready. Press Ctrl-R to open the shared scratch editor.")
+        print(
+            "One-line REPL ready. Press Ctrl-R to open the shared scratch editor."
+        )
     print("State persists between lines. Entries may span multiple lines.")
     print("Type :help, :reset, or :quit.")
 
@@ -1225,9 +1182,7 @@ def _print_repl_help(*, color: bool, fancy: bool = False) -> None:
     if fancy:
         print()
         print("Enhanced editing")
-        print(
-            "  Ctrl-R            switch modes; changed scratch source runs before REPL"
-        )
+        print("  Ctrl-R            switch modes; changed scratch source runs before REPL")
         print("  Enter             newline in scratch; run in REPL mode")
         print("  Ctrl-Enter / F5   run and retain the complete scratch program")
         print("  Ctrl-Backspace    clear the current input buffer")
@@ -1319,34 +1274,17 @@ class _ReplSession:
                 continue
             doc = definition.docstring
             lines = [definition.signature, *doc.description]
-            lines.extend(
-                f"Parameter {item.name}: {item.description}" for item in doc.params
-            )
-            if doc.returns is not None:
-                lines.append(f"Returns: {doc.returns}")
-            lines.extend(doc.extra_fields)
-            sections.append("\n".join(lines))
+            lines.extend(f"Parameter {item.name}: {item.description}" for item in doc.params)
+            if doc.returns is not None: lines.append(f"Returns: {doc.returns}")
+            lines.extend(doc.extra_fields); sections.append("\n".join(lines))
         visible = {item.text.removeprefix("\\") for item in self.completion_items()}
         if normalized in visible:
             for reference in collect_language_references(strict=False):
-                if normalized not in {
-                    reference.name,
-                    reference.qualified_name,
-                    *reference.aliases,
-                }:
+                if normalized not in {reference.name, reference.qualified_name, *reference.aliases}:
                     continue
-                lines = [
-                    reference.qualified_name,
-                    *reference.overloads,
-                    reference.summary,
-                    *reference.description,
-                ]
-                lines.extend(
-                    f"Parameter {item.name}: {item.description}"
-                    for item in reference.parameters
-                )
-                if reference.returns is not None:
-                    lines.append(f"Returns: {reference.returns}")
+                lines = [reference.qualified_name, *reference.overloads, reference.summary, *reference.description]
+                lines.extend(f"Parameter {item.name}: {item.description}" for item in reference.parameters)
+                if reference.returns is not None: lines.append(f"Returns: {reference.returns}")
                 sections.append("\n".join(lines))
         return ("\n\n" + "-" * 72 + "\n\n").join(dict.fromkeys(sections)) or None
 
@@ -1392,7 +1330,9 @@ class _ReplSession:
         next_branch = next(iter(final))
         if next_branch.errors:
             return f"Type error: {next_branch.errors[0].message}"
-        return f"Stack types: {_format_type_stack(next_branch.stack)}"
+        return (
+            f"Stack types: {_format_type_stack(next_branch.stack)}"
+        )
 
     def run(self, source: str) -> bool:
         """Compile and execute one source entry in the persistent REPL session."""
@@ -1546,7 +1486,9 @@ def _run_tidy_command(parsed: argparse.Namespace) -> int:
 
     if not parsed.tidy_stdout:
         if parsed.project_mode:
-            relative_label = f" in {project_root}" if project_root is not None else ""
+            relative_label = (
+                f" in {project_root}" if project_root is not None else ""
+            )
             print(
                 f"Tidied {len(source_files) - failed} file(s){relative_label}; "
                 f"{changed} changed."
@@ -1586,9 +1528,7 @@ def _tidy_source(
             add_trailing_commas="trailing-commas" in add,
             add_final_newline="final-newline" in add,
             trim_trailing_whitespace="trailing-whitespace" in remove,
-            max_blank_lines=(
-                settings.max_blank_lines if settings is not None else None
-            ),
+            max_blank_lines=(settings.max_blank_lines if settings is not None else None),
         )
     return rendered
 
@@ -1632,7 +1572,9 @@ def _run_docs_command(parsed: argparse.Namespace) -> int:
                 label = source_file.name
             else:
                 label = (
-                    source_file.resolve().relative_to(project_root.resolve()).as_posix()
+                    source_file.resolve()
+                    .relative_to(project_root.resolve())
+                    .as_posix()
                 )
             source_items_list.append((source_file, label, source))
         source_items = tuple(source_items_list)
@@ -1644,7 +1586,9 @@ def _run_docs_command(parsed: argparse.Namespace) -> int:
             typed = analyser.analyse(program)
             _print_analyser_messages(analyser, source, source_file)
             annotated = _safe_typed_source(typed, source)
-            references.extend(extract_documented_defines(annotated, source_path=label))
+            references.extend(
+                extract_documented_defines(annotated, source_path=label)
+            )
         except (LexError, ParseError, OSError) as exc:
             _print_exception_diagnostic(exc, source=source, source_file=source_file)
             failed += 1
@@ -1723,7 +1667,7 @@ def _safe_typed_source(typed, source: str) -> str:
     rendered = typed_source(typed, source)
     try:
         Parser(lex(rendered)).parse_program()
-    except LexError, ParseError:
+    except (LexError, ParseError):
         return source
     return rendered
 
@@ -1936,14 +1880,7 @@ def _run_build_command(parsed: argparse.Namespace) -> int:
                 if result:
                     return result
         return 0
-    except (
-        PackageError,
-        OSError,
-        LexError,
-        ParseError,
-        CompileError,
-        BytecodeFormatError,
-    ) as exc:
+    except (PackageError, OSError, LexError, ParseError, CompileError, BytecodeFormatError) as exc:
         _print_exception_diagnostic(exc)
         return 1
 

@@ -375,20 +375,20 @@ class _CallableValues:
                 self._diagnose(diagnostic, node)
                 return None
             variables = write.variables
-        self_annotated = annotation_hooks.has_annotation(node.annotations, "self")
+        has_friendly_receiver = node.object_friendly_receiver
         initial_stack = T.TypeStack(
             tuple(
                 typ
                 for index, (param, typ) in enumerate(
                     zip(node.params or (), body_params, strict=True)
                 )
-                if param.name is None and not (self_annotated and index == 0)
+                if param.name is None and not (has_friendly_receiver and index == 0)
             )
             if mode is InputMode.CYCLE_EXPLICIT_PARAMS
             else ()
         )
         cycle_params = body_params if mode is InputMode.CYCLE_EXPLICIT_PARAMS else ()
-        if self_annotated:
+        if has_friendly_receiver:
             # Object-friendly @self methods receive the receiver as their first
             # declared parameter, but it is plumbing for member access and the
             # returned fluent value, not an implicit stack operand. Keep it out

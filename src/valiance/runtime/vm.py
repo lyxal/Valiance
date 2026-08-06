@@ -689,10 +689,10 @@ class VirtualMachine:
             explicit_args,
             isolate_captures=isolate_captures,
         )
-        cycle_values = tuple(explicit_args) if function.code.cycle_params else ()
+        cycle_values = tuple(explicit_args[function.code.cycle_param_offset :]) if function.code.cycle_params else ()
         initial_stack = list(stack_args)
         if function.code.params and not cycle_values:
-            initial_stack.extend(explicit_args)
+            initial_stack.extend(explicit_args[function.code.cycle_param_offset :])
         return_tag_specs = _resolve_static_rank_variables(
             function.code.return_tag_specs, locals_
         )
@@ -2326,10 +2326,10 @@ class VirtualMachine:
             explicit_args,
             isolate_captures=request.isolate_captures,
         )
-        cycle_values = tuple(explicit_args) if function.code.cycle_params else ()
+        cycle_values = tuple(explicit_args[function.code.cycle_param_offset :]) if function.code.cycle_params else ()
         initial_stack = list(stack_args)
         if function.code.params and not cycle_values:
-            initial_stack.extend(explicit_args)
+            initial_stack.extend(explicit_args[function.code.cycle_param_offset :])
         return self._new_activation(
             function.code,
             locals_,
@@ -4063,8 +4063,8 @@ class VirtualMachine:
     ) -> list[Any]:
         """Execute a proved leaf and return its raw stack result."""
         locals_, retained_locals = _function_call_locals(function, args)
-        cycle_values = tuple(args) if function.code.cycle_params else ()
-        initial_stack = [] if cycle_values else list(args)
+        cycle_values = tuple(args[function.code.cycle_param_offset :]) if function.code.cycle_params else ()
+        initial_stack = [] if cycle_values else list(args[function.code.cycle_param_offset :])
         activation = self._new_activation(
             function.code,
             locals_,

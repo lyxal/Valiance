@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from typing import TYPE_CHECKING, Iterator, NoReturn
 
 import valiance.analysis.contracts.where_clauses as static_where
@@ -304,6 +304,7 @@ class _Compiler:
         params: tuple[str, ...] = (),
         name: str | None = None,
         cycle_params: bool = False,
+        cycle_param_offset: int = 0,
         accepts_stack_inputs: bool = False,
         element_tags: tuple[str, ...] = (),
         recursive: bool = False,
@@ -333,6 +334,7 @@ class _Compiler:
             params=params,
             name=name,
             cycle_params=cycle_params,
+            cycle_param_offset=cycle_param_offset,
             accepts_stack_inputs=accepts_stack_inputs,
             element_tags=element_tags,
             recursive=recursive,
@@ -1509,6 +1511,19 @@ def _compile_function_value(
     return _compile_function_node(node, name)
 
 
+def _contains_self_read(value: object) -> bool:
+    """Return whether a compiled body explicitly reads the object receiver local."""
+    if isinstance(value, TypedNode):
+        return _contains_self_read(value.node)
+    if isinstance(value, GetVariableNode):
+        return value.name.text == "self"
+    if isinstance(value, tuple):
+        return any(_contains_self_read(item) for item in value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return any(_contains_self_read(getattr(value, item.name)) for item in fields(value))
+    return False
+
+
 def _compile_function_node(
     node: FunctionNode | TypedNode,
     name: str | None = None,
@@ -1546,6 +1561,9 @@ def _compile_function_node(
         params=params,
         name=name,
         cycle_params=cycle_params,
+        cycle_param_offset=(
+            1 if params[:1] == ("self",) and ast.returns is None else 0
+        ),
         accepts_stack_inputs=accepts_stack_inputs or ast.params is None,
         element_tags=_function_element_tag_names(node),
         recursive=_function_is_recursive(ast),
@@ -1649,6 +1667,9 @@ def _compile_function_overload(
         params=(*params, *static_params),
         name=name,
         cycle_params=bool(typ.params),
+        cycle_param_offset=(
+            1 if params[:1] == ("self",) and ast.returns is None else 0
+        ),
         element_tags=_function_element_tag_names(overload.typ),
         recursive=_function_is_recursive(ast),
         multi=source is not None and source.is_multi,

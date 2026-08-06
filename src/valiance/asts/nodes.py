@@ -418,6 +418,7 @@ class FunctionNode(ASTNode):
     generic_constraints: tuple[Type | None, ...] = ()
     overloads: tuple[OverloadSignature, ...] = ()
     generic_scope_id: int | None = field(default=None, compare=False)
+    object_friendly_receiver: bool = field(default=False, compare=False)
 
 
 @dataclass(frozen=True)

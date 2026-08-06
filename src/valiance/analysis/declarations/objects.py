@@ -90,6 +90,17 @@ from ..state import (
 class Analyser:
     """Analysis session owning global environment, diagnostics, and dispatch."""
 
+def _contains_self_read(value: object) -> bool:
+    """Return whether an object-friendly body explicitly reads $self."""
+    if isinstance(value, GetVariableNode):
+        return value.name == Symbol("self")
+    if isinstance(value, tuple):
+        return any(_contains_self_read(item) for item in value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return any(_contains_self_read(getattr(value, item.name)) for item in fields(value))
+    return False
+
+
 class _ObjectDeclarations:
     """Own objects declaration operations."""
 
@@ -440,6 +451,10 @@ class _ObjectDeclarations:
                 element_tags=definition.function.element_tags,
                 annotations=definition.function.annotations,
                 location=definition.function.location,
+                object_friendly_receiver=(
+                    annotation_hooks.has_annotation(definition.annotations, "self")
+                    or definition.function.returns is None
+                ),
             ),
             definition.annotations,
         )

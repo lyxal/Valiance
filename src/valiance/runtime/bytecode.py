@@ -189,6 +189,7 @@ class FunctionCode:
     params: tuple[str, ...] = ()
     name: str | None = None
     cycle_params: bool = False
+    cycle_param_offset: int = 0
     accepts_stack_inputs: bool = False
     element_tags: tuple[str, ...] = ()
     recursive: bool = False

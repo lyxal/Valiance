@@ -150,6 +150,7 @@ def _genericize_function_node(
         ),
         generic_constraints=generic_constraints,
         location=function.location,
+        object_friendly_receiver=function.object_friendly_receiver,
     )
 
 def _contextualize_function_empty_returns(function: FunctionNode) -> FunctionNode:
