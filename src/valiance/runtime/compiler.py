@@ -1687,6 +1687,12 @@ def _runtime_parameter_rank(typ: Type) -> int | None:
         return _runtime_parameter_rank(typ.inner)
     if isinstance(typ, CollectionType):
         return typ.rank if isinstance(typ.rank, int) else None
+    if isinstance(typ, (UnionType, IntersectionType)):
+        ranks = tuple(_runtime_parameter_rank(item) for item in typ.items)
+        # A union such as ``T | T~`` accepts both scalar and collection values
+        # as atomic parameters. It must not be assigned scalar rank zero, which
+        # would make the prepared-call adapter traverse collection alternatives.
+        return ranks[0] if ranks and all(rank == ranks[0] for rank in ranks) else None
     if isinstance(typ, RankVariable):
         return None
     return 0

@@ -2522,6 +2522,38 @@ getName $joe
 
         self.assertEqual(observed, [String, Real, Integer, String])
 
+    def test_match_consumption_advances_explicit_parameter_cycle(self):
+        analyser = Analyser()
+        source = """
+define[T] flatten(:T~) -> T+ =>
+  fold([] as[T+]): fn (acc: T+, item: T|T~) =>
+    addAll(match =>
+      as :T~ => flatten
+      as :T => ^+
+    )
+  end
+end
+"""
+
+        analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_implicit_modifier_orders_deeper_inputs_before_explicit_argument_inputs(self):
+        analyser = Analyser()
+        source = """
+define[T] flatten(:T~) -> T+ =>
+  fold([] as[T+]): addAll(match =>
+    as :T~ => flatten
+    as :T => ^+
+  )
+end
+"""
+
+        analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+
     def test_dip_modifier_can_source_explicit_parameter_cycle(self):
         analyser = Analyser()
         branches = analyser.analyse_block(

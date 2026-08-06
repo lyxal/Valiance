@@ -179,6 +179,35 @@ class _CallArguments:
                     preparation.call_arg_order,
                     analyser=self,
                 ):
+                    # Explicit argument expressions are evaluated before omitted
+                    # operands are sourced from the surrounding stack. In an
+                    # inferred-input function this means top-of-stack inputs can
+                    # be discovered before deeper inputs. Function parameters,
+                    # however, are ordered from deeper to shallower stack values.
+                    # Move inputs inferred while sourcing omitted operands ahead
+                    # of those inferred by the explicit expressions.
+                    if (
+                        branch.input_mode is InputMode.INFER_INPUTS
+                        and preparation.branch.inputs[: len(branch.inputs)]
+                        == branch.inputs
+                        and popped.inputs[: len(preparation.branch.inputs)]
+                        == preparation.branch.inputs
+                    ):
+                        expression_inputs = preparation.branch.inputs[
+                            len(branch.inputs) :
+                        ]
+                        omitted_inputs = popped.inputs[
+                            len(preparation.branch.inputs) :
+                        ]
+                        if expression_inputs and omitted_inputs:
+                            popped = replace(
+                                popped,
+                                inputs=(
+                                    branch.inputs
+                                    + omitted_inputs
+                                    + expression_inputs
+                                ),
+                            )
                     sources.append(
                         ElementArguments(
                             overload=overload,

@@ -6314,6 +6314,13 @@ def _resolve_vectorisation_depths(
             resolved.append(0)
             continue
         actual_rank = runtime_collection_rank(value)
+        if actual_rank is None and is_eager_sequence(value) and not value:
+            # An empty collection carries no structural evidence from which to
+            # recover its exact rank. Its statically selected parameter target
+            # is nevertheless sufficient: no traversal is required to adapt an
+            # empty value to that target rank.
+            resolved.append(0)
+            continue
         if actual_rank is None:
             raise RuntimeError(
                 "cannot determine the runtime rank of a minimum-rank list "

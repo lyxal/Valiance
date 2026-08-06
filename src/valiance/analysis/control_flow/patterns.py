@@ -829,6 +829,15 @@ def _join_match_output(
         .with_element_tags(candidate.element_tags)
         .with_data_element_uses(candidate.data_element_uses),
         inputs=merged_inputs,
+        # ``base`` can come from the pre-match branch so refinements remain
+        # associated with their original values. Cycling state must instead
+        # come from the post-subject branch; otherwise a subject obtained by
+        # input cycling becomes available a second time after the match.
+        input_mode=joined.input_mode,
+        cycle_params=joined.cycle_params,
+        cycle_index=joined.cycle_index,
+        cycle_stack_remaining=joined.cycle_stack_remaining,
+        cycle_from_top=joined.cycle_from_top,
     )
 
 

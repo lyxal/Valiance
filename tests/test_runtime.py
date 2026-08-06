@@ -3717,6 +3717,27 @@ end
             ],
         )
 
+    def test_recursive_rugged_fold_with_implicit_modifier_and_input_cycling(self):
+        self.assertEqual(
+            execute("""
+define[T] flatten(:T~) -> T+ =>
+  fold([] as[T+]): addAll(match =>
+    as :T~ => flatten
+    as :T => ^+
+  )
+end
+[1, [2, [3]], 4] flatten
+"""),
+            [
+                [
+                    RuntimeNumber("1"),
+                    RuntimeNumber("2"),
+                    RuntimeNumber("3"),
+                    RuntimeNumber("4"),
+                ]
+            ],
+        )
+
     def test_match_branch_cycles_only_over_retained_coordinates(self):
         self.assertEqual(
             execute("""
