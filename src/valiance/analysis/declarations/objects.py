@@ -241,6 +241,7 @@ class _ObjectDeclarations:
                 (),
                 self.env.context,
             ),
+            task_isolated=bool(_utils._mustcall_methods(node.annotations)),
         )
         if annotation_hooks.has_annotation(node.annotations, "errType"):
             self.env.add_trait_impl(name, Symbol("Err"))

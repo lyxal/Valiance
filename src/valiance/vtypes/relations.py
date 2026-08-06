@@ -58,6 +58,7 @@ from valiance.vtypes.nodes import (
     RuntimeTypePattern,
     Specificity,
     TaggedType,
+    TaskType,
     TupleType,
     Type,
     TypeVarId,
@@ -178,6 +179,13 @@ def _collect_directional_bounds(
             )
             return inner is not None and actual_inner is not None and rec(
                 inner, actual_inner, position
+            )
+        if isinstance(p, TaskType) and isinstance(a, TaskType):
+            if len(p.outputs) != len(a.outputs) or p.effects != a.effects:
+                return False
+            return all(
+                rec(expected, observed, Variance.INVARIANT)
+                for expected, observed in zip(p.outputs, a.outputs, strict=True)
             )
         if isinstance(p, FunctionType) and isinstance(a, FunctionType):
             if p.params is None or p.returns is None:
@@ -392,6 +400,16 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
             return True
         if source.name == REAL and target.name == NUMBER:
             return True
+
+    if isinstance(source, TaskType) and isinstance(target, TaskType):
+        return (
+            source.effects == target.effects
+            and len(source.outputs) == len(target.outputs)
+            and all(
+            same(actual, expected)
+            for actual, expected in zip(source.outputs, target.outputs, strict=True)
+            )
+        )
 
     if isinstance(source, TupleType) and isinstance(target, TupleType):
         return len(source.params) == len(target.params) and all(
@@ -1205,6 +1223,11 @@ def _solve(
                 elif not assignable(actual_field, field.typ, ctx):
                     return False
             return True
+        if isinstance(p, TaskType) and isinstance(a, TaskType):
+            return len(p.outputs) == len(a.outputs) and all(
+                rec(expected, actual)
+                for expected, actual in zip(p.outputs, a.outputs, strict=True)
+            )
         if isinstance(p, TupleType) and isinstance(a, TupleType):
             return len(p.params) == len(a.params) and all(
                 rec(x, y) for x, y in zip(p.params, a.params, strict=False)
@@ -1835,6 +1858,14 @@ def _substitute(t: Type, subst: dict[TypeVarKey, Type]) -> Type:
     t = normalize(t)
     if isinstance(t, VarType):
         return subst.get(type_var_key(t), t)
+    if isinstance(t, TaskType):
+        return TaskType(
+            tuple(_substitute(output, subst) for output in t.outputs),
+            frozenset(
+                ElementTag(tag.name, tuple(_substitute(arg, subst) for arg in tag.args), tag.absent)
+                for tag in t.effects
+            ),
+        )
     if isinstance(t, NominalType):
         return N(t.name, *(_substitute(a, subst) for a in t.args))
     if isinstance(t, UnionType):

@@ -804,30 +804,23 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Implement `vln upgrade`.
 - [x] Update both manifest and lockfile during package changes.
 
-## 41. Concurrency — deferred design area
+## 41. Concurrency — initial release complete
 
-- [ ] Implement green-thread tasks.
-- [ ] Parse `spawn`.
-- [ ] Return `Task[T]` from spawned blocks.
-- [ ] Implement `wait`.
-- [ ] Return the task result from `wait`.
-- [ ] Prevent a task from being successfully waited more than once.
-- [ ] Vectorise `wait` over collections of tasks.
-- [ ] Automatically wait for unreturned tasks at function exit.
-- [ ] Automatically wait for outstanding main-program tasks.
-- [ ] Parse `concurrent` blocks.
-- [ ] Automatically wait for tasks at the end of a `concurrent` block.
-- [ ] Provide generic channels.
-- [ ] Support sending values to channels.
-- [ ] Support receiving values from channels.
-- [ ] Support channel closure.
-- [ ] Define behavior for sends and receives involving closed channels.
-- [ ] Support channel communication across tasks.
-- [ ] Parse `match channels`.
-- [ ] Wait on multiple channel operations.
-- [ ] Select ready channel cases.
-- [ ] Support any specified default or fallback channel cases.
-- [ ] Integrate channel matching with static types.
+- [x] Implement cooperative tasks and `spawn`.
+- [x] Preserve native task output rows in `Task[...]`.
+- [x] Implement repeatable scalar and vectorised `wait`.
+- [x] Implement structured `concurrent` scopes and automatic child joining.
+- [x] Implement deterministic fail-fast cancellation and fault selection.
+- [x] Implement invariant generic channels, rendezvous, bounded buffering, and FIFO.
+- [x] Implement channel send, receive, close, draining, and closed-send faults.
+- [x] Distinguish `Receive.Value(None)` from `Receive.Closed`.
+- [x] Integrate transfer classes, isolated movement, copy-on-write, and lazy values.
+- [x] Integrate cooperative timers/non-blocking wake sources and deadlock reporting.
+- [x] Preserve concurrency through optimization and bytecode serialization.
+- [x] Add deterministic fuzzing, stress/leak gates, benchmarks, and executable examples.
+- [ ] Deferred: public cancellation and timeout syntax.
+- [ ] Deferred: `match channels` / select across multiple channel operations.
+- [ ] Deferred: directional channel endpoints, priorities, detached tasks, and parallel execution.
 
 ## 42. Eager evaluation — deferred design area
 

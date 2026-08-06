@@ -16,6 +16,7 @@ from valiance.asts import (
     BreakNode,
     CallArgument,
     CastNode,
+    ConcurrentNode,
     DefineNode,
     DictLiteralNode,
     ElementExtension,
@@ -987,6 +988,22 @@ class Parser:
             location=_loc(start),
         )
 
+    def _concurrent(self, start: Token) -> ConcurrentNode:
+        """Parse a structured concurrent block using function-style contracts."""
+        params = (
+            self._params(allow_empty=True)
+            if self._match(TokenKind.LPAREN)
+            else None
+        )
+        returns = self._returns()
+        self._expect(TokenKind.FAT_ARROW)
+        return ConcurrentNode(
+            params=params,
+            returns=returns,
+            body=self._body(owner_column=self._line_start_column(start)),
+            location=_loc(start),
+        )
+
     def _function_element_tags(self) -> tuple[frozenset[ElementTag], bool]:
         """Parse function element tags from the current token stream."""
         if not self._check_op("<"):
@@ -1645,6 +1662,8 @@ class Parser:
                 (self._function(self._previous, (annotation,)),),
                 True,
             )
+        if self._match_ident("concurrent"):
+            return _ChainPiece((self._concurrent(self._previous),), True)
         if self._match_ident("fn"):
             return _ChainPiece((self._function(self._previous),), True)
         if self._match_ident("if"):

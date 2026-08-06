@@ -135,7 +135,7 @@ class ModuleLoader:
                         raise ModuleLoadError(f"could not load module {compiled_file}: {exc}") from exc
                 else:
                     source_matches = not source_file.exists() or hashlib.sha256(
-                        source_file.read_bytes()
+                        source_file.read_text(encoding="utf-8").encode("utf-8")
                     ).hexdigest() == candidate.source_hash
                     if source_matches and candidate.analysed_interface is not None:
                         expected_name = _module_name(path)

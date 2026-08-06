@@ -625,6 +625,17 @@ class RuntimeContext:
     )
     index_get: Callable[[Any, Any, bool], Any] | None = None
     index_set: Callable[[Any, Any, Any, bool], Any] | None = None
+    cooperative_poll: Callable[[], None] | None = None
+    work_chunk: int = 64
+
+    def poll_work(self, index: int) -> None:
+        """Poll cancellation/fairness at a bounded native-loop chunk boundary."""
+        if (
+            self.cooperative_poll is not None
+            and index > 0
+            and index % self.work_chunk == 0
+        ):
+            self.cooperative_poll()
 
 
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
@@ -1700,10 +1711,12 @@ def _reduce(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
     if isinstance(values, PlannedLazyList):
         # The first value was already obtained from the same lazy iterator.
-        for item in iterator:
+        for index, item in enumerate(iterator, 1):
+            ctx.poll_work(index)
             result = reduce_item(result, item)
         return (result,)
-    for item in iterator:
+    for index, item in enumerate(iterator, 1):
+        ctx.poll_work(index)
         result = reduce_item(result, item)
     return (result,)
 
@@ -1721,7 +1734,8 @@ def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Fold every list item into an explicit seed accumulator."""
     values, result, folder = args
     prepared = ctx.prepare_call(folder, 2, 1) if ctx.prepare_call is not None else None
-    for item in values:
+    for index, item in enumerate(values, 1):
+        ctx.poll_work(index)
         called = prepared.invoke2(result, item) if prepared is not None else tuple(ctx.call(folder, [result, item]))
         result = called[0]
     return (result,)
@@ -1934,16 +1948,16 @@ def _map_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     prepared = (
         ctx.prepare_call(function, 1, 1) if ctx.prepare_call is not None else None
     )
-    return (
-        [
-            (
-                prepared.invoke1(character)
-                if prepared is not None
-                else tuple(ctx.call(function, [character]))
-            )[0]
-            for character in values
-        ],
-    )
+    mapped = []
+    for index, character in enumerate(values, 1):
+        ctx.poll_work(index)
+        called = (
+            prepared.invoke1(character)
+            if prepared is not None
+            else tuple(ctx.call(function, [character]))
+        )
+        mapped.append(called[0])
+    return (mapped,)
 
 
 @builtin(
@@ -2008,7 +2022,11 @@ def _map(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         )
         return (result,)
     if _callable_has_element_tag(args[1], "Eager"):
-        return ([map_item(item) for item in args[0]],)
+        result = []
+        for index, item in enumerate(args[0], 1):
+            ctx.poll_work(index)
+            result.append(map_item(item))
+        return (result,)
     if isinstance(args[0], PlannedLazyList):
         return (args[0].append_stage(LazyPipelineStage.mapping(map_item)),)
     return (PlannedLazyList(args[0], (LazyPipelineStage.mapping(map_item),)),)
@@ -2053,7 +2071,8 @@ def _map_niladic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _map_eager_effect(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Execute an eager mapping callable through one reusable call plan."""
     prepared = _prepared_runtime_call(ctx, args[1], 1)
-    for item in args[0]:
+    for index, item in enumerate(args[0], 1):
+        ctx.poll_work(index)
         if prepared is not None:
             prepared(item)
         else:
@@ -2444,7 +2463,8 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     if not shape_values:
         raise RuntimeError("reshape shape must contain at least one dimension")
     shape: list[int] = []
-    for raw_dimension in shape_values:
+    for index, raw_dimension in enumerate(shape_values, 1):
+        ctx.poll_work(index)
         if (
             not isinstance(raw_dimension, RuntimeNumber)
             or not raw_dimension.is_integer()

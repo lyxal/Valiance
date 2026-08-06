@@ -229,3 +229,7 @@ Licensed under either of:
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
 
 at your option. 
+
+## Concurrency
+
+Valiance includes structured cooperative tasks, repeatable scalar and vectorised waits, invariant FIFO channels, bounded backpressure, close-and-drain semantics, transfer safety, deadlock diagnostics, and deterministic bytecode behavior. See [the concurrency guide](docs/concurrency.md) and the executable programs in `samples/concurrency/`.

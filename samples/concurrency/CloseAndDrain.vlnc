@@ -1,0 +1,7 @@
+$channel = 2 Channel[Integer]
+$channel 7 send
+$channel 8 send
+$channel close
+$channel receive
+$channel receive
+$channel receive

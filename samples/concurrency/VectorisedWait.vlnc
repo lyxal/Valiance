@@ -1,0 +1,5 @@
+[
+  fn -> Integer => 1 end | spawn,
+  fn -> Integer => 2 end | spawn,
+  fn -> Integer => 3 end | spawn
+] | wait

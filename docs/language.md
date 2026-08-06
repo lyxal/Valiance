@@ -4609,120 +4609,515 @@ lockfile, and refresh the local managed package metadata.
 
 
 # 25. Concurrency
-_Features from this point onwards are for implementation further down the road. They are not considered core priority. As such, these features are very open to change._
 
-_The concurrency story here is strongly inspired by Go._
+Valiance provides **structured cooperative concurrency**. A task can make progress alongside other tasks, but tasks do not run Python-style host threads and do not make CPU-bound work execute in parallel across multiple cores.
 
-- Where other languages use `async`/`await`, `fiber`s, or direct threading, Valiance uses a green threads system with channels for cross-thread communication
-- `spawn => <code> end` creates a new `Task[T]` that will execute `code` alongside the main program.
-        - The `[T]` in `Task[T]` is the return type of `code`
-- `wait`, when given a `Task[T]`, will block until the `Task` completes, and then return the result `T`
-        - Think of it like `unwrap` for `Task`s.
-- A `Task` cannot be `wait`ed more than once
-        - Tracked by each `Task` storing a reference to an internal thread handle
-        - So like `spawn => ...` creates thread with internal id `x`, and the returned `Task` object stores `x`. You can copy `x` as much as you like, but there's only ever 1 true value of `x`.
+Use concurrency when work needs to:
 
-- But `wait`s can get ceremonious, especially if you have a lot of them
-- That's why there's two ways to automatically `wait`:
-1. un`wait`ed tasks are automatically `wait`ed at the end of a function if they aren't returned
-2. All un`wait`ed tasks are `wait`ed at the end of a `concurrent` block
+- overlap at well-defined suspension points;
+- communicate through channels;
+- wait for several independent computations;
+- coordinate producers and consumers;
+- remain owned by a lexical `concurrent` scope.
 
-- A `concurrent` block is just a labelled wrapper around a bunch of code
-- `concurrent => <code> end`
-- Serves to provide a scoped completion point without the ceremony of creating a new function.
+The main concurrency features are:
 
-- `wait` is defined as `[T] (Task[T]) -> T`
-        - Meaning vectorisation kicks-in when given a `Task[T]+` or any list of `Task`s
+- `spawn`, which starts a task;
+- `Task[...]`, which represents the task and its output row;
+- `wait`, which observes a task's result;
+- `concurrent`, which creates a structured task scope;
+- `Channel[T]`, which transfers values between tasks;
+- `send`, `receive`, and `close`, which operate on channels.
 
-- Putting this altogether:
+## 25.1. Starting a task with `spawn`
 
-```
-spawn => println("Hello from a thread!")
-println("Hello from main thread!")
-```
+A task runs a function concurrently with the task that spawned it. Create the function first, then pass it to `spawn`:
 
-- The exact order is of course runtime sensitive, but it'll most likely be:
-
-```
-Hello from main thread!
-Hello from a thread!
-```
-
-- Note that auto-`wait` also applies to the main program.
-        - No need to sleep a little to give the `Task` time to complete
-
-## 25.1. Channels
-
-- What if `Task`s need to communicate with each other, as well as the outside world?
-- The built-in `Channel` object serves as a communication medium
-- `Channel` is defined roughly as
-
-```
-object[T] Channel =>
-  $bufferSize: Number? = \None
-  #? No buffer size = no bounding
-  define write(value: T) -> => ...
-  define read() -> T? => ...
-  define close() -> => ...
-  define hasNext() -> #boolean Number => ...
+```valiance
+$worker = fn -> Integer =>
+  40 2 +
 end
+
+$task = $worker spawn
+$answer = $task wait
 ```
 
-- Like `Task`s, `Channel` holds a reference to an actual channel identifier.
-        - Allows `Channel`s to be `copy`'d and `move`'d
+`$task` has type `Task[Integer]`. Calling `wait` returns the task's `Integer` result, so `$answer` is `42`.
 
-- `write` will write a value to the channel. Blocks if no `Task`s are using `read` or if there's a buffer size and the channel is full. Panics if `Channel` is closed.
-- `read` will "pop" and return the last written value. Blocks if `Channel` is empty. Returns `None` if `Channel` is closed or is empty. Note that `read` on a closed channel will read any remaining buffered values.
-- `close` closes the channel, allowing no more `write`s.
-- `hasNext` returns whether a `read` would return `None`. This allows for iterating on a `Channel` in a while loop without consuming the value.
+The pipeline form is often more convenient:
 
-- An example
-
+```valiance
+$task = fn -> Integer => 40 2 + end | spawn
+$task wait
 ```
-$ch = Channel[String]
+
+A spawned function may return no values:
+
+```valiance
+$task = fn -> =>
+  "background work" println
+end | spawn
+
+$task wait
+```
+
+### Passing arguments to a spawned function
+
+Arguments appear before the function, just as they do for an ordinary first-class call:
+
+```valiance
+$double = fn (value: Integer) -> Integer =>
+  $value 2 *
+end
+
+$task = 21 $double spawn
+$task wait
+```
+
+The result is `42`.
+
+The modifier form can also make the moved or captured values visually explicit:
+
+```valiance
+41
+spawn: fn (value: Integer) -> Integer =>
+  $value 1 +
+end
+| wait
+```
+
+## 25.2. Task output rows
+
+A `Task[...]` stores the complete output row of its function. A function with two outputs produces a task with two output types:
+
+```valiance
+$worker = fn -> Integer, String =>
+  42
+  "complete"
+end
+
+$task = $worker spawn
+$task wait
+```
+
+The task has type:
+
+```valiance
+Task[Integer, String]
+```
+
+Waiting restores both outputs in their original order.
+
+A function with no outputs produces a zero-output task. Waiting for it synchronizes with completion but does not push a placeholder value onto the stack.
+
+## 25.3. Waiting is repeatable
+
+A task is an immutable handle to one runtime task. Waiting does not consume that task or invalidate the handle.
+
+```valiance
+$task = fn -> Integer => 42 end | spawn
+
+$first = $task wait
+$second = $task wait
+```
+
+Both waits observe the same stored result. Copies or aliases of the task handle also refer to the same task:
+
+```valiance
+$task = fn -> String => "done" end | spawn
+$alias = $task
+
+$task wait
+$alias wait
+```
+
+If the task failed, every wait observes the same underlying failure.
+
+## 25.4. Waiting for a collection of tasks
+
+`wait` vectorises over a typed collection of tasks. The tasks are observed in collection order, not completion order:
+
+```valiance
+$tasks = [
+  fn -> Integer => 1 end | spawn,
+  fn -> Integer => 2 end | spawn,
+  fn -> Integer => 3 end | spawn
+]
+
+$results = $tasks wait
+```
+
+`$results` is:
+
+```valiance
+[1, 2, 3]
+```
+
+If each task has multiple outputs, `wait` returns one collection for each output position:
+
+```valiance
+$tasks = [
+  fn -> Integer, String => 1 "one" end | spawn,
+  fn -> Integer, String => 2 "two" end | spawn
+]
+
+$numbers $names = $tasks wait
+```
+
+Conceptually, the two resulting collections are:
+
+```valiance
+[1, 2]
+["one", "two"]
+```
+
+An empty typed task collection still preserves the output shape:
+
+```valiance
+$results = [] as[Task[Integer]+] | wait
+```
+
+Here `$results` is an empty `Integer` collection.
+
+## 25.5. Structured concurrency with `concurrent`
+
+A `concurrent` block creates a dynamic scope for tasks:
+
+```valiance
 concurrent =>
-  #? Producer
-  spawn =>
-    ["a", "b", "c"] eagermap: spawn => send($ch, _)
-    #? Close the channel once everything is sent
-    close($ch)
-  end
-  #? Consumer
-  spawn =>
-    #? Consume until $ch is closed/empty
-    while ($ch hasNext) => println(read($ch))
-  end
-  #? Concurrent block will wait until both Tasks have finished
+  fn -> => "first task" println end | spawn
+  fn -> => "second task" println end | spawn
 end
 ```
 
-## 25.2. `match channels`
+The block does not finish until every child task it owns has reached a terminal state. You do not need to manually wait for every child solely to keep it alive.
 
-- You thought that was it?
-- Say you want to wait on multiple channels, and capture the first channel to produce a value.
-- `match channels => <channels> end` does just that.
-- `channels` contains `from` branches
-        - `from ${channelVar} -> ${code}`
-        - `channelVar` is the channel to watch
-        - `code` gets the returned value from the channel
-- Blocks until a channel produces a value
-- Example:
+You should still use `wait` when you need a child's returned values inside the scope:
 
+```valiance
+concurrent =>
+  $left = fn -> Integer => 20 end | spawn
+  $right = fn -> Integer => 22 end | spawn
+
+  $left wait
+  $right wait
+  +
+end
 ```
-import{time}
 
-define fetchTimeout(url: String, ms: Number) -> Result[String, String] =>
-  $data = Channel[String]
-  $timeout = Channel[{}] #? Empty tuple channel
+### Nested scopes
 
-  spawn => $data send(fetch($url))
-  spawn => time.sleep($ms) $timeout send(())
+A nested `concurrent` block owns its own children:
 
-  match channels =>
-    from $data    => id, #? Just return fetch result
-    from $timeout => Error("Request timed out.") 
-  end
+```valiance
+concurrent =>
+  fn -> =>
+    concurrent =>
+      fn -> => "nested child" println end | spawn
+    end
+  end | spawn
+end
 ```
+
+The inner scope joins its children before the inner task completes. The outer scope then joins the inner task.
+
+### Structured failure
+
+If one child fails, the scope selects a deterministic primary failure, requests cooperative cancellation of its unfinished siblings, waits for cleanup, and then propagates the failure:
+
+```valiance
+concurrent =>
+  fn -> Integer =>
+    panic ValueFault("worker failed")
+  end | spawn
+
+  fn -> =>
+    "sibling work" println
+  end | spawn
+end
+```
+
+A failure is normally observed when the failing task is explicitly waited or when its owning `concurrent` scope closes.
+
+## 25.6. Capturing values safely
+
+A spawned closure may capture ordinary transferable values:
+
+```valiance
+$values = [1, 2, 3]
+
+$task = fn -> Integer+ =>
+  $values
+end | spawn
+
+$task wait
+```
+
+Ordinary value graphs are not eagerly deep-copied at spawn. Runtime-managed mutable values use copy-on-write behavior when a task boundary requires detachment.
+
+Lazy values can cross a task boundary without forcing the lazy source. Traversal still happens only when the receiving task demands values.
+
+Task and channel handles are shared identities. Copying a handle creates another reference to the same task or channel, not a second runtime entity.
+
+## 25.7. Moving isolated resources
+
+An isolated resource cannot be captured or passed to a spawned task implicitly. It must be uniquely owned and explicitly moved:
+
+```valiance
+@mustcall(any = ["close"])
+object Resource =>
+  define close => $self
+end
+
+Resource
+move(value -> value)
+spawn: fn (value: Resource) -> Resource =>
+  $value close
+end
+| wait
+```
+
+`move(value -> value)` proves that the value is being transferred rather than copied. After the move, the sender must not continue using the old ownership occurrence.
+
+Using `copy` instead of `move` does not authorize isolated-resource transfer.
+
+## 25.8. Creating channels
+
+An unbuffered channel is created with `Channel[T]`:
+
+```valiance
+$channel = Channel[Integer]
+```
+
+A bounded channel is created by placing its capacity before the constructor:
+
+```valiance
+$channel = 4 Channel[Integer]
+```
+
+`Channel[T]` is invariant because it both accepts and produces `T`. For example, a `Channel[Integer]` is not interchangeable with a `Channel[Number]`.
+
+Channel handles can be shared between tasks:
+
+```valiance
+$channel = Channel[Integer]
+
+$sender = fn -> =>
+  $channel 42 send
+end
+
+$receiver = fn -> Receive[Integer] =>
+  $channel receive
+end
+
+$sendTask = $sender spawn
+$receiveTask = $receiver spawn
+
+$received = $receiveTask wait
+$sendTask wait
+```
+
+## 25.9. Sending and receiving
+
+The channel appears before the transmitted value when calling `send`:
+
+```valiance
+$channel 42 send
+```
+
+Receive takes the channel and returns `Receive[T]`:
+
+```valiance
+$result = $channel receive
+```
+
+A receive result is one of two variants:
+
+- `Receive.Value(value)`, when a value was received;
+- `Receive.Closed()`, when the channel is closed and completely drained.
+
+This distinction is important for optional element types. A `Channel[T?]` may transmit `None`, and that is represented as `Receive.Value(None)`, not as channel closure.
+
+### Unbuffered rendezvous
+
+An unbuffered send waits until a receiver can commit the same operation. The sender and receiver may reach the channel in either order:
+
+```valiance
+$channel = Channel[Integer]
+
+$receiver = fn -> Receive[Integer] =>
+  $channel receive
+end
+
+$sender = fn -> =>
+  $channel 17 send
+end
+
+$receiveTask = $receiver spawn
+$sendTask = $sender spawn
+
+$receiveTask wait
+$sendTask wait
+```
+
+Running an unbuffered `send` or `receive` directly when no other task can match it produces an explicit would-block failure rather than silently hanging the main execution.
+
+## 25.10. Bounded buffering and backpressure
+
+A bounded channel accepts values until its buffer reaches capacity. Further sends suspend until receivers make room:
+
+```valiance
+$channel = 1 Channel[Integer]
+
+$producer = fn -> =>
+  $channel 1 send
+  $channel 2 send
+  $channel 3 send
+end
+
+$consumer = fn -> Receive[Integer], Receive[Integer], Receive[Integer] =>
+  $channel receive
+  $channel receive
+  $channel receive
+end
+
+$producerTask = $producer spawn
+$consumerTask = $consumer spawn
+
+$consumerTask wait
+$producerTask wait
+```
+
+The consumer receives `1`, `2`, and `3` in FIFO order. The capacity of `1` forces the producer to wait as the consumer catches up.
+
+## 25.11. Closing and draining a channel
+
+Close a channel with:
+
+```valiance
+$channel close
+```
+
+Closing has the following effects:
+
+- future sends fail;
+- blocked senders fail if their values were not committed;
+- buffered values remain available to receivers;
+- after the buffer is drained, receives return `Receive.Closed()`;
+- blocked receivers wake with buffered values or closure.
+
+Example:
+
+```valiance
+$channel = 2 Channel[Integer]
+
+$channel 7 send
+$channel 8 send
+$channel close
+
+$first = $channel receive
+$second = $channel receive
+$finished = $channel receive
+```
+
+The three results are conceptually:
+
+```valiance
+Receive.Value(7)
+Receive.Value(8)
+Receive.Closed()
+```
+
+Closing an already closed channel has no additional effect.
+
+## 25.12. Producer and consumer example
+
+A minimal producer/consumer program uses an unbuffered channel and two tasks:
+
+```valiance
+$channel = Channel[Integer]
+
+$producer = fn -> =>
+  $channel 1 send
+end
+
+$consumer = fn -> Receive[Integer] =>
+  $channel receive
+end
+
+$producerTask = $producer spawn
+$consumerTask = $consumer spawn
+
+$value = $consumerTask wait
+$producerTask wait
+```
+
+For a stream of values, use a bounded channel, have the producer close it when done, and let the consumer receive until it observes `Receive.Closed()`.
+
+## 25.13. Cancellation and suspension behavior
+
+Cancellation is cooperative. It is observed at scheduler boundaries, waits, channel operations, supported timer and external-wakeup suspension points, and bounded polls inside long-running runtime operations.
+
+The initial release does not expose a public cancellation function. Cancellation is currently driven by structured failure, scope cleanup, and runtime lifecycle management.
+
+Supported non-blocking timers and integrated I/O wake the scheduler without blocking its executor. A host call that would block the executor is rejected when used from concurrent execution.
+
+## 25.14. Deadlocks
+
+If tasks are blocked and no runnable task, timer, or external wake source can make progress, the scheduler raises a deadlock fault instead of waiting forever.
+
+Deadlock diagnostics identify the blocked tasks and resources. When source information is available, they also include spawn sites, owning scopes, channel creation sites, and blocked-operation locations.
+
+A simple deadlock is two tasks waiting to receive from an unbuffered channel when no task can send:
+
+```valiance
+$channel = Channel[Integer]
+
+concurrent =>
+  fn -> Receive[Integer] => $channel receive end | spawn
+  fn -> Receive[Integer] => $channel receive end | spawn
+end
+```
+
+## 25.15. Choosing between tasks and channels
+
+Use a task result when one computation has a fixed output that another part of the program needs later:
+
+```valiance
+$task = fn -> Integer => 42 end | spawn
+$answer = $task wait
+```
+
+Use a channel when tasks need to exchange a sequence of values or apply backpressure:
+
+```valiance
+$channel = 8 Channel[Integer]
+```
+
+Use a `concurrent` block when several tasks form one operation and must not outlive that operation:
+
+```valiance
+concurrent =>
+  # Spawn all children belonging to this operation here.
+end
+```
+
+## 25.16. Features deferred beyond the initial release
+
+The initial release does not provide:
+
+- public cancellation syntax;
+- public timeout syntax;
+- `select` or `match channels` across several channel operations;
+- directional send-only or receive-only channel types;
+- detached tasks;
+- task priorities;
+- work stealing;
+- multi-core parallel task execution;
+- unrestricted host-blocking I/O.
+
+These are named future language features. They do not change the task, scope, wait, transfer, channel, bytecode, or diagnostic contracts documented above.
+
 
 # 26. Eager Evaluation 
 

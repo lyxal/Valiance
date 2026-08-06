@@ -82,6 +82,7 @@ class ObjectDefinition:
     generics: tuple[Symbol, ...] = ()
     generic_variance: tuple[Variance, ...] = ()
     attributes: tuple[ObjectAttribute, ...] = ()
+    task_isolated: bool = False
 
     def attribute_type(self, name: Symbol) -> Type | None:
         """Return an attribute's type, if the object declares it."""
@@ -294,6 +295,7 @@ class Environment:
         *,
         generics: tuple[Symbol, ...] = (),
         generic_variance: tuple[Variance, ...] = (),
+        task_isolated: bool = False,
     ) -> None:
         """Register or replace an object type visible in this environment."""
         seen: set[Symbol] = set()
@@ -304,7 +306,9 @@ class Environment:
                 )
             seen.add(attribute.name)
         variances = _generic_variance(generics, generic_variance)
-        self.objects[name] = ObjectDefinition(name, generics, variances, attributes)
+        self.objects[name] = ObjectDefinition(
+            name, generics, variances, attributes, task_isolated
+        )
         self.context.set_generic_variance(name, variances)
 
     def lookup_object(self, name: Symbol) -> ObjectDefinition | None:

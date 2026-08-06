@@ -11,6 +11,7 @@ from valiance.asts.nodes import (
     ElementExtension,
     ElementNode,
     FieldAccessNode,
+    ConcurrentNode,
     FunctionNode,
     FunctionOverloadTyping,
     FunctionParam,
@@ -31,6 +32,7 @@ from valiance.asts.nodes import (
     TypedElementExtension,
     TypedElementNode,
     TypedExtensionPatternRule,
+    TypedConcurrentNode,
     TypedFunctionNode,
     TypedNode,
     TypeLiteralNode,
@@ -54,6 +56,8 @@ def pretty_ast(value: ASTNode | TypedNode | Sequence[ASTNode | TypedNode]) -> st
 
 def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> str:
     """Compute pretty for AST diagnostic output."""
+    if isinstance(value, TypedConcurrentNode):
+        return _typed_concurrent_node(value, level)
     if isinstance(value, TypedFunctionNode):
         return _typed_function_node(value, level)
     if isinstance(value, TypedElementNode):
@@ -64,6 +68,8 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
         return _typed_node(value, level)
     if isinstance(value, FunctionOverloadTyping):
         return _function_overload_typing(value, level)
+    if isinstance(value, ConcurrentNode):
+        return _concurrent_node(value, level)
     if isinstance(value, FunctionNode):
         return _function_node(value, level)
     if isinstance(value, TryNode):
@@ -279,6 +285,20 @@ def _typed_call_node(value: TypedCallNode, level: int) -> str:
     return "\n".join(lines)
 
 
+def _typed_concurrent_node(value: TypedConcurrentNode, level: int) -> str:
+    """Render analysed concurrent scope metadata and body."""
+    lines = [
+        f"TypedConcurrentNode(type={_type_label(value.typ)},",
+        f"  inputs={_types_label(value.input_stack)},",
+        f"  outputs={_types_label(value.output_stack)},",
+        "  body=[",
+    ]
+    for node in value.body:
+        lines.extend(_indent(_pretty(node, level + 1).splitlines(), 2))
+    lines.extend(["  ]", ")"])
+    return "\n".join(lines)
+
+
 def _typed_function_node(value: TypedFunctionNode, level: int) -> str:
     """Compute typed function node for AST diagnostic output."""
     lines = [f"TypedFunctionNode(type={_type_label(value.typ)}, node="]
@@ -298,6 +318,22 @@ def _function_overload_typing(value: FunctionOverloadTyping, level: int) -> str:
     for node in value.body:
         lines.extend(_indent(_pretty(node, level + 1).splitlines()))
     lines.append("])")
+    return "\n".join(lines)
+
+
+def _concurrent_node(value: ConcurrentNode, level: int) -> str:
+    """Render one raw structured concurrent block."""
+    lines = [
+        "ConcurrentNode(",
+        f"  params={_params_label(value.params)},",
+        f"  returns={_types_label(value.returns)},",
+        "  body=[",
+    ]
+    for node in value.body:
+        lines.extend(_indent(_pretty(node, level + 1).splitlines(), 2))
+    lines.extend(["  ]", ")"])
+    if value.location is not None:
+        lines.insert(1, f"  location={_location_label(value)},")
     return "\n".join(lines)
 
 

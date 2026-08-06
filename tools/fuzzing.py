@@ -795,6 +795,42 @@ def _random_extension(rng: random.Random, depth: int) -> VectorExtensionReferenc
     return VectorExtensionReference(default, rules, selector)
 
 
+def _valid_concurrency_argument(
+    op: OpCode, rng: random.Random, depth: int
+) -> object:
+    """Return a serializer-valid argument for one concurrency opcode."""
+    if op is OpCode.SPAWN_CALL:
+        return (rng.randint(0, 4), rng.randint(0, 4), rng.randint(0, 3))
+    if op in {OpCode.WAIT_TASK, OpCode.WAIT_TASKS_VECTORISED}:
+        return rng.randint(0, 4)
+    if op is OpCode.CHANNEL_NEW:
+        return rng.choice((False, True))
+    if op in {
+        OpCode.SCOPE_BEGIN,
+        OpCode.SCOPE_END,
+        OpCode.CHANNEL_SEND,
+        OpCode.CHANNEL_RECEIVE,
+        OpCode.CHANNEL_CLOSE,
+        OpCode.CANCEL_POLL,
+    }:
+        return None
+    return _simple_value(rng, max(0, depth))
+
+
+def _random_instruction(
+    rng: random.Random, depth: int, op: OpCode | None = None
+) -> Instruction:
+    """Build one random instruction with valid concurrency payload shapes."""
+    selected = op or rng.choice(
+        tuple(
+            candidate
+            for candidate in OpCode
+            if candidate not in {OpCode.SCOPE_BEGIN, OpCode.SCOPE_END}
+        )
+    )
+    return Instruction(selected, _valid_concurrency_argument(selected, rng, depth))
+
+
 def _random_function(
     rng: random.Random,
     depth: int,
@@ -802,15 +838,18 @@ def _random_function(
 ) -> FunctionCode:
     instruction_count = rng.randint(0, 4 if depth > 0 else 8)
     instructions: list[Instruction] = []
-    if forced_op is not None:
-        instructions.append(Instruction(forced_op, _simple_value(rng, max(0, depth))))
-    while len(instructions) < instruction_count:
-        instructions.append(
-            Instruction(
-                rng.choice(tuple(OpCode)),
-                _simple_value(rng, max(0, depth)),
-            )
+    if forced_op is OpCode.SCOPE_END:
+        instructions.extend(
+            (Instruction(OpCode.SCOPE_BEGIN), Instruction(OpCode.SCOPE_END))
         )
+    elif forced_op is OpCode.SCOPE_BEGIN:
+        instructions.extend(
+            (Instruction(OpCode.SCOPE_BEGIN), Instruction(OpCode.SCOPE_END))
+        )
+    elif forced_op is not None:
+        instructions.append(_random_instruction(rng, max(0, depth), forced_op))
+    while len(instructions) < instruction_count:
+        instructions.append(_random_instruction(rng, max(0, depth)))
 
     return FunctionCode(
         instructions=tuple(instructions),
@@ -1165,10 +1204,26 @@ def _fuzz_runtime_bytecode(
     ]
     instructions.extend(
         (
-            Instruction(op, _runtime_fuzz_value(rng)),
+            Instruction(
+                op,
+                _valid_concurrency_argument(op, rng, 1)
+                if op in {
+                    OpCode.SPAWN_CALL, OpCode.WAIT_TASK,
+                    OpCode.WAIT_TASKS_VECTORISED, OpCode.SCOPE_BEGIN,
+                    OpCode.SCOPE_END, OpCode.CHANNEL_NEW, OpCode.CHANNEL_SEND,
+                    OpCode.CHANNEL_RECEIVE, OpCode.CHANNEL_CLOSE,
+                    OpCode.CANCEL_POLL,
+                }
+                else _runtime_fuzz_value(rng),
+            ),
             Instruction(OpCode.RETURN),
         )
     )
+    if op is OpCode.SCOPE_BEGIN:
+        instructions.insert(-1, Instruction(OpCode.SCOPE_END))
+    elif op is OpCode.SCOPE_END:
+        operation_index = len(instructions) - 2
+        instructions.insert(operation_index, Instruction(OpCode.SCOPE_BEGIN))
     program = Program(FunctionCode(tuple(instructions), name="<fuzz>"))
     try:
         decoded = loads(dumps(program))

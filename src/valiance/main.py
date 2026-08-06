@@ -40,6 +40,7 @@ from valiance.elements.reference_docs import (
     collect_language_references,
     render_language_reference,
 )
+from valiance.runtime.concurrency import render_concurrency_fault
 from valiance.runtime import (
     BytecodeFormatError,
     CompileError,
@@ -1962,7 +1963,12 @@ def _print_exception_diagnostic(
         stage = "Runtime error"
     else:
         stage = "Error"
-    _print_diagnostic(from_exception(stage, exc), source, source_file)
+    diagnostic = from_exception(stage, exc)
+    if getattr(exc, "task_context", ()) or getattr(exc, "secondary_faults", ()):
+        from dataclasses import replace
+
+        diagnostic = replace(diagnostic, message=render_concurrency_fault(exc))
+    _print_diagnostic(diagnostic, source, source_file)
 
 
 def _print_diagnostic(

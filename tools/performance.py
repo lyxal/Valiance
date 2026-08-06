@@ -8,7 +8,6 @@ import hashlib
 import json
 import os
 import platform
-import resource
 import statistics
 import sys
 from dataclasses import asdict, dataclass
@@ -16,6 +15,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter
 from typing import Any, Callable, Iterable
+
+try:
+    import resource
+except ImportError:  # Not available on Windows.
+    resource = None
 
 from valiance.analysis import Analyser
 from valiance.modules_system.modules import ModuleLoader
@@ -171,6 +175,8 @@ $sumTo(4000, 0)""",
 
 def _peak_rss_kib() -> int:
     """Return process peak resident-set size in KiB on supported hosts."""
+    if resource is None:
+        return 0
     value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return int(value // 1024) if sys.platform == "darwin" else int(value)
 

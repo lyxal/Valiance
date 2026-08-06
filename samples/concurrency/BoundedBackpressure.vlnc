@@ -1,0 +1,15 @@
+$channel = 1 Channel[Integer]
+$producer = fn -> =>
+  $channel 1 send
+  $channel 2 send
+  $channel 3 send
+end
+$consumer = fn -> Receive[Integer], Receive[Integer], Receive[Integer] =>
+  $channel receive
+  $channel receive
+  $channel receive
+end
+$producerTask = $producer spawn
+$consumerTask = $consumer spawn
+$consumerTask wait
+$producerTask wait

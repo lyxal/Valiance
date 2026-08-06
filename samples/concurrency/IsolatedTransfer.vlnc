@@ -1,0 +1,7 @@
+@mustcall(any = ["close"])
+object Resource =>
+  define close => $self
+end
+Resource
+move(value -> value)
+spawn: fn (value: Resource) -> Resource => $value close end | wait

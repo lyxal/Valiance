@@ -15,6 +15,7 @@ from valiance.asts import (
     AssertNode,
     AtNode,
     CastNode,
+    ConcurrentNode,
     DictLiteralNode,
     ElementTagDeclarationNode,
     FileLintSuppressionNode,
@@ -41,6 +42,7 @@ from valiance.asts import (
     TypedAssertNode,
     TypedAtNode,
     TypedCallNode,
+    TypedConcurrentNode,
     TypedForNode,
     TypedFunctionNode,
     TypedIfNode,
@@ -317,6 +319,116 @@ def _at_node(
             ),
         )
     )
+
+
+def _direct_concurrent_captures(
+    node: ConcurrentNode,
+    branch: _core.AnalysisBranch,
+) -> tuple[GetVariableNode, ...]:
+    """Find outer variable reads, excluding reads inside closure literals."""
+    visible = {name for name, _typ in branch.variables.visible_items()}
+    parameter_names = {
+        param.name for param in node.params or () if param.name is not None
+    }
+    captures: list[GetVariableNode] = []
+
+    def visit(value: object) -> None:
+        """Visit one value or syntax node while avoiding recursive cycles."""
+        if isinstance(value, FunctionNode):
+            return
+        if isinstance(value, GetVariableNode):
+            if value.name in visible and value.name not in parameter_names:
+                captures.append(value)
+            return
+        if isinstance(value, _core.ASTNode):
+            from dataclasses import fields
+            for item in fields(value):
+                if item.name != "location":
+                    visit(getattr(value, item.name))
+        elif isinstance(value, (tuple, list)):
+            for item in value:
+                visit(item)
+
+    visit(node.body)
+    return tuple(captures)
+
+
+@_core.register(ConcurrentNode)
+def _concurrent_node(
+    self: _core.Analyser,
+    node: ConcurrentNode,
+    branch: _core.AnalysisBranch,
+) -> _core.BranchSet:
+    """Analyse a concurrent block as a closed function-shaped scope."""
+    captures = _direct_concurrent_captures(node, branch)
+    if captures:
+        for capture in captures:
+            self._diagnose(
+                f"concurrent block cannot capture outer variable '{capture.name}'; "
+                "pass the value through the stack or parameter list",
+                capture,
+            )
+        return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+
+    function = FunctionNode(
+        params=node.params,
+        body=node.body,
+        returns=node.returns,
+        location=node.location,
+    )
+    blank_outer = _core.AnalysisBranch(
+        input_mode=_core.InputMode.TOP_LEVEL,
+        origin=branch.origin,
+    )
+    analysed = self._analyse_function_literal(
+        blank_outer, function, allow_top_level_captures=False
+    )
+    if analysed is None:
+        return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+    details, _ = analysed
+    candidates = tuple(
+        item for item in details.overloads if isinstance(item.overload, T.Overload)
+    )
+    if not candidates:
+        self._diagnose("concurrent block must have a concrete stack contract", node)
+        return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+
+    arities = {len(item.overload.params) for item in candidates}
+    if len(arities) != 1:
+        self._diagnose("inferred concurrent inputs have inconsistent arity", node)
+        return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+    preview_params = candidates[0].overload.params
+    sourced = branch.source_arguments(preview_params)
+    if sourced is None:
+        self._diagnose("not enough stack values for concurrent block inputs", node)
+        return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+    actual, remaining = sourced
+    resolved = T.resolve_overload_result(
+        tuple(item.overload for item in candidates), actual, self.env.context
+    )
+    if resolved is None:
+        expected = candidates[0].overload.params
+        self._diagnose(
+            "concurrent block input type mismatch: expected "
+            f"{', '.join(T.show(item) for item in expected)}, received "
+            f"{', '.join(T.show(item) for item in actual)}",
+            node,
+        )
+        return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+    selected = next(
+        item for item in candidates if item.overload == resolved.overload
+    )
+    params = resolved.params
+    returns = resolved.returns
+    typed = TypedConcurrentNode(
+        node,
+        T.Fn(params, returns, resolved.overload.element_tags),
+        node.params,
+        tuple(params),
+        tuple(returns),
+        selected.body,
+    )
+    return _core.BranchSet((remaining.push(*returns).emit(typed),))
 
 
 @_core.register(FunctionNode)

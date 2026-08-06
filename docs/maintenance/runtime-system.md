@@ -1663,3 +1663,97 @@ Optimization statistics expose the applied contract through:
 - `call.policy.fixed-vectorised`
 - `call.policy.union-dispatch`
 - `call.policy.declared-dispatch`
+
+## Cooperative suspension and native-loop polling
+
+The initial concurrency runtime uses one executor. Scheduler suspension sources
+therefore must never block the host thread. `Scheduler.register_timer` creates a
+deterministic logical timer; `register_external` creates an explicit wake token
+for integrated I/O or test doubles. Both return an exactly-once
+`SuspensionRegistration`. Cancellation removes the registration once, firing
+commits one wake once, and pending sources suppress deadlock classification.
+
+External calls declare `ExternalCallPolicy`: immediate, scheduler-suspending, or
+host-blocking. Host-blocking calls are rejected before concurrent execution.
+Cancellation awareness is explicit metadata rather than inferred behavior.
+
+Long-running built-in loops call `RuntimeContext.poll_work` every 64 items. The
+VM poll first observes task cancellation, then permits one runnable sibling
+quantum. Polls belong only at native-loop item boundaries. Retain/release,
+channel commit, copy-on-write detach, assignment reconstruction, and destructor
+execution remain atomic and must not call the poll.
+
+## Task-aware concurrency diagnostics
+
+Concurrency bytecode carries stable source sites for scope entry, spawn, wait,
+and channel operations. A failed task stores its task id, terminal state, spawn
+site, owning-scope site, and underlying fault. Waiting does not replace that
+fault: each observation adds only the current wait site, so repeated waits retain
+fault identity while reporting the new observer.
+
+The CLI and both REPL frontends use the shared exception renderer. It renders the
+primary task context first, then deterministic secondary faults with their own
+task contexts. Runtime wrapping preserves this metadata for panics, closure,
+cancellation, deadlock, and invalid-runtime faults. Optimized and serialized
+programs retain the same diagnostic structure.
+
+Deadlock edges include task spawn sites and blocked-operation sites when known.
+Timer and external wake registrations continue to suppress deadlock diagnosis
+until no scheduler-visible wake source can make progress.
+
+## Concurrency bytecode compatibility and optimizer barriers
+
+The bytecode header is `VLNCBC` followed by the format-version byte. The current
+format version is 30 (`0x1e`). A file with the expected prefix but another
+version fails before payload decoding with an explicit received/expected version
+message. Checked-in version 30 and unsupported version 29 concurrency fixtures
+make this boundary reproducible.
+
+Every concurrency opcode is an optimizer barrier: spawn, scalar and vector wait,
+scope begin/end, channel construction/send/receive/close, and cancellation poll.
+Before and after every optimization pass, the pipeline compares the ordered
+barrier contract across the main function and all nested bytecode payloads. A
+pass that changes barrier order, payload, or nesting is rejected with
+`OptimizationError`. This protects capture boundaries, dynamic scope ownership,
+wait effects, channel order, and task/channel identity without redesigning the
+optimizer.
+
+Function traversal includes ordinary nested functions, overloaded
+`FunctionSetCode`, union-dispatch plans, vector extension functions, object
+initializers, generic specializations represented as compiled functions, and
+recursive functions. A function containing concurrency barriers is not an
+inlining candidate.
+
+## Deterministic concurrency fuzzing and replay
+
+`python -m tools.concurrency_fuzz` runs scheduler/task/channel lifecycle cases
+from independently derived per-case PRNG seeds. Campaign slicing does not change
+a case: replay a failure with the reported `--seed`, `--start`,
+`--iterations 1`, and `--operations` command. Failures include the generated
+operation prefix and cause. CI runs 500 bounded cases; the nightly workflow runs
+10,000 longer cases.
+
+Runtime test instrumentation exposes monotonic task terminal-transition counts
+and channel send/receive commit, cancellation, and fault counters. Fuzz and
+stress gates assert one terminal transition, complete waiter cleanup, FIFO,
+no duplicate receives, deterministic task outcomes, and empty runnable queues.
+The generated mix exercises completion/cancellation, blocked send and receive,
+close races, aliases and repeated observations. Dedicated contract tests retain
+coverage for nested scope faults, group waits, mixed deadlocks, cyclic transfer,
+and lazy cancellation.
+
+## Concurrency stress and benchmark gates
+
+`tests/test_concurrency_phase5.py` provides bounded fairness, 2,000-task runnable
+queue, 5,000-sender/receiver cancellation storm, repeated lifecycle/GC batch,
+and 20,000-value FIFO gates. The tests assert terminal queue drainage,
+registration cleanup, entity reclamation, and no lost or duplicate values.
+
+`python -m tools.benchmark_concurrency` emits JSON and optional CSV for spawn and
+wait, suspended-task memory, context switches, repeated waits, scope close at
+1/10/1,000 children (plus 100,000 with `--include-large`), unbuffered and bounded
+channels, waiter cancellation, scalar/vector waits, small/large capture
+transfer, copy-on-write fanout, parent/child detachment, lazy prefixes, and
+scheduler overhead. Baselines are observational and deliberately do not impose
+machine-dependent timing thresholds. Checked-in Linux results document the
+initial comparison point.

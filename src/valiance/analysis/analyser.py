@@ -26,6 +26,10 @@ import valiance.vtypes as T
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.elements.builtins import default_environment
 from valiance.analysis.import_runtime import prelude_seed, with_import_runtime_name
+from valiance.analysis.transfer import (
+    render_transfer_type_violations,
+    validate_task_transfer_type,
+)
 from valiance.analysis.lints import (
     DEFAULT_REGISTRY as DEFAULT_LINT_REGISTRY,
     BlockLintContext,
@@ -38,9 +42,11 @@ from valiance.asts import (
     AnnotationNode,
     ASTNode,
     BindingPatternNode,
+    ConcurrentNode,
     DefineNode,
     ElementExtension,
     ElementNode,
+    StackShuffleNode,
     EnumMemberNode,
     FileLintSuppressionNode,
     FunctionNode,
@@ -66,6 +72,8 @@ from valiance.asts import (
     TryNode,
     TypePatternNode,
     TypedCallNode,
+    TypedChannelNode,
+    TypedConcurrentNode,
     TypedElementExtension,
     TypedElementNode,
     TypedExtensionPatternRule,
@@ -74,6 +82,8 @@ from valiance.asts import (
     TypedImportedObjectNode,
     TypedMatchNode,
     TypedNode,
+    TypedSpawnNode,
+    TypedWaitNode,
     TypedTagApplicationNode,
     TypedTryNode,
     VariantMemberNode,
@@ -231,6 +241,13 @@ def _nested_types(typ: T.Type) -> Iterator[T.Type]:
         return
     if isinstance(typ, T.CollectionType):
         yield from _nested_types(typ.base)
+        return
+    if isinstance(typ, T.TaskType):
+        for item in typ.outputs:
+            yield from _nested_types(item)
+        for effect in typ.effects:
+            for arg in effect.args:
+                yield from _nested_types(arg)
         return
     if isinstance(typ, T.FunctionType):
         for item in (*(typ.params or ()), *(typ.returns or ())):
@@ -881,7 +898,269 @@ class Analyser:
         node: ElementNode,
         branch: AnalysisBranch,
     ) -> BranchSet:
-        """Delegate element invocation to the call-planning subsystem."""
+        """Delegate ordinary calls, while fixing concurrency plans statically."""
+        if node.name == Symbol("Channel") and not node.modifier_args and not node.call_args:
+            if len(node.generic_args) != 1 or node.generic_args[0] is None:
+                self._diagnose("Channel requires exactly one concrete item type", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            item_type = T.normalize(node.generic_args[0])
+            channel_type = T.N(Symbol("Channel"), item_type)
+            has_capacity = False
+            remaining = branch
+            if branch.stack and T.assignable(branch.stack[-1], T.Integer, self.env.context):
+                has_capacity = True
+                remaining = branch.pop()
+            typed = TypedChannelNode(
+                node, channel_type, "new", item_type, has_capacity
+            )
+            return BranchSet((remaining.push(channel_type).emit(typed),))
+
+        if node.name == Symbol("send") and not node.modifier_args and not node.call_args:
+            if len(branch.stack) < 2:
+                self._diagnose("send requires a channel and value", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            channel_type = T.normalize(branch.stack[-2])
+            value_type = branch.stack[-1]
+            if (
+                not isinstance(channel_type, T.NominalType)
+                or channel_type.name != Symbol("Channel")
+                or len(channel_type.args) != 1
+            ):
+                self._diagnose("send requires Channel[T] below the value", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            item_type = channel_type.args[0]
+            if not T.assignable(value_type, item_type, self.env.context):
+                self._diagnose(
+                    f"channel send expects {T.show(item_type)}, received {T.show(value_type)}",
+                    node,
+                )
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            typed = TypedChannelNode(node, None, "send", item_type, False)
+            return BranchSet((branch.pop(2).emit(typed),))
+
+        if node.name == Symbol("receive") and not node.modifier_args and not node.call_args:
+            if not branch.stack:
+                self._diagnose("receive requires a channel", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            channel_type = T.normalize(branch.stack[-1])
+            if (
+                not isinstance(channel_type, T.NominalType)
+                or channel_type.name != Symbol("Channel")
+                or len(channel_type.args) != 1
+            ):
+                self._diagnose("receive requires Channel[T]", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            item_type = channel_type.args[0]
+            receive_type = T.N(Symbol("Receive"), item_type)
+            typed = TypedChannelNode(node, receive_type, "receive", item_type, False)
+            return BranchSet((branch.pop().push(receive_type).emit(typed),))
+
+        if node.name == Symbol("close") and not node.modifier_args and not node.call_args:
+            if not branch.stack:
+                self._diagnose("close requires a channel", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            channel_type = T.normalize(branch.stack[-1])
+            if (
+                not isinstance(channel_type, T.NominalType)
+                or channel_type.name != Symbol("Channel")
+                or len(channel_type.args) != 1
+            ):
+                self._diagnose("close requires Channel[T]", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            item_type = channel_type.args[0]
+            typed = TypedChannelNode(node, None, "close", item_type, False)
+            return BranchSet((branch.pop().emit(typed),))
+
+        if node.name == Symbol("spawn") and node.modifier_args and not node.call_args:
+            if len(node.modifier_args) != 1:
+                self._diagnose("spawn modifier requires exactly one function", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            function_node = node.modifier_args[0]
+            visible = set(branch.variables.visible_names())
+            capture_reads = _functions._top_level_capture_reads_in_function(
+                function_node, visible, frozenset()
+            )
+            capture_violations = []
+            seen_capture_names: set[Symbol] = set()
+            for capture in capture_reads:
+                if capture.name in seen_capture_names:
+                    continue
+                seen_capture_names.add(capture.name)
+                capture_type = branch.variables.read(capture.name)
+                if capture_type is None:
+                    continue
+                violation = validate_task_transfer_type(
+                    capture_type,
+                    self.env,
+                    path=f"capture `{capture.name}`",
+                )
+                if violation is not None:
+                    capture_violations.append(violation)
+            if capture_violations:
+                self._diagnose(
+                    render_transfer_type_violations(tuple(capture_violations)),
+                    function_node,
+                )
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            analysed = self._analyse_function_literal(branch, function_node)
+            if analysed is None:
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            details, _ = analysed
+            matches: list[tuple[int, T.ResolvedOverload, AnalysisBranch, object, tuple[bool, ...]]] = []
+            transfer_violation = None
+            for index, item in enumerate(details.overloads):
+                overload = item.overload
+                if not isinstance(overload, T.Overload):
+                    continue
+                sourced = branch.source_arguments(overload.params)
+                if sourced is None:
+                    continue
+                actual, remaining = sourced
+                unique_inputs = _spawn_unique_inputs(branch, len(actual))
+                resolved = T.apply_overload(overload, actual, self.env.context)
+                if resolved is not None:
+                    unsafe = next(
+                        (
+                            violation
+                            for argument_index, typ in enumerate(actual)
+                            if (
+                                violation := validate_task_transfer_type(
+                                    typ,
+                                    self.env,
+                                    path=f"argument[{argument_index}]",
+                                )
+                                if not unique_inputs[argument_index]
+                                else None
+                            )
+                            is not None
+                        ),
+                        None,
+                    )
+                    if unsafe is None:
+                        matches.append((index, resolved, remaining, item, unique_inputs))
+                    elif transfer_violation is None:
+                        transfer_violation = unsafe
+            if not matches:
+                if transfer_violation is not None:
+                    self._diagnose(transfer_violation.render(), node)
+                else:
+                    self._diagnose("no spawn modifier overload accepts the current stack", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            if len(matches) > 1:
+                # Reuse ordinary overload ranking across all viable declarations.
+                arity = len(matches[0][1].params)
+                if any(len(match[1].params) != arity for match in matches):
+                    self._diagnose("spawn modifier overloads have ambiguous arity", node)
+                    return BranchSet((branch.emit(TypedNode(node, None)),))
+                sourced = branch.source_arguments(matches[0][1].params)
+                assert sourced is not None
+                actual, _ = sourced
+                winner = T.resolve_overload_result(
+                    tuple(match[1].overload for match in matches),
+                    actual,
+                    self.env.context,
+                )
+                if winner is None:
+                    self._diagnose("spawn modifier overload is ambiguous", node)
+                    return BranchSet((branch.emit(TypedNode(node, None)),))
+                matches = [
+                    match for match in matches if match[1].overload == winner.overload
+                ]
+            overload_index, resolved, remaining, selected, unique_inputs = matches[0]
+            callable_type = T.Fn(
+                resolved.params, resolved.returns, resolved.overload.element_tags
+            )
+            typed_callable = TypedFunctionNode(
+                function_node, details.typ, details.overloads
+            )
+            task_type = T.Task(*resolved.returns, effects=resolved.overload.element_tags)
+            typed = TypedSpawnNode(
+                node,
+                task_type,
+                callable_type,
+                resolved.params,
+                resolved.returns,
+                typed_callable,
+                overload_index,
+                unique_inputs,
+                resolved.vectorised,
+                resolved.vectorised_depths,
+                resolved.vectorised_target_ranks,
+                resolved.runtime_static_values,
+            )
+            return BranchSet((remaining.push(task_type).emit(typed),))
+
+        if node.name == Symbol("spawn") and not node.modifier_args and not node.call_args:
+            if not branch.stack:
+                self._diagnose("empty stack when spawning a function", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            callable_type = T.normalize(branch.stack[-1])
+            if not isinstance(callable_type, T.FunctionType):
+                self._diagnose(
+                    f"spawn requires a function, received {T.show(callable_type)}", node
+                )
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            if callable_type.params is None or callable_type.returns is None:
+                self._diagnose("spawn requires a concrete callable stack contract", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            without_callable = branch.pop()
+            sourced = without_callable.source_arguments(callable_type.params)
+            if sourced is None:
+                self._diagnose("not enough stack values for spawned call", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            actual, remaining = sourced
+            unique_inputs = _spawn_unique_inputs(without_callable, len(actual))
+            for argument_index, typ in enumerate(actual):
+                violation = validate_task_transfer_type(
+                    typ, self.env, path=f"argument[{argument_index}]"
+                )
+                if violation is not None and not unique_inputs[argument_index]:
+                    self._diagnose(violation.render(), node)
+                    return BranchSet((branch.emit(TypedNode(node, None)),))
+            call_plan = T.apply_overload(
+                T.Overload(callable_type.params, callable_type.returns),
+                actual,
+                self.env.context,
+            )
+            if call_plan is None:
+                self._diagnose("spawn argument type mismatch", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            task_type = T.Task(*call_plan.actual_returns, effects=callable_type.element_tags)
+            typed = TypedSpawnNode(
+                node, task_type, callable_type, call_plan.params, call_plan.actual_returns,
+                None, 0, unique_inputs, call_plan.vectorised,
+                call_plan.vectorised_depths, call_plan.vectorised_target_ranks,
+                call_plan.runtime_static_values,
+            )
+            return BranchSet((remaining.push(task_type).emit(typed),))
+
+        if node.name == Symbol("wait") and not node.modifier_args and not node.call_args:
+            if not branch.stack:
+                self._diagnose("empty stack when waiting for a task", node)
+                return BranchSet((branch.emit(TypedNode(node, None)),))
+            task_type = T.normalize(branch.stack[-1])
+            if isinstance(task_type, T.TaskType):
+                typed = TypedWaitNode(node, None, task_type.outputs, False, task_type.effects)
+                return BranchSet((
+                    branch.pop().push(*task_type.outputs).emit(typed),
+                ))
+            if isinstance(task_type, T.CollectionType) and isinstance(
+                T.normalize(task_type.base), T.TaskType
+            ):
+                item_task = T.normalize(task_type.base)
+                assert isinstance(item_task, T.TaskType)
+                lifted = tuple(
+                    T.C(type(task_type), output, task_type.rank)
+                    for output in item_task.outputs
+                )
+                typed = TypedWaitNode(node, None, lifted, True, item_task.effects)
+                return BranchSet((branch.pop().push(*lifted).emit(typed),))
+            self._diagnose(
+                f"wait requires a task or task collection, received {T.show(task_type)}",
+                node,
+            )
+            return BranchSet((branch.emit(TypedNode(node, None)),))
+
         return self.calls._element(node, branch)
 
     @register(MatchNode)
@@ -951,6 +1230,26 @@ class Analyser:
         self.lints.clear()
         self.lint_findings.clear()
 
+
+
+def _spawn_unique_inputs(
+    branch: AnalysisBranch,
+    arity: int,
+) -> tuple[bool, ...]:
+    """Prove inputs unique only after one explicit non-duplicating move."""
+    if arity == 0 or not branch.typed_body:
+        return (False,) * arity
+    source = branch.typed_body[-1].node
+    if isinstance(source, FunctionNode) and len(branch.typed_body) >= 2:
+        source = branch.typed_body[-2].node
+    if (
+        not isinstance(source, StackShuffleNode)
+        or source.mode != Symbol("move")
+        or len(source.poststack) < arity
+        or len(set(source.poststack[-arity:])) != arity
+    ):
+        return (False,) * arity
+    return (True,) * arity
 
 
 def _resolve_pop_n_static_counts(

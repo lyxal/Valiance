@@ -15,6 +15,8 @@ from valiance.asts import (
     TypedAtNode,
     TypedAssertNode,
     TypedCallNode,
+    TypedChannelNode,
+    TypedConcurrentNode,
     TypedElementExtension,
     TypedElementNode,
     TypedExtensionPatternRule,
@@ -26,7 +28,9 @@ from valiance.asts import (
     TypedLiteralNode,
     TypedMatchNode,
     TypedNode,
+    TypedSpawnNode,
     TypedTagApplicationNode,
+    TypedWaitNode,
     TypedTryNode,
     TypedUnfoldNode,
     TypedWhileNode,
@@ -180,6 +184,71 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typed_node.node,
             typ,
             tuple(_refine_typed_body(item, old, new) for item in typed_node.items),
+        )
+    if isinstance(typed_node, TypedSpawnNode):
+        callable_type = (
+            None
+            if typed_node.callable_type is None
+            else _refine_type(typed_node.callable_type, old, new)
+        )
+        callable_node = (
+            None
+            if typed_node.callable_node is None
+            else _refine_typed_node(typed_node.callable_node, old, new)
+        )
+        return TypedSpawnNode(
+            typed_node.node,
+            typ,
+            callable_type,
+            tuple(_refine_type(item, old, new) for item in typed_node.input_types),
+            tuple(_refine_type(item, old, new) for item in typed_node.output_types),
+            callable_node,
+            typed_node.overload_index,
+            typed_node.unique_inputs,
+            typed_node.vectorised,
+            typed_node.vectorised_depths,
+            typed_node.vectorised_target_ranks,
+            typed_node.runtime_static_values,
+        )
+    if isinstance(typed_node, TypedWaitNode):
+        return TypedWaitNode(
+            typed_node.node,
+            typ,
+            tuple(_refine_type(item, old, new) for item in typed_node.output_types),
+            typed_node.vectorised,
+            typed_node.effects,
+        )
+    if isinstance(typed_node, TypedChannelNode):
+        return TypedChannelNode(
+            typed_node.node,
+            typ,
+            typed_node.operation,
+            None
+            if typed_node.item_type is None
+            else _refine_type(typed_node.item_type, old, new),
+            typed_node.has_capacity,
+        )
+    if isinstance(typed_node, TypedConcurrentNode):
+        parameters = (
+            None
+            if typed_node.parameters is None
+            else tuple(
+                replace(
+                    parameter,
+                    typ=None
+                    if parameter.typ is None
+                    else _refine_type(parameter.typ, old, new),
+                )
+                for parameter in typed_node.parameters
+            )
+        )
+        return TypedConcurrentNode(
+            typed_node.node,
+            typ,
+            parameters,
+            tuple(_refine_type(item, old, new) for item in typed_node.input_stack),
+            tuple(_refine_type(item, old, new) for item in typed_node.output_stack),
+            _refine_typed_body(typed_node.body, old, new),
         )
     if isinstance(typed_node, TypedTagApplicationNode):
         return TypedTagApplicationNode(

@@ -180,6 +180,39 @@ def collect_stdlib_references(*, strict: bool = True) -> tuple[ElementReference,
     return tuple(sorted(references, key=_reference_sort_key))
 
 
+
+def collect_concurrency_references() -> tuple[ElementReference, ...]:
+    """Document compiler-level concurrency forms alongside callable elements."""
+    entries = (
+        ("concurrent", "concurrent => ... end", "Run a structured task scope and join its children."),
+        ("spawn", "spawn(function) -> Task[outputs...]", "Create a cooperatively scheduled task in the current scope."),
+        ("wait", "wait(Task[T...]) -> T...", "Observe a task result; observation is repeatable."),
+        ("Channel", "Channel[T] | Integer Channel[T] -> Channel[T]", "Create an invariant unbuffered or bounded FIFO channel."),
+        ("send", "send(Channel[T], T) ->", "Send one transferable value with rendezvous or backpressure."),
+        ("receive", "receive(Channel[T]) -> Receive[T]", "Receive Value(value) or Closed without conflating None."),
+        ("close", "close(Channel[T]) ->", "Close a channel; buffered values remain drainable."),
+        ("Receive.Value", "Receive.Value(T)", "A channel receive containing a transmitted value."),
+        ("Receive.Closed", "Receive.Closed", "A channel receive reporting closed and fully drained."),
+    )
+    return tuple(
+        ElementReference(
+            name=name,
+            qualified_name=name,
+            scope="language",
+            module=None,
+            category="Concurrency",
+            summary=summary,
+            description=(),
+            parameters=(),
+            returns=None,
+            examples=(),
+            notes=(),
+            see_also=("docs/language.md#23-concurrency-runtime-contracts",),
+            overloads=(signature,),
+        )
+        for name, signature, summary in entries
+    )
+
 def collect_language_references(*, strict: bool = True) -> tuple[ElementReference, ...]:
     """Collect the complete built-in and standard-library function catalogue."""
     return tuple(
@@ -187,6 +220,7 @@ def collect_language_references(*, strict: bool = True) -> tuple[ElementReferenc
             (
                 *collect_builtin_references(strict=strict),
                 *collect_stdlib_references(strict=strict),
+                *collect_concurrency_references(),
             ),
             key=_reference_sort_key,
         )

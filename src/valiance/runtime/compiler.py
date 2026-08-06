@@ -60,6 +60,10 @@ from valiance.asts import (
     TryNode,
     TupleLiteralNode,
     TypedAssertNode,
+    TypedChannelNode,
+    TypedConcurrentNode,
+    TypedSpawnNode,
+    TypedWaitNode,
     TypedAtNode,
     TypedElementExtension,
     TypedElementNode,
@@ -344,6 +348,64 @@ class _Compiler:
         """Lower one typed AST node into bytecode instructions."""
         source_node = node
         typed_node = node if isinstance(node, TypedNode) else None
+        if isinstance(typed_node, TypedChannelNode):
+            operations = {
+                "new": OpCode.CHANNEL_NEW,
+                "send": OpCode.CHANNEL_SEND,
+                "receive": OpCode.CHANNEL_RECEIVE,
+                "close": OpCode.CHANNEL_CLOSE,
+            }
+            self.emit(
+                operations[typed_node.operation],
+                (typed_node.has_capacity, _source_site(typed_node.node))
+                if typed_node.operation == "new"
+                else _source_site(typed_node.node),
+            )
+            return
+        if isinstance(typed_node, TypedConcurrentNode):
+            self.emit(
+                OpCode.SCOPE_BEGIN,
+                (
+                    len(typed_node.input_stack), len(typed_node.output_stack),
+                    _source_site(typed_node.node),
+                ),
+            )
+            for child in typed_node.body:
+                self.node(child)
+            self.emit(
+                OpCode.SCOPE_END,
+                (
+                    len(typed_node.input_stack), len(typed_node.output_stack),
+                    _source_site(typed_node.node),
+                ),
+            )
+            return
+        if isinstance(typed_node, TypedSpawnNode):
+            if typed_node.callable_node is not None:
+                self.node(typed_node.callable_node)
+            self.emit(
+                OpCode.SPAWN_CALL,
+                (
+                    len(typed_node.input_types),
+                    len(typed_node.output_types),
+                    typed_node.overload_index,
+                    typed_node.unique_inputs,
+                    typed_node.vectorised,
+                    typed_node.vectorised_depths,
+                    typed_node.vectorised_target_ranks,
+                    typed_node.runtime_static_values,
+                    _source_site(typed_node.node),
+                ),
+            )
+            return
+        if isinstance(typed_node, TypedWaitNode):
+            self.emit(
+                OpCode.WAIT_TASKS_VECTORISED
+                if typed_node.vectorised
+                else OpCode.WAIT_TASK,
+                (len(typed_node.output_types), _source_site(typed_node.node)),
+            )
+            return
         node = _unwrap(node)
         match node:
             case NumberLiteralNode(value):
@@ -1908,6 +1970,14 @@ def _object_runtime_metadata(
         mustcall_mode,
         mustcall_methods,
     )
+
+
+def _source_site(node: ASTNode) -> str | None:
+    """Render one stable source location for runtime concurrency diagnostics."""
+    location = node.location
+    if location is None:
+        return None
+    return f"{location.line}:{location.column}"
 
 
 def _unwrap(node: ASTNode | TypedNode) -> ASTNode:

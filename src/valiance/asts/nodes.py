@@ -68,6 +68,40 @@ class TypedCallNode(TypedNode):
 
 
 @dataclass(frozen=True, slots=True)
+class TypedSpawnNode(TypedNode):
+    """A spawn with a statically fixed callable input/output plan."""
+
+    callable_type: FunctionType | None = None
+    input_types: tuple[Type, ...] = ()
+    output_types: tuple[Type, ...] = ()
+    callable_node: TypedFunctionNode | None = None
+    overload_index: int = 0
+    unique_inputs: tuple[bool, ...] = ()
+    vectorised: bool = False
+    vectorised_depths: tuple[int, ...] = ()
+    vectorised_target_ranks: tuple[int | None, ...] = ()
+    runtime_static_values: tuple[object, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TypedWaitNode(TypedNode):
+    """A scalar or specialized collection wait with native output rows."""
+
+    output_types: tuple[Type, ...] = ()
+    vectorised: bool = False
+    effects: frozenset[ElementTag] = field(default_factory=frozenset)
+
+
+@dataclass(frozen=True, slots=True)
+class TypedChannelNode(TypedNode):
+    """A statically typed channel construction or operation."""
+
+    operation: str = "new"
+    item_type: Type | None = None
+    has_capacity: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class TypedTagApplicationNode(TypedNode):
     """A typed data-tag application with an optional runtime validator."""
 
@@ -169,6 +203,16 @@ class TypedReturnNode(TypedNode):
 class TypedFunctionNode(TypedNode):
     overloads: tuple[FunctionOverloadTyping, ...] = ()
     dispatch_plan: UnionDispatchPlan | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TypedConcurrentNode(TypedNode):
+    """Analysed closed concurrent scope with native input/output stack rows."""
+
+    parameters: tuple[FunctionParam, ...] | None = None
+    input_stack: tuple[Type, ...] = ()
+    output_stack: tuple[Type, ...] = ()
+    body: tuple[TypedNode, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,6 +387,15 @@ class OverloadSignature:
 
     params: tuple[Type, ...] = ()
     returns: tuple[Type, ...] = ()
+
+
+@dataclass(frozen=True)
+class ConcurrentNode(ASTNode):
+    """A closed stack transformation that also owns a structured task scope."""
+
+    params: tuple[FunctionParam, ...] | None = None
+    body: tuple[ASTNode, ...] = ()
+    returns: tuple[Type, ...] | None = None
 
 
 @dataclass(frozen=True)

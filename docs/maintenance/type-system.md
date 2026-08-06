@@ -1942,3 +1942,17 @@ retains one legacy string fallback solely for environment and builtin overload
 metadata that still constructs unscoped `VarType` values. Removing `str` from
 `TypeVarKey` therefore requires binder identities for that metadata, not further
 function-parameter work. No new unscoped analyser producer should be added.
+
+## Concurrency type and transfer contracts
+
+`TaskType` stores an ordered output row plus the callable's element-tag effect
+set. Generic substitution, normalization, alpha-canonicalization, assignability,
+and typed-AST refinement must preserve both fields. `wait` copies the stored
+effect set into `TypedWaitNode`; never reconstruct it from runtime behavior.
+
+`Channel[T]` uses the nominal type system's default invariant generic relation.
+Do not register covariance or contravariance for Channel. Spawn arguments,
+statically visible closure captures, and channel payloads must use the same
+transfer classification vocabulary: value-semantic, shared handle, or isolated.
+New external runtime values must declare their transfer class explicitly rather
+than relying on reference counts as a race-safety proof.

@@ -61,6 +61,18 @@ class NominalType(Type):
     args: tuple[Type, ...] = ()
 
 
+@dataclass(frozen=True)
+class TaskType(Type):
+    """A task whose payload is an ordered native output stack row.
+
+    The outputs are deliberately not represented as nominal generic arguments or
+    a tuple. Waiting splices this row back onto the operand stack.
+    """
+
+    outputs: tuple[Type, ...] = ()
+    effects: frozenset["ElementTag"] = field(default_factory=frozenset)
+
+
 @dataclass(frozen=True, order=True, slots=True)
 class TypeVarId:
     """Lexical identity of one bound type variable.

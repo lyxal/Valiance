@@ -27,7 +27,9 @@ from valiance.vtypes import (
     Variance,
 )
 
-MAGIC = b"VLNCBC\x1d"
+MAGIC_PREFIX = b"VLNCBC"
+BYTECODE_VERSION = 0x1E
+MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
     OpCode.PUSH_CONST: 0x01,
@@ -83,6 +85,16 @@ _OP_TO_BYTE = {
     OpCode.ENSURE_MIN_RANK: 0x33,
     OpCode.MATCH_BRANCH_BEGIN: 0x34,
     OpCode.MATCH_BRANCH_END: 0x35,
+    OpCode.SPAWN_CALL: 0x36,
+    OpCode.WAIT_TASK: 0x37,
+    OpCode.WAIT_TASKS_VECTORISED: 0x38,
+    OpCode.SCOPE_BEGIN: 0x39,
+    OpCode.SCOPE_END: 0x3A,
+    OpCode.CHANNEL_NEW: 0x3B,
+    OpCode.CHANNEL_SEND: 0x3C,
+    OpCode.CHANNEL_RECEIVE: 0x3D,
+    OpCode.CHANNEL_CLOSE: 0x3E,
+    OpCode.CANCEL_POLL: 0x3F,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 
@@ -111,6 +123,7 @@ def dumps(program: Program) -> bytes:
         writer = _Writer()
         writer.bytes(MAGIC)
         _validate_tag_parent_metadata(program.tag_parents)
+        _validate_concurrency_bytecode(program.main)
         writer.function(program.main)
         writer.u32(len(program.tag_parents))
         for variant, parent in program.tag_parents:
@@ -129,13 +142,22 @@ def loads(data: bytes) -> Program:
     import decimal
 
     try:
-        reader.expect(MAGIC)
+        prefix = reader.take(len(MAGIC_PREFIX))
+        if prefix != MAGIC_PREFIX:
+            raise BytecodeFormatError("invalid Valiance bytecode magic")
+        version = reader.u8()
+        if version != BYTECODE_VERSION:
+            raise BytecodeFormatError(
+                f"unsupported Valiance bytecode version {version}; "
+                f"expected {BYTECODE_VERSION}"
+            )
         main = reader.function()
         tag_parents = tuple(
             (reader.string(), reader.string()) for _ in range(reader.u32())
         )
         _validate_tag_parent_metadata(tag_parents)
         program = Program(main, tag_parents)
+        _validate_concurrency_bytecode(program.main)
         reader.expect_eof()
         return program
     except (
@@ -146,6 +168,132 @@ def loads(data: bytes) -> Program:
         struct.error,
     ) as exc:
         raise BytecodeFormatError("invalid Valiance bytecode payload") from exc
+
+
+def _validate_concurrency_bytecode(code: FunctionCode) -> None:
+    """Reject malformed concurrency payloads and unbalanced scope bytecode."""
+    scope_depth = 0
+    for index, instruction in enumerate(code.instructions):
+        op = instruction.op
+        argument = instruction.arg
+        if op is OpCode.SCOPE_BEGIN:
+            _validate_scope_payload(argument, "scope begin")
+            scope_depth += 1
+        elif op is OpCode.SCOPE_END:
+            _validate_scope_payload(argument, "scope end")
+            scope_depth -= 1
+            if scope_depth < 0:
+                raise BytecodeFormatError(
+                    f"scope end without matching begin at instruction {index}"
+                )
+        elif op is OpCode.SPAWN_CALL:
+            if (
+                not isinstance(argument, tuple)
+                or len(argument) not in {2, 3, 4, 8, 9}
+                or not all(
+                    isinstance(item, int) and not isinstance(item, bool) and item >= 0
+                    for item in argument[:3]
+                )
+                or (
+                    len(argument) >= 4
+                    and (
+                        not isinstance(argument[3], tuple)
+                        or len(argument[3]) != argument[0]
+                        or not all(isinstance(item, bool) for item in argument[3])
+                    )
+                )
+                or (
+                    len(argument) in {8, 9}
+                    and (
+                        not isinstance(argument[4], bool)
+                        or not isinstance(argument[5], tuple)
+                        or not all(isinstance(item, int) and item >= 0 for item in argument[5])
+                        or not isinstance(argument[6], tuple)
+                        or not all(item is None or isinstance(item, int) and item >= 0 for item in argument[6])
+                        or not isinstance(argument[7], tuple)
+                        or (
+                            len(argument) == 9
+                            and argument[8] is not None
+                            and not isinstance(argument[8], str)
+                        )
+                    )
+                )
+            ):
+                raise BytecodeFormatError("invalid spawn call payload")
+        elif op in {OpCode.WAIT_TASK, OpCode.WAIT_TASKS_VECTORISED}:
+            count = argument[0] if isinstance(argument, tuple) and len(argument) == 2 else argument
+            location = argument[1] if isinstance(argument, tuple) and len(argument) == 2 else None
+            if (
+                not isinstance(count, int)
+                or isinstance(count, bool)
+                or count < 0
+                or (location is not None and not isinstance(location, str))
+            ):
+                raise BytecodeFormatError(f"invalid {op.name.lower()} payload")
+        elif op is OpCode.CHANNEL_NEW:
+            if not (
+                isinstance(argument, bool)
+                or (
+                    isinstance(argument, tuple)
+                    and len(argument) == 2
+                    and isinstance(argument[0], bool)
+                    and (argument[1] is None or isinstance(argument[1], str))
+                )
+            ):
+                raise BytecodeFormatError("invalid channel construction payload")
+        elif op in {
+            OpCode.CHANNEL_SEND,
+            OpCode.CHANNEL_RECEIVE,
+            OpCode.CHANNEL_CLOSE,
+        } and argument is not None and not (
+            isinstance(argument, str)
+            and argument.count(":") == 1
+            and all(part.isdigit() for part in argument.split(":"))
+        ):
+            raise BytecodeFormatError(
+                f"{op.name.lower()} must carry only a source location"
+            )
+        if op is OpCode.CANCEL_POLL and argument is not None:
+            raise BytecodeFormatError("cancel_poll must not carry a payload")
+        _validate_nested_concurrency_values(argument)
+    if scope_depth:
+        raise BytecodeFormatError(
+            f"function ends with {scope_depth} unclosed concurrency scope(s)"
+        )
+
+
+def _validate_scope_payload(value: object, operation: str) -> None:
+    """Accept scope counts plus optional source location metadata."""
+    if value is None:
+        return
+    if (
+        not isinstance(value, tuple)
+        or len(value) not in {2, 3}
+        or not all(
+            isinstance(item, int) and not isinstance(item, bool) and item >= 0
+            for item in value[:2]
+        )
+        or (len(value) == 3 and value[2] is not None and not isinstance(value[2], str))
+    ):
+        raise BytecodeFormatError(f"invalid {operation} payload")
+
+
+def _validate_nested_concurrency_values(value: object) -> None:
+    """Validate nested function bytecode found inside instruction payloads."""
+    if isinstance(value, FunctionCode):
+        _validate_concurrency_bytecode(value)
+    elif isinstance(value, FunctionSetCode):
+        for overload in value.overloads:
+            _validate_concurrency_bytecode(overload)
+    elif isinstance(value, tuple):
+        for item in value:
+            _validate_nested_concurrency_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            _validate_nested_concurrency_values(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _validate_nested_concurrency_values(item)
 
 
 def _validate_tag_parent_metadata(

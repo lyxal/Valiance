@@ -28,6 +28,12 @@ from valiance.runtime.bytecode import (
     VectorExtensionReference,
     decode_stack_shuffle_spec,
 )
+from valiance.runtime.concurrency import (
+    CancelledFault, Channel, ChannelReceiver, ChannelSender, ClosedFault,
+    DeadlockFault, Receive, Scheduler, TaskHandle, TaskScope, TaskBlocked, TaskState,
+    TaskYield, WaitDependency,
+)
+from valiance.runtime.transfer import require_task_transfer
 from valiance.runtime.runtime_values import (
     DIAGNOSTIC_LIST_PREVIEW_LIMIT,
     DictValue,
@@ -108,6 +114,20 @@ class RuntimeError(_py_builtins.RuntimeError):
             for context in self.execution_contexts:
                 lines.append(f"  - {_format_execution_context(context)}")
         return "\n".join(lines)
+
+
+def _concurrency_runtime_error(message: str, cause: BaseException) -> RuntimeError:
+    """Wrap a runtime fault without dropping structured task diagnostics."""
+    error = RuntimeError(message)
+    for attribute in (
+        "task_context", "observation_site", "secondary_faults", "cleanup_context"
+    ):
+        if hasattr(cause, attribute):
+            try:
+                setattr(error, attribute, getattr(cause, attribute))
+            except (AttributeError, TypeError):
+                pass
+    return error
 
 
 class AssertionFailure(RuntimeError):
@@ -444,6 +464,51 @@ class _Activation:
     frame: _Frame
     ip: int = 0
     pending_call: _FunctionCallRequest | None = None
+    pending_concurrency: object | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivationQuantumYield:
+    """Internal marker returned when one activation budget is exhausted."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivationTaskWait:
+    handle: TaskHandle
+    wake: Callable[[], None]
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivationTaskGroupWait:
+    handles: tuple[TaskHandle, ...]
+    shape: object
+    output_count: int
+    wakes: tuple[tuple[TaskHandle, Callable[[object], None]], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivationScopeClose:
+    """One or more scopes suspended until every owned child is terminal."""
+
+    scopes: tuple[TaskScope, ...]
+    wake: Callable[[], None]
+    primary_fault: BaseException | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivationChannelSend:
+    channel: Channel[Any]
+    registration: ChannelSender[Any]
+    wake: Callable[[], None]
+    location: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivationChannelReceive:
+    channel: Channel[Any]
+    registration: ChannelReceiver[Any]
+    wake: Callable[[], None]
+    location: str | None = None
 
 
 class _StackUnderflow(Exception):
@@ -495,6 +560,9 @@ class VirtualMachine:
         self.optimization_stats = (
             OptimizationStats() if collect_optimization_stats else None
         )
+        self.scheduler = Scheduler()
+        self._scope_stack: list[TaskScope] = [self.scheduler.root_scope]
+        self.task_instruction_quantum = 64
         self._resolved_builtin_cache: dict[
             int,
             tuple[ResolvedElementReference, BuiltinValue, BuiltinOverload],
@@ -511,12 +579,21 @@ class VirtualMachine:
                     prepare_call=self.prepare_call,
                     index_get=self._builtin_index_get,
                     index_set=self._builtin_index_set,
+                    cooperative_poll=self._cooperative_builtin_poll,
                 ),
             )
             for name, element in (
                 runtime_elements() | runtime_stdlib_elements()
             ).items()
         }
+
+    def _cooperative_builtin_poll(self) -> None:
+        """Bound cancellation latency and permit one sibling quantum in native loops."""
+        current = self.scheduler.current_task
+        if current is not None and current.cancellation_requested:
+            raise CancelledFault(f"task {current.id} was cancelled")
+        if self.scheduler.runnable:
+            self.scheduler.step()
 
     def _builtin_index_get(
         self, receiver: Any, selector: Any, grouped_update: bool
@@ -545,16 +622,45 @@ class VirtualMachine:
         )
 
     def run(self, program: Program) -> list[Any]:
-        """Execute a compiled program and return the final stack."""
+        """Execute a program, closing every structured scope on all exits."""
+        body_error: BaseException | None = None
         try:
             self.tag_parents = _validated_tag_parent_mapping(program.tag_parents)
-            return self.call(FunctionValue(program.main, self.globals), [])
-        except PanicSignal as exc:
-            raise RuntimeError(f"uncaught panic: {_format_value(exc.value)}") from exc
-        except RuntimeError:
-            raise
-        except Exception as exc:
-            raise RuntimeError(f"invalid bytecode: {exc}") from exc
+            result = self.call(FunctionValue(program.main, self.globals), [])
+        except BaseException as exc:
+            body_error = exc
+            result = []
+        try:
+            while len(self._scope_stack) > 1:
+                self._scope_stack.pop().close(body_error)
+            self.scheduler.root_scope.close(body_error)
+        except BaseException as close_error:
+            body_error = close_error
+        if body_error is not None:
+            if isinstance(body_error, PanicSignal):
+                raise _concurrency_runtime_error(
+                    f"uncaught panic: {_format_value(body_error.value)}", body_error
+                ) from body_error
+            if isinstance(body_error, RuntimeError):
+                raise body_error
+            if isinstance(body_error, ClosedFault):
+                raise _concurrency_runtime_error(
+                    f"closed concurrency resource: {body_error}", body_error
+                ) from body_error
+            if isinstance(body_error, CancelledFault):
+                raise _concurrency_runtime_error(
+                    f"cancelled task: {body_error}", body_error
+                ) from body_error
+            if isinstance(body_error, DeadlockFault):
+                raise _concurrency_runtime_error(
+                    f"concurrency deadlock: {body_error}", body_error
+                ) from body_error
+            if isinstance(body_error, Exception):
+                raise _concurrency_runtime_error(
+                    f"invalid bytecode: {body_error}", body_error
+                ) from body_error
+            raise body_error
+        return result
 
     def call(
         self,
@@ -1961,6 +2067,222 @@ class VirtualMachine:
                 self._propagate_frame_error(frames, exc)
         raise RuntimeError("VM activation driver terminated without a result")
 
+    def _drive_frames_runner(
+        self,
+        root: _Activation,
+        *,
+        instruction_budget: int,
+    ):
+        """Yield between bounded activation quanta while preserving all frames."""
+        if instruction_budget < 1:
+            raise ValueError("instruction budget must be positive")
+        frames: list[tuple[_Activation, _FunctionCallRequest | None]] = [(root, None)]
+        try:
+            while frames:
+                activation, completed_request = frames[-1]
+                try:
+                    event = self._run_activation(
+                        activation, instruction_budget=instruction_budget
+                    )
+                except Exception as exc:
+                    frames.pop()
+                    if not frames:
+                        raise
+                    self._propagate_frame_error(frames, exc)
+                    continue
+                if isinstance(event, _ActivationQuantumYield):
+                    yield TaskYield("instruction budget")
+                    continue
+                if isinstance(event, _ActivationTaskWait):
+                    yield TaskBlocked(
+                        f"wait task {event.handle.id}",
+                        lambda event=event: event.handle.control.waiters.remove(event.wake)
+                        if event.wake in event.handle.control.waiters else None,
+                        (WaitDependency("task", event.handle.id),),
+                    )
+                    continue
+                if isinstance(event, _ActivationTaskGroupWait):
+                    def cancel_group(event=event) -> None:
+                        """Remove every outstanding callback for a cancelled group wait."""
+                        for handle, wake in event.wakes:
+                            if wake in handle.control.waiters:
+                                handle.control.waiters.remove(wake)
+                    dependencies = tuple(
+                        WaitDependency("task", handle.id, "group wait")
+                        for handle, _wake in event.wakes
+                        if not handle.control.state.terminal
+                    )
+                    yield TaskBlocked("wait task group", cancel_group, dependencies)
+                    continue
+                if isinstance(event, _ActivationScopeClose):
+                    def cancel_scope_close(event=event) -> None:
+                        """Cancel every unfinished scope in one suspended unwind."""
+                        for scope in event.scopes:
+                            scope.cancel_close_waiter(event.wake)
+                    yield TaskBlocked(
+                        "scope close",
+                        cancel_scope_close,
+                        tuple(
+                            WaitDependency("task", child.id, "scope close")
+                            for scope in event.scopes
+                            for child in scope.children
+                            if not child.state.terminal
+                        ),
+                    )
+                    continue
+                if isinstance(event, _ActivationChannelSend):
+                    yield TaskBlocked(
+                        "channel send",
+                        lambda event=event: event.channel.cancel_send(event.registration),
+                        (WaitDependency("channel", event.channel.id, "send", event.location),),
+                    )
+                    continue
+                if isinstance(event, _ActivationChannelReceive):
+                    yield TaskBlocked(
+                        "channel receive",
+                        lambda event=event: event.channel.cancel_receive(event.registration),
+                        (WaitDependency("channel", event.channel.id, "receive", event.location),),
+                    )
+                    continue
+                if isinstance(event, _FunctionCallRequest):
+                    try:
+                        child = self._function_request_activation(event)
+                    except Exception as exc:
+                        self._propagate_frame_error(frames, exc)
+                    else:
+                        frames.append((child, event))
+                    continue
+                frames.pop()
+                try:
+                    result = (
+                        self._finalize_function_request(completed_request, event)
+                        if completed_request is not None
+                        else event
+                    )
+                except Exception as exc:
+                    if not frames:
+                        raise
+                    self._propagate_frame_error(frames, exc)
+                    continue
+                if not frames:
+                    return result
+                try:
+                    self._resume_call_success(frames[-1][0], result)
+                except Exception as exc:
+                    frames.pop()
+                    if not frames:
+                        raise
+                    self._propagate_frame_error(frames, exc)
+            raise RuntimeError("resumable VM activation driver terminated without a result")
+        finally:
+            cleanup_errors: list[BaseException] = []
+            while frames:
+                activation, _request = frames.pop()
+                pending_call = activation.pending_call
+                activation.pending_call = None
+                if pending_call is not None and pending_call.release_after is not None:
+                    try:
+                        _release_value(pending_call.release_after, self)
+                    except BaseException as exc:
+                        cleanup_errors.append(exc)
+                try:
+                    self._discard_frame(activation.frame)
+                except BaseException as exc:
+                    cleanup_errors.append(exc)
+            if cleanup_errors:
+                primary = cleanup_errors[0]
+                secondary = tuple(cleanup_errors[1:])
+                if secondary:
+                    try:
+                        setattr(primary, "secondary_faults", secondary)
+                    except (AttributeError, TypeError):
+                        pass
+                raise primary
+
+    def _task_call_runner(
+        self,
+        value: Any,
+        args: tuple[Any, ...],
+        overload_index: int,
+        vectorised: bool = False,
+        vectorised_depths: tuple[int, ...] = (),
+        vectorised_target_ranks: tuple[int | None, ...] = (),
+        runtime_static_values: tuple[Any, ...] = (),
+    ):
+        """Create a task-local resumable activation stack for one fixed call."""
+        if isinstance(value, FunctionValue):
+            if overload_index != 0:
+                raise RuntimeError(f"function has no overload {overload_index}")
+            selected = value
+        elif isinstance(value, OverloadedFunctionValue):
+            try:
+                selected = value.overloads[overload_index]
+            except IndexError as exc:
+                raise RuntimeError(
+                    f"function has no overload {overload_index}"
+                ) from exc
+        else:
+            raise RuntimeError(f"cannot call value {_format_value(value)}")
+        if vectorised:
+            execution_error: BaseException | None = None
+            result: tuple[Any, ...] | None = None
+            try:
+                result = tuple(
+                    self.call_value_overload(
+                        value,
+                        list(args),
+                        overload_index,
+                        runtime_static_values,
+                        True,
+                        vectorised_depths,
+                        vectorised_target_ranks,
+                    )
+                )
+            except BaseException as exc:
+                execution_error = exc
+            try:
+                _release_value(value, self)
+            except BaseException as cleanup_error:
+                if execution_error is None:
+                    execution_error = cleanup_error
+            if execution_error is not None:
+                raise execution_error
+            assert result is not None
+            return result
+        request = _FunctionCallRequest(
+            selected, (*args, *runtime_static_values), _function_name(selected.code),
+            isolate_captures=True
+        )
+        activation = self._function_request_activation(request)
+        execution_error: BaseException | None = None
+        result: tuple[Any, ...] | None = None
+        try:
+            raw = yield from self._drive_frames_runner(
+                activation, instruction_budget=self.task_instruction_quantum
+            )
+            result = tuple(self._finalize_function_request(request, raw))
+        except BaseException as exc:
+            execution_error = exc
+        try:
+            _release_value(value, self)
+        except BaseException as cleanup_error:
+            if execution_error is None or isinstance(execution_error, GeneratorExit):
+                execution_error = cleanup_error
+            else:
+                existing = tuple(getattr(execution_error, "secondary_faults", ()))
+                try:
+                    setattr(
+                        execution_error,
+                        "secondary_faults",
+                        (*existing, cleanup_error),
+                    )
+                except (AttributeError, TypeError):
+                    pass
+        if execution_error is not None:
+            raise execution_error
+        assert result is not None
+        return result
+
     def _propagate_frame_error(
         self,
         frames: list[tuple[_Activation, _FunctionCallRequest | None]],
@@ -2167,18 +2489,155 @@ class VirtualMachine:
             ),
         )
 
-    def _run_activation(self, activation: _Activation) -> object:
-        """Run one activation until it calls another function or returns."""
+    def _active_scope_stack(self) -> list[TaskScope]:
+        """Return the task-local dynamic scope stack for the current execution."""
+        task = self.scheduler.current_task
+        return self._scope_stack if task is None else task.active_scopes
+
+    def _retain_task_row(self, row: tuple[Any, ...]) -> tuple[Any, ...]:
+        """Create fresh owned occurrences for one observed terminal task row."""
+        return tuple(_retain_value(value) for value in row)
+
+    def _run_activation(
+        self,
+        activation: _Activation,
+        *,
+        instruction_budget: int | None = None,
+    ) -> object:
+        """Run until call, return, or a safe pre-instruction quantum boundary."""
         code = activation.code
         frame = activation.frame
         ip = activation.ip
         instructions = code.instructions
+        executed = 0
+        if instruction_budget is not None:
+            owner = self.scheduler.current_task
+            if owner is not None:
+                failed_scope = next(
+                    (
+                        scope
+                        for scope in reversed(owner.active_scopes[1:])
+                        if scope.owner_task is owner
+                        and scope.pending_failure is not None
+                    ),
+                    None,
+                )
+                if failed_scope is not None:
+                    primary = failed_scope.pending_failure
+                    assert primary is not None
+                    unwind: list[TaskScope] = []
+                    while owner.active_scopes[-1] is not failed_scope:
+                        unwind.append(owner.active_scopes.pop())
+                    unwind.append(owner.active_scopes.pop())
+                    if owner.blocked_cancel is not None:
+                        cancel, owner.blocked_cancel = owner.blocked_cancel, None
+                        cancel()
+                    def wake_failed_scope(owner=owner) -> None:
+                        """Requeue the owner after fail-fast child cleanup."""
+                        self.scheduler.schedule(owner)
+                    ready = True
+                    for scope in unwind:
+                        body_fault = primary if scope is not failed_scope else None
+                        ready = scope.begin_close(
+                            body_fault, wake_failed_scope
+                        ) and ready
+                    if not ready:
+                        event = _ActivationScopeClose(
+                            tuple(unwind), wake_failed_scope, primary
+                        )
+                        activation.pending_concurrency = event
+                        activation.ip = ip
+                        return event
+                    for scope in unwind:
+                        scope.finalize_close()
+                    raise primary
+        pending = activation.pending_concurrency
+        if isinstance(pending, _ActivationTaskWait):
+            if not pending.handle.control.state.terminal:
+                return pending
+            activation.pending_concurrency = None
+            consumed = _pop(frame.stack, "wait task")
+            frame.stack.extend(self._retain_task_row(pending.handle.result()))
+            _release_value(consumed, self)
+            ip += 1
+            activation.ip = ip
+        elif isinstance(pending, _ActivationTaskGroupWait):
+            unique_members = {id(handle.control): handle.control for handle in pending.handles}
+            if any(
+                member.state is TaskState.FAILED
+                for member in unique_members.values()
+            ):
+                for member in unique_members.values():
+                    if not member.state.terminal:
+                        member.request_cancel()
+            if not all(member.state.terminal for member in unique_members.values()):
+                return pending
+            activation.pending_concurrency = None
+            consumed = _pop(frame.stack, "wait task group")
+            rows = [
+                self._retain_task_row(row)
+                for row in self.scheduler.wait_all(list(pending.handles))
+            ]
+            _release_value(consumed, self)
+            if any(len(row) != pending.output_count for row in rows):
+                raise RuntimeError(
+                    "task group result multiplicity disagrees with plan"
+                )
+            for output_index in range(pending.output_count):
+                frame.stack.append(
+                    _rebuild_task_group_output(
+                        pending.shape, rows, output_index
+                    )
+                )
+            ip += 1
+            activation.ip = ip
+        elif isinstance(pending, _ActivationScopeClose):
+            if not all(scope.children_terminal for scope in pending.scopes):
+                return pending
+            activation.pending_concurrency = None
+            selected = pending.primary_fault
+            for scope in pending.scopes:
+                fault = scope.finalize_close()
+                if selected is None and fault is not None:
+                    selected = fault
+            if selected is not None:
+                raise selected
+            ip += 1
+            activation.ip = ip
+        elif isinstance(pending, _ActivationChannelSend):
+            registration = pending.registration
+            if registration.fault is not None:
+                activation.pending_concurrency = None
+                raise registration.fault
+            if not registration.committed:
+                return pending
+            activation.pending_concurrency = None
+            _pop(frame.stack, "channel send value")
+            channel_value = _pop(frame.stack, "channel send")
+            _release_value(channel_value, self)
+            ip += 1
+            activation.ip = ip
+        elif isinstance(pending, _ActivationChannelReceive):
+            registration = pending.registration
+            if registration.result is None:
+                return pending
+            activation.pending_concurrency = None
+            channel_value = _pop(frame.stack, "channel receive")
+            frame.stack.append(registration.result)
+            _release_value(channel_value, self)
+            ip += 1
+            activation.ip = ip
         try:
             while ip < len(instructions):
+                if instruction_budget is not None and executed >= instruction_budget:
+                    activation.ip = ip
+                    return _ActivationQuantumYield()
                 instruction = instructions[ip]
+                executed += 1
                 try:
                     match instruction.op:
                         case OpCode.PUSH_CONST:
+                            _retain_task_handles_in_constant(instruction.arg)
                             frame.stack.append(instruction.arg)
                         case OpCode.LOAD_VAR:
                             value = _load_name(
@@ -2717,6 +3176,307 @@ class VirtualMachine:
                             )
                             for value in _pop_many(frame.stack, count):
                                 _release_value(value, self)
+                        case OpCode.SCOPE_BEGIN:
+                            scope_stack = self._active_scope_stack()
+                            scope = TaskScope(
+                                self.scheduler,
+                                parent=scope_stack[-1],
+                                owner_task=self.scheduler.current_task,
+                                creation_site=(
+                                    instruction.arg[2]
+                                    if isinstance(instruction.arg, tuple)
+                                    and len(instruction.arg) == 3
+                                    else None
+                                ),
+                            )
+                            scope_stack.append(scope)
+                        case OpCode.SCOPE_END:
+                            scope_stack = self._active_scope_stack()
+                            if len(scope_stack) <= 1:
+                                raise RuntimeError("scope end without matching begin")
+                            scope = scope_stack.pop()
+                            if instruction_budget is not None:
+                                owner = self.scheduler.current_task
+                                if owner is None:
+                                    raise RuntimeError(
+                                        "scope suspension requires a running task"
+                                    )
+                                def wake_scope(owner=owner) -> None:
+                                    """Requeue the owner after its final child terminates."""
+                                    self.scheduler.schedule(owner)
+                                if not scope.begin_close(wake=wake_scope):
+                                    event = _ActivationScopeClose((scope,), wake_scope)
+                                    activation.pending_concurrency = event
+                                    activation.ip = ip
+                                    return event
+                                scope.finish_close()
+                            else:
+                                scope.close()
+                        case OpCode.SPAWN_CALL:
+                            if (
+                                not isinstance(instruction.arg, tuple)
+                                or len(instruction.arg) not in {2, 3, 4, 8, 9}
+                                or not all(
+                                    isinstance(item, int) and not isinstance(item, bool) and item >= 0
+                                    for item in instruction.arg[:3]
+                                )
+                                or (
+                                    len(instruction.arg) >= 4
+                                    and (
+                                        not isinstance(instruction.arg[3], tuple)
+                                        or len(instruction.arg[3]) != instruction.arg[0]
+                                        or not all(isinstance(item, bool) for item in instruction.arg[3])
+                                    )
+                                )
+                                or (
+                                    len(instruction.arg) in {8, 9}
+                                    and (
+                                        not isinstance(instruction.arg[4], bool)
+                                        or not isinstance(instruction.arg[5], tuple)
+                                        or not isinstance(instruction.arg[6], tuple)
+                                        or not isinstance(instruction.arg[7], tuple)
+                                    )
+                                )
+                            ):
+                                raise RuntimeError("malformed spawn call plan")
+                            arity, _output_count = instruction.arg[:2]
+                            overload_index = (
+                                instruction.arg[2] if len(instruction.arg) >= 3 else 0
+                            )
+                            unique_inputs = (
+                                instruction.arg[3]
+                                if len(instruction.arg) >= 4
+                                else (False,) * arity
+                            )
+                            vectorised = instruction.arg[4] if len(instruction.arg) in {8, 9} else False
+                            vectorised_depths = instruction.arg[5] if len(instruction.arg) in {8, 9} else ()
+                            vectorised_target_ranks = instruction.arg[6] if len(instruction.arg) in {8, 9} else ()
+                            runtime_static_values = instruction.arg[7] if len(instruction.arg) in {8, 9} else ()
+                            spawn_site = instruction.arg[8] if len(instruction.arg) == 9 else None
+                            callee = _pop(frame.stack, "spawn callable")
+                            if len(frame.stack) < arity:
+                                raise RuntimeError("stack underflow while spawning call")
+                            args = tuple(frame.stack[-arity:]) if arity else ()
+                            require_task_transfer(callee, path="function")
+                            for argument_index, argument in enumerate(args):
+                                require_task_transfer(
+                                    argument,
+                                    path=f"argument[{argument_index}]",
+                                    unique=unique_inputs[argument_index],
+                                )
+                            if arity:
+                                del frame.stack[-arity:]
+                            def invoke_spawned(
+                                callable_value: Any = callee,
+                                call_args: tuple[Any, ...] = args,
+                                selected_overload: int = overload_index,
+                            ):
+                                """Create the resumable runner for one prepared spawned call."""
+                                return self._task_call_runner(
+                                    callable_value, call_args, selected_overload,
+                                    vectorised, vectorised_depths,
+                                    vectorised_target_ranks, runtime_static_values,
+                                )
+                            frame.stack.append(
+                                self._active_scope_stack()[-1].spawn(
+                                    invoke_spawned, creation_site=spawn_site
+                                )
+                            )
+                        case OpCode.WAIT_TASK:
+                            wait_arg = instruction.arg
+                            wait_site = (
+                                wait_arg[1]
+                                if isinstance(wait_arg, tuple) and len(wait_arg) == 2
+                                else None
+                            )
+                            handle = frame.stack[-1] if frame.stack else None
+                            if not isinstance(handle, TaskHandle):
+                                raise RuntimeError("wait requires a task handle")
+                            if instruction_budget is not None and not handle.control.state.terminal:
+                                owner = self.scheduler.current_task
+                                if owner is None:
+                                    raise RuntimeError("task wait suspension requires a running task")
+                                def wake_wait(
+                                    _completed: object = None, owner=owner
+                                ) -> None:
+                                    """Requeue the task blocked on one completed task."""
+                                    self.scheduler.schedule(owner)
+                                handle.control.waiters.append(wake_wait)
+                                event = _ActivationTaskWait(handle, wake_wait)
+                                activation.pending_concurrency = event
+                                activation.ip = ip
+                                return event
+                            consumed = _pop(frame.stack, "wait task")
+                            frame.stack.extend(
+                                self._retain_task_row(
+                                    self.scheduler.wait(handle, observation_site=wait_site)
+                                )
+                            )
+                            _release_value(consumed, self)
+                        case OpCode.WAIT_TASKS_VECTORISED:
+                            wait_arg = instruction.arg
+                            output_count = wait_arg[0] if isinstance(wait_arg, tuple) else wait_arg
+                            wait_site = (wait_arg[1] if isinstance(wait_arg, tuple) and len(wait_arg) == 2 else None)
+                            if not isinstance(output_count, int) or output_count < 0:
+                                raise RuntimeError("malformed vectorised wait plan")
+                            handles_value = frame.stack[-1] if frame.stack else None
+                            flat_handles: list[TaskHandle] = []
+                            shape = _collect_task_group_shape(
+                                handles_value, flat_handles
+                            )
+                            if isinstance(shape, int):
+                                raise RuntimeError(
+                                    "vectorised wait requires a task-handle collection"
+                                )
+                            if instruction_budget is not None and not all(
+                                handle.control.state.terminal for handle in flat_handles
+                            ):
+                                owner = self.scheduler.current_task
+                                if owner is None:
+                                    raise RuntimeError(
+                                        "task group suspension requires a running task"
+                                    )
+                                wakes: list[
+                                    tuple[TaskHandle, Callable[[object], None]]
+                                ] = []
+                                seen: set[int] = set()
+                                for handle in flat_handles:
+                                    if (
+                                        id(handle.control) in seen
+                                        or handle.control.state.terminal
+                                    ):
+                                        continue
+                                    seen.add(id(handle.control))
+                                    def wake_group(
+                                        _completed: object = None, owner=owner
+                                    ) -> None:
+                                        """Requeue the task blocked on a completed group member."""
+                                        self.scheduler.schedule(owner)
+                                    handle.control.waiters.append(wake_group)
+                                    wakes.append((handle, wake_group))
+                                event = _ActivationTaskGroupWait(
+                                    tuple(flat_handles),
+                                    shape,
+                                    output_count,
+                                    tuple(wakes),
+                                )
+                                activation.pending_concurrency = event
+                                activation.ip = ip
+                                return event
+                            consumed = _pop(frame.stack, "wait task group")
+                            rows = [
+                                self._retain_task_row(row)
+                                for row in self.scheduler.wait_all(flat_handles, observation_site=wait_site)
+                            ]
+                            _release_value(consumed, self)
+                            if any(len(row) != output_count for row in rows):
+                                raise RuntimeError(
+                                    "task group result multiplicity disagrees with plan"
+                                )
+                            for output_index in range(output_count):
+                                frame.stack.append(
+                                    _rebuild_task_group_output(
+                                        shape, rows, output_index
+                                    )
+                                )
+                        case OpCode.CHANNEL_NEW:
+                            channel_arg = instruction.arg
+                            has_capacity = (
+                                channel_arg[0] if isinstance(channel_arg, tuple) else channel_arg
+                            )
+                            channel_site = (
+                                channel_arg[1] if isinstance(channel_arg, tuple) else None
+                            )
+                            if not isinstance(has_capacity, bool):
+                                raise RuntimeError("malformed channel construction plan")
+                            capacity = 0
+                            if has_capacity:
+                                raw_capacity = _pop(frame.stack, "channel capacity")
+                                if isinstance(raw_capacity, bool) or not isinstance(
+                                    raw_capacity, (int, RuntimeNumber)
+                                ):
+                                    raise RuntimeError(
+                                        "channel capacity must be a non-negative integer"
+                                    )
+                                integral = int(raw_capacity)
+                                if raw_capacity != integral or integral < 0:
+                                    raise RuntimeError(
+                                        "channel capacity must be a non-negative integer"
+                                    )
+                                capacity = integral
+                            frame.stack.append(Channel(capacity, creation_site=channel_site))
+                        case OpCode.CHANNEL_SEND:
+                            value = _pop(frame.stack, "channel send value")
+                            channel = _pop(frame.stack, "channel send")
+                            if not isinstance(channel, Channel):
+                                raise RuntimeError("channel send requires a channel handle")
+                            require_task_transfer(value, path="channel value")
+                            if instruction_budget is not None:
+                                owner = self.scheduler.current_task
+                                if owner is None:
+                                    raise RuntimeError("channel suspension requires a running task")
+                                def wake_send(owner=owner) -> None:
+                                    """Requeue the task whose channel send can now resume."""
+                                    self.scheduler.schedule(owner)
+                                registration = channel.register_send(value, wake_send)
+                                if registration is not None:
+                                    # Restore operands because completion is applied on resume.
+                                    frame.stack.extend((channel, value))
+                                    event = _ActivationChannelSend(
+                                        channel, registration, wake_send, instruction.arg
+                                    )
+                                    activation.pending_concurrency = event
+                                    activation.ip = ip
+                                    return event
+                            else:
+                                registration = channel.register_send(value)
+                                if registration is not None:
+                                    channel.cancel_send(registration)
+                                    raise RuntimeError(
+                                        "channel send would block; registration was cancelled "
+                                        "because resumable channel suspension is not implemented yet"
+                                    )
+                            _release_value(channel, self)
+                        case OpCode.CHANNEL_RECEIVE:
+                            channel = _pop(frame.stack, "channel receive")
+                            if not isinstance(channel, Channel):
+                                raise RuntimeError("channel receive requires a channel handle")
+                            if instruction_budget is not None:
+                                owner = self.scheduler.current_task
+                                if owner is None:
+                                    raise RuntimeError("channel suspension requires a running task")
+                                def wake_receive(owner=owner) -> None:
+                                    """Requeue the task whose channel receive can now resume."""
+                                    self.scheduler.schedule(owner)
+                                result = channel.register_receive(wake_receive)
+                                if isinstance(result, ChannelReceiver):
+                                    frame.stack.append(channel)
+                                    event = _ActivationChannelReceive(
+                                        channel, result, wake_receive, instruction.arg
+                                    )
+                                    activation.pending_concurrency = event
+                                    activation.ip = ip
+                                    return event
+                            else:
+                                result = channel.register_receive()
+                                if isinstance(result, ChannelReceiver):
+                                    channel.cancel_receive(result)
+                                    raise RuntimeError(
+                                        "channel receive would block; registration was cancelled "
+                                        "because resumable channel suspension is not implemented yet"
+                                    )
+                            frame.stack.append(result)
+                            _release_value(channel, self)
+                        case OpCode.CHANNEL_CLOSE:
+                            channel = _pop(frame.stack, "channel close")
+                            if not isinstance(channel, Channel):
+                                raise RuntimeError("channel close requires a channel handle")
+                            channel.close()
+                            _release_value(channel, self)
+                        case OpCode.CANCEL_POLL:
+                            if instruction_budget is not None:
+                                activation.ip = ip + 1
+                                return _ActivationQuantumYield()
                         case OpCode.RETURN:
                             result = frame.stack
                             frame.stack = []
@@ -3553,6 +4313,44 @@ class VirtualMachine:
         return bool(result) and _truthy(result[-1])
 
 
+def _collect_task_group_shape(
+    value: Any,
+    flat_handles: list[TaskHandle],
+) -> object:
+    """Flatten task handles while preserving a nested reconstruction layout."""
+    if isinstance(value, TaskHandle):
+        index = len(flat_handles)
+        flat_handles.append(value)
+        return index
+    if isinstance(value, list):
+        return [_collect_task_group_shape(item, flat_handles) for item in value]
+    if isinstance(value, tuple):
+        return tuple(
+            _collect_task_group_shape(item, flat_handles) for item in value
+        )
+    raise RuntimeError("vectorised wait requires a task-handle collection")
+
+
+def _rebuild_task_group_output(
+    layout: object,
+    rows: list[tuple[Any, ...]],
+    output_index: int,
+) -> Any:
+    """Rebuild one native task output with the original collection shape."""
+    if isinstance(layout, int):
+        return rows[layout][output_index]
+    if isinstance(layout, list):
+        return [
+            _rebuild_task_group_output(item, rows, output_index)
+            for item in layout
+        ]
+    assert isinstance(layout, tuple)
+    return tuple(
+        _rebuild_task_group_output(item, rows, output_index)
+        for item in layout
+    )
+
+
 def run(
     program: Program,
     *,
@@ -4046,6 +4844,20 @@ def _release_stack_tail(stack: list[Any], count: int, vm: VirtualMachine) -> Non
         _release_value(value, vm)
 
 
+def _retain_task_handles_in_constant(value: Any) -> None:
+    """Retain runtime-only task handles embedded in a bytecode test constant."""
+    if isinstance(value, TaskHandle):
+        value.control.retain_handle()
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _retain_task_handles_in_constant(item)
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            _retain_task_handles_in_constant(item)
+
+
 def _needs_release(value: Any) -> bool:
     """Return whether dropping a value requires ownership bookkeeping."""
     if isinstance(value, _SCALAR_RUNTIME_TYPES):
@@ -4054,8 +4866,10 @@ def _needs_release(value: Any) -> bool:
         value = value.value
         if isinstance(value, _SCALAR_RUNTIME_TYPES):
             return False
-    if isinstance(value, (ListValue, DictValue)):
+    if isinstance(value, (ListValue, DictValue, TaskHandle, Channel)):
         return True
+    if isinstance(value, Receive):
+        return not value.closed and _needs_release(value.value)
     if isinstance(value, list):
         return not _list_ownership_is_trivial(value)
     if isinstance(value, dict):
@@ -4091,6 +4905,16 @@ def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
     """Retain value during VM execution."""
     if isinstance(value, TaggedValue):
         _retain_value(value.value, check_duplication=check_duplication)
+        return value
+    if isinstance(value, TaskHandle):
+        value.control.retain_handle()
+        return value
+    if isinstance(value, Channel):
+        value.retain_handle()
+        return value
+    if isinstance(value, Receive):
+        if not value.closed:
+            _retain_value(value.value, check_duplication=check_duplication)
         return value
     if isinstance(value, LazyList):
         value.refcount += 1
@@ -4141,6 +4965,18 @@ def _release_value(value: Any, vm: VirtualMachine) -> None:
     """Release value during VM execution."""
     if isinstance(value, TaggedValue):
         _release_value(value.value, vm)
+        return
+    if isinstance(value, TaskHandle):
+        value.control.release_handle(
+            lambda outputs, fault: _release_task_terminal(outputs, fault, vm)
+        )
+        return
+    if isinstance(value, Channel):
+        value.release_handle(lambda item: _release_value(item, vm))
+        return
+    if isinstance(value, Receive):
+        if not value.closed:
+            _release_value(value.value, vm)
         return
     if isinstance(value, LazyList):
         value.refcount -= 1
@@ -4204,6 +5040,18 @@ def _release_value(value: Any, vm: VirtualMachine) -> None:
             return
         for item in value.values():
             _release_value(item, vm)
+
+
+def _release_task_terminal(
+    outputs: tuple[Any, ...],
+    fault: BaseException | None,
+    vm: VirtualMachine,
+) -> None:
+    """Release one task's stored output row and owned panic payload."""
+    for output in outputs:
+        _release_value(output, vm)
+    if isinstance(fault, PanicSignal):
+        _release_value(fault.value, vm)
 
 
 def _run_object_cleanup(value: ObjectValue, vm: VirtualMachine) -> None:
@@ -5512,6 +6360,7 @@ def _vectorize_declared_callable(
         vm.call_value,
         vm.format_value,
         vm.call_value_overload,
+        cooperative_poll=vm._cooperative_builtin_poll,
     )
 
     def implementation(
@@ -5574,6 +6423,7 @@ def _vectorize_function(
         vm.call_value,
         vm.format_value,
         vm.call_value_overload,
+        cooperative_poll=vm._cooperative_builtin_poll,
     )
     result = _vectorize_resolved_depths(
         implementation,

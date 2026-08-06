@@ -253,7 +253,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x1d"))
+        self.assertTrue(data.startswith(b"VLNCBC\x1e"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)
@@ -375,6 +375,83 @@ class BytecodeSerializationTests(unittest.TestCase):
         )
 
         self.assertEqual(loads(dumps(program)), program)
+
+    def test_rejects_malformed_concurrency_instruction_payloads(self):
+        cases = (
+            Instruction(OpCode.SPAWN_CALL, None),
+            Instruction(OpCode.SPAWN_CALL, (1, -1)),
+            Instruction(OpCode.SPAWN_CALL, (True, 1)),
+            Instruction(OpCode.WAIT_TASK, None),
+            Instruction(OpCode.WAIT_TASKS_VECTORISED, -1),
+            Instruction(OpCode.CHANNEL_NEW, 1),
+            Instruction(OpCode.CHANNEL_SEND, "unexpected"),
+            Instruction(OpCode.CHANNEL_RECEIVE, False),
+            Instruction(OpCode.CHANNEL_CLOSE, ()),
+            Instruction(OpCode.CANCEL_POLL, 0),
+        )
+        for instruction in cases:
+            with self.subTest(instruction=instruction):
+                program = Program(
+                    FunctionCode((instruction, Instruction(OpCode.RETURN)))
+                )
+                with self.assertRaises(BytecodeFormatError):
+                    dumps(program)
+
+    def test_rejects_unbalanced_concurrency_scope_nesting(self):
+        cases = (
+            (Instruction(OpCode.SCOPE_END), Instruction(OpCode.RETURN)),
+            (Instruction(OpCode.SCOPE_BEGIN), Instruction(OpCode.RETURN)),
+            (
+                Instruction(OpCode.SCOPE_BEGIN),
+                Instruction(OpCode.SCOPE_END),
+                Instruction(OpCode.SCOPE_END),
+                Instruction(OpCode.RETURN),
+            ),
+            (Instruction(OpCode.SCOPE_BEGIN, 0), Instruction(OpCode.RETURN)),
+            (Instruction(OpCode.SCOPE_END, 0), Instruction(OpCode.RETURN)),
+        )
+        for instructions in cases:
+            with self.subTest(instructions=instructions):
+                with self.assertRaises(BytecodeFormatError):
+                    dumps(Program(FunctionCode(instructions)))
+
+    def test_accepts_nested_balanced_scopes_and_valid_payloads(self):
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.SCOPE_BEGIN, (0, 1)),
+                    Instruction(OpCode.SCOPE_BEGIN, (1, 2)),
+                    Instruction(OpCode.SPAWN_CALL, (0, 1, 0)),
+                    Instruction(OpCode.WAIT_TASK, 1),
+                    Instruction(OpCode.WAIT_TASKS_VECTORISED, 2),
+                    Instruction(OpCode.CHANNEL_NEW, False),
+                    Instruction(OpCode.CHANNEL_SEND),
+                    Instruction(OpCode.CHANNEL_RECEIVE),
+                    Instruction(OpCode.CHANNEL_CLOSE),
+                    Instruction(OpCode.CANCEL_POLL),
+                    Instruction(OpCode.SCOPE_END, (1, 2)),
+                    Instruction(OpCode.SCOPE_END, (0, 1)),
+                    Instruction(OpCode.RETURN),
+                )
+            )
+        )
+        self.assertEqual(loads(dumps(program)), program)
+
+    def test_validates_concurrency_inside_nested_function_payloads(self):
+        nested = FunctionCode(
+            (Instruction(OpCode.SCOPE_BEGIN), Instruction(OpCode.RETURN)),
+            name="invalid-nested",
+        )
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.MAKE_FUNCTION, nested),
+                    Instruction(OpCode.RETURN),
+                )
+            )
+        )
+        with self.assertRaisesRegex(BytecodeFormatError, "unclosed concurrency scope"):
+            dumps(program)
 
 
 if __name__ == "__main__":

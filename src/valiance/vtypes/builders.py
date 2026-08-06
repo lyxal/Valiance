@@ -32,6 +32,7 @@ from valiance.vtypes.nodes import (
     RowField,
     RowType,
     TaggedType,
+    TaskType,
     TupleType,
     TupleTypeItem,
     Type,
@@ -248,6 +249,11 @@ def NoVec(inner: Type) -> Type:
     return NoVecType(inner)
 
 
+def Task(*outputs: Type, effects: Iterable[ElementTag | str] = ()) -> Type:
+    """Create a task type preserving its output row and observable effects."""
+    return TaskType(tuple(outputs), frozenset(_element_tag(tag) for tag in effects))
+
+
 def Exact(var: Type) -> Type:
     """Create call-policy metadata requiring a scalar argument position."""
     return ExactType(var)
@@ -288,6 +294,8 @@ def _optional_inner(t: UnionType) -> Type | None:
 
 def normalize(t: Type) -> Type:
     """Canonicalize unions, intersections, nested collections, and wrappers."""
+    if isinstance(t, NominalType) and t.name == Symbol("Task"):
+        return TaskType(tuple(normalize(output) for output in t.args))
     if isinstance(t, UnionType):
         # Flattening/deduplication means equality can stay structural. This is
         # also where Never disappears from ordinary unions.
@@ -327,6 +335,15 @@ def normalize(t: Type) -> Type:
         if len(flat) == 1:
             return next(iter(flat))
         return IntersectionType(frozenset(flat))
+
+    if isinstance(t, TaskType):
+        return TaskType(
+            tuple(normalize(output) for output in t.outputs),
+            frozenset(
+                ElementTag(tag.name, tuple(normalize(arg) for arg in tag.args), tag.absent)
+                for tag in t.effects
+            ),
+        )
 
     if isinstance(t, CollectionType):
         base = normalize(t.base)
@@ -596,6 +613,18 @@ def _alpha_canonicalize(
     if isinstance(t, VarType):
         renamed = scope.get(t.name)
         return VarType(renamed, None) if renamed is not None else t
+    if isinstance(t, TaskType):
+        return TaskType(
+            tuple(_alpha_canonicalize(item, scope, depth) for item in t.outputs),
+            frozenset(
+                ElementTag(
+                    tag.name,
+                    tuple(_alpha_canonicalize(arg, scope, depth) for arg in tag.args),
+                    tag.absent,
+                )
+                for tag in t.effects
+            ),
+        )
     if isinstance(t, NominalType):
         return NominalType(
             t.name,
@@ -768,6 +797,12 @@ def _show(
         if type_variable_name is None or t.name in bound:
             return t.name
         return type_variable_name(t.name)
+    if isinstance(t, TaskType):
+        if not t.outputs:
+            return "Task[->]"
+        return "Task[" + ", ".join(
+            _show(output, type_variable_name, bound) for output in t.outputs
+        ) + "]"
     if isinstance(t, NominalType):
         if not t.args:
             return str(t.name)

@@ -66,6 +66,16 @@ class OpCode(Enum):
     POP = "pop"
     POP_N = "pop_n"
     RETURN = "return"
+    SPAWN_CALL = "spawn_call"
+    WAIT_TASK = "wait_task"
+    WAIT_TASKS_VECTORISED = "wait_tasks_vectorised"
+    SCOPE_BEGIN = "scope_begin"
+    SCOPE_END = "scope_end"
+    CHANNEL_NEW = "channel_new"
+    CHANNEL_SEND = "channel_send"
+    CHANNEL_RECEIVE = "channel_receive"
+    CHANNEL_CLOSE = "channel_close"
+    CANCEL_POLL = "cancel_poll"
 
 
 @dataclass(frozen=True, slots=True)

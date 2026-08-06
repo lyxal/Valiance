@@ -23,6 +23,38 @@ from valiance.runtime.bytecode import (
 from valiance.runtime.runtime_values import RuntimeNumber
 
 
+_CONCURRENCY_BARRIER_OPS = frozenset(
+    {
+        OpCode.SPAWN_CALL,
+        OpCode.WAIT_TASK,
+        OpCode.WAIT_TASKS_VECTORISED,
+        OpCode.SCOPE_BEGIN,
+        OpCode.SCOPE_END,
+        OpCode.CHANNEL_NEW,
+        OpCode.CHANNEL_SEND,
+        OpCode.CHANNEL_RECEIVE,
+        OpCode.CHANNEL_CLOSE,
+        OpCode.CANCEL_POLL,
+    }
+)
+
+
+def _concurrency_barrier_signature(program: Program) -> tuple[tuple[str | None, OpCode, object], ...]:
+    """Return the ordered concurrency contract across every nested function."""
+    signature: list[tuple[str | None, OpCode, object]] = []
+
+    def visit(function: FunctionCode) -> FunctionCode:
+        """Record nested barriers while preserving the mapped payload value."""
+        for instruction in function.instructions:
+            _map_nested_functions(instruction.arg, visit)
+            if instruction.op in _CONCURRENCY_BARRIER_OPS:
+                signature.append((function.name, instruction.op, instruction.arg))
+        return function
+
+    visit(program.main)
+    return tuple(signature)
+
+
 class OptimizationError(ValueError):
     """Raised when an optimisation pass receives malformed bytecode."""
 
@@ -92,11 +124,17 @@ class OptimizationPipeline:
         """Run every configured pass in order over a compiled program."""
         current = program
         for optimization_pass in self.passes:
+            barriers = _concurrency_barrier_signature(current)
             current = optimization_pass.optimize(current)
             if not isinstance(current, Program):
                 raise OptimizationError(
                     f"optimisation pass {optimization_pass.name!r} did not return "
                     "Program"
+                )
+            if _concurrency_barrier_signature(current) != barriers:
+                raise OptimizationError(
+                    f"optimisation pass {optimization_pass.name!r} changed "
+                    "concurrency barrier order, payload, or nesting"
                 )
         return current
 
@@ -992,6 +1030,8 @@ def _contains_control_flow(instructions: tuple[Instruction, ...]) -> bool:
             OpCode.TRY_END,
             OpCode.PANIC,
             OpCode.TRY_UNWRAP,
+            # Concurrency operations are scheduling and ownership barriers.
+            *_CONCURRENCY_BARRIER_OPS,
         }
         for instruction in instructions
     )
@@ -1002,6 +1042,19 @@ def _exact_straight_line_depth(
     depth: int,
 ) -> int | None:
     """Return exact physical depth after one supported straight-line opcode."""
+    if instruction.op in {
+        OpCode.SPAWN_CALL,
+        OpCode.WAIT_TASK,
+        OpCode.WAIT_TASKS_VECTORISED,
+        OpCode.SCOPE_BEGIN,
+        OpCode.SCOPE_END,
+        OpCode.CHANNEL_NEW,
+        OpCode.CHANNEL_SEND,
+        OpCode.CHANNEL_RECEIVE,
+        OpCode.CHANNEL_CLOSE,
+        OpCode.CANCEL_POLL,
+    }:
+        return None
     if instruction.op in {
         OpCode.PUSH_CONST,
         OpCode.LOAD_VAR,
