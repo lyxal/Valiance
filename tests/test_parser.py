@@ -1712,5 +1712,11 @@ end
         )
 
 
+    def test_parses_extracting_match_cases(self):
+        [node] = parse("match =>\n  extract [1, _, 3] => * 2\n  [1, $n = _, 3] => $n\nend")
+        self.assertTrue(node.cases[0].extract)
+        self.assertFalse(node.cases[1].extract)
+
+
 if __name__ == "__main__":
     unittest.main()

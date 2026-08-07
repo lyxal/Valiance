@@ -1046,6 +1046,12 @@ When editing the serializer, preserve these properties:
 - reject truncated data
 - never silently coerce malformed payloads
 
+## Extracting Match Inputs
+
+`JUMP_IF_MATCH` collects anonymous structural or regular-expression captures and installs them as the selected branch's conceptual input cycle. It does not preload the branch's physical stack. `MATCH_BRANCH_BEGIN` starts the selected body with an empty physical stack, and `MATCH_BRANCH_END` appends only values the body actually produced. A branch such as `extract [1, _, 3] => "matched"` therefore returns only `"matched"`; the unused capture is not an implicit second result.
+
+Named captures are installed in case locals rather than in the conceptual cycle. Ordinary cases follow the same physical-stack rule, using retained complete subjects as their conceptual inputs instead of captures.
+
 ## Debugging Runtime Mismatches
 
 Useful checks when a program analyses but fails at runtime:

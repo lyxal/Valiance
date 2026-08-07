@@ -359,6 +359,10 @@ case in `_lower_chain_segment` preserves that data-flow boundary. Add parser and
 runtime tests whenever changing this rule; a parse-only snapshot can look valid
 while matching the wrong stack value.
 
+### Extracting match cases
+
+A match case may begin with `extract` before its comma-separated patterns. The parser records this on `MatchCaseNode.extract`; it does not rewrite the pattern tree. Literal strings retain ordinary literal-pattern syntax, with analysis/code generation interpreting them as regular expressions only for extracting cases.
+
 ### Adjacency-sensitive syntax
 
 Because ordinary cursor movement skips whitespace, syntax that requires touching

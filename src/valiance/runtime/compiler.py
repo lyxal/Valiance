@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, fields, is_dataclass
 from typing import TYPE_CHECKING, Iterator, NoReturn
 
@@ -1222,7 +1224,16 @@ class _Compiler:
             compiled_patterns = tuple(
                 ("catch_all",)
                 if catch_all and isinstance(pattern, WildcardPatternNode)
-                else _compile_match_pattern(pattern, guard_blocks)
+                else (
+                    ("extracting", _compile_match_pattern(
+                        pattern,
+                        guard_blocks,
+                        extracting=True,
+                        root=True,
+                    ))
+                    if case.extract
+                    else _compile_match_pattern(pattern, guard_blocks)
+                )
                 for pattern in case.patterns
             )
             if guard_blocks is not None:
@@ -2310,10 +2321,19 @@ def _number(value: str, node: ASTNode) -> RuntimeNumber:
 def _compile_match_pattern(
     pattern: MatchPatternNode,
     typed_guards: Iterator[tuple[ASTNode | TypedNode, ...]] | None = None,
+    *,
+    extracting: bool = False,
+    root: bool = False,
 ) -> object:
     """Compile one pattern, consuming analysed guards in traversal order."""
     match pattern:
         case LiteralPatternNode(value):
+            if extracting and root and isinstance(value, StringLiteralNode):
+                source = re.sub(r"\(\?<([A-Za-z_]\w*)>", r"(?P<\1>", value.value)
+                compiled = re.compile(source)
+                named_by_index = {index: name for name, index in compiled.groupindex.items()}
+                group_names = tuple(named_by_index.get(index) for index in range(1, compiled.groups + 1))
+                return ("regex", source, group_names)
             return ("literal", _literal_pattern_value(value))
         case ExpressionPatternNode(expression):
             return ("literal", _literal_expression_value(expression))
@@ -2321,8 +2341,10 @@ def _compile_match_pattern(
             guard = _next_typed_guard(typed_guards, condition)
             return ("guard", _compile_guard(guard))
         case WildcardPatternNode():
-            return ("wildcard",)
+            return ("capture",) if extracting and not root else ("wildcard",)
         case RestPatternNode(name):
+            if extracting and not root and name is None:
+                return ("capture_rest",)
             return ("rest", None if name is None else name.text)
         case BindingPatternNode(name, inner):
             if isinstance(inner, RestPatternNode):
@@ -2330,13 +2352,13 @@ def _compile_match_pattern(
             return (
                 "bind",
                 name.text,
-                _compile_match_pattern(inner, typed_guards),
+                _compile_match_pattern(inner, typed_guards, extracting=False, root=False),
             )
         case OrPatternNode(options):
             return (
                 "or",
                 tuple(
-                    _compile_match_pattern(option, typed_guards)
+                    _compile_match_pattern(option, typed_guards, extracting=extracting, root=root)
                     for option in options
                 ),
             )
@@ -2344,7 +2366,7 @@ def _compile_match_pattern(
             return (
                 "list",
                 tuple(
-                    _compile_match_pattern(item, typed_guards)
+                    _compile_match_pattern(item, typed_guards, extracting=extracting, root=False)
                     for item in items
                 ),
             )
@@ -2359,7 +2381,7 @@ def _compile_match_pattern(
                 None if typ is None else _cast_type_spec(typ),
                 None if name is None else name.text,
                 tuple(
-                    _compile_match_pattern(field, typed_guards)
+                    _compile_match_pattern(field, typed_guards, extracting=extracting, root=False)
                     for field in fields
                 ),
                 compiled_guard,

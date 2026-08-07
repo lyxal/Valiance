@@ -1158,6 +1158,7 @@ class Parser:
             if cases and self._current.column < case_column:
                 break
             case_start = self._current
+            extract = self._match_ident("extract")
             patterns = self._match_case_patterns()
             pattern_type = None
             if (
@@ -1173,6 +1174,7 @@ class Parser:
                     (),
                     pattern_type,
                     self._match_body(case_column),
+                    extract=extract,
                     location=_loc(case_start),
                 )
             )

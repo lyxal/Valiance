@@ -5485,3 +5485,55 @@ $f = fn (xs) => $xs 1 rotate end
               [RuntimeNumber(5), RuntimeNumber(6)],
               [RuntimeNumber(1), RuntimeNumber(2)]]],
         )
+
+    def test_extracting_match_capture_is_not_an_implicit_branch_result(self):
+        self.assertEqual(
+            execute("""
+[1, 9, 3] match =>
+  extract [1, _, 3] => "matched"
+  _ => "other"
+end
+"""),
+            ["matched"],
+        )
+
+    def test_extracting_match_patterns_project_structural_and_regex_captures(self):
+        self.assertEqual(
+            execute("""
+[1, 9, 3] match =>
+  extract [1, _, 3] => * 2
+  _ => 0
+end
+"""),
+            [RuntimeNumber(18)],
+        )
+        self.assertEqual(
+            execute("""
+[4, 5, 6, 7] match =>
+  extract [4, ..., 7] => sum
+  _ => 0
+end
+"""),
+            [RuntimeNumber(11)],
+        )
+        self.assertEqual(
+            execute('''"item:42" match =>
+  extract "(?<kind>[a-z]+):([0-9]+)" => $kind swap
+  _ => "no"
+end'''),
+            ["item", "42"],
+        )
+        self.assertEqual(
+            execute("""
+[1, 8, 3] match =>
+  extract [1, $n = _, 3] => $n
+  _ => 0
+end
+"""),
+            [RuntimeNumber(8)],
+        )
+        analyser = Analyser()
+        analyser.analyse(parse("1 match => extract _ => 2 end"))
+        self.assertTrue(
+            any("extract requires at least one" in str(item) for item in analyser.diagnostics)
+        )

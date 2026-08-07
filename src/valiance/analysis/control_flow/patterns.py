@@ -1298,6 +1298,65 @@ def _pattern_bound_names(pattern: MatchPatternNode) -> frozenset[Symbol]:
     return frozenset(names)
 
 
+def _pattern_capture_types(
+    pattern: MatchPatternNode,
+    subject_type: T.Type,
+    env: T.Environment,
+    *,
+    root: bool = True,
+) -> tuple[T.Type, ...]:
+    """Return anonymous values projected by an extracting pattern."""
+    if isinstance(pattern, WildcardPatternNode):
+        return () if root else (subject_type,)
+    if isinstance(pattern, RestPatternNode):
+        if root or pattern.name is not None:
+            return ()
+        return (subject_type,)
+    if isinstance(pattern, BindingPatternNode):
+        # A binding names the captured value instead of also projecting it.
+        return ()
+    if isinstance(pattern, ListPatternNode):
+        item_type = _list_pattern_item_type(subject_type) or T.V("_matched_item")
+        captures: list[T.Type] = []
+        for item in pattern.items:
+            nested_type = T.ExactList(item_type) if _is_rest_match_pattern(item) else item_type
+            captures.extend(_pattern_capture_types(item, nested_type, env, root=False))
+        return tuple(captures)
+    if isinstance(pattern, TypePatternNode):
+        field_types = _destructure_field_types(pattern, subject_type, env)
+        captures: list[T.Type] = []
+        for index, field in enumerate(pattern.fields):
+            field_type = field_types[index] if index < len(field_types) else T.V(f"_matched_field_{index}")
+            captures.extend(_pattern_capture_types(field, field_type, env, root=False))
+        return tuple(captures)
+    if isinstance(pattern, OrPatternNode):
+        options = tuple(_pattern_capture_types(option, subject_type, env, root=root) for option in pattern.options)
+        if not options:
+            return ()
+        if len({len(option) for option in options}) != 1:
+            raise ValueError("or-pattern alternatives extract different numbers of values")
+        merged = list(options[0])
+        for option in options[1:]:
+            merged = [T.merge_types(left, right, env.context) for left, right in zip(merged, option, strict=True)]
+        return tuple(merged)
+    return ()
+
+
+def _pattern_has_proper_named_capture(pattern: MatchPatternNode, *, root: bool = True) -> bool:
+    """Return whether a pattern names a component below its top-level subject."""
+    if isinstance(pattern, BindingPatternNode):
+        return not root
+    if isinstance(pattern, RestPatternNode):
+        return not root and pattern.name is not None
+    children: tuple[MatchPatternNode, ...] = ()
+    if isinstance(pattern, ListPatternNode):
+        children = pattern.items
+    elif isinstance(pattern, TypePatternNode):
+        children = pattern.fields
+    elif isinstance(pattern, OrPatternNode):
+        children = pattern.options
+    return any(_pattern_has_proper_named_capture(child, root=False) for child in children)
+
 def _uncheckable_runtime_pattern_type(
     pattern: MatchPatternNode,
 ) -> tuple[MatchPatternNode, T.Type] | None:

@@ -590,6 +590,9 @@ not runtime type inference.
 
 ## The physical and conceptual stacks
 
+Match branches follow the same distinction. A selected branch begins with an empty physical stack. Ordinary retained subjects or `extract` captures are installed as conceptual cycle inputs and are sourced only if the body underflows. A body that only pushes a literal therefore returns only that literal, regardless of how many match inputs were available.
+
+
 `_Frame.source_args(arity)` is the central argument-sourcing operation.
 
 It considers three sources, in order:

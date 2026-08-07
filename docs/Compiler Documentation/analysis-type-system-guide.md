@@ -1178,6 +1178,10 @@ iteration state, supports explicit named and unnamed state parameters with
 cycling, preserves parent-scope writes, and carries terminating state or
 explicit `break` values through typed code generation and bytecode execution.
 
+### Match extraction inputs
+
+Every match case is analysed with an empty physical case stack. Ordinary cases place their retained complete subjects in the branch's conceptual cycle. An `extract` case replaces those cycle parameters with the statically derived anonymous captures from its patterns. The body sources a cycle parameter only when an operation would otherwise underflow, so unused captures do not become inferred branch results. Named captures are block-local variables and do not also occupy anonymous cycle positions.
+
 ## Trait inheritance and structural requirements
 
 A declaration `trait Child as Parent` imports the parent's requirements into the

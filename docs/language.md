@@ -1435,6 +1435,40 @@ match =>
 end
 ```
 
+### 10.1.1. Extracting pattern captures
+
+Ordinary cases give the branch body each complete top-level matched subject. Prefix a case with `extract` when the branch instead needs the proper captures declared inside a compound pattern:
+
+```vln
+match =>
+  extract [1, _, 3] => * 2       #? Receives the middle item
+  extract [4, ..., 7] => sum     #? Receives the gap as one list
+  [1, $n = _, 3] => $n           #? Receives the whole list and binds $n
+end
+```
+
+Every selected match branch begins with an empty physical stack. Its match inputs are instead available through conceptual input cycling: they are sourced only when the body would otherwise underflow. Consequently, unused subjects or captures do not become branch results.
+
+In an ordinary case, the conceptual inputs are the retained complete top-level subjects. In an extracting case, they are replaced by the anonymous captures declared inside the patterns. Anonymous nested `_` holes and anonymous `...` rest holes become conceptual cycling inputs in left-to-right, depth-first order. A bound hole such as `$n = _` becomes a case-local variable instead of a cycling input. Matching itself is unchanged: without `extract`, the complete subject remains the conceptual input and nested bindings are still available.
+
+```vln
+[1, 9, 3] match =>
+  extract [1, _, 3] => "matched" #? Returns only "matched"; 9 is unused
+  _ => "other"
+end
+```
+
+A literal-string pattern in an extracting case is a full-match regular expression. Anonymous capture groups become conceptual cycling inputs; named groups become case-local variables. Groups guaranteed to participate have type `String`; groups that may not participate have type `String?` and produce `None` when absent. Both Python-style `(?P<name>...)` and concise `(?<name>...)` named groups are accepted.
+
+```vln
+"item:42" match =>
+  extract "(?<kind>[a-z]+):([0-9]+)" => $kind swap
+  _ => "no match"
+end
+```
+
+`extract` must expose at least one proper nested or regex capture. `extract _`, `extract 2`, a fully constrained structure, and an extracting regex with no capture groups are compile-time errors. Use the ordinary case form when the whole matched subject is wanted.
+
 - The branch body is given the matched arguments.
 	- Branch bodies do not pop from the outer stack. This is to ensure consistent static typing
 	- The result of a match statement is pairwise unions of each branch. If any branch returns less than the maximum multiplicity, `None` is returned as padding.

@@ -867,6 +867,7 @@ class MatchCaseNode(ASTNode):
     pattern: tuple[ASTNode, ...] = ()
     pattern_type: Type | None = None
     body: tuple[ASTNode, ...] = ()
+    extract: bool = False
 
 
 @dataclass(frozen=True)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins as _py_builtins
+import re
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
@@ -4122,48 +4123,74 @@ class VirtualMachine:
         frame: _Frame,
         patterns: tuple[object, ...],
     ) -> tuple[dict[str, Any], tuple[Any, ...]] | None:
-        """Match patterns during VM execution."""
+        """Match patterns during VM execution and collect extracting captures."""
         if len(frame.stack) < len(patterns):
             return None
-        if len(patterns) == 1:
-            pattern = patterns[0]
-            value = frame.stack[-1]
-            if isinstance(pattern, tuple) and pattern:
-                if pattern[0] == "literal":
-                    if value != pattern[1]:
-                        return None
-                    return {"top": value}, (value,)
-                if pattern[0] == "wildcard":
-                    return {"top": value}, ()
-                if pattern[0] == "catch_all":
-                    return {"top": value}, (value,)
         bindings: dict[str, Any] = {}
         subjects = tuple(reversed(frame.stack[-len(patterns) :]))
         if subjects:
             bindings["top"] = subjects[0]
         retained: list[Any] = []
-        for pattern, value in zip(patterns, subjects, strict=True):
-            if not self._match_pattern(value, pattern, bindings):
+        captures: list[Any] = []
+        extracting_case = any(
+            isinstance(pattern, tuple) and pattern and pattern[0] == "extracting"
+            for pattern in patterns
+        )
+        for raw_pattern, value in zip(patterns, subjects, strict=True):
+            extracting = (
+                isinstance(raw_pattern, tuple)
+                and raw_pattern
+                and raw_pattern[0] == "extracting"
+            )
+            pattern = raw_pattern[1] if extracting else raw_pattern
+            if not self._match_pattern(value, pattern, bindings, captures if extracting else None):
                 return None
-            if not (isinstance(pattern, tuple) and pattern and pattern[0] == "wildcard"):
+            if not extracting and not (
+                isinstance(pattern, tuple) and pattern and pattern[0] == "wildcard"
+            ):
                 retained.append(value)
-        return bindings, tuple(retained)
+        return bindings, tuple(captures if extracting_case else retained)
 
     def _match_pattern(
         self,
         value: Any,
         pattern: object,
         bindings: dict[str, Any],
+        captures: list[Any] | None = None,
     ) -> bool:
-        """Return the Boolean result of match pattern during virtual-machine execution."""
+        """Return whether a value matches, appending anonymous captures when requested."""
         if not isinstance(pattern, tuple) or not pattern:
             return False
         kind = pattern[0]
         if kind == "literal":
             return value == pattern[1]
+        if kind == "regex":
+            if not isinstance(value, str):
+                return False
+            match = re.fullmatch(pattern[1], value)
+            if match is None:
+                return False
+            group_names = pattern[2]
+            for index, name in enumerate(group_names, start=1):
+                captured = match.group(index)
+                runtime_value = captured if captured is not None else ObjectValue("None", {})
+                if name is None:
+                    if captures is not None:
+                        captures.append(runtime_value)
+                elif not _bind_match_name(bindings, name, runtime_value):
+                    return False
+            return True
         if kind == "guard":
             return self._guard_truthy(pattern[1], value)
         if kind in {"wildcard", "catch_all"}:
+            return True
+        if kind == "capture":
+            if captures is not None:
+                captures.append(value)
+            return True
+        if kind == "capture_rest":
+            if captures is not None:
+                captures.append(value)
             return True
         if kind == "rest":
             name = pattern[1]
@@ -4171,23 +4198,26 @@ class VirtualMachine:
         if kind == "bind":
             name, inner = pattern[1], pattern[2]
             snapshot = dict(bindings)
-            if not self._match_pattern(value, inner, bindings):
+            if not self._match_pattern(value, inner, bindings, None):
                 bindings.clear()
                 bindings.update(snapshot)
                 return False
             return _bind_match_name(bindings, name, value)
         if kind == "or":
             for option in pattern[1]:
-                snapshot = dict(bindings)
-                if self._match_pattern(value, option, bindings):
+                binding_snapshot = dict(bindings)
+                capture_count = 0 if captures is None else len(captures)
+                if self._match_pattern(value, option, bindings, captures):
                     return True
                 bindings.clear()
-                bindings.update(snapshot)
+                bindings.update(binding_snapshot)
+                if captures is not None:
+                    del captures[capture_count:]
             return False
         if kind == "list":
-            return self._match_list_pattern(value, pattern[1], bindings)
+            return self._match_list_pattern(value, pattern[1], bindings, captures)
         if kind == "type":
-            return self._match_type_pattern(value, pattern, bindings)
+            return self._match_type_pattern(value, pattern, bindings, captures)
         return False
 
     def _match_list_pattern(
@@ -4195,17 +4225,19 @@ class VirtualMachine:
         value: Any,
         items: tuple[object, ...],
         bindings: dict[str, Any],
+        captures: list[Any] | None = None,
     ) -> bool:
         """Return the Boolean result of match list pattern during virtual-machine execution."""
         if not is_eager_sequence(value):
             return False
-        return self._match_list_items(tuple(value), items, bindings, 0, 0)
+        return self._match_list_items(tuple(value), items, bindings, captures, 0, 0)
 
     def _match_list_items(
         self,
         values: tuple[Any, ...],
         patterns: tuple[object, ...],
         bindings: dict[str, Any],
+        captures: list[Any] | None,
         value_index: int,
         pattern_index: int,
     ) -> bool:
@@ -4213,34 +4245,38 @@ class VirtualMachine:
         if pattern_index == len(patterns):
             return value_index == len(values)
         pattern = patterns[pattern_index]
-        if isinstance(pattern, tuple) and pattern and pattern[0] == "rest":
-            name = pattern[1]
+        if isinstance(pattern, tuple) and pattern and pattern[0] in {"rest", "capture_rest"}:
+            name = pattern[1] if pattern[0] == "rest" else None
             for end in range(value_index, len(values) + 1):
                 snapshot = dict(bindings)
-                if name is None or _bind_match_name(
-                    bindings,
-                    name,
-                    list(values[value_index:end]),
-                ):
+                rest_value = list(values[value_index:end])
+                capture_count = 0 if captures is None else len(captures)
+                if name is None or _bind_match_name(bindings, name, rest_value):
+                    if pattern[0] == "capture_rest" and captures is not None:
+                        captures.append(rest_value)
                     if self._match_list_items(
                         values,
                         patterns,
                         bindings,
+                        captures,
                         end,
                         pattern_index + 1,
                     ):
                         return True
                 bindings.clear()
                 bindings.update(snapshot)
+                if captures is not None:
+                    del captures[capture_count:]
             return False
         if value_index >= len(values):
             return False
         snapshot = dict(bindings)
-        if self._match_pattern(values[value_index], pattern, bindings):
+        if self._match_pattern(values[value_index], pattern, bindings, captures):
             if self._match_list_items(
                 values,
                 patterns,
                 bindings,
+                captures,
                 value_index + 1,
                 pattern_index + 1,
             ):
@@ -4254,11 +4290,12 @@ class VirtualMachine:
         values: tuple[Any, ...],
         patterns: tuple[object, ...],
         bindings: dict[str, Any],
+        captures: list[Any] | None = None,
     ) -> bool:
         """Return the Boolean result of match pattern sequence during virtual-machine execution."""
         snapshot = dict(bindings)
         for value, pattern in zip(values, patterns, strict=True):
-            if not self._match_pattern(value, pattern, bindings):
+            if not self._match_pattern(value, pattern, bindings, captures):
                 bindings.clear()
                 bindings.update(snapshot)
                 return False
@@ -4269,6 +4306,7 @@ class VirtualMachine:
         value: Any,
         pattern: tuple[object, ...],
         bindings: dict[str, Any],
+        captures: list[Any] | None = None,
     ) -> bool:
         """Return the Boolean result of match type pattern during virtual-machine execution."""
         _, type_spec, binding_name, fields, guard = pattern
@@ -4302,7 +4340,7 @@ class VirtualMachine:
                 return False
             if len(values) != len(fields):
                 return False
-            if not self._match_pattern_sequence(values, fields, bindings):
+            if not self._match_pattern_sequence(values, fields, bindings, captures):
                 return False
         return guard is None or self._guard_truthy(guard, value)
 

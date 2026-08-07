@@ -14,6 +14,12 @@ from enum import Enum, auto
 from hashlib import sha1
 from itertools import count
 from pathlib import Path
+import re
+
+try:
+    from re import _parser as _regex_parser
+except ImportError:  # pragma: no cover - alternate host regex implementation
+    _regex_parser = None
 from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
@@ -44,6 +50,7 @@ from valiance.asts import (
     ImportPath,
     ImportSpec,
     ListPatternNode,
+    LiteralPatternNode,
     MatchCaseNode,
     MatchNode,
     MatchPatternNode,
@@ -70,7 +77,7 @@ from valiance.asts import (
     VariantMemberNode,
     is_catch_all_match_case,
 )
-from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
+from valiance.asts.nodes import GetVariableNode, ObjectFieldNode, StringLiteralNode
 from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
 from valiance.asts.object_constructors import (
     constructor_definitions,
@@ -98,6 +105,67 @@ from ..calls.models import (
 
 
 
+
+
+def _extract_regex(pattern: MatchPatternNode) -> re.Pattern[str] | None:
+    """Compile a literal-string extracting pattern as a regular expression."""
+    if not isinstance(pattern, LiteralPatternNode) or not isinstance(pattern.value, StringLiteralNode):
+        return None
+    source = pattern.value.value
+    # Accept the common (?<name>...) spelling and lower it to Python's form.
+    source = re.sub(r"\(\?<([A-Za-z_]\w*)>", r"(?P<\1>", source)
+    return re.compile(source)
+
+
+def _mandatory_regex_groups(source: str) -> frozenset[int]:
+    """Return capture groups guaranteed to participate in every successful match."""
+    if _regex_parser is None:
+        return frozenset()
+    parsed = _regex_parser.parse(source, 0)
+
+    def guaranteed(sequence: object) -> set[int]:
+        result: set[int] = set()
+        for operation, argument in sequence:
+            name = str(operation)
+            if name == "SUBPATTERN":
+                group, _add_flags, _del_flags, child = argument
+                if group is not None:
+                    result.add(group)
+                result.update(guaranteed(child))
+            elif name == "BRANCH":
+                _none, branches = argument
+                branch_sets = [guaranteed(branch) for branch in branches]
+                if branch_sets:
+                    result.update(set.intersection(*branch_sets))
+            elif name in {"MAX_REPEAT", "MIN_REPEAT", "POSSESSIVE_REPEAT"}:
+                minimum, _maximum, child = argument
+                if minimum > 0:
+                    result.update(guaranteed(child))
+        return result
+
+    return frozenset(guaranteed(parsed))
+
+
+def _regex_capture_interface(
+    compiled: re.Pattern[str],
+) -> tuple[tuple[T.Type, ...], tuple[tuple[Symbol, T.Type], ...]]:
+    """Return anonymous stack captures and named local captures for a regex."""
+    named_by_index = {index: name for name, index in compiled.groupindex.items()}
+    mandatory = _mandatory_regex_groups(compiled.pattern)
+
+    def capture_type(index: int) -> T.Type:
+        return T.String if index in mandatory else T.optional(T.String)
+
+    anonymous = tuple(
+        capture_type(index)
+        for index in range(1, compiled.groups + 1)
+        if index not in named_by_index
+    )
+    named = tuple(
+        (Symbol(name), capture_type(index))
+        for name, index in sorted(compiled.groupindex.items(), key=lambda item: item[1])
+    )
+    return anonymous, named
 
 
 class _MatchAnalysis:
@@ -161,6 +229,37 @@ class _MatchAnalysis:
                 subject_types,
                 self.env,
             )
+            extracted_types: tuple[T.Type, ...] = ()
+            if case.extract:
+                captures: list[T.Type] = []
+                proper_capture = False
+                for pattern, subject_type in zip(case.patterns, subject_types, strict=True):
+                    try:
+                        regex = _extract_regex(pattern)
+                    except re.error as exc:
+                        self._diagnose(f"invalid extracting regular expression: {exc}", pattern)
+                        return BranchSet()
+                    if regex is not None:
+                        anonymous, named = _regex_capture_interface(regex)
+                        captures.extend(anonymous)
+                        for name, typ in named:
+                            case_variables = case_variables.with_block_local(name, typ)
+                        proper_capture = proper_capture or bool(anonymous or named)
+                        continue
+                    try:
+                        pattern_captures = _patterns._pattern_capture_types(pattern, subject_type, self.env)
+                    except ValueError as exc:
+                        self._diagnose(str(exc), pattern)
+                        return BranchSet()
+                    captures.extend(pattern_captures)
+                    proper_capture = proper_capture or bool(pattern_captures) or _patterns._pattern_has_proper_named_capture(pattern)
+                if not proper_capture:
+                    self._diagnose(
+                        "extract requires at least one nested hole, nested binding, rest capture, or regular-expression capture group",
+                        case,
+                    )
+                    return BranchSet()
+                extracted_types = tuple(captures)
             if subject_variables:
                 case_variables = _patterns._refine_match_subject_variables(
                     case_variables,
@@ -183,14 +282,16 @@ class _MatchAnalysis:
                 )
             )
             retained_subject_types = (
-                refined_subject_types
-                if is_catch_all_match_case(case.patterns)
-                else tuple(
-                    typ
-                    for pattern, typ in zip(
-                        case.patterns, refined_subject_types, strict=True
+                extracted_types
+                if case.extract
+                else (
+                    refined_subject_types
+                    if is_catch_all_match_case(case.patterns)
+                    else tuple(
+                        typ
+                        for pattern, typ in zip(case.patterns, refined_subject_types, strict=True)
+                        if not isinstance(pattern, WildcardPatternNode)
                     )
-                    if not isinstance(pattern, WildcardPatternNode)
                 )
             )
             # Matched subjects are conceptual case inputs, not physical stack
