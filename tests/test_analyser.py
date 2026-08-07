@@ -5432,6 +5432,21 @@ end
         self.assertIn("overload", analyser.diagnostics[0])
         self.assertIn("Number | String", analyser.diagnostics[0])
 
+    def test_list_rest_binding_does_not_leak_internal_match_item_type(self):
+        source = """
+fn (:(Number | String+)?) =>
+  match =>
+    ["first", $middle = ..., "last"] => $middle
+    _ => "Nothing"
+  end
+end
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(T.show(typed[0].typ), "Function[(Number | String+)? -> String | String+]")
+        self.assertNotIn("_matched_item", T.show(typed[0].typ))
+
     def test_match_binding_shadows_an_outer_variable(self):
         analyser = Analyser()
 

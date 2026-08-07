@@ -587,7 +587,7 @@ def _invalid_destructure_arity(
                 return invalid
         return None
     if isinstance(pattern, ListPatternNode):
-        item_type = T.collection_item_type(subject_type) or T.V("_matched_item")
+        item_type = _list_pattern_item_type(subject_type) or T.V("_matched_item")
         for item in pattern.items:
             nested_type = (
                 T.ExactList(item_type) if _is_rest_match_pattern(item) else item_type
@@ -1164,6 +1164,34 @@ def _subtract_match_type(
     return (subject,)
 
 
+def _list_pattern_item_type(subject_type: T.Type) -> T.Type | None:
+    """Return the item type exposed when a structural list pattern succeeds.
+
+    Match subjects may be unions or optionals whose collection branch is nested
+    inside ``Some``. Only collection-capable branches can reach a successful
+    list-pattern body, so internal fallback variables must not escape through
+    rest bindings when a concrete item type is available.
+    """
+    subject_type = T.normalize(subject_type)
+    direct = T.collection_item_type(subject_type)
+    if direct is not None:
+        return direct
+    if (
+        isinstance(subject_type, T.NominalType)
+        and subject_type.name == Symbol("Some")
+        and len(subject_type.args) == 1
+    ):
+        return _list_pattern_item_type(subject_type.args[0])
+    if isinstance(subject_type, T.UnionType):
+        items = tuple(
+            item
+            for branch in subject_type.items
+            if (item := _list_pattern_item_type(branch)) is not None
+        )
+        return T.U(*items) if items else None
+    return None
+
+
 def _pattern_binding_types(
     pattern: MatchPatternNode,
     subject_type: T.Type,
@@ -1203,7 +1231,7 @@ def _pattern_binding_types(
                 add(name, typ)
         return result
     if isinstance(pattern, ListPatternNode):
-        item_type = T.collection_item_type(subject_type) or T.V("_matched_item")
+        item_type = _list_pattern_item_type(subject_type) or T.V("_matched_item")
         for item in pattern.items:
             nested_type = (
                 T.ExactList(item_type) if _is_rest_match_pattern(item) else item_type
@@ -1408,7 +1436,7 @@ def _pattern_guards(
         for option in pattern.options:
             yield from _pattern_guards(option, subject_type)
     elif isinstance(pattern, ListPatternNode):
-        item_type = T.collection_item_type(subject_type) or T.V("_matched_item")
+        item_type = _list_pattern_item_type(subject_type) or T.V("_matched_item")
         for item in pattern.items:
             yield from _pattern_guards(item, item_type)
     elif isinstance(pattern, BindingPatternNode):
