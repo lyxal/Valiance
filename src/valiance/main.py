@@ -1154,6 +1154,7 @@ def _run_repl() -> int:
             print(_repl_style(type_preview, _ANSI_CYAN, color))
         if submission_kind == "scratch-run":
             frontend.wait_for_scratch_result()
+            session.reset()
         line_number += 1
 
 
