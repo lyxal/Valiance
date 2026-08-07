@@ -181,7 +181,7 @@ def create_repl_frontend(
             type_hint_provider=type_hint_provider,
             documentation_provider=documentation_provider,
         )
-    except (ImportError, OSError, RuntimeError, ValueError):
+    except ImportError, OSError, RuntimeError, ValueError:
         return plain
 
 
@@ -332,7 +332,7 @@ def _is_tty(stream: TextIO) -> bool:
     """Return whether the value is tty."""
     try:
         return bool(stream.isatty())
-    except (AttributeError, OSError):
+    except AttributeError, OSError:
         return False
 
 
@@ -373,7 +373,7 @@ def _copy_to_system_clipboard(text: str) -> bool:
                 return True
             finally:
                 user32.CloseClipboard()
-        except (AttributeError, OSError):
+        except AttributeError, OSError:
             return False
 
     if sys.platform == "darwin":
@@ -386,7 +386,7 @@ def _copy_to_system_clipboard(text: str) -> bool:
                 timeout=2,
             )
             return True
-        except (OSError, subprocess.SubprocessError):
+        except OSError, subprocess.SubprocessError:
             return False
 
     # OSC 52 is supported by many modern Unix terminals and remote shells.
@@ -403,6 +403,7 @@ def _copy_to_system_clipboard(text: str) -> bool:
 
 def _system_clipboard(in_memory_clipboard):
     """Wrap prompt-toolkit's clipboard with best-effort system clipboard writes."""
+
     class SystemClipboard:
         def set_data(self, data) -> None:
             """Store clipboard data and mirror its text to the system clipboard."""
@@ -469,7 +470,9 @@ class _PromptToolkitFrontend:
         from prompt_toolkit.styles import Style
 
         self._type_hint_provider = type_hint_provider
-        self._documentation_provider = documentation_provider or (lambda _name, _source: None)
+        self._documentation_provider = documentation_provider or (
+            lambda _name, _source: None
+        )
         self._type_hints_enabled = True
         self._editor_source = ""
         self._last_submitted_source = ""
@@ -487,12 +490,21 @@ class _PromptToolkitFrontend:
             buffer.cursor_position = len(buffer.text)
             buffer.selection_state = SelectionState(original_cursor_position=0)
 
+        @bindings.add("c-c", eager=True)
+        def _copy(event) -> None:
+            """Copy the active selection to the application clipboard."""
+            buffer = event.current_buffer
+            if buffer.selection_state is not None:
+                data = buffer.copy_selection()
+                event.app.clipboard.set_data(data)
+            else:
+                # Normal terminal CTRL+C behaviour.
+                event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
+
         @bindings.add("c-x", eager=True)
         def _cut(event) -> None:
             """Cut the active selection to the application clipboard."""
-            _cut_selection_to_clipboard(
-                event.current_buffer, event.app.clipboard
-            )
+            _cut_selection_to_clipboard(event.current_buffer, event.app.clipboard)
 
         @bindings.add("c-z")
         def _undo(event) -> None:
@@ -580,11 +592,17 @@ class _PromptToolkitFrontend:
                 for line in documentation.splitlines():
                     if line.startswith(("define ", "public define ")) or " -> " in line:
                         print(f"\033[93m{line}\033[0m")
-                    elif line.lower().startswith(("parameter ", "returns:", "example:", "note:")):
+                    elif line.lower().startswith(
+                        ("parameter ", "returns:", "example:", "note:")
+                    ):
                         print(f"\033[92m{line}\033[0m")
                     else:
                         print(line)
-                print("\n\033[2mPress Enter to return to the scratchpad...\033[0m", end="", flush=True)
+                print(
+                    "\n\033[2mPress Enter to return to the scratchpad...\033[0m",
+                    end="",
+                    flush=True,
+                )
                 try:
                     input()
                 except EOFError:
@@ -671,8 +689,10 @@ class _PromptToolkitFrontend:
             mouse_support=Condition(lambda: self._mode == "scratch"),
             multiline=Condition(lambda: self._mode == "scratch"),
         )
+
         def menu_action(action: str):
             """Return a handler for an editor menu command."""
+
             def handle() -> None:
                 """Run one menu command against the active editor buffer."""
                 app = get_app()
@@ -712,34 +732,51 @@ class _PromptToolkitFrontend:
                         start, end = buffer.document.selection_range()
                         name = buffer.text[start:end].strip()
                         if name and not any(char.isspace() for char in name):
-                            documentation = self._documentation_provider(name, buffer.text)
+                            documentation = self._documentation_provider(
+                                name, buffer.text
+                            )
+
                             def display() -> None:
                                 """Show styled selected-element documentation temporarily."""
-                                text = documentation or f"No loaded documentation for {name}."
+                                text = (
+                                    documentation
+                                    or f"No loaded documentation for {name}."
+                                )
                                 print("\033[2J\033[3J\033[H", end="")
-                                print("\033[48;5;24m\033[97;1m  Valiance Element Help  \033[0m")
+                                print(
+                                    "\033[48;5;24m\033[97;1m  Valiance Element Help  \033[0m"
+                                )
                                 print(f"\033[96;1m{name}\033[0m")
                                 print("\033[38;5;67m" + "─" * 76 + "\033[0m")
                                 print(text)
-                                print("\n\033[2mPress Enter to return to the scratchpad...\033[0m", end="", flush=True)
+                                print(
+                                    "\n\033[2mPress Enter to return to the scratchpad...\033[0m",
+                                    end="",
+                                    flush=True,
+                                )
                                 try:
                                     input()
                                 except EOFError:
                                     pass
                                 print("\033[2J\033[3J\033[H", end="", flush=True)
+
                             run_in_terminal(display)
+
             return handle
 
         body = self._session.layout.container
         # PromptSession deliberately disables focus-on-click. Full-screen editor
         # semantics need clicks in the document to take focus away from menus.
         from prompt_toolkit.layout.controls import BufferControl
+
         for window in self._session.layout.find_all_windows():
             if (
                 isinstance(window.content, BufferControl)
                 and window.content.buffer is self._session.default_buffer
             ):
-                window.content.focus_on_click = Condition(lambda: self._mode == "scratch")
+                window.content.focus_on_click = Condition(
+                    lambda: self._mode == "scratch"
+                )
         diagnostics = ConditionalContainer(
             Window(
                 FormattedTextControl(self._diagnostic_fragments),
@@ -765,53 +802,109 @@ class _PromptToolkitFrontend:
             body=body,
             key_bindings=menu_bindings,
             menu_items=[
-                MenuItem("File    ", children=[
-                    MenuItem("Save", handler=menu_action("save")),
-                    MenuItem("Run", handler=menu_action("run")),
-                    MenuItem("Return to REPL", handler=menu_action("switch")),
-                ]),
-                MenuItem("Edit    ", children=[
-                    MenuItem("Select All", handler=menu_action("select-all")),
-                    MenuItem("Cut", handler=menu_action("cut")),
-                    MenuItem("Undo", handler=menu_action("undo")),
-                    MenuItem("Redo", handler=menu_action("redo")),
-                    MenuItem("Clear Buffer", handler=menu_action("clear")),
-                ]),
-                MenuItem("View    ", children=[
-                    MenuItem("Toggle Types", handler=menu_action("types")),
-                    MenuItem("Theme", children=[
-                        MenuItem("Midnight", handler=menu_action("theme:Midnight")),
-                        MenuItem("Classic Blue", handler=menu_action("theme:Classic Blue")),
-                        MenuItem("Slate", handler=menu_action("theme:Slate")),
-                        MenuItem("Forest", handler=menu_action("theme:Forest")),
-                        MenuItem("Solarized Dark", handler=menu_action("theme:Solarized Dark")),
-                        MenuItem("Dracula", handler=menu_action("theme:Dracula")),
-                        MenuItem("Nord", handler=menu_action("theme:Nord")),
-                        MenuItem("Monokai", handler=menu_action("theme:Monokai")),
-                        MenuItem("Gruvbox Dark", handler=menu_action("theme:Gruvbox Dark")),
-                        MenuItem("Tokyo Night", handler=menu_action("theme:Tokyo Night")),
-                        MenuItem("Rose Pine", handler=menu_action("theme:Rose Pine")),
-                        MenuItem("Catppuccin Mocha", handler=menu_action("theme:Catppuccin Mocha")),
-                        MenuItem("Ocean", handler=menu_action("theme:Ocean")),
-                        MenuItem("Amber Terminal", handler=menu_action("theme:Amber Terminal")),
-                        MenuItem("Purple Haze", handler=menu_action("theme:Purple Haze")),
-                        MenuItem("Cherry Blossom", handler=menu_action("theme:Cherry Blossom")),
-                        MenuItem("Mint", handler=menu_action("theme:Mint")),
-                        MenuItem("Copper", handler=menu_action("theme:Copper")),
-                        MenuItem("Ice", handler=menu_action("theme:Ice")),
-                        MenuItem("Desert", handler=menu_action("theme:Desert")),
-                        MenuItem("Neon", handler=menu_action("theme:Neon")),
-                        MenuItem("Sepia", handler=menu_action("theme:Sepia")),
-                        MenuItem("Paper", handler=menu_action("theme:Paper")),
-                        MenuItem("Light", handler=menu_action("theme:Light")),
-                        MenuItem("Gruvbox Light", handler=menu_action("theme:Gruvbox Light")),
-                        MenuItem("Solarized Light", handler=menu_action("theme:Solarized Light")),
-                        MenuItem("High Contrast", handler=menu_action("theme:High Contrast")),
-                    ]),
-                ]),
-                MenuItem("Help    ", children=[
-                    MenuItem("Selected Element", handler=menu_action("help")),
-                ]),
+                MenuItem(
+                    "File    ",
+                    children=[
+                        MenuItem("Save", handler=menu_action("save")),
+                        MenuItem("Run", handler=menu_action("run")),
+                        MenuItem("Return to REPL", handler=menu_action("switch")),
+                    ],
+                ),
+                MenuItem(
+                    "Edit    ",
+                    children=[
+                        MenuItem("Select All", handler=menu_action("select-all")),
+                        MenuItem("Cut", handler=menu_action("cut")),
+                        MenuItem("Undo", handler=menu_action("undo")),
+                        MenuItem("Redo", handler=menu_action("redo")),
+                        MenuItem("Clear Buffer", handler=menu_action("clear")),
+                    ],
+                ),
+                MenuItem(
+                    "View    ",
+                    children=[
+                        MenuItem("Toggle Types", handler=menu_action("types")),
+                        MenuItem(
+                            "Theme",
+                            children=[
+                                MenuItem(
+                                    "Midnight", handler=menu_action("theme:Midnight")
+                                ),
+                                MenuItem(
+                                    "Classic Blue",
+                                    handler=menu_action("theme:Classic Blue"),
+                                ),
+                                MenuItem("Slate", handler=menu_action("theme:Slate")),
+                                MenuItem("Forest", handler=menu_action("theme:Forest")),
+                                MenuItem(
+                                    "Solarized Dark",
+                                    handler=menu_action("theme:Solarized Dark"),
+                                ),
+                                MenuItem(
+                                    "Dracula", handler=menu_action("theme:Dracula")
+                                ),
+                                MenuItem("Nord", handler=menu_action("theme:Nord")),
+                                MenuItem(
+                                    "Monokai", handler=menu_action("theme:Monokai")
+                                ),
+                                MenuItem(
+                                    "Gruvbox Dark",
+                                    handler=menu_action("theme:Gruvbox Dark"),
+                                ),
+                                MenuItem(
+                                    "Tokyo Night",
+                                    handler=menu_action("theme:Tokyo Night"),
+                                ),
+                                MenuItem(
+                                    "Rose Pine", handler=menu_action("theme:Rose Pine")
+                                ),
+                                MenuItem(
+                                    "Catppuccin Mocha",
+                                    handler=menu_action("theme:Catppuccin Mocha"),
+                                ),
+                                MenuItem("Ocean", handler=menu_action("theme:Ocean")),
+                                MenuItem(
+                                    "Amber Terminal",
+                                    handler=menu_action("theme:Amber Terminal"),
+                                ),
+                                MenuItem(
+                                    "Purple Haze",
+                                    handler=menu_action("theme:Purple Haze"),
+                                ),
+                                MenuItem(
+                                    "Cherry Blossom",
+                                    handler=menu_action("theme:Cherry Blossom"),
+                                ),
+                                MenuItem("Mint", handler=menu_action("theme:Mint")),
+                                MenuItem("Copper", handler=menu_action("theme:Copper")),
+                                MenuItem("Ice", handler=menu_action("theme:Ice")),
+                                MenuItem("Desert", handler=menu_action("theme:Desert")),
+                                MenuItem("Neon", handler=menu_action("theme:Neon")),
+                                MenuItem("Sepia", handler=menu_action("theme:Sepia")),
+                                MenuItem("Paper", handler=menu_action("theme:Paper")),
+                                MenuItem("Light", handler=menu_action("theme:Light")),
+                                MenuItem(
+                                    "Gruvbox Light",
+                                    handler=menu_action("theme:Gruvbox Light"),
+                                ),
+                                MenuItem(
+                                    "Solarized Light",
+                                    handler=menu_action("theme:Solarized Light"),
+                                ),
+                                MenuItem(
+                                    "High Contrast",
+                                    handler=menu_action("theme:High Contrast"),
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                MenuItem(
+                    "Help    ",
+                    children=[
+                        MenuItem("Selected Element", handler=menu_action("help")),
+                    ],
+                ),
             ],
         )
         original_menu_fragments = menu._get_menu_fragments
@@ -944,15 +1037,23 @@ class _PromptToolkitFrontend:
             "completion-menu.meta.completion": f"bg:{body_bg} {bar_fg}",
             "completion-menu.meta.completion.current": f"bg:{bar_fg} {bar_bg}",
             "auto-suggestion": "#6c7086 italic",
-            "keyword": "ansimagenta bold", "type": "ansicyan", "number": "ansiyellow",
-            "string": "ansigreen", "comment": "#6c7086 italic", "variable": "ansiblue",
-            "tag": "ansired", "operator": "ansiwhite bold", "punctuation": "#a6adc8",
-            "name": body_fg, "error": f"{error_fg} underline",
+            "keyword": "ansimagenta bold",
+            "type": "ansicyan",
+            "number": "ansiyellow",
+            "string": "ansigreen",
+            "comment": "#6c7086 italic",
+            "variable": "ansiblue",
+            "tag": "ansired",
+            "operator": "ansiwhite bold",
+            "punctuation": "#a6adc8",
+            "name": body_fg,
+            "error": f"{error_fg} underline",
         }
 
     def _apply_theme(self, name: str) -> None:
         """Apply a named editor theme immediately."""
         from prompt_toolkit.styles import Style
+
         self._theme_name = name
         self._session.style = Style.from_dict(self._theme_styles(name))
 
@@ -1017,7 +1118,11 @@ class _PromptToolkitFrontend:
 
     def wait_for_scratch_result(self) -> None:
         """Pause before restoring the full-screen editor after an explicit run."""
-        print("\n\033[2mPress Enter to return to the scratchpad...\033[0m", end="", flush=True)
+        print(
+            "\n\033[2mPress Enter to return to the scratchpad...\033[0m",
+            end="",
+            flush=True,
+        )
         try:
             input()
         except EOFError:
@@ -1052,7 +1157,9 @@ class _PromptToolkitFrontend:
             hint = self._type_hint_provider(source)
         except Exception:
             return {}
-        if not hint or not hint.lower().startswith(("type error", "parse error", "lex error")):
+        if not hint or not hint.lower().startswith(
+            ("type error", "parse error", "lex error")
+        ):
             return {}
         location = re.search(r"(?:\bat\s+|^|\s)(\d+):(\d+)(?:\b|:)", hint)
         if location:
@@ -1089,8 +1196,7 @@ class _PromptToolkitFrontend:
         """Render the complete diagnostic in a restrained panel above status."""
         text = self._diagnostic_text()
         return [
-            ("class:editor.diagnostic.error", line + "\n")
-            for line in text.splitlines()
+            ("class:editor.diagnostic.error", line + "\n") for line in text.splitlines()
         ]
 
     def _bottom_toolbar(self):
@@ -1118,7 +1224,9 @@ class _PromptToolkitFrontend:
                 hint = self._type_hint_provider(document.text)
             except Exception:
                 hint = None
-            if hint and not hint.lower().startswith(("type error", "parse error", "lex error")):
+            if hint and not hint.lower().startswith(
+                ("type error", "parse error", "lex error")
+            ):
                 status = hint.splitlines()[0]
             elif hint:
                 status = "Type error"
@@ -1127,7 +1235,6 @@ class _PromptToolkitFrontend:
             ("class:bottom-toolbar.type", f"{row}:{column}  {status}{modified}"),
             ("class:bottom-toolbar", "  [scratch.vlnc] "),
         ]
-
 
 
 class _ValiancePromptLexer:
@@ -1139,22 +1246,33 @@ class _ValiancePromptLexer:
         """Return highlighted lines with live error underlines."""
         lines = document.lines
         spans = self._error_spans_provider(document.text)
+
         def get_line(lineno: int):
             """Return fragments for one display line."""
-            if lineno >= len(lines): return []
-            fragments = highlighted_fragments(lines[lineno]); span = spans.get(lineno)
-            if span is None: return fragments
-            start, end = span; rendered = []; offset = 0
+            if lineno >= len(lines):
+                return []
+            fragments = highlighted_fragments(lines[lineno])
+            span = spans.get(lineno)
+            if span is None:
+                return fragments
+            start, end = span
+            rendered = []
+            offset = 0
             for style, text in fragments:
                 stop = offset + len(text)
-                if stop <= start or offset >= end: rendered.append((style, text))
+                if stop <= start or offset >= end:
+                    rendered.append((style, text))
                 else:
-                    left=max(start-offset,0); right=min(end-offset,len(text))
-                    if left: rendered.append((style,text[:left]))
-                    rendered.append((f"{style} class:error".strip(),text[left:right]))
-                    if right < len(text): rendered.append((style,text[right:]))
-                offset=stop
+                    left = max(start - offset, 0)
+                    right = min(end - offset, len(text))
+                    if left:
+                        rendered.append((style, text[:left]))
+                    rendered.append((f"{style} class:error".strip(), text[left:right]))
+                    if right < len(text):
+                        rendered.append((style, text[right:]))
+                offset = stop
             return rendered
+
         return get_line
 
 
