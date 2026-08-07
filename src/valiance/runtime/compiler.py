@@ -1710,11 +1710,32 @@ def _runtime_parameter_rank(typ: Type) -> int | None:
         return _runtime_parameter_rank(typ.inner)
     if isinstance(typ, CollectionType):
         return typ.rank if isinstance(typ.rank, int) else None
-    if isinstance(typ, (UnionType, IntersectionType)):
+    if isinstance(typ, UnionType):
+        optional_payloads = tuple(
+            item.args[0]
+            for item in typ.items
+            if (
+                isinstance(item, NominalType)
+                and item.name == Symbol("Some")
+                and len(item.args) == 1
+            )
+        )
+        if optional_payloads and any(
+            isinstance(item, NoneTypeNode) for item in typ.items
+        ):
+            payload = (
+                optional_payloads[0]
+                if len(optional_payloads) == 1
+                else UnionType(frozenset(optional_payloads))
+            )
+            return _runtime_parameter_rank(payload)
         ranks = tuple(_runtime_parameter_rank(item) for item in typ.items)
         # A union such as ``T | T~`` accepts both scalar and collection values
         # as atomic parameters. It must not be assigned scalar rank zero, which
         # would make the prepared-call adapter traverse collection alternatives.
+        return ranks[0] if ranks and all(rank == ranks[0] for rank in ranks) else None
+    if isinstance(typ, IntersectionType):
+        ranks = tuple(_runtime_parameter_rank(item) for item in typ.items)
         return ranks[0] if ranks and all(rank == ranks[0] for rank in ranks) else None
     if isinstance(typ, RankVariable):
         return None

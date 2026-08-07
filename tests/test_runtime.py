@@ -1794,6 +1794,18 @@ fn => choose end | call{Number}(6)
             [RuntimeNumber("7")],
         )
 
+    def test_explicit_call_treats_optional_collection_union_as_one_argument(self):
+        source = """
+fn (:(Number | String+)?) =>
+  match =>
+    ["hello", "world"] => "kind greeting"
+    _ => "Nothing"
+  end
+end
+call(["hello", "world"])
+"""
+        self.assertEqual(execute(source), ["kind greeting"])
+
     def test_executes_both_for_zero_through_three_input_callables(self):
         self.assertEqual(
             execute("both: fn => 7 end"),
