@@ -1131,7 +1131,12 @@ class _PromptToolkitFrontend:
 
     def save_scratchpad(self) -> str | None:
         """Prompt for a ``.vlnc`` path and write the retained scratch source."""
-        raw_path = self._session.prompt("Save scratchpad as: ").strip()
+        # The editor session is multiline, so Enter inserts source text.
+        # Use a separate single-line session for the filename prompt.
+        from prompt_toolkit import PromptSession
+
+        path_session: PromptSession[str] = PromptSession(multiline=False)
+        raw_path = path_session.prompt("Save scratchpad as: ").strip()
         if not raw_path:
             return None
         path = os.path.expanduser(raw_path)
