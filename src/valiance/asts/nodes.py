@@ -158,6 +158,8 @@ class TypedMatchNode(TypedNode):
     case_guards: tuple[
         tuple[tuple[ASTNode | TypedNode, ...], ...], ...
     ] = ()
+    case_pattern_arities: tuple[tuple[int, ...], ...] = ()
+    case_guard_arities: tuple[tuple[int, ...], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -765,6 +767,13 @@ class GuardPatternNode(MatchPatternNode):
 
 
 @dataclass(frozen=True)
+class ExtractPatternNode(MatchPatternNode):
+    """A pattern alternative that projects captures instead of its subject."""
+
+    pattern: MatchPatternNode
+
+
+@dataclass(frozen=True)
 class WildcardPatternNode(MatchPatternNode):
     pass
 
@@ -800,6 +809,8 @@ class TypePatternNode(MatchPatternNode):
 
 def pattern_binding_counts(pattern: MatchPatternNode) -> dict[Symbol, int]:
     """Return maximum binding occurrences along one successful pattern path."""
+    if isinstance(pattern, ExtractPatternNode):
+        return pattern_binding_counts(pattern.pattern)
     if isinstance(pattern, BindingPatternNode):
         result = pattern_binding_counts(pattern.pattern)
         result[pattern.name] = result.get(pattern.name, 0) + 1
@@ -836,6 +847,8 @@ def is_catch_all_match_pattern(pattern: MatchPatternNode) -> bool:
     """Return whether a pattern unconditionally accepts every subject value."""
     if has_repeated_match_bindings((pattern,)):
         return False
+    if isinstance(pattern, ExtractPatternNode):
+        return is_catch_all_match_pattern(pattern.pattern)
     if isinstance(pattern, (WildcardPatternNode, RestPatternNode)):
         return True
     if isinstance(pattern, BindingPatternNode):

@@ -24,6 +24,7 @@ from valiance.asts import (
     ElementTagDeclarationNode,
     EnumMemberNode,
     ExpressionPatternNode,
+    ExtractPatternNode,
     ExtensionPatternRule,
     FieldAccessNode,
     FieldSetNode,
@@ -1160,6 +1161,16 @@ class Parser:
             case_start = self._current
             extract = self._match_ident("extract")
             patterns = self._match_case_patterns()
+            if extract:
+                first, *remaining = patterns
+                if isinstance(first, OrPatternNode):
+                    first = OrPatternNode(
+                        (ExtractPatternNode(first.options[0], location=first.options[0].location), *first.options[1:]),
+                        location=first.location,
+                    )
+                else:
+                    first = ExtractPatternNode(first, location=first.location)
+                patterns = (first, *remaining)
             pattern_type = None
             if (
                 len(patterns) == 1
@@ -1174,7 +1185,7 @@ class Parser:
                     (),
                     pattern_type,
                     self._match_body(case_column),
-                    extract=extract,
+                    extract=False,
                     location=_loc(case_start),
                 )
             )
@@ -1210,6 +1221,49 @@ class Parser:
             return options[0]
         return OrPatternNode(tuple(options), location=options[0].location)
 
+    def _match_guard_chain_until(
+        self,
+        terminators: set[TokenKind | str],
+    ) -> tuple[ASTNode, ...]:
+        """Parse a guard chain, reserving adjacent ``||`` for or-patterns."""
+        nodes: list[ASTNode] = []
+        segment: list[_ChainPiece] = []
+        self._skip_newlines()
+        ordinary_terminators = terminators - {TokenKind.PIPE}
+        while not self._at_terminator(ordinary_terminators):
+            if (
+                self._check(TokenKind.PIPE)
+                and self._peek(1).kind is TokenKind.PIPE
+                and self._adjacent(self._current, self._peek(1))
+            ):
+                break
+            if self._match(TokenKind.PIPE):
+                nodes.extend(
+                    _lower_chain_segment(
+                        segment,
+                        reverse_elements=not bool(self._where_clause_depth),
+                    )
+                )
+                segment.clear()
+                continue
+            piece = self._term()
+            segment.append(piece)
+            if piece.breaks_chain:
+                nodes.extend(
+                    _lower_chain_segment(
+                        segment,
+                        reverse_elements=not bool(self._where_clause_depth),
+                    )
+                )
+                segment.clear()
+        nodes.extend(
+            _lower_chain_segment(
+                segment,
+                reverse_elements=not bool(self._where_clause_depth),
+            )
+        )
+        return tuple(nodes)
+
     def _match_pattern_atom(
         self,
         terminators: set[TokenKind],
@@ -1220,7 +1274,7 @@ class Parser:
         if self._match_ident("if"):
             start = self._previous
             return GuardPatternNode(
-                self._chain_until(terminators),
+                self._match_guard_chain_until(terminators),
                 location=_loc(start),
             )
         if self._check_ident("_"):

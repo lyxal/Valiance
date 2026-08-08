@@ -12,6 +12,7 @@ from valiance.asts import (
     DictLiteralNode,
     ElementExtension,
     ElementNode,
+    ExtractPatternNode,
     FieldAccessNode,
     ElementTagDeclarationNode,
     EnumMemberNode,
@@ -1712,10 +1713,34 @@ end
         )
 
 
+    def test_extract_is_scoped_to_its_case_across_or_and_comma_patterns(self):
+        [node] = parse("""
+match =>
+  extract [1, _] || [2, _], [3, _] => "extracting"
+  [4, _], [5, _] => "normal"
+end
+""")
+
+        self.assertFalse(any(case.extract for case in node.cases))
+        self.assertEqual(
+            [len(case.patterns) for case in node.cases],
+            [2, 2],
+        )
+        self.assertIsInstance(node.cases[0].patterns[0], OrPatternNode)
+        self.assertIsInstance(
+            node.cases[0].patterns[0].options[0], ExtractPatternNode
+        )
+        self.assertIsInstance(
+            node.cases[0].patterns[0].options[1], ListPatternNode
+        )
+        self.assertIsInstance(node.cases[0].patterns[1], ListPatternNode)
+        self.assertIsInstance(node.cases[1].patterns[0], ListPatternNode)
+        self.assertIsInstance(node.cases[1].patterns[1], ListPatternNode)
+
     def test_parses_extracting_match_cases(self):
         [node] = parse("match =>\n  extract [1, _, 3] => * 2\n  [1, $n = _, 3] => $n\nend")
-        self.assertTrue(node.cases[0].extract)
-        self.assertFalse(node.cases[1].extract)
+        self.assertIsInstance(node.cases[0].patterns[0], ExtractPatternNode)
+        self.assertFalse(any(case.extract for case in node.cases))
 
 
 if __name__ == "__main__":

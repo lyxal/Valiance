@@ -181,7 +181,7 @@ def create_repl_frontend(
             type_hint_provider=type_hint_provider,
             documentation_provider=documentation_provider,
         )
-    except ImportError, OSError, RuntimeError, ValueError:
+    except (ImportError, OSError, RuntimeError, ValueError):
         return plain
 
 
@@ -332,7 +332,7 @@ def _is_tty(stream: TextIO) -> bool:
     """Return whether the value is tty."""
     try:
         return bool(stream.isatty())
-    except AttributeError, OSError:
+    except (AttributeError, OSError):
         return False
 
 
@@ -373,7 +373,7 @@ def _copy_to_system_clipboard(text: str) -> bool:
                 return True
             finally:
                 user32.CloseClipboard()
-        except AttributeError, OSError:
+        except (AttributeError, OSError):
             return False
 
     if sys.platform == "darwin":
@@ -386,7 +386,7 @@ def _copy_to_system_clipboard(text: str) -> bool:
                 timeout=2,
             )
             return True
-        except OSError, subprocess.SubprocessError:
+        except (OSError, subprocess.SubprocessError):
             return False
 
     # OSC 52 is supported by many modern Unix terminals and remote shells.

@@ -42,10 +42,13 @@ from valiance.asts import (
     ElementExtension,
     ElementNode,
     EnumMemberNode,
+    ExpressionPatternNode,
+    ExtractPatternNode,
     FileLintSuppressionNode,
     FunctionNode,
     FunctionOverloadTyping,
     FunctionParam,
+    GuardPatternNode,
     ImportComponent,
     ImportPath,
     ImportSpec,
@@ -124,6 +127,7 @@ def _mandatory_regex_groups(source: str) -> frozenset[int]:
     parsed = _regex_parser.parse(source, 0)
 
     def guaranteed(sequence: object) -> set[int]:
+        """Collect groups that participate on every path through a sequence."""
         result: set[int] = set()
         for operation, argument in sequence:
             name = str(operation)
@@ -154,6 +158,7 @@ def _regex_capture_interface(
     mandatory = _mandatory_regex_groups(compiled.pattern)
 
     def capture_type(index: int) -> T.Type:
+        """Return the static type of one mandatory or optional capture group."""
         return T.String if index in mandatory else T.optional(T.String)
 
     anonymous = tuple(
@@ -181,22 +186,70 @@ class _MatchAnalysis:
             self._diagnose("match requires at least one case", node)
             return BranchSet()
 
-        arities = {len(case.patterns) for case in node.cases}
-        arity = next(iter(arities)) if len(arities) == 1 else None
+        if not self._match_value_patterns_are_self_contained(node, branch):
+            return BranchSet()
+
+        analysed_guards: list[tuple[tuple[ASTNode | TypedNode, ...], ...]] = []
+        case_guard_inputs: list[tuple[tuple[T.Type, ...], ...]] = []
+        case_pattern_arities: list[tuple[int, ...]] = []
+        for case in node.cases:
+            subject_hints = tuple(
+                _patterns._match_subject_pattern_type(branch, node, index, self.env)
+                for index in range(len(case.patterns))
+            )
+            guard_result = self._analyse_match_guards(case.patterns, subject_hints, node)
+            if guard_result is None:
+                return BranchSet()
+            typed_guards, guard_inputs = guard_result
+            analysed_guards.append(typed_guards)
+            case_guard_inputs.append(guard_inputs)
+            guard_iter = iter(guard_inputs)
+            pattern_arities: list[int] = []
+            for pattern in case.patterns:
+                try:
+                    pattern_arities.append(self._match_pattern_consumption(pattern, guard_iter))
+                except ValueError as exc:
+                    self._diagnose(str(exc), pattern)
+                    return BranchSet()
+            case_pattern_arities.append(tuple(pattern_arities))
+
+        # Arity is measured uniformly for every case form. Literal/value,
+        # typed, structural, extracted, and wildcard patterns each consume one
+        # match subject per top-level pattern. A guard consumes the number of
+        # inputs inferred for its isolated guard function. Extraction changes
+        # what the selected body can cycle over, never how many subjects the
+        # case consumes.
+        consumptions = {sum(arities) for arities in case_pattern_arities}
+        arity = next(iter(consumptions)) if len(consumptions) == 1 else None
         if arity is None:
-            self._diagnose("match cases must match the same number of values", node)
+            self._diagnose("match cases must consume the same number of inputs", node)
             return BranchSet()
         if arity == 0:
             self._diagnose("match requires at least one pattern per case", node)
             return BranchSet()
 
+        coordinate_types: list[list[T.Type]] = [[] for _ in range(arity)]
+        for case, pattern_arities, guard_inputs in zip(
+            node.cases, case_pattern_arities, case_guard_inputs, strict=True
+        ):
+            guard_iter = iter(guard_inputs)
+            coordinate = 0
+            for pattern, consumed in zip(case.patterns, pattern_arities, strict=True):
+                if isinstance(pattern, GuardPatternNode):
+                    inputs = next(guard_iter)
+                    for offset, typ in enumerate(inputs):
+                        coordinate_types[coordinate + offset].append(typ)
+                else:
+                    inferred = _patterns._pattern_subject_type(pattern, self.env.context)
+                    if inferred is not None:
+                        coordinate_types[coordinate].append(inferred)
+                coordinate += consumed
         subject_params = tuple(
-            reversed(
-                tuple(
-                    _patterns._match_subject_pattern_type(branch, node, index, self.env)
-                    for index in range(arity)
-                )
-            )
+            reversed(tuple(
+                self._merge_match_coordinate_types(types)
+                if types else _functions._anonymous_type_var(branch, index + 1)
+                for index, types in enumerate(coordinate_types)
+            ))
         )
         sourced = branch.source_arguments(subject_params)
         if sourced is None:
@@ -207,7 +260,7 @@ class _MatchAnalysis:
             return BranchSet()
         stack_subjects, body_input = sourced
         subject_types = tuple(reversed(stack_subjects))
-        if not self._match_patterns_are_valid(subject_types, node):
+        if not self._match_patterns_are_valid(subject_types, node, tuple(case_pattern_arities)):
             return BranchSet()
         if not self._match_is_exhaustive(subject_types, node):
             return BranchSet()
@@ -219,123 +272,55 @@ class _MatchAnalysis:
 
         joined: AnalysisBranch | None = None
         typed_case_bodies: list[tuple[ASTNode | TypedNode, ...]] = []
-        typed_case_guards: list[tuple[tuple[ASTNode | TypedNode, ...], ...]] = []
         subject_variables = _patterns._match_subject_variables(branch, arity)
+        all_simple_coordinates = all(
+            all(count == 1 for count in arities) for arities in case_pattern_arities
+        )
         previous_patterns: list[tuple[MatchPatternNode, ...]] = []
-        for case in node.cases:
-            case_variables = _patterns._match_case_variables(
-                body_input.variables,
-                case.patterns,
-                subject_types,
-                self.env,
+        for case_index, case in enumerate(node.cases):
+            pattern_arities = case_pattern_arities[case_index]
+            simple_coordinates = all_simple_coordinates and all(count == 1 for count in pattern_arities)
+            case_variables = (
+                _patterns._match_case_variables(
+                    body_input.variables, case.patterns, subject_types, self.env
+                )
+                if simple_coordinates
+                else body_input.variables
             )
-            extracted_types: tuple[T.Type, ...] = ()
-            if case.extract:
-                captures: list[T.Type] = []
-                proper_capture = False
-                for pattern, subject_type in zip(case.patterns, subject_types, strict=True):
-                    try:
-                        regex = _extract_regex(pattern)
-                    except re.error as exc:
-                        self._diagnose(f"invalid extracting regular expression: {exc}", pattern)
-                        return BranchSet()
-                    if regex is not None:
-                        anonymous, named = _regex_capture_interface(regex)
-                        captures.extend(anonymous)
-                        for name, typ in named:
-                            case_variables = case_variables.with_block_local(name, typ)
-                        proper_capture = proper_capture or bool(anonymous or named)
-                        continue
-                    try:
-                        pattern_captures = _patterns._pattern_capture_types(pattern, subject_type, self.env)
-                    except ValueError as exc:
-                        self._diagnose(str(exc), pattern)
-                        return BranchSet()
-                    captures.extend(pattern_captures)
-                    proper_capture = proper_capture or bool(pattern_captures) or _patterns._pattern_has_proper_named_capture(pattern)
-                if not proper_capture:
-                    self._diagnose(
-                        "extract requires at least one nested hole, nested binding, rest capture, or regular-expression capture group",
-                        case,
-                    )
+            exposed_types: list[T.Type] = []
+            coordinate = 0
+            for pattern, consumed in zip(case.patterns, pattern_arities, strict=True):
+                segment = subject_types[coordinate:coordinate + consumed]
+                coordinate += consumed
+                try:
+                    exposed = self._pattern_exposed_types(pattern, segment)
+                except (ValueError, re.error) as exc:
+                    self._diagnose(str(exc), pattern)
                     return BranchSet()
-                extracted_types = tuple(captures)
-            if subject_variables:
+                exposed_types.extend(exposed)
+                for name, typ in self._extract_named_regex_captures(pattern):
+                    case_variables = case_variables.with_block_local(name, typ)
+            if subject_variables and simple_coordinates:
                 case_variables = _patterns._refine_match_subject_variables(
-                    case_variables,
-                    subject_variables,
-                    case.patterns,
-                    subject_types,
-                    tuple(previous_patterns),
-                    self.env,
+                    case_variables, subject_variables, case.patterns, subject_types,
+                    tuple(previous_patterns), self.env,
                 )
-            refined_subject_types = tuple(
-                _patterns._match_case_subject_type(
-                    pattern,
-                    subject_type,
-                    tuple(previous[index] for previous in previous_patterns),
-                    self.env,
-                )
-                or subject_type
-                for index, (pattern, subject_type) in enumerate(
-                    zip(case.patterns, subject_types, strict=True)
-                )
-            )
-            retained_subject_types = (
-                extracted_types
-                if case.extract
-                else (
-                    refined_subject_types
-                    if is_catch_all_match_case(case.patterns)
-                    else tuple(
-                        typ
-                        for pattern, typ in zip(case.patterns, refined_subject_types, strict=True)
-                        if not isinstance(pattern, WildcardPatternNode)
-                    )
-                )
-            )
-            # Matched subjects are conceptual case inputs, not physical stack
-            # values. A case therefore begins with the subjects removed, while
-            # ordinary underflow can cycle retained coordinates on demand.
-            # Case bodies operate on retained match subjects, not on values below
-            # the consumed subjects. Keep the outer stack isolated while analysing
-            # the case, then restore it when committing the case output.
-            case_input = body_input.with_variables(case_variables).with_stack(
-                T.TypeStack()
-            )
+            retained_subject_types = tuple(exposed_types)
+            case_input = body_input.with_variables(case_variables).with_stack(T.TypeStack())
             case_input = replace(
-                case_input,
-                input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
-                cycle_params=retained_subject_types,
-                cycle_index=0,
-                cycle_stack_remaining=0,
-                cycle_from_top=True,
+                case_input, input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
+                cycle_params=retained_subject_types, cycle_index=0,
+                cycle_stack_remaining=0, cycle_from_top=True,
             )
-            typed_guards = self._analyse_match_guards(
-                subject_types, case.patterns, node
-            )
-            if typed_guards is None:
-                return BranchSet()
-            typed_case_guards.append(typed_guards)
-            case_outputs = self.analyse_scoped_block(
-                BranchSet((case_input,)),
-                case.body,
-            )
+            case_outputs = self.analyse_scoped_block(BranchSet((case_input,)), case.body)
             typed_case_bodies.append(
-                _patterns._typed_block(
-                    case_outputs,
-                    len(case_input.typed_body),
-                    case.body,
-                )
+                _patterns._typed_block(case_outputs, len(case_input.typed_body), case.body)
             )
             for output in case_outputs:
                 candidate = _patterns._match_case_output(output, body_input, node)
                 joined = _patterns._join_match_output(
-                    original=branch,
-                    baseline=body_input,
-                    joined=joined,
-                    candidate=candidate,
-                    ctx=self.env.context,
+                    original=branch, baseline=body_input, joined=joined,
+                    candidate=candidate, ctx=self.env.context,
                 )
                 if joined is None:
                     self._diagnose("match cases inferred different inputs", node)
@@ -344,81 +329,245 @@ class _MatchAnalysis:
 
         if joined is None:
             return BranchSet()
-        return BranchSet(
-            (
-                joined.emit(
-                    TypedMatchNode(
-                        node,
-                        _calls._returns_result_type(joined.stack.items),
-                        case_bodies=tuple(typed_case_bodies),
-                        case_guards=tuple(typed_case_guards),
+        return BranchSet((joined.emit(TypedMatchNode(
+            node, _calls._returns_result_type(joined.stack.items),
+            case_bodies=tuple(typed_case_bodies),
+            case_guards=tuple(analysed_guards),
+            case_pattern_arities=tuple(case_pattern_arities),
+            case_guard_arities=tuple(
+                tuple(len(inputs) for inputs in guards) for guards in case_guard_inputs
+            ),
+        )),))
+
+    def _match_value_patterns_are_self_contained(
+        self,
+        node: MatchNode,
+        branch: AnalysisBranch,
+    ) -> bool:
+        """Reject value-pattern expressions that require external stack inputs."""
+        for case in node.cases:
+            for pattern in case.patterns:
+                for expression_pattern in self._match_expression_patterns(pattern):
+                    diagnostics_before = len(self.diagnostics)
+                    expression_input = AnalysisBranch(
+                        variables=branch.variables,
+                        input_mode=InputMode.INFER_INPUTS,
                     )
-                ),
+                    outputs = self.analyse_scoped_block(
+                        BranchSet((expression_input,)),
+                        expression_pattern.expression,
+                    )
+                    if len(self.diagnostics) != diagnostics_before:
+                        return False
+                    if not outputs:
+                        self._diagnose(
+                            "value match expression must produce exactly one value",
+                            expression_pattern,
+                        )
+                        return False
+                    if any(output.inputs for output in outputs):
+                        self._diagnose(
+                            "value match expressions are stack isolated and cannot consume inputs",
+                            expression_pattern,
+                        )
+                        return False
+                    if any(len(output.stack) != 1 for output in outputs):
+                        self._diagnose(
+                            "value match expression must produce exactly one value",
+                            expression_pattern,
+                        )
+                        return False
+        return True
+
+    def _match_expression_patterns(
+        self,
+        pattern: MatchPatternNode,
+    ) -> Iterator[ExpressionPatternNode]:
+        """Yield expression-valued patterns nested inside one case pattern."""
+        if isinstance(pattern, ExpressionPatternNode):
+            yield pattern
+            return
+        if isinstance(pattern, ExtractPatternNode):
+            yield from self._match_expression_patterns(pattern.pattern)
+            return
+        if isinstance(pattern, BindingPatternNode):
+            yield from self._match_expression_patterns(pattern.pattern)
+            return
+        if isinstance(pattern, OrPatternNode):
+            for option in pattern.options:
+                yield from self._match_expression_patterns(option)
+            return
+        if isinstance(pattern, ListPatternNode):
+            for item in pattern.items:
+                yield from self._match_expression_patterns(item)
+            return
+        if isinstance(pattern, TypePatternNode):
+            for field in pattern.fields:
+                yield from self._match_expression_patterns(field)
+
+    def _pattern_exposed_types(
+        self,
+        pattern: MatchPatternNode,
+        subject_types: tuple[T.Type, ...],
+    ) -> tuple[T.Type, ...]:
+        """Return the common body-input interface of a successful pattern."""
+        subject_type = subject_types[0]
+        if isinstance(pattern, ExtractPatternNode):
+            inner = pattern.pattern
+            regex = _extract_regex(inner)
+            if regex is not None:
+                anonymous, named = _regex_capture_interface(regex)
+                captures = (*anonymous, *(typ for _name, typ in named))
+            else:
+                captures = _patterns._pattern_capture_types(
+                    inner, subject_type, self.env
+                )
+            if not captures and not _patterns._pattern_has_proper_named_capture(inner):
+                raise ValueError(
+                    "extract requires at least one nested hole, nested binding, "
+                    "rest capture, or regular-expression capture group"
+                )
+            return tuple(captures)
+        if isinstance(pattern, OrPatternNode):
+            options = tuple(
+                self._pattern_exposed_types(option, subject_types)
+                for option in pattern.options
             )
+            counts = {len(option) for option in options}
+            if len(counts) != 1:
+                raise ValueError(
+                    "or-pattern alternatives expose different numbers of matched values"
+                )
+            merged = list(options[0]) if options else []
+            for option in options[1:]:
+                merged = [
+                    T.merge_types(left, right, self.env.context)
+                    for left, right in zip(merged, option, strict=True)
+                ]
+            return tuple(merged)
+        if isinstance(pattern, GuardPatternNode):
+            return subject_types
+        return (
+            _patterns._successful_pattern_subject_type(
+                pattern, subject_type, self.env
+            ),
         )
+
+    def _extract_named_regex_captures(
+        self,
+        pattern: MatchPatternNode,
+    ) -> Iterator[tuple[Symbol, T.Type]]:
+        """Yield named regex captures introduced by extracting alternatives."""
+        if isinstance(pattern, ExtractPatternNode):
+            regex = _extract_regex(pattern.pattern)
+            if regex is not None:
+                _anonymous, named = _regex_capture_interface(regex)
+                yield from named
+            return
+        if isinstance(pattern, OrPatternNode):
+            for option in pattern.options:
+                yield from self._extract_named_regex_captures(option)
+
+    def _merge_match_coordinate_types(self, types: list[T.Type]) -> T.Type:
+        """Merge subject hints contributed for one match input coordinate."""
+        result = types[0]
+        for typ in types[1:]:
+            result = T.merge_types(result, typ, self.env.context)
+        return result
+
+    def _match_pattern_consumption(
+        self, pattern: MatchPatternNode, guard_inputs: Iterator[tuple[T.Type, ...]]
+    ) -> int:
+        """Return the number of match subjects consumed by one pattern."""
+        if isinstance(pattern, ExtractPatternNode):
+            return self._match_pattern_consumption(pattern.pattern, guard_inputs)
+        if isinstance(pattern, GuardPatternNode):
+            return len(next(guard_inputs))
+        if isinstance(pattern, OrPatternNode):
+            option_counts = {self._match_pattern_consumption(option, guard_inputs) for option in pattern.options}
+            if len(option_counts) != 1:
+                raise ValueError("every alternative in an or-pattern must consume the same number of inputs")
+            return next(iter(option_counts))
+        nested_guards = tuple(_patterns._pattern_guards(pattern, T.V("_match_guard")))
+        for _condition, _subject in nested_guards:
+            inputs = next(guard_inputs)
+            if len(inputs) != 1:
+                raise ValueError("nested match guards must consume exactly one input")
+        return 1
 
     def _analyse_match_guards(
         self,
-        subject_types: tuple[T.Type, ...],
         patterns: tuple[MatchPatternNode, ...],
+        subject_hints: tuple[T.Type, ...],
         node: MatchNode,
-    ) -> tuple[tuple[ASTNode | TypedNode, ...], ...] | None:
-        """Validate guards and retain their analysed nodes in traversal order."""
-        guards = tuple(_patterns._match_pattern_guards(patterns, subject_types))
+    ) -> tuple[
+        tuple[tuple[ASTNode | TypedNode, ...], ...],
+        tuple[tuple[T.Type, ...], ...],
+    ] | None:
+        """Analyse guards as self-contained stack functions and record arity."""
+        guards = tuple(_patterns._match_pattern_guards(patterns, subject_hints))
         typed_guards: list[tuple[ASTNode | TypedNode, ...]] = []
+        guard_inputs: list[tuple[T.Type, ...]] = []
         for guard, subject_type in guards:
             diagnostics_before = len(self.diagnostics)
             guard_input = AnalysisBranch(
                 stack=T.TypeStack((subject_type,)),
                 variables=BranchVariables(),
-                input_mode=InputMode.TOP_LEVEL,
+                input_mode=InputMode.INFER_INPUTS,
             )
             outputs = self.analyse_scoped_block(BranchSet((guard_input,)), guard)
             terminal, outputs = _utils._split_terminal_branches(outputs)
             if not outputs:
                 if terminal:
-                    typed_guards.append(
-                        _patterns._typed_block(
-                            terminal,
-                            len(guard_input.typed_body),
-                            guard,
-                        )
-                    )
+                    typed_guards.append(_patterns._typed_block(
+                        terminal, len(guard_input.typed_body), guard
+                    ))
+                    guard_inputs.append((subject_type,))
                     continue
                 if len(self.diagnostics) == diagnostics_before:
                     self._diagnose("match guard must be a boolean value", node)
                 return None
             outputs = self.require_stack_top_assignable(
-                outputs,
-                expected=Boolean,
-                location=node.location,
-                message="match guard must be a boolean value",
-                code="match-guard-type",
+                outputs, expected=Boolean, location=node.location,
+                message="match guard must be a boolean value", code="match-guard-type",
             )
             if not outputs or any(output.failed for output in outputs):
                 self._diagnose("match guard must be a boolean value", node)
                 return None
-            typed_guards.append(
-                _patterns._typed_block(
-                    outputs,
-                    len(guard_input.typed_body),
-                    guard,
-                )
-            )
-        return tuple(typed_guards)
+            first = next(iter(outputs))
+            input_counts = {len(output.inputs) for output in outputs}
+            if len(input_counts) != 1:
+                self._diagnose("match guard has no single input arity", node)
+                return None
+            inferred_inputs = list(first.inputs)
+            for output in tuple(outputs)[1:]:
+                inferred_inputs = [
+                    T.merge_types(left, right, self.env.context)
+                    for left, right in zip(inferred_inputs, output.inputs, strict=True)
+                ]
+            typed_guards.append(_patterns._typed_block(
+                outputs, len(guard_input.typed_body), guard
+            ))
+            guard_inputs.append((*inferred_inputs, subject_type))
+        return tuple(typed_guards), tuple(guard_inputs)
 
     def _match_patterns_are_valid(
         self,
         subject_types: tuple[T.Type, ...],
         node: MatchNode,
+        case_pattern_arities: tuple[tuple[int, ...], ...] | None = None,
     ) -> bool:
         """Validate pattern structure that must agree with every runtime path."""
-        for case in node.cases:
-            for pattern, subject_type in zip(
-                case.patterns,
-                subject_types,
-                strict=True,
-            ):
+        for case_index, case in enumerate(node.cases):
+            arities = (
+                case_pattern_arities[case_index]
+                if case_pattern_arities is not None
+                else tuple(1 for _ in case.patterns)
+            )
+            coordinate = 0
+            for pattern, consumed in zip(case.patterns, arities, strict=True):
+                subject_type = subject_types[coordinate]
+                coordinate += consumed
                 for pattern_type in _core._match_pattern_types(pattern):
                     if not self._validate_data_tags(
                         ((pattern_type,),),

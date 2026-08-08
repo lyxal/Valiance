@@ -360,6 +360,8 @@ def _refine_typed_node(typed_node: TypedNode, old: T.Type, new: T.Type) -> Typed
             typ,
             typed_node.case_bodies,
             typed_node.case_guards,
+            typed_node.case_pattern_arities,
+            typed_node.case_guard_arities,
         )
     if isinstance(typed_node, TypedImportedObjectNode):
         return TypedImportedObjectNode(

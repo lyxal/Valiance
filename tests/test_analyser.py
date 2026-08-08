@@ -1586,7 +1586,228 @@ end
 
         self.assertEqual(
             analyser.diagnostics,
-            ["3:1: match cases must match the same number of values"],
+            ["3:1: match cases must consume the same number of inputs"],
+        )
+
+    def test_value_match_expression_cannot_consume_the_outer_stack(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+1 2
+match =>
+  + => "invalid"
+  _ => "fallback"
+end
+"""))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "4:3: value match expressions are stack isolated and cannot consume inputs"
+            ],
+        )
+
+    def test_case_arity_is_consistent_across_every_case_form(self):
+        valid_sources = {
+            "value": """
+1 2
+match =>
+  1, 2 => "value"
+  _, _ => "fallback"
+end
+""",
+            "guard": """
+2 3
+match =>
+  if + | == 5 => "guard"
+  10, 20 => "value"
+  _, _ => "fallback"
+end
+""",
+            "typed": """
+1 2
+match =>
+  as :Number, as :Number => "typed"
+  _, _ => "fallback"
+end
+""",
+            "pattern": """
+[1, 9] [2, 8]
+match =>
+  [1, _], [2, _] => "pattern"
+  _, _ => "fallback"
+end
+""",
+            "extracted pattern": """
+[1, 9] [2, 8]
+match =>
+  extract [1, _], [2, _] => "extracted"
+  _, _ => "fallback"
+end
+""",
+            "wildcard": """
+1 2
+match =>
+  _, _ => "wildcard"
+end
+""",
+        }
+
+        for case_type, source in valid_sources.items():
+            with self.subTest(case_type=case_type):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+
+    def test_every_case_form_participates_in_case_arity_validation(self):
+        one_input_cases = {
+            "value": "1",
+            "guard": "if > 0",
+            "typed": "as :Number",
+            "pattern": "[1, _]",
+            "extracted pattern": "extract [1, _]",
+            "wildcard": "_",
+        }
+
+        for case_type, case_source in one_input_cases.items():
+            with self.subTest(case_type=case_type):
+                analyser = Analyser()
+                analyser.analyse(parse(f"""
+1 2
+match =>
+  1, 2 => "two inputs"
+  {case_source} => "one input"
+  _, _ => "fallback"
+end
+"""))
+                self.assertEqual(
+                    analyser.diagnostics,
+                    [
+                        "3:1: match cases must consume the same number of inputs"
+                    ],
+                )
+
+    def test_or_pattern_consistency_is_general_across_pattern_forms(self):
+        valid_sources = {
+            "value": """
+1
+match =>
+  1 || 2 => top
+  _ => 0
+end
+""",
+            "typed": """
+1
+match =>
+  as x: Number if > 0 || as x: String => $x
+  _ => 0
+end
+""",
+            "structural": """
+[1, 9]
+match =>
+  [1, _] || [2, _] => top
+  _ => 0
+end
+""",
+            "wildcard": """
+1
+match =>
+  1 || _ => top
+end
+""",
+            "extracted": """
+[1, 9]
+match =>
+  extract [1, _] || [2, _] => * 2
+  _ => 0
+end
+""",
+        }
+
+        for pattern_form, source in valid_sources.items():
+            with self.subTest(pattern_form=pattern_form):
+                analyser = Analyser()
+                analyser.analyse(parse(source))
+                self.assertEqual(analyser.diagnostics, [])
+
+    def test_or_pattern_guard_and_value_must_consume_equal_inputs(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+1 2
+match =>
+  if + | == 3 || 1 => top
+  _, _ => 0
+end
+"""))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "4:3: every alternative in an or-pattern must consume the same number of inputs"
+            ],
+        )
+
+    def test_or_pattern_exposed_values_merge_types_when_counts_agree(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+[1, 9]
+match =>
+  extract [1, _] || [2, _] => * 2
+  _ => 0
+end
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_or_pattern_exposed_value_counts_must_agree(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+[1, 8, 9]
+match =>
+  extract [1, _, _] || [2, _] => top
+  _ => 0
+end
+"""))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "4:11: or-pattern alternatives expose different numbers of matched values"
+            ],
+        )
+
+    def test_match_guard_and_value_cases_may_share_consumed_input_arity(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+2 3
+match =>
+  if + | == 5 => "sum"
+  10, 20 => "literal"
+  _, _ => "other"
+end
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_match_guard_and_value_cases_must_consume_same_inputs(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+2 3
+match =>
+  if + | == 5 => "sum"
+  10 => "literal"
+end
+"""))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["3:1: match cases must consume the same number of inputs"],
         )
 
     def test_result_question_unwraps_success_type(self):

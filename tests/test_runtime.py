@@ -3796,6 +3796,31 @@ end
             ],
         )
 
+    def test_guard_match_can_consume_two_inputs_like_two_value_patterns(self):
+        self.assertEqual(
+            execute("""
+2 3
+match =>
+  if + | == 5 => "sum"
+  10, 20 => "literal"
+  _, _ => "other"
+end
+"""),
+            ["sum"],
+        )
+
+    def test_value_match_body_cannot_pop_below_matched_subjects(self):
+        self.assertEqual(
+            execute("""
+99 10
+match =>
+  10 => +
+  _ => 0
+end
+"""),
+            [RuntimeNumber("99"), RuntimeNumber("20")],
+        )
+
     def test_recursive_rugged_fold_with_implicit_modifier_and_input_cycling(self):
         self.assertEqual(
             execute("""
@@ -5495,6 +5520,78 @@ $f = fn (xs) => $xs 1 rotate end
 end
 """),
             ["matched"],
+        )
+
+    def test_extract_does_not_leak_across_or_patterns_or_later_cases(self):
+        self.assertEqual(
+            execute("""
+[2, 7]
+match =>
+  extract [1, _] || [2, _] => * 2
+  [3, _] => "normal"
+  _ => "fallback"
+end
+"""),
+            [[RuntimeNumber(4), RuntimeNumber(14)]],
+        )
+        self.assertEqual(
+            execute("""
+[3, 7]
+match =>
+  extract [1, _] || [2, _] => * 2
+  [3, _] => "normal"
+  _ => "fallback"
+end
+"""),
+            ["normal"],
+        )
+
+    def test_extract_does_not_leak_across_commas_or_later_cases(self):
+        self.assertEqual(
+            execute("""
+[2, 5] [1, 4]
+match =>
+  extract [1, _], [2, _] => +
+  [3, _], [4, _] => "normal"
+  _, _ => "fallback"
+end
+"""),
+            [[RuntimeNumber(6), RuntimeNumber(9)]],
+        )
+        self.assertEqual(
+            execute("""
+[4, 8] [3, 7]
+match =>
+  extract [1, _], [2, _] => +
+  [3, _], [4, _] => "normal"
+  _, _ => "fallback"
+end
+"""),
+            ["normal"],
+        )
+
+    def test_extract_handles_or_before_comma_without_affecting_next_case(self):
+        self.assertEqual(
+            execute("""
+[3, 5] [2, 4]
+match =>
+  extract [1, _] || [2, _], [3, _] => +
+  [4, _], [5, _] => "normal"
+  _, _ => "fallback"
+end
+"""),
+            [[RuntimeNumber(5), RuntimeNumber(9)]],
+        )
+        self.assertEqual(
+            execute("""
+[5, 8] [4, 7]
+match =>
+  extract [1, _] || [2, _], [3, _] => +
+  [4, _], [5, _] => "normal"
+  _, _ => "fallback"
+end
+"""),
+            ["normal"],
         )
 
     def test_extracting_match_patterns_project_structural_and_regex_captures(self):

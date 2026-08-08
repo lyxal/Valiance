@@ -9,6 +9,7 @@ import valiance.vtypes as T
 from valiance.asts import (
     ASTNode,
     BindingPatternNode,
+    ExtractPatternNode,
     GuardPatternNode,
     IndexSelector,
     ListPatternNode,
@@ -578,6 +579,8 @@ def _invalid_destructure_arity(
     env: T.Environment,
 ) -> tuple[TypePatternNode, Symbol, int, int] | None:
     """Return the first object pattern whose field count cannot match."""
+    if isinstance(pattern, ExtractPatternNode):
+        return _invalid_destructure_arity(pattern.pattern, subject_type, env)
     if isinstance(pattern, BindingPatternNode):
         return _invalid_destructure_arity(pattern.pattern, subject_type, env)
     if isinstance(pattern, OrPatternNode):
@@ -631,6 +634,8 @@ def _covered_closed_members(
     env: T.Environment,
 ) -> tuple[Symbol, ...]:
     """Return closed members that this pattern accepts on every value path."""
+    if isinstance(pattern, ExtractPatternNode):
+        return _covered_closed_members(pattern.pattern, subject_type, expected, env)
     if has_repeated_match_bindings((pattern,)):
         return ()
     if isinstance(pattern, BindingPatternNode):
@@ -673,6 +678,8 @@ def _pattern_is_irrefutable(
     env: T.Environment,
 ) -> bool:
     """Return whether a pattern succeeds for every value of ``subject_type``."""
+    if isinstance(pattern, ExtractPatternNode):
+        return _pattern_is_irrefutable(pattern.pattern, subject_type, env)
     if has_repeated_match_bindings((pattern,)):
         return False
     if isinstance(pattern, (WildcardPatternNode, RestPatternNode)):
@@ -867,6 +874,8 @@ def _pattern_subject_type(
     ctx: T.Context,
 ) -> T.Type | None:
     """Determine the type of pattern subject during static analysis."""
+    if isinstance(pattern, ExtractPatternNode):
+        return _pattern_subject_type(pattern.pattern, ctx)
     if isinstance(pattern, TypePatternNode):
         return pattern.typ
     if isinstance(pattern, BindingPatternNode):
@@ -1067,6 +1076,8 @@ def _successful_pattern_subject_type(
     env: T.Environment,
 ) -> T.Type:
     """Return a safe subject refinement shared by every successful path."""
+    if isinstance(pattern, ExtractPatternNode):
+        return _successful_pattern_subject_type(pattern.pattern, subject_type, env)
     if isinstance(pattern, BindingPatternNode):
         return _successful_pattern_subject_type(pattern.pattern, subject_type, env)
     if isinstance(pattern, TypePatternNode):
@@ -1096,6 +1107,8 @@ def _fully_excluded_pattern_types(
     env: T.Environment,
 ) -> tuple[T.Type, ...]:
     """Return type branches completely consumed by an earlier match pattern."""
+    if isinstance(pattern, ExtractPatternNode):
+        return _fully_excluded_pattern_types(pattern.pattern, env)
     if isinstance(pattern, BindingPatternNode):
         return _fully_excluded_pattern_types(pattern.pattern, env)
     if isinstance(pattern, OrPatternNode):
@@ -1199,6 +1212,8 @@ def _pattern_binding_types(
 ) -> dict[Symbol, T.Type]:
     """Return bindings guaranteed to exist when this pattern succeeds."""
     result: dict[Symbol, T.Type] = {}
+    if isinstance(pattern, ExtractPatternNode):
+        return _pattern_binding_types(pattern.pattern, subject_type, env)
 
     def add(name: Symbol, typ: T.Type) -> None:
         """Merge one guaranteed binding into the pattern-local type map."""
@@ -1279,6 +1294,8 @@ def _narrowed_pattern_type(
 def _pattern_bound_names(pattern: MatchPatternNode) -> frozenset[Symbol]:
     """Return every name that at least one successful pattern path may bind."""
     names: set[Symbol] = set()
+    if isinstance(pattern, ExtractPatternNode):
+        return _pattern_bound_names(pattern.pattern)
     if isinstance(pattern, BindingPatternNode):
         names.add(pattern.name)
         names.update(_pattern_bound_names(pattern.pattern))
@@ -1306,6 +1323,8 @@ def _pattern_capture_types(
     root: bool = True,
 ) -> tuple[T.Type, ...]:
     """Return anonymous values projected by an extracting pattern."""
+    if isinstance(pattern, ExtractPatternNode):
+        return _pattern_capture_types(pattern.pattern, subject_type, env, root=root)
     if isinstance(pattern, WildcardPatternNode):
         return () if root else (subject_type,)
     if isinstance(pattern, RestPatternNode):
@@ -1344,6 +1363,8 @@ def _pattern_capture_types(
 
 def _pattern_has_proper_named_capture(pattern: MatchPatternNode, *, root: bool = True) -> bool:
     """Return whether a pattern names a component below its top-level subject."""
+    if isinstance(pattern, ExtractPatternNode):
+        return _pattern_has_proper_named_capture(pattern.pattern, root=root)
     if isinstance(pattern, BindingPatternNode):
         return not root
     if isinstance(pattern, RestPatternNode):
@@ -1361,6 +1382,8 @@ def _uncheckable_runtime_pattern_type(
     pattern: MatchPatternNode,
 ) -> tuple[MatchPatternNode, T.Type] | None:
     """Return the first pattern type the runtime cannot discriminate."""
+    if isinstance(pattern, ExtractPatternNode):
+        return _uncheckable_runtime_pattern_type(pattern.pattern)
     if isinstance(pattern, TypePatternNode):
         if pattern.typ is not None:
             invalid = _uncheckable_runtime_type(pattern.typ)
@@ -1430,7 +1453,9 @@ def _or_pattern_binding_mismatch(
 ) -> tuple[Symbol, ...]:
     """Return names not bound by every alternative of a nested or-pattern."""
     children: tuple[MatchPatternNode, ...] = ()
-    if isinstance(pattern, BindingPatternNode):
+    if isinstance(pattern, ExtractPatternNode):
+        children = (pattern.pattern,)
+    elif isinstance(pattern, BindingPatternNode):
         children = (pattern.pattern,)
     elif isinstance(pattern, ListPatternNode):
         children = pattern.items
@@ -1487,7 +1512,9 @@ def _pattern_guards(
     subject_type: T.Type,
 ) -> Iterator[tuple[tuple[ASTNode, ...], T.Type]]:
     """Compute pattern guards during static analysis."""
-    if isinstance(pattern, GuardPatternNode):
+    if isinstance(pattern, ExtractPatternNode):
+        yield from _pattern_guards(pattern.pattern, subject_type)
+    elif isinstance(pattern, GuardPatternNode):
         yield pattern.condition, subject_type
     elif isinstance(pattern, TypePatternNode) and pattern.guard:
         yield pattern.guard, pattern.typ or subject_type

@@ -1203,7 +1203,7 @@ class VirtualMachine:
             pattern = patterns[0]
             if not isinstance(pattern, tuple) or not pattern:
                 return None
-            if pattern[0] == "guard" and len(pattern) == 2:
+            if pattern[0] == "guard" and len(pattern) == 3 and pattern[2] == 1:
                 guard_code = pattern[1]
                 if not isinstance(guard_code, FunctionCode):
                     return None
@@ -3058,7 +3058,13 @@ class VirtualMachine:
                             match_result = self._match_patterns(frame, patterns)
                             if match_result is not None:
                                 bindings, values = match_result
-                                _release_stack_tail(frame.stack, len(patterns), self)
+                                consumed = sum(
+                                    pattern[2]
+                                    if isinstance(pattern, tuple) and pattern and pattern[0] == "guard"
+                                    else 1
+                                    for pattern in patterns
+                                )
+                                _release_stack_tail(frame.stack, consumed, self)
                                 frame.locals.update(bindings)
                                 frame.cycle_scopes.append(
                                     (
@@ -4118,38 +4124,83 @@ class VirtualMachine:
         )
         return list(contracted)
 
+    def _compiled_pattern_consumption(self, pattern: object) -> int:
+        """Return the subject count consumed by one compiled match pattern."""
+        if not isinstance(pattern, tuple) or not pattern:
+            return 1
+        kind = pattern[0]
+        if kind == "guard":
+            return pattern[2]
+        if kind == "extracting":
+            return self._compiled_pattern_consumption(pattern[1])
+        if kind == "or" and pattern[1]:
+            counts = {
+                self._compiled_pattern_consumption(option)
+                for option in pattern[1]
+            }
+            if len(counts) != 1:
+                raise RuntimeError(
+                    "compiled or-pattern alternatives consume different inputs"
+                )
+            return next(iter(counts))
+        return 1
+
     def _match_patterns(
         self,
         frame: _Frame,
         patterns: tuple[object, ...],
     ) -> tuple[dict[str, Any], tuple[Any, ...]] | None:
-        """Match patterns during VM execution and collect extracting captures."""
-        if len(frame.stack) < len(patterns):
+        """Match a case and expose values from each selected pattern path."""
+        consumed = sum(self._compiled_pattern_consumption(pattern) for pattern in patterns)
+        if len(frame.stack) < consumed:
             return None
         bindings: dict[str, Any] = {}
-        subjects = tuple(reversed(frame.stack[-len(patterns) :]))
+        subjects = tuple(reversed(frame.stack[-consumed:]))
         if subjects:
             bindings["top"] = subjects[0]
-        retained: list[Any] = []
-        captures: list[Any] = []
-        extracting_case = any(
-            isinstance(pattern, tuple) and pattern and pattern[0] == "extracting"
-            for pattern in patterns
-        )
-        for raw_pattern, value in zip(patterns, subjects, strict=True):
-            extracting = (
-                isinstance(raw_pattern, tuple)
-                and raw_pattern
-                and raw_pattern[0] == "extracting"
-            )
-            pattern = raw_pattern[1] if extracting else raw_pattern
-            if not self._match_pattern(value, pattern, bindings, captures if extracting else None):
+        exposed: list[Any] = []
+        coordinate = 0
+        for pattern in patterns:
+            pattern_consumption = self._compiled_pattern_consumption(pattern)
+            values = subjects[coordinate:coordinate + pattern_consumption]
+            coordinate += pattern_consumption
+            if not values:
                 return None
-            if not extracting and not (
-                isinstance(pattern, tuple) and pattern and pattern[0] == "wildcard"
-            ):
-                retained.append(value)
-        return bindings, tuple(captures if extracting_case else retained)
+            result = self._match_root_pattern(values, pattern, bindings)
+            if result is None:
+                return None
+            exposed.extend(result)
+        return bindings, tuple(exposed)
+
+    def _match_root_pattern(
+        self,
+        values: tuple[Any, ...],
+        pattern: object,
+        bindings: dict[str, Any],
+    ) -> tuple[Any, ...] | None:
+        """Match one root and return the selected alternative's body values."""
+        if not isinstance(pattern, tuple) or not pattern or not values:
+            return None
+        kind = pattern[0]
+        if kind == "guard":
+            return values if self._guard_truthy(pattern[1], values) else None
+        if kind == "extracting":
+            captures: list[Any] = []
+            if not self._match_pattern(values[0], pattern[1], bindings, captures):
+                return None
+            return tuple(captures)
+        if kind == "or":
+            for option in pattern[1]:
+                saved = dict(bindings)
+                result = self._match_root_pattern(values, option, bindings)
+                if result is not None:
+                    return result
+                bindings.clear()
+                bindings.update(saved)
+            return None
+        if not self._match_pattern(values[0], pattern, bindings, None):
+            return None
+        return values if kind == "catch_all" else (values[0],)
 
     def _match_pattern(
         self,
@@ -4181,7 +4232,7 @@ class VirtualMachine:
                     return False
             return True
         if kind == "guard":
-            return self._guard_truthy(pattern[1], value)
+            return self._guard_truthy(pattern[1], (value,))
         if kind in {"wildcard", "catch_all"}:
             return True
         if kind == "capture":
@@ -4342,11 +4393,11 @@ class VirtualMachine:
                 return False
             if not self._match_pattern_sequence(values, fields, bindings, captures):
                 return False
-        return guard is None or self._guard_truthy(guard, value)
+        return guard is None or self._guard_truthy(guard, (value,))
 
-    def _guard_truthy(self, guard: FunctionCode, value: Any) -> bool:
+    def _guard_truthy(self, guard: FunctionCode, values: tuple[Any, ...]) -> bool:
         """Return the Boolean result of guard truthy during virtual-machine execution."""
-        result = self.call(FunctionValue(guard, self.globals), [value])
+        result = self.call(FunctionValue(guard, self.globals), list(reversed(values)))
         return bool(result) and _truthy(result[-1])
 
 

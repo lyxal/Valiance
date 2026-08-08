@@ -23,6 +23,7 @@ from valiance.asts import (
     ElementNode,
     ElementTagDeclarationNode,
     ExpressionPatternNode,
+    ExtractPatternNode,
     FieldAccessNode,
     FieldSetNode,
     ForNode,
@@ -1207,9 +1208,15 @@ class _Compiler:
             for index, case in enumerate(node.cases)
             if index < len(typed_bodies)
         }
-        arities = {len(case.patterns) for case in node.cases}
-        if len(arities) == 1 and (arity := next(iter(arities))):
-            self.emit(OpCode.SOURCE_ARGS, arity)
+        pattern_arities = (
+            typed_node.case_pattern_arities
+            if isinstance(typed_node, TypedMatchNode)
+            else tuple(tuple(1 for _ in case.patterns) for case in node.cases)
+        )
+        consumptions = {sum(arities) for arities in pattern_arities}
+        match_arity = next(iter(consumptions)) if len(consumptions) == 1 else 0
+        if match_arity:
+            self.emit(OpCode.SOURCE_ARGS, match_arity)
         # Emit every pattern test in source order. Catch-all patterns are still
         # ordinary matches at runtime: hoisting them to a synthetic fallback
         # changes first-match semantics and can drop earlier guarded patterns.
@@ -1220,20 +1227,17 @@ class _Compiler:
                 if case_index < len(typed_guards)
                 else None
             )
+            guard_arities = (
+                iter(typed_node.case_guard_arities[case_index])
+                if isinstance(typed_node, TypedMatchNode)
+                and case_index < len(typed_node.case_guard_arities)
+                else None
+            )
             catch_all = is_catch_all_match_case(case.patterns)
             compiled_patterns = tuple(
                 ("catch_all",)
                 if catch_all and isinstance(pattern, WildcardPatternNode)
-                else (
-                    ("extracting", _compile_match_pattern(
-                        pattern,
-                        guard_blocks,
-                        extracting=True,
-                        root=True,
-                    ))
-                    if case.extract
-                    else _compile_match_pattern(pattern, guard_blocks)
-                )
+                else _compile_match_pattern(pattern, guard_blocks, guard_arities)
                 for pattern in case.patterns
             )
             if guard_blocks is not None:
@@ -2321,12 +2325,24 @@ def _number(value: str, node: ASTNode) -> RuntimeNumber:
 def _compile_match_pattern(
     pattern: MatchPatternNode,
     typed_guards: Iterator[tuple[ASTNode | TypedNode, ...]] | None = None,
+    guard_arities: Iterator[int] | None = None,
     *,
     extracting: bool = False,
     root: bool = False,
 ) -> object:
     """Compile one pattern, consuming analysed guards in traversal order."""
     match pattern:
+        case ExtractPatternNode(inner):
+            return (
+                "extracting",
+                _compile_match_pattern(
+                    inner,
+                    typed_guards,
+                    guard_arities,
+                    extracting=True,
+                    root=True,
+                ),
+            )
         case LiteralPatternNode(value):
             if extracting and root and isinstance(value, StringLiteralNode):
                 source = re.sub(r"\(\?<([A-Za-z_]\w*)>", r"(?P<\1>", value.value)
@@ -2339,7 +2355,8 @@ def _compile_match_pattern(
             return ("literal", _literal_expression_value(expression))
         case GuardPatternNode(condition):
             guard = _next_typed_guard(typed_guards, condition)
-            return ("guard", _compile_guard(guard))
+            arity = next(guard_arities) if guard_arities is not None else 1
+            return ("guard", _compile_guard(guard, arity), arity)
         case WildcardPatternNode():
             return ("capture",) if extracting and not root else ("wildcard",)
         case RestPatternNode(name):
@@ -2352,13 +2369,13 @@ def _compile_match_pattern(
             return (
                 "bind",
                 name.text,
-                _compile_match_pattern(inner, typed_guards, extracting=False, root=False),
+                _compile_match_pattern(inner, typed_guards, guard_arities, extracting=False, root=False),
             )
         case OrPatternNode(options):
             return (
                 "or",
                 tuple(
-                    _compile_match_pattern(option, typed_guards, extracting=extracting, root=root)
+                    _compile_match_pattern(option, typed_guards, guard_arities, extracting=extracting, root=root)
                     for option in options
                 ),
             )
@@ -2366,7 +2383,7 @@ def _compile_match_pattern(
             return (
                 "list",
                 tuple(
-                    _compile_match_pattern(item, typed_guards, extracting=extracting, root=False)
+                    _compile_match_pattern(item, typed_guards, guard_arities, extracting=extracting, root=False)
                     for item in items
                 ),
             )
@@ -2381,7 +2398,7 @@ def _compile_match_pattern(
                 None if typ is None else _cast_type_spec(typ),
                 None if name is None else name.text,
                 tuple(
-                    _compile_match_pattern(field, typed_guards, extracting=extracting, root=False)
+                    _compile_match_pattern(field, typed_guards, guard_arities, extracting=extracting, root=False)
                     for field in fields
                 ),
                 compiled_guard,
@@ -2418,9 +2435,11 @@ def _literal_pattern_value(node: ASTNode) -> object:
 
 def _compile_guard(
     condition: tuple[ASTNode | TypedNode, ...],
+    arity: int = 1,
 ) -> FunctionCode:
     """Compile an analysed guard while preserving selected call metadata."""
-    return _Compiler().compile_function(condition, params=("_",), name="<match guard>")
+    params = tuple(f"_{index}" for index in range(arity))
+    return _Compiler().compile_function(condition, params=params, name="<match guard>")
 
 
 def _runtime_tag_contract_spec(typ: Type) -> object:
