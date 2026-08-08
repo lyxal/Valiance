@@ -5901,6 +5901,81 @@ class WildcardPathSelectionAnalysisTests(unittest.TestCase):
                 self.assertEqual(analyser.diagnostics, [])
                 self.assertTrue(same(typed[-1].typ, C(ListExactType, Integer, rank)))
 
+
+class TraitElementTagConformanceTests(unittest.TestCase):
+    def test_trait_implementation_cannot_launder_inferred_panic_tag(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+trait Fooable =>
+  extend foo -> Number
+end
+object Baz =>
+  $bax = 0
+end
+object Baz as Fooable =>
+  define foo => ValueFault("Boom!") panic
+end
+"""))
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "has element tags <Panic[ValueFault]>, but the trait requires exactly <>",
+            analyser.diagnostics[0],
+        )
+
+    def test_trait_implementation_accepts_exact_declared_element_tags(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+trait Fooable =>
+  extend foo<Panic[ValueFault]> -> Number
+end
+object Baz =>
+  $bax = 0
+end
+object Baz as Fooable =>
+  define foo<Panic[ValueFault]> -> Number => ValueFault("Boom!") panic
+end
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_generic_trait_implementation_specializes_element_tag_arguments(self):
+        valid = Analyser()
+        valid.analyse(parse("""
+trait[T] Fooable => extend foo<Panic[T]> -> Number end
+object Baz => $bax = 0 end
+object Baz as Fooable[ValueFault] =>
+  define foo<Panic[ValueFault]> -> Number => ValueFault("Boom!") panic
+end
+"""))
+        self.assertEqual(valid.diagnostics, [])
+
+        invalid = Analyser()
+        invalid.analyse(parse("""
+trait[T] Fooable => extend foo<Panic[T]> -> Number end
+object Baz => $bax = 0 end
+object Baz as Fooable[ValueFault] => define foo -> Number => 1 end
+"""))
+        self.assertIn(
+            "trait requires exactly <Panic[ValueFault]>",
+            invalid.diagnostics[0],
+        )
+
+    def test_variant_member_implementation_requires_exact_inferred_tags(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+variant Choice =>
+  extend value -> Number
+  A => define value => ValueFault("Boom!") panic end
+end
+"""))
+
+        self.assertIn(
+            "element tags must exactly match the variant extend declaration",
+            analyser.diagnostics[0],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
 

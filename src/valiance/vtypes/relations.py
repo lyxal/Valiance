@@ -699,7 +699,9 @@ def _overload_satisfies_requirement(
     expected: Overload,
     ctx: Context,
 ) -> bool:
-    """Return the Boolean result of overload satisfies requirement during type solving and overload resolution."""
+    """Return whether an overload exactly satisfies a structural trait requirement."""
+    if candidate.element_tags != expected.element_tags:
+        return False
     if len(candidate.params) == len(expected.params) and len(candidate.returns) == len(
         expected.returns
     ) and all(

@@ -485,6 +485,7 @@ def _trait_requirement(node: TraitRequirementNode) -> T.TraitRequirement | None:
             params=params,
             returns=returns,
             param_names=tuple(param.name for param in node.params or ()),
+            element_tags=node.element_tags,
         ),
     )
 

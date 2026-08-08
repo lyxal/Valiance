@@ -904,8 +904,15 @@ class Parser:
             if self._match(TokenKind.LPAREN)
             else None
         )
+        element_tags, _element_tags_explicit = self._function_element_tags()
         returns = self._returns()
-        return TraitRequirementNode(name, params, returns, location=_loc(start))
+        return TraitRequirementNode(
+            name,
+            params,
+            returns,
+            element_tags,
+            location=_loc(start),
+        )
 
     def _field(self, owner: Symbol, visibility: Symbol | None) -> ObjectFieldNode:
         """Parse field from the current token stream."""
@@ -3212,6 +3219,7 @@ class Parser:
                 params,
                 returns,
                 param_names=tuple(param.name for param in node.params or ()),
+                element_tags=node.element_tags,
             ),
         )
 

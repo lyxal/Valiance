@@ -129,10 +129,14 @@ class _ObjectDeclarations:
             target = T.normalize(node.target)
             if isinstance(target, T.NominalType):
                 self.env.add_trait_impl(node.name, target.name)
+            requirements = self._specialized_trait_requirements(target)
             current = self._register_friendly_definitions(
                 branch.emit(TypedNode(node, None)),
                 node.name,
                 node.definitions,
+                trait_requirements={
+                    requirement.name: requirement for requirement in requirements
+                },
             )
             return BranchSet((current,))
 
@@ -169,6 +173,64 @@ class _ObjectDeclarations:
             friendly_definitions,
         )
         return BranchSet((current,))
+
+    def _specialized_trait_requirements(
+        self, target: T.Type
+    ) -> tuple[T.TraitRequirement, ...]:
+        """Specialize one implemented trait's requirements to its type arguments."""
+        if not isinstance(target, T.NominalType):
+            return ()
+        trait = self.env.lookup_trait(target.name)
+        if trait is None:
+            return ()
+        substitution = {
+            generic.text: argument
+            for generic, argument in zip(trait.generics, target.args, strict=False)
+        }
+
+        def substitute_tag(tag: T.ElementTag) -> T.ElementTag:
+            """Substitute generic types nested in one element-effect tag."""
+            return T.ElementTag(
+                tag.name,
+                tuple(T._substitute(argument, substitution) for argument in tag.args),
+                tag.absent,
+            )
+
+        return tuple(
+            T.TraitRequirement(
+                requirement.name,
+                replace(
+                    requirement.overload,
+                    params=tuple(
+                        T._substitute(param, substitution)
+                        for param in requirement.overload.params
+                    ),
+                    returns=tuple(
+                        T._substitute(ret, substitution)
+                        for ret in requirement.overload.returns
+                    ),
+                    element_tags=frozenset(
+                        substitute_tag(tag)
+                        for tag in requirement.overload.element_tags
+                    ),
+                ),
+            )
+            for requirement in trait.requirements
+        )
+
+    @staticmethod
+    def _show_element_tags(tags: frozenset[T.ElementTag]) -> str:
+        """Render an exact element-tag set using Valiance source syntax."""
+        rendered = []
+        for tag in sorted(tags):
+            prefix = "!" if tag.absent else ""
+            args = (
+                "[" + ", ".join(T.show(argument) for argument in tag.args) + "]"
+                if tag.args
+                else ""
+            )
+            rendered.append(f"{prefix}{tag.name}{args}")
+        return "<" + ", ".join(rendered) + ">"
 
     def _object_attribute(self, field: ObjectFieldNode) -> T.ObjectAttribute | None:
         """Compute object attribute during static analysis."""
@@ -427,6 +489,7 @@ class _ObjectDeclarations:
         branch: AnalysisBranch,
         owner: Symbol,
         definition: DefineNode,
+        trait_requirement: T.TraitRequirement | None = None,
     ) -> AnalysisBranch:
         """Register friendly definition during static analysis."""
         if not self._validate_annotations(definition.annotations, "define", definition):
@@ -449,6 +512,7 @@ class _ObjectDeclarations:
                 returns=definition.function.returns,
                 where_clause=definition.function.where_clause,
                 element_tags=definition.function.element_tags,
+                element_tags_explicit=definition.function.element_tags_explicit,
                 annotations=definition.function.annotations,
                 location=definition.function.location,
                 object_friendly_receiver=(
@@ -480,6 +544,24 @@ class _ObjectDeclarations:
         if result is None:
             return branch.emit(TypedNode(definition, None))
         function, typed_branch = result
+        if trait_requirement is not None:
+            required_tags = trait_requirement.overload.element_tags
+            actual_tag_sets = {
+                typing.overload.element_tags
+                for typing in function.overloads
+                if isinstance(typing.overload, T.Overload)
+            }
+            if actual_tag_sets != {required_tags}:
+                actual = ", ".join(
+                    sorted(self._show_element_tags(tags) for tags in actual_tag_sets)
+                ) or "<>"
+                self._diagnose(
+                    f"trait implementation element '{definition.name}' has element "
+                    f"tags {actual}, but the trait requires exactly "
+                    f"{self._show_element_tags(required_tags)}",
+                    definition,
+                )
+                return typed_branch
         generic_constraints = _functions._generic_constraints(
             definition.generics,
             definition.generic_variances,
@@ -508,10 +590,19 @@ class _ObjectDeclarations:
         branch: AnalysisBranch,
         owner: Symbol,
         definitions: tuple[DefineNode, ...],
+        *,
+        trait_requirements: dict[Symbol, T.TraitRequirement] | None = None,
     ) -> AnalysisBranch:
         """Register friendly definitions during static analysis."""
         current = branch
         for definition in definitions:
-            current = self._register_friendly_definition(current, owner, definition)
+            current = self._register_friendly_definition(
+                current,
+                owner,
+                definition,
+                None
+                if trait_requirements is None
+                else trait_requirements.get(definition.name),
+            )
         return current
 

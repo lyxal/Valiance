@@ -414,6 +414,12 @@ def _genericize_requirement(
         transform_overload_types(
             requirement.overload,
             lambda typ: _genericize_type(typ, generics),
+            element_tags=frozenset(
+                _genericize_element_tags(
+                    requirement.overload.element_tags,
+                    generics,
+                )
+            ),
         ),
     )
 

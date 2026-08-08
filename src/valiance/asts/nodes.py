@@ -622,6 +622,7 @@ class TraitRequirementNode(ASTNode):
     name: Symbol
     params: tuple[FunctionParam, ...] | None = None
     returns: tuple[Type, ...] | None = None
+    element_tags: frozenset[ElementTag] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)

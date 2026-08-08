@@ -1743,5 +1743,28 @@ end
         self.assertFalse(any(case.extract for case in node.cases))
 
 
+
+class TraitElementTagParserTests(unittest.TestCase):
+    def test_named_and_inline_trait_requirements_preserve_element_tags(self):
+        [named] = parse(
+            "trait[T] Source => extend read<Panic[T]> -> Number end"
+        )
+        requirement = named.requirements[0]
+        self.assertEqual(
+            requirement.element_tags,
+            frozenset({ElementTag(Symbol("Panic"), (N(Symbol("T")),))}),
+        )
+
+        [definition] = parse(
+            "define[T] use(value: trait[T] => "
+            "extend read<Panic[T]> -> Number end) => $value end"
+        )
+        inline = definition.function.params[0].typ
+        self.assertEqual(
+            inline.requirements[0].overload.element_tags,
+            frozenset({ElementTag(Symbol("Panic"), (N(Symbol("T")),))}),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

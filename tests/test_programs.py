@@ -660,14 +660,14 @@ end
 
     def test_trait_can_implement_another_trait_without_repeating_defaults(self):
         source = r"""
-trait Logger => extend log(:String)
+trait Logger => extend log(:String)<Eager, IO>
 trait ErrorReporter as Logger =>
   define reportError(:String) => $self log
 end
 
 object ConsoleLogger => end
 object ConsoleLogger as Logger =>
-  define log(:String) => println
+  define log(:String)<Eager, IO> => println
 end
 object ConsoleLogger as ErrorReporter => end
 """

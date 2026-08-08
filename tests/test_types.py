@@ -1667,5 +1667,37 @@ class TypeLibraryTests(unittest.TestCase):
 
 
 
+
+class InlineTraitElementTagConformanceTests(unittest.TestCase):
+    def test_structural_trait_requires_exact_element_tag_set(self):
+        name = Symbol("read")
+        panic = ElementTag(Symbol("Panic"), (ParseError,))
+        trait = AnonymousTrait(
+            (Symbol("T"),),
+            (AnonymousTraitRequirement(name, Overload((V("T"),), (Number,))),),
+        )
+        ctx = Context()
+        ctx.define_structural_overload(
+            name,
+            Overload((Integer,), (Number,), element_tags=frozenset({panic})),
+        )
+        self.assertFalse(assignable(Integer, trait, ctx))
+
+        exact = AnonymousTrait(
+            (Symbol("T"),),
+            (
+                AnonymousTraitRequirement(
+                    name,
+                    Overload(
+                        (V("T"),),
+                        (Number,),
+                        element_tags=frozenset({panic}),
+                    ),
+                ),
+            ),
+        )
+        self.assertTrue(assignable(Integer, exact, ctx))
+
+
 if __name__ == "__main__":
     unittest.main()

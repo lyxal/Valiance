@@ -248,6 +248,7 @@ class _VariantDeclarations:
                 returns=requirement.overload.returns,
                 where_clause=definition.function.where_clause,
                 element_tags=definition.function.element_tags,
+                element_tags_explicit=definition.function.element_tags_explicit,
                 annotations=definition.function.annotations,
                 location=definition.function.location,
             ),
@@ -288,6 +289,18 @@ class _VariantDeclarations:
             return branch.emit(TypedNode(definition, None))
 
         function, typed_branch = result
+        actual_tag_sets = {
+            typing.overload.element_tags
+            for typing in function.overloads
+            if isinstance(typing.overload, T.Overload)
+        }
+        if actual_tag_sets != {requirement.overload.element_tags}:
+            self._diagnose(
+                f"variant member element '{definition.name}' element tags must "
+                "exactly match the variant extend declaration",
+                definition,
+            )
+            return typed_branch
         [typing] = function.overloads
         if not isinstance(typing.overload, T.Overload):
             return branch.emit(TypedNode(definition, None))
