@@ -137,6 +137,20 @@ It also owns:
 Use builders instead of directly assembling dataclasses unless you are working
 inside the representation layer.
 
+### Correlated minimum-rank collection results
+
+Peeling the final guaranteed rank from a minimum-rank collection gives an
+isolated item the conservative shape ``T | T*``. That union must not be wrapped
+naively as ``(T | T*)+`` when an overload reconstructs a uniform collection.
+Overload application therefore retains the correlation at the collection
+boundary: a minimum-rank argument adapted to an exact-rank parameter contributes
+one shared runtime excess rank, and exact collection returns inherit that same
+excess. For example, filtering ``Number*`` produces ``Number*``, not
+``(Number | Number*)+``. Scalar returns such as reduce still receive the
+standalone item approximation, while collection-shaped returns preserve the
+uniform rank invariant. This rule is generic and is based on parameter and
+return shapes rather than element names.
+
 ### `types/context.py`: relationship facts
 
 `Context` contains the facts relation functions need while answering questions:

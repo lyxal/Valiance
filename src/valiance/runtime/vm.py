@@ -7098,9 +7098,18 @@ def _matches_collection_cast(
     value = unwrap_runtime_value(value)
     if rank <= 0:
         return _matches_cast_type(value, base)
-    if not is_eager_sequence(value):
-        return False
     actual_rank = runtime_collection_rank(value)
+    if not is_eager_sequence(value):
+        # Typed lazy collections carry non-consuming rank evidence. Collection
+        # pattern matching may use that evidence without exhausting the value;
+        # the analyser has already proved the compatible base type.
+        if actual_rank is None:
+            return False
+        if kind in {"list_exact", "array_exact"}:
+            return actual_rank == rank
+        if kind in {"list_min", "array_min"}:
+            return actual_rank >= rank
+        return False
     if kind in {"list_exact", "array_exact"} and actual_rank != rank:
         return False
     if kind in {"list_min", "array_min"} and (

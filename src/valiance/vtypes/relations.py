@@ -326,6 +326,7 @@ def _match_variadic_tuple(
     return rec(0, 0)
 
 
+
 def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
     """Return whether ``source`` can be treated as ``target`` by subsumption."""
     ctx = ctx or Context()
@@ -2670,6 +2671,54 @@ def _wrap_returns_for_union_vectorisation(
     )
 
 
+
+def _correlated_min_rank_returns(
+    returns: tuple[Type, ...],
+    args: tuple[Type, ...],
+    params: tuple[Type, ...],
+) -> tuple[Type, ...]:
+    """Preserve uniform rank correlation through collection-shaped returns.
+
+    A minimum-rank argument adapted to an exact-rank parameter has one shared
+    runtime excess rank. Exact collection returns inherit that excess, so their
+    minimum output rank is known even though an isolated parameter item is
+    represented by a scalar-or-collection union.
+    """
+    candidates: list[tuple[CollectionClass, int, Type]] = []
+    for argument, parameter in zip(args, params, strict=False):
+        argument_view = _collection_view(argument)
+        parameter_view = _collection_view(parameter)
+        if not isinstance(argument_view, (ListMinType, ArrayMinType)):
+            continue
+        if not isinstance(parameter_view, (ListExactType, ArrayExactType)):
+            continue
+        if not isinstance(argument_view.rank, int) or not isinstance(parameter_view.rank, int):
+            continue
+        if argument_view.rank < parameter_view.rank:
+            continue
+        family = ArrayMinType if isinstance(argument_view, ArrayMinType) else ListMinType
+        candidates.append((family, argument_view.rank - parameter_view.rank, argument_view.base))
+    if not candidates:
+        return returns
+
+    result: list[Type] = []
+    for returned in returns:
+        view = _collection_view(returned)
+        if not isinstance(view, (ListExactType, ArrayExactType)) or not isinstance(view.rank, int):
+            result.append(returned)
+            continue
+        family, excess, source_base = max(candidates, key=lambda item: item[1])
+        output_base = view.base
+        approximated_item = U(source_base, C(family, source_base, 1))
+        if same(output_base, approximated_item):
+            output_base = source_base
+        minimum_rank = view.rank + excess
+        if isinstance(view, ArrayExactType) and family is ArrayMinType:
+            result.append(C(ArrayMinType, output_base, minimum_rank))
+        else:
+            result.append(C(ListMinType, output_base, minimum_rank))
+    return tuple(result)
+
 def _wrap_returns_for_vectorisation(
     returns: tuple[Type, ...],
     args: tuple[Type, ...],
@@ -3061,6 +3110,7 @@ def try_apply_overload(
 
     params = tuple(_substitute(param, substitution) for param in overload.params)
     returns = tuple(_substitute(ret, substitution) for ret in overload.returns)
+    returns = _correlated_min_rank_returns(returns, base_args, params)
     if not _generic_constraints_met(
         overload.generic_constraints,
         substitution,

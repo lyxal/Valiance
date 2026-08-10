@@ -189,6 +189,28 @@ define \\empty -> Integer* => []
             ("[]",),
         )
 
+    def test_filter_preserves_correlated_minimum_rank_and_empty_runtime_rank(self):
+        self.assert_all_modes(
+            """
+define washed?(:Number*) =>
+  match =>
+    as :Number+++ => "No"
+    _ => "Yes"
+  end
+end
+
+define wash(:Number*) =>
+  filter: fn (:Number) => false end
+end
+
+const $subject = [[[10]]]
+println washed? $subject
+println washed? wash $subject
+""",
+            (),
+            "No\nNo\n",
+        )
+
     def test_mixed_dynamic_and_broadcast_arguments_keep_their_policies(self):
         self.assert_all_modes(
             """

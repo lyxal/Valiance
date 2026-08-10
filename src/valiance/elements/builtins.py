@@ -1911,11 +1911,23 @@ def _filter(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
             return ctx.test_predicate(predicate, item)
         return bool(ctx.call(predicate, [item])[0])
 
+    source_rank = runtime_collection_rank(values)
     if _callable_has_element_tag(predicate, "Eager"):
-        return ([item for item in values if test(item)],)
+        return (
+            ListValue(
+                (item for item in values if test(item)),
+                runtime_rank=source_rank,
+            ),
+        )
     if isinstance(values, PlannedLazyList):
         return (values.append_stage(LazyPipelineStage.filtering(test)),)
-    return (PlannedLazyList(values, (LazyPipelineStage.filtering(test),)),)
+    return (
+        PlannedLazyList(
+            values,
+            (LazyPipelineStage.filtering(test),),
+            runtime_rank=source_rank,
+        ),
+    )
 
 
 @builtin(
