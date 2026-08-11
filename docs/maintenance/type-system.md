@@ -1269,8 +1269,10 @@ consumers. This permits forward calls and forward inference without allowing
 recursive type inference. A recursive group must therefore expose complete
 parameter and return contracts, either directly or through explicit
 `overload(...)` signatures. Each body is then checked against that published
-contract. Prescanned overloads are tracked by owning definition so a second
-definition with the same signature is still diagnosed as a duplicate.
+contract. Prescanned overloads are tracked by owning definition so equal signatures keep
+distinct source-order slots. After specificity selection, otherwise equivalent
+invocations use the latest declared overload. Arity and return-count consistency
+remain requirements across the complete overload set.
 
 
 `_analyse_function_literal(...)` turns a function body into one or more typed

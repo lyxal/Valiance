@@ -125,16 +125,9 @@ class _FunctionDeclarations:
             declared_overload = _functions._fully_typed_overload(variant)
             if declared_overload is None:
                 continue
-            if self.env.has_local_non_object_friendly_overload(
-                node.name,
-                declared_overload,
-            ):
-                self._diagnose(
-                    f"duplicate definition for '{node.name}' with signature "
-                    f"{T.show(T.Fn(declared_overload.params, declared_overload.returns))}",
-                    node,
-                )
-                continue
+            # Equal signatures are deliberate redefinitions. Keep each source
+            # declaration in the overload set so declaration order can break an
+            # otherwise equal match in favour of the latest definition.
             if self._define_overload_with_diagnostic(
                 node.name,
                 declared_overload,
@@ -214,9 +207,24 @@ class _FunctionDeclarations:
             node.generic_constraints,
         )
         overload_typings = list(function.overloads)
+        unused_owned_declarations = list(owned_declarations)
         for typing_index, typing in enumerate(function.overloads):
             if not isinstance(typing.overload, T.Overload):
                 continue
+            typing_declared_index = next(
+                (
+                    index
+                    for declared_name, index in unused_owned_declarations
+                    if declared_name == name
+                    and index < len(self.env.overloads.get(name, ()))
+                    and self.env.overloads[name][index] == typing.overload
+                ),
+                None,
+            )
+            if typing_declared_index is not None:
+                unused_owned_declarations.remove((name, typing_declared_index))
+            elif typing_index == 0:
+                typing_declared_index = declared_index
             overload = self.prepare_defined_overload(
                 node,
                 branch,
@@ -226,22 +234,21 @@ class _FunctionDeclarations:
             if overload is None:
                 continue
             overload_typings[typing_index] = replace(typing, overload=overload)
-            if declared_index is not None and typing_index == 0:
-                # Replace the provisional interface with its validated form so
-                # inferred constraints, effects, tags, and runtime metadata do
-                # not create a duplicate overload.
-                self.env.overloads[name][declared_index] = overload
-                original_index = declared_index
+            if typing_declared_index is not None:
+                # Replace this definition's provisional interface with its
+                # validated form without disturbing equal slots owned by other
+                # source definitions.
+                self.env.overloads[name][typing_declared_index] = overload
+                original_index = typing_declared_index
             else:
-                if not self.env.has_local_non_object_friendly_overload(name, overload):
-                    if not self._define_overload_with_diagnostic(name, overload, node):
-                        return BranchSet(
-                            (typed_branch.emit(TypedNode(node, None)),)
-                        )
-                original_index = self.env.non_object_friendly_overload_index(
-                    name,
-                    overload,
-                )
+                # Every definition owns a runtime overload slot, even when an
+                # earlier definition inferred the same signature. Equal matches
+                # are resolved by source order, with the latest slot winning.
+                if not self._define_overload_with_diagnostic(name, overload, node):
+                    return BranchSet(
+                        (typed_branch.emit(TypedNode(node, None)),)
+                    )
+                original_index = len(self.env.overloads.get(name, ())) - 1
             if name.text.startswith("#") and original_index is not None:
                 static_result = _calls._static_validator_result(typing.body)
                 if static_result is not None:

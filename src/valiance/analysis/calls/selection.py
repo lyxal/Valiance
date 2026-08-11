@@ -115,6 +115,7 @@ class _CallSelection:
                 _functions._best_candidates(candidates, branch)
             )
         )
+        winners = self._prefer_latest_equal_winners(winners)
         if not winners:
             self._diagnose(no_match_message, node)
             return None
@@ -130,6 +131,55 @@ class _CallSelection:
             )
             return None
         return winners
+
+
+    @staticmethod
+    def _prefer_latest_equal_winners(
+        winners: tuple[CallCandidate, ...],
+    ) -> tuple[CallCandidate, ...]:
+        """Prefer the latest declaration for an equivalent invocation.
+
+        Specificity selection has already removed dominated candidates. This
+        pass only combines candidates whose applied parameters, returns, branch,
+        argument plan, and dispatch priority are otherwise identical. Distinct
+        generic inference paths and genuinely ambiguous overloads remain intact.
+        """
+        selected: list[CallCandidate] = []
+        for candidate in winners:
+            equivalent_index = next(
+                (
+                    index
+                    for index, existing in enumerate(selected)
+                    if candidate.applied.params == existing.applied.params
+                    and candidate.applied.actual_returns
+                    == existing.applied.actual_returns
+                    and candidate.branch == existing.branch
+                    and candidate.call_arg_order == existing.call_arg_order
+                    and candidate.dispatch_priority == existing.dispatch_priority
+                ),
+                None,
+            )
+            if equivalent_index is None:
+                selected.append(candidate)
+                continue
+            existing = selected[equivalent_index]
+            candidate_index = (
+                candidate.overload_index
+                if candidate.overload_index is not None
+                else candidate.callable_overload_index
+            )
+            existing_index = (
+                existing.overload_index
+                if existing.overload_index is not None
+                else existing.callable_overload_index
+            )
+            if (
+                candidate_index is not None
+                and existing_index is not None
+                and candidate_index > existing_index
+            ):
+                selected[equivalent_index] = candidate
+        return tuple(selected)
 
     def element_call_candidates(
         self,

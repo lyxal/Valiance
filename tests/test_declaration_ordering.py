@@ -6,7 +6,7 @@ import unittest
 
 from valiance.analysis import Analyser
 from valiance.parsing import parse
-from valiance.runtime import compile_program, dumps, loads, run
+from valiance.runtime import VirtualMachine, compile_program, dumps, loads, run
 from valiance.runtime.runtime_values import RuntimeNumber
 
 
@@ -164,18 +164,44 @@ define invalid(value: Integer) -> String => $value end
         self.assertIn("declares String", analyser.diagnostics[0])
         self.assertEqual(len(analyser.env.overloads_for(parse("invalid")[0].name)), 1)
 
-    def test_duplicate_prescanned_signature_is_diagnosed_once(self):
-        """Do not let two definitions claim the same provisional overload."""
-        analyser, _typed = analyse("""
-define same(value: Integer) -> Integer => $value end
-define same(value: Integer) -> Integer => $value end
+    def test_last_prescanned_equal_overload_wins(self):
+        """Let a later complete definition replace an equally specific overload."""
+        analyser, typed = analyse(r"""
+define \same -> String => "first" end
+define \same -> String => "second" end
+\same
 """)
-        duplicate_diagnostics = [
-            diagnostic
-            for diagnostic in analyser.diagnostics
-            if "duplicate definition" in diagnostic
-        ]
-        self.assertEqual(len(duplicate_diagnostics), 1)
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(run(compile_program(typed, optimize=False)), ["second"])
+
+    def test_forward_calls_use_last_inferred_equal_overload(self):
+        """Resolve every forward call against the final source-order overload set."""
+        source = r"""
+println \foobaz
+define \foobaz => "a"
+println \foobaz
+define \foobaz => "b"
+println \foobaz
+define \foobaz => "c"
+"""
+        analyser, typed = analyse(source)
+        self.assertEqual(analyser.diagnostics, [])
+        for optimize in (False, True):
+            program = compile_program(typed, optimize=optimize)
+            for candidate in (program, loads(dumps(program))):
+                output: list[object] = []
+                self.assertEqual(VirtualMachine(output=output.append).run(candidate), [])
+                self.assertEqual(output, ["c\n", "c\n", "c\n"])
+
+    def test_more_specific_overload_beats_later_general_overload(self):
+        """Use source order only to break ties after specificity selection."""
+        analyser, typed = analyse("""
+define classify(value: Integer) -> String => "integer" end
+define classify(value: Number) -> String => "number" end
+classify(1)
+""")
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(run(compile_program(typed, optimize=False)), ["integer"])
 
 
     def test_one_invalid_return_branch_is_diagnosed(self):
