@@ -1239,6 +1239,7 @@ fork: (sum, length) /
 
 - If `:` is used, then _all_ function arguments must be specified. This ensures 0 ambiguity as to which function-typed parameters are being filled.
 - Modifier shorthand is stack-oriented. `apply: -1` wraps subtraction by one, not a constant function returning negative one. Write `apply(fn => -1)` when a constant function is intended.
+- The higher-order parameter supplies the modifier function's contextual signature. This applies to shorthand bodies and explicit inferred functions written after `:`. Missing inputs cycle from those contextual parameters, so `[1, 2, 3] map: +` treats `+` as `Function[Integer -> Integer]`. Passing the same inferred function as an ordinary stack value does not request this adaptation and retains normal inference errors.
 
 
 # 9. Indexing

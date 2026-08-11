@@ -1559,6 +1559,26 @@ ParseError
             [RuntimeNumber("2"), RuntimeNumber("4"), RuntimeNumber("6")],
         )
 
+    def test_colon_context_sets_implicit_modifier_arity(self):
+        stack = execute("[1, 2, 3] map: +")
+
+        self.assertEqual(
+            list(stack[0]),
+            [RuntimeNumber("2"), RuntimeNumber("4"), RuntimeNumber("6")],
+        )
+
+    def test_colon_context_sets_explicit_inferred_function_arity(self):
+        stack = execute(
+            """
+3
+range(1, _)
+map: fn => [top] overtake swap | /: *
+reverse | /: **
+"""
+        )
+
+        self.assertEqual(stack, [RuntimeNumber("531441")])
+
     def test_ecs_call_accepts_explicit_function_modifier(self):
         ecs_stack = execute("map([1, 2, 3]): fn => * 2 end")
         postfix_stack = execute("[1, 2, 3] map: * 2")

@@ -32,6 +32,7 @@ class ModifierArgumentAnalysis:
 
     typ: T.Type
     typed_node: TypedFunctionNode
+    outer: AnalysisBranch | None = None
 
 @dataclass(frozen=True)
 class ElementArguments:

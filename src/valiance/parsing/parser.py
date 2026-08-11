@@ -2714,7 +2714,7 @@ class Parser:
     ) -> FunctionNode:
         """Parse modifier function from the current token stream."""
         if len(body) == 1 and isinstance(body[0], FunctionNode):
-            return body[0]
+            return replace(body[0], contextual_signature=True)
         if (
             len(body) == 1
             and isinstance(body[0], NumberLiteralNode)
@@ -2726,7 +2726,11 @@ class Parser:
             # remains available explicitly as ``apply(fn => -1)``.
             literal = replace(body[0], value=body[0].value[1:])
             body = (literal, ElementNode(name=Symbol("-"), location=body[0].location))
-        return FunctionNode(body=body, location=_loc(start))
+        return FunctionNode(
+            body=body,
+            contextual_signature=True,
+            location=_loc(start),
+        )
 
     def _record_fields(self) -> tuple[tuple[Symbol, tuple[ASTNode, ...]], ...]:
         """Parse record fields, including entries split across source lines."""

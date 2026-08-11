@@ -51,7 +51,9 @@ def audit_program(program: Program) -> dict[str, Any]:
         if not isinstance(pattern, tuple) or not pattern:
             return
         kind = pattern[0]
-        if kind == "guard" and len(pattern) == 2 and isinstance(pattern[1], FunctionCode):
+        if kind == "guard" and len(pattern) >= 2 and isinstance(pattern[1], FunctionCode):
+            # Guard patterns may carry additional compiler metadata after the
+            # nested function, such as the number of retained subjects.
             visit(pattern[1])
         elif kind in {"or", "list"} and len(pattern) == 2:
             for child in pattern[1]:

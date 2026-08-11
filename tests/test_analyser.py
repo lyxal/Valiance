@@ -445,6 +445,13 @@ define \\f<Read, Write> => 1
         self.assertIsInstance(modifier, TypedFunctionNode)
         self.assertEqual(modifier.typ, Fn((Integer,), (Number,)))
 
+    def test_colon_context_sets_modifier_signature_before_inference(self):
+        typed = analyse(parse("[1, 2, 3] map: +"))
+
+        mapped = typed[-1]
+        self.assertIsInstance(mapped, TypedElementNode)
+        self.assertEqual(mapped.modifier_args[0].typ, Fn((Integer,), (Integer,)))
+
     def test_modifier_overloads_cover_union_item_type(self):
         typed = analyse(parse('$lst = [1, 2, "A", "B"]\n$lst map: * 2'))
 

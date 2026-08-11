@@ -236,6 +236,7 @@ class _CallArguments:
                 ModifierArgumentAnalysis(
                     function.typ,
                     TypedFunctionNode(arg, function.typ, function.overloads),
+                    branch,
                 )
             )
         return tuple(analyses)

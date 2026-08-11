@@ -421,6 +421,7 @@ class FunctionNode(ASTNode):
     overloads: tuple[OverloadSignature, ...] = ()
     generic_scope_id: int | None = field(default=None, compare=False)
     object_friendly_receiver: bool = field(default=False, compare=False)
+    contextual_signature: bool = field(default=False, compare=False)
 
 
 @dataclass(frozen=True)

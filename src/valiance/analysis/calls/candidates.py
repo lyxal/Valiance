@@ -14,6 +14,7 @@ from valiance.asts import (
     CallArgument,
     ElementNode,
     FunctionNode,
+    FunctionParam,
     GetVariableNode,
     FunctionOverloadTyping,
     TypedFunctionNode,
@@ -779,6 +780,7 @@ def _modifier_variants_for_expected(
                             modifier.typed_node.overloads,
                             dispatch_plan,
                         ),
+                        modifier.outer,
                     ),
                     substitution,
                 )
@@ -809,6 +811,7 @@ def _modifier_variants_for_expected(
                         concrete_expected,
                         (overload,),
                     ),
+                    modifier.outer,
                 ),
                 substitution,
                 T.same(typ, concrete_expected),
@@ -831,6 +834,46 @@ def _contextual_modifier_overloads(
         return modifier.typed_node.overloads
     if expected.params is None:
         return modifier.typed_node.overloads
+
+    # The colon modifier is an explicit request to adapt its shorthand body to
+    # the higher-order parameter. Analyse that body with the parameter's input
+    # row even when ordinary inference succeeded with a different arity. This
+    # applies to shorthand and explicit inferred ``fn => ...`` bodies, but
+    # leaves functions with declared parameters unchanged.
+    has_niladic_overload = any(
+        isinstance(T.normalize(typing.typ), T.FunctionType)
+        and T.normalize(typing.typ).params == ()
+        for typing in modifier.typed_node.overloads
+    )
+    if (
+        modifier.typed_node.node.contextual_signature
+        and modifier.typed_node.node.params is None
+        and not has_niladic_overload
+    ):
+        resolved_contextual: list[FunctionOverloadTyping] = []
+        for params in _modifier_call_param_variants(expected.params):
+            contextual_node = replace(
+                modifier.typed_node.node,
+                params=tuple(FunctionParam(typ=param) for param in params),
+            )
+            probe = analyser._child_analyser(analyser.env.lexical_child_scope())
+            analysed = probe._analyse_function_literal(
+                modifier.outer or _core.AnalysisBranch(),
+                contextual_node,
+            )
+            if analysed is None:
+                continue
+            analysis, _ = analysed
+            compatible = tuple(
+                candidate
+                for candidate in analysis.overloads
+                if _contextual_modifier_overload_matches(candidate, expected, ctx)
+            )
+            if compatible:
+                resolved_contextual.extend(compatible)
+                break
+        if resolved_contextual:
+            return tuple(dict.fromkeys(resolved_contextual))
 
     resolved: list[FunctionOverloadTyping] = []
     deferred = False

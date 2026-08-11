@@ -2780,7 +2780,7 @@ class VirtualMachine:
                             cast_spec = _resolve_static_rank_variables(
                                 instruction.arg, frame.locals
                             )
-                            if not _matches_cast_type(value, cast_spec):
+                            if not _matches_cast_type(value, cast_spec, allow_lazy_rank=False):
                                 raise RuntimeError(
                                     f"checked cast failed: {_format_value(value)} is "
                                     f"{_runtime_type_name(value)}"
@@ -2792,7 +2792,7 @@ class VirtualMachine:
                                 raise RuntimeError("invalid optional cast payload")
                             raw_cast, raw_contract = instruction.arg
                             cast_spec = _resolve_static_rank_variables(raw_cast, frame.locals)
-                            if _matches_cast_type(value, cast_spec):
+                            if _matches_cast_type(value, cast_spec, allow_lazy_rank=False):
                                 contract = _resolve_static_rank_variables(raw_contract, frame.locals)
                                 refined = _canonicalize_runtime_value_tag_contract(value, contract, self.tag_parents)
                                 frame.stack.append(ObjectValue("Some", {"value": refined}))
@@ -6901,7 +6901,12 @@ def _resolve_static_rank_variables(
     return spec
 
 
-def _matches_cast_type(value: Any, spec: object) -> bool:
+def _matches_cast_type(
+    value: Any,
+    spec: object,
+    *,
+    allow_lazy_rank: bool = True,
+) -> bool:
     """Return whether the value matches cast type."""
     if not isinstance(spec, tuple) or not spec:
         return False
@@ -6934,6 +6939,7 @@ def _matches_cast_type(value: Any, spec: object) -> bool:
                 return _matches_cast_type(
                     unwrapped,
                     ("nominal", "OK", (expected_args[0],)),
+                    allow_lazy_rank=allow_lazy_rank,
                 )
             if _is_error_result_value(unwrapped):
                 return _runtime_pattern_matches(unwrapped, err_pattern)
@@ -7031,23 +7037,35 @@ def _matches_cast_type(value: Any, spec: object) -> bool:
             )
             if absent == present:
                 return False
-        return _matches_cast_type(unwrap_runtime_value(value), spec[1])
+        return _matches_cast_type(
+            unwrap_runtime_value(value),
+            spec[1],
+            allow_lazy_rank=allow_lazy_rank,
+        )
     if kind == "union":
-        return any(_matches_cast_type(value, item) for item in spec[1])
+        return any(_matches_cast_type(value, item, allow_lazy_rank=allow_lazy_rank)
+            for item in spec[1])
     if kind == "intersection":
-        return all(_matches_cast_type(value, item) for item in spec[1])
+        return all(_matches_cast_type(value, item, allow_lazy_rank=allow_lazy_rank)
+            for item in spec[1])
     if kind == "tuple":
         if not isinstance(value, tuple) or len(value) != len(spec[1]):
             return False
         return all(
-            _matches_cast_type(item, item_spec)
+            _matches_cast_type(item, item_spec, allow_lazy_rank=allow_lazy_rank)
             for item, item_spec in zip(value, spec[1], strict=True)
         )
     if kind == "collection":
         _, collection_kind, rank, base = spec
         if not is_list_like(value):
             return False
-        return _matches_collection_cast(value, collection_kind, rank, base)
+        return _matches_collection_cast(
+            value,
+            collection_kind,
+            rank,
+            base,
+            allow_lazy_rank=allow_lazy_rank,
+        )
     return False
 
 
@@ -7088,6 +7106,8 @@ def _matches_collection_cast(
     kind: str,
     rank: int,
     base: object,
+    *,
+    allow_lazy_rank: bool = True,
 ) -> bool:
     """Return whether the value matches collection cast.
 
@@ -7100,10 +7120,10 @@ def _matches_collection_cast(
         return _matches_cast_type(value, base)
     actual_rank = runtime_collection_rank(value)
     if not is_eager_sequence(value):
-        # Typed lazy collections carry non-consuming rank evidence. Collection
-        # pattern matching may use that evidence without exhausting the value;
-        # the analyser has already proved the compatible base type.
-        if actual_rank is None:
+        # Match patterns may use compiler-authored rank evidence without
+        # consuming a lazy collection. User-facing checked and optional casts
+        # cannot prove the base item type from rank metadata alone.
+        if not allow_lazy_rank or actual_rank is None:
             return False
         if kind in {"list_exact", "array_exact"}:
             return actual_rank == rank
@@ -7118,12 +7138,19 @@ def _matches_collection_cast(
         return False
     if kind in {"list_exact", "array_exact"}:
         return all(
-            _matches_collection_cast(item, kind, rank - 1, base) for item in value
+            _matches_collection_cast(
+                item, kind, rank - 1, base, allow_lazy_rank=allow_lazy_rank
+            )
+            for item in value
         )
     if kind in {"list_min", "array_min"}:
         return all(
-            _matches_collection_cast(item, kind, rank - 1, base)
-            or _matches_collection_cast(item, kind, rank, base)
+            _matches_collection_cast(
+                item, kind, rank - 1, base, allow_lazy_rank=allow_lazy_rank
+            )
+            or _matches_collection_cast(
+                item, kind, rank, base, allow_lazy_rank=allow_lazy_rank
+            )
             for item in value
         )
     if kind == "list_rugged":
@@ -7133,8 +7160,12 @@ def _matches_collection_cast(
         if _minimum_runtime_collection_rank(value) < rank:
             return False
         return all(
-            _matches_collection_cast(item, kind, rank - 1, base)
-            or _matches_collection_cast(item, kind, rank, base)
+            _matches_collection_cast(
+                item, kind, rank - 1, base, allow_lazy_rank=allow_lazy_rank
+            )
+            or _matches_collection_cast(
+                item, kind, rank, base, allow_lazy_rank=allow_lazy_rank
+            )
             for item in value
         )
     return False
