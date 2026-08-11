@@ -172,15 +172,18 @@ class _ElementCalls:
         candidates = self.element_call_candidates(node, overloads, sources)
 
         stack_before = branch.stack
+        modifier_signature_message = self._modifier_signature_message(modifier_args)
         if node.call_args:
             call_shape_message = self._explicit_call_shape_message(node, overloads)
             no_match_message = (
                 f"{call_shape_message}\n"
+                f"{modifier_signature_message}"
                 f"{_utils._show_overload_list(node.name, overloads)}"
                 if call_shape_message is not None
                 else (
                     f"no overloads for element '{node.name}' match explicit call "
-                    f"syntax\n{_utils._show_overload_list(node.name, overloads)}"
+                    f"syntax\n{modifier_signature_message}"
+                    f"{_utils._show_overload_list(node.name, overloads)}"
                 )
             )
             ambiguous_message = (
@@ -191,6 +194,7 @@ class _ElementCalls:
             no_match_message = (
                 f"no overloads for element '{node.name}' match stack "
                 f"{_utils._show_stack(stack_before)}\n"
+                f"{modifier_signature_message}"
                 f"{_utils._show_overload_list(node.name, overloads)}"
             )
             if not candidates:
@@ -217,6 +221,24 @@ class _ElementCalls:
             if committed is not None:
                 results.append(committed)
         return BranchSet.collect(results)
+
+    @staticmethod
+    def _modifier_signature_message(
+        modifier_args: tuple[ModifierArgumentAnalysis, ...],
+    ) -> str:
+        """Render the inferred signatures supplied after ``:`` in diagnostics."""
+        if not modifier_args:
+            return ""
+        heading = (
+            "modifier argument signature:"
+            if len(modifier_args) == 1
+            else "modifier argument signatures:"
+        )
+        signatures = "\n".join(
+            f"  - {index}: {T.show(argument.typ)}"
+            for index, argument in enumerate(modifier_args, start=1)
+        )
+        return f"{heading}\n{signatures}\n"
 
     def _unknown_element_message(
         self,

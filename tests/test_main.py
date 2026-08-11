@@ -1282,6 +1282,23 @@ class MainTests(unittest.TestCase):
         self.assertIn("did you mean:", rendered)
         self.assertIn("  - print(", rendered)
 
+    def test_main_renders_modifier_signature_on_overload_failure(self):
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            exit_code = main(
+                ["compile", "--code", '[1, 2, 3, 4] map: fn => + "a"']
+            )
+        self.assertEqual(exit_code, 1)
+        rendered = error.getvalue()
+        self.assertIn(
+            "modifier argument signature:\n  - 1: Function[String -> String]",
+            rendered,
+        )
+        self.assertLess(
+            rendered.index("modifier argument signature:"),
+            rendered.index("available overloads:"),
+        )
+
     def test_main_renders_multiline_overloads_without_function_prefixes(self):
         error = io.StringIO()
         with contextlib.redirect_stderr(error):
