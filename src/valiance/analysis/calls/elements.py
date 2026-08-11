@@ -173,16 +173,24 @@ class _ElementCalls:
 
         stack_before = branch.stack
         modifier_signature_message = self._modifier_signature_message(modifier_args)
+        modifier_mismatch_message = self._modifier_generic_mismatch_message(
+            node,
+            stack_before,
+            overloads,
+            modifier_args,
+        )
         if node.call_args:
             call_shape_message = self._explicit_call_shape_message(node, overloads)
             no_match_message = (
                 f"{call_shape_message}\n"
                 f"{modifier_signature_message}"
+                f"{modifier_mismatch_message}"
                 f"{_utils._show_overload_list(node.name, overloads)}"
                 if call_shape_message is not None
                 else (
                     f"no overloads for element '{node.name}' match explicit call "
                     f"syntax\n{modifier_signature_message}"
+                    f"{modifier_mismatch_message}"
                     f"{_utils._show_overload_list(node.name, overloads)}"
                 )
             )
@@ -195,6 +203,7 @@ class _ElementCalls:
                 f"no overloads for element '{node.name}' match stack "
                 f"{_utils._show_stack(stack_before)}\n"
                 f"{modifier_signature_message}"
+                f"{modifier_mismatch_message}"
                 f"{_utils._show_overload_list(node.name, overloads)}"
             )
             if not candidates:
@@ -239,6 +248,58 @@ class _ElementCalls:
             for index, argument in enumerate(modifier_args, start=1)
         )
         return f"{heading}\n{signatures}\n"
+
+    @staticmethod
+    def _modifier_generic_mismatch_message(
+        node: ElementNode,
+        stack: T.TypeStack,
+        overloads: tuple[T.Overload, ...],
+        modifier_args: tuple[ModifierArgumentAnalysis, ...],
+    ) -> str:
+        """Explain when a collection's generic item type cannot be specialized."""
+        if len(modifier_args) != 1 or not stack:
+            return ""
+        actual = T.normalize(stack[-1])
+        modifier = T.normalize(modifier_args[0].typ)
+        if not isinstance(actual, T.CollectionType):
+            return ""
+        if not isinstance(T.normalize(actual.base), T.VarType):
+            return ""
+        if not isinstance(modifier, T.FunctionType) or not modifier.params:
+            return ""
+        concrete_modifier_inputs = tuple(T.normalize(param) for param in modifier.params)
+        if any(isinstance(param, T.VarType) for param in concrete_modifier_inputs):
+            return ""
+        reducer = next(
+            (
+                overload
+                for overload in overloads
+                if any(
+                    isinstance(T.normalize(param), T.FunctionType)
+                    for param in overload.params
+                )
+                and any(
+                    isinstance(T.normalize(param), T.CollectionType)
+                    for param in overload.params
+                )
+            ),
+            None,
+        )
+        if reducer is None:
+            return ""
+        signature = _utils._show_overload_signature(node.name, reducer)
+        item_type = T.show(actual.base)
+        modifier_inputs = ", ".join(T.show(param) for param in modifier.params)
+        return (
+            "closest modifier overload mismatch:\n"
+            f"  - {signature}\n"
+            f"  - collection item type: {item_type} (generic type variable)\n"
+            f"  - ':' function inputs: {modifier_inputs}\n"
+            f"help: The preceding expression leaves `{item_type}` as an unresolved "
+            "generic type variable, so it cannot be matched with the reducer's "
+            f"`{modifier_inputs}` inputs. Check the stack-producing operation "
+            "immediately before this call.\n"
+        )
 
     def _unknown_element_message(
         self,

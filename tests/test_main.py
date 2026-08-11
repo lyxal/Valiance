@@ -1299,6 +1299,46 @@ class MainTests(unittest.TestCase):
             rendered.index("available overloads:"),
         )
 
+    def test_main_marks_unresolved_collection_item_as_generic(self):
+        error = io.StringIO()
+        source = (
+            "3\n"
+            "range(1, _)\n"
+            "map: (^+ overtake top | /: ** swap)\n"
+            "reverse | /: **"
+        )
+        with contextlib.redirect_stderr(error):
+            exit_code = main(["compile", "--code", source])
+        self.assertEqual(exit_code, 1)
+        rendered = error.getvalue()
+        self.assertIn("closest modifier overload mismatch:", rendered)
+        self.assertIn(
+            "- /(Item+, Function[Item, Item -> Item]) -> Item",
+            rendered,
+        )
+        self.assertIn(
+            "collection item type: Item (generic type variable)",
+            rendered,
+        )
+        self.assertIn("':' function inputs: Number, Number", rendered)
+        self.assertIn(
+            "help: The preceding expression leaves `Item` as an unresolved generic "
+            "type variable, so it cannot be matched with the reducer's `Number, "
+            "Number` inputs.",
+            rendered,
+        )
+        self.assertNotIn("rank", rendered.lower())
+        self.assertNotIn("Look at the stack shape immediately before this call", rendered)
+
+    def test_main_rank_two_reduction_remains_valid(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = main(
+                ["run", "--code", "[[1,2,3],[4,5,6],[7,8,9]] /: +"]
+            )
+        self.assertEqual(exit_code, 0)
+        self.assertIn("[12, 15, 18]", output.getvalue())
+
     def test_main_renders_multiline_overloads_without_function_prefixes(self):
         error = io.StringIO()
         with contextlib.redirect_stderr(error):
