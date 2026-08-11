@@ -726,7 +726,7 @@ define \\rugged -> Number~ => []
 
         self.assertEqual(
             analyser.diagnostics,
-            ["1:18: extend default must be compatible with every " "element parameter"],
+            ["1:18: extend default must produce a scalar value assignable to every " "element parameter"],
         )
 
     def test_extend_selector_arity_must_match_target(self):
@@ -740,6 +740,50 @@ define choose(a: Integer?) -> Integer? => $a end
         self.assertEqual(
             analyser.diagnostics,
             ["3:14: extend selector arity must match the target element arity"],
+        )
+
+    def test_extend_default_rejects_vectorised_collection_value(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("[1, 2, 3] [4, 5] + extend([0])"))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["1:20: extend default must produce a scalar value assignable to every " "element parameter"],
+        )
+
+    def test_extend_pattern_returns_are_not_vectorised_to_missing_parameters(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+[1, 2, 3] [4, 5] + extend =>
+  (lhs, _) => [$lhs] end
+  (_, rhs) => $rhs end
+end
+"""))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "2:20: extend pattern substitutions must be assignable to the missing "
+                "parameter types"
+            ],
+        )
+
+    def test_extend_selector_return_is_not_vectorised_to_parameter_types(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+define choose(a: Integer?, b: Integer?) -> Integer?+ => [$a] end
+[1, 2] [3] + extend: choose
+"""))
+
+        self.assertEqual(
+            analyser.diagnostics,
+            [
+                "3:14: extend selector result must be assignable to every optional "
+                "element parameter"
+            ],
         )
 
     def test_explicit_element_generic_arguments_fix_and_partially_infer_types(self):

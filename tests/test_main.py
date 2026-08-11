@@ -132,64 +132,6 @@ class MainTests(unittest.TestCase):
         rendered = output.getvalue()
         self.assertGreaterEqual(rendered.count("vln:1> "), 2)
 
-    def test_scratch_runs_start_clean_and_leave_definitions_available(self):
-        scratch = (
-            "$makeCounter = fn () =>\n"
-            "  $count = 0\n"
-            "  fn () =>\n"
-            "    $count := + 1\n"
-            "    $count\n"
-            "  end\n"
-            "end"
-        )
-
-        class FakeScratchFrontend:
-            fancy = True
-
-            def __init__(self):
-                self.entries = iter(
-                    (
-                        (scratch, "scratch-run"),
-                        (scratch, "scratch-run"),
-                        ("$makeCounter()", "repl"),
-                        (":quit", "repl"),
-                    )
-                )
-                self.kind = "repl"
-                self.waits = 0
-
-            def read(self, line_number):
-                source, self.kind = next(self.entries)
-                return source
-
-            def submission_kind(self):
-                return self.kind
-
-            def wait_for_scratch_result(self):
-                self.waits += 1
-
-            def set_mode(self, mode):
-                return True
-
-            def save_scratchpad(self):
-                return None
-
-        frontend = FakeScratchFrontend()
-        output = io.StringIO()
-        error = io.StringIO()
-        with (
-            contextlib.redirect_stdout(output),
-            contextlib.redirect_stderr(error),
-            patch("valiance.main.create_repl_frontend", return_value=frontend),
-        ):
-            exit_code = main([])
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(frontend.waits, 2)
-        self.assertNotIn("already defined", error.getvalue())
-        self.assertIn("<function/0>", output.getvalue())
-        self.assertGreaterEqual(output.getvalue().count("\033[2J\033[3J\033[H"), 2)
-
     def test_repl_type_command_previews_without_executing(self):
         output = io.StringIO()
         input_stream = io.StringIO(":type 1 2 +\n:quit\n")

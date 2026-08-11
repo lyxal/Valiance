@@ -1156,7 +1156,7 @@ $identity([1, 2, 3]) #? [1, 2, 3]
 - Simplest case of `extend`.
 - `extend(...)` - the result of `...` is used as a stand-in for any missing values. `...` is executed once after the arguments to `element` are popped.
 - For example, `[1, 2, 3] [4, 5] + extend(0)` - uses `0` if any values are missing. This makes it `[1 + 4, 2 + 5, 3 + 0]`.
-- Note that the default value must be compatible with all parameters of the element.
+- The default must produce one scalar value directly assignable to every parameter of the element. Call vectorisation is not used to adapt a collection-valued default to a scalar parameter.
 - This form of `extend` is most helpful for type-homogeneous elements (ie all arguments are the same type). These will most often be dyadic pervasive mathematical operations like addition.
 
 ### 7.4.2. `extend` + Patterns

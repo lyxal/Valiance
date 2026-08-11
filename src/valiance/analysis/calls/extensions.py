@@ -122,11 +122,11 @@ class _CallExtensions:
                 )
                 return None
             if not all(
-                T.compatible(returns, param, self.env.context)
+                T.assignable(returns, param, self.env.context)
                 for param in applied.params
             ):
                 self._diagnose(
-                    "extend default must be compatible with every element parameter",
+                    "extend default must produce a scalar value assignable to every element parameter",
                     extension,
                 )
                 return None
@@ -179,11 +179,11 @@ class _CallExtensions:
                     )
                     return None
                 if not all(
-                    T.compatible(actual, expected, self.env.context)
+                    T.assignable(actual, expected, self.env.context)
                     for actual, expected in zip(returns, missing, strict=True)
                 ):
                     self._diagnose(
-                        "extend pattern substitutions must match the missing "
+                        "extend pattern substitutions must be assignable to the missing "
                         "parameter types",
                         extension,
                     )
@@ -215,12 +215,12 @@ class _CallExtensions:
                 )
                 return None
             if not all(
-                T.compatible(returned, T.optional(param), self.env.context)
+                T.assignable(returned, T.optional(param), self.env.context)
                 for param in applied.params
             ):
                 self._diagnose(
-                    "extend selector result must be optional-compatible with "
-                    "every element parameter",
+                    "extend selector result must be assignable to every optional "
+                    "element parameter",
                     extension,
                 )
                 return None
