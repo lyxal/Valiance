@@ -7,13 +7,43 @@ from tempfile import TemporaryDirectory
 
 from valiance.analysis import Analyser
 from valiance.main import main_vln
-from valiance.modules_system.modules import ModuleLoader
+from valiance.asts import ImportPath
+from valiance.modules_system.modules import ModuleLoadError, ModuleLoader
 from valiance.modules_system.packages import load_manifest
 from valiance.parsing import parse
 from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_missing_module_suggests_renaming_similar_unimportable_file(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "json-parser.vlnc").write_text("", encoding="utf-8")
+
+            with self.assertRaises(ModuleLoadError) as raised:
+                ModuleLoader().load(
+                    ImportPath(("jsonParser",)),
+                    current_file=root / "main.vlnc",
+                )
+
+            message = str(raised.exception)
+            self.assertIn("json-parser.vlnc", message)
+            self.assertIn("not a valid Valiance identifier", message)
+            self.assertIn("rename 'json-parser.vlnc' to 'jsonParser.vlnc'", message)
+
+    def test_missing_module_does_not_suggest_unrelated_unimportable_file(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "totally-unrelated.vlnc").write_text("", encoding="utf-8")
+
+            with self.assertRaises(ModuleLoadError) as raised:
+                ModuleLoader().load(
+                    ImportPath(("jsonParser",)),
+                    current_file=root / "main.vlnc",
+                )
+
+            self.assertNotIn("help: rename", str(raised.exception))
+
     def test_compile_module_and_import_without_source(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

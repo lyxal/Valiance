@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 import hashlib
 from pathlib import Path
 
@@ -27,6 +28,12 @@ from valiance.modules_system.packages import (
     load_manifest,
 )
 from valiance.parsing import parse
+from valiance.parsing.unicode_identifiers import (
+    forbidden_identifier_character,
+    is_xid_continue,
+    is_xid_start,
+    normalize_identifier,
+)
 
 
 @dataclass(frozen=True)
@@ -203,6 +210,12 @@ class ModuleLoader:
         except OSError as exc:
             if native_exports is not None:
                 return native_exports
+            if isinstance(exc, FileNotFoundError):
+                suggestion = _unimportable_file_suggestion(source_file)
+                if suggestion is not None:
+                    raise ModuleLoadError(
+                        f"could not read module {source_file}: {exc}\n{suggestion}"
+                    ) from exc
             raise ModuleLoadError(f"could not read module {source_file}: {exc}") from exc
         finally:
             self._loading.discard(cache_key)
@@ -648,6 +661,69 @@ def _select_overloads(
         definition.public,
         definition.attached_tag,
     )
+
+
+def _is_importable_module_stem(value: str) -> bool:
+    """Return whether a file stem can be named by ordinary import syntax."""
+    normalized = normalize_identifier(value)
+    return (
+        value == normalized
+        and bool(value)
+        and is_xid_start(value[0])
+        and not forbidden_identifier_character(value[0])
+        and all(
+            is_xid_continue(char) and not forbidden_identifier_character(char)
+            for char in value[1:]
+        )
+    )
+
+
+def _module_name_similarity(value: str) -> str:
+    """Return a punctuation-insensitive key used only for missing-module hints."""
+    return "".join(char for char in value.casefold() if char.isalnum())
+
+
+def _unimportable_file_suggestion(source_file: Path) -> str | None:
+    """Suggest renaming a nearby source file that ordinary imports cannot name."""
+    directory = source_file.parent
+    if not directory.is_dir():
+        return None
+
+    requested = source_file.stem
+    requested_key = _module_name_similarity(requested)
+    if not requested_key:
+        return None
+
+    candidates: list[tuple[float, str]] = []
+    try:
+        entries = directory.iterdir()
+        for entry in entries:
+            if not entry.is_file() or entry.suffix != ".vlnc":
+                continue
+            stem = entry.stem
+            if _is_importable_module_stem(stem):
+                continue
+            candidate_key = _module_name_similarity(stem)
+            if not candidate_key:
+                continue
+            score = SequenceMatcher(None, requested_key, candidate_key).ratio()
+            if requested_key == candidate_key or score >= 0.8:
+                candidates.append((score, entry.name))
+    except OSError:
+        return None
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: (-item[0], item[1].casefold()))
+    names = [name for _, name in candidates[:3]]
+    lines = [
+        "A similarly named source file cannot be imported because its filename "
+        "is not a valid Valiance identifier:",
+        *(f"  {name}" for name in names),
+        f"help: rename {names[0]!r} to {source_file.name!r}",
+    ]
+    return "\n".join(lines)
 
 
 def _source_path(root: Path, parts: tuple[str, ...]) -> Path:
