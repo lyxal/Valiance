@@ -754,9 +754,22 @@ def _import_node(
             objects = import_objects(exports, resolved_spec)
             import_environment_facts(exports, resolved_spec, self.env)
         except ModuleLoadError as exc:
-            self._diagnose(str(exc), node)
+            namespace = (spec.alias.text,) if spec.alias else (spec.path.parts[-1],)
+            prefix = "" if spec.path.root is None else f"{spec.path.root}."
+            self._failed_imports[namespace] = prefix + ".".join(spec.path.parts)
+            if exc.diagnostics:
+                for diagnostic in exc.diagnostics:
+                    self._diagnose(diagnostic)
+            else:
+                self._diagnose(str(exc), node)
             return _core.BranchSet((branch.emit(TypedNode(node, None)),))
 
+        namespace = (
+            (resolved_spec.alias.text,)
+            if resolved_spec.alias
+            else (resolved_spec.path.parts[-1],)
+        )
+        self._failed_imports.pop(namespace, None)
         for typed_node in exports.runtime_prelude:
             self._prelude.add(typed_node)
         for obj in objects:

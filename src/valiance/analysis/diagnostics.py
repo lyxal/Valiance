@@ -46,6 +46,7 @@ class Diagnostic:
     message: str
     location: SourceLocation | None = None
     help: str | None = None
+    source_file: Path | None = None
 
 
 _RESET = "\033[0m"
@@ -71,6 +72,7 @@ _SYNTAX_STYLES = {
     "class:punctuation": _WHITE,
     "class:name": _WHITE,
 }
+_SOURCE_PREFIX = re.compile(r"^@source\[(?P<path>[^\n]+)\](?P<message>.*)$", re.DOTALL)
 _LOCATION_PREFIX = re.compile(
     r"^(?P<line>\d+):(?P<column>\d+):\s*(?P<message>.*)$",
     re.DOTALL,
@@ -80,6 +82,11 @@ _LOCATION_PREFIX = re.compile(
 def from_message(stage: str, message: str) -> Diagnostic:
     """Build a diagnostic from the analyser's current text format."""
     location = None
+    source_file = None
+    source_match = _SOURCE_PREFIX.match(message)
+    if source_match:
+        source_file = Path(source_match.group("path"))
+        message = source_match.group("message")
     match = _LOCATION_PREFIX.match(message)
     if match:
         location = SourceLocation(
@@ -93,6 +100,7 @@ def from_message(stage: str, message: str) -> Diagnostic:
         message,
         location,
         specific_help or _help_for(message),
+        source_file,
     )
 
 
@@ -120,7 +128,9 @@ def from_exception(stage: str, exc: BaseException) -> Diagnostic:
     else:
         parsed = from_message(stage, str(exc))
         if parsed.location is not None:
-            return Diagnostic(stage, parsed.message, parsed.location, parsed.help)
+            return Diagnostic(
+                stage, parsed.message, parsed.location, parsed.help, parsed.source_file
+            )
     return Diagnostic(stage, message, location, _help_for(message))
 
 
@@ -132,6 +142,12 @@ def render(
     color: bool = False,
 ) -> str:
     """Render a compiler diagnostic with source context when available."""
+    if diagnostic.source_file is not None:
+        source_file = diagnostic.source_file
+        try:
+            source = source_file.read_text(encoding="utf-8")
+        except OSError:
+            source = None
     message = _highlight_inline_code(diagnostic.message, color)
     lines = [f"{_style_stage(diagnostic.stage, color)}: {message}"]
     if diagnostic.location is not None:

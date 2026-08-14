@@ -3799,6 +3799,51 @@ define #checked(:String) -> #boolean Number => true end
         self.assertEqual(len(branches), 1)
         self.assertIn("no validator overload", analyser.diagnostics[-1])
 
+    def test_imported_module_diagnostics_remain_separate_and_source_scoped(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            geometry = root / "geometry.vlnc"
+            geometry.write_text(
+                "define first -> String => 1 end\n"
+                "public define second -> String => 2 end\n",
+                encoding="utf-8",
+            )
+            analyser = Analyser(
+                module_loader=ModuleLoader(), source_file=root / "main.vlnc"
+            )
+
+            analyser.analyse(parse("import { geometry }\ngeometry.second"))
+
+        self.assertEqual(len(analyser.diagnostics), 3)
+        self.assertTrue(analyser.diagnostics[0].startswith(f"@source[{geometry}]1:"))
+        self.assertTrue(analyser.diagnostics[1].startswith(f"@source[{geometry}]2:"))
+        self.assertNotIn(";", analyser.diagnostics[0])
+        self.assertIn("unknown element 'geometry.second'", analyser.diagnostics[2])
+        self.assertIn("module 'geometry' could not be imported", analyser.diagnostics[2])
+
+    def test_unknown_namespaced_element_links_to_failed_import(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "geometry2.vlnc").write_text("", encoding="utf-8")
+            main = root / "main.vlnc"
+            analyser = Analyser(module_loader=ModuleLoader(), source_file=main)
+
+            analyser.analyse(
+                parse(
+                    "import { geometry }\n"
+                    "[10, 20] geometry.distance [30, 40]"
+                )
+            )
+
+        self.assertIn("module 'geometry' was not found", analyser.diagnostics[0])
+        self.assertIn("did you mean 'geometry2'?", analyser.diagnostics[0])
+        self.assertIn("unknown element 'geometry.distance'", analyser.diagnostics[1])
+        self.assertIn(
+            "is unavailable because module 'geometry' could not be imported",
+            analyser.diagnostics[1],
+        )
+        self.assertIn("fix the import above", analyser.diagnostics[1])
+
     def test_explicit_tag_import_installs_tag_and_public_overlays(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

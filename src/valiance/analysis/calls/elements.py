@@ -308,6 +308,21 @@ class _ElementCalls:
     ) -> str:
         """Build an unknown-element message with type-viable typo suggestions."""
         message = f"unknown element '{node.name}'"
+        failed_import = next(
+            (
+                module
+                for namespace, module in self._failed_imports.items()
+                if node.name.namespace[: len(namespace)] == namespace
+            ),
+            None,
+        )
+        if failed_import is not None:
+            return (
+                f"{message}\n"
+                f"note: '{node.name}' is unavailable because module "
+                f"'{failed_import}' could not be imported\n"
+                "help: fix the import above before checking this element name"
+            )
         if branch.variables.read(node.name) is not None:
             return f"{message}\ndid you mean '${node.name}'?"
         suggestions = self._element_name_suggestions(node, branch)

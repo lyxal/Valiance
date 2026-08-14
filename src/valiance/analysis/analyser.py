@@ -331,6 +331,7 @@ class Analyser:
         self.file_lint_suppressions: dict[str, ASTNode] = {}
         self._friendly_owners: tuple[Symbol, ...] = ()
         self._imported_definition_sources: dict[Symbol, str] = {}
+        self._failed_imports: dict[tuple[str, ...], str] = {}
         self._top_level_declared_variable_names: frozenset[Symbol] = frozenset()
         self._prescanned_definition_overloads: dict[int, list[tuple[Symbol, int]]] = {}
         self._incomplete_recursive_definitions: tuple[DefineNode, ...] = ()

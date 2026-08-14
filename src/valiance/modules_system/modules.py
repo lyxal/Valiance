@@ -80,6 +80,16 @@ class ModuleExports:
 class ModuleLoadError(Exception):
     """Raised when an import cannot be resolved or analysed."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostics: tuple[str, ...] = (),
+    ) -> None:
+        """Initialize a module error, optionally retaining child diagnostics."""
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
 
 # Immutable analysed stdlib exports are safe to share between loader instances.
 _PROCESS_INTERFACE_CACHE: dict[tuple[str, str], ModuleExports] = {}
@@ -178,7 +188,9 @@ class ModuleLoader:
                 source = compiled_module.interface_source
                 source_file = compiled_file
             else:
-                source = source_file.read_text(encoding="utf-8")
+                raise ModuleLoadError(
+                    _missing_module_message(path, source_file)
+                )
 
             program = parse(source)
             if path.parts and path.parts[0] == "std":
@@ -194,7 +206,14 @@ class ModuleLoader:
             analyser = Analyser(env=env, module_loader=self, source_file=source_file)
             typed = analyser.analyse(program)
             if analyser.diagnostics:
-                raise ModuleLoadError(f"{source_file}: {'; '.join(analyser.diagnostics)}")
+                diagnostics = tuple(
+                    _module_diagnostic(source_file, diagnostic)
+                    for diagnostic in analyser.diagnostics
+                )
+                raise ModuleLoadError(
+                    f"module {_module_name(path)!r} contains type errors",
+                    diagnostics=diagnostics,
+                )
             exports = collect_module_exports(_module_name(path), program, typed, analyser)
             if native_exports is not None:
                 exports = ModuleExports(
@@ -211,11 +230,9 @@ class ModuleLoader:
             if native_exports is not None:
                 return native_exports
             if isinstance(exc, FileNotFoundError):
-                suggestion = _unimportable_file_suggestion(source_file)
-                if suggestion is not None:
-                    raise ModuleLoadError(
-                        f"could not read module {source_file}: {exc}\n{suggestion}"
-                    ) from exc
+                raise ModuleLoadError(
+                    _missing_module_message(path, source_file)
+                ) from exc
             raise ModuleLoadError(f"could not read module {source_file}: {exc}") from exc
         finally:
             self._loading.discard(cache_key)
@@ -681,6 +698,65 @@ def _is_importable_module_stem(value: str) -> bool:
 def _module_name_similarity(value: str) -> str:
     """Return a punctuation-insensitive key used only for missing-module hints."""
     return "".join(char for char in value.casefold() if char.isalnum())
+
+
+def _module_diagnostic(source_file: Path, diagnostic: str) -> str:
+    """Attach a module source path without flattening its diagnostic text."""
+    return f"@source[{source_file}]{diagnostic}"
+
+
+def _nearby_module_names(source_file: Path) -> tuple[str, ...]:
+    """Return importable sibling modules similar to a missing source module."""
+    directory = source_file.parent
+    if not directory.is_dir():
+        return ()
+
+    requested = source_file.stem
+    requested_key = _module_name_similarity(requested)
+    candidates: dict[str, float] = {}
+    try:
+        for entry in directory.iterdir():
+            if not entry.is_file() or entry.suffix not in {".vlnc", ".vbcm"}:
+                continue
+            stem = entry.stem
+            if stem == requested or not _is_importable_module_stem(stem):
+                continue
+            score = SequenceMatcher(
+                None, requested_key, _module_name_similarity(stem)
+            ).ratio()
+            if score >= 0.62:
+                candidates[stem] = max(score, candidates.get(stem, 0.0))
+    except OSError:
+        return ()
+
+    return tuple(
+        name
+        for name, _ in sorted(
+            candidates.items(), key=lambda item: (-item[1], item[0].casefold())
+        )[:3]
+    )
+
+
+def _missing_module_message(path: ImportPath, source_file: Path) -> str:
+    """Build an actionable diagnostic for a module that cannot be found."""
+    module_name = _module_name(path)
+    lines = [
+        f"module {module_name!r} was not found",
+        f"looked for: {source_file}",
+    ]
+    nearby = _nearby_module_names(source_file)
+    if nearby:
+        rendered = ", ".join(repr(name) for name in nearby)
+        lines.append(f"help: did you mean {rendered}?")
+    else:
+        lines.append(
+            "help: check the module name and make sure the source file exists "
+            "next to the importing file"
+        )
+    unimportable = _unimportable_file_suggestion(source_file)
+    if unimportable is not None:
+        lines.append(unimportable)
+    return "\n".join(lines)
 
 
 def _unimportable_file_suggestion(source_file: Path) -> str | None:

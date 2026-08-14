@@ -31,6 +31,23 @@ class CompiledModuleTests(unittest.TestCase):
             self.assertIn("not a valid Valiance identifier", message)
             self.assertIn("rename 'json-parser.vlnc' to 'jsonParser.vlnc'", message)
 
+    def test_missing_module_suggests_similar_importable_module(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "geometry2.vlnc").write_text("", encoding="utf-8")
+
+            with self.assertRaises(ModuleLoadError) as raised:
+                ModuleLoader().load(
+                    ImportPath(("geometry",)),
+                    current_file=root / "main.vlnc",
+                )
+
+            message = str(raised.exception)
+            self.assertIn("module 'geometry' was not found", message)
+            self.assertIn("looked for:", message)
+            self.assertIn("did you mean 'geometry2'?", message)
+            self.assertNotIn("[Errno 2]", message)
+
     def test_missing_module_does_not_suggest_unrelated_unimportable_file(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

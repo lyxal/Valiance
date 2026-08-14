@@ -572,6 +572,31 @@ class MainTests(unittest.TestCase):
         self.assertIn("1 | println()", rendered)
         self.assertIn("|         ^", rendered)
 
+    def test_main_renders_imported_module_errors_at_their_own_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            geometry = root / "geometry.vlnc"
+            main_file = root / "main.vlnc"
+            geometry.write_text(
+                "define first -> String => 1 end\n"
+                "public define second -> String => 2 end\n",
+                encoding="utf-8",
+            )
+            main_file.write_text(
+                "import { geometry }\ngeometry.second\n", encoding="utf-8"
+            )
+            error = io.StringIO()
+            with contextlib.redirect_stderr(error):
+                exit_code = main(["run", "--file", str(main_file)])
+
+        self.assertEqual(exit_code, 1)
+        rendered = error.getvalue()
+        self.assertIn(f"--> {geometry}:1:", rendered)
+        self.assertIn(f"--> {geometry}:2:", rendered)
+        self.assertEqual(rendered.count("function body returns"), 2)
+        self.assertNotIn(f"--> {main_file}:1:", rendered)
+        self.assertIn(f"--> {main_file}:2:", rendered)
+
     def test_main_formats_type_errors_with_source_context_and_help(self):
         error = io.StringIO()
         with contextlib.redirect_stderr(error):
