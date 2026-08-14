@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Sort contiguous runs of @builtin-decorated functions by builtin name.
+"""Sort builtin implementations and documentation by builtin name.
 
-The sorter uses Python's AST to find top-level functions and literal builtin
-names. It preserves each complete function block, including stacked @builtin
-and @alias decorators. It deliberately does not move functions across other
-Python statements, which avoids moving a declaration above a helper used by a
-decorator.
+The sorter uses Python's AST to:
+* sort literal entries in _BUILTIN_DOCUMENTATION alphabetically by key; and
+* sort contiguous runs of top-level @builtin-decorated functions by name.
+
+Complete function blocks, stacked decorators, dictionary values, comments, and
+formatting are preserved. Functions are not moved across other Python
+statements, avoiding changes to helper/decorator dependency order.
 """
 
 from __future__ import annotations
@@ -63,7 +65,67 @@ def only_trivia(lines: list[str], start: int, end: int) -> bool:
     return all(not line.strip() or line.lstrip().startswith("#") for line in lines[start:end])
 
 
+def _character_offset(line: str, byte_column: int) -> int:
+    """Translate an AST UTF-8 byte column into a Python string offset."""
+    return len(line.encode("utf-8")[:byte_column].decode("utf-8"))
+
+
+def _absolute_offset(lines: list[str], line_number: int, byte_column: int) -> int:
+    return sum(map(len, lines[: line_number - 1])) + _character_offset(
+        lines[line_number - 1], byte_column
+    )
+
+
+def sort_documentation_dictionary(source: str, filename: str) -> str:
+    """Sort _BUILTIN_DOCUMENTATION entries with literal string keys."""
+    tree = ast.parse(source, filename=filename)
+    lines = source.splitlines(keepends=True)
+    dictionary: ast.Dict | None = None
+
+    for statement in tree.body:
+        if isinstance(statement, ast.AnnAssign):
+            target, value = statement.target, statement.value
+        elif isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+            target, value = statement.targets[0], statement.value
+        else:
+            continue
+        if isinstance(target, ast.Name) and target.id == "_BUILTIN_DOCUMENTATION":
+            if not isinstance(value, ast.Dict):
+                raise ValueError("_BUILTIN_DOCUMENTATION must be a dictionary literal")
+            dictionary = value
+            break
+
+    if dictionary is None:
+        raise ValueError("could not find _BUILTIN_DOCUMENTATION")
+    if not dictionary.keys:
+        return source
+
+    entries: list[tuple[str, int]] = []
+    for key in dictionary.keys:
+        if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+            line = getattr(key, "lineno", dictionary.lineno)
+            raise ValueError(
+                f"line {line}: _BUILTIN_DOCUMENTATION keys must be string literals"
+            )
+        entries.append(
+            (key.value, _absolute_offset(lines, key.lineno, 0))
+        )
+
+    # Each chunk begins at a key and ends immediately before the next key. This
+    # preserves the full multiline value, comma, whitespace, and trailing comments.
+    closing_brace = _absolute_offset(lines, dictionary.end_lineno, 0)
+    chunks: list[tuple[str, str]] = []
+    for index, (key, start) in enumerate(entries):
+        end = entries[index + 1][1] if index + 1 < len(entries) else closing_brace
+        chunks.append((key, source[start:end]))
+
+    ordered = sorted(chunks, key=lambda item: (item[0].casefold(), item[0]))
+    first = entries[0][1]
+    return source[:first] + "".join(chunk for _, chunk in ordered) + source[closing_brace:]
+
+
 def sorted_source(source: str, filename: str) -> str:
+    source = sort_documentation_dictionary(source, filename)
     lines = source.splitlines(keepends=True)
     tree = ast.parse(source, filename=filename)
     blocks = [
@@ -116,7 +178,7 @@ def main() -> int:
         return 0
 
     if args.check:
-        print(f"Builtins are not alphabetically sorted: {args.path}", file=sys.stderr)
+        print(f"Builtins or builtin documentation are not alphabetically sorted: {args.path}", file=sys.stderr)
         sys.stderr.writelines(
             difflib.unified_diff(
                 original.splitlines(keepends=True),

@@ -115,6 +115,17 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         examples=(("10 dup", "10 10"),),
         category="Stack",
     ),
+    "hook": element_documentation(
+        "Fork functions f and g, then combine their results with h.",
+        parameters=(
+            ("f", "Callable applied to the lower input group."),
+            ("g", "Callable applied to the upper input group."),
+            ("h", "Callable that combines the results of f and g."),
+        ),
+        returns="The combined results of f and g.",
+        examples=(("[19, 2, 3, 4, 13] hook: (sum, /, length)", "8.2")),
+        category="Functions",
+    ),
     "swap": element_documentation(
         "Exchange the two topmost stack values.",
         parameters=(
@@ -1198,9 +1209,7 @@ def _choose_shared_call_site_applications(
         choice = T.choose_best_overload(callable_type, T.TypeStack(callable_args))
         if choice is None:
             return None
-        applications.append(
-            _concrete_callable_application(callable_args, choice)
-        )
+        applications.append(_concrete_callable_application(callable_args, choice))
     return _CallSiteApplications(shared_args, tuple(applications))
 
 
