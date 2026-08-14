@@ -331,6 +331,11 @@ class Analyser:
         self.file_lint_suppressions: dict[str, ASTNode] = {}
         self._friendly_owners: tuple[Symbol, ...] = ()
         self._imported_definition_sources: dict[Symbol, str] = {}
+        self._public_import_definitions = []
+        self._public_import_objects = []
+        self._public_import_tags = []
+        self._public_import_overlays = []
+        self._scope_depth = 0
         self._failed_imports: dict[tuple[str, ...], str] = {}
         self._top_level_declared_variable_names: frozenset[Symbol] = frozenset()
         self._prescanned_definition_overloads: dict[int, list[tuple[Symbol, int]]] = {}
@@ -611,6 +616,26 @@ class Analyser:
         return references
 
     @property
+    def public_import_definitions(self) -> tuple:
+        """Return definitions made public through top-level public imports."""
+        return tuple(self._public_import_definitions)
+
+    @property
+    def public_import_objects(self) -> tuple:
+        """Return object-like declarations made public through public imports."""
+        return tuple(self._public_import_objects)
+
+    @property
+    def public_import_tags(self) -> tuple:
+        """Return tags made public through selective public imports."""
+        return tuple(self._public_import_tags)
+
+    @property
+    def public_import_overlays(self) -> tuple:
+        """Return overlays belonging to publicly re-exported tags."""
+        return tuple(self._public_import_overlays)
+
+    @property
     def runtime_prelude(self) -> tuple[TypedNode, ...]:
         """Return declarations hoisted from imports for one-time initialization."""
         return tuple(self._prelude.nodes)
@@ -663,9 +688,11 @@ class Analyser:
         outer = self.env
         imported_sources = self._imported_definition_sources.copy()
         self.env = outer.lexical_child_scope()
+        self._scope_depth += 1
         try:
             return self.analyse_block(initial, nodes)
         finally:
+            self._scope_depth -= 1
             self.env = outer
             self._imported_definition_sources = imported_sources
 
@@ -679,6 +706,7 @@ class Analyser:
             _prelude=self._prelude,
         )
         child._friendly_owners = self._friendly_owners
+        child._scope_depth = self._scope_depth + 1
         child._imported_definition_sources = (
             self._imported_definition_sources.copy()
         )

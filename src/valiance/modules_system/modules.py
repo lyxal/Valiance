@@ -104,12 +104,21 @@ def collect_module_exports(
     """Collect the complete analysed static and runtime-facing module interface."""
     return ModuleExports(
         module_name,
-        _module_definitions(program, typed),
-        _module_objects(typed),
-        _module_tags(program, analyser.env),
-        _module_overlays(program, analyser.env),
+        _deduplicate(_module_definitions(program, typed) + analyser.public_import_definitions),
+        _deduplicate(_module_objects(typed) + analyser.public_import_objects),
+        _deduplicate(_module_tags(program, analyser.env) + analyser.public_import_tags),
+        _deduplicate(_module_overlays(program, analyser.env) + analyser.public_import_overlays),
         analyser.runtime_prelude,
     )
+
+
+def _deduplicate(items: tuple) -> tuple:
+    """Preserve interface order while removing repeated identical exports."""
+    result = []
+    for item in items:
+        if item not in result:
+            result.append(item)
+    return tuple(result)
 
 
 @dataclass
@@ -475,32 +484,30 @@ def _module_objects(
 
 
 def _module_tags(program: list, env) -> tuple[T.DataTagDefinition, ...]:
-    """Compute module tags during module loading and import resolution."""
-    public = {
+    """Compute importable module tags; tags do not require public visibility."""
+    importable = {
         Symbol(node.tag.name)
         for node in program
-        if isinstance(node, TagDeclarationNode)
-        and node.visibility == Symbol("public")
-        and node.disjoint is None
+        if isinstance(node, TagDeclarationNode) and node.disjoint is None
     }
     return tuple(
         definition
-        for name in public
+        for name in importable
         if (definition := env.lookup_tag(name)) is not None
     )
 
 
 def _module_overlays(program: list, env) -> tuple[T.TagOverlayDefinition, ...]:
-    """Compute module overlays during module loading and import resolution."""
-    public_tags = {
+    """Compute all module overlay rules available through an imported tag."""
+    overlay_tags = {
         Symbol(node.tag.name)
         for node in program
-        if isinstance(node, TagOverlayNode) and node.visibility == Symbol("public")
+        if isinstance(node, TagOverlayNode)
     }
     overlays: list[T.TagOverlayDefinition] = []
     for definitions in env.tag_overlays.values():
         overlays.extend(
-            definition for definition in definitions if definition.tag in public_tags
+            definition for definition in definitions if definition.tag in overlay_tags
         )
     return tuple(overlays)
 

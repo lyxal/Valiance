@@ -772,6 +772,25 @@ def _import_node(
         self._failed_imports.pop(namespace, None)
         for typed_node in exports.runtime_prelude:
             self._prelude.add(typed_node)
+        reexport = node.public and self._scope_depth == 0
+        if reexport:
+            self._public_import_objects.extend(
+                replace(obj, public=True) for obj in objects
+            )
+            self._public_import_definitions.extend(
+                replace(definition, public=True) for definition in definitions
+            )
+            selected_tags = {
+                Symbol(component.name.text.removeprefix("#"))
+                for component in resolved_spec.components
+                if component.kind == Symbol("tag")
+            }
+            for tag in exports.tags:
+                if tag.name in selected_tags:
+                    self._public_import_tags.append(tag)
+                    self._public_import_overlays.extend(
+                        overlay for overlay in exports.overlays if overlay.tag == tag.name
+                    )
         for obj in objects:
             runtime_name = self._prelude.add_declaration(obj.typed, obj.name)
             self._register_imported_object(obj, runtime_name)
