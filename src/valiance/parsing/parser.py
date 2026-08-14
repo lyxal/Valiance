@@ -187,13 +187,17 @@ def parse_with_diagnostics(source: str) -> ParseResult:
     except RecursionError:
         token = parser._current
         parser.diagnostics.append(
-            ParseError("source nesting is too deep", line=token.line, column=token.column)
+            ParseError(
+                "source nesting is too deep", line=token.line, column=token.column
+            )
         )
         nodes = parser.recovered_nodes
-    diagnostics = tuple(sorted(
-        (*lex_errors, *parser.diagnostics),
-        key=lambda item: (item.line or 0, item.column or 0),
-    ))
+    diagnostics = tuple(
+        sorted(
+            (*lex_errors, *parser.diagnostics),
+            key=lambda item: (item.line or 0, item.column or 0),
+        )
+    )
     return ParseResult(tuple(nodes), diagnostics)
 
 
@@ -245,10 +249,13 @@ class Parser:
                 self._synchronize_statement(before)
                 if len(self.diagnostics) >= 100:
                     token = self._current
-                    self.diagnostics.append(ParseError(
-                        "too many syntax errors; stopped after 100 diagnostics",
-                        line=token.line, column=token.column,
-                    ))
+                    self.diagnostics.append(
+                        ParseError(
+                            "too many syntax errors; stopped after 100 diagnostics",
+                            line=token.line,
+                            column=token.column,
+                        )
+                    )
                     break
         return nodes
 
@@ -343,7 +350,9 @@ class Parser:
             return self._constant(self._previous)
 
         if overloads:
-            self._error("overload must be followed by another overload, a comment, whitespace, define, or fn")
+            self._error(
+                "overload must be followed by another overload, a comment, whitespace, define, or fn"
+            )
         if annotations:
             self._error("annotation must be followed by a declaration")
         return self._chain_until(_LINE_TERMINATORS)
@@ -475,7 +484,7 @@ class Parser:
             if self._check(TokenKind.OP) and self._current.value.startswith("#"):
                 self.index -= 1
                 break
-            parts.append(self._expect(TokenKind.IDENT).value)
+            parts.append(self._symbol("expected import path component").text)
         return ImportPath(tuple(parts), root)
 
     def _import_components(self) -> tuple[ImportComponent, ...]:
@@ -553,8 +562,7 @@ class Parser:
             if self._match_ident("disjoint"):
                 disjoint = (
                     _tag_from_token(self._advance())
-                    if self._check(TokenKind.OP)
-                    and self._current.value.startswith("#")
+                    if self._check(TokenKind.OP) and self._current.value.startswith("#")
                     else self._symbol("expected disjoint tag name")
                 )
                 return ElementTagDeclarationNode(
@@ -578,8 +586,7 @@ class Parser:
         if self._match_ident("disjoint"):
             disjoint = (
                 _tag_from_token(self._advance())
-                if self._check(TokenKind.OP)
-                and self._current.value.startswith("#")
+                if self._check(TokenKind.OP) and self._current.value.startswith("#")
                 else self._symbol("expected disjoint tag name")
             )
             return TagDeclarationNode(
@@ -699,9 +706,7 @@ class Parser:
             attached_tag = _tag_from_token(self._advance())
         name = self._symbol("expected definition name")
         params = (
-            self._params(allow_defaults=True)
-            if self._match(TokenKind.LPAREN)
-            else None
+            self._params(allow_defaults=True) if self._match(TokenKind.LPAREN) else None
         )
         element_tags, element_tags_explicit = self._function_element_tags()
         element_tag_set = set(element_tags)
@@ -900,9 +905,7 @@ class Parser:
             else self._qualified_symbol(token)
         )
         params = (
-            self._params(allow_empty=True)
-            if self._match(TokenKind.LPAREN)
-            else None
+            self._params(allow_empty=True) if self._match(TokenKind.LPAREN) else None
         )
         element_tags, _element_tags_explicit = self._function_element_tags()
         returns = self._returns()
@@ -973,9 +976,7 @@ class Parser:
         """Parse function from the current token stream."""
         generics, generic_variances, generic_constraints = self._generic_parameters()
         params = (
-            self._params(allow_empty=True)
-            if self._match(TokenKind.LPAREN)
-            else None
+            self._params(allow_empty=True) if self._match(TokenKind.LPAREN) else None
         )
         element_tags, element_tags_explicit = self._function_element_tags()
         returns = self._returns()
@@ -999,9 +1000,7 @@ class Parser:
     def _concurrent(self, start: Token) -> ConcurrentNode:
         """Parse a structured concurrent block using function-style contracts."""
         params = (
-            self._params(allow_empty=True)
-            if self._match(TokenKind.LPAREN)
-            else None
+            self._params(allow_empty=True) if self._match(TokenKind.LPAREN) else None
         )
         returns = self._returns()
         self._expect(TokenKind.FAT_ARROW)
@@ -1037,7 +1036,9 @@ class Parser:
         """Parse if from the current token stream."""
         condition = self._condition()
         self._expect(TokenKind.FAT_ARROW)
-        then_branch = self._body({"else", "end"}, owner_column=self._line_start_column(start))
+        then_branch = self._body(
+            {"else", "end"}, owner_column=self._line_start_column(start)
+        )
         else_branch: tuple[ASTNode, ...] = ()
         self._skip_newlines()
         if self._match_ident("else"):
@@ -1046,7 +1047,9 @@ class Parser:
                 self._consume_optional_end(owner_column=self._line_start_column(start))
             else:
                 self._expect(TokenKind.FAT_ARROW)
-                else_branch = self._body({"end"}, owner_column=self._line_start_column(start))
+                else_branch = self._body(
+                    {"end"}, owner_column=self._line_start_column(start)
+                )
                 self._skip_newlines()
                 self._consume_optional_end(owner_column=self._line_start_column(start))
         return IfNode(condition, then_branch, else_branch, location=_loc(start))
@@ -1172,7 +1175,12 @@ class Parser:
                 first, *remaining = patterns
                 if isinstance(first, OrPatternNode):
                     first = OrPatternNode(
-                        (ExtractPatternNode(first.options[0], location=first.options[0].location), *first.options[1:]),
+                        (
+                            ExtractPatternNode(
+                                first.options[0], location=first.options[0].location
+                            ),
+                            *first.options[1:],
+                        ),
                         location=first.location,
                     )
                 else:
@@ -1591,7 +1599,11 @@ class Parser:
                         cast.typ if cast is not None else None,
                         location=_loc(token),
                     ),
-                    *((cast,) if cast is not None and (cast.checked or cast.optional) else ()),
+                    *(
+                        (cast,)
+                        if cast is not None and (cast.checked or cast.optional)
+                        else ()
+                    ),
                 ),
                 True,
             )
@@ -1922,9 +1934,7 @@ class Parser:
                 if not body:
                     self._error("extend pattern rule must produce substitutions")
                 params = tuple(
-                    FunctionParam(name=name)
-                    for name in pattern
-                    if name is not None
+                    FunctionParam(name=name) for name in pattern if name is not None
                 )
                 rules.append(
                     ExtensionPatternRule(
@@ -2191,9 +2201,7 @@ class Parser:
             )
         if self._match(TokenKind.ARROW, TokenKind.DOT):
             first_kind = (
-                "safe_field"
-                if self._previous.kind is TokenKind.ARROW
-                else "field"
+                "safe_field" if self._previous.kind is TokenKind.ARROW else "field"
             )
             path: list[tuple[str, Symbol]] = [
                 (first_kind, self._symbol("expected field name"))
@@ -2203,9 +2211,7 @@ class Parser:
                     path.append(("field", self._symbol("expected field name")))
                     continue
                 if self._match(TokenKind.ARROW):
-                    path.append(
-                        ("safe_field", self._symbol("expected field name"))
-                    )
+                    path.append(("safe_field", self._symbol("expected field name")))
                     continue
                 break
 
@@ -2326,11 +2332,7 @@ class Parser:
             self._current,
         ):
             self._advance()
-            call_args = (
-                ()
-                if self._match(TokenKind.RPAREN)
-                else self._call_arguments()
-            )
+            call_args = () if self._match(TokenKind.RPAREN) else self._call_arguments()
             if not any(arg.placeholder or arg.name is not None for arg in call_args):
                 return _ChainPiece(
                     (
@@ -2473,9 +2475,7 @@ class Parser:
         self._expect(TokenKind.ASSIGN)
         values: list[ASTNode] = []
         while True:
-            values.extend(
-                self._chain_until(_LINE_TERMINATORS | {TokenKind.COMMA})
-            )
+            values.extend(self._chain_until(_LINE_TERMINATORS | {TokenKind.COMMA}))
             if not self._match(TokenKind.COMMA):
                 break
             self._skip_newlines()
@@ -2546,8 +2546,7 @@ class Parser:
         nodes: list[ASTNode] = []
         for selector in selectors:
             nodes.extend(
-                self._lower_index_wildcard_shorthand(node)
-                for node in selector.start
+                self._lower_index_wildcard_shorthand(node) for node in selector.start
             )
             nodes.extend(selector.stop)
             nodes.extend(selector.step)
@@ -2559,17 +2558,25 @@ class Parser:
             return node
         fixed_path = any(
             isinstance(item, ElementNode) and item.name.text in {"_", "\\None"}
-            for expression in node.items for item in expression
+            for expression in node.items
+            for item in expression
         )
         items = tuple(
             tuple(
-                ElementNode(Symbol("\\None"), location=item.location)
-                if isinstance(item, ElementNode) and item.name.text == "_"
-                else self._lower_index_wildcard_shorthand(item)
+                (
+                    ElementNode(Symbol("\\None"), location=item.location)
+                    if isinstance(item, ElementNode) and item.name.text == "_"
+                    else self._lower_index_wildcard_shorthand(item)
+                )
                 for item in expression
-            ) for expression in node.items
+            )
+            for expression in node.items
         )
-        return TupleLiteralNode(items, location=node.location) if fixed_path else replace(node, items=items)
+        return (
+            TupleLiteralNode(items, location=node.location)
+            if fixed_path
+            else replace(node, items=items)
+        )
 
     def _comma_expressions(self, closer: TokenKind) -> tuple[tuple[ASTNode, ...], ...]:
         """Parse comma expressions from the current token stream."""
@@ -2607,15 +2614,18 @@ class Parser:
             self._error("empty argument lists are invalid; use a \\nilad name")
         while True:
             self._skip_newlines()
-            if self._check(TokenKind.IDENT) and self._current.value == "_" and (
-                self._peek(1).kind
-                in {TokenKind.COMMA, TokenKind.RPAREN, TokenKind.NEWLINE}
+            if (
+                self._check(TokenKind.IDENT)
+                and self._current.value == "_"
+                and (
+                    self._peek(1).kind
+                    in {TokenKind.COMMA, TokenKind.RPAREN, TokenKind.NEWLINE}
+                )
             ):
                 self._advance()
                 args.append(CallArgument(placeholder=True))
             elif (
-                self._check(TokenKind.IDENT)
-                and self._peek(1).kind is TokenKind.ASSIGN
+                self._check(TokenKind.IDENT) and self._peek(1).kind is TokenKind.ASSIGN
             ):
                 name = Symbol(self._advance().value)
                 self._expect(TokenKind.ASSIGN)
@@ -2632,9 +2642,8 @@ class Parser:
                 if not value:
                     self._error("expected argument")
                 prefix_count = 0
-                while (
-                    prefix_count < len(value)
-                    and isinstance(value[prefix_count], MinimumRankNode)
+                while prefix_count < len(value) and isinstance(
+                    value[prefix_count], MinimumRankNode
                 ):
                     prefix_count += 1
                 if prefix_count and prefix_count < len(value):
@@ -2647,7 +2656,9 @@ class Parser:
 
     def _element_generic_arguments(self, start: Token) -> tuple[Type | None, ...]:
         """Parse caller-supplied generic arguments in square brackets."""
-        if not self._check(TokenKind.LBRACKET) or not self._adjacent(start, self._current):
+        if not self._check(TokenKind.LBRACKET) or not self._adjacent(
+            start, self._current
+        ):
             return ()
         self._advance()
         return self._element_type_arguments(
@@ -2657,7 +2668,9 @@ class Parser:
 
     def _element_disambiguation(self, start: Token) -> tuple[Type | None, ...]:
         """Parse positional overload hints in adjacent curly braces."""
-        if not self._check(TokenKind.LBRACE) or not self._adjacent(start, self._current):
+        if not self._check(TokenKind.LBRACE) or not self._adjacent(
+            start, self._current
+        ):
             return ()
         self._advance()
         return self._element_type_arguments(
@@ -2923,8 +2936,7 @@ class Parser:
             self._skip_newlines()
             while not self._check(TokenKind.RBRACKET):
                 if not (
-                    self._check(TokenKind.OP)
-                    and self._current.value.startswith("#")
+                    self._check(TokenKind.OP) and self._current.value.startswith("#")
                 ):
                     self._error("expected data tag in exact tag set")
                 tag = _tag_from_token(self._advance())
@@ -3001,9 +3013,7 @@ class Parser:
             break
         return typ
 
-    def _type_postfix_rank(
-        self, op_token: Token, op: str
-    ) -> int | RankVariable:
+    def _type_postfix_rank(self, op_token: Token, op: str) -> int | RankVariable:
         """Parse type postfix rank from the current token stream."""
         if self._match(TokenKind.NUMBER):
             token = self._previous
@@ -3559,7 +3569,6 @@ def _append_object_body_item(
         fields.append(item)
     elif isinstance(item, DefineNode):
         definitions.append(item)
-
 
     else:
         requirements.append(item)
