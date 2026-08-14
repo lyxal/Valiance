@@ -108,96 +108,34 @@ TRAIT_IMPLS = (
 
 
 _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
-    "dup": element_documentation(
-        "Duplicate the top stack value.",
-        parameters=(("value", "Value to duplicate."),),
-        returns="Two copies of the input value.",
-        examples=(("10 dup", "10 10"),),
-        category="Stack",
+    "%": element_documentation(
+        "Return the remainder after numeric division.",
+        parameters=(("left", "Dividend."), ("right", "Divisor.")),
+        returns="The remainder.",
+        examples=(("17 5 %", "2"),),
+        category="Arithmetic",
     ),
-    "hook": element_documentation(
-        "Fork functions f and g, then combine their results with h.",
+    "&": element_documentation(
+        "Continue an optional or result computation only when a value is present or successful.",
         parameters=(
-            ("f", "Callable applied to the lower input group."),
-            ("g", "Callable applied to the upper input group."),
-            ("h", "Callable that combines the results of f and g."),
+            ("value", "Optional, result, or recoverable error."),
+            ("operation", "Callable applied to the present or successful value."),
         ),
-        returns="The combined results of f and g.",
-        examples=(("[19, 2, 3, 4, 13] hook: (sum, /, length)", "8.2")),
-        category="Functions",
+        returns="The transformed container, while empty or error values pass through unchanged.",
+        category="Optionals and results",
     ),
-    "swap": element_documentation(
-        "Exchange the two topmost stack values.",
-        parameters=(
-            ("lower", "Value immediately below the top of the stack."),
-            ("upper", "Value at the top of the stack."),
-        ),
-        returns="The same values in reverse stack order.",
-        examples=(("1 2 swap", "2 1"),),
-        category="Stack",
+    "*": element_documentation(
+        "Multiply numbers or repeat a string an integer number of times.",
+        parameters=(("left", "Left operand."), ("right", "Right operand.")),
+        returns="A numeric product or repeated string.",
+        examples=(("6 7 *", "42"), ('"ha" 3 *', "hahaha")),
+        category="Arithmetic",
     ),
-    "top": element_documentation(
-        "Return the top stack value unchanged.",
-        parameters=(("value", "Value at the top of the stack."),),
-        returns="The input value.",
-        category="Stack",
-    ),
-    "peek": element_documentation(
-        "Call a function while preserving the values it consumes.",
-        description="The callable receives its normal inputs, and those inputs remain beneath the callable's results.",
-        parameters=(("operation", "Callable to invoke."),),
-        returns="The preserved inputs followed by the callable results.",
-        category="Functions",
-    ),
-    "dip": element_documentation(
-        "Call a function beneath one temporarily held stack value.",
-        parameters=(
-            ("held", "Value temporarily removed while the callable runs."),
-            ("operation", "Callable to invoke on the remaining stack."),
-        ),
-        returns="The callable results followed by the held value.",
-        category="Functions",
-    ),
-    "fork": element_documentation(
-        "Apply two callables to the same available inputs.",
-        parameters=(
-            ("left", "First callable."),
-            ("right", "Second callable."),
-        ),
-        returns="The results of the left callable followed by the results of the right callable.",
-        category="Functions",
-    ),
-    "both": element_documentation(
-        "Apply one callable to two consecutive groups of stack values.",
-        description=(
-            "If the callable takes n inputs, both consumes two groups of n values.",
-            "The lower group is called first, followed by the upper group.",
-        ),
-        parameters=(("operation", "Callable applied to each input group."),),
-        returns="The first call's results followed by the second call's results.",
-        category="Functions",
-    ),
-    "sequence": element_documentation(
-        "Apply two callables to two distinct consecutive groups of stack values.",
-        description=(
-            "The first callable consumes the lower group and the second "
-            "callable consumes the upper group.",
-            "The callables may have different input and output arities.",
-        ),
-        parameters=(
-            ("lower", "Callable applied to the lower input group."),
-            ("upper", "Callable applied to the upper input group."),
-        ),
-        returns=(
-            "The lower callable's results followed by the upper callable's " "results."
-        ),
-        category="Functions",
-    ),
-    "call": element_documentation(
-        "Invoke a callable value.",
-        parameters=(("operation", "Callable to invoke."),),
-        returns="The values returned by the selected callable overload.",
-        category="Functions",
+    "**": element_documentation(
+        "Raise a number to a numeric power.",
+        parameters=(("base", "Number to raise."), ("exponent", "Power to apply.")),
+        returns="The exponentiated number.",
+        category="Arithmetic",
     ),
     "+": element_documentation(
         "Add numbers or concatenate strings.",
@@ -219,20 +157,6 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         examples=(("10 3 -", "7"),),
         category="Arithmetic",
     ),
-    "*": element_documentation(
-        "Multiply numbers or repeat a string an integer number of times.",
-        parameters=(("left", "Left operand."), ("right", "Right operand.")),
-        returns="A numeric product or repeated string.",
-        examples=(("6 7 *", "42"), ('"ha" 3 *', "hahaha")),
-        category="Arithmetic",
-    ),
-    "%": element_documentation(
-        "Return the remainder after numeric division.",
-        parameters=(("left", "Dividend."), ("right", "Divisor.")),
-        returns="The remainder.",
-        examples=(("17 5 %", "2"),),
-        category="Arithmetic",
-    ),
     "/": element_documentation(
         "Divide numbers or reduce a non-empty list.",
         description=(
@@ -246,6 +170,144 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The quotient or final reduced value.",
         category="Arithmetic",
         see_also=("reduce", "fold"),
+    ),
+    "<": element_documentation(
+        "Test whether the left number is less than the right number.",
+        parameters=(("left", "First number."), ("right", "Second number.")),
+        returns="A Boolean comparison result.",
+        category="Comparison",
+    ),
+    "<=": element_documentation(
+        "Test whether the left number is less than or equal to the right number.",
+        parameters=(("left", "First number."), ("right", "Second number.")),
+        returns="A Boolean comparison result.",
+        category="Comparison",
+    ),
+    "==": element_documentation(
+        "Test two numbers or two strings for equality.",
+        parameters=(("left", "First value."), ("right", "Second value.")),
+        returns="A Boolean equality result.",
+        category="Comparison",
+    ),
+    "===": element_documentation(
+        "Test any two values for structural equality.",
+        parameters=(("left", "First value."), ("right", "Second value.")),
+        returns="A Boolean equality result.",
+        category="Comparison",
+    ),
+    ">": element_documentation(
+        "Test whether the left number is greater than the right number.",
+        parameters=(("left", "First number."), ("right", "Second number.")),
+        returns="A Boolean comparison result.",
+        category="Comparison",
+    ),
+    ">=": element_documentation(
+        "Test whether the left number is greater than or equal to the right number.",
+        parameters=(("left", "First number."), ("right", "Second number.")),
+        returns="A Boolean comparison result.",
+        category="Comparison",
+    ),
+    "?": element_documentation(
+        "Unwrap a present optional or successful result with propagation semantics.",
+        parameters=(("value", "Optional or result to inspect."),),
+        returns="The contained value, or the original empty/error value for propagation.",
+        category="Optionals and results",
+    ),
+    "?!": element_documentation(
+        "Unwrap an optional or result and panic when no successful value exists.",
+        parameters=(("value", "Optional or result to unwrap."),),
+        returns="The contained value.",
+        notes="Panics with `UnwrappedNoneFault` or `UnwrappedResultFault` on failure.",
+        category="Optionals and results",
+    ),
+    "\\None": element_documentation(
+        "Push an empty optional value.",
+        returns="The empty `None` optional.",
+        category="Optionals and results",
+    ),
+    "addAll": element_documentation(
+        "Append every item from one list to another list.",
+        parameters=(
+            ("target", "List receiving the items."),
+            ("items", "Items to append."),
+        ),
+        returns="A combined list.",
+        category="Collections",
+    ),
+    "append": element_documentation(
+        "Return a list with one item appended.",
+        description="The item and list may appear in either supported stack order.",
+        parameters=(("values", "Input list."), ("item", "Item added to the end.")),
+        returns="A new list ending with the item.",
+        category="Collections",
+    ),
+    "both": element_documentation(
+        "Apply one callable to two consecutive groups of stack values.",
+        description=(
+            "If the callable takes n inputs, both consumes two groups of n values.",
+            "The lower group is called first, followed by the upper group.",
+        ),
+        parameters=(("operation", "Callable applied to each input group."),),
+        returns="The first call's results followed by the second call's results.",
+        category="Functions",
+    ),
+    "call": element_documentation(
+        "Invoke a callable value.",
+        parameters=(("operation", "Callable to invoke."),),
+        returns="The values returned by the selected callable overload.",
+        category="Functions",
+    ),
+    "dip": element_documentation(
+        "Call a function beneath one temporarily held stack value.",
+        parameters=(
+            ("held", "Value temporarily removed while the callable runs."),
+            ("operation", "Callable to invoke on the remaining stack."),
+        ),
+        returns="The callable results followed by the held value.",
+        category="Functions",
+    ),
+    "double": element_documentation(
+        "Multiply a number by two.",
+        parameters=(("value", "Number to double."),),
+        returns="The doubled number.",
+        examples=(("21 double", "42"),),
+        category="Arithmetic",
+    ),
+    "drop": element_documentation(
+        "Discard a prefix from a list or string.",
+        parameters=(
+            ("values", "Input value."),
+            ("count", "Number of leading items to remove."),
+        ),
+        returns="The remaining suffix.",
+        category="Collections",
+    ),
+    "dup": element_documentation(
+        "Duplicate the top stack value.",
+        parameters=(("value", "Value to duplicate."),),
+        returns="Two copies of the input value.",
+        examples=(("10 dup", "10 10"),),
+        category="Stack",
+    ),
+    "false": element_documentation(
+        "Push the Boolean false value.",
+        returns="The `false` Boolean value.",
+        category="Boolean",
+    ),
+    "filter": element_documentation(
+        "Filter a list by a predicate",
+        parameters=(
+            ("iterable", "The list to filter"),
+            ("predicate", "Callable that returns true for items to keep"),
+        ),
+        returns="The filtered list.",
+        category="Lists",
+    ),
+    "first": element_documentation(
+        "Return the first item of a non-empty list or string.",
+        parameters=(("values", "Non-empty input value."),),
+        returns="The first item or one-character string.",
+        category="Collections",
     ),
     "fold": element_documentation(
         "Fold a list from an explicit seed value.",
@@ -262,43 +324,31 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         category="Collections",
         see_also=("reduce", "/"),
     ),
-    "double": element_documentation(
-        "Multiply a number by two.",
-        parameters=(("value", "Number to double."),),
-        returns="The doubled number.",
-        examples=(("21 double", "42"),),
-        category="Arithmetic",
+    "fork": element_documentation(
+        "Apply two callables to the same available inputs.",
+        parameters=(
+            ("left", "First callable."),
+            ("right", "Second callable."),
+        ),
+        returns="The results of the left callable followed by the results of the right callable.",
+        category="Functions",
     ),
-    "squared": element_documentation(
-        "Multiply a number by itself.",
-        parameters=(("value", "Number to square."),),
-        returns="The square of the number.",
-        examples=(("5 squared", "25"),),
-        category="Arithmetic",
+    "groupConsecutive": element_documentation(
+        "Group adjacent equal items.",
+        parameters=(("values", "Input list or string."),),
+        returns="A list of consecutive groups.",
+        category="Collections",
     ),
-    "**": element_documentation(
-        "Raise a number to a numeric power.",
-        parameters=(("base", "Number to raise."), ("exponent", "Power to apply.")),
-        returns="The exponentiated number.",
-        category="Arithmetic",
-    ),
-    "positive?": element_documentation(
-        "Test whether a number is greater than zero.",
-        parameters=(("value", "Number to test."),),
-        returns="`true` when the number is positive; otherwise `false`.",
-        category="Comparison",
-    ),
-    "==": element_documentation(
-        "Test two numbers or two strings for equality.",
-        parameters=(("left", "First value."), ("right", "Second value.")),
-        returns="A Boolean equality result.",
-        category="Comparison",
-    ),
-    "===": element_documentation(
-        "Test any two values for structural equality.",
-        parameters=(("left", "First value."), ("right", "Second value.")),
-        returns="A Boolean equality result.",
-        category="Comparison",
+    "hook": element_documentation(
+        "Fork functions f and g, then combine their results with h.",
+        parameters=(
+            ("f", "Callable applied to the lower input group."),
+            ("g", "Callable applied to the upper input group."),
+            ("h", "Callable that combines the results of f and g."),
+        ),
+        returns="The combined results of f and g.",
+        examples=(("[19, 2, 3, 4, 13] hook: (sum, /, length)", "8.2")),
+        category="Functions",
     ),
     "in": element_documentation(
         "Test whether a value occurs in a collection or string.",
@@ -306,45 +356,33 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="A Boolean membership result.",
         category="Comparison",
     ),
-    "numeric?": element_documentation(
-        "Test whether a string is a valid base-ten integer.",
-        parameters=(("value", "String to inspect."),),
-        returns="A Boolean result.",
+    "input": element_documentation(
+        "Read one line of text from standard input.",
+        parameters=(("prompt", "Prompt displayed before reading."),),
+        returns="The entered line without its trailing newline.",
+        category="Input and output",
+    ),
+    "join": element_documentation(
+        "Join a list of strings with a separator.",
+        parameters=(
+            ("values", "Strings to join."),
+            ("separator", "Text inserted between adjacent strings."),
+        ),
+        returns="The joined string.",
         category="Strings",
     ),
-    "<": element_documentation(
-        "Test whether the left number is less than the right number.",
-        parameters=(("left", "First number."), ("right", "Second number.")),
-        returns="A Boolean comparison result.",
-        category="Comparison",
+    "last": element_documentation(
+        "Return the last item of a non-empty finite list or string.",
+        parameters=(("values", "Non-empty input value."),),
+        returns="The final item or one-character string.",
+        category="Collections",
     ),
-    "<=": element_documentation(
-        "Test whether the left number is less than or equal to the right number.",
-        parameters=(("left", "First number."), ("right", "Second number.")),
-        returns="A Boolean comparison result.",
-        category="Comparison",
-    ),
-    ">": element_documentation(
-        "Test whether the left number is greater than the right number.",
-        parameters=(("left", "First number."), ("right", "Second number.")),
-        returns="A Boolean comparison result.",
-        category="Comparison",
-    ),
-    ">=": element_documentation(
-        "Test whether the left number is greater than or equal to the right number.",
-        parameters=(("left", "First number."), ("right", "Second number.")),
-        returns="A Boolean comparison result.",
-        category="Comparison",
-    ),
-    "true": element_documentation(
-        "Push the Boolean true value.",
-        returns="The `true` Boolean value.",
-        category="Boolean",
-    ),
-    "false": element_documentation(
-        "Push the Boolean false value.",
-        returns="The `false` Boolean value.",
-        category="Boolean",
+    "length": element_documentation(
+        "Return the number of items in a finite list or string.",
+        parameters=(("values", "Finite list or string whose size is required."),),
+        returns="The value length as an `Integer`.",
+        category="Collections",
+        see_also=("len",),
     ),
     "map": element_documentation(
         "Apply a callable to every item in a list.",
@@ -356,84 +394,76 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="A list of mapped values, or no value for an eager effect-only callable.",
         category="Collections",
     ),
-    "take": element_documentation(
-        "Return at most the first requested number of list items.",
+    "message": element_documentation(
+        "Read the message stored by an error or fault.",
+        parameters=(("failure", "An `Err` or `Fault` value."),),
+        returns="The failure message string.",
+        category="Errors and faults",
+        see_also=("getMessage",),
+    ),
+    "numeric?": element_documentation(
+        "Test whether a string is a valid base-ten integer.",
+        parameters=(("value", "String to inspect."),),
+        returns="A Boolean result.",
+        category="Strings",
+    ),
+    "OK": element_documentation(
+        "Wrap a successful value in a result.",
+        parameters=(("value", "Successful result value."),),
+        returns="An `OK` result containing the value.",
+        category="Optionals and results",
+    ),
+    "or": element_documentation(
+        "Choose a fallback string or optional value.",
         parameters=(
-            ("values", "Input list."),
-            ("count", "Non-negative number of items to retain."),
+            ("value", "Preferred string or optional."),
+            ("fallback", "Value used when the preferred value is empty."),
         ),
-        returns="A list containing the selected prefix.",
-        category="Collections",
+        returns="The preferred non-empty value, otherwise the fallback.",
+        category="Optionals and results",
     ),
-    "length": element_documentation(
-        "Return the number of items in a finite list or string.",
-        parameters=(("values", "Finite list or string whose size is required."),),
-        returns="The value length as an `Integer`.",
-        category="Collections",
-        see_also=("len",),
+    "panic": element_documentation(
+        "Abort normal execution by raising a fault value.",
+        parameters=(("fault", "Value implementing `Fault`."),),
+        returns="Never returns normally.",
+        category="Errors and faults",
     ),
-    "first": element_documentation(
-        "Return the first item of a non-empty list or string.",
-        parameters=(("values", "Non-empty input value."),),
-        returns="The first item or one-character string.",
-        category="Collections",
+    "parseInt": element_documentation(
+        "Parse a base-ten integer string.",
+        parameters=(("value", "String to parse."),),
+        returns="The parsed `Integer`, or `None` when parsing fails.",
+        category="Strings",
     ),
-    "last": element_documentation(
-        "Return the last item of a non-empty finite list or string.",
-        parameters=(("values", "Non-empty input value."),),
-        returns="The final item or one-character string.",
-        category="Collections",
+    "peek": element_documentation(
+        "Call a function while preserving the values it consumes.",
+        description="The callable receives its normal inputs, and those inputs remain beneath the callable's results.",
+        parameters=(("operation", "Callable to invoke."),),
+        returns="The preserved inputs followed by the callable results.",
+        category="Functions",
     ),
-    "drop": element_documentation(
-        "Discard a prefix from a list or string.",
-        parameters=(
-            ("values", "Input value."),
-            ("count", "Number of leading items to remove."),
-        ),
-        returns="The remaining suffix.",
-        category="Collections",
+    "positive?": element_documentation(
+        "Test whether a number is greater than zero.",
+        parameters=(("value", "Number to test."),),
+        returns="`true` when the number is positive; otherwise `false`.",
+        category="Comparison",
     ),
-    "groupConsecutive": element_documentation(
-        "Group adjacent equal items.",
-        parameters=(("values", "Input list or string."),),
-        returns="A list of consecutive groups.",
-        category="Collections",
+    "print": element_documentation(
+        "Write a value without a trailing newline.",
+        parameters=(("value", "Value to format and write."),),
+        returns="No stack values.",
+        category="Input and output",
+    ),
+    "println": element_documentation(
+        "Write a value followed by a newline.",
+        parameters=(("value", "Value to format and write."),),
+        returns="No stack values.",
+        category="Input and output",
     ),
     "range": element_documentation(
         "Create an inclusive lazy integer range.",
         parameters=(("start", "First integer."), ("stop", "Last integer, included.")),
         returns="A lazy list of integers from start through stop.",
         examples=(("1 4 range", "[1, 2, 3, 4]"),),
-        category="Collections",
-    ),
-    "sum": element_documentation(
-        "Add every number in a list.",
-        parameters=(("values", "Numbers to add."),),
-        returns="The total, or zero for an empty list.",
-        examples=(("[1, 2, 3] sum", "6"),),
-        category="Collections",
-    ),
-    "update": element_documentation(
-        "Return a copy of an iterable with an indexed selection replaced.",
-        parameters=(
-            ("iterable", "Input list or string."),
-            ("index", "An index or Integer+ selection."),
-            ("value", "Replacement value or selection-shaped replacement."),
-        ),
-        returns="The reconstructed iterable; the input binding is unchanged.",
-        category="Collections",
-    ),
-    "updateBy": element_documentation(
-        "Return a copy of an iterable after applying a function to an indexed selection.",
-        parameters=(
-            ("iterable", "Input list or string."),
-            ("index", "An index or Integer+ selection."),
-            (
-                "function",
-                "Unary function applied once to the indexed value or selection.",
-            ),
-        ),
-        returns="The reconstructed iterable; the input binding is unchanged.",
         category="Collections",
     ),
     "removeAt": element_documentation(
@@ -458,36 +488,11 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         examples=(("[1, 2, 3, 4, 5, 6] reshape {2, 3}", "[[1, 2, 3], [4, 5, 6]]"),),
         category="Collections",
     ),
-    "append": element_documentation(
-        "Return a list with one item appended.",
-        description="The item and list may appear in either supported stack order.",
-        parameters=(("values", "Input list."), ("item", "Item added to the end.")),
-        returns="A new list ending with the item.",
-        category="Collections",
-    ),
-    "addAll": element_documentation(
-        "Append every item from one list to another list.",
-        parameters=(
-            ("target", "List receiving the items."),
-            ("items", "Items to append."),
-        ),
-        returns="A combined list.",
-        category="Collections",
-    ),
-    "join": element_documentation(
-        "Join a list of strings with a separator.",
-        parameters=(
-            ("values", "Strings to join."),
-            ("separator", "Text inserted between adjacent strings."),
-        ),
-        returns="The joined string.",
-        category="Strings",
-    ),
-    "split": element_documentation(
-        "Split a string around a separator.",
-        parameters=(("value", "String to split."), ("separator", "Separator text.")),
-        returns="A list of string segments.",
-        category="Strings",
+    "reverse": element_documentation(
+        "Reverse the order of a list of items",
+        parameters=(("iterable", "The list to reverse"),),
+        returns="The reversed list.",
+        category="Lists",
     ),
     "rotate": element_documentation(
         "Rotate a finite list or string to the left.",
@@ -498,30 +503,21 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The rotated value.",
         category="Collections",
     ),
-    "parseInt": element_documentation(
-        "Parse a base-ten integer string.",
-        parameters=(("value", "String to parse."),),
-        returns="The parsed `Integer`, or `None` when parsing fails.",
-        category="Strings",
-    ),
-    "input": element_documentation(
-        "Read one line of text from standard input.",
-        parameters=(("prompt", "Prompt displayed before reading."),),
-        returns="The entered line without its trailing newline.",
-        category="Input and output",
-    ),
-    "message": element_documentation(
-        "Read the message stored by an error or fault.",
-        parameters=(("failure", "An `Err` or `Fault` value."),),
-        returns="The failure message string.",
-        category="Errors and faults",
-        see_also=("getMessage",),
-    ),
-    "OK": element_documentation(
-        "Wrap a successful value in a result.",
-        parameters=(("value", "Successful result value."),),
-        returns="An `OK` result containing the value.",
-        category="Optionals and results",
+    "sequence": element_documentation(
+        "Apply two callables to two distinct consecutive groups of stack values.",
+        description=(
+            "The first callable consumes the lower group and the second "
+            "callable consumes the upper group.",
+            "The callables may have different input and output arities.",
+        ),
+        parameters=(
+            ("lower", "Callable applied to the lower input group."),
+            ("upper", "Callable applied to the upper input group."),
+        ),
+        returns=(
+            "The lower callable's results followed by the upper callable's " "results."
+        ),
+        category="Functions",
     ),
     "Some": element_documentation(
         "Wrap a present value in an optional.",
@@ -529,65 +525,11 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="A `Some` optional containing the value.",
         category="Optionals and results",
     ),
-    "\\None": element_documentation(
-        "Push an empty optional value.",
-        returns="The empty `None` optional.",
-        category="Optionals and results",
-    ),
-    "&": element_documentation(
-        "Continue an optional or result computation only when a value is present or successful.",
-        parameters=(
-            ("value", "Optional, result, or recoverable error."),
-            ("operation", "Callable applied to the present or successful value."),
-        ),
-        returns="The transformed container, while empty or error values pass through unchanged.",
-        category="Optionals and results",
-    ),
-    "?": element_documentation(
-        "Unwrap a present optional or successful result with propagation semantics.",
-        parameters=(("value", "Optional or result to inspect."),),
-        returns="The contained value, or the original empty/error value for propagation.",
-        category="Optionals and results",
-    ),
-    "?!": element_documentation(
-        "Unwrap an optional or result and panic when no successful value exists.",
-        parameters=(("value", "Optional or result to unwrap."),),
-        returns="The contained value.",
-        notes="Panics with `UnwrappedNoneFault` or `UnwrappedResultFault` on failure.",
-        category="Optionals and results",
-    ),
-    "print": element_documentation(
-        "Write a value without a trailing newline.",
-        parameters=(("value", "Value to format and write."),),
-        returns="No stack values.",
-        category="Input and output",
-    ),
-    "println": element_documentation(
-        "Write a value followed by a newline.",
-        parameters=(("value", "Value to format and write."),),
-        returns="No stack values.",
-        category="Input and output",
-    ),
-    "panic": element_documentation(
-        "Abort normal execution by raising a fault value.",
-        parameters=(("fault", "Value implementing `Fault`."),),
-        returns="Never returns normally.",
-        category="Errors and faults",
-    ),
-    "toString": element_documentation(
-        "Format a value using Valiance runtime display syntax.",
-        parameters=(("value", "Value to format."),),
-        returns="The formatted string.",
+    "split": element_documentation(
+        "Split a string around a separator.",
+        parameters=(("value", "String to split."), ("separator", "Separator text.")),
+        returns="A list of string segments.",
         category="Strings",
-    ),
-    "or": element_documentation(
-        "Choose a fallback string or optional value.",
-        parameters=(
-            ("value", "Preferred string or optional."),
-            ("fallback", "Value used when the preferred value is empty."),
-        ),
-        returns="The preferred non-empty value, otherwise the fallback.",
-        category="Optionals and results",
     ),
     "sqrt": element_documentation(
         "Compute the square root of a number.",
@@ -595,26 +537,84 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The square root of the input number.",
         category="Mathematics",
     ),
-    "filter": element_documentation(
-        "Filter a list by a predicate",
-        parameters=(
-            ("iterable", "The list to filter"),
-            ("predicate", "Callable that returns true for items to keep"),
-        ),
-        returns="The filtered list.",
-        category="Lists",
+    "squared": element_documentation(
+        "Multiply a number by itself.",
+        parameters=(("value", "Number to square."),),
+        returns="The square of the number.",
+        examples=(("5 squared", "25"),),
+        category="Arithmetic",
     ),
-    "reverse": element_documentation(
-        "Reverse the order of a list of items",
-        parameters=(("iterable", "The list to reverse"),),
-        returns="The reversed list.",
-        category="Lists",
+    "sum": element_documentation(
+        "Add every number in a list.",
+        parameters=(("values", "Numbers to add."),),
+        returns="The total, or zero for an empty list.",
+        examples=(("[1, 2, 3] sum", "6"),),
+        category="Collections",
+    ),
+    "swap": element_documentation(
+        "Exchange the two topmost stack values.",
+        parameters=(
+            ("lower", "Value immediately below the top of the stack."),
+            ("upper", "Value at the top of the stack."),
+        ),
+        returns="The same values in reverse stack order.",
+        examples=(("1 2 swap", "2 1"),),
+        category="Stack",
+    ),
+    "take": element_documentation(
+        "Return at most the first requested number of list items.",
+        parameters=(
+            ("values", "Input list."),
+            ("count", "Non-negative number of items to retain."),
+        ),
+        returns="A list containing the selected prefix.",
+        category="Collections",
+    ),
+    "top": element_documentation(
+        "Return the top stack value unchanged.",
+        parameters=(("value", "Value at the top of the stack."),),
+        returns="The input value.",
+        category="Stack",
+    ),
+    "toString": element_documentation(
+        "Format a value using Valiance runtime display syntax.",
+        parameters=(("value", "Value to format."),),
+        returns="The formatted string.",
+        category="Strings",
+    ),
+    "true": element_documentation(
+        "Push the Boolean true value.",
+        returns="The `true` Boolean value.",
+        category="Boolean",
     ),
     "unpair": element_documentation(
         "Return the first two items of a finite list, raising if there are fewer than two.",
         parameters=(("list", "The list to unpair"),),
         returns="The two items of the list, pushed separately onto the stack.",
         category="Lists",
+    ),
+    "update": element_documentation(
+        "Return a copy of an iterable with an indexed selection replaced.",
+        parameters=(
+            ("iterable", "Input list or string."),
+            ("index", "An index or Integer+ selection."),
+            ("value", "Replacement value or selection-shaped replacement."),
+        ),
+        returns="The reconstructed iterable; the input binding is unchanged.",
+        category="Collections",
+    ),
+    "updateBy": element_documentation(
+        "Return a copy of an iterable after applying a function to an indexed selection.",
+        parameters=(
+            ("iterable", "Input list or string."),
+            ("index", "An index or Integer+ selection."),
+            (
+                "function",
+                "Unary function applied once to the indexed value or selection.",
+            ),
+        ),
+        returns="The reconstructed iterable; the input binding is unchanged.",
+        category="Collections",
     ),
 }
 
