@@ -796,6 +796,15 @@ def _callable_overloads(typ: T.Type) -> tuple[T.Overload, ...]:
     return ()
 
 
+def choose_best_overload(
+    callable_type: T.Type,
+    stack_state: T.TypeStack | tuple[T.TypeStack, ...],
+    ctx: T.Context | None = None,
+) -> T.CallableOverloadChoice | None:
+    """Choose the unique best callable overload for mini stack states."""
+    return T.choose_best_overload(callable_type, stack_state, ctx)
+
+
 def _element_tag_covers(
     requirement: T.ElementTag,
     actual: T.ElementTag,

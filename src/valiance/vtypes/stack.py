@@ -92,6 +92,14 @@ class TypeStack:
 
 
 @dataclass(frozen=True)
+class CallableOverloadChoice:
+    """One overload selected for one or more immutable mini stack states."""
+
+    overload: Overload
+    applications: tuple[StackApplication, ...]
+
+
+@dataclass(frozen=True)
 class StackApplication:
     """Result of applying an overload to a stack during checking/inference."""
 

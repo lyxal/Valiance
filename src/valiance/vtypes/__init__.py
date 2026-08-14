@@ -118,6 +118,7 @@ from valiance.vtypes.relations import (
     apply_overload_candidates_to_stack,
     apply_overload_to_stack,
     apply_overloads_to_stack,
+    choose_best_overload,
     assignable,
     collection_item_type,
     compatible,
@@ -130,7 +131,7 @@ from valiance.vtypes.relations import (
     union_dispatched_callable_plan,
     try_apply_overload,
 )
-from valiance.vtypes.stack import StackApplication, TypeStack
+from valiance.vtypes.stack import CallableOverloadChoice, StackApplication, TypeStack
 
 __all__ = [
     "AppliedOverload",
@@ -146,6 +147,7 @@ __all__ = [
     "AtLeastList",
     "Boolean",
     "C",
+    "CallableOverloadChoice",
     "CollectionType",
     "Context",
     "DataTag",
@@ -246,6 +248,7 @@ __all__ = [
     "apply_overload_candidates_to_stack",
     "apply_overload_to_stack",
     "apply_overloads_to_stack",
+    "choose_best_overload",
     "assignable",
     "collection_item_type",
     "compatible",

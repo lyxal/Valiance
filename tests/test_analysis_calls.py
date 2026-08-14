@@ -5,8 +5,9 @@ from __future__ import annotations
 import copy
 import unittest
 
+import valiance.vtypes as T
 from valiance.analysis import Analyser
-from valiance.analysis.calls import CallAnalyser
+from valiance.analysis.calls import CallAnalyser, choose_best_overload
 from valiance.parsing import parse
 
 
@@ -60,6 +61,86 @@ class CallPlanningBoundaryTests(unittest.TestCase):
         analyser.analyse(parse("1 prntln"))
         self.assertTrue(analyser.diagnostics)
         self.assertIn("did you mean", analyser.diagnostics[0])
+
+
+class CallableOverloadSelectionTests(unittest.TestCase):
+    """Verify callable overload choice against an immutable mini stack."""
+
+    def test_concrete_callable_applies_to_stack(self) -> None:
+        callable_type = T.Fn((T.Number,), (T.String,))
+
+        chosen = choose_best_overload(
+            callable_type,
+            T.TypeStack((T.Number,)),
+        )
+
+        self.assertIsNotNone(chosen)
+        assert chosen is not None
+        self.assertEqual(chosen.applications[0].actual_returns, (T.String,))
+        self.assertEqual(chosen.applications[0].stack, T.TypeStack((T.String,)))
+
+    def test_overload_set_chooses_more_specific_candidate(self) -> None:
+        broad = T.Overload((T.Number,), (T.String,))
+        specific = T.Overload((T.Integer,), (T.Boolean,))
+        callable_type = T.Overloads(broad, specific)
+
+        chosen = choose_best_overload(
+            callable_type,
+            T.TypeStack((T.Integer,)),
+        )
+
+        self.assertIsNotNone(chosen)
+        assert chosen is not None
+        self.assertIs(chosen.overload, specific)
+        self.assertEqual(chosen.applications[0].actual_returns, (T.Boolean,))
+
+    def test_missing_inputs_are_inferred_from_selected_overload(self) -> None:
+        overload = T.Overload((T.Number, T.String), (T.Boolean,))
+
+        chosen = choose_best_overload(
+            T.Overloads(overload),
+            T.TypeStack((T.String,)),
+        )
+
+        self.assertIsNotNone(chosen)
+        assert chosen is not None
+        self.assertIs(chosen.overload, overload)
+        self.assertEqual(chosen.applications[0].inputs, (T.Number,))
+        self.assertEqual(chosen.applications[0].stack, T.TypeStack((T.Boolean,)))
+
+    def test_ambiguous_best_overloads_are_rejected(self) -> None:
+        left = T.Overload((T.Number, T.U(T.Number, T.String)), (T.Number,))
+        right = T.Overload((T.U(T.Number, T.String), T.Number), (T.String,))
+
+        chosen = choose_best_overload(
+            T.Overloads(left, right),
+            T.TypeStack((T.Number, T.Number)),
+        )
+
+        self.assertIsNone(chosen)
+
+
+    def test_multiple_stack_states_choose_one_exact_overload(self) -> None:
+        shared = T.Overload((T.Number,), (T.String,))
+        first_only = T.Overload((T.Integer,), (T.Boolean,))
+
+        chosen = choose_best_overload(
+            T.Overloads(shared, first_only),
+            (
+                T.TypeStack((T.Integer,)),
+                T.TypeStack((T.Real,)),
+            ),
+        )
+
+        self.assertIsNotNone(chosen)
+        assert chosen is not None
+        self.assertIs(chosen.overload, shared)
+        self.assertEqual(len(chosen.applications), 2)
+
+    def test_non_callable_type_is_rejected(self) -> None:
+        self.assertIsNone(
+            choose_best_overload(T.Number, T.TypeStack((T.Number,)))
+        )
 
 
 if __name__ == "__main__":

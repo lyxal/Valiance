@@ -70,7 +70,7 @@ from valiance.vtypes.nodes import (
     VariadicTupleType,
     VarType,
 )
-from valiance.vtypes.stack import StackApplication, TypeStack
+from valiance.vtypes.stack import CallableOverloadChoice, StackApplication, TypeStack
 
 CollectionClass = type[CollectionType]
 BOOLEAN = Symbol("Boolean")
@@ -3320,6 +3320,98 @@ def apply_overloads_to_stack(
         infer_missing=infer_missing,
     )
     return winners[0] if len(winners) == 1 else None
+
+
+def choose_best_overload(
+    callable_type: Type,
+    stack_state: TypeStack | tuple[TypeStack, ...],
+    ctx: Context | None = None,
+) -> CallableOverloadChoice | None:
+    """Choose one exact callable overload for immutable mini stack states.
+
+    Every supplied stack state is applied to the same overload. Missing lower
+    values are inferred from that candidate's parameters. The unique
+    non-dominated candidate is returned; ambiguity and non-callable inputs fail.
+    """
+    ctx = ctx or Context()
+    normalized = normalize(callable_type)
+    if isinstance(normalized, FunctionType):
+        if normalized.params is None or normalized.returns is None:
+            return None
+        overloads = (
+            Overload(
+                normalized.params,
+                normalized.returns,
+                element_tags=normalized.element_tags,
+            ),
+        )
+    elif isinstance(normalized, OverloadSetType):
+        overloads = normalized.overloads
+    else:
+        return None
+
+    states = stack_state if isinstance(stack_state, tuple) else (stack_state,)
+    if not states:
+        return None
+
+    candidates: list[CallableOverloadChoice] = []
+    for overload in overloads:
+        applications: list[StackApplication] = []
+        for state in states:
+            application = apply_overload_to_stack(
+                overload,
+                state,
+                ctx,
+                infer_missing=True,
+            )
+            if application is None:
+                break
+            applications.append(application)
+        else:
+            candidates.append(CallableOverloadChoice(overload, tuple(applications)))
+
+    winners = tuple(
+        candidate
+        for candidate in candidates
+        if not any(
+            other is not candidate
+            and _overload_match_dominates(
+                tuple(
+                    score
+                    for application in other.applications
+                    for score in application.scores
+                ),
+                tuple(
+                    param
+                    for application in other.applications
+                    for param in application.params
+                ),
+                tuple(
+                    score
+                    for application in candidate.applications
+                    for score in application.scores
+                ),
+                tuple(
+                    param
+                    for application in candidate.applications
+                    for param in application.params
+                ),
+                ctx,
+            )
+            for other in candidates
+        )
+    )
+    if len(winners) == 1:
+        return winners[0]
+    if winners and any(
+        application.inputs
+        for winner in winners
+        for application in winner.applications
+    ):
+        # Inferred-input CSTC historically commits to the first equally good
+        # callable shape; later branch analysis validates that specialization.
+        return winners[0]
+    return None
 
 
 def apply_overload_candidates_to_stack(

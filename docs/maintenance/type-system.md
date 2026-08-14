@@ -992,6 +992,15 @@ The full analyser normally uses `AnalysisBranch.source_arguments(...)` because
 it must also update branch inputs, explicit-parameter cycling state, variables,
 and diagnostics.
 
+For callable values, `analysis.calls.choose_best_overload(callable_type,
+stack_state, ctx)` is the analysis-level entry point for the same pure mini-stack
+question. It unwraps a concrete function or overload set, enables missing-input
+inference, and returns one `CallableOverloadChoice` containing the exact selected
+overload and its `StackApplication` values. Passing several immutable mini stacks
+requires that same overload to apply to every state, which is used by combinators
+such as `both`. Call-site checked built-ins should build the appropriate mini
+stack state and reuse this selector rather than enumerate callable overloads.
+
 ## Branch analysis is state exploration, not guesswork
 
 An `AnalysisBranch` is one internally consistent possible state. Its important

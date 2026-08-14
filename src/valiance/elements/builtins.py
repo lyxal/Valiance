@@ -1059,10 +1059,21 @@ def _callable_has_element_tag(value: Any, tag: str) -> bool:
 
 
 @dataclass(frozen=True)
-class _CallableApplication:
+class _ConcreteCallableApplication:
     overload: T.Overload
-    applied: T.AppliedOverload
+    stack_application: T.StackApplication
+    args: tuple[T.Type, ...]
     concrete_type: T.FunctionType
+
+    @property
+    def params(self) -> tuple[T.Type, ...]:
+        """Return the specialized parameters selected for this application."""
+        return self.stack_application.params
+
+    @property
+    def returns(self) -> tuple[T.Type, ...]:
+        """Return the actual stack results selected for this application."""
+        return self.stack_application.actual_returns
 
 
 @dataclass(frozen=True)
@@ -1070,11 +1081,11 @@ class _CallSiteApplications:
     """Concrete arguments and callable applications selected for one CSTC call."""
 
     args: tuple[T.Type, ...]
-    applications: tuple[_CallableApplication, ...]
+    applications: tuple[_ConcreteCallableApplication, ...]
 
 
 def _callable_overloads(typ: T.Type) -> tuple[T.Overload, ...]:
-    """Collect the overloads for callable for the built-in catalogue and runtime."""
+    """Collect callable overloads for non-selecting built-in checks."""
     typ = T.normalize(typ)
     if isinstance(typ, T.FunctionType):
         if typ.params is None or typ.returns is None:
@@ -1085,30 +1096,51 @@ def _callable_overloads(typ: T.Type) -> tuple[T.Overload, ...]:
     return ()
 
 
-def _apply_callable(
-    overload: T.Overload,
-    args: tuple[T.Type, ...],
-) -> _CallableApplication | None:
-    """Apply callable for the built-in catalogue and runtime."""
-    applied = T.try_apply_overload(overload, args).applied
-    if applied is None:
-        return None
-    return _CallableApplication(
-        overload,
-        applied,
-        T.Fn(args, applied.actual_returns, overload.element_tags),
-    )
-
-
 def _callable_applications(
     typ: T.Type,
     args: tuple[T.Type, ...],
-) -> Iterator[_CallableApplication]:
-    """Compute callable applications for the built-in catalogue and runtime."""
+) -> Iterator[_ConcreteCallableApplication]:
+    """Yield all applications for built-ins that filter callable candidates."""
     for overload in _callable_overloads(typ):
-        application = _apply_callable(overload, args)
-        if application is not None:
-            yield application
+        application = T.apply_overload_to_stack(
+            overload,
+            T.TypeStack(args),
+        )
+        if application is None:
+            continue
+        yield _ConcreteCallableApplication(
+            overload,
+            application,
+            args,
+            T.Fn(args, application.actual_returns, overload.element_tags),
+        )
+
+
+def _application_args(
+    stack: tuple[T.Type, ...],
+    application: T.StackApplication,
+) -> tuple[T.Type, ...]:
+    """Recover the completed argument group selected from one mini stack."""
+    arity = len(application.overload.params)
+    available_count = min(len(stack), arity)
+    available = stack[-available_count:] if available_count else ()
+    return (*application.inputs, *available)
+
+
+def _concrete_callable_application(
+    stack: tuple[T.Type, ...],
+    choice: T.CallableOverloadChoice,
+    index: int = 0,
+) -> _ConcreteCallableApplication:
+    """Build the concrete callable type for one selected mini-stack application."""
+    application = choice.applications[index]
+    args = _application_args(stack, application)
+    return _ConcreteCallableApplication(
+        choice.overload,
+        application,
+        args,
+        T.Fn(args, application.actual_returns, choice.overload.element_tags),
+    )
 
 
 def _completed_call_site_stack(
@@ -1125,62 +1157,51 @@ def _completed_call_site_stack(
     return (*expected[:missing], *stack)
 
 
-def _apply_consecutive_call_site_callables(
+def _choose_shared_call_site_applications(
     stack: tuple[T.Type, ...],
-    overloads: tuple[T.Overload, ...],
+    callable_types: tuple[T.Type, ...],
 ) -> _CallSiteApplications | None:
-    """Complete, partition, and apply consecutive callable argument groups.
+    """Choose independent overloads while refining one shared stack suffix."""
+    shared_args = stack
+    selected: list[_ConcreteCallableApplication] = []
+    expected: tuple[T.Type, ...] = ()
 
-    Completion happens before application, so a CSTC helper never has to reject
-    an undersized physical stack merely because an enclosing function can infer
-    the missing lower inputs.
-    """
-    expected = tuple(param for overload in overloads for param in overload.params)
-    args = _completed_call_site_stack(stack, expected)
-    applications: list[_CallableApplication] = []
-    offset = 0
-    for overload in overloads:
-        arity = len(overload.params)
-        group = args[offset : offset + arity]
-        offset += arity
-        application = _apply_callable(overload, group)
-        if application is None:
+    for callable_type in callable_types:
+        choice = T.choose_best_overload(callable_type, T.TypeStack(shared_args))
+        if choice is None:
             return None
-        applications.append(application)
-    return _CallSiteApplications(args, tuple(applications))
+        application = _concrete_callable_application(shared_args, choice)
+        selected.append(application)
 
+        arity = max(len(expected), len(application.params))
+        refined: list[T.Type] = []
+        for index in range(arity):
+            requirements: list[T.Type] = []
+            expected_offset = arity - len(expected)
+            if index >= expected_offset:
+                requirements.append(expected[index - expected_offset])
+            params = application.params
+            param_offset = arity - len(params)
+            if index >= param_offset:
+                requirements.append(params[index - param_offset])
+            shared = T.meet_required_inputs(tuple(requirements))
+            if shared is None:
+                return None
+            refined.append(shared)
+        expected = tuple(refined)
+        shared_args = _completed_call_site_stack(stack, expected)
 
-def _shared_call_site_applications(
-    stack: tuple[T.Type, ...],
-    overloads: tuple[T.Overload, ...],
-) -> Iterator[_CallSiteApplications]:
-    """Yield coherent applications sharing one completed argument suffix.
-
-    Longest callable signatures provide candidate missing-input shapes. Every
-    callable then receives the suffix matching its own arity. This centralises
-    the inference rule used by fan-out combinators such as ``fork``.
-    """
-    arity = max((len(overload.params) for overload in overloads), default=0)
-    expected: list[T.Type] = []
-    for index in range(arity):
-        requirements = tuple(
-            overload.params[index - (arity - len(overload.params))]
-            for overload in overloads
-            if index >= arity - len(overload.params)
+    applications: list[_ConcreteCallableApplication] = []
+    for callable_type, previous in zip(callable_types, selected, strict=True):
+        callable_arity = len(previous.overload.params)
+        callable_args = shared_args[-callable_arity:] if callable_arity else ()
+        choice = T.choose_best_overload(callable_type, T.TypeStack(callable_args))
+        if choice is None:
+            return None
+        applications.append(
+            _concrete_callable_application(callable_args, choice)
         )
-        shared = T.meet_required_inputs(requirements)
-        if shared is None:
-            return
-        expected.append(shared)
-    args = _completed_call_site_stack(stack, tuple(expected))
-    applications: list[_CallableApplication] = []
-    for overload in overloads:
-        callable_args = args[-len(overload.params) :] if overload.params else ()
-        application = _apply_callable(overload, callable_args)
-        if application is None:
-            return
-        applications.append(application)
-    yield _CallSiteApplications(args, tuple(applications))
+    return _CallSiteApplications(shared_args, tuple(applications))
 
 
 def _peek_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
@@ -1189,17 +1210,15 @@ def _peek_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
         return None
     function_type = call_params[-1]
     stack = call_params[:-1]
-    for candidate in _callable_overloads(function_type):
-        group = _apply_consecutive_call_site_callables(stack, (candidate,))
-        if group is None:
-            continue
-        application = group.applications[0]
-        return T.Overload(
-            (*group.args, application.concrete_type),
-            application.applied.actual_returns,
-            call_site_body=0,
-        )
-    return None
+    choice = T.choose_best_overload(function_type, T.TypeStack(stack))
+    if choice is None:
+        return None
+    application = _concrete_callable_application(stack, choice)
+    return T.Overload(
+        (*application.args, application.concrete_type),
+        application.returns,
+        call_site_body=0,
+    )
 
 
 def _dip_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
@@ -1209,42 +1228,35 @@ def _dip_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     function_type = call_params[-1]
     stack = call_params[:-1]
     held = stack[-1]
-    for candidate in _callable_overloads(function_type):
-        group = _apply_consecutive_call_site_callables(stack[:-1], (candidate,))
-        if group is None:
-            continue
-        application = group.applications[0]
-        return T.Overload(
-            (*group.args, held, application.concrete_type),
-            (*application.applied.actual_returns, held),
-            call_site_body=len(candidate.params) + 1,
-        )
-    return None
+    callable_stack = stack[:-1]
+    choice = T.choose_best_overload(function_type, T.TypeStack(callable_stack))
+    if choice is None:
+        return None
+    application = _concrete_callable_application(callable_stack, choice)
+    return T.Overload(
+        (*application.args, held, application.concrete_type),
+        (*application.returns, held),
+        call_site_body=len(choice.overload.params) + 1,
+    )
 
 
 def _fork_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     """Type-check two callables against one centrally completed shared suffix."""
     if len(call_params) < 2:
         return None
-    left_type, right_type = call_params[-2:]
-    stack = call_params[:-2]
-    for left in _callable_overloads(left_type):
-        for right in _callable_overloads(right_type):
-            for group in _shared_call_site_applications(stack, (left, right)):
-                left_application, right_application = group.applications
-                return T.Overload(
-                    (
-                        *group.args,
-                        left_application.concrete_type,
-                        right_application.concrete_type,
-                    ),
-                    (
-                        *left_application.applied.actual_returns,
-                        *right_application.applied.actual_returns,
-                    ),
-                    call_site_body=max(len(left.params), len(right.params)),
-                )
-    return None
+    callable_types = call_params[-2:]
+    group = _choose_shared_call_site_applications(
+        call_params[:-2],
+        callable_types,
+    )
+    if group is None:
+        return None
+    left, right = group.applications
+    return T.Overload(
+        (*group.args, left.concrete_type, right.concrete_type),
+        (*left.returns, *right.returns),
+        call_site_body=max(len(left.overload.params), len(right.overload.params)),
+    )
 
 
 def _both_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
@@ -1253,62 +1265,82 @@ def _both_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
         return None
     function_type = call_params[-1]
     stack = call_params[:-1]
-    for candidate in _callable_overloads(function_type):
-        group = _apply_consecutive_call_site_callables(stack, (candidate, candidate))
-        if group is None:
-            continue
-        first_application, second_application = group.applications
-        concrete_function_type = (
-            first_application.concrete_type
-            if T.same(
-                first_application.concrete_type,
-                second_application.concrete_type,
-            )
-            else function_type
-        )
-        arity = len(candidate.params)
-        return T.Overload(
-            (*group.args, concrete_function_type),
-            (
-                *first_application.applied.actual_returns,
-                *second_application.applied.actual_returns,
-            ),
-            call_site_body=arity * 2,
-            runtime_static_values=(arity,),
-        )
-    return None
+    overloads = _callable_overloads(function_type)
+    if not overloads:
+        return None
+    arity = len(overloads[0].params)
+
+    second_count = min(len(stack), arity)
+    second_stack = stack[-second_count:] if second_count else ()
+    remaining = stack[:-second_count] if second_count else stack
+    first_count = min(len(remaining), arity)
+    first_stack = remaining[-first_count:] if first_count else ()
+
+    choice = T.choose_best_overload(
+        function_type,
+        (T.TypeStack(first_stack), T.TypeStack(second_stack)),
+    )
+    if choice is None:
+        return None
+    first = _concrete_callable_application(first_stack, choice, 0)
+    second = _concrete_callable_application(second_stack, choice, 1)
+    concrete_function_type = (
+        first.concrete_type
+        if T.same(first.concrete_type, second.concrete_type)
+        else function_type
+    )
+    args = (*first.args, *second.args)
+    return T.Overload(
+        (*args, concrete_function_type),
+        (*first.returns, *second.returns),
+        call_site_body=arity * 2,
+        runtime_static_values=(arity,),
+    )
 
 
 def _hook_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
-    """The call-site helper for the `hook` built-in, which is a special case of `fork` followed by a combining function."""
+    """Type-check shared callables followed by one result-combining callable."""
     if len(call_params) < 3:
         return None
     f_type, combine_type, g_type = call_params[-3:]
-    stack = call_params[:-3]
-    for f in _callable_overloads(f_type):
-        for g in _callable_overloads(g_type):
-            for group in _shared_call_site_applications(stack, (f, g)):
-                f_application, g_application = group.applications
-                combined_args = (
-                    *f_application.applied.actual_returns,
-                    *g_application.applied.actual_returns,
-                )
-                for combine in _callable_overloads(combine_type):
-                    combine_application = _apply_callable(combine, combined_args)
-                    if combine_application is None:
-                        continue
-                    return T.Overload(
-                        (
-                            *group.args,
-                            f_application.concrete_type,
-                            combine_application.concrete_type,
-                            g_application.concrete_type,
-                        ),
-                        combine_application.applied.actual_returns,
-                        call_site_body=max(len(f.params), len(g.params)),
-                        runtime_static_values=(len(f.params), len(g.params)),
-                    )
-    return None
+    group = _choose_shared_call_site_applications(
+        call_params[:-3],
+        (f_type, g_type),
+    )
+    if group is None:
+        return None
+    f_application, g_application = group.applications
+    combined_args = (
+        *f_application.returns,
+        *g_application.returns,
+    )
+    combine_choice = T.choose_best_overload(
+        combine_type,
+        T.TypeStack(combined_args),
+    )
+    if combine_choice is None:
+        return None
+    combine_application = _concrete_callable_application(
+        combined_args,
+        combine_choice,
+    )
+    return T.Overload(
+        (
+            *group.args,
+            f_application.concrete_type,
+            combine_application.concrete_type,
+            g_application.concrete_type,
+        ),
+        combine_application.returns,
+        call_site_body=max(
+            len(f_application.overload.params),
+            len(g_application.overload.params),
+        ),
+        runtime_static_values=(
+            len(f_application.overload.params),
+            len(g_application.overload.params),
+        ),
+    )
 
 
 def _sequence_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
@@ -1317,28 +1349,31 @@ def _sequence_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
         return None
     lower_type, upper_type = call_params[-2:]
     stack = call_params[:-2]
-    for lower in _callable_overloads(lower_type):
-        for upper in _callable_overloads(upper_type):
-            group = _apply_consecutive_call_site_callables(stack, (lower, upper))
-            if group is None:
-                continue
-            lower_application, upper_application = group.applications
-            lower_arity = len(lower.params)
-            upper_arity = len(upper.params)
-            return T.Overload(
-                (
-                    *group.args,
-                    lower_application.concrete_type,
-                    upper_application.concrete_type,
-                ),
-                (
-                    *lower_application.applied.actual_returns,
-                    *upper_application.applied.actual_returns,
-                ),
-                call_site_body=lower_arity + upper_arity,
-                runtime_static_values=(lower_arity, upper_arity),
-            )
-    return None
+
+    upper_choice = T.choose_best_overload(upper_type, T.TypeStack(stack))
+    if upper_choice is None:
+        return None
+    upper_arity = len(upper_choice.overload.params)
+    upper_count = min(len(stack), upper_arity)
+    upper_stack = stack[-upper_count:] if upper_count else ()
+    remaining = stack[:-upper_count] if upper_count else stack
+    upper = _concrete_callable_application(upper_stack, upper_choice)
+
+    lower_choice = T.choose_best_overload(lower_type, T.TypeStack(remaining))
+    if lower_choice is None:
+        return None
+    lower_arity = len(lower_choice.overload.params)
+    lower_count = min(len(remaining), lower_arity)
+    lower_stack = remaining[-lower_count:] if lower_count else ()
+    lower = _concrete_callable_application(lower_stack, lower_choice)
+
+    args = (*lower.args, *upper.args)
+    return T.Overload(
+        (*args, lower.concrete_type, upper.concrete_type),
+        (*lower.returns, *upper.returns),
+        call_site_body=lower_arity + upper_arity,
+        runtime_static_values=(lower_arity, upper_arity),
+    )
 
 
 def _call_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
@@ -1347,17 +1382,15 @@ def _call_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
         return None
     function_type = call_params[-1]
     stack = call_params[:-1]
-    for candidate in _callable_overloads(function_type):
-        group = _apply_consecutive_call_site_callables(stack, (candidate,))
-        if group is None:
-            continue
-        application = group.applications[0]
-        return T.Overload(
-            (*group.args, application.concrete_type),
-            application.applied.actual_returns,
-            call_site_body=len(candidate.params),
-        )
-    return None
+    choice = T.choose_best_overload(function_type, T.TypeStack(stack))
+    if choice is None:
+        return None
+    application = _concrete_callable_application(stack, choice)
+    return T.Overload(
+        (*application.args, application.concrete_type),
+        application.returns,
+        call_site_body=len(choice.overload.params),
+    )
 
 
 def _eager_map_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
@@ -1369,7 +1402,7 @@ def _eager_map_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     if item_type is None:
         return None
     for application in _callable_applications(function_type, (item_type,)):
-        if application.applied.actual_returns:
+        if application.returns:
             continue
         if EAGER_TAG not in application.concrete_type.element_tags:
             continue
