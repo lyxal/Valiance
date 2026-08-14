@@ -1415,101 +1415,6 @@ def _eager_map_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     return None
 
 
-@builtin("dup", (T.V("T"),), (T.V("T"), T.V("T")))
-def _dup(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `dup` built-in runtime overload."""
-    return (args[0], args[0])
-
-
-@builtin("swap", (T.V("A"), T.V("B")), (T.V("B"), T.V("A")))
-def _swap(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `swap` built-in runtime overload."""
-    return (args[1], args[0])
-
-
-@builtin("top", (T.V("T"),), (T.V("T"),))
-def _top(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `top` built-in runtime overload."""
-    return (args[0],)
-
-
-@builtin("peek", (T.Fn(),), call_site=_peek_call_site)
-def _peek(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `peek` built-in runtime overload."""
-    callable_value = args[-1]
-    call_args = tuple(args[:-1])
-    prepared = _prepared_runtime_call(ctx, callable_value, len(call_args))
-    return (
-        prepared(*call_args)
-        if prepared is not None
-        else tuple(ctx.call(callable_value, list(call_args)))
-    )
-
-
-@builtin("dip", (T.Fn(),), call_site=_dip_call_site)
-def _dip(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `dip` built-in runtime overload."""
-    if len(args) < 2:
-        raise RuntimeError("dip requires a held value beneath its callable")
-    callable_value = args[-1]
-    held = args[-2]
-    call_args = tuple(args[:-2])
-    prepared = _prepared_runtime_call(ctx, callable_value, len(call_args))
-    called = (
-        prepared(*call_args)
-        if prepared is not None
-        else tuple(ctx.call(callable_value, list(call_args)))
-    )
-    return (*called, held)
-
-
-@builtin("fork", (T.Fn(), T.Fn()), call_site=_fork_call_site)
-def _fork(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `fork` built-in runtime overload."""
-    *call_args, left, right = args
-    left_arity = _runtime_callable_arity(left)
-    right_arity = _runtime_callable_arity(right)
-    left_args = tuple(call_args[-left_arity:]) if left_arity else ()
-    right_args = tuple(call_args[-right_arity:]) if right_arity else ()
-    left_plan = _prepared_runtime_call(ctx, left, left_arity)
-    right_plan = _prepared_runtime_call(ctx, right, right_arity)
-    left_result = (
-        left_plan(*left_args)
-        if left_plan is not None
-        else tuple(ctx.call(left, list(left_args)))
-    )
-    right_result = (
-        right_plan(*right_args)
-        if right_plan is not None
-        else tuple(ctx.call(right, list(right_args)))
-    )
-    return (*left_result, *right_result)
-
-
-@builtin("hook", (T.Fn(), T.Fn(), T.Fn()), call_site=_hook_call_site)
-def _hook(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """hook(f, c, g) = c(f(...), g(...))"""
-    *call_args, f, combiner, g = args
-    f_arity = _runtime_callable_arity(f)
-    g_arity = _runtime_callable_arity(g)
-    f_args = tuple(call_args[-f_arity:]) if f_arity else ()
-    g_args = tuple(call_args[-g_arity:]) if g_arity else ()
-    f_plan = _prepared_runtime_call(ctx, f, f_arity)
-    g_plan = _prepared_runtime_call(ctx, g, g_arity)
-    f_result = (
-        f_plan(*f_args) if f_plan is not None else tuple(ctx.call(f, list(f_args)))
-    )
-    g_result = (
-        g_plan(*g_args) if g_plan is not None else tuple(ctx.call(g, list(g_args)))
-    )
-    combiner_plan = _prepared_runtime_call(ctx, combiner, 2)
-    return (
-        combiner_plan(*f_result, *g_result)
-        if combiner_plan is not None
-        else tuple(ctx.call(combiner, list(f_result) + list(g_result)))
-    )
-
-
 @builtin("both", (T.Fn(),), call_site=_both_call_site)
 def _both(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Apply one callable to two statically sized argument groups."""
@@ -1529,42 +1434,6 @@ def _both(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         *ctx.call(callable_value, list(lower)),
         *ctx.call(callable_value, list(upper)),
     )
-
-
-@builtin(
-    "sequence",
-    (T.Fn(), T.Fn()),
-    call_site=_sequence_call_site,
-)
-def _sequence(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Apply two callables to their statically sized argument groups."""
-    if len(args) < 2:
-        raise RuntimeError("sequence requires two callables")
-    *values, lower, upper = args
-    if len(ctx.static_values) >= 2:
-        lower_arity = int(ctx.static_values[0])
-        upper_arity = int(ctx.static_values[1])
-    else:
-        lower_arity = _runtime_callable_arity(lower)
-        upper_arity = _runtime_callable_arity(upper)
-    if lower_arity < 0 or upper_arity < 0 or len(values) != lower_arity + upper_arity:
-        raise RuntimeError("invalid sequence call-site arity metadata")
-    split = lower_arity
-    lower_args = tuple(values[:split])
-    upper_args = tuple(values[split:])
-    lower_plan = _prepared_runtime_call(ctx, lower, lower_arity)
-    upper_plan = _prepared_runtime_call(ctx, upper, upper_arity)
-    lower_result = (
-        lower_plan(*lower_args)
-        if lower_plan is not None
-        else tuple(ctx.call(lower, list(lower_args)))
-    )
-    upper_result = (
-        upper_plan(*upper_args)
-        if upper_plan is not None
-        else tuple(ctx.call(upper, list(upper_args)))
-    )
-    return (*lower_result, *upper_result)
 
 
 @builtin("call", (T.Fn(),), call_site=_call_call_site)
@@ -1623,6 +1492,137 @@ def _call(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     if hidden_static_values:
         raise RuntimeError("call is missing its statically selected overload")
     return tuple(ctx.call(callable_value, call_args))
+
+
+@builtin("dip", (T.Fn(),), call_site=_dip_call_site)
+def _dip(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `dip` built-in runtime overload."""
+    if len(args) < 2:
+        raise RuntimeError("dip requires a held value beneath its callable")
+    callable_value = args[-1]
+    held = args[-2]
+    call_args = tuple(args[:-2])
+    prepared = _prepared_runtime_call(ctx, callable_value, len(call_args))
+    called = (
+        prepared(*call_args)
+        if prepared is not None
+        else tuple(ctx.call(callable_value, list(call_args)))
+    )
+    return (*called, held)
+
+
+@builtin("dup", (T.V("T"),), (T.V("T"), T.V("T")))
+def _dup(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `dup` built-in runtime overload."""
+    return (args[0], args[0])
+
+
+@builtin("fork", (T.Fn(), T.Fn()), call_site=_fork_call_site)
+def _fork(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `fork` built-in runtime overload."""
+    *call_args, left, right = args
+    left_arity = _runtime_callable_arity(left)
+    right_arity = _runtime_callable_arity(right)
+    left_args = tuple(call_args[-left_arity:]) if left_arity else ()
+    right_args = tuple(call_args[-right_arity:]) if right_arity else ()
+    left_plan = _prepared_runtime_call(ctx, left, left_arity)
+    right_plan = _prepared_runtime_call(ctx, right, right_arity)
+    left_result = (
+        left_plan(*left_args)
+        if left_plan is not None
+        else tuple(ctx.call(left, list(left_args)))
+    )
+    right_result = (
+        right_plan(*right_args)
+        if right_plan is not None
+        else tuple(ctx.call(right, list(right_args)))
+    )
+    return (*left_result, *right_result)
+
+
+@builtin("hook", (T.Fn(), T.Fn(), T.Fn()), call_site=_hook_call_site)
+def _hook(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """hook(f, c, g) = c(f(...), g(...))"""
+    *call_args, f, combiner, g = args
+    f_arity = _runtime_callable_arity(f)
+    g_arity = _runtime_callable_arity(g)
+    f_args = tuple(call_args[-f_arity:]) if f_arity else ()
+    g_args = tuple(call_args[-g_arity:]) if g_arity else ()
+    f_plan = _prepared_runtime_call(ctx, f, f_arity)
+    g_plan = _prepared_runtime_call(ctx, g, g_arity)
+    f_result = (
+        f_plan(*f_args) if f_plan is not None else tuple(ctx.call(f, list(f_args)))
+    )
+    g_result = (
+        g_plan(*g_args) if g_plan is not None else tuple(ctx.call(g, list(g_args)))
+    )
+    combiner_plan = _prepared_runtime_call(ctx, combiner, 2)
+    return (
+        combiner_plan(*f_result, *g_result)
+        if combiner_plan is not None
+        else tuple(ctx.call(combiner, list(f_result) + list(g_result)))
+    )
+
+
+@builtin("peek", (T.Fn(),), call_site=_peek_call_site)
+def _peek(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `peek` built-in runtime overload."""
+    callable_value = args[-1]
+    call_args = tuple(args[:-1])
+    prepared = _prepared_runtime_call(ctx, callable_value, len(call_args))
+    return (
+        prepared(*call_args)
+        if prepared is not None
+        else tuple(ctx.call(callable_value, list(call_args)))
+    )
+
+
+@builtin(
+    "sequence",
+    (T.Fn(), T.Fn()),
+    call_site=_sequence_call_site,
+)
+def _sequence(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Apply two callables to their statically sized argument groups."""
+    if len(args) < 2:
+        raise RuntimeError("sequence requires two callables")
+    *values, lower, upper = args
+    if len(ctx.static_values) >= 2:
+        lower_arity = int(ctx.static_values[0])
+        upper_arity = int(ctx.static_values[1])
+    else:
+        lower_arity = _runtime_callable_arity(lower)
+        upper_arity = _runtime_callable_arity(upper)
+    if lower_arity < 0 or upper_arity < 0 or len(values) != lower_arity + upper_arity:
+        raise RuntimeError("invalid sequence call-site arity metadata")
+    split = lower_arity
+    lower_args = tuple(values[:split])
+    upper_args = tuple(values[split:])
+    lower_plan = _prepared_runtime_call(ctx, lower, lower_arity)
+    upper_plan = _prepared_runtime_call(ctx, upper, upper_arity)
+    lower_result = (
+        lower_plan(*lower_args)
+        if lower_plan is not None
+        else tuple(ctx.call(lower, list(lower_args)))
+    )
+    upper_result = (
+        upper_plan(*upper_args)
+        if upper_plan is not None
+        else tuple(ctx.call(upper, list(upper_args)))
+    )
+    return (*lower_result, *upper_result)
+
+
+@builtin("swap", (T.V("A"), T.V("B")), (T.V("B"), T.V("A")))
+def _swap(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `swap` built-in runtime overload."""
+    return (args[1], args[0])
+
+
+@builtin("top", (T.V("T"),), (T.V("T"),))
+def _top(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `top` built-in runtime overload."""
+    return (args[0],)
 
 
 def _runtime_callable_arity(value: Any) -> int:
@@ -1688,25 +1688,32 @@ def _wrapping_mod(a: RuntimeNumber, b: RuntimeNumber) -> RuntimeNumber:
     return remainder
 
 
-@builtin("+", (T.Integer, T.Integer), (T.Integer,))
-@builtin("+", (T.Real, T.Real), (T.Real,))
-@builtin("+", (T.Real, T.Integer), (T.Real,))
-@builtin("+", (T.Integer, T.Real), (T.Real,))
-@builtin("+", (T.Number, T.Number), (T.Number,))
-@builtin("+", (T.String, T.String), (T.String,))
-def _plus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `+`, `+`, `+`, `+`, `+`, `+` built-in runtime overloads."""
-    return (args[0] + args[1],)
+@builtin(
+    "!=",
+    (T.Number, T.Number),
+    (T.Boolean,),
+    documentation=element_documentation(
+        "Test whether two numbers or strings differ.",
+        parameters=(("left", "First value."), ("right", "Second value.")),
+        returns="A Boolean number that is true when the values differ.",
+        category="Comparison",
+    ),
+)
+@builtin("!=", (T.String, T.String), (T.Boolean,))
+def _not_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the negation of ordinary value equality."""
+
+    return (_truth(args[0] != args[1]),)
 
 
-@builtin("-", (T.Integer, T.Integer), (T.Integer,))
-@builtin("-", (T.Real, T.Real), (T.Real,))
-@builtin("-", (T.Real, T.Integer), (T.Real,))
-@builtin("-", (T.Integer, T.Real), (T.Real,))
-@builtin("-", (T.Number, T.Number), (T.Number,))
-def _minus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `-`, `-`, `-`, `-`, `-` built-in runtime overloads."""
-    return (args[0] - args[1],)
+@builtin("%", (T.Integer, T.Integer), (T.Integer,))
+@builtin("%", (T.Real, T.Real), (T.Real,))
+@builtin("%", (T.Real, T.Integer), (T.Real,))
+@builtin("%", (T.Integer, T.Real), (T.Real,))
+@builtin("%", (T.Number, T.Number), (T.Number,))
+def _percent(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `%`, `%`, `%`, `%`, `%` built-in runtime overloads."""
+    return (_wrapping_mod(args[0], args[1]),)
 
 
 @builtin("*", (T.Integer, T.Integer), (T.Integer,))
@@ -1744,14 +1751,25 @@ def _power(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         raise RuntimeError("invalid numeric exponentiation") from exc
 
 
-@builtin("%", (T.Integer, T.Integer), (T.Integer,))
-@builtin("%", (T.Real, T.Real), (T.Real,))
-@builtin("%", (T.Real, T.Integer), (T.Real,))
-@builtin("%", (T.Integer, T.Real), (T.Real,))
-@builtin("%", (T.Number, T.Number), (T.Number,))
-def _percent(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `%`, `%`, `%`, `%`, `%` built-in runtime overloads."""
-    return (_wrapping_mod(args[0], args[1]),)
+@builtin("+", (T.Integer, T.Integer), (T.Integer,))
+@builtin("+", (T.Real, T.Real), (T.Real,))
+@builtin("+", (T.Real, T.Integer), (T.Real,))
+@builtin("+", (T.Integer, T.Real), (T.Real,))
+@builtin("+", (T.Number, T.Number), (T.Number,))
+@builtin("+", (T.String, T.String), (T.String,))
+def _plus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `+`, `+`, `+`, `+`, `+`, `+` built-in runtime overloads."""
+    return (args[0] + args[1],)
+
+
+@builtin("-", (T.Integer, T.Integer), (T.Integer,))
+@builtin("-", (T.Real, T.Real), (T.Real,))
+@builtin("-", (T.Real, T.Integer), (T.Real,))
+@builtin("-", (T.Integer, T.Real), (T.Real,))
+@builtin("-", (T.Number, T.Number), (T.Number,))
+def _minus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `-`, `-`, `-`, `-`, `-` built-in runtime overloads."""
+    return (args[0] - args[1],)
 
 
 @builtin("/", (T.Integer, T.Integer), (T.Real,))
@@ -1815,6 +1833,196 @@ def _reduce(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (result,)
 
 
+@builtin("<", (T.Number, T.Number), (T.Boolean,))
+def _less(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `<` built-in runtime overload."""
+    return (_truth(args[0] < args[1]),)
+
+
+@builtin("<=", (T.Number, T.Number), (T.Boolean,))
+def _less_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `<=` built-in runtime overload."""
+    return (_truth(args[0] <= args[1]),)
+
+
+@builtin("==", (T.Number, T.Number), (T.Boolean,))
+@builtin("==", (T.String, T.String), (T.Boolean,))
+def _equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `==`, `==` built-in runtime overloads."""
+    return (_truth(args[0] == args[1]),)
+
+
+@builtin("===", (T.V("T"), T.V("T")), (T.Boolean,))
+def _structural_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Compare two values using the runtime's structural value equality."""
+
+    return (_truth(args[0] == args[1]),)
+
+
+@builtin(">", (T.Number, T.Number), (T.Boolean,))
+def _greater(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `>` built-in runtime overload."""
+    return (_truth(args[0] > args[1]),)
+
+
+@builtin(">=", (T.Number, T.Number), (T.Boolean,))
+def _greater_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `>=` built-in runtime overload."""
+    return (_truth(args[0] >= args[1]),)
+
+
+# --------------------------------------------------------------------------
+# Comparisons
+# --------------------------------------------------------------------------
+
+
+@builtin(
+    "addAll",
+    (
+        T.ExactList(T.TypeVariable("Item")),
+        T.ExactList(T.TypeVariable("Item")),
+    ),
+    (T.ExactList(T.TypeVariable("Item")),),
+)
+def _add_all(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `addAll` built-in runtime overload."""
+    target, items = args
+    if isinstance(target, LazyList) or isinstance(items, LazyList):
+        return (LazyList(chain(target, items)),)
+    return ([*target, *items],)
+
+
+@builtin(
+    "append",
+    (T.ExactList(T.TypeVariable("Item")), T.TypeVariable("Item")),
+    (T.ExactList(T.TypeVariable("Item")),),
+)
+@builtin(
+    "append",
+    (T.TypeVariable("Item"), T.ExactList(T.TypeVariable("Item"))),
+    (T.ExactList(T.TypeVariable("Item")),),
+)
+def _append(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `append`, `append` built-in runtime overloads."""
+    if is_list_like(args[0]):
+        return ([*args[0], args[1]],)
+    return ([*args[1], args[0]],)
+
+
+@builtin("double", (T.Number,), (T.Number,))
+def _double(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `double` built-in runtime overload."""
+    return (args[0] * 2,)
+
+
+@builtin(
+    "drop",
+    (T.ExactList(T.V("Item")), T.Integer),
+    (T.ExactList(T.V("Item")),),
+)
+@builtin(
+    "drop",
+    (T.Integer, T.ExactList(T.V("Item"))),
+    (T.ExactList(T.V("Item")),),
+)
+@builtin("drop", (T.String, T.Integer), (T.String,))
+@builtin("drop", (T.Integer, T.String), (T.String,))
+def _drop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Drop a non-negative number of leading items from a list or string."""
+
+    if isinstance(args[0], RuntimeNumber):
+        raw_count, values = args
+    else:
+        values, raw_count = args
+    count = int(raw_count)
+    if count < 0:
+        raise RuntimeError("drop requires a non-negative integer")
+    if isinstance(values, PlannedLazyList):
+        return (values.append_stage(LazyPipelineStage.dropping(count)),)
+    if isinstance(values, LazyList):
+        return (LazyList(islice(iter(values), count, None)),)
+    return (values[count:],)
+
+
+@builtin(
+    "dropLast",
+    (T.ExactList(T.V("Item")),),
+    (T.ExactList(T.V("Item")),),
+    documentation=element_documentation(
+        "Return a finite list without its final item.",
+        parameters=(("values", "Input finite list."),),
+        returns="All items except the final item.",
+        category="Collections",
+    ),
+)
+def _drop_last(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return a materialized list with its final item removed."""
+
+    values = list(args[0])
+    if not values:
+        raise RuntimeError("dropLast requires a non-empty list")
+    return (values[:-1],)
+
+
+@builtin("false", (), (T.Boolean,))
+def _false(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `false` built-in runtime overload."""
+    return (RuntimeNumber(0),)
+
+
+@builtin(
+    "filter",
+    (
+        T.ExactList(T.TypeVariable("Item")),
+        T.Fn((T.TypeVariable("Item"),), (T.Boolean,)),
+    ),
+    (T.ExactList(T.TypeVariable("Item")),),
+)
+def _filter(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Filter a finite list using a unary predicate function."""
+    values, predicate = args
+
+    def test(item: Any) -> bool:
+        """Evaluate the predicate once for one pipeline item."""
+        if ctx.test_predicate is not None:
+            return ctx.test_predicate(predicate, item)
+        return bool(ctx.call(predicate, [item])[0])
+
+    source_rank = runtime_collection_rank(values)
+    if _callable_has_element_tag(predicate, "Eager"):
+        return (
+            ListValue(
+                (item for item in values if test(item)),
+                runtime_rank=source_rank,
+            ),
+        )
+    if isinstance(values, PlannedLazyList):
+        return (values.append_stage(LazyPipelineStage.filtering(test)),)
+    return (
+        PlannedLazyList(
+            values,
+            (LazyPipelineStage.filtering(test),),
+            runtime_rank=source_rank,
+        ),
+    )
+
+
+@builtin("first", (T.ExactList(T.TypeVariable("Item")),), (T.TypeVariable("Item"),))
+@builtin("first", (T.String,), (T.String,))
+def _first(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the first item, terminating a planned pipeline immediately."""
+    values = args[0]
+    if isinstance(values, PlannedLazyList):
+        return (
+            values.run_terminal(
+                PipelineTerminal.first("first requires a non-empty list")
+            ),
+        )
+    for item in values:
+        return (item,)
+    raise RuntimeError("first requires a non-empty list")
+
+
 @builtin(
     "fold",
     (
@@ -1841,23 +2049,44 @@ def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (result,)
 
 
-@builtin("double", (T.Number,), (T.Number,))
-def _double(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `double` built-in runtime overload."""
-    return (args[0] * 2,)
+@builtin(
+    "groupConsecutive",
+    (T.ExactList(T.V("Item")),),
+    (T.ExactList(T.V("Item"), 2),),
+)
+def _group_consecutive_list(
+    args: tuple[Any, ...], ctx: RuntimeContext
+) -> tuple[Any, ...]:
+    """Group adjacent equal list items into materialized sublists."""
+
+    return ([[*items] for _key, items in groupby(args[0])],)
 
 
-@builtin("squared", (T.Number,), (T.Number,))
-@alias("square")
-def _squared(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `squared` built-in runtime overload."""
-    return (args[0] * args[0],)
+@builtin("groupConsecutive", (T.String,), (T.ExactList(T.String),))
+def _group_consecutive_string(
+    args: tuple[Any, ...], ctx: RuntimeContext
+) -> tuple[Any, ...]:
+    """Group adjacent equal characters into strings."""
+
+    return (["".join(items) for _key, items in groupby(args[0])],)
 
 
-@builtin("sqrt", (T.Number,), (T.Number,))
-def _sqrt(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `sqrt` built-in runtime overload."""
-    return (args[0] ** 0.5,)
+# --------------------------------------------------------------------------
+# Lists
+# --------------------------------------------------------------------------
+
+
+@builtin("in", (T.String, T.String), (T.Boolean,))
+@builtin(
+    "in",
+    (T.V("Item"), T.ExactList(T.V("Item"))),
+    (T.Boolean,),
+)
+def _contains(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Test membership in a string or finite/list-like value."""
+
+    needle, haystack = args
+    return (_truth(needle in haystack),)
 
 
 @builtin(
@@ -1901,149 +2130,44 @@ def _in_range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (_truth(start <= value < stop),)
 
 
-@builtin("positive?", (T.Number,), (T.Boolean,))
-def _is_positive(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `positive?` built-in runtime overload."""
-    return (_truth(args[0] > 0),)
-
-
-# --------------------------------------------------------------------------
-# Comparisons
-# --------------------------------------------------------------------------
-
-
-@builtin("==", (T.Number, T.Number), (T.Boolean,))
-@builtin("==", (T.String, T.String), (T.Boolean,))
-def _equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `==`, `==` built-in runtime overloads."""
-    return (_truth(args[0] == args[1]),)
+@builtin("join", (T.ExactList(T.String), T.String), (T.String,))
+def _join(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `join` built-in runtime overload."""
+    values, separator = args
+    return (separator.join(str(item) for item in values),)
 
 
 @builtin(
-    "!=",
-    (T.Number, T.Number),
-    (T.Boolean,),
-    documentation=element_documentation(
-        "Test whether two numbers or strings differ.",
-        parameters=(("left", "First value."), ("right", "Second value.")),
-        returns="A Boolean number that is true when the values differ.",
-        category="Comparison",
-    ),
+    "last",
+    (T.WithoutTag(T.ExactList(T.V("Item")), "infinite"),),
+    (T.V("Item"),),
 )
-@builtin("!=", (T.String, T.String), (T.Boolean,))
-def _not_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Return the negation of ordinary value equality."""
+@builtin("last", (T.String,), (T.String,))
+def _last_value(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the final item from a non-empty finite list or string."""
 
-    return (_truth(args[0] != args[1]),)
-
-
-@builtin("===", (T.V("T"), T.V("T")), (T.Boolean,))
-def _structural_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Compare two values using the runtime's structural value equality."""
-
-    return (_truth(args[0] == args[1]),)
-
-
-@builtin("in", (T.String, T.String), (T.Boolean,))
-@builtin(
-    "in",
-    (T.V("Item"), T.ExactList(T.V("Item"))),
-    (T.Boolean,),
-)
-def _contains(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Test membership in a string or finite/list-like value."""
-
-    needle, haystack = args
-    return (_truth(needle in haystack),)
-
-
-@builtin("numeric?", (T.String,), (T.Boolean,))
-def _numeric(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Return whether a string can be parsed as a base-ten integer."""
-
-    try:
-        int(args[0].strip(), 10)
-    except ValueError:
-        return (_truth(False),)
-    return (_truth(True),)
-
-
-@builtin("<", (T.Number, T.Number), (T.Boolean,))
-def _less(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `<` built-in runtime overload."""
-    return (_truth(args[0] < args[1]),)
-
-
-@builtin("<=", (T.Number, T.Number), (T.Boolean,))
-def _less_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `<=` built-in runtime overload."""
-    return (_truth(args[0] <= args[1]),)
-
-
-@builtin(">", (T.Number, T.Number), (T.Boolean,))
-def _greater(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `>` built-in runtime overload."""
-    return (_truth(args[0] > args[1]),)
-
-
-@builtin(">=", (T.Number, T.Number), (T.Boolean,))
-def _greater_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `>=` built-in runtime overload."""
-    return (_truth(args[0] >= args[1]),)
-
-
-@builtin("true", (), (T.Boolean,))
-def _true(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `true` built-in runtime overload."""
-    return (RuntimeNumber(1),)
-
-
-@builtin("false", (), (T.Boolean,))
-def _false(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `false` built-in runtime overload."""
-    return (RuntimeNumber(0),)
-
-
-# --------------------------------------------------------------------------
-# Lists
-# --------------------------------------------------------------------------
+    value = args[0]
+    if not value:
+        raise RuntimeError("last requires a non-empty value")
+    return (value[-1],)
 
 
 @builtin(
-    "filter",
-    (
-        T.ExactList(T.TypeVariable("Item")),
-        T.Fn((T.TypeVariable("Item"),), (T.Boolean,)),
-    ),
-    (T.ExactList(T.TypeVariable("Item")),),
+    "length",
+    (T.WithoutTag(T.ExactList(T.TypeVariable("Item")), "infinite"),),
+    (T.Integer,),
+    vectorisable=False,
 )
-def _filter(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Filter a finite list using a unary predicate function."""
-    values, predicate = args
-
-    def test(item: Any) -> bool:
-        """Evaluate the predicate once for one pipeline item."""
-        if ctx.test_predicate is not None:
-            return ctx.test_predicate(predicate, item)
-        return bool(ctx.call(predicate, [item])[0])
-
-    source_rank = runtime_collection_rank(values)
-    if _callable_has_element_tag(predicate, "Eager"):
-        return (
-            ListValue(
-                (item for item in values if test(item)),
-                runtime_rank=source_rank,
-            ),
-        )
-    if isinstance(values, PlannedLazyList):
-        return (values.append_stage(LazyPipelineStage.filtering(test)),)
-    return (
-        PlannedLazyList(
-            values,
-            (LazyPipelineStage.filtering(test),),
-            runtime_rank=source_rank,
-        ),
-    )
+@builtin("length", (T.String,), (T.Integer,), vectorisable=False)
+@alias("len")
+def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return the exact length, evaluating lazy lists until they terminate."""
+    value = args[0]
+    if isinstance(value, PlannedLazyList):
+        return (RuntimeNumber(value.count_terminal()),)
+    if isinstance(value, LazyList):
+        return (RuntimeNumber(sum(1 for _ in value)),)
+    return (RuntimeNumber(len(value)),)
 
 
 @builtin(
@@ -2189,6 +2313,17 @@ def _map_eager_effect(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, 
     return ()
 
 
+@builtin("numeric?", (T.String,), (T.Boolean,))
+def _numeric(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return whether a string can be parsed as a base-ten integer."""
+
+    try:
+        int(args[0].strip(), 10)
+    except ValueError:
+        return (_truth(False),)
+    return (_truth(True),)
+
+
 @builtin(
     "overtake",
     (T.ExactList(T.V("Item")), T.Integer),
@@ -2216,6 +2351,175 @@ def _overtake(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (list(islice(cycle(materialized), count)),)
 
 
+@builtin("parseInt", (T.String,), (T.optional(T.Integer),))
+def _parse_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Parse a base-ten integer, returning `None` when parsing fails."""
+
+    try:
+        return (RuntimeNumber(int(args[0].strip(), 10)),)
+    except ValueError:
+        return (ObjectValue("None", {}),)
+
+
+@builtin("positive?", (T.Number,), (T.Boolean,))
+def _is_positive(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `positive?` built-in runtime overload."""
+    return (_truth(args[0] > 0),)
+
+
+@builtin("range", (T.Integer, T.Integer), (T.ExactList(T.Integer),))
+@builtin("range", (T.Number, T.Number), (T.ExactList(T.Number),))
+def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `range` built-in runtime overload."""
+    start, stop = args
+    if start != start.to_integral_value() or stop != stop.to_integral_value():
+        raise RuntimeError("range bounds must be integral numbers")
+    return (LazyList(RuntimeNumber(item) for item in range(int(start), int(stop) + 1)),)
+
+
+@builtin(
+    "removeAt",
+    (T.ExactList(T.V("Item")), T.Integer),
+    (T.ExactList(T.V("Item")),),
+    param_names=("values", "index"),
+)
+def _remove_at(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Return a materialized copy of a list without the indexed item."""
+    values, raw_index = args
+    result = list(values)
+    index = int(raw_index)
+    try:
+        del result[index]
+    except IndexError as exc:
+        raise RuntimeError(f"removeAt index {index} is out of range") from exc
+    return (result,)
+
+
+@builtin(
+    "reshape",
+    (T.C(T.ListRuggedType, T.V("Item")), T.ExactList(T.Number)),
+    (T.C(T.ListMinType, T.V("Item")),),
+    param_names=("values", "shape"),
+    vectorisable=False,
+)
+@builtin(
+    "reshape",
+    (T.C(T.ListRuggedType, T.V("Item")), T.TupRepeat(T.Number)),
+    (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),),
+    param_names=("values", "shape"),
+    vectorisable=False,
+    where_clause=(
+        GetVariableNode(Symbol("shape")),
+        ElementNode(Symbol("length")),
+        SetVariableNode(Symbol("n")),
+    ),
+)
+def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Reshape a finite, possibly nested value to the requested dimensions."""
+    values, raw_shape = args
+    shape_values = list(raw_shape)
+    if not shape_values:
+        raise RuntimeError("reshape shape must contain at least one dimension")
+    shape: list[int] = []
+    for raw_dimension in shape_values:
+        if (
+            not isinstance(raw_dimension, RuntimeNumber)
+            or not raw_dimension.is_integer()
+        ):
+            raise RuntimeError("reshape dimensions must be integers")
+        dimension = int(raw_dimension)
+        if dimension < 0:
+            raise RuntimeError("reshape dimensions must be non-negative")
+        shape.append(dimension)
+
+    def flatten(value: Any) -> Iterator[Any]:
+        """Yield scalar leaves from a finite prefix of a nested value."""
+        if is_list_like(value) or isinstance(value, tuple):
+            for item in value:
+                yield from flatten(item)
+        else:
+            yield value
+
+    expected = 1
+    for dimension in shape:
+        expected *= dimension
+    items = list(islice(flatten(values), expected + 1))
+    if len(items) != expected:
+        rendered_shape = ", ".join(str(dimension) for dimension in shape)
+        received = f"more than {expected}" if len(items) > expected else str(len(items))
+        raise RuntimeError(
+            f"reshape needs exactly {expected} items for shape ({rendered_shape}); received {received}"
+        )
+    position = 0
+
+    def build(depth: int) -> list[Any]:
+        """Build one nested result level while advancing the flat position."""
+        nonlocal position
+        dimension = shape[depth]
+        if depth == len(shape) - 1:
+            result = items[position : position + dimension]
+            position += dimension
+            return result
+        return [build(depth + 1) for _ in range(dimension)]
+
+    return (build(0),)
+
+
+@builtin("rotate", (T.String, T.Integer), (T.String,))
+@builtin(
+    "rotate",
+    (T.ExactList(T.V("Item")), T.Integer),
+    (T.ExactList(T.V("Item")),),
+)
+def _rotate(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Rotate a finite sequence left by the requested signed amount."""
+
+    values, raw_amount = args
+    materialized = values if isinstance(values, str) else list(values)
+    if not materialized:
+        return (materialized,)
+    amount = int(raw_amount) % len(materialized)
+    return (materialized[amount:] + materialized[:amount],)
+
+
+@builtin(
+    "split",
+    (T.String, T.String),
+    (T.ExactList(T.String),),
+    param_names=("value", "on"),
+)
+def _split_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Split a string at every occurrence of a literal separator."""
+
+    value, separator = args
+    if separator == "":
+        return (list(value),)
+    return (value.split(separator),)
+
+
+@builtin("sqrt", (T.Number,), (T.Number,))
+def _sqrt(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `sqrt` built-in runtime overload."""
+    return (args[0] ** 0.5,)
+
+
+@builtin("squared", (T.Number,), (T.Number,))
+@alias("square")
+def _squared(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `squared` built-in runtime overload."""
+    return (args[0] * args[0],)
+
+
+@builtin("sum", (T.ExactList(T.Number),), (T.Number,))
+def _sum(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Add every numeric item, fusing any prepared lazy pipeline stages."""
+    values = args[0]
+    zero = RuntimeNumber(0)
+    if isinstance(values, PlannedLazyList):
+        return (values.sum_terminal(zero),)
+    return (sum(values, zero),)
+
+
 @builtin(
     "take",
     (T.ExactList(T.TypeVariable("Item")), T.Integer),
@@ -2233,63 +2537,10 @@ def _take(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (lst[: int(n)],)
 
 
-@builtin(
-    "length",
-    (T.WithoutTag(T.ExactList(T.TypeVariable("Item")), "infinite"),),
-    (T.Integer,),
-    vectorisable=False,
-)
-@builtin("length", (T.String,), (T.Integer,), vectorisable=False)
-@alias("len")
-def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Return the exact length, evaluating lazy lists until they terminate."""
-    value = args[0]
-    if isinstance(value, PlannedLazyList):
-        return (RuntimeNumber(value.count_terminal()),)
-    if isinstance(value, LazyList):
-        return (RuntimeNumber(sum(1 for _ in value)),)
-    return (RuntimeNumber(len(value)),)
-
-
-@builtin("first", (T.ExactList(T.TypeVariable("Item")),), (T.TypeVariable("Item"),))
-@builtin("first", (T.String,), (T.String,))
-def _first(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Return the first item, terminating a planned pipeline immediately."""
-    values = args[0]
-    if isinstance(values, PlannedLazyList):
-        return (
-            values.run_terminal(
-                PipelineTerminal.first("first requires a non-empty list")
-            ),
-        )
-    for item in values:
-        return (item,)
-    raise RuntimeError("first requires a non-empty list")
-
-
-@builtin(
-    "last",
-    (T.WithoutTag(T.ExactList(T.V("Item")), "infinite"),),
-    (T.V("Item"),),
-)
-@builtin("last", (T.String,), (T.String,))
-def _last_value(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Return the final item from a non-empty finite list or string."""
-
-    value = args[0]
-    if not value:
-        raise RuntimeError("last requires a non-empty value")
-    return (value[-1],)
-
-
-@builtin("range", (T.Integer, T.Integer), (T.ExactList(T.Integer),))
-@builtin("range", (T.Number, T.Number), (T.ExactList(T.Number),))
-def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `range` built-in runtime overload."""
-    start, stop = args
-    if start != start.to_integral_value() or stop != stop.to_integral_value():
-        raise RuntimeError("range bounds must be integral numbers")
-    return (LazyList(RuntimeNumber(item) for item in range(int(start), int(stop) + 1)),)
+@builtin("true", (), (T.Boolean,))
+def _true(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `true` built-in runtime overload."""
+    return (RuntimeNumber(1),)
 
 
 @builtin("unpair", (T.ExactList(T.V("Item")),), (T.V("Item"), T.V("Item")))
@@ -2299,87 +2550,6 @@ def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     if len(values) != 2:
         raise RuntimeError("unpair requires a list of exactly two items")
     return (values[0], values[1])
-
-
-@builtin(
-    "drop",
-    (T.ExactList(T.V("Item")), T.Integer),
-    (T.ExactList(T.V("Item")),),
-)
-@builtin(
-    "drop",
-    (T.Integer, T.ExactList(T.V("Item"))),
-    (T.ExactList(T.V("Item")),),
-)
-@builtin("drop", (T.String, T.Integer), (T.String,))
-@builtin("drop", (T.Integer, T.String), (T.String,))
-def _drop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Drop a non-negative number of leading items from a list or string."""
-
-    if isinstance(args[0], RuntimeNumber):
-        raw_count, values = args
-    else:
-        values, raw_count = args
-    count = int(raw_count)
-    if count < 0:
-        raise RuntimeError("drop requires a non-negative integer")
-    if isinstance(values, PlannedLazyList):
-        return (values.append_stage(LazyPipelineStage.dropping(count)),)
-    if isinstance(values, LazyList):
-        return (LazyList(islice(iter(values), count, None)),)
-    return (values[count:],)
-
-
-@builtin(
-    "dropLast",
-    (T.ExactList(T.V("Item")),),
-    (T.ExactList(T.V("Item")),),
-    documentation=element_documentation(
-        "Return a finite list without its final item.",
-        parameters=(("values", "Input finite list."),),
-        returns="All items except the final item.",
-        category="Collections",
-    ),
-)
-def _drop_last(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Return a materialized list with its final item removed."""
-
-    values = list(args[0])
-    if not values:
-        raise RuntimeError("dropLast requires a non-empty list")
-    return (values[:-1],)
-
-
-@builtin(
-    "groupConsecutive",
-    (T.ExactList(T.V("Item")),),
-    (T.ExactList(T.V("Item"), 2),),
-)
-def _group_consecutive_list(
-    args: tuple[Any, ...], ctx: RuntimeContext
-) -> tuple[Any, ...]:
-    """Group adjacent equal list items into materialized sublists."""
-
-    return ([[*items] for _key, items in groupby(args[0])],)
-
-
-@builtin("groupConsecutive", (T.String,), (T.ExactList(T.String),))
-def _group_consecutive_string(
-    args: tuple[Any, ...], ctx: RuntimeContext
-) -> tuple[Any, ...]:
-    """Group adjacent equal characters into strings."""
-
-    return (["".join(items) for _key, items in groupby(args[0])],)
-
-
-@builtin("sum", (T.ExactList(T.Number),), (T.Number,))
-def _sum(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Add every numeric item, fusing any prepared lazy pipeline stages."""
-    values = args[0]
-    zero = RuntimeNumber(0)
-    if isinstance(values, PlannedLazyList):
-        return (values.sum_terminal(zero),)
-    return (sum(values, zero),)
 
 
 @builtin(
@@ -2556,176 +2726,6 @@ def _update_by(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @builtin(
-    "removeAt",
-    (T.ExactList(T.V("Item")), T.Integer),
-    (T.ExactList(T.V("Item")),),
-    param_names=("values", "index"),
-)
-def _remove_at(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Return a materialized copy of a list without the indexed item."""
-    values, raw_index = args
-    result = list(values)
-    index = int(raw_index)
-    try:
-        del result[index]
-    except IndexError as exc:
-        raise RuntimeError(f"removeAt index {index} is out of range") from exc
-    return (result,)
-
-
-@builtin(
-    "reshape",
-    (T.C(T.ListRuggedType, T.V("Item")), T.ExactList(T.Number)),
-    (T.C(T.ListMinType, T.V("Item")),),
-    param_names=("values", "shape"),
-    vectorisable=False,
-)
-@builtin(
-    "reshape",
-    (T.C(T.ListRuggedType, T.V("Item")), T.TupRepeat(T.Number)),
-    (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),),
-    param_names=("values", "shape"),
-    vectorisable=False,
-    where_clause=(
-        GetVariableNode(Symbol("shape")),
-        ElementNode(Symbol("length")),
-        SetVariableNode(Symbol("n")),
-    ),
-)
-def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Reshape a finite, possibly nested value to the requested dimensions."""
-    values, raw_shape = args
-    shape_values = list(raw_shape)
-    if not shape_values:
-        raise RuntimeError("reshape shape must contain at least one dimension")
-    shape: list[int] = []
-    for raw_dimension in shape_values:
-        if (
-            not isinstance(raw_dimension, RuntimeNumber)
-            or not raw_dimension.is_integer()
-        ):
-            raise RuntimeError("reshape dimensions must be integers")
-        dimension = int(raw_dimension)
-        if dimension < 0:
-            raise RuntimeError("reshape dimensions must be non-negative")
-        shape.append(dimension)
-
-    def flatten(value: Any) -> Iterator[Any]:
-        """Yield scalar leaves from a finite prefix of a nested value."""
-        if is_list_like(value) or isinstance(value, tuple):
-            for item in value:
-                yield from flatten(item)
-        else:
-            yield value
-
-    expected = 1
-    for dimension in shape:
-        expected *= dimension
-    items = list(islice(flatten(values), expected + 1))
-    if len(items) != expected:
-        rendered_shape = ", ".join(str(dimension) for dimension in shape)
-        received = f"more than {expected}" if len(items) > expected else str(len(items))
-        raise RuntimeError(
-            f"reshape needs exactly {expected} items for shape ({rendered_shape}); received {received}"
-        )
-    position = 0
-
-    def build(depth: int) -> list[Any]:
-        """Build one nested result level while advancing the flat position."""
-        nonlocal position
-        dimension = shape[depth]
-        if depth == len(shape) - 1:
-            result = items[position : position + dimension]
-            position += dimension
-            return result
-        return [build(depth + 1) for _ in range(dimension)]
-
-    return (build(0),)
-
-
-@builtin(
-    "append",
-    (T.ExactList(T.TypeVariable("Item")), T.TypeVariable("Item")),
-    (T.ExactList(T.TypeVariable("Item")),),
-)
-@builtin(
-    "append",
-    (T.TypeVariable("Item"), T.ExactList(T.TypeVariable("Item"))),
-    (T.ExactList(T.TypeVariable("Item")),),
-)
-def _append(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `append`, `append` built-in runtime overloads."""
-    if is_list_like(args[0]):
-        return ([*args[0], args[1]],)
-    return ([*args[1], args[0]],)
-
-
-@builtin(
-    "addAll",
-    (
-        T.ExactList(T.TypeVariable("Item")),
-        T.ExactList(T.TypeVariable("Item")),
-    ),
-    (T.ExactList(T.TypeVariable("Item")),),
-)
-def _add_all(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `addAll` built-in runtime overload."""
-    target, items = args
-    if isinstance(target, LazyList) or isinstance(items, LazyList):
-        return (LazyList(chain(target, items)),)
-    return ([*target, *items],)
-
-
-@builtin("join", (T.ExactList(T.String), T.String), (T.String,))
-def _join(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `join` built-in runtime overload."""
-    values, separator = args
-    return (separator.join(str(item) for item in values),)
-
-
-@builtin(
-    "split",
-    (T.String, T.String),
-    (T.ExactList(T.String),),
-    param_names=("value", "on"),
-)
-def _split_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Split a string at every occurrence of a literal separator."""
-
-    value, separator = args
-    if separator == "":
-        return (list(value),)
-    return (value.split(separator),)
-
-
-@builtin("rotate", (T.String, T.Integer), (T.String,))
-@builtin(
-    "rotate",
-    (T.ExactList(T.V("Item")), T.Integer),
-    (T.ExactList(T.V("Item")),),
-)
-def _rotate(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Rotate a finite sequence left by the requested signed amount."""
-
-    values, raw_amount = args
-    materialized = values if isinstance(values, str) else list(values)
-    if not materialized:
-        return (materialized,)
-    amount = int(raw_amount) % len(materialized)
-    return (materialized[amount:] + materialized[:amount],)
-
-
-@builtin("parseInt", (T.String,), (T.optional(T.Integer),))
-def _parse_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Parse a base-ten integer, returning `None` when parsing fails."""
-
-    try:
-        return (RuntimeNumber(int(args[0].strip(), 10)),)
-    except ValueError:
-        return (ObjectValue("None", {}),)
-
-
-@builtin(
     Symbol("merge", ("record",)),
     (T.N(Symbol("record")), T.N(Symbol("record"))),
     (T.N(Symbol("record")),),
@@ -2826,40 +2826,6 @@ for _message_type in (
     _register_builtin_message_type(_message_type)
 
 
-@builtin("message", (T.N(ERR),), (T.String,))
-@builtin("message", (T.N(FAULT),), (T.String,))
-@alias("getMessage")
-def _failure_message(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `message`, `message` built-in runtime overloads."""
-    failure = args[0]
-    if not isinstance(failure, ObjectValue) or "message" not in failure.fields:
-        raise RuntimeError("Err or Fault value has no message field")
-    return (failure.fields["message"],)
-
-
-# --------------------------------------------------------------------------
-# Optionals and results
-# --------------------------------------------------------------------------
-
-
-@builtin("OK", (T.V("T"),), (T.OKType(T.V("T")),))
-def _ok(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `OK` built-in runtime overload."""
-    return (ObjectValue("OK", {"value": args[0]}, type_args=ctx.type_args),)
-
-
-@builtin("Some", (T.V("T"),), (T.Some(T.V("T")),))
-def _some(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `Some` built-in runtime overload."""
-    return (ObjectValue("Some", {"value": args[0]}, type_args=ctx.type_args),)
-
-
-@builtin("\\None", (), (T.NoneType(),))
-def _none(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the niladic `\\None` built-in runtime overload."""
-    return (ObjectValue("None", {}),)
-
-
 @builtin(
     "&",
     (
@@ -2915,6 +2881,11 @@ def _and_then(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     raise RuntimeError("& requires an optional or Result value")
 
 
+# --------------------------------------------------------------------------
+# Optionals and results
+# --------------------------------------------------------------------------
+
+
 @builtin("?", (T.optional(T.TypeVariable("T")),), (T.TypeVariable("T"),))
 @builtin(
     "?",
@@ -2960,47 +2931,10 @@ def _question_bang(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
     return _question(args, ctx)
 
 
-# --------------------------------------------------------------------------
-# I/O and control flow
-# --------------------------------------------------------------------------
-
-
-@builtin("input", (T.String,), (T.String,), element_tags=(EAGER_TAG, IO_TAG))
-def _input(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Read one line from standard input after displaying a prompt."""
-
-    return (python_builtins.input(args[0]),)
-
-
-@builtin("print", (T.V("T"),), (), element_tags=(EAGER_TAG, IO_TAG))
-def _print(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `print` built-in runtime overload."""
-    ctx.output(ctx.format_value(args[0]))
-    return ()
-
-
-@builtin("println", (T.V("T"),), (), element_tags=(EAGER_TAG, IO_TAG))
-def _println(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `println` built-in runtime overload."""
-    ctx.output(ctx.format_value(args[0]) + "\n")
-    return ()
-
-
-@builtin(
-    "panic",
-    (T.TypeVariable("F"),),
-    (T.Never(),),
-    (T.GenericConstraint("F", T.N(FAULT)),),
-    element_tags=(T.ElementTag(Symbol("Panic"), (T.TypeVariable("F"),)),),
-)
-def _panic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `panic` built-in runtime overload."""
-    raise PanicSignal(args[0])
-
-
-# --------------------------------------------------------------------------
-# Strings
-# --------------------------------------------------------------------------
+@builtin("\\None", (), (T.NoneType(),))
+def _none(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the niladic `\\None` built-in runtime overload."""
+    return (ObjectValue("None", {}),)
 
 
 @builtin(
@@ -3028,10 +2962,33 @@ def _from_charcode(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...
         raise RuntimeError("fromCharcode code point is out of range") from exc
 
 
-@builtin("toString", (T.V("T"),), (T.String,))
-def _to_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Implement the `toString` built-in runtime overload."""
-    return (ctx.format_value(args[0]),)
+@builtin("input", (T.String,), (T.String,), element_tags=(EAGER_TAG, IO_TAG))
+def _input(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Read one line from standard input after displaying a prompt."""
+
+    return (python_builtins.input(args[0]),)
+
+
+@builtin("message", (T.N(ERR),), (T.String,))
+@builtin("message", (T.N(FAULT),), (T.String,))
+@alias("getMessage")
+def _failure_message(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `message`, `message` built-in runtime overloads."""
+    failure = args[0]
+    if not isinstance(failure, ObjectValue) or "message" not in failure.fields:
+        raise RuntimeError("Err or Fault value has no message field")
+    return (failure.fields["message"],)
+
+
+# --------------------------------------------------------------------------
+# I/O and control flow
+# --------------------------------------------------------------------------
+
+
+@builtin("OK", (T.V("T"),), (T.OKType(T.V("T")),))
+def _ok(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `OK` built-in runtime overload."""
+    return (ObjectValue("OK", {"value": args[0]}, type_args=ctx.type_args),)
 
 
 @builtin("or", (T.String, T.String), (T.String,))
@@ -3051,6 +3008,49 @@ def _or_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 def _or_optional(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `or` built-in runtime overload."""
     return (args[1] if _is_none_value(args[0]) else args[0],)
+
+
+@builtin(
+    "panic",
+    (T.TypeVariable("F"),),
+    (T.Never(),),
+    (T.GenericConstraint("F", T.N(FAULT)),),
+    element_tags=(T.ElementTag(Symbol("Panic"), (T.TypeVariable("F"),)),),
+)
+def _panic(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `panic` built-in runtime overload."""
+    raise PanicSignal(args[0])
+
+
+# --------------------------------------------------------------------------
+# Strings
+# --------------------------------------------------------------------------
+
+
+@builtin("print", (T.V("T"),), (), element_tags=(EAGER_TAG, IO_TAG))
+def _print(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `print` built-in runtime overload."""
+    ctx.output(ctx.format_value(args[0]))
+    return ()
+
+
+@builtin("println", (T.V("T"),), (), element_tags=(EAGER_TAG, IO_TAG))
+def _println(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `println` built-in runtime overload."""
+    ctx.output(ctx.format_value(args[0]) + "\n")
+    return ()
+
+
+@builtin("Some", (T.V("T"),), (T.Some(T.V("T")),))
+def _some(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `Some` built-in runtime overload."""
+    return (ObjectValue("Some", {"value": args[0]}, type_args=ctx.type_args),)
+
+
+@builtin("toString", (T.V("T"),), (T.String,))
+def _to_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Implement the `toString` built-in runtime overload."""
+    return (ctx.format_value(args[0]),)
 
 
 # --------------------------------------------------------------------------
