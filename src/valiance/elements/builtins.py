@@ -228,15 +228,25 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
             "Numeric overloads perform division.",
             "The list overload, also available as `reduce`, starts with the first item and reduces the remainder.",
         ),
-        parameters=(("left_or_values", "Dividend or non-empty list."), ("right_or_reducer", "Divisor or reducer.")),
+        parameters=(
+            ("left_or_values", "Dividend or non-empty list."),
+            ("right_or_reducer", "Divisor or reducer."),
+        ),
         returns="The quotient or final reduced value.",
         category="Arithmetic",
         see_also=("reduce", "fold"),
     ),
     "fold": element_documentation(
         "Fold a list from an explicit seed value.",
-        description=("Applies the folder to the accumulator and every item in order.", "An empty list returns the seed."),
-        parameters=(("values", "Values to fold."), ("seed", "Initial accumulator."), ("folder", "Accumulator and item callable.")),
+        description=(
+            "Applies the folder to the accumulator and every item in order.",
+            "An empty list returns the seed.",
+        ),
+        parameters=(
+            ("values", "Values to fold."),
+            ("seed", "Initial accumulator."),
+            ("folder", "Accumulator and item callable."),
+        ),
         returns="The final accumulator.",
         category="Collections",
         see_also=("reduce", "/"),
@@ -407,7 +417,10 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         parameters=(
             ("iterable", "Input list or string."),
             ("index", "An index or Integer+ selection."),
-            ("function", "Unary function applied once to the indexed value or selection."),
+            (
+                "function",
+                "Unary function applied once to the indexed value or selection.",
+            ),
         ),
         returns="The reconstructed iterable; the input binding is unchanged.",
         category="Collections",
@@ -625,6 +638,8 @@ class RuntimeContext:
     )
     index_get: Callable[[Any, Any, bool], Any] | None = None
     index_set: Callable[[Any, Any, Any, bool], Any] | None = None
+
+
 RuntimeImpl = Callable[[tuple[Any, ...], RuntimeContext], tuple[Any, ...]]
 
 
@@ -976,9 +991,14 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
         # merely because its length is not known in advance. Unsized foreign
         # iterables are not valid runtime list values and remain ineligible for
         # an absent-infinite overload during legacy dynamic dispatch.
-        if any(
-            tag.absent and tag.name == "infinite" and tag.depth == 0 for tag in typ.tags
-        ) and not isinstance(value, LazyList) and not is_finite_list_like(value):
+        if (
+            any(
+                tag.absent and tag.name == "infinite" and tag.depth == 0
+                for tag in typ.tags
+            )
+            and not isinstance(value, LazyList)
+            and not is_finite_list_like(value)
+        ):
             return False
         return _runtime_assignable(value, typ.inner)
     if isinstance(typ, T.NominalType):
@@ -1259,6 +1279,38 @@ def _both_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     return None
 
 
+def _hook_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
+    """The call-site helper for the `hook` built-in, which is a special case of `fork` followed by a combining function."""
+    if len(call_params) < 3:
+        return None
+    f_type, combine_type, g_type = call_params[-3:]
+    stack = call_params[:-3]
+    for f in _callable_overloads(f_type):
+        for g in _callable_overloads(g_type):
+            for group in _shared_call_site_applications(stack, (f, g)):
+                f_application, g_application = group.applications
+                combined_args = (
+                    *f_application.applied.actual_returns,
+                    *g_application.applied.actual_returns,
+                )
+                for combine in _callable_overloads(combine_type):
+                    combine_application = _apply_callable(combine, combined_args)
+                    if combine_application is None:
+                        continue
+                    return T.Overload(
+                        (
+                            *group.args,
+                            f_application.concrete_type,
+                            combine_application.concrete_type,
+                            g_application.concrete_type,
+                        ),
+                        combine_application.applied.actual_returns,
+                        call_site_body=max(len(f.params), len(g.params)),
+                        runtime_static_values=(len(f.params), len(g.params)),
+                    )
+    return None
+
+
 def _sequence_call_site(call_params: tuple[T.Type, ...]) -> T.Overload | None:
     """Type-check two callables against completed consecutive input groups."""
     if len(call_params) < 2:
@@ -1399,6 +1451,30 @@ def _fork(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         else tuple(ctx.call(right, list(right_args)))
     )
     return (*left_result, *right_result)
+
+
+@builtin("hook", (T.Fn(), T.Fn(), T.Fn()), call_site=_hook_call_site)
+def _hook(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """hook(f, c, g) = c(f(...), g(...))"""
+    *call_args, f, combiner, g = args
+    f_arity = _runtime_callable_arity(f)
+    g_arity = _runtime_callable_arity(g)
+    f_args = tuple(call_args[-f_arity:]) if f_arity else ()
+    g_args = tuple(call_args[-g_arity:]) if g_arity else ()
+    f_plan = _prepared_runtime_call(ctx, f, f_arity)
+    g_plan = _prepared_runtime_call(ctx, g, g_arity)
+    f_result = (
+        f_plan(*f_args) if f_plan is not None else tuple(ctx.call(f, list(f_args)))
+    )
+    g_result = (
+        g_plan(*g_args) if g_plan is not None else tuple(ctx.call(g, list(g_args)))
+    )
+    combiner_plan = _prepared_runtime_call(ctx, combiner, 2)
+    return (
+        combiner_plan(*f_result, *g_result)
+        if combiner_plan is not None
+        else tuple(ctx.call(combiner, list(f_result) + list(g_result)))
+    )
 
 
 @builtin("both", (T.Fn(),), call_site=_both_call_site)
@@ -1711,7 +1787,10 @@ def _reduce(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     (
         T.ExactList(T.TypeVariable("Item")),
         T.TypeVariable("Accumulator"),
-        T.Fn((T.TypeVariable("Accumulator"), T.TypeVariable("Item")), (T.TypeVariable("Accumulator"),)),
+        T.Fn(
+            (T.TypeVariable("Accumulator"), T.TypeVariable("Item")),
+            (T.TypeVariable("Accumulator"),),
+        ),
     ),
     (T.TypeVariable("Accumulator"),),
 )
@@ -1720,7 +1799,11 @@ def _fold(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     values, result, folder = args
     prepared = ctx.prepare_call(folder, 2, 1) if ctx.prepare_call is not None else None
     for item in values:
-        called = prepared.invoke2(result, item) if prepared is not None else tuple(ctx.call(folder, [result, item]))
+        called = (
+            prepared.invoke2(result, item)
+            if prepared is not None
+            else tuple(ctx.call(folder, [result, item]))
+        )
         result = called[0]
     return (result,)
 
@@ -2268,22 +2351,35 @@ def _sum(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin(
     "update",
-    (T.C(T.ListMinType, T.V("Item")), T.ExactList(T.optional(T.Integer)), T.V("Replacement")),
+    (
+        T.C(T.ListMinType, T.V("Item")),
+        T.ExactList(T.optional(T.Integer)),
+        T.V("Replacement"),
+    ),
     (T.C(T.ListMinType, T.V("Item")),),
-    param_names=("iterable", "index", "value"), vectorisable=False,
+    param_names=("iterable", "index", "value"),
+    vectorisable=False,
 )
 @builtin(
     "update",
-    (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),
-     T.TupRepeat(T.optional(T.Integer)),
-     T.C(T.ListExactType, T.V("Item"), T.RankVariable("m"))),
+    (
+        T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),
+        T.TupRepeat(T.optional(T.Integer)),
+        T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),
+    ),
     (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),),
-    param_names=("iterable", "index", "value"), vectorisable=False,
+    param_names=("iterable", "index", "value"),
+    vectorisable=False,
     where_clause=(
-        GetVariableNode(Symbol("index")), ElementNode(Symbol("length")),
-        GetVariableNode(Symbol("m")), ElementNode(Symbol("==")), ElementNode(Symbol("?")),
-        GetVariableNode(Symbol("n")), GetVariableNode(Symbol("m")),
-        ElementNode(Symbol(">=")), ElementNode(Symbol("?")),
+        GetVariableNode(Symbol("index")),
+        ElementNode(Symbol("length")),
+        GetVariableNode(Symbol("m")),
+        ElementNode(Symbol("==")),
+        ElementNode(Symbol("?")),
+        GetVariableNode(Symbol("n")),
+        GetVariableNode(Symbol("m")),
+        ElementNode(Symbol(">=")),
+        ElementNode(Symbol("?")),
     ),
 )
 @builtin(
@@ -2335,24 +2431,38 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin(
     "updateBy",
-    (T.C(T.ListMinType, T.V("Item")), T.ExactList(T.optional(T.Integer)),
-     T.Fn((T.C(T.ListMinType, T.V("Item")),), (T.C(T.ListMinType, T.V("Item")),))),
+    (
+        T.C(T.ListMinType, T.V("Item")),
+        T.ExactList(T.optional(T.Integer)),
+        T.Fn((T.C(T.ListMinType, T.V("Item")),), (T.C(T.ListMinType, T.V("Item")),)),
+    ),
     (T.C(T.ListMinType, T.V("Item")),),
-    param_names=("iterable", "index", "function"), vectorisable=False,
+    param_names=("iterable", "index", "function"),
+    vectorisable=False,
 )
 @builtin(
     "updateBy",
-    (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),
-     T.TupRepeat(T.optional(T.Integer)),
-     T.Fn((T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),),
-          (T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),))),
+    (
+        T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),
+        T.TupRepeat(T.optional(T.Integer)),
+        T.Fn(
+            (T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),),
+            (T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),),
+        ),
+    ),
     (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),),
-    param_names=("iterable", "index", "function"), vectorisable=False,
+    param_names=("iterable", "index", "function"),
+    vectorisable=False,
     where_clause=(
-        GetVariableNode(Symbol("index")), ElementNode(Symbol("length")),
-        GetVariableNode(Symbol("m")), ElementNode(Symbol("==")), ElementNode(Symbol("?")),
-        GetVariableNode(Symbol("n")), GetVariableNode(Symbol("m")),
-        ElementNode(Symbol(">=")), ElementNode(Symbol("?")),
+        GetVariableNode(Symbol("index")),
+        ElementNode(Symbol("length")),
+        GetVariableNode(Symbol("m")),
+        ElementNode(Symbol("==")),
+        ElementNode(Symbol("?")),
+        GetVariableNode(Symbol("n")),
+        GetVariableNode(Symbol("m")),
+        ElementNode(Symbol(">=")),
+        ElementNode(Symbol("?")),
     ),
 )
 @builtin(
