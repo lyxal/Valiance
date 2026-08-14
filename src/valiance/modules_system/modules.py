@@ -58,6 +58,15 @@ class ModuleObject:
 
 
 @dataclass(frozen=True)
+class ModuleTraitImplementation:
+    """One object-to-trait implementation defined by a module."""
+
+    object_name: Symbol
+    trait_name: Symbol
+    definitions: tuple[DefineNode, ...] = ()
+
+
+@dataclass(frozen=True)
 class ModuleExports:
     """The reusable symbol surface of an analysed module."""
 
@@ -67,6 +76,7 @@ class ModuleExports:
     tags: tuple[T.DataTagDefinition, ...] = ()
     overlays: tuple[T.TagOverlayDefinition, ...] = ()
     runtime_prelude: tuple[TypedNode, ...] = ()
+    trait_implementations: tuple[ModuleTraitImplementation, ...] = ()
 
     def public_definitions(self) -> tuple[ModuleDefinition, ...]:
         """Return the definitions exported publicly by this module."""
@@ -109,6 +119,7 @@ def collect_module_exports(
         _deduplicate(_module_tags(program, analyser.env) + analyser.public_import_tags),
         _deduplicate(_module_overlays(program, analyser.env) + analyser.public_import_overlays),
         analyser.runtime_prelude,
+        _deduplicate(_module_trait_implementations(typed) + analyser.public_import_trait_implementations),
     )
 
 
@@ -232,6 +243,7 @@ class ModuleLoader:
                     exports.tags,
                     exports.overlays,
                     exports.runtime_prelude,
+                    exports.trait_implementations,
                 )
             self._cache[cache_key] = exports
             return exports
@@ -481,6 +493,46 @@ def _module_objects(
             )
         )
     return tuple(result)
+
+
+def _module_trait_implementations(
+    typed: list[TypedNode],
+) -> tuple[ModuleTraitImplementation, ...]:
+    """Collect object-to-trait implementations defined by this module."""
+    result = []
+    for typed_node in typed:
+        node = typed_node.node
+        if not isinstance(node, ObjectNode) or node.target is None:
+            continue
+        target = T.normalize(node.target)
+        if isinstance(target, T.NominalType):
+            result.append(ModuleTraitImplementation(node.name, target.name, node.definitions))
+    return tuple(result)
+
+
+def import_trait_implementations(
+    exports: ModuleExports,
+    spec: ImportSpec,
+) -> tuple[ModuleTraitImplementation, ...]:
+    """Select explicit object-to-trait implementation imports."""
+    selected = []
+    for component in spec.components:
+        if component.kind != Symbol("trait_impl"):
+            continue
+        match = next(
+            (
+                impl for impl in exports.trait_implementations
+                if impl.object_name == component.name and impl.trait_name == component.trait
+            ),
+            None,
+        )
+        if match is None:
+            raise ModuleLoadError(
+                f"module {exports.module_name!r} defines no implementation "
+                f"of trait {component.trait} for object {component.name}"
+            )
+        selected.append(match)
+    return tuple(selected)
 
 
 def _module_tags(program: list, env) -> tuple[T.DataTagDefinition, ...]:

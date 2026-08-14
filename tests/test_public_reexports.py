@@ -208,6 +208,108 @@ class PublicReExportTests(unittest.TestCase):
             typed = self.analyse(root, "import { facade.[double] }\n4 double")
             self.assertEqual(str(typed[-1].typ.name), "Number")
 
+    def test_public_import_reexports_selected_overload_only(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "internal.vlnc").write_text(
+                "overload(String -> String)\n"
+                "overload(Number -> Number)\n"
+                "public define identity(value) => $value\n",
+                encoding="utf-8",
+            )
+            (root / "facade.vlnc").write_text(
+                "public import { internal.[identity(Number)] }\n",
+                encoding="utf-8",
+            )
+            numeric = self.analyse(root, "import { facade.[identity] }\n4 identity")
+            self.assertEqual(str(numeric[-1].typ.name), "Number")
+
+            analyser = Analyser(module_loader=ModuleLoader(), source_file=root / "main.vlnc")
+            analyser.analyse(parse('import { facade.[identity] }\n"x" identity'))
+            self.assertTrue(any("no overload" in d.lower() for d in analyser.diagnostics))
+
+    def test_reexported_object_preserves_constructor_and_friendly_element(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "internal.vlnc").write_text(
+                "public object Box =>\n"
+                "  $value: Number\n"
+                "  define unwrap -> Number => $self.value\n"
+                "end\n",
+                encoding="utf-8",
+            )
+            (root / "facade.vlnc").write_text(
+                "public import { internal.[Box] }\n",
+                encoding="utf-8",
+            )
+            typed = self.analyse(root, "import { facade.[Box] }\nBox(7) unwrap")
+            self.assertEqual(str(typed[-1].typ.name), "Number")
+
+    def test_public_trait_implementation_import_reexports_relationship(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "internal.vlnc").write_text(
+                "public trait Shape => end\n"
+                "public object Rectangle =>\n  $width: Number\nend\n"
+                "object Rectangle as Shape => end\n",
+                encoding="utf-8",
+            )
+            (root / "facade.vlnc").write_text(
+                "public import { internal.[Rectangle, Shape, object Rectangle as Shape] }\n",
+                encoding="utf-8",
+            )
+            analyser = Analyser(module_loader=ModuleLoader(), source_file=root / "main.vlnc")
+            analyser.analyse(parse(
+                "import { facade.[Rectangle, Shape, object Rectangle as Shape] }\n"
+            ))
+            self.assertEqual(analyser.diagnostics, [])
+            self.assertIn(
+                Symbol("Shape"),
+                analyser.env.context.trait_impls.get(Symbol("Rectangle"), set()),
+            )
+
+    def test_conflicting_public_imports_do_not_produce_a_facade_interface(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for module in ("first", "second"):
+                (root / f"{module}.vlnc").write_text(
+                    "public define hash(value: String) -> String => $value\n",
+                    encoding="utf-8",
+                )
+            (root / "facade.vlnc").write_text(
+                "public import { first.[hash], second.[hash] }\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(Exception) as raised:
+                ModuleLoader().load(ImportPath(("facade",)), current_file=root / "main.vlnc")
+            self.assertIn("contains type errors", str(raised.exception))
+
+    def test_compiled_facade_preserves_selected_overload(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            internal = root / "internal.vlnc"
+            facade = root / "facade.vlnc"
+            internal.write_text(
+                "overload(String -> String)\n"
+                "overload(Number -> Number)\n"
+                "public define identity(value) => $value\n",
+                encoding="utf-8",
+            )
+            facade.write_text(
+                "public import { internal.[identity(Number)] }\n",
+                encoding="utf-8",
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = main_vln([
+                    "compile-module", "--file", str(facade),
+                    "--output", str(root / "facade.vbcm"),
+                ])
+            self.assertEqual(result, 0)
+            facade.unlink()
+            internal.unlink()
+            typed = self.analyse(root, "import { facade.[identity] }\n4 identity")
+            self.assertEqual(str(typed[-1].typ.name), "Number")
+
 
 if __name__ == "__main__":
     unittest.main()

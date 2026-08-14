@@ -68,6 +68,7 @@ from valiance.modules_system.modules import (
     ModuleLoadError,
     import_environment_facts,
     import_objects,
+    import_trait_implementations,
 )
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.default_types import Boolean
@@ -741,6 +742,12 @@ def _call_node(
 
 
 
+def _show_import_path_for_diagnostic(path) -> str:
+    """Render an import path with canonical resolution-root spelling."""
+    prefix = "" if path.root is None else f"{path.root}."
+    return prefix + ".".join(path.parts)
+
+
 @_core.register(ImportNode)
 def _import_node(
     self: _core.Analyser,
@@ -752,6 +759,7 @@ def _import_node(
         try:
             exports, resolved_spec, definitions = self._load_import_definitions(spec)
             objects = import_objects(exports, resolved_spec)
+            trait_implementations = import_trait_implementations(exports, resolved_spec)
             import_environment_facts(exports, resolved_spec, self.env)
         except ModuleLoadError as exc:
             namespace = (spec.alias.text,) if spec.alias else (spec.path.parts[-1],)
@@ -770,27 +778,36 @@ def _import_node(
             else (resolved_spec.path.parts[-1],)
         )
         self._failed_imports.pop(namespace, None)
+        if not resolved_spec.components:
+            namespace_name = resolved_spec.alias or Symbol(resolved_spec.path.parts[-1])
+            source = _show_import_path_for_diagnostic(resolved_spec.path)
+            previous = self._imported_namespace_sources.get(namespace_name)
+            if previous is not None and previous != source:
+                self._diagnose(
+                    f"conflicting imported namespace '{namespace_name}': provided by "
+                    f"`{previous}` and `{source}`\n"
+                    "help: alias at least one imported module namespace",
+                    node,
+                )
+                return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+        conflict = self._validate_import_conflicts(resolved_spec, definitions, objects)
+        if conflict is not None:
+            self._diagnose(conflict, node)
+            return _core.BranchSet((branch.emit(TypedNode(node, None)),))
+        for implementation in trait_implementations:
+            key = (implementation.object_name, implementation.trait_name)
+            source = f"{exports.module_name}.[object {implementation.object_name} as {implementation.trait_name}]"
+            previous = self._imported_trait_impl_sources.get(key)
+            if previous is not None and previous != source:
+                self._diagnose(
+                    f"conflicting imported trait implementation for object "
+                    f"'{implementation.object_name}' as trait '{implementation.trait_name}': "
+                    f"provided by `{previous}` and `{source}`",
+                    node,
+                )
+                return _core.BranchSet((branch.emit(TypedNode(node, None)),))
         for typed_node in exports.runtime_prelude:
             self._prelude.add(typed_node)
-        reexport = node.public and self._scope_depth == 0
-        if reexport:
-            self._public_import_objects.extend(
-                replace(obj, public=True) for obj in objects
-            )
-            self._public_import_definitions.extend(
-                replace(definition, public=True) for definition in definitions
-            )
-            selected_tags = {
-                Symbol(component.name.text.removeprefix("#"))
-                for component in resolved_spec.components
-                if component.kind == Symbol("tag")
-            }
-            for tag in exports.tags:
-                if tag.name in selected_tags:
-                    self._public_import_tags.append(tag)
-                    self._public_import_overlays.extend(
-                        overlay for overlay in exports.overlays if overlay.tag == tag.name
-                    )
         for obj in objects:
             runtime_name = self._prelude.add_declaration(obj.typed, obj.name)
             self._register_imported_object(obj, runtime_name)
@@ -817,9 +834,38 @@ def _import_node(
                 return _core.BranchSet(
                     (branch.emit(TypedNode(node, None)),)
                 )
-            self._imported_definition_sources[definition.name] = (
-                self._import_source_text(resolved_spec, definition.name)
+        for implementation in trait_implementations:
+            self.env.add_trait_impl(implementation.object_name, implementation.trait_name)
+            source = f"{exports.module_name}.[object {implementation.object_name} as {implementation.trait_name}]"
+            self._imported_trait_impl_sources[
+                (implementation.object_name, implementation.trait_name)
+            ] = source
+        self._commit_import_sources(resolved_spec, definitions, objects)
+        if not resolved_spec.components:
+            namespace_name = resolved_spec.alias or Symbol(resolved_spec.path.parts[-1])
+            self._imported_namespace_sources[namespace_name] = (
+                _show_import_path_for_diagnostic(resolved_spec.path)
             )
+        reexport = node.public and self._scope_depth == 0
+        if reexport:
+            self._public_import_trait_implementations.extend(trait_implementations)
+            self._public_import_objects.extend(
+                replace(obj, public=True) for obj in objects
+            )
+            self._public_import_definitions.extend(
+                replace(definition, public=True) for definition in definitions
+            )
+            selected_tags = {
+                Symbol(component.name.text.removeprefix("#"))
+                for component in resolved_spec.components
+                if component.kind == Symbol("tag")
+            }
+            for tag in exports.tags:
+                if tag.name in selected_tags:
+                    self._public_import_tags.append(tag)
+                    self._public_import_overlays.extend(
+                        overlay for overlay in exports.overlays if overlay.tag == tag.name
+                    )
 
     return _core.BranchSet((branch.emit(TypedNode(node, None)),))
 

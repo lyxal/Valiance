@@ -161,20 +161,16 @@ class _ImportDeclarations:
             f"`{current_namespace}.{name.text}`"
         )
 
-    def _register_imported_definition(
-        self,
-        name: Symbol,
-        typed_node: TypedFunctionNode,
-        runtime_name: Symbol,
-    ) -> None:
-        """Register imported definition during static analysis."""
+    def _selected_import_overloads(self, typed_node: TypedFunctionNode) -> tuple[T.Overload, ...]:
+        """Return the concrete overloads selected by one imported definition."""
         declared = tuple(
             typing.overload
             for typing in typed_node.overloads
             if isinstance(typing.overload, T.Overload)
         )
+        result = []
         for selected in _functions._callable_overloads(typed_node.typ):
-            overload = next(
+            result.append(next(
                 (
                     candidate
                     for candidate in declared
@@ -182,7 +178,73 @@ class _ImportDeclarations:
                     and candidate.returns == selected.returns
                 ),
                 selected,
+            ))
+        return tuple(result)
+
+    def _validate_import_conflicts(
+        self,
+        resolved_spec: ImportSpec,
+        definitions,
+        objects,
+    ) -> str | None:
+        """Validate imported symbol and overload conflicts before mutation."""
+        pending_overloads: dict[tuple[Symbol, tuple[T.Type, ...]], str] = {}
+        for definition in definitions:
+            source = self._import_source_text(resolved_spec, definition.name)
+            for overload in self._selected_import_overloads(definition.typed):
+                key = (definition.name, overload.params)
+                previous = self._imported_overload_sources.get(key)
+                current_pending = pending_overloads.get(key)
+                conflict = previous or current_pending
+                if conflict is not None and conflict != source:
+                    return (
+                        f"conflicting imported overload '{definition.name}' for parameter "
+                        f"types {overload.params}: provided by `{conflict}` and `{source}`\n"
+                        "help: select distinct overloads, exclude one with `except`, or alias one import"
+                    )
+                pending_overloads[key] = source
+
+        pending_objects: dict[Symbol, str] = {}
+        for obj in objects:
+            source = self._import_source_text(resolved_spec, obj.name)
+            previous = self._imported_object_sources.get(obj.name)
+            current_pending = pending_objects.get(obj.name)
+            conflict = previous or current_pending
+            if conflict is not None and conflict != source:
+                return (
+                    f"conflicting imported symbol '{obj.name}': provided by "
+                    f"`{conflict}` and `{source}`\n"
+                    "help: alias one imported component or keep both modules namespaced"
+                )
+            if self._imported_definition_sources.get(obj.name) not in {None, source}:
+                return f"conflicting imported symbol '{obj.name}'"
+            pending_objects[obj.name] = source
+        for definition in definitions:
+            source = self._import_source_text(resolved_spec, definition.name)
+            if self._imported_object_sources.get(definition.name) not in {None, source}:
+                return f"conflicting imported symbol '{definition.name}'"
+        return None
+
+    def _commit_import_sources(self, resolved_spec: ImportSpec, definitions, objects) -> None:
+        """Commit validated imported identities for later conflict checks."""
+        for definition in definitions:
+            source = self._import_source_text(resolved_spec, definition.name)
+            self._imported_definition_sources[definition.name] = source
+            for overload in self._selected_import_overloads(definition.typed):
+                self._imported_overload_sources[(definition.name, overload.params)] = source
+        for obj in objects:
+            self._imported_object_sources[obj.name] = self._import_source_text(
+                resolved_spec, obj.name
             )
+
+    def _register_imported_definition(
+        self,
+        name: Symbol,
+        typed_node: TypedFunctionNode,
+        runtime_name: Symbol,
+    ) -> None:
+        """Register imported definition during static analysis."""
+        for overload in self._selected_import_overloads(typed_node):
             self.env.define_overload(name, overload)
             self.env.bind_runtime_name(name, runtime_name, overload)
 

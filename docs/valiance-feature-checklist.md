@@ -759,23 +759,23 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Support importing several components using bracket syntax.
 - [x] Support selective element-overload imports.
 - [x] Support generic wildcard overload signatures in imports.
-- [ ] Support importing object-to-trait implementations.
+- [x] Support importing object-to-trait implementations.
 - [x] Support local relative module paths.
-- [x] Support project-root-relative paths using `~`.
+- [x] Support project-root-relative paths using `root`, with `~` as an alias.
 - [x] Support standard-library paths beginning with `std`.
-- [ ] Support VCS package paths.
-- [ ] Support installed-package paths beginning with `@`.
+- [x] Resolve manifest dependencies through canonical `dep` paths, with `@` as an alias.
+- [x] Keep VCS locations in the manifest and lockfile rather than import paths.
 - [x] Support namespace-qualified access.
 - [x] Keep imports private by default.
-- [ ] Support public re-exports.
-- [ ] Detect conflicting imported overloads.
-- [ ] Detect conflicting imported trait implementations.
-- [ ] Require explicit conflict resolution.
+- [x] Support public re-exports.
+- [x] Detect conflicting imported overloads.
+- [x] Detect conflicting imported trait implementations.
+- [x] Require explicit conflict resolution.
 - [x] Parse overload exclusions using `except`.
 - [x] Support concrete and generic exclusions.
 - [x] Reject exclusions of nonexistent overloads.
 - [x] Reject `except` after an already specific overload import.
-- [ ] Continue detecting conflicts after exclusions.
+- [x] Continue detecting conflicts after exclusions.
 - [x] Automatically import object-friendly elements with component object imports.
 - [x] Avoid automatically importing object-friendly elements through namespace-only imports.
 - [x] Import tag overlays and tag-associated elements.

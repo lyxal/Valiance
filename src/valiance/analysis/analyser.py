@@ -331,10 +331,15 @@ class Analyser:
         self.file_lint_suppressions: dict[str, ASTNode] = {}
         self._friendly_owners: tuple[Symbol, ...] = ()
         self._imported_definition_sources: dict[Symbol, str] = {}
+        self._imported_overload_sources: dict[tuple[Symbol, tuple[T.Type, ...]], str] = {}
+        self._imported_object_sources: dict[Symbol, str] = {}
+        self._imported_namespace_sources: dict[Symbol, str] = {}
         self._public_import_definitions = []
         self._public_import_objects = []
         self._public_import_tags = []
         self._public_import_overlays = []
+        self._public_import_trait_implementations = []
+        self._imported_trait_impl_sources: dict[tuple[Symbol, Symbol], str] = {}
         self._scope_depth = 0
         self._failed_imports: dict[tuple[str, ...], str] = {}
         self._top_level_declared_variable_names: frozenset[Symbol] = frozenset()
@@ -636,6 +641,11 @@ class Analyser:
         return tuple(self._public_import_overlays)
 
     @property
+    def public_import_trait_implementations(self) -> tuple:
+        """Return trait implementations re-exported by top-level public imports."""
+        return tuple(self._public_import_trait_implementations)
+
+    @property
     def runtime_prelude(self) -> tuple[TypedNode, ...]:
         """Return declarations hoisted from imports for one-time initialization."""
         return tuple(self._prelude.nodes)
@@ -687,6 +697,10 @@ class Analyser:
         """Analyse a nested block with declarations local to that block."""
         outer = self.env
         imported_sources = self._imported_definition_sources.copy()
+        overload_sources = self._imported_overload_sources.copy()
+        object_sources = self._imported_object_sources.copy()
+        namespace_sources = self._imported_namespace_sources.copy()
+        trait_impl_sources = self._imported_trait_impl_sources.copy()
         self.env = outer.lexical_child_scope()
         self._scope_depth += 1
         try:
@@ -695,6 +709,10 @@ class Analyser:
             self._scope_depth -= 1
             self.env = outer
             self._imported_definition_sources = imported_sources
+            self._imported_overload_sources = overload_sources
+            self._imported_object_sources = object_sources
+            self._imported_namespace_sources = namespace_sources
+            self._imported_trait_impl_sources = trait_impl_sources
 
     def _child_analyser(self, env: T.Environment) -> Analyser:
         """Create a nested analyser sharing module resolution and import prelude."""
@@ -710,6 +728,10 @@ class Analyser:
         child._imported_definition_sources = (
             self._imported_definition_sources.copy()
         )
+        child._imported_overload_sources = self._imported_overload_sources.copy()
+        child._imported_object_sources = self._imported_object_sources.copy()
+        child._imported_namespace_sources = self._imported_namespace_sources.copy()
+        child._imported_trait_impl_sources = self._imported_trait_impl_sources.copy()
         child.project_lints_enabled = self.project_lints_enabled
         child.project_disabled_lint_codes = self.project_disabled_lint_codes
         child.disabled_lint_codes = (
