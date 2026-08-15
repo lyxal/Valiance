@@ -1110,6 +1110,31 @@ import {
             ],
         )
 
+    def test_parses_symbolic_and_mixed_element_names(self):
+        [symbolic] = parse("define ++ => + 1")
+        self.assertEqual(symbolic.name, Symbol("++"))
+        self.assertEqual(
+            symbolic.function.body,
+            (NumberLiteralNode("1"), ElementNode(Symbol("+"))),
+        )
+
+        [mixed_definition] = parse("define e+e => 1")
+        self.assertEqual(mixed_definition.name, Symbol("e+e"))
+        self.assertEqual(
+            parse("e+e"),
+            [ElementNode(Symbol("e+e"))],
+        )
+
+    def test_whitespace_still_separates_element_names(self):
+        self.assertEqual(
+            parse("e + e"),
+            [
+                ElementNode(Symbol("e")),
+                ElementNode(Symbol("+")),
+                ElementNode(Symbol("e")),
+            ],
+        )
+
     def test_parses_niladic_define_with_backslash_name(self):
         [node] = parse('define \\foo => println("Hello, World!")')
 

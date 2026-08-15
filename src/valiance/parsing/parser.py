@@ -704,7 +704,14 @@ class Parser:
             not in {TokenKind.LPAREN, TokenKind.FAT_ARROW, TokenKind.COLON}
         ):
             attached_tag = _tag_from_token(self._advance())
-        name = self._symbol("expected definition name")
+        if not self._match(TokenKind.IDENT, TokenKind.OP):
+            self._error("expected definition name")
+        name_token = self._previous
+        name = (
+            self._operator_run(name_token)
+            if name_token.kind is TokenKind.OP
+            else self._qualified_symbol(name_token)
+        )
         params = (
             self._params(allow_defaults=True) if self._match(TokenKind.LPAREN) else None
         )
@@ -2102,6 +2109,15 @@ class Parser:
     def _qualified_symbol(self, start: Token) -> Symbol:
         """Parse qualified symbol from the current token stream."""
         parts = [start.value]
+        last = start
+        while (
+            self._check(TokenKind.IDENT, TokenKind.OP)
+            and self._adjacent(last, self._current)
+        ):
+            if self._current.kind is TokenKind.OP and self._current.value == "<":
+                break
+            last = self._advance()
+            parts[-1] += last.value
         while self._check(TokenKind.DOT) and self._peek(1).kind in (
             TokenKind.IDENT,
             TokenKind.OP,
@@ -2122,14 +2138,17 @@ class Parser:
         The lexer emits a single-character OP token per operator character
         (so that e.g. `Number++` can distinguish a rank-2 list type from two
         separate unary operators). Here in expression/element position we
-        glue an unbroken, whitespace-free run of such tokens back together
-        into a single operator name, e.g. `+` `+` (adjacent) -> `++`, while a
-        run broken by whitespace (`+ +`) stays as two separate operators.
+        glue an unbroken, whitespace-free run of identifier and operator tokens
+        back together into a single element name, e.g. `+` `+` -> `++` and
+        `e` `+` `e` -> `e+e`. Whitespace ends the run.
         """
         parts = [start.value]
         last = start
-        while self._check(TokenKind.OP) and self._adjacent(last, self._current):
-            if self._current.value == "<" and self._peek(1).kind in {
+        while (
+            self._check(TokenKind.IDENT, TokenKind.OP)
+            and self._adjacent(last, self._current)
+        ):
+            if self._current.kind is TokenKind.OP and self._current.value == "<" and self._peek(1).kind in {
                 TokenKind.IDENT,
                 TokenKind.OP,
                 TokenKind.LBRACE,
