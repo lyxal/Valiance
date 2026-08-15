@@ -788,6 +788,7 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Support standalone scripts without a manifest.
 - [ ] Disable external packages for standalone scripts.
 - [x] Parse project metadata.
+- [x] Require fully specified dependency source kinds, package identities, and coordinates.
 - [x] Parse exact-version dependency declarations.
 - [x] Reject version ranges, wildcards, and implicit version selection.
 - [x] Generate and maintain `valiance.lock`.
@@ -798,11 +799,16 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [ ] Keep types from different package versions distinct.
 - [x] Support explicit dependency upgrades.
 - [x] Implement `vln install`.
-- [ ] Implement installed-package `vln add`.
-- [x] Implement VCS-package `vln add`.
+- [ ] Accept and acquire registry packages.
+- [x] Implement Git-package `vln add`.
+- [x] Implement local-snapshot `vln add`.
+- [x] Implement live path dependencies across nested project roots.
+- [x] Infer package metadata for concise `vln add --path`, `--local`, and `--git` commands.
+- [x] Convert live path dependencies into managed snapshots with `vln localize`.
+- [ ] Accept and acquire Mercurial, Subversion, and Fossil packages.
 - [x] Implement `vln remove`.
 - [x] Implement `vln upgrade`.
-- [x] Update both manifest and lockfile during package changes.
+- [x] Update manifest, lockfile, and managed package tree transactionally during package changes.
 
 ## 41. Concurrency — initial release complete
 

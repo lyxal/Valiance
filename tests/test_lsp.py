@@ -453,7 +453,7 @@ class DefinitionProviderTests(unittest.TestCase):
             package.mkdir(parents=True)
             (root / "valiance.toml").write_text(
                 '[project]\nname = "demo"\nversion = "1.0.0"\n\n'
-                '[dependencies]\nmath = { source = "local/math", version = "1.0.0" }\n',
+                '[dependencies]\nmath = { kind = "local", package = "math", path = "local/math", version = "1.0.0" }\n',
                 encoding="utf-8",
             )
             target = package / "math.vlnc"

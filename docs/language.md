@@ -3765,8 +3765,8 @@ Given:
 
 ```toml
 [dependencies]
-somelib = "1.2.3"
-repo = { source = "github.com/user/repo", version = "1.0.0" }
+somelib = { kind = "registry", registry = "https://packages.example", package = "somelib", version = "1.2.3" }
+repo = { kind = "git", package = "repo", location = "https://github.com/user/repo.git", version = "1.0.0" }
 ```
 
 the imports resolve through the dependencies named `somelib` and `repo`.
@@ -4115,10 +4115,11 @@ hashB.digest(value)
 Valiance projects are described by a `valiance.toml` manifest. The manifest
 defines project metadata, executable entry points, and direct dependencies.
 
-The package manager currently provides project creation, manifest editing,
-lockfile generation, and local package-directory setup. Registry downloads,
-VCS cloning, transitive dependency resolution, and integrity verification are
-not yet implemented.
+The package manager provides project creation, manifest editing, exact-version
+Git and local dependencies, recursive installation, lockfile generation, and
+SHA-256 integrity verification. Registry downloads, non-Git VCS acquisition,
+version-range solving, package publishing, and global tool installation are not
+yet implemented.
 
 ## 24.1. Projects
 
@@ -4310,45 +4311,63 @@ source selection.
 
 ## 24.6. Dependencies
 
-The `[dependencies]` table maps local dependency names to exact versions and
-package identities.
+The `[dependencies]` table maps local import names to fully specified package
+sources. Phase one accepts three source kinds: `git`, `local`, and `path`. Every
+dependency is an inline table and must explicitly provide:
 
-A registry-style dependency may use the compact form:
+- `kind`: `git` or `local`;
+- `package`: the expected `[project].name` in the dependency manifest;
+- `version`: the expected exact dotted-numeric package version;
+- `location` for Git, or `path` for local and live path dependencies.
+
+A Git dependency is declared as:
+
+```toml
+[dependencies]
+math = { kind = "git", package = "advanced-math", location = "https://github.com/example/math.git", version = "2.0.0" }
+```
+
+A local source-tree dependency is declared as:
+
+```toml
+[dependencies]
+utilities = { kind = "local", package = "project-utilities", path = "../utilities", version = "0.4.0" }
+```
+
+A live path dependency is declared as:
+
+```toml
+[dependencies]
+workspace = { kind = "path", package = "workspace-root", path = "../..", version = "0.3.0" }
+```
+
+A path dependency resolves directly to its target directory and is not copied
+beneath `.vln`. This permits a nested project to expose an outer package through
+`dep.workspace` while preserving `root` as the nested package's own root.
+
+The TOML key is solely the local dependency name used by `dep.<name>` imports.
+The `package` field is the external package identity and must match the fetched
+or copied package manifest. Source coordinates never appear in import paths.
+
+Local paths are resolved relative to the manifest that declares them. A local
+package is copied into the managed package tree; `.git`, `.vln`, and
+`valiance.lock` are excluded. The copied tree is validated and hashed like a Git
+package. Locked mode can verify a local snapshot but cannot restore historical local
+content after the source path changes. A `path` dependency is deliberately live:
+locked mode validates its canonical path, package identity, and version, but does
+not require its source contents to remain unchanged.
+
+`registry`, `hg`, `svn`, and `fossil` are reserved future source-kind names but
+are not valid dependency declarations in phase one. Unknown and reserved kinds
+are manifest errors rather than parseable, unbuildable project states.
+
+Compact and inferred declarations are invalid:
 
 ```toml
 [dependencies]
 somelib = "1.2.3"
+repo = { source = "https://github.com/example/repo.git", version = "1.0.0" }
 ```
-
-This declares:
-
-- local dependency name: `somelib`;
-- package identity: `somelib`;
-- source kind: registry;
-- exact version: `1.2.3`.
-
-A different external package name may be declared with the expanded form:
-
-```toml
-[dependencies]
-math = { package = "advanced-math", version = "2.0.0" }
-```
-
-This keeps `math` as the local dependency name while recording
-`advanced-math` as the external package identity.
-
-A source-based dependency may be declared as:
-
-```toml
-[dependencies]
-repo = { source = "github.com/user/repo", version = "1.0.0" }
-```
-
-The package manager classifies a dependency as source-based when it has a
-`source` field.
-
-At present, source strings are recorded as metadata. The package manager does
-not yet clone repositories or download registry packages.
 
 ## 24.7. Dependency Names
 
@@ -4377,9 +4396,9 @@ Valid examples include:
 
 ```toml
 [dependencies]
-a = "1"
-b = "1.2"
-c = "1.2.3"
+a = { kind = "git", package = "a", location = "https://example.com/a.git", version = "1" }
+b = { kind = "git", package = "b", location = "https://example.com/b.git", version = "1.2" }
+c = { kind = "local", package = "c", path = "../c", version = "1.2.3" }
 ```
 
 Version ranges and compatibility operators are rejected.
@@ -4388,10 +4407,10 @@ Invalid examples include:
 
 ```toml
 [dependencies]
-a = "^1.2.3"
-b = ">=2.0"
-c = "1.*"
-d = "*"
+a = { kind = "git", package = "a", location = "https://example.com/a.git", version = "^1.2.3" }
+b = { kind = "git", package = "b", location = "https://example.com/b.git", version = ">=2.0" }
+c = { kind = "local", package = "c", path = "../c", version = "1.*" }
+d = { kind = "local", package = "d", path = "../d", version = "*" }
 ```
 
 The current version syntax accepts one or more numeric components separated by
@@ -4399,53 +4418,55 @@ periods.
 
 ## 24.9. Adding Dependencies
 
-Add a registry-style dependency with:
+`vln add` uses one concise source selector. The command inspects the dependency
+manifest, infers its package identity and, for local sources, its version, then
+writes a fully explicit declaration to `valiance.toml`.
+
+Add a live path dependency:
 
 ```text
-vln add somelib 1.2.3
+vln add workspace --path ../..
 ```
 
-This writes:
-
-```toml
-[dependencies]
-somelib = "1.2.3"
-```
-
-Add a source-based dependency with:
+Add a managed local snapshot:
 
 ```text
-vln add github.com/user/repo 1.0.0
+vln add utilities --local ../utilities
 ```
 
-By default, the final path component becomes the local dependency name:
-
-```toml
-[dependencies]
-repo = { source = "github.com/user/repo", version = "1.0.0" }
-```
-
-Choose a different local name with `as`:
+Add an exact-version Git dependency:
 
 ```text
-vln add github.com/user/repo 1.0.0 as userrepo
+vln add math --git https://github.com/example/math.git@2.0.0
 ```
 
-This writes:
+A Git version may instead be supplied separately with `--version`. Optional
+`--package` and `--version` values act as assertions: discovery fails loudly if
+the dependency manifest disagrees. The generated TOML always records `kind`,
+`package`, source coordinates, and exact `version` explicitly.
 
-```toml
-[dependencies]
-userrepo = { source = "github.com/user/repo", version = "1.0.0" }
-```
+Git and local dependencies are installed beneath managed `.vln` directories.
+Path dependencies remain at their canonical external location; their own
+non-path dependencies are managed beneath that package's `.vln` directory.
 
-Adding a dependency:
-
-1. validates the local name and exact version;
-2. updates `valiance.toml`;
-3. regenerates `valiance.lock`;
-4. ensures the corresponding `.vln` package directory exists.
+The command validates the complete proposed graph. Manifest, lockfile, and
+managed-package changes are rolled back together if resolution, acquisition,
+manifest validation, or integrity processing fails.
 
 Adding a dependency with an existing local name replaces that declaration.
+
+### 24.9.1. Localizing a Path Dependency
+
+Convert a live path dependency into a managed local snapshot with:
+
+```text
+vln localize workspace
+```
+
+The command validates the current path package, copies it into `.vln/workspace`,
+changes its manifest declaration from `kind = "path"` to `kind = "local"`, and
+updates the lockfile transactionally. The external source directory is not
+modified. Later edits to that directory do not affect the localized snapshot.
 
 ## 24.10. Removing Dependencies
 
@@ -4503,8 +4524,9 @@ Install and resolve the dependencies declared by the current project with:
 vln install
 ```
 
-Phase-one package management is registryless. Every installable dependency must
-use an explicit Git source and an exact numeric version. The installer resolves
+Phase-one remote package management is registryless. Every installable remote
+dependency must use an explicit `git` source and exact numeric version. Fully
+specified `local` snapshots and live `path` dependencies are also supported. The installer resolves
 either the `v<version>` or `<version>` tag, records the resulting commit SHA,
 checks out source without its `.git` directory, validates the package manifest,
 and recursively installs its dependencies. Registry-name dependencies are
@@ -4541,7 +4563,8 @@ packages from the exact locked commit. It never upgrades dependencies.
 ## 24.13. The Lockfile
 
 `valiance.lock` separates direct manifest intent from the complete resolved
-graph. It records:
+graph. Managed package ownership is recorded structurally using `owner_kind` and
+`owner_source`; ownership is never encoded into installation-path strings. It records:
 
 - the lockfile format version and root project identity;
 - canonical direct dependency declarations for stale-lock detection;
@@ -4549,7 +4572,9 @@ graph. It records:
 - its canonical Git source and requested exact version;
 - the immutable commit revision selected from the version tag;
 - a canonical `sha256:` digest of the package source tree;
-- child dependency names and the managed installation path.
+- child dependency names;
+- the owning root or live path package;
+- the managed installation path relative to that owner's `.vln` directory.
 
 The source-tree digest excludes `.git`, `.vln`, and generated `valiance.lock`
 data. Do not edit `valiance.lock` by hand. Commit both `valiance.toml` and
@@ -4576,7 +4601,8 @@ of the same source without alias leakage.
 
 The phase-one manager does not yet provide:
 
-- a named package registry or discovery/search service;
+- registry acquisition, discovery, or search;
+- Mercurial, Subversion, or Fossil acquisition backends;
 - version ranges or constraint solving;
 - signed provenance or vulnerability metadata;
 - archive/CDN mirrors;
@@ -4622,9 +4648,9 @@ vln install
 Add dependencies:
 
 ```text
-vln add somelib 1.2.3
-vln add github.com/user/repo 1.0.0
-vln add github.com/user/repo 1.0.0 as userrepo
+vln add somelib --git https://github.com/user/somelib.git@1.2.3
+vln add utilities --local ../utilities
+vln add workspace --path ../..
 ```
 
 Remove a dependency:
@@ -4640,7 +4666,9 @@ vln upgrade somelib 1.3.0
 ```
 
 All dependency-modifying commands rewrite the manifest, regenerate the
-lockfile, and refresh the local managed package metadata.
+lockfile, and refresh managed package metadata. Transactions journal the root
+project and every live path package whose `.vln` tree may be changed; failures
+restore all touched managed trees.
 
 
 # 25. Concurrency

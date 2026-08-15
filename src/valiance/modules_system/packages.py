@@ -95,26 +95,29 @@ class Dependency:
 
     local_name: str
     version: str
-    package: str | None = None
-    source: str | None = None
+    source_kind: str
+    location: str
+    package: str
 
     @property
     def identity(self) -> str:
         """Return the lockfile identity for this dependency source."""
-        return self.package or self.source or self.local_name
+        return self.package
 
     @property
     def kind(self) -> str:
         """Return the manifest source kind for this dependency."""
-        return "vcs" if self.source is not None else "registry"
+        return self.source_kind
 
-    def manifest_value(self) -> str | dict[str, str]:
-        """Return the TOML-compatible manifest value for this dependency."""
-        if self.source is not None:
-            return {"source": self.source, "version": self.version}
-        if self.package is not None and self.package != self.local_name:
-            return {"package": self.package, "version": self.version}
-        return self.version
+    def manifest_value(self) -> dict[str, str]:
+        """Return the strict phase-one TOML representation."""
+        value = {
+            "kind": self.source_kind,
+            "package": self.package,
+            "version": self.version,
+        }
+        value["path" if self.source_kind in {"local", "path"} else "location"] = self.location
+        return value
 
 
 @dataclass(frozen=True)
@@ -574,6 +577,8 @@ def install(
         records=records,
         ancestry=(),
         install_prefix=(),
+        owner_kind="root",
+        owner_source=None,
         progress=progress,
     )
     lock_path = write_lockfile(manifest, resolved=records)
@@ -589,23 +594,59 @@ def _resolve_and_install_manifest(
     records: list[dict[str, object]],
     ancestry: tuple[str, ...],
     install_prefix: tuple[str, ...],
+    owner_kind: str,
+    owner_source: str | None,
     progress: ProgressCallback | None,
 ) -> None:
     """Resolve and install every dependency declared by one manifest."""
     for dependency in sorted(manifest.dependencies, key=lambda item: item.local_name):
-        if dependency.source is None:
-            raise PackageError(
-                f"cannot install registry dependency {dependency.identity!r}",
-                hint=(
-                    "Use an explicit Git source, for example: "
-                    f'{dependency.local_name} = {{ source = "https://github.com/owner/repo.git", '
-                    f'version = "{dependency.version}" }}'
-                ),
-            )
-        source = _canonical_git_source(dependency.source, manifest.root)
+        source = _canonical_git_source(dependency.location, manifest.root)
         label = dependency.local_name
         _report(progress, "resolve", label, dependency.version, step=1, total=4)
-        revision = _resolve_git_revision(source, dependency.version)
+
+        if dependency.source_kind == "path":
+            package_root = Path(source)
+            revision = "path"
+            cycle_key = f"path:{package_root}"
+            if cycle_key in ancestry:
+                chain = " -> ".join((*ancestry, cycle_key))
+                raise PackageError(f"dependency cycle detected: {chain}")
+            package_manifest = load_manifest(package_root)
+            _report(progress, "verify", label, "live manifest and SHA-256", step=3, total=4)
+            _validate_package_manifest(dependency, package_manifest)
+            integrity = "live"
+            records.append({
+                "name": dependency.local_name,
+                "package": dependency.package,
+                "kind": "path",
+                "identity": dependency.identity,
+                "source": source,
+                "version": dependency.version,
+                "revision": revision,
+                "integrity": integrity,
+                "dependencies": sorted(item.local_name for item in package_manifest.dependencies),
+                "declared_path": dependency.location,
+                "owner_kind": owner_kind,
+                "owner_source": owner_source,
+                "install_path": None,
+            })
+            child_root = package_root / ".vln"
+            child_root.mkdir(exist_ok=True)
+            _resolve_and_install_manifest(
+                package_manifest,
+                child_root,
+                records=records,
+                ancestry=(*ancestry, cycle_key),
+                install_prefix=(),
+                owner_kind="path",
+                owner_source=str(package_root),
+                progress=progress,
+            )
+            _report(progress, "linked", label, str(package_root), step=4, total=4)
+            continue
+
+        revision = (_resolve_git_revision(source, dependency.version)
+                    if dependency.source_kind == "git" else "local")
         _report(progress, "fetch", label, revision[:12], step=2, total=4)
         cycle_key = f"{source}@{revision}"
         if cycle_key in ancestry:
@@ -616,27 +657,28 @@ def _resolve_and_install_manifest(
             prefix=f".{dependency.local_name}-", dir=packages_dir
         ) as tmp_name:
             checkout = Path(tmp_name) / "source"
-            _checkout_git_revision(source, revision, checkout)
+            if dependency.source_kind == "git":
+                _checkout_git_revision(source, revision, checkout)
+            else:
+                _copy_local_source(source, checkout)
             package_manifest = load_manifest(checkout)
             _report(progress, "verify", label, "manifest and SHA-256", step=3, total=4)
             _validate_package_manifest(dependency, package_manifest)
             integrity = _tree_integrity(checkout)
-            child_names = [item.local_name for item in package_manifest.dependencies]
-            record = {
+            records.append({
                 "name": dependency.local_name,
-                "package": package_manifest.project.get(
-                    "name", dependency.identity
-                ),
-                "kind": "vcs",
+                "package": dependency.package,
+                "kind": dependency.source_kind,
                 "identity": dependency.identity,
                 "source": source,
                 "version": dependency.version,
                 "revision": revision,
                 "integrity": integrity,
-                "dependencies": sorted(child_names),
+                "dependencies": sorted(item.local_name for item in package_manifest.dependencies),
+                "owner_kind": owner_kind,
+                "owner_source": owner_source,
                 "install_path": "/".join((*install_prefix, dependency.local_name)),
-            }
-            records.append(record)
+            })
             child_root = checkout / ".vln"
             child_root.mkdir(exist_ok=True)
             _resolve_and_install_manifest(
@@ -645,6 +687,8 @@ def _resolve_and_install_manifest(
                 records=records,
                 ancestry=(*ancestry, cycle_key),
                 install_prefix=(*install_prefix, dependency.local_name, ".vln"),
+                owner_kind=owner_kind,
+                owner_source=owner_source,
                 progress=progress,
             )
             if destination.exists():
@@ -664,21 +708,50 @@ def _install_locked_records(
     for value in records:
         if not isinstance(value, dict):
             raise PackageError("lockfile dependency entries must be objects")
-        required = {"name", "source", "version", "revision", "integrity", "install_path"}
+        required = {
+            "name", "package", "kind", "source", "version", "revision",
+            "integrity", "owner_kind", "owner_source", "install_path",
+        }
         missing = sorted(required - value.keys())
         if missing:
             raise PackageError(
                 "lockfile dependency entry is missing: " + ", ".join(missing)
             )
+        if value.get("kind") not in {"git", "local", "path"}:
+            raise PackageError("lockfile dependency kind must be git, local, or path")
+        if not isinstance(value.get("package"), str) or not value["package"]:
+            raise PackageError("lockfile dependency package must be a non-empty string")
         normalized.append(value)
     normalized.sort(key=lambda item: str(item["install_path"]).count("/"))
     for record in normalized:
         label = str(record["name"])
         _report(progress, "verify", label, "locked integrity", step=1, total=2)
-        rel = Path(str(record["install_path"]))
+        if record.get("kind") == "path":
+            source_root = Path(str(record["source"]))
+            if not source_root.is_dir():
+                raise PackageError(f"locked path dependency {label!r} does not exist")
+            if record.get("integrity") != "live" or record.get("revision") != "path":
+                raise PackageError(f"invalid locked path dependency record for {label!r}")
+            path_manifest = load_manifest(source_root)
+            if path_manifest.project.get("name") != record["package"] or path_manifest.project.get("version") != record["version"]:
+                raise PackageError(f"locked path dependency {label!r} manifest changed")
+            _report(progress, "linked", label, str(source_root), step=2, total=2)
+            continue
+        install_path = str(record["install_path"])
+        rel = Path(install_path)
         if rel.is_absolute() or ".." in rel.parts:
-            raise PackageError("lockfile install_path must stay within .vln")
-        destination = manifest.root / ".vln" / rel
+            raise PackageError("lockfile install_path must stay within its owner .vln")
+        owner_kind = record.get("owner_kind")
+        if owner_kind == "root":
+            owner_root = manifest.root
+        elif owner_kind == "path":
+            owner_source = record.get("owner_source")
+            if not isinstance(owner_source, str) or not Path(owner_source).is_absolute():
+                raise PackageError("path-owned lockfile package needs an absolute owner_source")
+            owner_root = Path(owner_source)
+        else:
+            raise PackageError("lockfile owner_kind must be root or path")
+        destination = owner_root / ".vln" / rel
         expected = str(record["integrity"])
         if destination.is_dir() and _tree_integrity(destination) == expected:
             _report(progress, "cached", label, "already verified", step=2, total=2)
@@ -688,9 +761,12 @@ def _install_locked_records(
             prefix=f".{record['name']}-", dir=destination.parent
         ) as tmp_name:
             checkout = Path(tmp_name) / "source"
-            _checkout_git_revision(
-                str(record["source"]), str(record["revision"]), checkout
-            )
+            if record.get("kind") == "local":
+                _copy_local_source(str(record["source"]), checkout)
+            else:
+                _checkout_git_revision(
+                    str(record["source"]), str(record["revision"]), checkout
+                )
             actual = _tree_integrity(checkout)
             if actual != expected:
                 raise PackageError(
@@ -698,6 +774,10 @@ def _install_locked_records(
                     f"expected {expected}, got {actual}"
                 )
             locked_manifest = load_manifest(checkout)
+            if locked_manifest.project.get("name") != record["package"]:
+                raise PackageError(
+                    f"locked package {record['name']!r} manifest name changed"
+                )
             if locked_manifest.project.get("version") != record["version"]:
                 raise PackageError(
                     f"locked package {record['name']!r} manifest version changed"
@@ -777,6 +857,19 @@ def _checkout_git_revision(source: str, revision: str, destination: Path) -> Non
         shutil.rmtree(git_dir)
 
 
+
+def _copy_local_source(source: str, destination: Path) -> None:
+    """Copy a fully specified local package source without managed output."""
+    source_path = Path(source)
+    if not source_path.is_dir():
+        raise PackageError(f"local package source does not exist: {source_path}")
+    shutil.copytree(
+        source_path,
+        destination,
+        ignore=shutil.ignore_patterns(".git", ".vln", "valiance.lock"),
+        symlinks=True,
+    )
+
 def _validate_package_manifest(
     dependency: Dependency, package_manifest: Manifest
 ) -> None:
@@ -823,7 +916,9 @@ def _manifest_dependency_records(manifest: Manifest) -> list[dict[str, str]]:
         {
             "name": item.local_name,
             "identity": item.identity,
-            "source": item.source or "registry",
+            "package": item.package,
+            "kind": item.source_kind,
+            "source": item.location,
             "version": item.version,
         }
         for item in sorted(manifest.dependencies, key=lambda value: value.local_name)
@@ -854,25 +949,192 @@ def _validate_lock_matches_manifest(
             hint="Run `vln install` to resolve dependencies and refresh the lockfile.",
         )
 
+
+
+def _path_managed_roots(manifest: Manifest) -> tuple[Path, ...]:
+    """Return external managed roots reachable through live path dependencies."""
+    found: set[Path] = set()
+    visiting: set[Path] = set()
+
+    def visit(current: Manifest) -> None:
+        canonical = current.root.resolve()
+        if canonical in visiting:
+            return
+        visiting.add(canonical)
+        for dependency in current.dependencies:
+            if dependency.source_kind != "path":
+                continue
+            target = Path(dependency.location).expanduser()
+            if not target.is_absolute():
+                target = current.root / target
+            target = target.resolve()
+            if target in found:
+                continue
+            child = load_manifest(target)
+            _validate_package_manifest(dependency, child)
+            found.add(target)
+            visit(child)
+
+    visit(manifest)
+    return tuple(sorted(found, key=lambda value: str(value)))
+
+def _commit_manifest_change(
+    current: Manifest,
+    updated: Manifest,
+    *,
+    progress: ProgressCallback | None = None,
+    remove_name: str | None = None,
+) -> None:
+    """Apply a package mutation transactionally across every touched managed tree."""
+    manifest_path = current.path
+    lock_path = current.root / "valiance.lock"
+    manifest_bytes = manifest_path.read_bytes()
+    lock_bytes = lock_path.read_bytes() if lock_path.exists() else None
+    managed_roots = {current.root.resolve(), *_path_managed_roots(updated)}
+    with tempfile.TemporaryDirectory(prefix=".vln-transaction-", dir=current.root.parent) as tmp:
+        backup_root = Path(tmp)
+        backups: dict[Path, Path | None] = {}
+        for index, root in enumerate(sorted(managed_roots, key=lambda value: str(value))):
+            packages = root / ".vln"
+            backup = backup_root / f"packages-{index}"
+            if packages.exists():
+                shutil.copytree(packages, backup, symlinks=True)
+                backups[root] = backup
+            else:
+                backups[root] = None
+        try:
+            write_manifest(updated)
+            install(current.root, progress=progress)
+            if remove_name is not None:
+                unused = current.root / ".vln" / remove_name
+                if unused.is_dir():
+                    shutil.rmtree(unused)
+        except Exception:
+            manifest_path.write_bytes(manifest_bytes)
+            if lock_bytes is None:
+                lock_path.unlink(missing_ok=True)
+            else:
+                lock_path.write_bytes(lock_bytes)
+            rollback_errors: list[str] = []
+            for root, backup in backups.items():
+                packages = root / ".vln"
+                try:
+                    if packages.exists():
+                        shutil.rmtree(packages)
+                    if backup is not None:
+                        shutil.copytree(backup, packages, symlinks=True)
+                except OSError as exc:
+                    rollback_errors.append(f"{packages}: {exc}")
+            if rollback_errors:
+                raise PackageError(
+                    "package operation failed and rollback was incomplete: "
+                    + "; ".join(rollback_errors)
+                )
+            raise
+
+
+def inspect_dependency_source(
+    source_kind: str,
+    location: str,
+    *,
+    version: str | None = None,
+    relative_to: Path | None = None,
+) -> tuple[str, str]:
+    """Return package identity and version declared by a dependency source."""
+    if source_kind not in {"git", "local", "path"}:
+        raise PackageError(f"unsupported dependency source kind {source_kind!r}")
+    base = (relative_to or Path.cwd()).resolve()
+    source = _canonical_git_source(location, base)
+    if source_kind == "git":
+        if version is None:
+            raise PackageError(
+                "Git dependencies require an exact version",
+                hint="Use `--git <location>@<version>` or add `--version <version>`.",
+            )
+        _validate_exact_version(version)
+        revision = _resolve_git_revision(source, version)
+        with tempfile.TemporaryDirectory(prefix=".vln-inspect-", dir=base) as tmp:
+            checkout = Path(tmp) / "source"
+            _checkout_git_revision(source, revision, checkout)
+            candidate = load_manifest(checkout)
+    else:
+        candidate = load_manifest(Path(source))
+    package = candidate.project.get("name")
+    declared_version = candidate.project.get("version")
+    if not isinstance(package, str) or not package:
+        raise PackageError("dependency manifest needs a non-empty [project].name")
+    if not isinstance(declared_version, str):
+        raise PackageError("dependency manifest needs a string [project].version")
+    _validate_exact_version(declared_version)
+    if version is not None and declared_version != version:
+        raise PackageError(
+            f"dependency declares version {declared_version!r}, expected {version!r}"
+        )
+    return package, declared_version
+
+
+def localize_dependency(
+    name: str,
+    *,
+    start: Path | None = None,
+    progress: ProgressCallback | None = None,
+) -> Manifest:
+    """Convert a live path dependency into a managed local snapshot."""
+    manifest = require_manifest(start)
+    _validate_dependency_name(name)
+    existing = manifest.dependency(name)
+    if existing is None:
+        raise PackageError(f"dependency {name!r} is not declared")
+    if existing.source_kind != "path":
+        raise PackageError(
+            f"dependency {name!r} is {existing.source_kind!r}, not a live path dependency"
+        )
+    source_root = dependency_install_root(manifest, name)
+    source_manifest = load_manifest(source_root)
+    _validate_package_manifest(existing, source_manifest)
+    updated_dependency = Dependency(
+        existing.local_name,
+        existing.version,
+        "local",
+        existing.location,
+        existing.package,
+    )
+    dependencies = tuple(
+        updated_dependency if dependency.local_name == name else dependency
+        for dependency in manifest.dependencies
+    )
+    updated = Manifest(
+        manifest.root, manifest.project, manifest.entries, dependencies,
+        manifest.lints, manifest.builds, manifest.formatting,
+    )
+    _commit_manifest_change(manifest, updated, progress=progress)
+    return updated
+
 def add_dependency(
     target: str,
     version: str,
     *,
-    alias: str | None = None,
+    source_kind: str,
+    location: str,
+    package: str,
     start: Path | None = None,
     progress: ProgressCallback | None = None,
 ) -> Manifest:
     """Add or replace a project dependency and persist the manifest."""
     manifest = require_manifest(start)
     _validate_exact_version(version)
-    if _is_vcs_source(target):
-        local_name = alias or target.rstrip("/").rsplit("/", 1)[-1]
-        dependency = Dependency(local_name, version, source=target)
-    else:
-        local_name = alias or target
-        package_name = None if local_name == target else target
-        dependency = Dependency(local_name, version, package=package_name)
+    local_name = target
+    _validate_dependency_name(local_name)
+    dependency = Dependency(local_name, version, source_kind, location, package)
+    # Reuse manifest validation so CLI declarations and hand-written TOML obey
+    # exactly the same source schema.
+    dependency = _parse_dependency(local_name, dependency.manifest_value())
     _validate_dependency_name(dependency.local_name)
+    if dependency.source_kind not in {"git", "local", "path"}:
+        raise PackageError(
+            f"cannot add {dependency.source_kind} dependency {dependency.identity!r}",
+            hint="This release accepts fully specified git, local, and path sources.",
+        )
     dependencies = _without_dependency(manifest.dependencies, dependency.local_name)
     updated = Manifest(
         manifest.root,
@@ -881,9 +1143,9 @@ def add_dependency(
         dependencies + (dependency,),
         manifest.lints,
         manifest.builds,
+        manifest.formatting,
     )
-    write_manifest(updated)
-    install(manifest.root, progress=progress)
+    _commit_manifest_change(manifest, updated, progress=progress)
     return updated
 
 
@@ -895,11 +1157,7 @@ def remove_dependency(name: str, *, start: Path | None = None) -> Manifest:
     if len(dependencies) == len(manifest.dependencies):
         raise PackageError(f"dependency {name!r} is not declared")
     updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies, manifest.lints, manifest.builds, manifest.formatting)
-    write_manifest(updated)
-    install(manifest.root)
-    unused_dir = manifest.root / ".vln" / name
-    if unused_dir.exists() and unused_dir.is_dir():
-        shutil.rmtree(unused_dir)
+    _commit_manifest_change(manifest, updated, remove_name=name)
     return updated
 
 
@@ -920,16 +1178,16 @@ def upgrade_dependency(
     updated_dependency = Dependency(
         existing.local_name,
         version,
-        package=existing.package,
-        source=existing.source,
+        existing.source_kind,
+        existing.location,
+        existing.package,
     )
     dependencies = tuple(
         updated_dependency if dependency.local_name == name else dependency
         for dependency in manifest.dependencies
     )
     updated = Manifest(manifest.root, manifest.project, manifest.entries, dependencies, manifest.lints, manifest.builds, manifest.formatting)
-    write_manifest(updated)
-    install(manifest.root, progress=progress)
+    _commit_manifest_change(manifest, updated, progress=progress)
     return updated
 
 
@@ -1000,30 +1258,56 @@ def dependency_install_root(manifest: Manifest, name: str) -> Path:
     dependency = manifest.dependency(name)
     if dependency is None:
         raise PackageError(f"dependency {name!r} is not declared")
+    if dependency.source_kind == "path":
+        path = Path(dependency.location).expanduser()
+        if not path.is_absolute():
+            path = manifest.root / path
+        return path.resolve()
     return manifest.root / ".vln" / dependency.local_name
 
 
 def _parse_dependency(name: str, value: object) -> Dependency:
-    """Parse dependency for project and dependency management."""
+    """Parse one strict phase-one dependency declaration."""
     _validate_dependency_name(name)
     if isinstance(value, str):
-        _validate_exact_version(value)
-        return Dependency(name, value)
+        raise PackageError(
+            f"dependency {name!r} must be an inline table with an explicit source",
+            hint=(f'Use {name} = {{ kind = "git", package = "...", '
+                  'location = "...", version = "..." }}.'),
+        )
     if not isinstance(value, dict):
-        raise PackageError(f"dependency {name!r} must be a version string or table")
+        raise PackageError(f"dependency {name!r} must be an inline table")
+    kind = value.get("kind")
+    if not isinstance(kind, str):
+        raise PackageError(f"dependency {name!r} needs an explicit string kind")
+    if kind not in {"git", "local", "path"}:
+        reserved = {"registry", "hg", "svn", "fossil"}
+        if kind in reserved:
+            raise PackageError(
+                f"dependency {name!r} uses unsupported source kind {kind!r}",
+                hint="This release accepts git, local, and path dependencies.",
+            )
+        raise PackageError(
+            f"dependency {name!r} has unknown source kind {kind!r}; expected git, local, or path"
+        )
     version = value.get("version")
     package = value.get("package")
-    source = value.get("source")
     if not isinstance(version, str):
         raise PackageError(f"dependency {name!r} needs an exact version")
     _validate_exact_version(version)
-    if package is not None and not isinstance(package, str):
-        raise PackageError(f"dependency {name!r} package must be a string")
-    if source is not None and not isinstance(source, str):
-        raise PackageError(f"dependency {name!r} source must be a string")
-    if package is not None and source is not None:
-        raise PackageError(f"dependency {name!r} cannot use both package and source")
-    return Dependency(name, version, package=package, source=source)
+    if not isinstance(package, str) or not package:
+        raise PackageError(f"dependency {name!r} needs a non-empty package identity")
+    coordinate = "path" if kind in {"local", "path"} else "location"
+    location = value.get(coordinate)
+    if not isinstance(location, str) or not location:
+        raise PackageError(f"{kind} dependency {name!r} needs a non-empty {coordinate}")
+    allowed = {"kind", "package", "version", coordinate}
+    unknown = set(value) - allowed
+    if unknown:
+        raise PackageError(
+            f"dependency {name!r} has unsupported field(s): " + ", ".join(sorted(unknown))
+        )
+    return Dependency(name, version, kind, location, package)
 
 
 def _validate_dependency_name(name: str) -> None:
@@ -1049,10 +1333,6 @@ def _without_dependency(
         dependency for dependency in dependencies if dependency.local_name != name
     )
 
-
-def _is_vcs_source(target: str) -> bool:
-    """Return whether the value is VCS source."""
-    return "/" in target
 
 
 def _dependency_lines(dependency: Dependency) -> list[str]:

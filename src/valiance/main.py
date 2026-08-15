@@ -23,6 +23,8 @@ from valiance.modules_system.packages import (
     PROJECT_TEMPLATES,
     DEFAULT_PROJECT_TEMPLATE,
     add_dependency,
+    inspect_dependency_source,
+    localize_dependency,
     init_project,
     install,
     normalize_project_template,
@@ -86,7 +88,7 @@ _ANSI_MAGENTA = "\033[35m"
 _SOURCE_ACTIONS = {"compile", "run", "parse", "analyse", "analyze", "compile-module", "build"}
 _SOURCE_TOOL_ACTIONS = {"tidy", "annotate", "docs"}
 _BYTECODE_ACTIONS = {"exec"}
-_PACKAGE_ACTIONS = {"init", "install", "add", "remove", "upgrade"}
+_PACKAGE_ACTIONS = {"init", "install", "add", "remove", "upgrade", "localize"}
 _TEST_ACTIONS = {"test"}
 _LSP_ACTIONS = {"lsp"}
 _ACTIONS = (
@@ -138,7 +140,8 @@ COMMON COMMANDS
   tidy      Add types/docs or format source
   docs      Generate project or language reference documentation
   init      Create a Valiance project
-  add       Add an exact-version dependency
+  add       Add a dependency from Git or a local path
+  localize  Snapshot a live path dependency into .vln
   install   Install project dependencies
   lsp       Start the stdio language server
 
@@ -168,7 +171,8 @@ def _command_help_text(prog: str, action: str) -> str:
         "test": "[<selector-or-path> ...] [--filter <text>] [--list [--flat]] [--fail-fast] [--show-output]",
         "init": "[directory] [--template <name>] [--tests | --no-tests] [--list-templates]",
         "install": "[--locked]",
-        "add": "<package-or-source> <version> [as <name>]",
+        "add": "<name> (--path <dir> | --local <dir> | --git <url>@<version>) [--package <name>] [--version <version>]",
+        "localize": "<name>",
         "remove": "<name>",
         "upgrade": "<name> <version>",
         "lsp": "",
@@ -200,16 +204,22 @@ def _command_help_text(prog: str, action: str) -> str:
             "Non-interactive use defaults to application with tests."
         ),
         "add": (
-            "Add an exact-version Git dependency and install its complete dependency graph.\n\n"
-            "ARGUMENTS\n"
-            "  <package-or-source>  Git URL or local Git repository path\n"
-            "  <version>            Exact numeric version; resolves v<version> or <version>\n"
-            "  as <name>            Optional local import alias\n\n"
+            "Add a dependency using a concise source selector. Package identity and local\n"
+            "versions are inferred from the dependency manifest and written explicitly.\n\n"
             "EXAMPLES\n"
-            f"  {prog} add https://github.com/owner/math.git 1.2.0\n"
-            f"  {prog} add ../local-math 1.2.0 as math\n\n"
-            "The command updates valiance.toml, recursively fetches dependencies, verifies\n"
-            "SHA-256 integrity, and writes exact commit revisions to valiance.lock."
+            f"  {prog} add workspace --path ../..\n"
+            f"  {prog} add utilities --local ../utilities\n"
+            f"  {prog} add math --git https://github.com/owner/math.git@1.2.0\n\n"
+            "OPTIONS\n"
+            "  --path <dir>       Add a live path dependency\n"
+            "  --local <dir>      Add a managed local snapshot\n"
+            "  --git <url>@<ver>  Add an exact-version Git dependency\n"
+            "  --package <name>   Assert the discovered package identity\n"
+            "  --version <ver>    Assert or provide the exact version"
+        ),
+        "localize": (
+            "Convert a live path dependency into a managed local snapshot.\n\n"
+            f"EXAMPLE\n  {prog} localize workspace"
         ),
         "install": (
             "Resolve and install all dependencies from valiance.toml.\n\n"
@@ -242,7 +252,7 @@ def _run(vln_mode: bool, argv: Sequence[str] | None = None) -> int:
     if not args:
         return _run_repl()
 
-    if "--version" in args:
+    if args == ["--version"]:
         print(f"{prog} {_version_text()}")
         return 0
 
@@ -386,6 +396,22 @@ def _parse_args(args: list[str], *, prog: str = DEFAULT_PROG) -> argparse.Namesp
         return argparse.Namespace(action="lsp")
     if explicit_action == "test":
         return _parse_test_args(args, prog=prog)
+    if explicit_action == "add":
+        parser = argparse.ArgumentParser(prog=prog, add_help=False)
+        parser.add_argument("name")
+        sources = parser.add_mutually_exclusive_group(required=True)
+        sources.add_argument("--path")
+        sources.add_argument("--local")
+        sources.add_argument("--git")
+        parser.add_argument("--package")
+        parser.add_argument("--version")
+        try:
+            parsed = parser.parse_args(args)
+        except SystemExit:
+            return None
+        parsed.action = "add"
+        parsed.package_args = []
+        return parsed
     if explicit_action in {"tidy", "annotate"}:
         return _parse_tidy_args(explicit_action, args, prog=prog)
     if explicit_action == "docs":
@@ -771,9 +797,9 @@ def _validate_package_args(parsed: argparse.Namespace) -> argparse.Namespace | N
     ):
         print("error: init template and test options are only valid with init", file=sys.stderr)
         return None
-    if parsed.action == "remove":
+    if parsed.action in {"remove", "localize"}:
         if len(args) != 1:
-            print("error: remove requires a dependency name", file=sys.stderr)
+            print(f"error: {parsed.action} requires a dependency name", file=sys.stderr)
             return None
         parsed.package_args = args
         return parsed
@@ -787,9 +813,9 @@ def _validate_package_args(parsed: argparse.Namespace) -> argparse.Namespace | N
         parsed.package_args = args
         return parsed
     if parsed.action == "add":
-        if len(args) not in {2, 4} or (len(args) == 4 and args[2] != "as"):
+        if len(args) != 6 or args[2] != "from":
             print(
-                "error: add requires <package-or-source> <version> [as <name>]",
+                "error: add requires <name> <version> from <git|local|path> <package> <location>",
                 file=sys.stderr,
             )
             return None
@@ -1052,13 +1078,30 @@ def _run_package_command(parsed: argparse.Namespace) -> int:
             return 0
         args = parsed.package_args
         if parsed.action == "add":
-            manifest = add_dependency(
-                args[0],
-                args[1],
-                alias=args[3] if len(args) == 4 else None,
-                progress=progress,
+            source_kind = "path" if parsed.path else "local" if parsed.local else "git"
+            location = parsed.path or parsed.local or parsed.git
+            requested_version = parsed.version
+            if source_kind == "git" and location is not None and requested_version is None:
+                candidate, separator, suffix = location.rpartition("@")
+                if separator and candidate and suffix:
+                    location, requested_version = candidate, suffix
+            project_root = require_manifest().root
+            package, version = inspect_dependency_source(
+                source_kind, location, version=requested_version, relative_to=project_root,
             )
-            print(f"Added dependency; updated {manifest.path}")
+            if parsed.package is not None and parsed.package != package:
+                raise PackageError(
+                    f"dependency declares package {package!r}, expected {parsed.package!r}"
+                )
+            manifest = add_dependency(
+                parsed.name, version, source_kind=source_kind,
+                package=package, location=location, progress=progress,
+            )
+            print(f"Added {source_kind} dependency {parsed.name}; updated {manifest.path}")
+            return 0
+        if parsed.action == "localize":
+            manifest = localize_dependency(args[0], progress=progress)
+            print(f"Localized dependency {args[0]}; updated {manifest.path}")
             return 0
         if parsed.action == "remove":
             manifest = remove_dependency(args[0])

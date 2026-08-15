@@ -1085,7 +1085,7 @@ class MainTests(unittest.TestCase):
 
                 os.chdir(root)
                 with contextlib.redirect_stdout(output):
-                    add_exit = main(["add", str(package), "1.0.0", "as", "repo"])
+                    add_exit = main(["add", "repo", "--git", f"{package}@1.0.0"])
                     upgrade_exit = main(["upgrade", "repo", "1.1.0"])
                     install_exit = main(["install", "--locked"])
                     remove_exit = main(["remove", "repo"])
@@ -1193,7 +1193,7 @@ class MainTests(unittest.TestCase):
 
                 os.chdir(root)
                 with contextlib.redirect_stderr(error):
-                    exit_code = main(["add", "somelib", "^1.2.3"])
+                    exit_code = main(["add", "somelib", "--git", "https://example.com/somelib.git", "--version", "^1.2.3"])
             finally:
                 os.chdir(old_cwd)
 
