@@ -758,7 +758,7 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Support importing individual components.
 - [x] Support importing several components using bracket syntax.
 - [x] Support selective element-overload imports.
-- [x] Support generic wildcard overload signatures in imports.
+- [x] Support explicitly declared generic overload signatures in imports.
 - [x] Support importing object-to-trait implementations.
 - [x] Support local relative module paths.
 - [x] Support project-root-relative paths using `root`, with `~` as an alias.

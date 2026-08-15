@@ -1074,7 +1074,7 @@ import {
   root.shared.logging,
   dep.somelib.[
     hash(String),
-    hash except [(Number), (_+)],
+    hash except [(Number)],
     object Box as Show,
     #sorted
   ]
@@ -1092,7 +1092,7 @@ import {
                 ImportComponent(Symbol("hash"), signature=(String,)),
                 ImportComponent(
                     Symbol("hash"),
-                    exclusions=((Number,), (C(ListExactType, N(Symbol("_"))),)),
+                    exclusions=((Number,),),
                 ),
                 ImportComponent(
                     Symbol("Box"),
@@ -1102,6 +1102,18 @@ import {
                 ImportComponent(Symbol("#sorted"), kind=Symbol("tag")),
             ),
         )
+
+    def test_rejects_rank_shortcuts_in_import_selectors(self):
+        for source in (
+            "import { mymod.hash(_) }",
+            "import { mymod.hash(_+) }",
+            "import { mymod.hash(_++) }",
+            "import { mymod.hash except [(_+)] }",
+        ):
+            with self.subTest(source=source), self.assertRaisesRegex(
+                ParseError, "wildcard types.*not allowed in import signatures"
+            ):
+                parse(source)
 
     def test_parses_generic_overload_import_selector(self):
         [node] = parse("import { name.element[T](T) }")

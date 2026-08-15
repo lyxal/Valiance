@@ -3506,8 +3506,8 @@ import {
     object X as Y,
     hash,
     hash(String),
-    hash(_+),
-    hash except [(String), (_+)]
+    hash[T](T+),
+    hash except [(String)]
   ]
 }
 ```
@@ -3805,24 +3805,20 @@ import {
 
 The signature identifies parameter types only. It does not repeat parameter names or return types.
 
-Generic overloads use the same wildcard type syntax as the rest of the language:
+Generic overloads declare their type parameters explicitly:
 
 ```vlnc
 import {
   dep.somelib.[
-    hash(_),
-    hash(_+),
-    hash(_++)
+    hash[T](T),
+    hash[T](T+),
+    hash[T](T+2)
   ]
 }
 ```
 
-In an overload signature:
-
-* `_` means any single type;
-* `_+` means a rank-1 list of any type;
-* `_++` means a rank-2 list of any type;
-* further `+` suffixes indicate higher list ranks.
+Wildcard types such as `_`, `_+`, and `_++` are not valid in import
+signatures. Use a named generic parameter when selecting a generic overload.
 
 Selecting an overload that does not exist is a compile error.
 
@@ -3845,19 +3841,20 @@ import {
   dep.somelib.[
     hash except [
       (String),
-      (_+)
+      (Number)
     ]
   ]
 }
 ```
 
-Exclusions may refer to concrete or generic overloads.
+Exclusions use explicit overload signatures. Wildcard types such as `_` and
+`_+` are not accepted.
 
 `except` is valid only after a bare element name:
 
 ```vlnc
 hash except [(String)]       #? valid
-hash(String) except [(_+)]   #? compile error
+hash(String) except [(Number)] #? compile error
 ```
 
 The second form is invalid because `hash(String)` already selects one specific overload.
@@ -4020,11 +4017,11 @@ import {
 }
 ```
 
-Generic overloads are resolved in the same way:
+Generic overloads are resolved with declared import generics:
 
 ```vlnc
 import {
-  dep.pkgA.[hash(_+)]
+  dep.pkgA.[hash[T](T+)]
 }
 ```
 
@@ -4045,7 +4042,7 @@ import {
   dep.pkgB.[hash except [(String)]]
 }
 
-#? compile error if both modules still provide hash(_+)
+#? compile error if both modules still provide the same remaining overload
 ```
 
 ## 23.14. Trait Implementation Conflicts

@@ -484,9 +484,12 @@ class Parser:
             if self._check(TokenKind.OP) and self._current.value.startswith("#"):
                 self.index -= 1
                 break
-            if (
-                self._check(TokenKind.IDENT, TokenKind.OP)
-                and self._peek(1).kind is TokenKind.LBRACKET
+            if self._check(TokenKind.IDENT, TokenKind.OP) and (
+                self._peek(1).kind in {TokenKind.LBRACKET, TokenKind.LPAREN}
+                or (
+                    self._peek(1).kind is TokenKind.IDENT
+                    and self._peek(1).value == "except"
+                )
             ):
                 self.index -= 1
                 break
@@ -541,8 +544,13 @@ class Parser:
         )
 
     def _import_signature(self) -> tuple[Type, ...]:
-        """Parse import signature from the current token stream."""
+        """Parse an import signature without anonymous rank shortcuts."""
         params = self._type_list_until({TokenKind.RPAREN})
+        if any(_contains_import_wildcard(param) for param in params):
+            self._error(
+                "wildcard types such as '_' and '_+' are not allowed in import "
+                "signatures; declare a generic parameter, for example element[T](T)"
+            )
         self._expect(TokenKind.RPAREN)
         return params
 
@@ -3533,6 +3541,36 @@ def _parser_param_type(param: FunctionParam, index: int) -> Type:
         return param.typ
     name = param.name.text if param.name is not None else f"_{index}"
     return N(Symbol(name))
+
+
+def _contains_import_wildcard(typ: Type) -> bool:
+    """Return whether a type contains an anonymous import wildcard."""
+    if isinstance(typ, NominalType):
+        return typ.name == Symbol("_") or any(
+            _contains_import_wildcard(arg) for arg in typ.args
+        )
+    if isinstance(typ, CollectionType):
+        return _contains_import_wildcard(typ.base)
+    if isinstance(typ, (UnionType, IntersectionType)):
+        return any(_contains_import_wildcard(item) for item in typ.items)
+    if isinstance(typ, TupleType):
+        return any(_contains_import_wildcard(item) for item in typ.params)
+    if isinstance(typ, VariadicTupleType):
+        return any(_contains_import_wildcard(item.typ) for item in typ.items)
+    if isinstance(typ, RowType):
+        return _contains_import_wildcard(typ.base) or any(
+            _contains_import_wildcard(field.typ) for field in typ.fields
+        )
+    if isinstance(typ, FunctionType):
+        return any(
+            _contains_import_wildcard(item)
+            for item in (*typ.params, *typ.returns)
+        )
+    if isinstance(typ, TaggedType):
+        return _contains_import_wildcard(typ.inner)
+    if isinstance(typ, (NoVecType, ExactType)):
+        return _contains_import_wildcard(typ.inner)
+    return False
 
 
 def _local_generic_type(typ: Type, generics: tuple[Symbol, ...]) -> Type:
