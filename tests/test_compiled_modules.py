@@ -15,6 +15,24 @@ from valiance.runtime import BytecodeFormatError, loads_module
 
 
 class CompiledModuleTests(unittest.TestCase):
+    def test_missing_module_reports_matching_directory(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "moduleA").mkdir()
+
+            with self.assertRaises(ModuleLoadError) as raised:
+                ModuleLoader().load(
+                    ImportPath(("moduleA",)),
+                    current_file=root / "main.vlnc",
+                )
+
+            message = str(raised.exception)
+            self.assertIn("module 'moduleA' was not found", message)
+            self.assertIn(f"found directory: {root / 'moduleA'}", message)
+            self.assertIn("directories cannot be imported", message)
+            self.assertIn("import a .vlnc file from the directory", message)
+            self.assertNotIn("make sure the source file exists", message)
+
     def test_missing_module_suggests_renaming_similar_unimportable_file(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

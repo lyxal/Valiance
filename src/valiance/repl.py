@@ -1229,12 +1229,13 @@ class _PromptToolkitFrontend:
                 hint = self._type_hint_provider(document.text)
             except Exception:
                 hint = None
-            if hint and not hint.lower().startswith(
-                ("type error", "parse error", "lex error")
-            ):
-                status = hint.splitlines()[0]
-            elif hint:
-                status = "Type error"
+            if hint:
+                first_line = hint.splitlines()[0]
+                category = first_line.partition(":")[0]
+                if category.lower().endswith(" error"):
+                    status = category
+                else:
+                    status = first_line
         return [
             ("class:bottom-toolbar", " [UTF-8]  [Spaces:4]  "),
             ("class:bottom-toolbar.type", f"{row}:{column}  {status}{modified}"),

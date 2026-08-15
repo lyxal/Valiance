@@ -73,6 +73,66 @@ _SYNTAX_STYLES = {
     "class:name": _WHITE,
 }
 _SOURCE_PREFIX = re.compile(r"^@source\[(?P<path>[^\n]+)\](?P<message>.*)$", re.DOTALL)
+_ANALYSIS_STAGE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Module error", ("module ", "import ")),
+    (
+        "Name error",
+        (
+            "unknown element ",
+            "undefined variable ",
+            "unknown data tag ",
+            "undeclared element tag ",
+            "unknown field ",
+            "unknown member ",
+        ),
+    ),
+    (
+        "Stack error",
+        (
+            "empty stack",
+            "not enough stack",
+            "stack underflow",
+            "stack overflow",
+            "no single valid stack effect",
+        ),
+    ),
+    (
+        "Overload error",
+        (
+            "no overloads for ",
+            "no overload ",
+            "ambiguous overload",
+            "overload is ambiguous",
+            "overload signatures ",
+        ),
+    ),
+    ("Exhaustiveness error", ("non-exhaustive", "not exhaustive", "missing match case")),
+    ("Pattern error", ("pattern ", "invalid pattern", "duplicate pattern")),
+    ("Annotation error", ("annotation ", "invalid annotation", "unknown annotation", "does not accept named arguments")),
+    ("Control-flow error", ("invalid break", "invalid return", "outside a loop", "unreachable control flow")),
+)
+
+
+def analysis_stage(message: str) -> str:
+    """Return a useful category for a static-analysis diagnostic message.
+
+    Rules intentionally recognise only strong wording signals. Unrecognised
+    diagnostics remain type errors rather than being misleadingly classified.
+    """
+    text = message.lower()
+    if text.startswith("@source["):
+        closing = text.find("]")
+        if closing >= 0:
+            text = text[closing + 1 :]
+    text = _LOCATION_PREFIX.sub(lambda match: match.group("message"), text)
+    if "module " in text and ("not found" in text or "could not" in text or "failed" in text):
+        return "Module error"
+    for stage, prefixes in _ANALYSIS_STAGE_RULES[1:]:
+        if any(signal in text for signal in prefixes):
+            return stage
+    return "Type error"
+
+
 _LOCATION_PREFIX = re.compile(
     r"^(?P<line>\d+):(?P<column>\d+):\s*(?P<message>.*)$",
     re.DOTALL,
@@ -95,6 +155,8 @@ def from_message(stage: str, message: str) -> Diagnostic:
         )
         message = match.group("message")
     message, specific_help = _split_specific_help(message)
+    if stage == "Type error":
+        stage = analysis_stage(message)
     return Diagnostic(
         stage,
         message,
@@ -131,6 +193,8 @@ def from_exception(stage: str, exc: BaseException) -> Diagnostic:
             return Diagnostic(
                 stage, parsed.message, parsed.location, parsed.help, parsed.source_file
             )
+    if stage == "Type error":
+        stage = analysis_stage(message)
     return Diagnostic(stage, message, location, _help_for(message))
 
 

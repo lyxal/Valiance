@@ -803,15 +803,23 @@ def _missing_module_message(path: ImportPath, source_file: Path) -> str:
         f"module {module_name!r} was not found",
         f"looked for: {source_file}",
     ]
-    nearby = _nearby_module_names(source_file)
-    if nearby:
-        rendered = ", ".join(repr(name) for name in nearby)
-        lines.append(f"help: did you mean {rendered}?")
-    else:
+    directory = source_file.with_suffix("")
+    if directory.is_dir():
+        lines.append(f"found directory: {directory}")
         lines.append(
-            "help: check the module name and make sure the source file exists "
-            "next to the importing file"
+            "help: directories cannot be imported directly; import a .vlnc file "
+            "from the directory instead"
         )
+    else:
+        nearby = _nearby_module_names(source_file)
+        if nearby:
+            rendered = ", ".join(repr(name) for name in nearby)
+            lines.append(f"help: did you mean {rendered}?")
+        else:
+            lines.append(
+                "help: check the module name and make sure the source file exists "
+                "next to the importing file"
+            )
     unimportable = _unimportable_file_suggestion(source_file)
     if unimportable is not None:
         lines.append(unimportable)

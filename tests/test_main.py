@@ -6,7 +6,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from valiance.analysis.diagnostics import Diagnostic, SourceLocation, render
+from valiance.analysis.diagnostics import (
+    Diagnostic,
+    SourceLocation,
+    from_message,
+    render,
+)
 from valiance.main import _ReplSession, _format_stack, main
 
 
@@ -120,7 +125,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("\033[2J\033[3J\033[H", output.getvalue())
         self.assertIn("Reset REPL state.", output.getvalue())
-        self.assertIn("Type error: undefined variable 'x'", error.getvalue())
+        self.assertIn("Name error: undefined variable 'x'", error.getvalue())
 
     def test_repl_reset_restarts_prompt_counter(self):
         output = io.StringIO()
@@ -604,7 +609,7 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         rendered = error.getvalue()
-        self.assertIn("Type error: unknown element 'missing'", rendered)
+        self.assertIn("Name error: unknown element 'missing'", rendered)
         self.assertIn("--> <code>:1:1", rendered)
         self.assertIn("1 | missing", rendered)
         self.assertIn("help: Check the element name", rendered)
@@ -618,7 +623,7 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         rendered = error.getvalue()
-        self.assertIn("Type error: no overloads for element 'fold'", rendered)
+        self.assertIn("Overload error: no overloads for element 'fold'", rendered)
         self.assertIn("help: `fold` requires an explicit accumulator seed", rendered)
         self.assertIn("`0 fold: +`", rendered)
         self.assertIn("`reduce: +`", rendered)
@@ -637,6 +642,19 @@ class MainTests(unittest.TestCase):
         self.assertIn("Type warning: use newer", rendered)
         self.assertIn("--> <code>:2:1", rendered)
         self.assertNotIn("\033[", rendered)
+
+    def test_analysis_diagnostics_use_specific_categories(self):
+        cases = (
+            ("module 'geometry' was not found", "Module error"),
+            ("unknown element 'missing'", "Name error"),
+            ("empty stack while calling 'add'", "Stack error"),
+            ("no overloads for element 'fold'", "Overload error"),
+            ("expected Number, received String", "Type error"),
+        )
+
+        for message, expected_stage in cases:
+            with self.subTest(message=message):
+                self.assertEqual(from_message("Type error", message).stage, expected_stage)
 
     def test_diagnostic_rendering_can_use_colour(self):
         rendered = render(
@@ -1301,7 +1319,7 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         rendered = error.getvalue()
-        self.assertIn("Type error: unknown element 'pritn'", rendered)
+        self.assertIn("Name error: unknown element 'pritn'", rendered)
         self.assertNotIn("Type error: 1:3:", rendered)
         self.assertIn("--> <code>:1:3", rendered)
         self.assertIn("did you mean:", rendered)
@@ -1415,7 +1433,7 @@ class ReplBareParameterDiagnosticTests(unittest.TestCase):
 
         self.assertEqual(
             hint,
-            "Type error: unknown element 'c'\nhelp: did you mean '$c'?",
+            "Name error: unknown element 'c'\nhelp: did you mean '$c'?",
         )
 
 class BareParameterRunDiagnosticHelpTests(unittest.TestCase):
@@ -1427,7 +1445,7 @@ class BareParameterRunDiagnosticHelpTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         rendered = error.getvalue()
-        self.assertIn("Type error: unknown element 'c'", rendered)
+        self.assertIn("Name error: unknown element 'c'", rendered)
         self.assertIn("help: did you mean '$c'?", rendered)
         self.assertNotIn("unknown element 'c'\\ndid you mean", rendered)
 

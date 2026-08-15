@@ -1356,7 +1356,13 @@ def _message_diagnostic(message: str, severity: int) -> dict[str, Any]:
     text = structured.message
     if "\ndid you mean " in message and structured.help is not None:
         text += f"\nhelp: {structured.help}"
-    return {"range": rng, "severity": severity, "source": "valiance", "message": text}
+    return {
+        "range": rng,
+        "severity": severity,
+        "source": "valiance",
+        "code": structured.stage.lower().replace(" ", "-"),
+        "message": text,
+    }
 
 
 def _lint_diagnostic(finding: Any) -> dict[str, Any]:
