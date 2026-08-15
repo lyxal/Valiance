@@ -1,5 +1,7 @@
 import unittest
 
+import valiance.vtypes as T
+
 from valiance.asts import (
     AnnotationNode,
     AssertNode,
@@ -1100,6 +1102,14 @@ import {
                 ImportComponent(Symbol("#sorted"), kind=Symbol("tag")),
             ),
         )
+
+    def test_parses_generic_overload_import_selector(self):
+        [node] = parse("import { name.element[T](T) }")
+
+        component = node.specs[0].components[0]
+        self.assertEqual(component.name, Symbol("element"))
+        self.assertEqual(component.generics, (Symbol("T"),))
+        self.assertEqual(component.signature, (T.TypeVariable("T"),))
 
     def test_parses_namespace_qualified_element_names(self):
         self.assertEqual(

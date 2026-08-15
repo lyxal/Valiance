@@ -484,6 +484,12 @@ class Parser:
             if self._check(TokenKind.OP) and self._current.value.startswith("#"):
                 self.index -= 1
                 break
+            if (
+                self._check(TokenKind.IDENT, TokenKind.OP)
+                and self._peek(1).kind is TokenKind.LBRACKET
+            ):
+                self.index -= 1
+                break
             parts.append(self._symbol("expected import path component").text)
         return ImportPath(tuple(parts), root)
 
@@ -518,7 +524,10 @@ class Parser:
             return ImportComponent(Symbol(f"#{tag.name}"), kind=Symbol("tag"))
 
         name = self._symbol("expected imported component")
+        generics = self._generic_names()
         signature = self._import_signature() if self._match(TokenKind.LPAREN) else None
+        if signature is not None and generics:
+            signature = tuple(_local_generic_type(typ, generics) for typ in signature)
         exclusions: tuple[tuple[Type, ...], ...] = ()
         if self._match_ident("except"):
             if signature is not None:
@@ -527,7 +536,9 @@ class Parser:
         alias = None
         if self._match_ident("as"):
             alias = self._symbol("expected component alias")
-        return ImportComponent(name, alias, signature, exclusions)
+        return ImportComponent(
+            name, alias, signature, exclusions, generics=generics
+        )
 
     def _import_signature(self) -> tuple[Type, ...]:
         """Parse import signature from the current token stream."""

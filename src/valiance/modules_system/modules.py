@@ -20,6 +20,8 @@ from valiance.asts import (
     TypedFunctionNode,
 )
 from valiance.asts.nodes import TypedNode
+from valiance.vtypes.nodes import VarType, type_var_key
+from valiance.vtypes.relations import _substitute
 from valiance.asts.object_constructors import constructor_definitions
 from valiance.modules_system.packages import (
     PackageError,
@@ -700,7 +702,7 @@ def _select_overloads(
         selected = tuple(
             overload
             for overload in overloads
-            if _same_signature(overload.params, component.signature)
+            if _same_import_signature(overload, component)
         )
         if not selected:
             raise ModuleLoadError(
@@ -910,7 +912,10 @@ def _native_std_exports(path: ImportPath) -> ModuleExports | None:
 
 
 def _definition_overloads(definition: ModuleDefinition) -> tuple[T.Overload, ...]:
-    """Collect the overloads for definition during module loading and import resolution."""
+    """Collect complete overload metadata for import resolution."""
+    analysed = tuple(item.overload for item in definition.typed.overloads)
+    if analysed:
+        return analysed
     typ = definition.typed.typ
     if (
         isinstance(typ, T.FunctionType)
@@ -922,6 +927,53 @@ def _definition_overloads(definition: ModuleDefinition) -> tuple[T.Overload, ...
         return typ.overloads
     return ()
 
+
+
+def _same_import_signature(overload: T.Overload, component) -> bool:
+    """Match an import signature, alpha-renaming declared generic parameters."""
+    signature = component.signature
+    if signature is None or len(overload.params) != len(signature):
+        return False
+    if not component.generics:
+        return _same_signature(overload.params, signature)
+    if len(overload.generic_params) != len(component.generics):
+        return False
+
+    import_variables = {
+        generic.text: T.TypeVariable(generic.text) for generic in component.generics
+    }
+    substitution = {}
+    for overload_name, import_generic in zip(
+        overload.generic_params, component.generics, strict=True
+    ):
+        variable = _find_type_variable(overload.params, overload_name)
+        if variable is None:
+            return False
+        substitution[type_var_key(variable)] = import_variables[import_generic.text]
+    renamed = tuple(_substitute(param, substitution) for param in overload.params)
+    return _same_signature(renamed, signature)
+
+
+def _find_type_variable(
+    types: tuple[T.Type, ...], name: str
+) -> VarType | None:
+    """Find the bound variable for one declared generic name in a signature."""
+    stack = list(types)
+    while stack:
+        current = stack.pop()
+        if isinstance(current, VarType) and current.name == name:
+            return current
+        if hasattr(current, "__dataclass_fields__"):
+            for field_name in current.__dataclass_fields__:
+                value = getattr(current, field_name)
+                if isinstance(value, T.Type):
+                    stack.append(value)
+                elif isinstance(value, (tuple, frozenset)):
+                    stack.extend(item for item in value if isinstance(item, T.Type))
+                    stack.extend(
+                        item.typ for item in value if hasattr(item, "typ")
+                    )
+    return None
 
 def _same_signature(left: tuple[T.Type, ...], right: tuple[T.Type, ...]) -> bool:
     """Return the Boolean result of same signature during module loading and import resolution."""

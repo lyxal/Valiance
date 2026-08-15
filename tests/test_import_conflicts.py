@@ -37,6 +37,19 @@ class ImportConflictTests(unittest.TestCase):
             )
             self.assertEqual(analyser.diagnostics, [])
 
+    def test_generic_overload_selector_matches_alpha_renamed_generic(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "generic.vlnc").write_text(
+                "public define[U] identity(value: U) -> U => $value end\n",
+                encoding="utf-8",
+            )
+            typed = self.analyse(
+                root,
+                'import { generic.identity[T](T) }\n"value" identity',
+            )
+            self.assertEqual(typed.diagnostics, [])
+
     def test_identical_imported_overload_signatures_conflict(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

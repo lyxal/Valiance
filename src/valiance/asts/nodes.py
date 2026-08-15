@@ -661,6 +661,7 @@ class ImportComponent:
     exclusions: tuple[tuple[Type, ...], ...] = ()
     kind: Symbol | None = None
     trait: Symbol | None = None
+    generics: tuple[Symbol, ...] = ()
 
 
 @dataclass(frozen=True)
