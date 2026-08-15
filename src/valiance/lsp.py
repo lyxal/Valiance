@@ -1085,9 +1085,8 @@ def _import_definition_candidates(
                 )
         return tuple(candidates)
 
-    # First preserve a true namespace import. If the complete path is not a
-    # source module, mirror the analyser's implicit final-component fallback.
-    candidates.append((spec.path, local_name))
+    # Mirror analyser precedence: first interpret the final segment as a
+    # component of the parent module, then fall back to a nested module.
     if len(spec.path.parts) >= 2:
         visible = str(spec.alias or spec.path.parts[-1]).removeprefix("\\")
         if visible == local_name:
@@ -1099,6 +1098,7 @@ def _import_definition_candidates(
                     spec.path.parts[-1],
                 )
             )
+    candidates.append((spec.path, local_name))
     return tuple(candidates)
 
 

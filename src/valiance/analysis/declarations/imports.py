@@ -99,23 +99,26 @@ class _ImportDeclarations:
         spec: ImportSpec,
     ):
         """Load import definitions during static analysis."""
-        try:
-            exports = self.module_loader.load(
-                spec.path,
-                current_file=self.source_file,
-            )
-            return exports, spec, import_definitions(exports, spec)
-        except ModuleLoadError:
-            if spec.components or len(spec.path.parts) < 2:
-                raise
+        if not spec.components and len(spec.path.parts) >= 2:
             module_path = ImportPath(spec.path.parts[:-1], spec.path.root)
             component = ImportComponent(Symbol(spec.path.parts[-1]))
             split_spec = ImportSpec(module_path, spec.alias, (component,))
-            exports = self.module_loader.load(
-                split_spec.path,
-                current_file=self.source_file,
-            )
-            return exports, split_spec, import_definitions(exports, split_spec)
+            try:
+                exports = self.module_loader.load(
+                    split_spec.path,
+                    current_file=self.source_file,
+                )
+                definitions = import_definitions(exports, split_spec)
+            except ModuleLoadError:
+                pass
+            else:
+                return exports, split_spec, definitions
+
+        exports = self.module_loader.load(
+            spec.path,
+            current_file=self.source_file,
+        )
+        return exports, spec, import_definitions(exports, spec)
 
     def _import_source_text(
         self,

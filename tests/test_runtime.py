@@ -5275,6 +5275,25 @@ class ImportedOverloadRuntimeTests(unittest.TestCase):
         self.assertEqual(direct, [RuntimeNumber(55)])
         self.assertEqual(restored, direct)
 
+    def test_component_import_wins_when_same_dotted_path_is_also_a_module(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "moduleA").mkdir()
+            (root / "moduleA.vlnc").write_text(
+                'public define fileA(value: String) -> String => "moduleA.fileA"\n',
+                encoding="utf-8",
+            )
+            (root / "moduleA" / "fileA.vlnc").write_text(
+                'public define fileA(value: String) -> String => "moduleA/fileA"\n',
+                encoding="utf-8",
+            )
+            analyser = Analyser(source_file=root / "main.vlnc")
+            typed = analyser.analyse(parse('import {moduleA.fileA}\nfileA("hello")'))
+            self.assertEqual(analyser.diagnostics, [])
+            result = run(compile_program(typed, optimize=False))
+
+        self.assertEqual(result, ["moduleA.fileA"])
+
     def test_imported_overloads_call_the_runtime_body_selected_by_analysis(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

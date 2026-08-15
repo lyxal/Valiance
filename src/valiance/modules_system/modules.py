@@ -288,8 +288,9 @@ class ModuleLoader:
         if current_file is None:
             raise ModuleLoadError("local imports require a source file")
         # Unqualified paths are strictly relative to the importing file. For
-        # example, src/main.vlnc importing app.greeting resolves src/app.vlnc,
-        # while parsers.json resolves src/parsers/json.vlnc.
+        # The analyser first interprets a dotted final segment as a component
+        # when the parent module exports it. Otherwise this complete path is
+        # resolved as a nested source module such as parsers/json.vlnc.
         return _source_path(current_file.parent, path.parts)
 
     def _resolve_dependency(
