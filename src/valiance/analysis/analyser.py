@@ -429,8 +429,8 @@ class Analyser:
                 self.declarations.prescan_define(definition)
             for definition in self._incomplete_recursive_definitions:
                 self._diagnose(
-                    "recursive declaration cycles require complete parameter and "
-                    "return signatures",
+                    f"recursive element '{definition.name}' must have complete "
+                    "parameter and return signatures",
                     definition,
                 )
             current = self.analyse_block(current, definitions)
@@ -488,12 +488,13 @@ class Analyser:
         self,
         definitions: list[DefineNode],
     ) -> tuple[DefineNode, ...]:
-        """Order acyclic definition dependencies before their consumers.
+        """Infer incomplete acyclic definitions before checking declared bodies.
 
-        Complete recursive cycles are intentionally left in source order because
-        their prescanned signatures already make every member available. An
-        incomplete cycle consequently reaches normal analysis without a usable
-        declaration and is rejected rather than recursively inferred.
+        Complete signatures are published by the declaration prescan, so their
+        bodies may remain in source order even when they are mutually recursive.
+        Definitions requiring inference are dependency-ordered ahead of those
+        bodies. Any recursive component containing an incomplete declaration is
+        recorded for the language-level explicit-signature diagnostic.
         """
         names = {definition.name for definition in definitions}
         by_name: dict[Symbol, list[int]] = {}
@@ -505,7 +506,7 @@ class Analyser:
             referenced = self._definition_element_references(definition.function)
             dependencies.append({
                 index
-                for name in (referenced - {definition.name}) & names
+                for name in referenced & names
                 for index in by_name[name]
             })
 
@@ -514,26 +515,37 @@ class Analyser:
             dependencies,
         )
 
-        ordered: list[int] = []
+        incomplete_indexes = {
+            index
+            for index, definition in enumerate(definitions)
+            if not self._definition_has_complete_contract(definition)
+        }
+        ordered_incomplete: list[int] = []
         complete: set[int] = set()
         visiting: set[int] = set()
 
-        def visit(index: int) -> None:
-            """Append one definition after recursively scheduling its dependencies."""
-            if index in complete:
-                return
-            if index in visiting:
+        def visit_incomplete(index: int) -> None:
+            """Schedule incomplete dependencies before the declaration using them."""
+            if index in complete or index in visiting:
                 return
             visiting.add(index)
-            for dependency in sorted(dependencies[index]):
-                visit(dependency)
+            for dependency in sorted(dependencies[index] & incomplete_indexes):
+                visit_incomplete(dependency)
             visiting.remove(index)
             complete.add(index)
-            ordered.append(index)
+            ordered_incomplete.append(index)
 
-        for index in range(len(definitions)):
-            visit(index)
-        return tuple(definitions[index] for index in ordered)
+        for index in sorted(incomplete_indexes):
+            visit_incomplete(index)
+
+        declared = [
+            index for index in range(len(definitions))
+            if index not in incomplete_indexes
+        ]
+        return tuple(
+            definitions[index]
+            for index in (*ordered_incomplete, *declared)
+        )
 
     @staticmethod
     def _definition_has_complete_contract(definition: DefineNode) -> bool:

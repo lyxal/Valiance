@@ -57,12 +57,50 @@ odd(10)
         self.assertEqual(run(loads(dumps(program))), [True, False])
 
     def test_incomplete_mutual_recursion_is_not_prescanned(self):
-        """Keep recursive return inference out of the declaration prescan."""
+        """Require explicit contracts for every inferred recursive element."""
         analyser, _typed = analyse("""
 define left(n: Integer) => right($n) end
 define right(n: Integer) => left($n) end
 """)
-        self.assertTrue(analyser.diagnostics)
+        recursive = [
+            diagnostic for diagnostic in analyser.diagnostics
+            if "must have complete parameter and return signatures" in diagnostic
+        ]
+        self.assertEqual(len(recursive), 2)
+        self.assertTrue(any("'left'" in diagnostic for diagnostic in recursive))
+        self.assertTrue(any("'right'" in diagnostic for diagnostic in recursive))
+
+    def test_inferred_helper_after_complete_recursive_callers(self):
+        """Infer a later helper before checking fully declared recursive bodies."""
+        analyser, _typed = analyse("""
+define even?(:Integer) -> #boolean Number =>
+  match =>
+    if isZero? => 1
+    _ => odd?(- 1)
+  end
+end
+
+define odd?(:Integer) -> #boolean Number =>
+  match =>
+    if isZero? => 0
+    _ => even?(- 1)
+  end
+end
+
+define isZero? => == 0
+""")
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_direct_inferred_recursion_has_explicit_signature_diagnostic(self):
+        """Diagnose direct inferred recursion as a contract violation."""
+        analyser, _typed = analyse("""
+define recurse(value) => recurse($value) end
+""")
+        self.assertTrue(any(
+            "recursive element 'recurse' must have complete parameter and return signatures"
+            in diagnostic
+            for diagnostic in analyser.diagnostics
+        ))
 
 
     def test_three_definition_cycle_uses_prescanned_signatures(self):
@@ -243,7 +281,7 @@ define right(value) => left($value) end
         cycle_diagnostics = [
             diagnostic
             for diagnostic in analyser.diagnostics
-            if "recursive declaration cycles require complete" in diagnostic
+            if "must have complete parameter and return signatures" in diagnostic
         ]
         self.assertEqual(len(cycle_diagnostics), 1)
         self.assertTrue(cycle_diagnostics[0].startswith("3:1:"))
