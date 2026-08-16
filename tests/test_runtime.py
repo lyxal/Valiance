@@ -3065,6 +3065,26 @@ Person("Ada", 36) $.name
             ["Ada"],
         )
 
+    def test_default_constructor_supports_named_members_and_overrides_defaults(self):
+        stack = execute("""
+object Point =>
+  $x: Real = 10
+  $y: Real
+end
+Point(y = 20)
+Point(20)
+Point(y = 20, x = 30)
+""")
+
+        self.assertEqual(
+            [value.fields for value in stack],
+            [
+                {"x": RuntimeNumber("10"), "y": RuntimeNumber("20")},
+                {"x": RuntimeNumber("10"), "y": RuntimeNumber("20")},
+                {"x": RuntimeNumber("30"), "y": RuntimeNumber("20")},
+            ],
+        )
+
     def test_executes_explicit_object_constructor(self):
         self.assertEqual(
             execute("""

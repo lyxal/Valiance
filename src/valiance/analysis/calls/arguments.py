@@ -108,7 +108,11 @@ class _CallArguments:
         modifiers: tuple[ModifierArgumentAnalysis, ...],
     ) -> tuple[list[ElementArguments], list[AnalysisBranch]]:
         """Enumerate parameter-ordered argument sources for an overload."""
-        if node.call_args:
+        constructor = self.env.lookup_constructor(node.name)
+        if node.call_args or (
+            constructor is not None
+            and any(overload.param_defaults for overload in overloads)
+        ):
             return self.explicit_element_arguments(
                 node,
                 branch,

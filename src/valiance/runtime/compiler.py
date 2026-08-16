@@ -956,10 +956,17 @@ class _Compiler:
                 default_values.append(
                     (field.name.text, _literal_expression_value(field.default))
                 )
-        required = tuple(
-            field_name
-            for field_name in field_names
-            if field_name not in {name for name, _ in default_values}
+        # Synthesized constructors receive every member value after analysis has
+        # inserted omitted defaults and ordered named ECS arguments. Explicit
+        # constructors retain their declared initializer arity below.
+        required = (
+            tuple(field_names)
+            if not initializers
+            else tuple(
+                field_name
+                for field_name in field_names
+                if field_name not in {name for name, _ in default_values}
+            )
         )
         initializer_code: FunctionCode | FunctionSetCode | None = None
         if initializers:

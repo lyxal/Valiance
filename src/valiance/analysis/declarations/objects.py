@@ -337,6 +337,7 @@ class _ObjectDeclarations:
                     ),
                 ),
                 generic_constraints=constraints,
+                param_defaults=tuple(field.default or None for field in node.fields),
             )
         else:
             self.env.define_constructor_metadata(
