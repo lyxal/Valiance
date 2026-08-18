@@ -35,3 +35,6 @@ select = ["E", "F", "I", "UP", "B"]
 
 # enables fixes on save
 fixable = ["ALL"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
