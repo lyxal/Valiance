@@ -3010,9 +3010,9 @@ def _or_string(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "or",
     (
         T.optional(T.TypeVariable("T")),
-        T.optional(T.TypeVariable("T")),
+        T.TypeVariable("T"),
     ),
-    (T.optional(T.TypeVariable("T")),),
+    (T.TypeVariable("T"),),
 )
 def _or_optional(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `or` built-in runtime overload."""
