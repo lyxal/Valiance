@@ -403,7 +403,7 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Support indexed augmented assignment.
 - [x] Support sliced assignment and augmented sliced assignment.
 - [x] Treat indexed updates as immutable reconstruction.
-- [x] Parse spread indexing using `...$[...]`.
+- [x] Parse dump indexing using `$name...[...]` and `$...[...]`.
 - [x] Push statically known indexed values individually onto the stack.
 
 ## 24. Pattern matching

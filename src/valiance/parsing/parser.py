@@ -1593,22 +1593,6 @@ class Parser:
                 (TypeLiteralNode(self.parse_type_expression(), location=_loc(start)),),
                 True,
             )
-        if self._match_ellipsis():
-            start = self._previous
-            self._expect(TokenKind.DOLLAR)
-            self._expect(TokenKind.LBRACKET)
-            selectors = self._index_selectors()
-            return _ChainPiece(
-                (
-                    *self._selector_expressions(selectors),
-                    IndexAccessNode(
-                        selectors,
-                        spread=True,
-                        location=_loc(start),
-                    ),
-                ),
-                True,
-            )
         if self._match(TokenKind.DOT):
             token = self._previous
             return _ChainPiece(
@@ -2193,6 +2177,20 @@ class Parser:
         """Parse variable from the current token stream."""
         if self._check(TokenKind.LPAREN):
             return _ChainPiece(self._multiple_assignment(start), True)
+        if self._match_ellipsis():
+            self._expect(TokenKind.LBRACKET)
+            selectors = self._index_selectors()
+            return _ChainPiece(
+                (
+                    *self._selector_expressions(selectors),
+                    IndexAccessNode(
+                        selectors,
+                        spread=True,
+                        location=_loc(start),
+                    ),
+                ),
+                True,
+            )
         if self._match(TokenKind.LBRACKET):
             selectors = self._index_selectors()
             if self._match(TokenKind.ASSIGN, TokenKind.AUG_ASSIGN):
@@ -2304,6 +2302,21 @@ class Parser:
                 breaks_chain=True,
             )
         name = self._symbol("expected variable name")
+        if self._match_ellipsis():
+            self._expect(TokenKind.LBRACKET)
+            selectors = self._index_selectors()
+            return _ChainPiece(
+                (
+                    GetVariableNode(name, location=_loc(start)),
+                    *self._selector_expressions(selectors),
+                    IndexAccessNode(
+                        selectors,
+                        spread=True,
+                        location=_loc(start),
+                    ),
+                ),
+                True,
+            )
         path: list[tuple[str, object]] = []
         while True:
             if self._match(TokenKind.LBRACKET):

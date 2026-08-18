@@ -1350,11 +1350,18 @@ $[1:3] := + 1
 
 - This is not mutation. It is sugar for reconstructing the receiver from the indexed or sliced update.
 
-## 9.2. Spread Indexing
-- If there are a static number of indices, `...$[]` can be used to dump the items of the index to the stack
+## 9.2. Dump Indexing
+- If there is a static list of indices, `$name...[indices]` pushes the indexed values from a named receiver onto the stack in selector order.
 
 ```
-[5, 1, 6, 2, 7] ...$[3, 4] #? Pushes 2 and 7
+$xs = [6, 9, 5, 7, 4, 2, 3]
+$xs...[1, 2, 4] #? Pushes 9, then 5, then 4
+```
+
+- `$...[indices]` applies the same operation to the receiver on top of the stack.
+
+```
+[6, 9, 5, 7, 4, 2, 3] $...[1, 2, 4] #? Pushes 9, then 5, then 4
 ```
 
 # 10. Control Flow
