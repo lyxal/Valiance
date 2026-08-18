@@ -110,6 +110,37 @@ def _get_variable(
 
 
 
+def _behaviour_set_ambiguity_message(
+    source: T.Type,
+    target: T.Type,
+    ctx: T.Context,
+) -> str | None:
+    """Describe competing providers for one nominal assignment."""
+    source = T.normalize(source)
+    target = T.normalize(target)
+    if not isinstance(source, T.NominalType):
+        return None
+    if not isinstance(target, T.NominalType) or target.name.namespace:
+        return None
+    providers = tuple(
+        sorted(
+            ctx.implementation_providers(source.name, target.name),
+            key=str,
+        )
+    )
+    if len(providers) < 2:
+        return None
+    choices = ", ".join(
+        f"`as[{provider}.{target.name}]`" for provider in providers
+    )
+    return (
+        f"ambiguous implementation of {target.name} for {source.name}\n"
+        "candidate behaviour sets:\n"
+        + "\n".join(f"  {provider}.{target.name}" for provider in providers)
+        + f"\nhelp: qualify the value with one of {choices}"
+    )
+
+
 def _declared_variable_type(
     branch: _core.AnalysisBranch,
     name: Symbol,
@@ -203,9 +234,17 @@ def _set_variable(
         declared_type,
         self.env.context,
     ):
+        ambiguity = _behaviour_set_ambiguity_message(
+            value_type,
+            declared_type,
+            self.env.context,
+        )
         self._diagnose(
-            f"cannot assign {T.show(value_type)} to variable '{node.name}' "
-            f"of declared type {T.show(declared_type)}",
+            ambiguity
+            or (
+                f"cannot assign {T.show(value_type)} to variable '{node.name}' "
+                f"of declared type {T.show(declared_type)}"
+            ),
             node,
         )
         return _core.BranchSet((branch.emit(TypedNode(node, None)),))

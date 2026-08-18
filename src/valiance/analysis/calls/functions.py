@@ -98,6 +98,41 @@ from .models import (
 
 
 
+def _behaviour_set_return_ambiguity(
+    actuals: tuple[T.Type, ...],
+    declared: tuple[T.Type, ...],
+    ctx: T.Context,
+) -> str | None:
+    """Describe competing providers used by an implicit function return."""
+    for actual, target in zip(actuals, declared, strict=True):
+        actual = T.normalize(actual)
+        target = T.normalize(target)
+        if not isinstance(actual, T.NominalType):
+            continue
+        if not isinstance(target, T.NominalType) or target.name.namespace:
+            continue
+        providers = tuple(
+            sorted(
+                ctx.implementation_providers(actual.name, target.name),
+                key=str,
+            )
+        )
+        if len(providers) < 2:
+            continue
+        choices = ", ".join(
+            f"`as[{provider}.{target.name}]`" for provider in providers
+        )
+        return (
+            f"ambiguous implementation of {target.name} for {actual.name}\n"
+            "candidate behaviour sets:\n"
+            + "\n".join(
+                f"  {provider}.{target.name}" for provider in providers
+            )
+            + f"\nhelp: qualify the returned value with one of {choices}"
+        )
+    return None
+
+
 def _declared_type_var_keys(value: object) -> frozenset[T.TypeVarKey]:
     """Collect variables declared in a function return contract."""
     found: set[T.TypeVarKey] = set()
@@ -814,11 +849,23 @@ class _CallableValues:
                     diagnosed = True
                     break
             if not diagnosed:
-                actual_text = ", ".join(T.show(item) for item in actual_returns) or "nothing"
-                declared_text = ", ".join(T.show(item) for item in checked_returns) or "nothing"
+                ambiguity = _behaviour_set_return_ambiguity(
+                    actual_returns,
+                    checked_returns,
+                    self.env.context,
+                )
+                actual_text = ", ".join(
+                    T.show(item) for item in actual_returns
+                ) or "nothing"
+                declared_text = ", ".join(
+                    T.show(item) for item in checked_returns
+                ) or "nothing"
                 self._diagnose(
-                    f"function body returns {actual_text}, but the explicit return "
-                    f"annotation declares {declared_text}",
+                    ambiguity
+                    or (
+                        f"function body returns {actual_text}, but the explicit return "
+                        f"annotation declares {declared_text}"
+                    ),
                     node,
                 )
             return None

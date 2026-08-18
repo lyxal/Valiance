@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 import hashlib
 from pathlib import Path
@@ -61,11 +61,17 @@ class ModuleObject:
 
 @dataclass(frozen=True)
 class ModuleTraitImplementation:
-    """One object-to-trait implementation defined by a module."""
+    """One object-to-trait implementation pattern defined by a module."""
 
     object_name: Symbol
     trait_name: Symbol
     definitions: tuple[DefineNode, ...] = ()
+    owned: bool = False
+    object_pattern: T.Type | None = None
+    trait_pattern: T.Type | None = None
+    generics: tuple[Symbol, ...] = ()
+    generic_constraints: tuple[T.Type | None, ...] = ()
+    subject_kind: Symbol = Symbol("object")
 
 
 @dataclass(frozen=True)
@@ -117,11 +123,11 @@ def collect_module_exports(
     return ModuleExports(
         module_name,
         _deduplicate(_module_definitions(program, typed) + analyser.public_import_definitions),
-        _deduplicate(_module_objects(typed) + analyser.public_import_objects),
+        _deduplicate(_module_objects(program, typed) + analyser.public_import_objects),
         _deduplicate(_module_tags(program, analyser.env) + analyser.public_import_tags),
         _deduplicate(_module_overlays(program, analyser.env) + analyser.public_import_overlays),
         analyser.runtime_prelude,
-        _deduplicate(_module_trait_implementations(typed) + analyser.public_import_trait_implementations),
+        _deduplicate(_module_trait_implementations(program, typed) + analyser.public_import_trait_implementations),
     )
 
 
@@ -466,23 +472,38 @@ def _module_definitions(
 
 
 def _module_objects(
+    program: list,
     typed: list[TypedNode],
 ) -> tuple[ModuleObject, ...]:
     """Compute module objects during module loading and import resolution."""
+    local_traits = {
+        node.name for node in program
+        if isinstance(node, ObjectNode)
+        and node.target is None
+        and node.kind == Symbol("trait")
+    }
     friendly_by_owner: dict[Symbol, list[DefineNode]] = {}
     for typed_node in typed:
         node = typed_node.node
         if not isinstance(node, ObjectNode):
             continue
-        if node.kind == Symbol("object") and node.target is not None:
-            friendly_by_owner.setdefault(node.name, []).extend(node.definitions)
+        if node.target is not None and (
+            node.kind == Symbol("object")
+            or (node.kind == Symbol("trait") and node.name in local_traits)
+        ):
+            target = T.normalize(node.target)
+            if isinstance(target, T.NominalType):
+                friendly_by_owner.setdefault(node.name, []).extend(node.definitions)
 
     result: list[ModuleObject] = []
     for typed_node in typed:
         node = typed_node.node
         if not isinstance(node, ObjectNode):
             continue
-        if node.kind == Symbol("object") and node.target is not None:
+        if node.target is not None and (
+            node.kind == Symbol("object")
+            or (node.kind == Symbol("trait") and node.name in local_traits)
+        ):
             continue
         result.append(
             ModuleObject(
@@ -498,19 +519,147 @@ def _module_objects(
     return tuple(result)
 
 
+def _implementation_pattern_type(
+    typ: T.Type,
+    generics: tuple[Symbol, ...],
+) -> T.Type:
+    """Convert source generic names in an implementation type to variables."""
+    generic_names = {generic.text for generic in generics}
+    typ = T.normalize(typ)
+    if (
+        isinstance(typ, T.NominalType)
+        and not typ.args
+        and not typ.name.namespace
+        and typ.name.text in generic_names
+    ):
+        return T.V(typ.name.text)
+    if isinstance(typ, T.NominalType):
+        return T.N(
+            typ.name,
+            *(_implementation_pattern_type(arg, generics) for arg in typ.args),
+        )
+    return typ
+
+
+def _implementation_object_pattern(node: ObjectNode) -> T.Type:
+    """Return the source-level object pattern matched by an implementation."""
+    args = tuple(T.V(generic.text) for generic in node.generics)
+    return T.N(node.name, *args)
+
+
 def _module_trait_implementations(
+    program: list,
     typed: list[TypedNode],
 ) -> tuple[ModuleTraitImplementation, ...]:
     """Collect object-to-trait implementations defined by this module."""
+    local_objects = {
+        node.name for node in program
+        if isinstance(node, ObjectNode)
+        and node.target is None
+        and node.kind == Symbol("object")
+    }
+    local_traits = {
+        node.name for node in program
+        if isinstance(node, ObjectNode)
+        and node.target is None
+        and node.kind == Symbol("trait")
+    }
     result = []
     for typed_node in typed:
         node = typed_node.node
         if not isinstance(node, ObjectNode) or node.target is None:
             continue
+        is_trait_impl = node.kind == Symbol("trait")
+        if node.kind != Symbol("object") and not is_trait_impl:
+            continue
         target = T.normalize(node.target)
         if isinstance(target, T.NominalType):
-            result.append(ModuleTraitImplementation(node.name, target.name, node.definitions))
+            result.append(
+                ModuleTraitImplementation(
+                    node.name,
+                    target.name,
+                    node.definitions,
+                    owned=(
+                        target.name in local_traits
+                        and (node.name in local_objects or node.name in local_traits)
+                    ),
+                    object_pattern=_implementation_object_pattern(node),
+                    trait_pattern=_implementation_pattern_type(
+                        target,
+                        node.generics,
+                    ),
+                    generics=node.generics,
+                    generic_constraints=tuple(
+                        _implementation_pattern_type(constraint, node.generics)
+                        if constraint is not None else None
+                        for constraint in node.generic_constraints
+                    ),
+                    subject_kind=Symbol("trait") if is_trait_impl else Symbol("object"),
+                )
+            )
     return tuple(result)
+
+
+def import_behaviour_set_objects(
+    exports: ModuleExports,
+    spec: ImportSpec,
+) -> tuple[ModuleObject, ...]:
+    """Build provider-qualified friendly surfaces for behaviour set imports."""
+    objects_by_name = {obj.name: obj for obj in exports.objects}
+    provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
+    selected = []
+    for component in spec.components:
+        if component.kind != Symbol("trait_impl"):
+            continue
+        implementation = next(
+            (
+                item for item in exports.trait_implementations
+                if item.object_name == component.name
+                and item.trait_name == component.trait
+                and item.subject_kind == (component.subject_kind or Symbol("object"))
+            ),
+            None,
+        )
+        obj = objects_by_name.get(component.name)
+        if implementation is None or obj is None:
+            continue
+        surface = Symbol(component.trait.text, (provider.text,))
+        implementation_object = replace(
+            obj,
+            friendly_definitions=implementation.definitions,
+        )
+        selected.append(
+            _renamed_object(
+                implementation_object,
+                surface,
+                friendly_prefix=surface,
+                import_friendly=True,
+            )
+        )
+        selected.append(
+            _renamed_object(
+                implementation_object,
+                surface,
+                import_friendly=True,
+            )
+        )
+    return tuple(selected)
+
+
+def import_owned_trait_implementations(
+    exports: ModuleExports,
+    spec: ImportSpec,
+) -> tuple[ModuleTraitImplementation, ...]:
+    """Select owned implementations attached to direct object imports."""
+    selected = []
+    for component in spec.components:
+        if component.kind is not None:
+            continue
+        selected.extend(
+            item for item in exports.trait_implementations
+            if item.owned and item.object_name == component.name
+        )
+    return tuple(selected)
 
 
 def import_trait_implementations(
@@ -525,7 +674,9 @@ def import_trait_implementations(
         match = next(
             (
                 impl for impl in exports.trait_implementations
-                if impl.object_name == component.name and impl.trait_name == component.trait
+                if impl.object_name == component.name
+                and impl.trait_name == component.trait
+                and impl.subject_kind == (component.subject_kind or Symbol("object"))
             ),
             None,
         )

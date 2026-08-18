@@ -128,7 +128,36 @@ class _ObjectDeclarations:
                 return BranchSet((branch.emit(TypedNode(node, None)),))
             target = T.normalize(node.target)
             if isinstance(target, T.NominalType):
-                self.env.add_trait_impl(node.name, target.name)
+                generic_names = {generic.text for generic in node.generics}
+
+                def pattern_type(typ: T.Type) -> T.Type:
+                    """Convert implementation-local generic names to type variables."""
+                    typ = T.normalize(typ)
+                    if (
+                        isinstance(typ, T.NominalType)
+                        and not typ.args
+                        and not typ.name.namespace
+                        and typ.name.text in generic_names
+                    ):
+                        return T.V(typ.name.text)
+                    if isinstance(typ, T.NominalType):
+                        return T.N(typ.name, *(pattern_type(arg) for arg in typ.args))
+                    return typ
+
+                self.env.add_trait_impl(
+                    node.name,
+                    target.name,
+                    provider=Symbol("<local>"),
+                    object_pattern=T.N(
+                        node.name, *(T.V(generic.text) for generic in node.generics)
+                    ),
+                    trait_pattern=pattern_type(target),
+                    generic_names=node.generics,
+                    generic_constraints=tuple(
+                        pattern_type(constraint) if constraint is not None else None
+                        for constraint in node.generic_constraints
+                    ),
+                )
             requirements = self._specialized_trait_requirements(target)
             current = self._register_friendly_definitions(
                 branch.emit(TypedNode(node, None)),
@@ -137,6 +166,7 @@ class _ObjectDeclarations:
                 trait_requirements={
                     requirement.name: requirement for requirement in requirements
                 },
+                owner_node=node,
             )
             return BranchSet((current,))
 
@@ -491,15 +521,38 @@ class _ObjectDeclarations:
         owner: Symbol,
         definition: DefineNode,
         trait_requirement: T.TraitRequirement | None = None,
+        owner_node: ObjectNode | None = None,
     ) -> AnalysisBranch:
         """Register friendly definition during static analysis."""
         if not self._validate_annotations(definition.annotations, "define", definition):
             return branch.emit(TypedNode(definition, None))
         owner_definition = self.env.lookup_object(owner)
-        self_type = _utils._declared_nominal(
-            owner,
-            owner_definition.generics if owner_definition is not None else (),
+        owner_generics = (
+            owner_node.generics
+            if owner_node is not None
+            else owner_definition.generics if owner_definition is not None else ()
         )
+        shadowed_generics = {
+            generic.text for generic in owner_generics
+        } & {generic.text for generic in definition.generics}
+        if shadowed_generics:
+            names = ", ".join(sorted(shadowed_generics))
+            self._diagnose(
+                f"element generic parameter(s) shadow implementation generic parameter(s): {names}",
+                definition,
+            )
+            return branch.emit(TypedNode(definition, None))
+        owner_scope = (
+            T.TypeVarScope(
+                owner_node.generic_scope_id,
+                tuple(generic.text for generic in owner_generics),
+            )
+            if owner_node is not None
+            and owner_generics
+            and owner_node.generic_scope_id is not None
+            else None
+        )
+        self_type = _utils._declared_nominal(owner, owner_generics, owner_scope)
         params = (FunctionParam(Symbol("self"), self_type),) + tuple(
             definition.function.params or ()
         )
@@ -516,6 +569,11 @@ class _ObjectDeclarations:
                 element_tags_explicit=definition.function.element_tags_explicit,
                 annotations=definition.function.annotations,
                 location=definition.function.location,
+                generic_scope_id=(
+                    owner_node.generic_scope_id
+                    if owner_node is not None and not definition.generics
+                    else None
+                ),
                 object_friendly_receiver=(
                     annotation_hooks.has_annotation(definition.annotations, "self")
                     or definition.function.returns is None
@@ -531,7 +589,7 @@ class _ObjectDeclarations:
         )
         function_node = _functions._genericize_function_node(
             function_node,
-            definition.generics,
+            (*owner_generics, *definition.generics),
         )
         self._friendly_owners = self._friendly_owners + (owner,)
         try:
@@ -563,10 +621,17 @@ class _ObjectDeclarations:
                     definition,
                 )
                 return typed_branch
-        generic_constraints = _functions._generic_constraints(
-            definition.generics,
-            definition.generic_variances,
-            definition.generic_constraints,
+        generic_constraints = (
+            *_functions._generic_constraints(
+                owner_generics,
+                owner_node.generic_variances if owner_node is not None else (),
+                owner_node.generic_constraints if owner_node is not None else (),
+            ),
+            *_functions._generic_constraints(
+                definition.generics,
+                definition.generic_variances,
+                definition.generic_constraints,
+            ),
         )
         for name in (definition.name, Symbol(f"{owner}::{definition.name}")):
             object_friendly = name == definition.name
@@ -593,6 +658,7 @@ class _ObjectDeclarations:
         definitions: tuple[DefineNode, ...],
         *,
         trait_requirements: dict[Symbol, T.TraitRequirement] | None = None,
+        owner_node: ObjectNode | None = None,
     ) -> AnalysisBranch:
         """Register friendly definitions during static analysis."""
         current = branch
@@ -604,6 +670,7 @@ class _ObjectDeclarations:
                 None
                 if trait_requirements is None
                 else trait_requirements.get(definition.name),
+                owner_node,
             )
         return current
 

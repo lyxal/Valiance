@@ -6,7 +6,13 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from valiance.vtypes.symbols import Symbol, tag_symbol
-from valiance.vtypes.context import Context, TagKind, Variance
+from valiance.vtypes.context import (
+    Context,
+    TagKind,
+    TraitImplementationBehaviour,
+    TraitImplementationPattern,
+    Variance,
+)
 from valiance.vtypes.nodes import (
     FunctionType,
     GenericConstraint,
@@ -599,9 +605,60 @@ class Environment:
             return OverloadSetType(overloads)
         return None
 
-    def add_trait_impl(self, type_name: Symbol, trait_name: Symbol) -> None:
-        """Record that a concrete type implements a trait."""
-        self.context.trait_impls.setdefault(type_name, set()).add(trait_name)
+    def add_trait_impl(
+        self,
+        type_name: Symbol,
+        trait_name: Symbol,
+        *,
+        provider: Symbol | None = None,
+        object_pattern: Type | None = None,
+        trait_pattern: Type | None = None,
+        generic_names: tuple[Symbol, ...] = (),
+        generic_constraints: tuple[Type | None, ...] = (),
+        subject_kind: Symbol = Symbol("object"),
+    ) -> None:
+        """Record a concrete relationship and optional generic implementation pattern."""
+        if not generic_names:
+            self.context.trait_impls.setdefault(type_name, set()).add(trait_name)
+            if provider is not None:
+                self.context.trait_impl_providers.setdefault(
+                    (type_name, trait_name), set()
+                ).add(provider)
+        if provider is not None:
+            if (
+                (generic_names or subject_kind == Symbol("trait"))
+                and object_pattern is not None
+                and trait_pattern is not None
+            ):
+                pattern = TraitImplementationPattern(
+                    object_pattern,
+                    trait_pattern,
+                    provider,
+                    generic_names,
+                    generic_constraints,
+                    subject_kind,
+                )
+                if pattern not in self.context.trait_impl_patterns:
+                    self.context.trait_impl_patterns.append(pattern)
+
+    def add_trait_impl_behaviour(
+        self,
+        object_pattern: Type,
+        trait_pattern: Type,
+        provider: Symbol,
+        subject_kind: Symbol,
+        definitions: tuple[object, ...],
+    ) -> None:
+        """Record executable definitions supplied by one implementation edge."""
+        behaviour = TraitImplementationBehaviour(
+            object_pattern,
+            trait_pattern,
+            provider,
+            subject_kind,
+            definitions,
+        )
+        if behaviour not in self.context.trait_impl_behaviours:
+            self.context.trait_impl_behaviours.append(behaviour)
 
     def add_trait_parent(self, trait_name: Symbol, parent_name: Symbol) -> None:
         """Record that one trait implies another trait."""

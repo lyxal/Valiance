@@ -58,6 +58,8 @@ class TypedElementNode(TypedNode):
     call_overload_index: int | None = None
     extension: TypedElementExtension | None = None
     runtime_name: Symbol | None = None
+    behaviour_definition: object | None = None
+    behaviour_provider: Symbol | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -662,6 +664,7 @@ class ImportComponent:
     kind: Symbol | None = None
     trait: Symbol | None = None
     generics: tuple[Symbol, ...] = ()
+    subject_kind: Symbol | None = None
 
 
 @dataclass(frozen=True)

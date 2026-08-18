@@ -462,7 +462,7 @@ class Parser:
         return ImportSpec(path, alias, components)
 
     def _import_path(self) -> ImportPath:
-        """Parse import path from the current token stream."""
+        """Parse an import path, stopping before a selected component."""
         root = None
         parts: list[str] = []
         if self._check(TokenKind.OP) and self._current.value == "~":
@@ -477,22 +477,26 @@ class Parser:
                 root = Symbol(first)
             else:
                 parts.append(first)
-        while self._match(TokenKind.DOT):
-            if self._check(TokenKind.LBRACKET):
-                self.index -= 1
+        while self._check(TokenKind.DOT):
+            next_token = self._peek(1)
+            if next_token.kind is TokenKind.LBRACKET:
                 break
-            if self._check(TokenKind.OP) and self._current.value.startswith("#"):
-                self.index -= 1
+            if next_token.kind is TokenKind.OP and next_token.value.startswith("#"):
                 break
-            if self._check(TokenKind.IDENT, TokenKind.OP) and (
-                self._peek(1).kind in {TokenKind.LBRACKET, TokenKind.LPAREN}
+            if next_token.kind is TokenKind.IDENT and (
+                next_token.value in {"object", "trait"}
+                or next_token.value[:1].isupper()
+            ):
+                break
+            if next_token.kind in {TokenKind.IDENT, TokenKind.OP} and (
+                self._peek(2).kind in {TokenKind.LBRACKET, TokenKind.LPAREN}
                 or (
-                    self._peek(1).kind is TokenKind.IDENT
-                    and self._peek(1).value == "except"
+                    self._peek(2).kind is TokenKind.IDENT
+                    and self._peek(2).value == "except"
                 )
             ):
-                self.index -= 1
                 break
+            self._advance()
             parts.append(self._symbol("expected import path component").text)
         return ImportPath(tuple(parts), root)
 
@@ -512,14 +516,16 @@ class Parser:
 
     def _import_component(self) -> ImportComponent:
         """Parse import component from the current token stream."""
-        if self._match_ident("object"):
-            object_name = self._symbol("expected imported object name")
+        if self._match_ident("object", "trait"):
+            subject_kind = self._previous.value
+            subject_name = self._symbol(f"expected imported {subject_kind} name")
             self._expect_ident("as")
             trait_name = self._symbol("expected imported trait name")
             return ImportComponent(
-                object_name,
+                subject_name,
                 kind=Symbol("trait_impl"),
                 trait=trait_name,
+                subject_kind=(Symbol("trait") if subject_kind == "trait" else None),
             )
 
         if self._check(TokenKind.OP) and self._current.value.startswith("#"):

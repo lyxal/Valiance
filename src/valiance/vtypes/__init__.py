@@ -41,7 +41,12 @@ from valiance.vtypes.builders import (
     same,
     show,
 )
-from valiance.vtypes.context import Context, TagKind, Variance
+from valiance.vtypes.context import (
+    Context,
+    TagKind,
+    TraitImplementationPattern,
+    Variance,
+)
 from valiance.vtypes.default_types import Boolean, Integer, Number, Real, String
 from valiance.vtypes.environment import (
     AppliedElement,
@@ -122,6 +127,14 @@ from valiance.vtypes.relations import (
     assignable,
     collection_item_type,
     compatible,
+    ImplementationEdge,
+    ImplementationEvidence,
+    implementation_edge_behaviours,
+    implementation_evidence_behaviours,
+    implementation_evidence_definitions,
+    implementation_pattern_evidence,
+    implementation_reachable_traits,
+    implementation_pattern_providers,
     meet_required_inputs,
     merge_stacks,
     merge_types,

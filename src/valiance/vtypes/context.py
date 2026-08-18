@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from valiance.vtypes.symbols import Symbol, tag_symbol
-from valiance.vtypes.nodes import Overload, Variance
+from valiance.vtypes.nodes import Overload, Type, Variance
 
 
 class TagKind(Enum):
@@ -18,6 +18,49 @@ class TagKind(Enum):
     VARIANT = auto()
 
 
+@dataclass(frozen=True)
+class TraitImplementationPattern:
+    """One visible generic implementation pattern and its provider."""
+
+    object_pattern: object
+    trait_pattern: object
+    provider: Symbol
+    generic_names: tuple[Symbol, ...] = ()
+    generic_constraints: tuple[object | None, ...] = ()
+    subject_kind: Symbol = Symbol("object")
+
+
+@dataclass(frozen=True)
+class TraitImplementationBehaviour:
+    """Executable definitions supplied by one implementation pattern."""
+
+    object_pattern: Type
+    trait_pattern: Type
+    provider: Symbol
+    subject_kind: Symbol
+    definitions: tuple[object, ...]
+
+    @property
+    def element_names(self) -> tuple[Symbol, ...]:
+        """Return names exposed by the stored executable definitions."""
+        return tuple(
+            name
+            for definition in self.definitions
+            if isinstance((name := getattr(definition, "name", None)), Symbol)
+        )
+
+    def definition(self, name: Symbol) -> object | None:
+        """Return the exact definition supplying ``name``, if present."""
+        return next(
+            (
+                definition
+                for definition in self.definitions
+                if getattr(definition, "name", None) == name
+            ),
+            None,
+        )
+
+
 @dataclass
 class Context:
     """Mutable registry of relationships needed by type checks."""
@@ -26,6 +69,15 @@ class Context:
     # relationships that the relation functions need to answer questions.
     trait_impls: dict[Symbol, set[Symbol]] = field(
         default_factory=dict[Symbol, set[Symbol]]
+    )
+    trait_impl_providers: dict[tuple[Symbol, Symbol], set[Symbol]] = field(
+        default_factory=dict[tuple[Symbol, Symbol], set[Symbol]]
+    )
+    trait_impl_patterns: list[TraitImplementationPattern] = field(
+        default_factory=list[TraitImplementationPattern]
+    )
+    trait_impl_behaviours: list[TraitImplementationBehaviour] = field(
+        default_factory=list[TraitImplementationBehaviour]
     )
     trait_parents: dict[Symbol, set[Symbol]] = field(
         default_factory=dict[Symbol, set[Symbol]]
@@ -49,6 +101,12 @@ class Context:
             trait_impls={
                 name: set(traits) for name, traits in self.trait_impls.items()
             },
+            trait_impl_providers={
+                key: set(providers)
+                for key, providers in self.trait_impl_providers.items()
+            },
+            trait_impl_patterns=list(self.trait_impl_patterns),
+            trait_impl_behaviours=list(self.trait_impl_behaviours),
             trait_parents={
                 name: set(parents) for name, parents in self.trait_parents.items()
             },
@@ -65,8 +123,29 @@ class Context:
             },
         )
 
+    def implementation_providers(
+        self, type_name: Symbol, trait_name: Symbol
+    ) -> frozenset[Symbol]:
+        """Return visible providers for one concrete nominal relationship."""
+        return frozenset(
+            self.trait_impl_providers.get((type_name, trait_name), set())
+        )
+
+    def implementation_is_ambiguous(
+        self, type_name: Symbol, trait_name: Symbol
+    ) -> bool:
+        """Return whether a concrete relationship has competing providers."""
+        return len(self.implementation_providers(type_name, trait_name)) > 1
+
     def implements(self, type_name: Symbol, trait_name: Symbol) -> bool:
         """Return whether a nominal type implements a trait, following parents."""
+        if trait_name.namespace:
+            provider = Symbol(trait_name.namespace[-1])
+            return provider in self.implementation_providers(
+                type_name, Symbol(trait_name.text)
+            )
+        if self.implementation_is_ambiguous(type_name, trait_name):
+            return False
         seen: set[Symbol] = set()
         pending = list(self.trait_impls.get(type_name, set()))
         if type_name == trait_name:

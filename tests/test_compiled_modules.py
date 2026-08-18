@@ -241,3 +241,84 @@ class CompiledModuleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CompiledGenericTraitImplementationTests(unittest.TestCase):
+    def _compile_without_source(self, root: Path, source: str) -> None:
+        library = root / "generic.vlnc"
+        library.write_text(source, encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main_vln([
+                    "compile-module", "--file", str(library),
+                    "--output", str(root / "generic.vbcm"),
+                ]),
+                0,
+            )
+        library.unlink()
+
+    def test_generic_trait_implication_round_trips_without_source(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._compile_without_source(
+                root,
+                "public trait[T] Producer => end\n"
+                "public trait[T] Iterable => end\n"
+                "public object[T] Box => $value: T end\n"
+                "object[T] Box as Producer[T] => end\n"
+                "trait[T] Producer as Iterable[T] => end\n",
+            )
+            analyser = Analyser(
+                module_loader=ModuleLoader(), source_file=root / "main.vlnc"
+            )
+            analyser.analyse(parse(
+                "import { generic.[Box, Producer, Iterable] }\n"
+                "Box(1) as[Iterable[Integer]]\n"
+            ))
+            self.assertEqual(analyser.diagnostics, [])
+
+    def test_compiled_generic_trait_implication_preserves_correlation(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._compile_without_source(
+                root,
+                "public trait[T] Producer => end\n"
+                "public trait[T] Iterable => end\n"
+                "public object[T] Box => $value: T end\n"
+                "object[T] Box as Producer[T] => end\n"
+                "trait[T] Producer as Iterable[T] => end\n",
+            )
+            analyser = Analyser(
+                module_loader=ModuleLoader(), source_file=root / "main.vlnc"
+            )
+            analyser.analyse(parse(
+                "import { generic.[Box, Producer, Iterable] }\n"
+                'Box("value") as[Iterable[Integer]]\n'
+            ))
+            self.assertTrue(any(
+                "cannot safely cast Box[String] to Iterable[Integer]" in diagnostic
+                for diagnostic in analyser.diagnostics
+            ))
+
+    def test_compiled_generic_trait_implication_preserves_constraints(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._compile_without_source(
+                root,
+                "public trait[T] Producer => end\n"
+                "public trait[T] Iterable => end\n"
+                "public object[T] Box => $value: T end\n"
+                "object[T] Box as Producer[T] => end\n"
+                "trait[T: Number] Producer as Iterable[T] => end\n",
+            )
+            analyser = Analyser(
+                module_loader=ModuleLoader(), source_file=root / "main.vlnc"
+            )
+            analyser.analyse(parse(
+                "import { generic.[Box, Producer, Iterable] }\n"
+                'Box("value") as[Iterable[String]]\n'
+            ))
+            self.assertTrue(any(
+                "cannot safely cast Box[String] to Iterable[String]" in diagnostic
+                for diagnostic in analyser.diagnostics
+            ))

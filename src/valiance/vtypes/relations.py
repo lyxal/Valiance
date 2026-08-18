@@ -327,6 +327,262 @@ def _match_variadic_tuple(
 
 
 
+def _implementation_substitution(
+    pattern: Type,
+    actual: Type,
+    ctx: Context,
+) -> dict[TypeVarKey, Type] | None:
+    """Solve one implementation subject pattern to a concrete subject."""
+    solution = _solve(pattern, actual, ctx, allow_implementation=False)
+    if solution is None:
+        return None
+    substitution = {
+        key: _combine_all(values, ctx)
+        for key, values in solution.items()
+    }
+    if any(value is None for value in substitution.values()):
+        return None
+    return substitution  # type: ignore[return-value]
+
+
+def _implementation_constraints_hold(
+    implementation: object,
+    substitution: dict[TypeVarKey, Type],
+    ctx: Context,
+) -> bool:
+    """Return whether every inferred implementation generic meets its bound."""
+    names = getattr(implementation, "generic_names", ())
+    constraints = getattr(implementation, "generic_constraints", ())
+    for name, constraint in zip(names, constraints, strict=False):
+        if constraint is None:
+            continue
+        value = substitution.get(name.text)
+        if value is None:
+            continue
+        bound = _substitute(constraint, substitution)
+        if not subtype(value, bound, ctx):
+            return False
+    return True
+
+
+@dataclass(frozen=True)
+class ImplementationEdge:
+    """One specialized implementation edge selected during evidence search."""
+
+    source: Type
+    target: NominalType
+    provider: Symbol
+    subject_kind: Symbol
+
+
+@dataclass(frozen=True)
+class ImplementationEvidence:
+    """One provider-preserving path from a concrete type to a trait."""
+
+    edges: tuple[ImplementationEdge, ...]
+
+    @property
+    def provider(self) -> Symbol:
+        """Return the provider of the final edge."""
+        return self.edges[-1].provider
+
+    @property
+    def traits(self) -> tuple[NominalType, ...]:
+        """Return the specialized trait reached by every edge."""
+        return tuple(edge.target for edge in self.edges)
+
+    @property
+    def edge_providers(self) -> tuple[Symbol, ...]:
+        """Return providers in path order."""
+        return tuple(edge.provider for edge in self.edges)
+
+
+def implementation_reachable_traits(
+    source: Type,
+    ctx: Context,
+) -> tuple[NominalType, ...]:
+    """Return all uniquely specialized traits reachable from ``source``."""
+    source = normalize(source)
+    if not isinstance(source, NominalType):
+        return ()
+    reached: list[NominalType] = []
+    pending: list[Type] = [source]
+    seen: set[Type] = {source}
+    while pending:
+        subject = pending.pop(0)
+        for implementation in ctx.trait_impl_patterns:
+            if implementation.subject_kind == Symbol("object") and subject != source:
+                continue
+            if implementation.subject_kind == Symbol("trait") and subject == source:
+                continue
+            object_pattern = implementation.object_pattern
+            trait_pattern = implementation.trait_pattern
+            if not isinstance(object_pattern, Type) or not isinstance(trait_pattern, Type):
+                continue
+            substitution = _implementation_substitution(object_pattern, subject, ctx)
+            if substitution is None or not _implementation_constraints_hold(
+                implementation, substitution, ctx
+            ):
+                continue
+            target = normalize(_substitute(trait_pattern, substitution))
+            if not isinstance(target, NominalType) or target in seen:
+                continue
+            seen.add(target)
+            reached.append(target)
+            pending.append(target)
+    return tuple(reached)
+
+
+def implementation_pattern_evidence(
+    source: Type,
+    target: Type,
+    ctx: Context,
+) -> tuple[ImplementationEvidence, ...]:
+    """Return all matching implementation paths without ranking providers."""
+    source = normalize(source)
+    target = normalize(target)
+    if not isinstance(source, NominalType) or not isinstance(target, NominalType):
+        return ()
+    requested_provider = (
+        Symbol(target.name.namespace[-1]) if target.name.namespace else None
+    )
+    unqualified_target = (
+        NominalType(Symbol(target.name.text), target.args)
+        if target.name.namespace
+        else target
+    )
+    results: set[ImplementationEvidence] = set()
+    for provider in ctx.implementation_providers(source.name, unqualified_target.name):
+        if requested_provider is None or provider == requested_provider:
+            results.add(ImplementationEvidence((
+                ImplementationEdge(
+                    source,
+                    unqualified_target,
+                    provider,
+                    Symbol("object"),
+                ),
+            )))
+
+    evidence: list[tuple[NominalType, tuple[ImplementationEdge, ...]]] = []
+    for trait in ctx.trait_impls.get(source.name, set()):
+        target_trait = NominalType(trait)
+        for provider in sorted(ctx.implementation_providers(source.name, trait), key=str):
+            evidence.append((
+                target_trait,
+                (ImplementationEdge(source, target_trait, provider, Symbol("object")),),
+            ))
+    seen_evidence = set(evidence)
+    changed = True
+    while changed:
+        changed = False
+        for implementation in ctx.trait_impl_patterns:
+            object_pattern = implementation.object_pattern
+            trait_pattern = implementation.trait_pattern
+            if not isinstance(object_pattern, Type) or not isinstance(trait_pattern, Type):
+                continue
+            subjects = (
+                ((source, ()),)
+                if implementation.subject_kind == Symbol("object")
+                else tuple(evidence)
+            )
+            for subject, edges in subjects:
+                substitution = _implementation_substitution(object_pattern, subject, ctx)
+                if substitution is None or not _implementation_constraints_hold(
+                    implementation, substitution, ctx
+                ):
+                    continue
+                specialized_trait = normalize(_substitute(trait_pattern, substitution))
+                if not isinstance(specialized_trait, NominalType):
+                    continue
+                if any(same(specialized_trait, edge.target) for edge in edges):
+                    continue
+                specialized_edges = (*edges, ImplementationEdge(
+                    subject,
+                    specialized_trait,
+                    implementation.provider,
+                    implementation.subject_kind,
+                ))
+                if same(specialized_trait, unqualified_target):
+                    if requested_provider is None or implementation.provider == requested_provider:
+                        results.add(ImplementationEvidence(specialized_edges))
+                item = (specialized_trait, specialized_edges)
+                if item not in seen_evidence:
+                    seen_evidence.add(item)
+                    evidence.append(item)
+                    changed = True
+    return tuple(sorted(results, key=lambda item: (str(item.provider), tuple(map(str, item.traits)))))
+
+
+def implementation_edge_behaviours(
+    edge: ImplementationEdge,
+    element_name: Symbol,
+    ctx: Context,
+) -> tuple[object, ...]:
+    """Return behaviour declarations that supply an element for one edge."""
+    matches = []
+    for behaviour in ctx.trait_impl_behaviours:
+        if behaviour.provider != edge.provider:
+            continue
+        if behaviour.subject_kind != edge.subject_kind:
+            continue
+        if element_name not in behaviour.element_names:
+            continue
+        substitution = _implementation_substitution(
+            behaviour.object_pattern,
+            edge.source,
+            ctx,
+        )
+        if substitution is None:
+            continue
+        specialized_target = normalize(
+            _substitute(behaviour.trait_pattern, substitution)
+        )
+        if same(specialized_target, edge.target):
+            matches.append(behaviour)
+    return tuple(matches)
+
+
+def implementation_evidence_behaviours(
+    evidence: ImplementationEvidence,
+    element_name: Symbol,
+    ctx: Context,
+) -> tuple[tuple[ImplementationEdge, object], ...]:
+    """Join an evidence path to every implementation that supplies an element."""
+    return tuple(
+        (edge, behaviour)
+        for edge in evidence.edges
+        for behaviour in implementation_edge_behaviours(edge, element_name, ctx)
+    )
+
+
+def implementation_evidence_definitions(
+    evidence: ImplementationEvidence,
+    element_name: Symbol,
+    ctx: Context,
+) -> tuple[tuple[ImplementationEdge, object], ...]:
+    """Return exact executable definitions selected by an evidence path."""
+    selected = []
+    for edge, behaviour in implementation_evidence_behaviours(
+        evidence, element_name, ctx
+    ):
+        definition = behaviour.definition(element_name)
+        if definition is not None:
+            selected.append((edge, definition))
+    return tuple(selected)
+
+
+def implementation_pattern_providers(
+    source: Type,
+    target: Type,
+    ctx: Context,
+) -> frozenset[Symbol]:
+    """Return providers whose direct or trait-to-trait patterns match a use."""
+    return frozenset(
+        evidence.provider
+        for evidence in implementation_pattern_evidence(source, target, ctx)
+    )
+
+
 def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
     """Return whether ``source`` can be treated as ``target`` by subsumption."""
     ctx = ctx or Context()
@@ -391,6 +647,11 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
             return _source_subtypes_result(source, target, ctx)
         if source.name == target.name and len(source.args) == len(target.args):
             return _nominal_args_subtype(source, target, ctx)
+        pattern_providers = implementation_pattern_providers(source, target, ctx)
+        if len(pattern_providers) == 1:
+            return True
+        if len(pattern_providers) > 1:
+            return False
         if ctx.implements(source.name, target.name):
             return True
         if target.name == ERR and _is_builtin_err(source):
@@ -1049,6 +1310,8 @@ def _solve(
     pattern: Type,
     actual: Type,
     ctx: Context | None = None,
+    *,
+    allow_implementation: bool = True,
 ) -> dict[TypeVarKey, list[Type]] | None:
     """Collect generic constraints by matching a parameter pattern to an argument."""
     ctx = ctx or Context()
@@ -1188,6 +1451,16 @@ def _solve(
             constraints.update(matches[0])
             return True
         if isinstance(p, NominalType) and isinstance(a, NominalType):
+            if allow_implementation and p.name != a.name and _contains_type_var(p):
+                matching = tuple(
+                    target
+                    for target in implementation_reachable_traits(a, ctx)
+                    if target.name == p.name and len(target.args) == len(p.args)
+                )
+                if len(matching) == 1:
+                    return rec(p, matching[0])
+                if matching:
+                    return False
             if p.name == RESULT and len(p.args) == 2:
                 if a.name == OK and len(a.args) == 1:
                     if not rec(p.args[0], a.args[0]):

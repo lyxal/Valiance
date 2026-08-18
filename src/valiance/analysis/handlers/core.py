@@ -69,6 +69,8 @@ from valiance.modules_system.modules import (
     import_environment_facts,
     import_objects,
     import_trait_implementations,
+    import_owned_trait_implementations,
+    import_behaviour_set_objects,
 )
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.default_types import Boolean
@@ -486,7 +488,57 @@ def _cast_node(self: _core.Analyser, node: CastNode, branch: _core.AnalysisBranc
             self._diagnose(f"cannot cast {T.show(source)} to {T.show(target)}", node)
             return _core.BranchSet()
     elif not runtime_refinement and not statically_safe:
-        self._diagnose(f"cannot safely cast {T.show(source)} to {T.show(target)}", node)
+        if (
+            isinstance(source, T.NominalType)
+            and isinstance(target, T.NominalType)
+            and target.name.namespace
+        ):
+            provider = Symbol(target.name.namespace[-1])
+            trait_name = Symbol(target.name.text)
+            self._diagnose(
+                f"behaviour set {provider}.{trait_name} does not provide "
+                f"{source.name} as {trait_name}",
+                node,
+            )
+        elif (
+            isinstance(source, T.NominalType)
+            and isinstance(target, T.NominalType)
+            and not target.name.namespace
+            and len(
+                T.implementation_pattern_providers(
+                    source,
+                    target,
+                    self.env.context,
+                )
+            ) > 1
+        ):
+            providers = tuple(
+                sorted(
+                    T.implementation_pattern_providers(
+                        source,
+                        target,
+                        self.env.context,
+                    ),
+                    key=str,
+                )
+            )
+            choices = ", ".join(
+                f"`as[{provider}.{T.show(target)}]`" for provider in providers
+            )
+            self._diagnose(
+                f"ambiguous implementation of {T.show(target)} for {T.show(source)}\n"
+                "candidate behaviour sets:\n"
+                + "\n".join(
+                    f"  {provider}.{T.show(target)}" for provider in providers
+                )
+                + f"\nhelp: qualify the cast with one of {choices}",
+                node,
+            )
+        else:
+            self._diagnose(
+                f"cannot safely cast {T.show(source)} to {T.show(target)}",
+                node,
+            )
         return _core.BranchSet()
     flowed = _calls._apply_data_tag_flow((source,), (target,), (target,), self.env.context)[0]
     result = T.optional(flowed) if node.optional else flowed
@@ -759,7 +811,11 @@ def _import_node(
         try:
             exports, resolved_spec, definitions = self._load_import_definitions(spec)
             objects = import_objects(exports, resolved_spec)
+            behaviour_objects = import_behaviour_set_objects(exports, resolved_spec)
             trait_implementations = import_trait_implementations(exports, resolved_spec)
+            trait_implementations += import_owned_trait_implementations(
+                exports, resolved_spec
+            )
             import_environment_facts(exports, resolved_spec, self.env)
         except ModuleLoadError as exc:
             namespace = (spec.alias.text,) if spec.alias else (spec.path.parts[-1],)
@@ -794,21 +850,12 @@ def _import_node(
         if conflict is not None:
             self._diagnose(conflict, node)
             return _core.BranchSet((branch.emit(TypedNode(node, None)),))
-        for implementation in trait_implementations:
-            key = (implementation.object_name, implementation.trait_name)
-            source = f"{exports.module_name}.[object {implementation.object_name} as {implementation.trait_name}]"
-            previous = self._imported_trait_impl_sources.get(key)
-            if previous is not None and previous != source:
-                self._diagnose(
-                    f"conflicting imported trait implementation for object "
-                    f"'{implementation.object_name}' as trait '{implementation.trait_name}': "
-                    f"provided by `{previous}` and `{source}`",
-                    node,
-                )
-                return _core.BranchSet((branch.emit(TypedNode(node, None)),))
         for typed_node in exports.runtime_prelude:
             self._prelude.add(typed_node)
         for obj in objects:
+            runtime_name = self._prelude.add_declaration(obj.typed, obj.name)
+            self._register_imported_object(obj, runtime_name)
+        for obj in behaviour_objects:
             runtime_name = self._prelude.add_declaration(obj.typed, obj.name)
             self._register_imported_object(obj, runtime_name)
         for definition in definitions:
@@ -834,12 +881,30 @@ def _import_node(
                 return _core.BranchSet(
                     (branch.emit(TypedNode(node, None)),)
                 )
+        provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
         for implementation in trait_implementations:
-            self.env.add_trait_impl(implementation.object_name, implementation.trait_name)
-            source = f"{exports.module_name}.[object {implementation.object_name} as {implementation.trait_name}]"
-            self._imported_trait_impl_sources[
-                (implementation.object_name, implementation.trait_name)
-            ] = source
+            self.env.add_trait_impl(
+                implementation.object_name,
+                implementation.trait_name,
+                provider=provider,
+                object_pattern=implementation.object_pattern,
+                trait_pattern=implementation.trait_pattern,
+                generic_names=implementation.generics,
+                generic_constraints=implementation.generic_constraints,
+                subject_kind=implementation.subject_kind,
+            )
+            if (
+                implementation.definitions
+                and implementation.object_pattern is not None
+                and implementation.trait_pattern is not None
+            ):
+                self.env.add_trait_impl_behaviour(
+                    implementation.object_pattern,
+                    implementation.trait_pattern,
+                    provider,
+                    implementation.subject_kind,
+                    implementation.definitions,
+                )
         self._commit_import_sources(resolved_spec, definitions, objects)
         if not resolved_spec.components:
             namespace_name = resolved_spec.alias or Symbol(resolved_spec.path.parts[-1])

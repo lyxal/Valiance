@@ -110,6 +110,26 @@ class _CallSelection:
         ambiguous_message: str,
     ) -> tuple[CallCandidate, ...] | None:
         """Select the most specific viable call candidates and diagnose ambiguity."""
+        candidates = tuple(candidates)
+        provider_ambiguity = self._behaviour_set_provider_ambiguity(
+            candidates,
+            branch,
+        )
+        if provider_ambiguity is not None:
+            source_name, trait_name, providers = provider_ambiguity
+            choices = ", ".join(
+                f"`as[{provider}.{trait_name}]`" for provider in providers
+            )
+            self._diagnose(
+                f"ambiguous implementation of {trait_name} for {source_name}\n"
+                "candidate behaviour sets:\n"
+                + "\n".join(
+                    f"  {provider}.{trait_name}" for provider in providers
+                )
+                + f"\nhelp: qualify the value with one of {choices}",
+                node,
+            )
+            return None
         winners = _functions._collapse_equivalent_call_winners(
             _functions._collapse_equivalent_friendly_multidispatch_winners(
                 _functions._best_candidates(candidates, branch)
@@ -117,7 +137,26 @@ class _CallSelection:
         )
         winners = self._prefer_latest_equal_winners(winners)
         if not winners:
-            self._diagnose(no_match_message, node)
+            provider_ambiguity = self._overload_provider_ambiguity(
+                node,
+                branch,
+            )
+            if provider_ambiguity is not None:
+                source_name, trait_name, providers = provider_ambiguity
+                choices = ", ".join(
+                    f"`as[{provider}.{trait_name}]`" for provider in providers
+                )
+                self._diagnose(
+                    f"ambiguous implementation of {trait_name} for {source_name}\n"
+                    "candidate behaviour sets:\n"
+                    + "\n".join(
+                        f"  {provider}.{trait_name}" for provider in providers
+                    )
+                    + f"\nhelp: qualify the value with one of {choices}",
+                    node,
+                )
+            else:
+                self._diagnose(no_match_message, node)
             return None
         if (
             len(winners) > 1
@@ -132,6 +171,77 @@ class _CallSelection:
             return None
         return winners
 
+
+
+
+    def _overload_provider_ambiguity(
+        self,
+        node: ASTNode,
+        branch: AnalysisBranch,
+    ) -> tuple[Symbol, Symbol, tuple[Symbol, ...]] | None:
+        """Find ambiguous trait evidence among rejected named overloads."""
+        name = getattr(node, "name", None)
+        if not isinstance(name, Symbol):
+            return None
+        for overload in self.env.overloads_for(name):
+            if len(overload.params) > len(branch.stack):
+                continue
+            actuals = branch.stack.items[-len(overload.params):] if overload.params else ()
+            for actual, parameter in zip(actuals, overload.params):
+                if not isinstance(actual, T.NominalType):
+                    continue
+                trait_names: list[Symbol] = []
+                if isinstance(parameter, T.NominalType):
+                    if not parameter.name.namespace:
+                        trait_names.append(parameter.name)
+                elif isinstance(parameter, T.VarType):
+                    trait_names.extend(
+                        constraint.bound.name
+                        for constraint in overload.generic_constraints
+                        if constraint.name == parameter.name
+                        and isinstance(constraint.bound, T.NominalType)
+                        and not constraint.bound.name.namespace
+                    )
+                for trait_name in trait_names:
+                    providers = tuple(
+                        sorted(
+                            self.env.context.implementation_providers(
+                                actual.name,
+                                trait_name,
+                            ),
+                            key=str,
+                        )
+                    )
+                    if len(providers) > 1:
+                        return actual.name, trait_name, providers
+        return None
+
+    def _behaviour_set_provider_ambiguity(
+        self,
+        candidates: tuple[CallCandidate, ...],
+        branch: AnalysisBranch,
+    ) -> tuple[Symbol, Symbol, tuple[Symbol, ...]] | None:
+        """Find an unqualified trait relationship with competing providers."""
+        for candidate in candidates:
+            for actual, parameter in zip(branch.stack, candidate.applied.params):
+                if not isinstance(actual, T.NominalType):
+                    continue
+                if not isinstance(parameter, T.NominalType):
+                    continue
+                if parameter.name.namespace:
+                    continue
+                providers = tuple(
+                    sorted(
+                        self.env.context.implementation_providers(
+                            actual.name,
+                            parameter.name,
+                        ),
+                        key=str,
+                    )
+                )
+                if len(providers) > 1:
+                    return actual.name, parameter.name, providers
+        return None
 
     @staticmethod
     def _prefer_latest_equal_winners(
@@ -290,6 +400,14 @@ class _CallSelection:
         # An imported source overload is compiled as its own one-slot function.
         # Its visible overload-set index therefore must not be reused at runtime.
         runtime_index = 0 if overload_runtime_name is not None else selected_index
+        behaviour_matches = tuple(
+            (behaviour.provider, definition)
+            for behaviour in self.env.context.trait_impl_behaviours
+            if (definition := behaviour.definition(node.name)) is not None
+        )
+        behaviour_provider, behaviour_definition = (
+            behaviour_matches[0] if len(behaviour_matches) == 1 else (None, None)
+        )
         return candidate.branch.push(*actual_returns).emit(
             TypedElementNode(
                 node,
@@ -305,6 +423,8 @@ class _CallSelection:
                 candidate.callable_overload_index,
                 extension,
                 overload_runtime_name or self.env.runtime_name_for(node.name),
+                behaviour_definition,
+                behaviour_provider,
             )
         )
 

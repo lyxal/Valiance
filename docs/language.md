@@ -3866,39 +3866,80 @@ Every excluded overload must exist in the imported module. Excluding a nonexiste
 hash except [(Number)]
 ```
 
-## 23.8. Importing Trait Implementations
+## 23.8. Behaviour Set Imports
 
-A trait implementation may be imported explicitly:
+A trait implementation that is not imported automatically with its object is selected with a **behaviour set import**:
 
 ```vlnc
 import {
-  dep.somelib.[
+  somemod.object X as Y
+}
+```
+
+The grouped form is equivalent and may be mixed with ordinary component imports:
+
+```vlnc
+import {
+  somemod.[
+    parse,
     object X as Y
   ]
 }
 ```
 
-This imports the implementation of trait `Y` for object `X`.
+The term *behaviour set import* refers only to these import forms. The declaration remains a trait implementation written as `object X as Y => ...`.
+
+More than one behaviour set for the same object and trait may be visible. An unqualified use is valid only when exactly one provider applies. If several providers apply, the use is a compile error and the behaviour set must be qualified:
+
+```vlnc
+import {
+  first.object Rectangle as Shape,
+  second.object Rectangle as Shape
+}
+
+Rectangle(4) as[first.Shape] | area
+Rectangle(4) as[second.Shape] | area
+
+Rectangle(4) first.Shape.area
+Rectangle(4) second.Shape.area
+```
+
+`as[module.Trait]` is the ordinary zero-cost type cast. Qualification selects which visible implementation supplies the trait relationship; it does not introduce a runtime wrapper.
+
+Ownership and import order never rank competing implementations. Ownership controls only which implementations are imported automatically.
+
+Behaviour set imports follow ordinary block import scope. Their qualified types and elements are unavailable after the enclosing block ends.
 
 The object and trait names must identify an implementation defined by the selected module. Importing an implementation that does not exist is a compile error.
 
 ## 23.9. Importing Objects
 
-Importing an object directly also imports its object-friendly elements.
+Importing an object directly imports:
+
+* the object;
+* its object-friendly elements;
+* each trait implementation for which the module defines both the object and the trait.
 
 ```vlnc
-import {somemod.Y}
-Y foo
+#? shapes.vlnc
+public trait Shape => end
+public object Rectangle => end
+object Rectangle as Shape => end
+
+#? main.vlnc
+import {shapes.Rectangle}
 ```
 
-Object-friendly elements are not imported when the object is accessed through a module namespace:
+The import makes the owned `Rectangle as Shape` implementation available. Implementations involving a foreign object or foreign trait require a behaviour set import, including implementations for a foreign object of a trait owned by the implementing module.
+
+Object-friendly elements are not imported when the object is accessed only through a module namespace:
 
 ```vlnc
 import {somemod}
 somemod.Y somemod.foo
 ```
 
-In the second example, `Y` and `foo` remain members of the `somemod` namespace.
+In this example, `Y` and `foo` remain members of the `somemod` namespace.
 
 ## 23.10. Importing Tags
 
@@ -5587,3 +5628,55 @@ cache. Failures use a `Package error:` heading and, when recovery is known, a
 separate `help:` line with the exact next action. `vln add --help` and
 `vln install --help` document arguments, examples, recursive dependency
 behaviour, integrity verification, and the recommended locked CI workflow.
+
+## Trait-to-trait behaviour sets
+
+A trait may provide an importable implementation of another, already declared
+trait. This is the blanket implementation form:
+
+```valiance
+trait Printable => end
+trait Displayable => end
+
+trait Printable as Displayable =>
+    # Displayable elements may be defined here.
+end
+```
+
+Any object with visible evidence for `Printable` can then be used as
+`Displayable`. Generic arguments are correlated through the relationship:
+
+```valiance
+trait[T] Producer => end
+trait[T] Iterable => end
+trait[T] Producer as Iterable[T] => end
+```
+
+Here, `Producer[Integer]` implies `Iterable[Integer]`, but not
+`Iterable[String]`. Constraints on the implementation binder are checked after
+the source arguments are inferred. A failed constraint makes that behaviour set
+inapplicable rather than ambiguous.
+
+Trait behaviour sets use the same explicit import model as object behaviour
+sets:
+
+```valiance
+import { formatting.trait Printable as Displayable }
+```
+
+Importing a trait also imports behaviour sets owned by the same module whose
+subject is that trait. Importing only the target trait does not import the
+relationship. Public re-exports preserve the re-exporting module as the
+source-facing qualifier while retaining the originating behaviour identity
+internally.
+
+Implications are transitive and cycle-safe. A cycle cannot create evidence from
+nothing. If one applicable provider remains, the implication is used silently.
+If several providers remain, none is ranked by declaration order, path length,
+ownership, or specificity. The use is ambiguous and must qualify the intended
+behaviour set, for example `as[plain.Displayable]`.
+
+Trait inheritance and trait behaviour sets remain distinct. Declaring a new
+trait with a target contributes to that trait's intrinsic hierarchy. Declaring
+`trait A as B` after `A` already exists contributes externally supplied,
+import-controlled behaviour.
