@@ -4523,8 +4523,12 @@ println(triple([1, 2, 3, 4, 5]))
         )
         self.assertEqual(execute('dict{"name" => "Jeff"} $["name"]'), ["Jeff"])
         self.assertEqual(
-            execute("[5, 1, 6, 2, 7] ...$[3, 4]"),
+            execute("[5, 1, 6, 2, 7] $...[3, 4]"),
             [RuntimeNumber("2"), RuntimeNumber("7")],
+        )
+        self.assertEqual(
+            execute("$xs = [6, 9, 5, 7, 4, 2, 3]\n$xs...[1, 2, 4]"),
+            [RuntimeNumber("9"), RuntimeNumber("5"), RuntimeNumber("4")],
         )
 
     def test_invalid_multidimensional_slice_raises_catchable_slice_fault(self):

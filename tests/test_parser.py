@@ -626,13 +626,28 @@ end
         )
 
     def test_parses_indexing_forms(self):
-        program = parse("$data[2, 4, 1]\n[1, 2, 3] $[1]\n...$[3, 4]")
+        program = parse("$data[2, 4, 1]\n[1, 2, 3] $[1]\n$...[3, 4]")
 
         self.assertEqual(program[0], GetVariableNode(Symbol("data")))
         self.assertEqual(program[4], IndexAccessNode(program[4].selectors))
         self.assertEqual(len(program[4].selectors), 3)
         self.assertIsInstance(program[5], ListLiteralNode)
         self.assertEqual(program[7], IndexAccessNode(program[7].selectors))
+        self.assertTrue(program[-1].spread)
+
+    def test_parses_named_variable_dump_indexing(self):
+        program = parse("$xs...[1, 2, 4]")
+
+        self.assertEqual(program[0], GetVariableNode(Symbol("xs")))
+        self.assertEqual(
+            program[1:4],
+            [
+                NumberLiteralNode("1"),
+                NumberLiteralNode("2"),
+                NumberLiteralNode("4"),
+            ],
+        )
+        self.assertIsInstance(program[-1], IndexAccessNode)
         self.assertTrue(program[-1].spread)
 
     def test_parses_double_colon_slice_indexing(self):
