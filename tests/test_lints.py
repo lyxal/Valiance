@@ -30,7 +30,7 @@ class LintRegistryTests(unittest.TestCase):
         registry.register_node(NumberLiteralNode, lint_number)
         analyser = Analyser(lint_registry=registry)
 
-        analyser.analyse(parse("1 as[Integer]"))
+        analyser.analyse(parse("1 as[Int]"))
 
         self.assertEqual(
             analyser.lints,
@@ -279,7 +279,7 @@ class ProjectLintConfigurationTests(unittest.TestCase):
         """The disable array suppresses only named lint codes project-wide."""
         temporary, analyser = self._project(
             'enabled = true\ndisable = ["prefer-sum"]',
-            "$total = 0\n[1, 2] foreach (n) => $total := + $n end\n1 as[Integer]",
+            "$total = 0\n[1, 2] foreach (n) => $total := + $n end\n1 as[Int]",
         )
         self.addCleanup(temporary.cleanup)
         codes = [item.code for item in analyser.lint_findings]
@@ -290,7 +290,7 @@ class ProjectLintConfigurationTests(unittest.TestCase):
         """Setting enabled=false suppresses all project lint findings."""
         temporary, analyser = self._project(
             "enabled = false\ndisable = []",
-            "$total = 0\n[1, 2] foreach (n) => $total := + $n end\n1 as[Integer]",
+            "$total = 0\n[1, 2] foreach (n) => $total := + $n end\n1 as[Int]",
         )
         self.addCleanup(temporary.cleanup)
         self.assertEqual(analyser.lint_findings, [])
@@ -299,7 +299,7 @@ class ProjectLintConfigurationTests(unittest.TestCase):
         """Node suppression can disable another lint after project configuration."""
         temporary, analyser = self._project(
             'enabled = true\ndisable = ["prefer-sum"]',
-            '@lintOff("redundant-cast")\n1 as[Integer]',
+            '@lintOff("redundant-cast")\n1 as[Int]',
         )
         self.addCleanup(temporary.cleanup)
         self.assertEqual(analyser.lint_findings, [])

@@ -343,7 +343,7 @@ def _index_access_node(
         index_types,
         self.env.context,
     ):
-        self._diagnose("list indexing requires Integer index value(s)", node)
+        self._diagnose("list indexing requires Int index value(s)", node)
         return _core.BranchSet()
 
     selector_mode = (
@@ -449,7 +449,7 @@ def _index_set_node(
         index_types,
         self.env.context,
     ):
-        self._diagnose("list indexing requires Integer index value(s)", node)
+        self._diagnose("list indexing requires Int index value(s)", node)
         return _core.BranchSet()
 
     selector_mode = (

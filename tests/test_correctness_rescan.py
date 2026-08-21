@@ -12,7 +12,7 @@ from valiance.runtime.bytecode import FunctionCode, Instruction, OpCode, Program
 from valiance.runtime.runtime_values import LazyList
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes import (
-    Integer,
+    Int,
     N,
     Number,
     OKType,
@@ -49,10 +49,10 @@ def execute_both(source: str):
 
 
 OPTIONAL_RETRY_POLICY = """
-define retryStatus(value: Integer?) -> String =>
+define retryStatus(value: Int?) -> String =>
   $value |
   match =>
-    as :Some[Integer] => "scheduled"
+    as :Some[Int] => "scheduled"
     as :None => "disabled"
     _ => "invalid"
   end
@@ -79,10 +79,10 @@ settlementStatus(ValueError("declined"))
 
 
 DICTIONARY_CONFIGURATION_FLOW = """
-define configKind(value: Dict[String, Integer] | String) -> String =>
+define configKind(value: Dict[String, Int] | String) -> String =>
   $value |
   match =>
-    as :Dict[String, Integer] => "mapping"
+    as :Dict[String, Int] => "mapping"
     _ => "preset"
   end
 end |
@@ -92,10 +92,10 @@ configKind("default")
 
 
 OPTIONAL_PAYLOAD_WORKFLOW = """
-define retryDelay(value: Integer?) -> Integer =>
+define retryDelay(value: Int?) -> Int =>
   $value |
   match =>
-    as :Some[Integer](seconds) => +($seconds, 5)
+    as :Some[Int](seconds) => +($seconds, 5)
     _ => 0
   end
 end |
@@ -155,10 +155,10 @@ classifyBox(Box(Car("sedan")))
 
 
 EXHAUSTIVE_OPTIONAL_WORKFLOW = """
-define optionalState(value: Integer?) -> String =>
+define optionalState(value: Int?) -> String =>
   $value |
   match =>
-    as :Some[Integer] => "some"
+    as :Some[Int] => "some"
     as :None => "none"
   end
 end |
@@ -178,7 +178,7 @@ requireMatrix([] as[Number+])
 USER_ERROR_PIPELINE = """
 object Problem => $message: String end |
 object Problem as Err => end |
-define classifyResult(value: Result[Integer, Problem]) -> String =>
+define classifyResult(value: Result[Int, Problem]) -> String =>
   $value |
   match =>
     as :Err => "error"
@@ -224,10 +224,10 @@ classifyVehicle(Car("sedan"))
 EXHAUSTIVE_RESULT_WORKFLOW = """
 object Problem => $message: String end |
 object Problem as Err => end |
-define resultState(value: Result[Integer, Problem]) -> String =>
+define resultState(value: Result[Int, Problem]) -> String =>
   $value |
   match =>
-    as :OK[Integer] => "success"
+    as :OK[Int] => "success"
     as :Problem => "error"
   end
 end |
@@ -240,11 +240,11 @@ GENERIC_TRAIT_WORKFLOW = """
 trait[T] Producer => end |
 object[T] Box => $value: T end |
 object[T] Box as Producer[T] => end |
-define classifyProducer(value: Producer[Integer] | String) -> String =>
+define classifyProducer(value: Producer[Int] | String) -> String =>
   $value |
   match =>
     as :Producer[String] => "wrong"
-    as :Producer[Integer] => "right"
+    as :Producer[Int] => "right"
     _ => "other"
   end
 end |
@@ -257,11 +257,11 @@ trait[T] Source => end |
 trait[T] Producer as Source[T] => end |
 object[T] Box => $value: T end |
 object[T] Box as Producer[T] => end |
-define classifySource(value: Source[Integer] | String) -> String =>
+define classifySource(value: Source[Int] | String) -> String =>
   $value |
   match =>
     as :Source[String] => "wrong"
-    as :Source[Integer] => "right"
+    as :Source[Int] => "right"
     _ => "other"
   end
 end |
@@ -273,24 +273,24 @@ class TypeAlgebraCorrectnessTests(unittest.TestCase):
     def test_raw_and_explicit_some_normalize_to_one_present_branch(self):
         self.assertTrue(
             same(
-                U(Integer, Some(String)),
-                Some(U(Integer, String)),
+                U(Int, Some(String)),
+                Some(U(Int, String)),
             )
         )
 
     def test_optional_join_is_associative_with_explicit_some_values(self):
         from valiance.vtypes import NoneType
 
-        left = merge_types(merge_types(NoneType(), Integer), Some(String))
-        right = merge_types(NoneType(), merge_types(Integer, Some(String)))
+        left = merge_types(merge_types(NoneType(), Int), Some(String))
+        right = merge_types(NoneType(), merge_types(Int, Some(String)))
 
         self.assertTrue(same(left, right), (show(left), show(right)))
-        self.assertTrue(same(left, optional(U(Integer, String))))
+        self.assertTrue(same(left, optional(U(Int, String))))
 
     def test_result_types_are_covariant_in_success_and_error_types(self):
         value_error = N(Symbol("ValueError"))
         err = N(Symbol("Err"))
-        narrow = Result(Integer, value_error)
+        narrow = Result(Int, value_error)
         broad = Result(Number, err)
 
         self.assertTrue(subtype(narrow, broad))
@@ -300,9 +300,9 @@ class TypeAlgebraCorrectnessTests(unittest.TestCase):
         value_error = N(Symbol("ValueError"))
         result = Result(String, value_error)
         cases = (
-            (Integer, OKType(String)),
-            (Integer, result),
-            (OKType(Integer), result),
+            (Int, OKType(String)),
+            (Int, result),
+            (OKType(Int), result),
         )
 
         for left, right in cases:

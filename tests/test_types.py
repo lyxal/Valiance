@@ -73,7 +73,7 @@ from valiance.vtypes import (
 
 NUMBER = Symbol("Number")
 REAL = Symbol("Real")
-INTEGER = Symbol("Integer")
+INT = Symbol("Int")
 STRING = Symbol("String")
 CIRCLE = Symbol("Circle")
 SHAPE = Symbol("Shape")
@@ -86,7 +86,7 @@ PARSE_ERROR = Symbol("ParseError")
 
 Number = N(NUMBER)
 Real = N(REAL)
-Integer = N(INTEGER)
+Int = N(INT)
 String = N(STRING)
 Foo = N(FOO)
 Car = N(CAR)
@@ -96,41 +96,41 @@ ParseError = N(PARSE_ERROR)
 
 class TypeLibraryTests(unittest.TestCase):
     def test_atomic_marker_normalization_is_idempotent(self):
-        self.assertEqual(normalize(Exact(Exact(Integer))), Exact(Integer))
+        self.assertEqual(normalize(Exact(Exact(Int))), Exact(Int))
 
     def test_intersection_with_never_normalizes_to_bottom(self):
-        self.assertEqual(I(Integer, Never()), Never())
+        self.assertEqual(I(Int, Never()), Never())
         self.assertEqual(I(Never(), String), Never())
 
     def test_optional_never_normalizes_to_none(self):
         self.assertEqual(optional(Never()), NoneType())
 
     def test_optional_types_are_covariant(self):
-        self.assertTrue(subtype(optional(Integer), optional(Number)))
-        self.assertTrue(assignable(optional(Integer), optional(Number)))
-        self.assertTrue(compatible(optional(Integer), optional(Number)))
-        self.assertFalse(assignable(optional(Number), optional(Integer)))
+        self.assertTrue(subtype(optional(Int), optional(Number)))
+        self.assertTrue(assignable(optional(Int), optional(Number)))
+        self.assertTrue(compatible(optional(Int), optional(Number)))
+        self.assertFalse(assignable(optional(Number), optional(Int)))
 
     def test_some_covariance_preserves_optional_subtype_transitivity(self):
-        some_integer = N(Symbol("Some"), Integer)
+        some_integer = N(Symbol("Some"), Int)
 
-        self.assertTrue(subtype(some_integer, optional(Integer)))
-        self.assertTrue(subtype(optional(Integer), optional(Number)))
+        self.assertTrue(subtype(some_integer, optional(Int)))
+        self.assertTrue(subtype(optional(Int), optional(Number)))
         self.assertTrue(subtype(some_integer, optional(Number)))
         self.assertTrue(subtype(some_integer, N(Symbol("Some"), Number)))
 
     def test_merge_none_with_explicit_some_does_not_double_wrap(self):
-        some_integer = N(Symbol("Some"), Integer)
+        some_integer = N(Symbol("Some"), Int)
 
-        self.assertEqual(merge_types(NoneType(), some_integer), optional(Integer))
-        self.assertEqual(merge_types(some_integer, NoneType()), optional(Integer))
+        self.assertEqual(merge_types(NoneType(), some_integer), optional(Int))
+        self.assertEqual(merge_types(some_integer, NoneType()), optional(Int))
         self.assertEqual(
             merge_types(optional(Number), some_integer),
             optional(Number),
         )
 
     def test_tagged_unions_and_intersections_decompose_before_tag_checks(self):
-        tagged_integer = Tagged(Integer, "x")
+        tagged_integer = Tagged(Int, "x")
         tagged_number = Tagged(Number, "x")
         tagged_real = Tagged(Real, "x")
         source_intersection = I(tagged_integer, Tagged(Number, "y"))
@@ -143,12 +143,12 @@ class TypeLibraryTests(unittest.TestCase):
         ctx = Context()
         ctx.define_tag("km", TagKind.UNIT)
         ctx.define_tag("sec", TagKind.UNIT)
-        seconds = Tagged(Integer, "sec")
-        not_kilometres = Tagged(Integer, DataTag("km", absent=True))
+        seconds = Tagged(Int, "sec")
+        not_kilometres = Tagged(Int, DataTag("km", absent=True))
 
         self.assertFalse(subtype(seconds, not_kilometres, ctx))
         self.assertFalse(assignable(seconds, not_kilometres, ctx))
-        self.assertFalse(subtype(seconds, Integer, ctx))
+        self.assertFalse(subtype(seconds, Int, ctx))
         self.assertTrue(
             subtype(seconds, Tagged(Number, DataTag("sec")), ctx)
         )
@@ -156,27 +156,27 @@ class TypeLibraryTests(unittest.TestCase):
     def test_contextual_branch_merges_preserve_unit_tags(self):
         ctx = Context()
         ctx.define_tag("km", TagKind.UNIT)
-        kilometres = Tagged(Integer, "km")
+        kilometres = Tagged(Int, "km")
 
-        merged = merge_types(Integer, kilometres, ctx)
+        merged = merge_types(Int, kilometres, ctx)
         merged_stack = merge_stacks(
-            TypeStack((Integer,)),
+            TypeStack((Int,)),
             TypeStack((kilometres,)),
             ctx,
         )
 
-        self.assertEqual(merged, U(Integer, kilometres))
-        self.assertEqual(merged_stack, TypeStack((U(Integer, kilometres),)))
-        self.assertTrue(assignable(Integer, merged, ctx))
+        self.assertEqual(merged, U(Int, kilometres))
+        self.assertEqual(merged_stack, TypeStack((U(Int, kilometres),)))
+        self.assertTrue(assignable(Int, merged, ctx))
         self.assertTrue(assignable(kilometres, merged, ctx))
 
     def test_numeric_intersections_remove_redundant_supertypes(self):
-        self.assertEqual(I(Integer, Real), Integer)
-        self.assertEqual(I(Integer, Number), Integer)
+        self.assertEqual(I(Int, Real), Int)
+        self.assertEqual(I(Int, Number), Int)
         self.assertEqual(I(Real, Number), Real)
 
     def test_bottom_intersections_preserve_subtype_transitivity(self):
-        source = I(Never(), Integer)
+        source = I(Never(), Int)
         target = Tagged(String, DataTag("required"))
 
         self.assertTrue(subtype(source, Never()))
@@ -184,8 +184,8 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertTrue(subtype(source, target))
 
     def test_merge_is_canonical_for_mutually_assignable_refinements(self):
-        plain = Tup(Integer, Integer)
-        refined = Tup(WithoutTag(Integer, "x"), WithoutTag(Integer, "x"))
+        plain = Tup(Int, Int)
+        refined = Tup(WithoutTag(Int, "x"), WithoutTag(Int, "x"))
 
         self.assertTrue(assignable(plain, refined))
         self.assertTrue(assignable(refined, plain))
@@ -193,17 +193,17 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(merge_types(refined, plain), plain)
 
     def test_branch_type_merging_is_commutative_and_associative(self):
-        values = (Integer, String, NoneType())
+        values = (Int, String, NoneType())
         merged = {
             normalize(merge_types(merge_types(first, second), third))
             for first, second, third in permutations(values)
         }
 
-        self.assertEqual(merged, {optional(U(Integer, String))})
+        self.assertEqual(merged, {optional(U(Int, String))})
 
     def test_branch_stack_merging_is_independent_of_branch_order(self):
         branches = (
-            TypeStack((Integer,)),
+            TypeStack((Int,)),
             TypeStack((String,)),
             TypeStack(()),
         )
@@ -212,10 +212,10 @@ class TypeLibraryTests(unittest.TestCase):
             for first, second, third in permutations(branches)
         }
 
-        self.assertEqual(merged, {TypeStack((optional(U(Integer, String)),))})
+        self.assertEqual(merged, {TypeStack((optional(U(Int, String)),))})
 
     def test_generic_evidence_combination_is_permutation_invariant(self):
-        evidence = (NoneType(), Integer, optional(Integer))
+        evidence = (NoneType(), Int, optional(Int))
         overload = Overload((V("T"), V("T"), V("T")), (V("T"),))
 
         results = []
@@ -225,7 +225,7 @@ class TypeLibraryTests(unittest.TestCase):
             results.append(applied.substitution["T"])
 
         self.assertTrue(
-            all(normalize(result) == optional(Integer) for result in results)
+            all(normalize(result) == optional(Int) for result in results)
         )
 
     def test_symbols_have_value_equality_and_hashing(self):
@@ -240,15 +240,15 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertTrue(compatible(C(ListExactType, Number), Number))
 
     def test_public_subtype_api_checks_nominal_widening(self):
-        self.assertTrue(subtype(Integer, Number))
-        self.assertFalse(subtype(Number, Integer))
+        self.assertTrue(subtype(Int, Number))
+        self.assertFalse(subtype(Number, Int))
 
     def test_minimum_rank_is_parameter_compatible_with_exact_rank(self):
         argument = C(ListMinType, Number)
         parameter = C(ListExactType, Number)
 
         self.assertFalse(assignable(argument, parameter))
-        applied = apply_overload(Overload((parameter,), (Integer,)), (argument,))
+        applied = apply_overload(Overload((parameter,), (Int,)), (argument,))
 
         self.assertIsNotNone(applied)
         self.assertTrue(applied.vectorised)
@@ -256,13 +256,13 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(applied.vectorised_target_ranks, (1,))
         self.assertEqual(
             applied.actual_returns,
-            (U(Integer, C(ListMinType, Integer)),),
+            (U(Int, C(ListMinType, Int)),),
         )
 
     def test_minimum_rank_argument_vectorises_dynamically_to_atomic_parameter(self):
-        argument = C(ListMinType, Integer)
+        argument = C(ListMinType, Int)
 
-        applied = apply_overload(Overload((Integer,), (String,)), (argument,))
+        applied = apply_overload(Overload((Int,), (String,)), (argument,))
 
         self.assertIsNotNone(applied)
         self.assertTrue(applied.vectorised)
@@ -271,9 +271,9 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(applied.actual_returns, (C(ListMinType, String),))
 
     def test_union_vectorisation_records_runtime_target_rank(self):
-        scalar_or_list = U(Integer, C(ListMinType, Integer))
+        scalar_or_list = U(Int, C(ListMinType, Int))
 
-        applied = apply_overload(Overload((Integer,), (String,)), (scalar_or_list,))
+        applied = apply_overload(Overload((Int,), (String,)), (scalar_or_list,))
 
         self.assertIsNotNone(applied)
         self.assertTrue(applied.vectorised)
@@ -282,7 +282,7 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(applied.actual_returns, (U(String, C(ListMinType, String)),))
 
     def test_matching_union_parameter_does_not_trigger_runtime_vectorisation(self):
-        scalar_or_list = U(Integer, C(ListMinType, Integer))
+        scalar_or_list = U(Int, C(ListMinType, Int))
 
         applied = apply_overload(
             Overload((scalar_or_list,), (String,)),
@@ -297,20 +297,20 @@ class TypeLibraryTests(unittest.TestCase):
 
     def test_higher_minimum_rank_preserves_minimum_vectorised_result_rank(self):
         applied = apply_overload(
-            Overload((C(ListExactType, Number),), (Integer,)),
+            Overload((C(ListExactType, Number),), (Int,)),
             (C(ListMinType, Number, 3),),
         )
 
         self.assertIsNotNone(applied)
         self.assertEqual(applied.vectorised_depths, (2,))
         self.assertEqual(applied.vectorised_target_ranks, (1,))
-        self.assertEqual(applied.actual_returns, (C(ListMinType, Integer, 2),))
+        self.assertEqual(applied.actual_returns, (C(ListMinType, Int, 2),))
 
     def test_numeric_nominal_hierarchy_is_integer_real_number(self):
-        self.assertTrue(assignable(Integer, Real))
-        self.assertTrue(assignable(Integer, Number))
+        self.assertTrue(assignable(Int, Real))
+        self.assertTrue(assignable(Int, Number))
         self.assertTrue(assignable(Real, Number))
-        self.assertFalse(assignable(Real, Integer))
+        self.assertFalse(assignable(Real, Int))
         self.assertFalse(assignable(Number, Real))
 
     def test_nested_collection_normalization_is_idempotent(self):
@@ -507,14 +507,14 @@ class TypeLibraryTests(unittest.TestCase):
     def test_rugged_generic_solves_from_scalar_leaves(self):
         actual = ExactList(
             U(
-                Integer,
-                ExactList(Integer),
-                ExactList(ExactList(Integer)),
+                Int,
+                ExactList(Int),
+                ExactList(ExactList(Int)),
             )
         )
         constraints = _solve(C(ListRuggedType, V("T")), actual)
         self.assertIsNotNone(constraints)
-        self.assertEqual(_combine_all(constraints["T"]), Integer)
+        self.assertEqual(_combine_all(constraints["T"]), Int)
 
     def test_collection_item_type_peels_one_rank(self):
         self.assertEqual(collection_item_type(C(ListExactType, Number)), Number)
@@ -529,11 +529,11 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertIsNone(collection_item_type(Number))
 
     def test_optional_union_displays_with_question_mark_syntax(self):
-        self.assertEqual(str(optional(Integer)), "Integer?")
-        self.assertEqual(str(optional(U(Integer, String))), "(Integer | String)?")
+        self.assertEqual(str(optional(Int)), "Int?")
+        self.assertEqual(str(optional(U(Int, String))), "(Int | String)?")
         self.assertEqual(
-            str(Fn((optional(Integer),), (optional(String),))),
-            "Function[Integer? -> String?]",
+            str(Fn((optional(Int),), (optional(String),))),
+            "Function[Int? -> String?]",
         )
 
     def test_collection_display_parenthesizes_union_base(self):
@@ -629,7 +629,7 @@ class TypeLibraryTests(unittest.TestCase):
                 Fn(
                     (Number,),
                     (),
-                    (ElementTag(Symbol("Panic"), (Integer,), absent=True),),
+                    (ElementTag(Symbol("Panic"), (Int,), absent=True),),
                 ),
             )
         )
@@ -698,10 +698,10 @@ class TypeLibraryTests(unittest.TestCase):
         inner = V("T", TypeVarId(41, 0))
         pattern = Tup(outer, inner)
 
-        solved = _solve(pattern, Tup(Integer, String))
+        solved = _solve(pattern, Tup(Int, String))
 
         self.assertEqual(solved, {
-            TypeVarId(40, 0): [Integer],
+            TypeVarId(40, 0): [Int],
             TypeVarId(41, 0): [String],
         })
 
@@ -711,10 +711,10 @@ class TypeLibraryTests(unittest.TestCase):
 
         substituted = _substitute(
             Tup(outer, inner),
-            {TypeVarId(50, 0): Integer},
+            {TypeVarId(50, 0): Int},
         )
 
-        self.assertEqual(substituted, Tup(Integer, inner))
+        self.assertEqual(substituted, Tup(Int, inner))
 
     def test_metavariable_has_distinct_refinable_identity(self):
         first = M("@1", MetaVarId(70, 1))
@@ -724,8 +724,8 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertNotEqual(first, second)
         self.assertEqual(str(first), "@1")
         self.assertEqual(
-            _substitute(first, {MetaVarId(70, 1): Integer}),
-            Integer,
+            _substitute(first, {MetaVarId(70, 1): Int}),
+            Int,
         )
 
     def test_rigid_and_meta_variables_with_same_label_do_not_alias(self):
@@ -760,53 +760,53 @@ class TypeLibraryTests(unittest.TestCase):
     def test_generic_parameter_solves_across_every_actual_union_branch(self):
         overload = Overload(
             (WithoutTag(ExactList(V("Item")), "infinite"),),
-            (Integer,),
+            (Int,),
         )
-        actual = U(ExactList(Integer), ExactList(Number))
+        actual = U(ExactList(Int), ExactList(Number))
 
         applied = apply_overload(overload, (actual,))
 
         self.assertIsNotNone(applied)
         self.assertEqual(applied.substitution["Item"], Number)
-        self.assertEqual(applied.actual_returns, (Integer,))
+        self.assertEqual(applied.actual_returns, (Int,))
 
     def test_constructed_tags_are_transparent_to_generic_overload_solving(self):
         overload = Overload(
-            (C(ListExactType, V("Item")), Integer),
+            (C(ListExactType, V("Item")), Int),
             (C(ListExactType, V("Item")),),
         )
-        source = Tagged(C(ListExactType, Integer), DataTag("infinite"))
+        source = Tagged(C(ListExactType, Int), DataTag("infinite"))
 
-        applied = apply_overload(overload, (source, Integer))
+        applied = apply_overload(overload, (source, Int))
 
         self.assertIsNotNone(applied)
-        self.assertEqual(applied.substitution["Item"], Integer)
-        self.assertEqual(applied.params, (C(ListExactType, Integer), Integer))
-        self.assertEqual(applied.actual_returns, (C(ListExactType, Integer),))
+        self.assertEqual(applied.substitution["Item"], Int)
+        self.assertEqual(applied.params, (C(ListExactType, Int), Int))
+        self.assertEqual(applied.actual_returns, (C(ListExactType, Int),))
 
     def test_vectorised_return_lifts_data_tags_to_collection_depth(self):
-        boolean_integer = Tagged(Integer, DataTag("boolean"))
+        boolean_integer = Tagged(Int, DataTag("boolean"))
         applied = apply_overload(
-            Overload((Integer, Integer), (boolean_integer,)),
-            (C(ListExactType, Integer), Integer),
+            Overload((Int, Int), (boolean_integer,)),
+            (C(ListExactType, Int), Int),
         )
         self.assertIsNotNone(applied)
         self.assertEqual(
             applied.actual_returns,
             (
                 Tagged(
-                    C(ListExactType, Integer),
+                    C(ListExactType, Int),
                     DataTag("boolean", depth=1),
                 ),
             ),
         )
 
     def test_union_argument_joins_scalar_and_vectorised_returns(self):
-        scalar_or_list = U(Integer, ExactList(Integer))
+        scalar_or_list = U(Int, ExactList(Int))
 
         applied = apply_overload(
-            Overload((Integer, Integer), (Integer,)),
-            (scalar_or_list, Integer),
+            Overload((Int, Int), (Int,)),
+            (scalar_or_list, Int),
         )
 
         self.assertIsNotNone(applied)
@@ -814,12 +814,12 @@ class TypeLibraryTests(unittest.TestCase):
 
     def test_union_vectorisation_joins_every_rank_combination(self):
         scalar_or_vector = U(
-            Integer,
-            ExactList(Integer),
-            ExactList(Integer, 2),
+            Int,
+            ExactList(Int),
+            ExactList(Int, 2),
         )
         applied = apply_overload(
-            Overload((Integer, Integer), (String,)),
+            Overload((Int, Int), (String,)),
             (scalar_or_vector, scalar_or_vector),
         )
 
@@ -830,8 +830,8 @@ class TypeLibraryTests(unittest.TestCase):
         )
 
     def test_union_vectorisation_preserves_list_and_array_alternatives(self):
-        argument = U(ExactList(Integer), ExactArray(Integer))
-        applied = apply_overload(Overload((Integer,), (String,)), (argument,))
+        argument = U(ExactList(Int), ExactArray(Int))
+        applied = apply_overload(Overload((Int,), (String,)), (argument,))
 
         self.assertIsNotNone(applied)
         self.assertEqual(
@@ -842,9 +842,9 @@ class TypeLibraryTests(unittest.TestCase):
     def test_nested_union_vectorisation_substitutes_every_scalar_leaf(self):
         shape = ExactList(
             U(
-                Integer,
-                ExactList(Integer),
-                ExactList(U(Integer, ExactList(Integer))),
+                Int,
+                ExactList(Int),
+                ExactList(U(Int, ExactList(Int))),
             )
         )
         expected = ExactList(
@@ -854,16 +854,16 @@ class TypeLibraryTests(unittest.TestCase):
                 ExactList(U(String, ExactList(String))),
             )
         )
-        applied = apply_overload(Overload((Integer,), (String,)), (shape,))
+        applied = apply_overload(Overload((Int,), (String,)), (shape,))
 
         self.assertIsNotNone(applied)
         self.assertEqual(applied.actual_returns, (expected,))
 
     def test_vectorised_return_preserves_heterogeneous_collection_shape(self):
-        rugged_shape = ExactList(U(Integer, ExactList(Integer)))
+        rugged_shape = ExactList(U(Int, ExactList(Int)))
 
         applied = apply_overload(
-            Overload((Integer, Integer), (Integer,)),
+            Overload((Int, Int), (Int,)),
             (rugged_shape, rugged_shape),
         )
 
@@ -907,7 +907,7 @@ class TypeLibraryTests(unittest.TestCase):
 
     def test_higher_rugged_rank_satisfies_lower_rugged_rank(self):
         for source_rank in (1, 2, 3):
-            source = C(ListRuggedType, Integer, source_rank)
+            source = C(ListRuggedType, Int, source_rank)
             for target_rank in range(1, source_rank + 1):
                 target = C(ListRuggedType, Number, target_rank)
                 with self.subTest(
@@ -1013,8 +1013,8 @@ class TypeLibraryTests(unittest.TestCase):
     def test_exact_parameter_disables_vectorisation(self):
         overload = Overload((NoVec(Number),), (Number,))
 
-        scalar = apply_overload(overload, (Integer,))
-        vector = apply_overload(overload, (C(ListExactType, Integer),))
+        scalar = apply_overload(overload, (Int,))
+        vector = apply_overload(overload, (C(ListExactType, Int),))
 
         self.assertIsNotNone(scalar)
         self.assertFalse(scalar.vectorised)
@@ -1023,8 +1023,8 @@ class TypeLibraryTests(unittest.TestCase):
     def test_exact_collection_requires_the_declared_rank(self):
         overload = Overload((NoVec(C(ListExactType, Number)),), (Number,))
 
-        matching = apply_overload(overload, (C(ListExactType, Integer),))
-        higher_rank = apply_overload(overload, (C(ListExactType, Integer, 2),))
+        matching = apply_overload(overload, (C(ListExactType, Int),))
+        higher_rank = apply_overload(overload, (C(ListExactType, Int, 2),))
 
         self.assertIsNotNone(matching)
         self.assertFalse(matching.vectorised)
@@ -1033,7 +1033,7 @@ class TypeLibraryTests(unittest.TestCase):
 
     def test_generic_exact_parameter_treats_collection_as_one_value(self):
         overload = Overload((NoVec(V("T")),), (V("T"),))
-        argument = C(ListExactType, Integer)
+        argument = C(ListExactType, Int)
 
         applied = apply_overload(overload, (argument,))
 
@@ -1052,8 +1052,8 @@ class TypeLibraryTests(unittest.TestCase):
         applied = apply_overload(
             overload,
             (
-                C(ListExactType, Integer),
-                C(ListExactType, Integer),
+                C(ListExactType, Int),
+                C(ListExactType, Int),
             ),
         )
 
@@ -1065,16 +1065,16 @@ class TypeLibraryTests(unittest.TestCase):
     def test_atomic_marker_can_supply_the_only_generic_evidence(self):
         applied = apply_overload(
             Overload((Exact(V("T")),), (V("T"),)),
-            (Integer,),
+            (Int,),
         )
 
         self.assertIsNotNone(applied)
-        self.assertEqual(applied.substitution["T"], Integer)
-        self.assertEqual(applied.actual_returns, (Integer,))
+        self.assertEqual(applied.substitution["T"], Int)
+        self.assertEqual(applied.actual_returns, (Int,))
         self.assertIsNone(
             apply_overload(
                 Overload((Exact(V("T")),), (V("T"),)),
-                (C(ListExactType, Integer),),
+                (C(ListExactType, Int),),
             )
         )
 
@@ -1084,21 +1084,21 @@ class TypeLibraryTests(unittest.TestCase):
             (C(ListExactType, V("T")),),
         )
 
-        matching = apply_overload(overload, (C(ListExactType, Integer),))
+        matching = apply_overload(overload, (C(ListExactType, Int),))
 
         self.assertIsNotNone(matching)
-        self.assertEqual(matching.substitution["T"], Integer)
+        self.assertEqual(matching.substitution["T"], Int)
         self.assertEqual(
             matching.actual_returns,
-            (C(ListExactType, Integer),),
+            (C(ListExactType, Int),),
         )
         self.assertIsNone(
-            apply_overload(overload, (C(ListExactType, Integer, 2),))
+            apply_overload(overload, (C(ListExactType, Int, 2),))
         )
         self.assertIsNone(
             apply_overload(
                 overload,
-                (C(ListExactType, C(ListExactType, Integer)),),
+                (C(ListExactType, C(ListExactType, Int)),),
             )
         )
 
@@ -1108,10 +1108,10 @@ class TypeLibraryTests(unittest.TestCase):
             (C(ListExactType, V("T")),),
         )
 
-        applied = apply_overload(overload, (ExactArray(Integer),))
+        applied = apply_overload(overload, (ExactArray(Int),))
 
         self.assertIsNotNone(applied)
-        self.assertEqual(applied.substitution["T"], Integer)
+        self.assertEqual(applied.substitution["T"], Int)
         self.assertFalse(applied.vectorised)
 
     def test_atomic_evidence_validates_without_overriding_regular_evidence(self):
@@ -1122,21 +1122,21 @@ class TypeLibraryTests(unittest.TestCase):
 
         applied = apply_overload(
             overload,
-            (C(ListExactType, Integer), Integer),
+            (C(ListExactType, Int), Int),
         )
 
         self.assertIsNotNone(applied)
-        self.assertEqual(applied.substitution["T"], Integer)
+        self.assertEqual(applied.substitution["T"], Int)
         self.assertIsNone(
             apply_overload(
                 overload,
-                (C(ListExactType, Integer), String),
+                (C(ListExactType, Int), String),
             )
         )
         self.assertIsNone(
             apply_overload(
                 overload,
-                (C(ListExactType, Integer, 2), Integer),
+                (C(ListExactType, Int, 2), Int),
             )
         )
 
@@ -1186,7 +1186,7 @@ class TypeLibraryTests(unittest.TestCase):
 
 
     def test_row_width_depth_and_compatibility_laws(self):
-        source = Row(Foo, Field(BAR, Integer), Field(BAZ, String))
+        source = Row(Foo, Field(BAR, Int), Field(BAZ, String))
         wider = Row(Foo, Field(BAR, Number))
         wrong_depth = Row(Foo, Field(BAR, String))
 
@@ -1198,9 +1198,9 @@ class TypeLibraryTests(unittest.TestCase):
 
     def test_row_generic_requires_one_coherent_solution_across_fields(self):
         pattern = Row(V("Base"), Field(BAR, V("T")), Field(BAZ, V("T")))
-        coherent = Row(Foo, Field(BAR, Integer), Field(BAZ, Integer))
-        widenable = Row(Foo, Field(BAR, Integer), Field(BAZ, Real))
-        conflicting = Row(Foo, Field(BAR, String), Field(BAZ, Integer))
+        coherent = Row(Foo, Field(BAR, Int), Field(BAZ, Int))
+        widenable = Row(Foo, Field(BAR, Int), Field(BAZ, Real))
+        conflicting = Row(Foo, Field(BAR, String), Field(BAZ, Int))
 
         self.assertIsNotNone(_solve(pattern, coherent))
         solved = _solve(pattern, widenable)
@@ -1209,7 +1209,7 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertTrue(
             same(
                 _combine_all(_solve(pattern, conflicting)["T"]),
-                U(Integer, String),
+                U(Int, String),
             )
         )
         self.assertTrue(compatible(conflicting, pattern))
@@ -1218,7 +1218,7 @@ class TypeLibraryTests(unittest.TestCase):
         ctx = Context()
         box = Symbol("Box")
         ctx.set_generic_variance(box, (Variance.COVARIANT,))
-        source = N(box, Row(Foo, Field(BAR, Integer), Field(BAZ, String)))
+        source = N(box, Row(Foo, Field(BAR, Int), Field(BAZ, String)))
         target = N(box, Row(Foo, Field(BAR, Number)))
 
         self.assertTrue(assignable(source, target, ctx))
@@ -1229,8 +1229,8 @@ class TypeLibraryTests(unittest.TestCase):
         ctx = Context()
         plus = Symbol("plus")
         times = Symbol("times")
-        ctx.define_structural_overload(plus, Overload((Integer, Integer), (Integer,)))
-        ctx.define_structural_overload(times, Overload((Integer, Integer), (String,)))
+        ctx.define_structural_overload(plus, Overload((Int, Int), (Int,)))
+        ctx.define_structural_overload(times, Overload((Int, Int), (String,)))
         trait = AnonymousTrait(
             (Symbol("T"),),
             (
@@ -1239,13 +1239,13 @@ class TypeLibraryTests(unittest.TestCase):
             ),
         )
 
-        self.assertFalse(assignable(Integer, trait, ctx))
-        self.assertFalse(compatible(Integer, trait, ctx))
+        self.assertFalse(assignable(Int, trait, ctx))
+        self.assertFalse(compatible(Int, trait, ctx))
 
     def test_anonymous_trait_alpha_renaming_is_semantics_preserving(self):
         ctx = Context()
         combine = Symbol("combine")
-        ctx.define_structural_overload(combine, Overload((Integer, Integer), (Integer,)))
+        ctx.define_structural_overload(combine, Overload((Int, Int), (Int,)))
         left = AnonymousTrait(
             (Symbol("T"),),
             (AnonymousTraitRequirement(combine, Overload((V("T"), V("T")), (V("T"),))),),
@@ -1255,17 +1255,17 @@ class TypeLibraryTests(unittest.TestCase):
             (AnonymousTraitRequirement(combine, Overload((V("@17"), V("@17")), (V("@17"),))),),
         )
 
-        self.assertEqual(assignable(Integer, left, ctx), assignable(Integer, right, ctx))
-        self.assertEqual(compatible(Integer, left, ctx), compatible(Integer, right, ctx))
+        self.assertEqual(assignable(Int, left, ctx), assignable(Int, right, ctx))
+        self.assertEqual(compatible(Int, left, ctx), compatible(Int, right, ctx))
 
     def test_anonymous_generic_scopes_do_not_capture_named_generic(self):
         pattern = Tup(Row(V("T"), Field(BAR, V("@1"))), V("T"))
-        actual = Tup(Row(Foo, Field(BAR, Integer)), Foo)
+        actual = Tup(Row(Foo, Field(BAR, Int)), Foo)
         solved = _solve(pattern, actual)
 
         self.assertIsNotNone(solved)
         self.assertEqual(_combine_all(solved["T"]), Foo)
-        self.assertEqual(_combine_all(solved["@1"]), Integer)
+        self.assertEqual(_combine_all(solved["@1"]), Int)
 
     def test_optional_none_does_not_solve_type_var(self):
         constraints = _solve(optional(V("T")), NoneType())
@@ -1343,7 +1343,7 @@ class TypeLibraryTests(unittest.TestCase):
     def test_try_apply_overload_reports_structured_mismatch(self):
         overload = Overload((Number,), (Number,))
 
-        accepted = try_apply_overload(overload, (Integer,))
+        accepted = try_apply_overload(overload, (Int,))
         self.assertIsNotNone(accepted.applied)
         self.assertIsNone(accepted.mismatch)
 
@@ -1427,57 +1427,57 @@ class TypeLibraryTests(unittest.TestCase):
 
     def test_overload_set_can_cover_each_union_function_input_branch(self):
         overloaded = Overloads(
-            Overload((Integer,), (Integer,)),
+            Overload((Int,), (Int,)),
             Overload((String,), (String,)),
         )
-        expected = Fn((U(Integer, String),), (TypeVariable("Mapped"),))
+        expected = Fn((U(Int, String),), (TypeVariable("Mapped"),))
 
         solved = _solve(expected, overloaded)
 
-        self.assertEqual(solved, {"Mapped": [U(Integer, String)]})
+        self.assertEqual(solved, {"Mapped": [U(Int, String)]})
         self.assertTrue(
             compatible(
                 overloaded,
-                Fn((U(Integer, String),), (U(Integer, String),)),
+                Fn((U(Int, String),), (U(Int, String),)),
             )
         )
 
     def test_union_function_coverage_requires_every_branch(self):
-        overloaded = Overloads(Overload((Integer,), (Integer,)))
+        overloaded = Overloads(Overload((Int,), (Int,)))
 
         self.assertFalse(
             compatible(
                 overloaded,
-                Fn((U(Integer, String),), (U(Integer, String),)),
+                Fn((U(Int, String),), (U(Int, String),)),
             )
         )
 
     def test_union_function_coverage_requires_unambiguous_branches(self):
         overloaded = Overloads(
-            Overload((Integer,), (Integer,)),
-            Overload((Integer,), (String,)),
+            Overload((Int,), (Int,)),
+            Overload((Int,), (String,)),
             Overload((String,), (String,)),
         )
 
         self.assertFalse(
             compatible(
                 overloaded,
-                Fn((U(Integer, String),), (U(Integer, String),)),
+                Fn((U(Int, String),), (U(Int, String),)),
             )
         )
 
     def test_union_function_coverage_rejects_overlapping_tag_dispatch(self):
-        left = Tagged(Integer, DataTag(Symbol("left")))
-        right = Tagged(Integer, DataTag(Symbol("right")))
+        left = Tagged(Int, DataTag(Symbol("left")))
+        right = Tagged(Int, DataTag(Symbol("right")))
         overloaded = Overloads(
-            Overload((left,), (Integer,)),
+            Overload((left,), (Int,)),
             Overload((right,), (String,)),
         )
 
         self.assertFalse(
             compatible(
                 overloaded,
-                Fn((U(left, right),), (U(Integer, String),)),
+                Fn((U(left, right),), (U(Int, String),)),
             )
         )
 
@@ -1486,31 +1486,31 @@ class TypeLibraryTests(unittest.TestCase):
         ctx.define_tag("left", TagKind.COMPUTED)
         ctx.define_tag("right", TagKind.COMPUTED)
         ctx.add_disjoint_tags("left", "right")
-        left = Tagged(Integer, DataTag("left"))
-        right = Tagged(Integer, DataTag("right"))
+        left = Tagged(Int, DataTag("left"))
+        right = Tagged(Int, DataTag("right"))
         overloaded = Overloads(
-            Overload((left,), (Integer,)),
+            Overload((left,), (Int,)),
             Overload((right,), (String,)),
         )
 
         self.assertTrue(
             compatible(
                 overloaded,
-                Fn((U(left, right),), (U(Integer, String),)),
+                Fn((U(left, right),), (U(Int, String),)),
                 ctx,
             )
         )
 
     def test_union_function_coverage_accepts_broad_non_union_inputs(self):
         overloaded = Overloads(
-            Overload((Integer, Number), (Number,)),
+            Overload((Int, Number), (Number,)),
             Overload((String, Number), (Number,)),
         )
 
         self.assertTrue(
             compatible(
                 overloaded,
-                Fn((U(Integer, String), Number), (Number,)),
+                Fn((U(Int, String), Number), (Number,)),
             )
         )
 
@@ -1523,7 +1523,7 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertTrue(
             compatible(
                 overloaded,
-                Fn((U(Integer, String),), (U(Number, String),)),
+                Fn((U(Int, String),), (U(Number, String),)),
             )
         )
 
@@ -1535,12 +1535,12 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertIs(result.overload, concrete)
 
     def test_concrete_exact_overload_beats_exact_generic_equivalent(self):
-        concrete = Overload((Integer,), (String,))
+        concrete = Overload((Int,), (String,))
         generic = Overload((V("T"),), (Number,))
 
-        concrete_applied = apply_overload(concrete, (Integer,))
-        generic_applied = apply_overload(generic, (Integer,))
-        result = resolve_overload_result((generic, concrete), (Integer,))
+        concrete_applied = apply_overload(concrete, (Int,))
+        generic_applied = apply_overload(generic, (Int,))
+        result = resolve_overload_result((generic, concrete), (Int,))
 
         self.assertEqual(concrete_applied.scores, (Specificity.EXACT,))
         self.assertEqual(
@@ -1573,28 +1573,28 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertIs(result.overload, direct)
 
     def test_numeric_tower_specificity_selects_narrowest_overload(self):
-        integer = Overload((Integer, Integer), (Integer,))
+        integer = Overload((Int, Int), (Int,))
         real = Overload((Real, Real), (Real,))
         number = Overload((Number, Number), (Number,))
 
-        result = resolve_overload_result((number, real, integer), (Integer, Integer))
+        result = resolve_overload_result((number, real, integer), (Int, Int))
 
         self.assertIsNotNone(result)
         self.assertIs(result.overload, integer)
 
     def test_vectorised_numeric_specificity_selects_narrowest_overload(self):
-        integer = Overload((Integer, Integer), (Integer,))
+        integer = Overload((Int, Int), (Int,))
         real = Overload((Real, Real), (Real,))
         number = Overload((Number, Number), (Number,))
 
         applied = apply_overloads_to_stack(
             (number, real, integer),
-            TypeStack((C(ListExactType, Integer), C(ListExactType, Integer))),
+            TypeStack((C(ListExactType, Int), C(ListExactType, Int))),
         )
 
         self.assertIsNotNone(applied)
         self.assertIs(applied.overload, integer)
-        self.assertEqual(applied.stack, TypeStack((C(ListExactType, Integer),)))
+        self.assertEqual(applied.stack, TypeStack((C(ListExactType, Int),)))
 
     def test_cross_specificity_is_ambiguous(self):
         left = Overload((Number, U(Number, String)), (Number,))
@@ -1645,22 +1645,22 @@ class TypeLibraryTests(unittest.TestCase):
 
     def test_generic_lower_bounds_form_reduced_union_when_unrelated(self):
         choose = Overload((V("T"), V("T")), (V("T"),))
-        applied = apply_overload(choose, (Integer, String))
+        applied = apply_overload(choose, (Int, String))
         self.assertIsNotNone(applied)
-        self.assertTrue(same(applied.substitution["T"], U(Integer, String)))
-        self.assertTrue(same(applied.returns[0], U(Integer, String)))
+        self.assertTrue(same(applied.substitution["T"], U(Int, String)))
+        self.assertTrue(same(applied.returns[0], U(Int, String)))
 
     def test_generic_numeric_lower_bounds_choose_real_for_integer_and_real(self):
         choose = Overload((V("T"), V("T")), (V("T"),))
-        applied = apply_overload(choose, (Integer, Real))
+        applied = apply_overload(choose, (Int, Real))
         self.assertIsNotNone(applied)
         self.assertTrue(same(applied.substitution["T"], Real))
         self.assertEqual(applied.returns, (Real,))
 
     def test_generic_lower_bound_union_is_order_independent(self):
         choose = Overload((V("T"), V("T")), (V("T"),))
-        forward = apply_overload(choose, (Integer, String))
-        reverse = apply_overload(choose, (String, Integer))
+        forward = apply_overload(choose, (Int, String))
+        reverse = apply_overload(choose, (String, Int))
         self.assertIsNotNone(forward)
         self.assertIsNotNone(reverse)
         self.assertTrue(same(forward.substitution["T"], reverse.substitution["T"]))
@@ -1679,9 +1679,9 @@ class InlineTraitElementTagConformanceTests(unittest.TestCase):
         ctx = Context()
         ctx.define_structural_overload(
             name,
-            Overload((Integer,), (Number,), element_tags=frozenset({panic})),
+            Overload((Int,), (Number,), element_tags=frozenset({panic})),
         )
-        self.assertFalse(assignable(Integer, trait, ctx))
+        self.assertFalse(assignable(Int, trait, ctx))
 
         exact = AnonymousTrait(
             (Symbol("T"),),
@@ -1696,7 +1696,7 @@ class InlineTraitElementTagConformanceTests(unittest.TestCase):
                 ),
             ),
         )
-        self.assertTrue(assignable(Integer, exact, ctx))
+        self.assertTrue(assignable(Int, exact, ctx))
 
 
 if __name__ == "__main__":

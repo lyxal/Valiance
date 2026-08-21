@@ -1,2 +1,2 @@
-$task = fn -> Integer => 40 2 + end | spawn
+$task = fn -> Int => 40 2 + end | spawn
 $task wait

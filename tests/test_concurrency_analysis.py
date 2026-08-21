@@ -3,7 +3,7 @@ import unittest
 from valiance.analysis import Analyser
 from valiance.asts import TypedConcurrentNode
 from valiance.parsing import parse
-from valiance.vtypes import Integer
+from valiance.vtypes import Int
 
 
 def analyse(source: str):
@@ -16,23 +16,23 @@ class ConcurrentAnalysisTests(unittest.TestCase):
     def test_explicit_parameters_consume_inputs_and_restore_outputs(self):
         analyser, typed = analyse(
             """10
-concurrent (value: Integer) -> Integer =>
+concurrent (value: Int) -> Int =>
   $value
 end"""
         )
         self.assertEqual(analyser.diagnostics, [])
         block = typed[-1]
         self.assertIsInstance(block, TypedConcurrentNode)
-        self.assertEqual(block.input_stack, (Integer,))
-        self.assertEqual(block.output_stack, (Integer,))
+        self.assertEqual(block.input_stack, (Int,))
+        self.assertEqual(block.output_stack, (Int,))
 
     def test_inferred_inputs_use_closed_body_contract(self):
         analyser, typed = analyse("10 concurrent => 1 + end")
         self.assertEqual(analyser.diagnostics, [])
         block = typed[-1]
         self.assertIsInstance(block, TypedConcurrentNode)
-        self.assertEqual(block.input_stack, (Integer,))
-        self.assertEqual(block.output_stack, (Integer,))
+        self.assertEqual(block.input_stack, (Int,))
+        self.assertEqual(block.output_stack, (Int,))
 
     def test_direct_outer_capture_is_rejected_with_help(self):
         analyser, _ = analyse(
@@ -46,8 +46,8 @@ end"""
     def test_closure_is_one_composite_stack_input(self):
         analyser, typed = analyse(
             """$value = 10
-fn -> Integer => $value end
-concurrent (operation: Function[-> Integer]) -> Function[-> Integer] =>
+fn -> Int => $value end
+concurrent (operation: Function[-> Int]) -> Function[-> Int] =>
   $operation
 end"""
         )
@@ -55,7 +55,7 @@ end"""
         self.assertIsInstance(typed[-1], TypedConcurrentNode)
 
     def test_wrong_explicit_input_type_is_rejected(self):
-        analyser, _ = analyse('"text" concurrent (value: Integer) => $value end')
+        analyser, _ = analyse('"text" concurrent (value: Int) => $value end')
         self.assertTrue(any("input type mismatch" in item for item in analyser.diagnostics))
 
 

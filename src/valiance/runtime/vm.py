@@ -5582,7 +5582,7 @@ def _panic_matches(value: Any, type_name: str) -> bool:
         return value.type_name == type_name
     if type_name == "String":
         return isinstance(value, str)
-    if type_name == "Integer":
+    if type_name == "Int":
         return isinstance(value, RuntimeNumber) and value == value.to_integral_value()
     if type_name == "Real":
         return isinstance(value, RuntimeNumber)
@@ -5742,7 +5742,7 @@ def _runtime_value_pattern(value: Any) -> RuntimeTypePattern | None:
             variances=variances,
         )
     if isinstance(value, RuntimeNumber):
-        name = "Integer" if value == value.to_integral_value() else "Real"
+        name = "Int" if value == value.to_integral_value() else "Real"
         return RuntimeTypePattern("nominal", name=name, accepted_names=(name,))
     if isinstance(value, str):
         return RuntimeTypePattern("nominal", name="String", accepted_names=("String",))
@@ -5827,8 +5827,8 @@ def _parse_runtime_type_pattern(
         accepted, variance_markers = _runtime_type_fact(text, type_facts)
         if not accepted:
             accepted = {
-                "Number": ("Integer", "Real", "Number"),
-                "Real": ("Integer", "Real"),
+                "Number": ("Int", "Real", "Number"),
+                "Real": ("Int", "Real"),
             }.get(text, (text,))
         return RuntimeTypePattern(
             "nominal",
@@ -5953,7 +5953,7 @@ def _runtime_type_name(value: Any) -> str | None:
         return f"{value.type_name}[{', '.join(value.type_args)}]"
     if isinstance(value, RuntimeNumber):
         if value == value.to_integral_value():
-            return "Integer"
+            return "Int"
         return "Real"
     if isinstance(value, str):
         return "String"
@@ -7057,7 +7057,7 @@ def _truthy(value: Any) -> bool:
 def _matches_type_pattern(value: Any, pattern: str) -> bool:
     """Return whether the value matches type pattern."""
     value = unwrap_runtime_value(value)
-    if pattern == "Integer":
+    if pattern == "Int":
         return isinstance(value, RuntimeNumber) and value == value.to_integral_value()
     if pattern == "Real":
         return isinstance(value, RuntimeNumber)
@@ -7634,7 +7634,7 @@ def _selection_identity(value: Any) -> Any:
 
 
 def _sequence_selection_positions(receiver: Any, selector: Any) -> list[Any]:
-    """Resolve an Integer+ or Integer++ selector through index-path semantics."""
+    """Resolve an Int+ or Int++ selector through index-path semantics."""
     requested = list(selector)
     if isinstance(receiver, dict):
         for key in requested:
@@ -8773,7 +8773,7 @@ def _runtime_type_name(value: Any) -> str:
     """Return the canonical name for runtime type during VM execution."""
     value = unwrap_runtime_value(value)
     if isinstance(value, RuntimeNumber):
-        return "Integer" if value == value.to_integral_value() else "Real"
+        return "Int" if value == value.to_integral_value() else "Real"
     if isinstance(value, str):
         return "String"
     if isinstance(value, list):

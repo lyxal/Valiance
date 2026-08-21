@@ -434,13 +434,13 @@ of candidate types; each occurrence describes a flow relationship:
 The relation layer represents these observations per variable as lower and
 upper evidence. Lower evidence is joined with the existing order-independent
 `_combine_all(...)` rules. This preserves established behaviour such as
-`Integer` plus `Number` solving to `Number`, along with the existing exact,
+`Int` plus `Number` solving to `Number`, along with the existing exact,
 minimum-rank, rugged, array, optional, `Result`, row, and tag-aware joins.
 If no existing or structural common supertype represents all lower evidence,
-the lower join becomes a reduced union. For example, `Integer` and `String`
-solve a shared covariant `T` as `Integer | String`. Redundant union members are
-removed by assignability, so `Integer` and `Real` solve to `Real`, following the
-numeric hierarchy `Integer <: Real <: Number`.
+the lower join becomes a reduced union. For example, `Int` and `String`
+solve a shared covariant `T` as `Int | String`. Redundant union members are
+removed by assignability, so `Int` and `Real` solve to `Real`, following the
+numeric hierarchy `Int <: Real <: Number`.
 
 Upper evidence is met. If one existing type satisfies every upper requirement,
 that narrowest existing type is used. Otherwise the requirements are represented
@@ -463,12 +463,12 @@ Covariant value arguments therefore support heterogeneous generic calls:
 
 ```valiance
 define[T] choose(left: T, right: T) => $left
-choose(1, "hello")  # T = Integer | String
+choose(1, "hello")  # T = Int | String
 choose(1, 2.5)      # T = Real
 ```
 
 Literal typing happens before generic joining. Integral literals contribute
-`Integer`, decimal literals contribute `Real`, and genuinely complex literals
+`Int`, decimal literals contribute `Real`, and genuinely complex literals
 contribute `Number`; zero imaginary components retain their normalized real or
 integer type.
 
@@ -476,11 +476,11 @@ When both directions are present, the joined lower bound is preferred when it
 satisfies the upper meet:
 
 ```text
-Integer <: T
+Int <: T
 T <: Number
 ```
 
-solves to `Integer`. A lower join outside the upper meet rejects the overload
+solves to `Int`. A lower join outside the upper meet rejects the overload
 candidate.
 
 Higher-order parameters are where this distinction matters most. Given:
@@ -495,7 +495,7 @@ contributes another lower bound, and the folder input contributes an upper
 bound. For example:
 
 ```text
-{Integer, #boolean Integer} <: Accumulator
+{Int, #boolean Int} <: Accumulator
 {Number, #boolean Number}  <: Accumulator
 Accumulator <: {Number, #boolean Number}
 ```
@@ -721,7 +721,7 @@ Function[Number exact -> Number]
 
 An exact parameter accepts values assignable to its inner type but never uses
 vectorisation to make a higher-ranked argument fit. Thus `Number exact` accepts
-`Integer` but rejects `Integer+`, while `Number+ exact` accepts a rank-1 number
+`Int` but rejects `Int+`, while `Number+ exact` accepts a rank-1 number
 list and rejects rank 2. Generic `T exact` may bind `T` to a collection type;
 the collection is then treated as one argument value rather than a
 vectorisation target.

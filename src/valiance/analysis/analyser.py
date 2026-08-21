@@ -970,7 +970,7 @@ class Analyser:
             channel_type = T.N(Symbol("Channel"), item_type)
             has_capacity = False
             remaining = branch
-            if branch.stack and T.assignable(branch.stack[-1], T.Integer, self.env.context):
+            if branch.stack and T.assignable(branch.stack[-1], T.Int, self.env.context):
                 has_capacity = True
                 remaining = branch.pop()
             typed = TypedChannelNode(

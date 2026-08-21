@@ -11,7 +11,7 @@ from valiance.vtypes import (
     Fn,
     GenericConstraint,
     I,
-    Integer,
+    Int,
     N,
     Number,
     Overload,
@@ -127,7 +127,7 @@ class RowPolymorphismTests(unittest.TestCase):
         )
         actual = Row(
             Foo,
-            Field(FIRST, Integer),
+            Field(FIRST, Int),
             Field(SECOND, Number),
         )
 
@@ -136,13 +136,13 @@ class RowPolymorphismTests(unittest.TestCase):
         self.assertIsNotNone(constraints)
         solution = _combine_all(constraints["@2"])
         self.assertEqual(solution, Number)
-        self.assertTrue(assignable(Integer, solution))
+        self.assertTrue(assignable(Int, solution))
         self.assertTrue(assignable(Number, solution))
 
     def test_generic_row_solving_accepts_concrete_depth_subtypes(self):
         ctx = Context(trait_impls={CAR: {VEHICLE}})
         pattern = Row(V("T"), Field(VALUE, Number))
-        actual = Row(Car, Field(VALUE, Integer))
+        actual = Row(Car, Field(VALUE, Int))
 
         constraints = _solve(pattern, actual, ctx)
 
@@ -173,7 +173,7 @@ class RowPolymorphismTests(unittest.TestCase):
         self.assertTrue(same(applied.substitution["@2"], U(Number, String)))
 
     def test_row_fields_support_union_optional_and_intersection_targets(self):
-        source = Row(Foo, Field(VALUE, Integer))
+        source = Row(Foo, Field(VALUE, Int))
 
         self.assertTrue(
             assignable(source, Row(Foo, Field(VALUE, U(Number, String))))
@@ -186,7 +186,7 @@ class RowPolymorphismTests(unittest.TestCase):
         )
 
     def test_row_branch_merging_uses_common_structural_supertype(self):
-        narrow = Row(Foo, Field(NAME, String), Field(AGE, Integer))
+        narrow = Row(Foo, Field(NAME, String), Field(AGE, Int))
         broad = Row(Foo, Field(NAME, String))
         incompatible = Row(Foo, Field(NAME, Number))
 
@@ -273,24 +273,24 @@ class AnonymousTraitTests(unittest.TestCase):
             (requirement(MAP, (V("T"),), (Number,)),),
         )
         ctx = Context()
-        ctx.define_structural_overload(MAP, Overload((Number,), (Integer,)))
+        ctx.define_structural_overload(MAP, Overload((Number,), (Int,)))
 
-        self.assertTrue(assignable(Integer, trait, ctx))
-        self.assertTrue(subtype(Integer, trait, ctx))
-        self.assertTrue(compatible(Integer, trait, ctx))
+        self.assertTrue(assignable(Int, trait, ctx))
+        self.assertTrue(subtype(Int, trait, ctx))
+        self.assertTrue(compatible(Int, trait, ctx))
 
     def test_requirement_rejects_narrow_parameter_or_broad_return(self):
         trait = AnonymousTrait(
             (Symbol("T"),),
-            (requirement(MAP, (V("T"),), (Integer,)),),
+            (requirement(MAP, (V("T"),), (Int,)),),
         )
         narrow_param = Context()
-        narrow_param.define_structural_overload(MAP, Overload((Integer,), (Integer,)))
+        narrow_param.define_structural_overload(MAP, Overload((Int,), (Int,)))
         broad_return = Context()
         broad_return.define_structural_overload(MAP, Overload((Number,), (Number,)))
 
         self.assertFalse(assignable(Number, trait, narrow_param))
-        self.assertFalse(assignable(Integer, trait, broad_return))
+        self.assertFalse(assignable(Int, trait, broad_return))
 
     def test_shared_generic_requirements_use_one_coherent_substitution(self):
         trait = AnonymousTrait(
@@ -350,7 +350,7 @@ class AnonymousTraitTests(unittest.TestCase):
         trait = unary_trait()
         overload = Overload((trait,), (V("U"),))
         ctx = Context()
-        ctx.define_structural_overload(READ, Overload((Foo,), (Integer,)))
+        ctx.define_structural_overload(READ, Overload((Foo,), (Int,)))
         ctx.define_structural_overload(READ, Overload((Foo,), (Number,)))
 
         applied = apply_overload(overload, (Foo,), ctx)
@@ -732,7 +732,7 @@ class AnonymousGenericIntegrationTests(unittest.TestCase):
     def test_shared_anonymous_generic_enforces_one_solution(self):
         overload = Overload((V("@1"), V("@1")), (V("@1"),))
 
-        accepted = apply_overload(overload, (Integer, Number))
+        accepted = apply_overload(overload, (Int, Number))
         rejected = apply_overload(overload, (String, Number))
 
         self.assertIsNotNone(accepted)

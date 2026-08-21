@@ -126,11 +126,11 @@ class VmRegistrationRollbackTests(unittest.TestCase):
 
     def test_blocking_source_send_reports_rollback(self):
         with self.assertRaisesRegex(Exception, "registration was cancelled"):
-            self.execute_with_vm("$c = Channel[Integer]\n$c 1 send")
+            self.execute_with_vm("$c = Channel[Int]\n$c 1 send")
 
     def test_blocking_source_receive_reports_rollback(self):
         with self.assertRaisesRegex(Exception, "registration was cancelled"):
-            self.execute_with_vm("$c = Channel[Integer]\n$c receive")
+            self.execute_with_vm("$c = Channel[Int]\n$c receive")
 
 
 if __name__ == "__main__":

@@ -186,7 +186,7 @@ class ProgramTests(unittest.TestCase):
 
     def test_map_double_inferred_return_lambda(self):
         result = execute("""
-            [1, 2, 3, 4] map fn (:Integer) => * 2
+            [1, 2, 3, 4] map fn (:Int) => * 2
         """)
         self.assertEqual(
             result,
@@ -202,7 +202,7 @@ class ProgramTests(unittest.TestCase):
 
     def test_map_double_fully_typed_lambda(self):
         result = execute("""
-            [1, 2, 3, 4] map fn (:Integer) -> Integer => * 2
+            [1, 2, 3, 4] map fn (:Int) -> Int => * 2
         """)
         self.assertEqual(
             result,
@@ -238,14 +238,14 @@ class ProgramTests(unittest.TestCase):
 
     def test_reduce_rejects_empty_list(self):
         with self.assertRaisesRegex(Exception, "reduce requires a non-empty list"):
-            execute("([] as[Integer+]) reduce: +")
+            execute("([] as[Int+]) reduce: +")
 
     def test_fold_uses_explicit_seed_and_accepts_empty_list(self):
         self.assertEqual(execute("[1, 2, 3] 10 fold: +"), [RuntimeNumber("16")])
-        self.assertEqual(execute("([] as[Integer+]) 10 fold: +"), [RuntimeNumber("10")])
+        self.assertEqual(execute("([] as[Int+]) 10 fold: +"), [RuntimeNumber("10")])
 
     def test_fold_supports_distinct_accumulator_and_item_types(self):
-        source = '[1, 2, 3] "" fold fn (text: String, n: Integer) -> String => "$text$n" end'
+        source = '[1, 2, 3] "" fold fn (text: String, n: Int) -> String => "$text$n" end'
         self.assertEqual(execute(source), ["123"])
 
     def test_fold_widens_seed_from_higher_order_accumulator_evidence(self):
@@ -295,7 +295,7 @@ $findFold([4, 7, 9], 5)
     def test_reduce_sum_matrix_inferred_return_lambda(self):
         result = execute("""
             [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
-            reduce fn (:Integer+, :Integer+) => +           
+            reduce fn (:Int+, :Int+) => +           
         """)
         self.assertEqual(
             result, [[RuntimeNumber("12"), RuntimeNumber("15"), RuntimeNumber("18")]]
@@ -304,7 +304,7 @@ $findFold([4, 7, 9], 5)
     def test_reduce_sum_matrix_fully_typed_lambda(self):
         result = execute("""
             [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
-            reduce fn (:Integer+, :Integer+) -> Integer+ => +           
+            reduce fn (:Int+, :Int+) -> Int+ => +           
         """)
         self.assertEqual(
             result, [[RuntimeNumber("12"), RuntimeNumber("15"), RuntimeNumber("18")]]
@@ -375,7 +375,7 @@ $findFold([4, 7, 9], 5)
 
     def test_factorial_recursive_as_a_define(self):
         result = execute("""
-        define factorial(:Integer) -> Integer =>
+        define factorial(:Int) -> Int =>
             match =>
                 0 => 1
                 _ => factorial(- 1) *
@@ -387,7 +387,7 @@ $findFold([4, 7, 9], 5)
 
     def test_factorial_recursive_as_a_lambda(self):
         result = execute("""
-        $factorial = @recursive fn (n: Integer) -> Integer =>
+        $factorial = @recursive fn (n: Int) -> Int =>
             if ($n == 0) => return 1
             this($n - 1) * $n
         end
@@ -495,7 +495,7 @@ end
 
     def test_caesar_cipher(self):
         source = r"""
-define cipher(plaintext: String, shiftAmount: Integer) =>
+define cipher(plaintext: String, shiftAmount: Int) =>
   import {string}
   string.\Alphabet peek: rotate $shiftAmount
   string.transliterate($plaintext, _, _)
@@ -506,12 +506,12 @@ cipher("ABC XYZ", 3)
 
     def test_run_length_encode_and_decode(self):
         source = r"""
-define encode(:String) -> {Integer, String}+ =>
+define encode(:String) -> {Int, String}+ =>
   groupConsecutive
   map: ({length, first})
 end
 
-define decode(:{Integer, String}+) -> String =>
+define decode(:{Int, String}+) -> String =>
   map: reduce: *
   join ""
 end
@@ -583,7 +583,7 @@ trapezoidal(fn (x: Number) => $x * $x end, 0, 1, 2)
 
     def test_fibonacci_in_three_styles(self):
         source = r"""
-define fibonacci1(n: Integer) =>
+define fibonacci1(n: Int) =>
   if ($n == 0) => 0
   else if ($n == 1) => 1
   else =>
@@ -692,26 +692,26 @@ end
 
 
 BRAINFUCK_INTERPRETER = r"""
-define \TAPE_SIZE -> Integer => 30000
+define \TAPE_SIZE -> Int => 30000
 $tape = [0] overtake \TAPE_SIZE
 
 tag #TapePointer as unit
-define #TapePointer(:Integer) => inRange(0, \TAPE_SIZE)
+define #TapePointer(:Int) => inRange(0, \TAPE_SIZE)
 
-define get(tape: Integer+, ind: #TapePointer Integer) => $tape[#-TapePointer $ind]
-define apply(value: #TapePointer Integer, fn: Function[Integer -> Integer]) =>
+define get(tape: Int+, ind: #TapePointer Int) => $tape[#-TapePointer $ind]
+define apply(value: #TapePointer Int, fn: Function[Int -> Int]) =>
   #-TapePointer $value | #TapePointer $fn()
 end
 
-$tp: #TapePointer Integer = 0
+$tp: #TapePointer Int = 0
 
 $program = input("Enter brainfuck program: ")
 
-$instructions: record(.cmd: String, .jump: Integer)+ = $program map fn (ch) =>
+$instructions: record(.cmd: String, .jump: Int)+ = $program map fn (ch) =>
   record{cmd => $ch, jump => -1}
 end
 
-$stack: Integer+ = []
+$stack: Int+ = []
 
 $instructions foreach (instr, i) =>
   $instr.cmd match =>
@@ -729,7 +729,7 @@ end
 
 if (length $stack != 0) => panic ValueFault("Unmatched [")
 
-$pc: Integer = 0
+$pc: Int = 0
 
 while ($pc < length $instructions) =>
   $instr = $instructions[$pc]

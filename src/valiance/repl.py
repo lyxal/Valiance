@@ -80,7 +80,7 @@ _TYPE_NAMES = frozenset(
         "Any",
         "Boolean",
         "Function",
-        "Integer",
+        "Int",
         "Never",
         "\\None",
         "Number",

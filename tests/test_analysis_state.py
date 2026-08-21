@@ -6,7 +6,7 @@ import unittest
 
 from valiance.analysis import AnalysisBranch, BranchSet, BranchVariables, InputMode
 from valiance.analysis.state import VariableWrite
-from valiance.vtypes import Integer, Number, String
+from valiance.vtypes import Int, Number, String
 from valiance.vtypes.symbols import Symbol
 
 
@@ -16,18 +16,18 @@ class AnalysisStateBoundaryTests(unittest.TestCase):
     def test_branch_stack_transformations_are_immutable(self) -> None:
         """Pushing and popping return new branches without changing the input."""
         branch = AnalysisBranch()
-        pushed = branch.push(Integer, String)
+        pushed = branch.push(Int, String)
         self.assertEqual(tuple(branch.stack), ())
-        self.assertEqual(tuple(pushed.stack), (Integer, String))
-        self.assertEqual(tuple(pushed.pop().stack), (Integer,))
+        self.assertEqual(tuple(pushed.stack), (Int, String))
+        self.assertEqual(tuple(pushed.pop().stack), (Int,))
 
     def test_variable_refinement_is_independent_of_analyser(self) -> None:
         """Variable frames refine matching facts as pure values."""
         name = Symbol("value")
-        written = BranchVariables().write(name, Integer)
+        written = BranchVariables().write(name, Int)
         self.assertIsInstance(written, VariableWrite)
         self.assertIsNotNone(written.variables)
-        refined = written.variables.refine_type(Integer, Number)
+        refined = written.variables.refine_type(Int, Number)
         self.assertEqual(refined.read(name), Number)
         self.assertIsNone(BranchVariables().read(name))
 

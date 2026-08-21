@@ -367,7 +367,7 @@ class TraitImplementationImportTests(unittest.TestCase):
                 root,
                 "import { producers.Box, "
                 "producers.object Box as Producer }\n"
-                "Box(1) as[producers.Producer[Integer]]\n",
+                "Box(1) as[producers.Producer[Int]]\n",
             )
             self.assertEqual(analyser.diagnostics, [])
 
@@ -409,15 +409,15 @@ class TraitImplementationImportTests(unittest.TestCase):
                 "import { first.Box, "
                 "first.object Box as Producer, "
                 "second.object Box as Producer }\n"
-                "Box(1) as[Producer[Integer]]\n",
+                "Box(1) as[Producer[Int]]\n",
             )
             diagnostic = "\n".join(analyser.diagnostics)
             self.assertIn(
-                "ambiguous implementation of Producer[Integer] for Box[Integer]",
+                "ambiguous implementation of Producer[Int] for Box[Int]",
                 diagnostic,
             )
-            self.assertIn("first.Producer[Integer]", diagnostic)
-            self.assertIn("second.Producer[Integer]", diagnostic)
+            self.assertIn("first.Producer[Int]", diagnostic)
+            self.assertIn("second.Producer[Int]", diagnostic)
 
     def test_overlapping_generic_behaviour_sets_can_be_qualified(self):
         with TemporaryDirectory() as tmp:
@@ -434,8 +434,8 @@ class TraitImplementationImportTests(unittest.TestCase):
                 "import { first.Box, "
                 "first.object Box as Producer, "
                 "second.object Box as Producer }\n"
-                "Box(1) as[first.Producer[Integer]]\n"
-                "Box(2) as[second.Producer[Integer]]\n",
+                "Box(1) as[first.Producer[Int]]\n"
+                "Box(2) as[second.Producer[Int]]\n",
             )
             self.assertEqual(analyser.diagnostics, [])
 
@@ -466,7 +466,7 @@ class TraitToTraitImplementationTests(unittest.TestCase):
             analyser = self.analyse(
                 root,
                 "import { formatting.[Printable, Displayable] }\n"
-                "object Document => $id: Integer end\n"
+                "object Document => $id: Int end\n"
                 "object Document as Printable => end\n"
                 "Document(1) as[Displayable]\n",
             )
@@ -484,7 +484,7 @@ class TraitToTraitImplementationTests(unittest.TestCase):
                 root,
                 "import { formatting.[Printable, Displayable, "
                 "trait Printable as Displayable] }\n"
-                "object Document => $id: Integer end\n"
+                "object Document => $id: Int end\n"
                 "object Document as Printable => end\n"
                 "Document(1) as[formatting.Displayable]\n",
             )
@@ -505,7 +505,7 @@ class TraitToTraitImplementationTests(unittest.TestCase):
             analyser = self.analyse(
                 root,
                 "import { chain.[A, B, C] }\n"
-                "object Item => $id: Integer end\n"
+                "object Item => $id: Int end\n"
                 "object Item as A => end\n"
                 "Item(1) as[C]\n",
             )
@@ -521,7 +521,7 @@ class GenericTraitToTraitImplementationTests(unittest.TestCase):
             "trait[T] Producer as Iterable[T] => end\n"
             "object[T] Box => $value: T end\n"
             "object[T] Box as Producer[T] => end\n"
-            "Box(1) as[Iterable[Integer]]\n"
+            "Box(1) as[Iterable[Int]]\n"
         ))
         self.assertEqual(analyser.diagnostics, [])
 
@@ -561,7 +561,7 @@ class GenericTraitToTraitImplementationTests(unittest.TestCase):
                 "import { base.[Printable, Displayable] }\n"
                 "import { plain.trait Printable as Displayable, "
                 "rich.trait Printable as Displayable }\n"
-                "object Document => $id: Integer end\n"
+                "object Document => $id: Int end\n"
                 "object Document as Printable => end\n"
                 "Document(1) as[Displayable]\n"
             ))
@@ -613,8 +613,8 @@ class GenericImplementationElementDispatchTests(unittest.TestCase):
             source = (
                 "import { first.Box, first.object Box as Producer, "
                 "second.object Box as Producer }\n"
-                "Box(9) as[first.Producer[Integer]] | produce\n"
-                "Box(9) as[second.Producer[Integer]] | produce\n"
+                "Box(9) as[first.Producer[Int]] | produce\n"
+                "Box(9) as[second.Producer[Int]] | produce\n"
             )
             analyser = Analyser(
                 module_loader=ModuleLoader(), source_file=root / "main.vlnc"
@@ -692,8 +692,8 @@ class TraitImplementationEvidencePathTests(unittest.TestCase):
             "object[T] Box as Producer[T] => end\n"
         ))
         evidence = T.implementation_pattern_evidence(
-            T.N(Symbol("Box"), T.N(Symbol("Integer"))),
-            T.N(Symbol("Iterable"), T.N(Symbol("Integer"))),
+            T.N(Symbol("Box"), T.N(Symbol("Int"))),
+            T.N(Symbol("Iterable"), T.N(Symbol("Int"))),
             analyser.env.context,
         )
         self.assertEqual(len(evidence), 1)
@@ -701,8 +701,8 @@ class TraitImplementationEvidencePathTests(unittest.TestCase):
         self.assertEqual(
             evidence[0].traits,
             (
-                T.N(Symbol("Producer"), T.N(Symbol("Integer"))),
-                T.N(Symbol("Iterable"), T.N(Symbol("Integer"))),
+                T.N(Symbol("Producer"), T.N(Symbol("Int"))),
+                T.N(Symbol("Iterable"), T.N(Symbol("Int"))),
             ),
         )
 
@@ -717,7 +717,7 @@ class TraitImplementationEvidencePathTests(unittest.TestCase):
             "trait Printable as Displayable => end\n"
             "trait Displayable as Serializable => end\n"
             "trait Printable as Serializable => end\n"
-            "object Document => $id: Integer end\n"
+            "object Document => $id: Int end\n"
             "object Document as Printable => end\n"
         ))
         evidence = T.implementation_pattern_evidence(
@@ -741,7 +741,7 @@ class TraitImplementationEvidencePathTests(unittest.TestCase):
             "trait Serializable => end\n"
             "trait Printable as Displayable => end\n"
             "trait Displayable as Serializable => end\n"
-            "object Document => $id: Integer end\n"
+            "object Document => $id: Int end\n"
             "object Document as Printable => end\n"
         ))
         [evidence] = T.implementation_pattern_evidence(
@@ -809,8 +809,8 @@ class TraitImplementationBehaviourJoinTests(unittest.TestCase):
             "define produce -> T => $self.value end\n"
         ))
         [evidence] = T.implementation_pattern_evidence(
-            T.N(Symbol("Box"), T.N(Symbol("Integer"))),
-            T.N(Symbol("Iterable"), T.N(Symbol("Integer"))),
+            T.N(Symbol("Box"), T.N(Symbol("Int"))),
+            T.N(Symbol("Iterable"), T.N(Symbol("Int"))),
             analyser.env.context,
         )
         joined = T.implementation_evidence_behaviours(
@@ -818,8 +818,8 @@ class TraitImplementationBehaviourJoinTests(unittest.TestCase):
         )
         self.assertEqual(len(joined), 1)
         edge, behaviour = joined[0]
-        self.assertEqual(str(edge.source), "Producer[Integer]")
-        self.assertEqual(str(edge.target), "Iterable[Integer]")
+        self.assertEqual(str(edge.source), "Producer[Int]")
+        self.assertEqual(str(edge.target), "Iterable[Int]")
         self.assertEqual(behaviour.element_names, (Symbol("first"),))
 
     def test_evidence_join_ignores_unrelated_elements_and_edges(self):
@@ -831,7 +831,7 @@ class TraitImplementationBehaviourJoinTests(unittest.TestCase):
             "trait Serializable => extend serialize -> String end\n"
             "trait Printable as Serializable => "
             'define serialize -> String => "serialized" end\n'
-            "object Document => $id: Integer end\n"
+            "object Document => $id: Int end\n"
             "object Document as Printable => "
             'define display -> String => "document" end\n'
         ))
@@ -861,7 +861,7 @@ class TraitImplementationBehaviourJoinTests(unittest.TestCase):
             "trait Serializable => extend serialize -> String end\n"
             "trait Printable as Serializable => "
             'define serialize -> String => "selected-body" end\n'
-            "object Document => $id: Integer end\n"
+            "object Document => $id: Int end\n"
             "object Document as Printable => "
             'define display -> String => "document" end\n'
         ))
@@ -911,7 +911,7 @@ class TraitImplementationEndToEndDispatchTests(unittest.TestCase):
             "trait Serializable => extend serialize -> String end\n"
             "trait Printable as Serializable => "
             'define serialize -> String => "one" end\n'
-            "object Document => $id: Integer end\n"
+            "object Document => $id: Int end\n"
             "object Document as Printable => end\n"
         ))
         context = analyser.env.context

@@ -1,4 +1,4 @@
-$channel = 2 Channel[Integer]
+$channel = 2 Channel[Int]
 $channel 7 send
 $channel 8 send
 $channel close

@@ -72,7 +72,7 @@ from valiance.vtypes import (
     ListExactType,
     ListMinType,
     ListRuggedType,
-    Integer,
+    Int,
     N,
     Number,
     RankVariable,
@@ -784,7 +784,7 @@ end
         self.assertEqual(program[2], ElementNode(Symbol("println")))
 
     def test_parses_element_generic_arguments_before_disambiguation(self):
-        program = parse("convert[Integer, _]{Number}(1)")
+        program = parse("convert[Int, _]{Number}(1)")
 
         self.assertEqual(
             program[0],
@@ -792,7 +792,7 @@ end
                 Symbol("convert"),
                 disambiguation=(Number,),
                 call_args=(CallArgument(value=(NumberLiteralNode("1"),)),),
-                generic_args=(Integer, None),
+                generic_args=(Int, None),
             ),
         )
 
@@ -1493,7 +1493,7 @@ end
     def test_rejects_foreach_break_return_annotations(self):
         with self.assertRaises(ParseError):
             parse(
-                '[1, 2] foreach (item, index) -> Integer, String => '
+                '[1, 2] foreach (item, index) -> Int, String => '
                 'break ($item, "done") end'
             )
 

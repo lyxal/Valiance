@@ -35,13 +35,13 @@ end
     def test_fully_declared_definitions_can_be_mutually_recursive(self):
         """Prescanned signatures break a named mutual-recursion cycle."""
         source = """
-define even(n: Integer) -> #boolean Integer =>
+define even(n: Int) -> #boolean Int =>
   if ($n == 0) => true
   else => odd($n - 1)
   end
 end
 
-define odd(n: Integer) -> #boolean Integer =>
+define odd(n: Int) -> #boolean Int =>
   if ($n == 0) => false
   else => even($n - 1)
   end
@@ -59,8 +59,8 @@ odd(10)
     def test_incomplete_mutual_recursion_is_not_prescanned(self):
         """Require explicit contracts for every inferred recursive element."""
         analyser, _typed = analyse("""
-define left(n: Integer) => right($n) end
-define right(n: Integer) => left($n) end
+define left(n: Int) => right($n) end
+define right(n: Int) => left($n) end
 """)
         recursive = [
             diagnostic for diagnostic in analyser.diagnostics
@@ -73,14 +73,14 @@ define right(n: Integer) => left($n) end
     def test_inferred_helper_after_complete_recursive_callers(self):
         """Infer a later helper before checking fully declared recursive bodies."""
         analyser, _typed = analyse("""
-define even?(:Integer) -> #boolean Number =>
+define even?(:Int) -> #boolean Number =>
   match =>
     if isZero? => 1
     _ => odd?(- 1)
   end
 end
 
-define odd?(:Integer) -> #boolean Number =>
+define odd?(:Int) -> #boolean Number =>
   match =>
     if isZero? => 0
     _ => even?(- 1)
@@ -106,15 +106,15 @@ define recurse(value) => recurse($value) end
     def test_three_definition_cycle_uses_prescanned_signatures(self):
         """Resolve a recursive cycle containing more than two definitions."""
         source = """
-define first(n: Integer) -> Integer =>
+define first(n: Int) -> Int =>
   if ($n == 0) => 1 else => second($n - 1) end
 end
 
-define second(n: Integer) -> Integer =>
+define second(n: Int) -> Int =>
   if ($n == 0) => 2 else => third($n - 1) end
 end
 
-define third(n: Integer) -> Integer =>
+define third(n: Int) -> Int =>
   if ($n == 0) => 3 else => first($n - 1) end
 end
 
@@ -130,8 +130,8 @@ first(2)
     def test_niladic_definitions_can_be_mutually_recursive(self):
         """Treat a backslash-prefixed definition as an explicit zero-input signature."""
         analyser, _typed = analyse(r"""
-define \left -> #boolean Integer => \right end
-define \right -> #boolean Integer => \left end
+define \left -> #boolean Int => \right end
+define \right -> #boolean Int => \left end
 """)
         self.assertEqual(analyser.diagnostics, [])
 
@@ -146,11 +146,11 @@ define[T] right(value: T) -> T => left($value) end
     def test_explicit_overload_sets_can_be_mutually_recursive(self):
         """Publish every explicit overload signature before checking shared bodies."""
         analyser, _typed = analyse("""
-overload(Integer -> Integer)
+overload(Int -> Int)
 overload(String -> String)
 define left(value) => right($value) end
 
-overload(Integer -> Integer)
+overload(Int -> Int)
 overload(String -> String)
 define right(value) => left($value) end
 """)
@@ -195,10 +195,10 @@ define helper(value) => $value + 1 end
     def test_declared_return_mismatch_is_diagnosed(self):
         """Report an incompatible body while retaining its declared interface."""
         analyser, _typed = analyse("""
-define invalid(value: Integer) -> String => $value end
+define invalid(value: Int) -> String => $value end
 """)
         self.assertEqual(len(analyser.diagnostics), 1)
-        self.assertIn("function body returns Integer", analyser.diagnostics[0])
+        self.assertIn("function body returns Int", analyser.diagnostics[0])
         self.assertIn("declares String", analyser.diagnostics[0])
         self.assertEqual(len(analyser.env.overloads_for(parse("invalid")[0].name)), 1)
 
@@ -234,7 +234,7 @@ define \foobaz => "c"
     def test_more_specific_overload_beats_later_general_overload(self):
         """Use source order only to break ties after specificity selection."""
         analyser, typed = analyse("""
-define classify(value: Integer) -> String => "integer" end
+define classify(value: Int) -> String => "integer" end
 define classify(value: Number) -> String => "number" end
 classify(1)
 """)
@@ -245,22 +245,22 @@ classify(1)
     def test_one_invalid_return_branch_is_diagnosed(self):
         """Reject a declared function when any branch violates its return contract."""
         analyser, _typed = analyse("""
-define choose(flag: #boolean Number) -> Integer =>
+define choose(flag: #boolean Number) -> Int =>
   if ($flag) => 1 else => "bad" end
 end
 """)
         self.assertEqual(len(analyser.diagnostics), 1)
-        self.assertIn("Integer | String", analyser.diagnostics[0])
-        self.assertIn("declares Integer", analyser.diagnostics[0])
+        self.assertIn("Int | String", analyser.diagnostics[0])
+        self.assertIn("declares Int", analyser.diagnostics[0])
 
     def test_explicit_overload_body_is_checked_against_each_contract(self):
         """Validate a shared body against every explicit overload signature."""
         analyser, _typed = analyse("""
-overload(Integer -> String)
+overload(Int -> String)
 define convert(value) => $value end
 """)
         self.assertEqual(len(analyser.diagnostics), 1)
-        self.assertIn("function body returns Integer", analyser.diagnostics[0])
+        self.assertIn("function body returns Int", analyser.diagnostics[0])
         self.assertIn("declares String", analyser.diagnostics[0])
 
     def test_generic_return_contract_is_checked_rigidly(self):
@@ -275,7 +275,7 @@ define[T] identity(value: T) -> T => "bad" end
     def test_partially_declared_recursive_cycle_is_rejected(self):
         """Require every member of a recursive component to expose a full contract."""
         analyser, _typed = analyse("""
-define left(value: Integer) -> Integer => right($value) end
+define left(value: Int) -> Int => right($value) end
 define right(value) => left($value) end
 """)
         cycle_diagnostics = [

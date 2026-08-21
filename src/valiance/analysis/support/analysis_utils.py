@@ -617,7 +617,7 @@ def _number_literal_type(value: str) -> T.Type:
     if parsed.is_complex():
         return T.Number
     if parsed.is_integer():
-        return T.Integer
+        return T.Int
     return T.Real
 
 

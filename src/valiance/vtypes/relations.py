@@ -74,7 +74,7 @@ from valiance.vtypes.stack import CallableOverloadChoice, StackApplication, Type
 
 CollectionClass = type[CollectionType]
 BOOLEAN = Symbol("Boolean")
-INTEGER = Symbol("Integer")
+INT = Symbol("Int")
 NUMBER = Symbol("Number")
 REAL = Symbol("Real")
 SOME = Symbol("Some")
@@ -658,7 +658,7 @@ def subtype(source: Type, target: Type, ctx: Context | None = None) -> bool:
             return True
         if ctx.variant_members.get(source.name) == target.name:
             return True
-        if source.name == INTEGER and target.name in {REAL, NUMBER}:
+        if source.name == INT and target.name in {REAL, NUMBER}:
             return True
         if source.name == REAL and target.name == NUMBER:
             return True
@@ -1261,7 +1261,7 @@ def _is_boolean_number_to_integer(source: Type, target: Type) -> bool:
         return False
     if DataTag("boolean") not in source.tags or DataTag("boolean") not in target.tags:
         return False
-    return same(source.inner, N(NUMBER)) and same(target.inner, N(INTEGER))
+    return same(source.inner, N(NUMBER)) and same(target.inner, N(INT))
 
 
 def _source_subtypes_result(
@@ -1872,8 +1872,8 @@ def _combine_all(
         return None
 
     # Prefer an evidence type that already accepts every other observation.
-    # This handles chains such as Integer -> Real -> Number and bridge types
-    # such as None, Integer, Optional[Integer] without an order-sensitive fold.
+    # This handles chains such as Int -> Real -> Number and bridge types
+    # such as None, Int, Optional[Int] without an order-sensitive fold.
     common = [
         candidate
         for candidate in vals
@@ -2530,7 +2530,7 @@ def _runtime_nominal_subtypes(typ: NominalType, ctx: Context) -> set[str]:
     """Compute runtime nominal subtypes during type and overload solving."""
     names = {str(typ.name)}
     candidates = set(ctx.trait_impls) | set(ctx.variant_members)
-    candidates.update({INTEGER, REAL, NUMBER})
+    candidates.update({INT, REAL, NUMBER})
     for candidate in candidates:
         if subtype(N(candidate), typ, ctx):
             names.add(str(candidate))

@@ -139,7 +139,7 @@ class OptimizationPipeline:
         return current
 
 
-_SCALAR_PARAMETER_DISPATCH_TYPES = frozenset({"Number", "Real", "Integer", "String"})
+_SCALAR_PARAMETER_DISPATCH_TYPES = frozenset({"Number", "Real", "Int", "String"})
 
 
 @dataclass(frozen=True, slots=True)

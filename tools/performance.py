@@ -84,13 +84,13 @@ WORKLOADS = (
     PerformanceWorkload(
         "vectorised-user-function",
         "vectorisation",
-        "const $f = fn (n: Integer) -> Integer => ($n * 2) + 1 end\n"
+        "const $f = fn (n: Int) -> Int => ($n * 2) + 1 end\n"
         "$f(range(1, 10000)) sum",
     ),
     PerformanceWorkload(
         "guarded-classification",
         "control-flow",
-        """range(1, 10000) map fn (n: Integer) =>
+        """range(1, 10000) map fn (n: Int) =>
   match =>
     if % 15 == 0 => "FizzBuzz"
     if % 5 == 0 => "Buzz"
@@ -102,7 +102,7 @@ end | length""",
     PerformanceWorkload(
         "guarded-risk-bands",
         "control-flow",
-        """range(1, 10000) map fn (n: Integer) =>
+        """range(1, 10000) map fn (n: Int) =>
   match =>
     if % 10 == 0 => "round"
     if > 9000 => "high"
@@ -121,8 +121,8 @@ end | length""",
         "object-construction",
         "objects",
         """object Point =>
-  public $x: Integer
-  public $y: Integer
+  public $x: Int
+  public $y: Int
 end
 range(1, 3000) map: fn (n) => Point($n, $n + 1) end | length""",
     ),
@@ -141,12 +141,12 @@ range(1, 1500) map: fn (n) => render(score($n)) end | length""",
         (
             (
                 "helpers.vlnc",
-                "public define score(value: Integer) -> Integer => "
+                "public define score(value: Int) -> Int => "
                 "($value * 3) + 1\n",
             ),
             (
                 "formatting.vlnc",
-                'public define render(value: Integer) -> String => "score=${$value}"\n',
+                'public define render(value: Int) -> String => "score=${$value}"\n',
             ),
         ),
     ),
@@ -163,7 +163,7 @@ range(1, 1500) map: fn (n) => render(score($n)) end | length""",
     PerformanceWorkload(
         "recursive-function",
         "calls",
-        """$sumTo = @recursive fn (n: Integer, total: Integer) -> Integer =>
+        """$sumTo = @recursive fn (n: Int, total: Int) -> Int =>
   if $n == 0 => $total
   else => this($n - 1, $total + $n)
   end

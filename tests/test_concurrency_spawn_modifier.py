@@ -5,7 +5,7 @@ from valiance.asts import TypedSpawnNode
 from valiance.parsing import parse
 from valiance.runtime import compile_program, dumps, loads, run
 from valiance.runtime.runtime_values import RuntimeNumber
-from valiance.vtypes import Integer
+from valiance.vtypes import Int
 
 
 def analyse(source: str):
@@ -24,19 +24,19 @@ def execute(source: str):
 class SpawnModifierTests(unittest.TestCase):
     def test_modifier_spawn_has_fixed_plan(self):
         analyser, typed = analyse(
-            "10 spawn: fn (value: Integer) -> Integer => $value 2 * end"
+            "10 spawn: fn (value: Int) -> Int => $value 2 * end"
         )
         self.assertEqual(analyser.diagnostics, [])
         spawn = typed[-1]
         self.assertIsInstance(spawn, TypedSpawnNode)
-        self.assertEqual(spawn.input_types, (Integer,))
-        self.assertEqual(spawn.output_types, (Integer,))
+        self.assertEqual(spawn.input_types, (Int,))
+        self.assertEqual(spawn.output_types, (Int,))
         self.assertIsNotNone(spawn.callable_node)
 
     def test_modifier_spawn_executes_and_waits(self):
         self.assertEqual(
             execute(
-                "10 spawn: fn (value: Integer) -> Integer => $value 3 * end | wait"
+                "10 spawn: fn (value: Int) -> Int => $value 3 * end | wait"
             ),
             [RuntimeNumber(30)],
         )
@@ -44,7 +44,7 @@ class SpawnModifierTests(unittest.TestCase):
     def test_modifier_spawn_multiple_outputs(self):
         self.assertEqual(
             execute(
-                '4 spawn: fn (value: Integer) -> Integer, String => '
+                '4 spawn: fn (value: Int) -> Int, String => '
                 '$value "ok" end | wait'
             ),
             [RuntimeNumber(4), "ok"],
@@ -52,7 +52,7 @@ class SpawnModifierTests(unittest.TestCase):
 
     def test_modifier_spawn_round_trips(self):
         analyser, typed = analyse(
-            "5 spawn: fn (value: Integer) -> Integer => $value 1 + end | wait"
+            "5 spawn: fn (value: Int) -> Int => $value 1 + end | wait"
         )
         self.assertEqual(analyser.diagnostics, [])
         program = compile_program(typed, optimize=False)
@@ -60,13 +60,13 @@ class SpawnModifierTests(unittest.TestCase):
 
     def test_modifier_spawn_reports_missing_inputs(self):
         analyser, _ = analyse(
-            "spawn: fn (value: Integer) -> Integer => $value end"
+            "spawn: fn (value: Int) -> Int => $value end"
         )
         self.assertTrue(any("no spawn modifier overload" in item for item in analyser.diagnostics))
 
     def test_modifier_spawn_preserves_vectorisation_plan(self):
         analyser, typed = analyse(
-            "[1, 2, 3] spawn: fn (value: Integer) -> Integer => "
+            "[1, 2, 3] spawn: fn (value: Int) -> Int => "
             "$value 2 * end | wait"
         )
         self.assertEqual(analyser.diagnostics, [])
@@ -75,13 +75,13 @@ class SpawnModifierTests(unittest.TestCase):
         self.assertTrue(spawn.vectorised)
         self.assertEqual(spawn.vectorised_depths, (1,))
         self.assertEqual(execute(
-            "[1, 2, 3] spawn: fn (value: Integer) -> Integer => "
+            "[1, 2, 3] spawn: fn (value: Int) -> Int => "
             "$value 2 * end | wait"
         ), [[RuntimeNumber(2), RuntimeNumber(4), RuntimeNumber(6)]])
 
     def test_first_class_spawn_preserves_vectorisation_plan(self):
         source = (
-            "[1, 2, 3] fn (value: Integer) -> Integer => "
+            "[1, 2, 3] fn (value: Int) -> Int => "
             "$value 1 + end spawn | wait"
         )
         analyser, typed = analyse(source)
@@ -95,7 +95,7 @@ class SpawnModifierTests(unittest.TestCase):
 
     def test_vectorised_spawn_round_trips(self):
         source = (
-            "[1, 2, 3] spawn: fn (value: Integer) -> Integer => "
+            "[1, 2, 3] spawn: fn (value: Int) -> Int => "
             "$value 3 * end | wait"
         )
         analyser, typed = analyse(source)
@@ -108,7 +108,7 @@ class SpawnModifierTests(unittest.TestCase):
     def test_spawn_respects_novec_broadcast_position(self):
         source = (
             "[10, 20] [1, 2, 3] spawn: fn "
-            "(fixed: Integer+ novec, value: Integer) -> Integer => "
+            "(fixed: Int+ novec, value: Int) -> Int => "
             "$fixed $[0] $value + end | wait"
         )
         self.assertEqual(execute(source), [

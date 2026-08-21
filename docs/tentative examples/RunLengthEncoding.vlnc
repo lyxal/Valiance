@@ -1,9 +1,9 @@
-define encode(:String) -> {Integer, String}+ =>
+define encode(:String) -> {Int, String}+ =>
   groupConsecutive
   map: ({length, first})
 end
 
-define decode(:{Integer, String}+) -> String =>
+define decode(:{Int, String}+) -> String =>
   map: reduce: *
   join ""
 end

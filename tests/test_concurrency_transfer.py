@@ -157,9 +157,9 @@ $holder fn (value: Holder) => $value end spawn
 
     def test_task_and_channel_handles_remain_statically_transferable(self):
         diagnostics = self.analyse('''
-$channel = Channel[Integer]
-$task = fn -> Integer => 1 end | spawn
-$channel $task fn (channel: Channel[Integer], task: Task[Integer]) =>
+$channel = Channel[Int]
+$task = fn -> Int => 1 end | spawn
+$channel $task fn (channel: Channel[Int], task: Task[Int]) =>
   $task wait
 end | spawn | wait
 ''')

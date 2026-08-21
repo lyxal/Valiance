@@ -4,7 +4,7 @@ Valiance provides deterministic, cooperative concurrency on one bytecode executo
 
 ## Tasks and structured scopes
 
-`spawn` creates a `Task[...]` owned by the nearest dynamic `concurrent` scope. A task preserves its full output row. For example, a function returning `Integer, String` produces `Task[Integer, String]`.
+`spawn` creates a `Task[...]` owned by the nearest dynamic `concurrent` scope. A task preserves its full output row. For example, a function returning `Int, String` produces `Task[Int, String]`.
 
 `wait` observes the stored terminal result. Waiting is repeatable and aliases observe the same task identity, outputs, or fault. Waiting over a collection is vectorised and preserves collection shape and task order.
 

@@ -64,7 +64,7 @@ from valiance.vtypes import (
     Fn,
     GenericConstraint,
     I,
-    Integer,
+    Int,
     N,
     Never,
     NoneType,
@@ -616,12 +616,12 @@ def _random_tag(rng: random.Random) -> DataTag:
 def _random_tag_contract(rng: random.Random, depth: int = 1) -> object:
     """Return a bounded serializable runtime tag-contract tree."""
     if depth <= 0:
-        return rng.choice((("any",), ("nominal", "Integer")))
+        return rng.choice((("any",), ("nominal", "Int")))
     choice = rng.choice(("any", "nominal", "tagged", "collection", "tuple"))
     if choice == "any":
         return ("any",)
     if choice == "nominal":
-        return ("nominal", rng.choice(("Integer", "Number", "String")))
+        return ("nominal", rng.choice(("Int", "Number", "String")))
     if choice == "tagged":
         return (
             "tagged",
@@ -1237,7 +1237,7 @@ def _fuzz_runtime_bytecode(
 
 
 def _random_concrete_type(rng: random.Random, depth: int):
-    atoms = (Integer, Real, Number, String, Boolean, NoneType())
+    atoms = (Int, Real, Number, String, Boolean, NoneType())
     if depth <= 0:
         return rng.choice(atoms)
 
@@ -1355,7 +1355,7 @@ def _fuzz_type_algebra(
 ) -> object:
     """Check high-risk relation laws, branch joins, and generic order invariance."""
     unrelated = rng.choice((String, N(Symbol("FuzzUnrelated"))))
-    value = rng.choice((Integer, Real, Number))
+    value = rng.choice((Int, Real, Number))
     case = (value, unrelated, iteration)
     try:
         # Bottom must remain bottom through intersections, otherwise subtype
@@ -1375,16 +1375,16 @@ def _fuzz_type_algebra(
             raise AssertionError("Optional[Never] did not normalize to None")
 
         if not (
-            subtype(optional(Integer), optional(Number))
-            and assignable(optional(Integer), optional(Number))
-            and compatible(optional(Integer), optional(Number))
+            subtype(optional(Int), optional(Number))
+            and assignable(optional(Int), optional(Number))
+            and compatible(optional(Int), optional(Number))
         ):
             raise AssertionError("optional covariance was rejected")
-        if assignable(optional(Number), optional(Integer)):
+        if assignable(optional(Number), optional(Int)):
             raise AssertionError("optional covariance was accepted backwards")
 
         numeric_intersection = rng.choice(
-            ((Integer, Real, Integer), (Integer, Number, Integer), (Real, Number, Real))
+            ((Int, Real, Int), (Int, Number, Int), (Real, Number, Real))
         )
         if not same(I(*numeric_intersection[:2]), numeric_intersection[2]):
             raise AssertionError("numeric intersection kept a redundant supertype")
@@ -1422,7 +1422,7 @@ def _fuzz_type_algebra(
 
         # Overload declaration order must not affect the chosen numeric overload.
         overloads = (
-            Overload((Integer,), (Integer,)),
+            Overload((Int,), (Int,)),
             Overload((Real,), (Real,)),
             Overload((Number,), (Number,)),
         )
@@ -1449,7 +1449,7 @@ def _fuzz_overload_markers(
     _config: FuzzConfig,
 ) -> object:
     """Exercise exact/novec call policy without leaking markers into values."""
-    scalar = rng.choice((Integer, Real, Number, String))
+    scalar = rng.choice((Int, Real, Number, String))
     rank = rng.randint(1, 3)
     collection_type = rng.choice((ExactList, ExactArray))
     collection = collection_type(scalar, rank)
@@ -1532,9 +1532,9 @@ def _positive_relation_pair(rng: random.Random) -> tuple[Type, Type]:
     """Return a source/target pair known to satisfy directional assignment."""
     return rng.choice(
         (
-            (Integer, Integer),
-            (Integer, Real),
-            (Integer, Number),
+            (Int, Int),
+            (Int, Real),
+            (Int, Number),
             (Real, Number),
             (String, String),
             (_STRUCT_FOO_TYPE, _STRUCT_ENTITY_TYPE),
@@ -1545,7 +1545,7 @@ def _positive_relation_pair(rng: random.Random) -> tuple[Type, Type]:
 
 def _incompatible_with(typ: Type, ctx: Context) -> Type:
     """Return a simple type unrelated to ``typ`` in either direction."""
-    for candidate in (String, _STRUCT_FOO_TYPE, Integer):
+    for candidate in (String, _STRUCT_FOO_TYPE, Int):
         if not assignable(typ, candidate, ctx) and not assignable(
             candidate,
             typ,
@@ -1694,7 +1694,7 @@ def _fuzz_structural_types(
         )
         shared_actual = Row(
             _STRUCT_FOO_TYPE,
-            Field(_STRUCT_FIELDS[0], Integer),
+            Field(_STRUCT_FIELDS[0], Int),
             Field(_STRUCT_FIELDS[1], Number),
         )
         shared_solution = _solve(shared, shared_actual, ctx)
@@ -1819,7 +1819,7 @@ def _fuzz_structural_types(
             raise AssertionError("ambiguous trait generic escaped application")
 
         widening_ctx = _structural_context()
-        for result in (Integer, Number):
+        for result in (Int, Number):
             widening_ctx.define_structural_overload(
                 _STRUCT_READ,
                 Overload((_STRUCT_FOO_TYPE,), (result,)),
@@ -2018,7 +2018,7 @@ def _fuzz_smart_diagnostics(
         cut = rng.randrange(1, len(base) - 1)
         typo = base[:cut] + base[cut + 1 :]
         input_type, other_type = (
-            (Integer, String) if rng.randrange(2) == 0 else (String, Integer)
+            (Int, String) if rng.randrange(2) == 0 else (String, Int)
         )
         env = Environment()
         env.define_overload(
@@ -2061,11 +2061,11 @@ def _fuzz_smart_diagnostics(
         name = Symbol("convert")
         env.define_overload(
             name,
-            Overload((Integer,), (String,), param_names=(Symbol("value"),)),
+            Overload((Int,), (String,), param_names=(Symbol("value"),)),
         )
         env.define_overload(
             name,
-            Overload((String,), (Integer,), param_names=(Symbol("text"),)),
+            Overload((String,), (Int,), param_names=(Symbol("text"),)),
         )
         case = ("overloads",)
         try:
@@ -2088,7 +2088,7 @@ def _fuzz_smart_diagnostics(
         name = Symbol("format")
         env.define_overload(
             name,
-            Overload((Integer,), (String,), param_names=(Symbol("value"),)),
+            Overload((Int,), (String,), param_names=(Symbol("value"),)),
         )
         env.define_overload(
             name,
@@ -2099,7 +2099,7 @@ def _fuzz_smart_diagnostics(
             analyser = Analyser(env)
             analyser.analyse(parse("formt(1)"))
             [message] = analyser.diagnostics
-            if "format(value: Integer) -> String" not in message:
+            if "format(value: Int) -> String" not in message:
                 raise AssertionError(message)
             if "format(text: String)" in message:
                 raise AssertionError(f"incompatible signature suggested: {message!r}")
@@ -2111,7 +2111,7 @@ def _fuzz_smart_diagnostics(
         env = Environment()
         env.define_overload(
             Symbol("convert"),
-            Overload((Integer,), (String,), param_names=(Symbol("value"),)),
+            Overload((Int,), (String,), param_names=(Symbol("value"),)),
         )
         case = ("named-argument",)
         try:
@@ -2129,7 +2129,7 @@ def _fuzz_smart_diagnostics(
     if mode == 4:
         source = rng.choice(
             (
-                "1 as[Integer]",
+                "1 as[Int]",
                 "1 as![Number]",
                 "1 move(value -> value)",
                 "1 copy(value ->)",
@@ -2392,17 +2392,17 @@ def _fuzz_soundness_boundaries(
     case: object = ("mode", mode)
     try:
         if mode == 0:
-            some_integer = N(Symbol("Some"), Integer)
+            some_integer = N(Symbol("Some"), Int)
             case = ("optional-subtyping", some_integer)
             if not subtype(some_integer, optional(Number)):
                 raise AssertionError("Some covariance broke optional transitivity")
         elif mode == 1:
-            some_integer = N(Symbol("Some"), Integer)
+            some_integer = N(Symbol("Some"), Int)
             case = ("optional-join", some_integer)
-            if not same(merge_types(NoneType(), some_integer), optional(Integer)):
+            if not same(merge_types(NoneType(), some_integer), optional(Int)):
                 raise AssertionError("None/Some join double-wrapped its payload")
         elif mode == 2:
-            tagged_integer = Tagged(Integer, "x")
+            tagged_integer = Tagged(Int, "x")
             case = ("tagged-decomposition", tagged_integer)
             if not subtype(
                 U(tagged_integer, Tagged(Real, "x")),
@@ -2418,15 +2418,15 @@ def _fuzz_soundness_boundaries(
             ctx = Context()
             ctx.define_tag("km", TagKind.UNIT)
             ctx.define_tag("sec", TagKind.UNIT)
-            seconds = Tagged(Integer, "sec")
-            not_kilometres = Tagged(Integer, DataTag("km", absent=True))
+            seconds = Tagged(Int, "sec")
+            not_kilometres = Tagged(Int, DataTag("km", absent=True))
             case = ("unit-laundering", seconds, not_kilometres)
             if assignable(seconds, not_kilometres, ctx):
                 raise AssertionError("unit tag was laundered through an absent tag")
-            merged = merge_types(Integer, Tagged(Integer, "km"), ctx)
+            merged = merge_types(Int, Tagged(Int, "km"), ctx)
             if not (
-                assignable(Integer, merged, ctx)
-                and assignable(Tagged(Integer, "km"), merged, ctx)
+                assignable(Int, merged, ctx)
+                and assignable(Tagged(Int, "km"), merged, ctx)
             ):
                 raise AssertionError("contextual join erased a unit-tagged branch")
         elif mode == 4:
@@ -2530,10 +2530,10 @@ def _fuzz_correctness_workloads(
                 else str(rng.randint(-20, 20))
             )
             source = f"""
-define retryStatus(value: Integer?) -> String =>
+define retryStatus(value: Int?) -> String =>
   $value |
   match =>
-    as :Some[Integer] => \"scheduled\"
+    as :Some[Int] => \"scheduled\"
     as :None => \"disabled\"
     _ => \"invalid\"
   end
@@ -2572,10 +2572,10 @@ status({argument})
                 raise AssertionError("successful Result missed its OK branch")
         elif mode == 2:
             source = """
-define kind(value: Dict[String, Integer] | String) -> String =>
+define kind(value: Dict[String, Int] | String) -> String =>
   $value |
   match =>
-    as :Dict[String, Integer] => \"mapping\"
+    as :Dict[String, Int] => \"mapping\"
     _ => \"preset\"
   end
 end |
@@ -2605,22 +2605,22 @@ requireMatrix([] as[Number+])
             else:
                 raise AssertionError("flat empty list passed a matrix cast")
         elif mode == 4:
-            left = U(Integer, Some(String))
-            right = Some(U(Integer, String))
+            left = U(Int, Some(String))
+            right = Some(U(Int, String))
             case = ("some-normalization", left, right)
             if not same(left, right):
                 raise AssertionError("raw and explicit Some branches did not normalize")
         elif mode == 5:
             value_error = N(Symbol("ValueError"))
             err = N(Symbol("Err"))
-            narrow = Result(Integer, value_error)
+            narrow = Result(Int, value_error)
             broad = Result(Number, err)
             case = ("result-covariance", narrow, broad)
             if not subtype(narrow, broad) or not assignable(narrow, broad):
                 raise AssertionError("Result covariance failed")
         elif mode == 6:
             value_error = N(Symbol("ValueError"))
-            left = rng.choice((Integer, OKType(Integer)))
+            left = rng.choice((Int, OKType(Int)))
             right = Result(String, value_error)
             merged = merge_types(left, right)
             case = ("result-join", left, right, merged)
@@ -2647,10 +2647,10 @@ end
         elif mode == 8:
             value = rng.randint(-20, 20)
             source = f"""
-define delay(value: Integer?) -> Integer =>
+define delay(value: Int?) -> Int =>
   $value |
   match =>
-    as :Some[Integer](seconds) => +($seconds, 1)
+    as :Some[Int](seconds) => +($seconds, 1)
     _ => 0
   end
 end |
@@ -2735,10 +2735,10 @@ end
                 raise AssertionError(analyser.diagnostics)
         elif mode == 13:
             source = """
-define state(value: Integer?) -> String =>
+define state(value: Int?) -> String =>
   $value |
   match =>
-    as :Some[Integer] => "some"
+    as :Some[Int] => "some"
     as :None => "none"
   end
 end |
@@ -2800,10 +2800,10 @@ end
             source = """
 object Problem => $message: String end |
 object Problem as Err => end |
-define state(value: Result[Integer, Problem]) -> String =>
+define state(value: Result[Int, Problem]) -> String =>
   $value |
   match =>
-    as :OK[Integer] => "success"
+    as :OK[Int] => "success"
     as :Problem => "error"
   end
 end |
@@ -2822,7 +2822,7 @@ object[T] Box as Producer[T] => end |
 Box(1) |
 match =>
   as :Producer[String] => "wrong"
-  as :Producer[Integer] => "right"
+  as :Producer[Int] => "right"
   _ => "other"
 end
 """
@@ -2840,7 +2840,7 @@ object[T] Box as Producer[T] => end |
 Box(1) |
 match =>
   as :Source[String] => "wrong"
-  as :Source[Integer] => "right"
+  as :Source[Int] => "right"
   _ => "other"
 end
 """
@@ -2873,9 +2873,9 @@ def _fuzz_data_tags(
                 name for name in universe if rng.choice((False, True))
             )
             actual = (
-                Tagged(Integer, *sorted(actual_names))
+                Tagged(Int, *sorted(actual_names))
                 if actual_names
-                else Integer
+                else Int
             )
             required = ExactTags(Number, *sorted(required_names))
             case = ("exact-set-relation", actual_names, required_names)
@@ -2887,7 +2887,7 @@ def _fuzz_data_tags(
             name = rng.choice(("a", "sorted", "finite"))
             case = ("absence-relation", name)
             if assignable(
-                Tagged(Integer, name),
+                Tagged(Int, name),
                 Tagged(Number, DataTag(name, absent=True)),
             ):
                 raise AssertionError("present tag satisfied an absent-tag requirement")
@@ -2924,7 +2924,7 @@ def _fuzz_data_tags(
             case = ("variant-static-runtime-split", source)
             analyser = Analyser()
             typed = analyser.analyse(parse(source))
-            if analyser.diagnostics or show(typed[-1].typ) != "#sorted Integer":
+            if analyser.diagnostics or show(typed[-1].typ) != "#sorted Int":
                 raise AssertionError(analyser.diagnostics or typed[-1].typ)
             [result] = run(compile_program(typed, optimize=False))
             if {tag.name for tag in result.tags} != {"sorted", "ascending"}:
@@ -2960,7 +2960,7 @@ end
             source = f"""
 tag #positive as computed
 define #positive(value: Number) -> #boolean Number => false end
-define #positive(value: Integer) -> #boolean Number => true end
+define #positive(value: Int) -> #boolean Number => true end
 {value} #positive
 """
             case = ("validator-specificity", source)
@@ -3148,10 +3148,10 @@ end
             source = """
 tag #sticky as constructed
 $values = [1 #sticky, 2]
-$plain = $values as[Integer+]
+$plain = $values as[Int+]
 $plain $[0] |
 match =>
-  as :#sticky Integer => "leaked"
+  as :#sticky Int => "leaked"
   _ => "plain"
 end
 """
@@ -3165,11 +3165,11 @@ end
         elif mode == 17:
             source = """
 tag #sticky as constructed
-define make(dummy: Number) -> Integer+ => [1 #sticky, 2] end
+define make(dummy: Number) -> Int+ => [1 #sticky, 2] end
 $plain = make 0
 $plain $[0] |
 match =>
-  as :#sticky Integer => "leaked"
+  as :#sticky Int => "leaked"
   _ => "plain"
 end
 """
@@ -3186,7 +3186,7 @@ tag #nested as constructed
 $outer = [[1, 2] #nested]
 $outer $[0] |
 match =>
-  as :#nested Integer+ => "tagged"
+  as :#nested Int+ => "tagged"
   _ => "plain"
 end
 """
@@ -3203,7 +3203,7 @@ tag #nested as constructed
 $outer = [[1, 2] #nested, [3, 4] #nested]
 $outer[0:0] |
 match =>
-  as :#nested+ Integer+2 => "tagged"
+  as :#nested+ Int+2 => "tagged"
   _ => "plain"
 end
 """
@@ -3223,7 +3223,7 @@ tag #infinite as constructed
             case = ("constructed-automatic-vector-flow", source)
             analyser = Analyser()
             typed = analyser.analyse(parse(source))
-            if analyser.diagnostics or show(typed[-1].typ) != "#infinite Integer+":
+            if analyser.diagnostics or show(typed[-1].typ) != "#infinite Int+":
                 raise AssertionError(analyser.diagnostics or typed[-1].typ)
             [value] = run(loads(dumps(compile_program(typed, optimize=False))))
             if not isinstance(value, TaggedValue) or {
@@ -3239,7 +3239,7 @@ define[T] identity(value: T) -> T => $value end
             case = ("constructed-generic-flow", source)
             analyser = Analyser()
             typed = analyser.analyse(parse(source))
-            if analyser.diagnostics or show(typed[-1].typ) != "#sticky Integer+":
+            if analyser.diagnostics or show(typed[-1].typ) != "#sticky Int+":
                 raise AssertionError(analyser.diagnostics or typed[-1].typ)
             [value] = run(loads(dumps(compile_program(typed, optimize=False))))
             if not isinstance(value, TaggedValue) or {
@@ -3299,7 +3299,7 @@ tag #sorted as computed
             case = ("constructed-versus-computed-flow", source)
             analyser = Analyser()
             typed = analyser.analyse(parse(source))
-            if analyser.diagnostics or show(typed[-1].typ) != "#stream Integer+":
+            if analyser.diagnostics or show(typed[-1].typ) != "#stream Int+":
                 raise AssertionError(analyser.diagnostics or typed[-1].typ)
             [value] = run(loads(dumps(compile_program(typed, optimize=False))))
             if not isinstance(value, TaggedValue) or {

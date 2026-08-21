@@ -72,7 +72,7 @@ end
 
     def test_nested_break_only_exits_innermost_loop(self):
         stack = execute("""
-$total: Integer = 0
+$total: Int = 0
 [1, 2, 3] foreach (outer) =>
   [10, 20, 30] foreach (inner) =>
     $total := + 1
@@ -85,7 +85,7 @@ $total
 
     def test_empty_foreach_returns_none_for_each_break_result(self):
         stack = execute("""
-[] as[Integer+] foreach (n) =>
+[] as[Int+] foreach (n) =>
   break (1, 2, 3)
 end
 """)
@@ -93,7 +93,7 @@ end
 
     def test_foreach_cycles_value_and_index_inputs(self):
         stack = execute("""
-$total: Integer = 0
+$total: Int = 0
 [4, 5, 6] foreach (item, index) =>
   $total := +
   $total := +
@@ -187,8 +187,8 @@ at (row+, item) => append
 
     def test_unfold_rejects_invalid_state_arity(self):
         for source in (
-            '1 unfold -> (n: Integer) => $n dup dup end',
-            '1 unfold -> (n: Integer) => 1 2 3 end',
+            '1 unfold -> (n: Int) => $n dup dup end',
+            '1 unfold -> (n: Int) => 1 2 3 end',
         ):
             with self.subTest(source=source):
                 analyser, _typed = analyse(source)
@@ -197,7 +197,7 @@ at (row+, item) => append
     def test_unfold_panic_is_propagated_with_runtime_context(self):
         with self.assertRaises(RuntimeError) as caught:
             execute("""
-1 unfold (true) -> (n: Integer) =>
+1 unfold (true) -> (n: Int) =>
   RuntimeFault("transition failed") panic
 end | #-infinite | 2 take | length
 """)
@@ -207,7 +207,7 @@ end | #-infinite | 2 take | length
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             stack = execute("""
-1 unfold (true) -> (n: Integer) =>
+1 unfold (true) -> (n: Int) =>
   "advanced" println
   $n + 1
 end

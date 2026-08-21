@@ -67,7 +67,7 @@ source:
 
 ```text
 vln:1> :type 1 2 +
-Types: [] -> [Integer]
+Types: [] -> [Int]
 ```
 
 Redirected input, `TERM=dumb`, or an unavailable enhanced-prompt dependency

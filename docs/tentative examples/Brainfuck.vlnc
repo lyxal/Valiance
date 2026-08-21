@@ -1,23 +1,23 @@
-define \TAPE_SIZE -> Integer => 30000
+define \TAPE_SIZE -> Int => 30000
 $tape = [0] overtake \TAPE_SIZE
 
 tag #TapePointer as unit
-define #TapePointer(:Integer) => inRange(0, \TAPE_SIZE)
+define #TapePointer(:Int) => inRange(0, \TAPE_SIZE)
 
-define get(tape: Integer+, ind: #TapePointer Integer) => $tape[#-TapePointer $ind]
-define apply(:#TapePointer Integer, fn: Function[Integer -> Integer]) =>
+define get(tape: Int+, ind: #TapePointer Int) => $tape[#-TapePointer $ind]
+define apply(:#TapePointer Int, fn: Function[Int -> Int]) =>
   #-TapePointer | #TapePointer $fn()
 end
 
-$tp: #TapePointer Integer = 0
+$tp: #TapePointer Int = 0
 
 $program = input("Enter brainfuck program: ")
 
-$instructions: record(.cmd: String, .jump: Integer)+ = $program map fn (ch) =>
+$instructions: record(.cmd: String, .jump: Int)+ = $program map fn (ch) =>
   record{cmd => $ch, jump => -1}
 end
 
-$stack: Integer+ = []
+$stack: Int+ = []
 
 $instructions foreach (instr, i) =>
   $instr.cmd match =>
@@ -35,7 +35,7 @@ end
 
 if (length $stack != 0) => panic ValueFault("Unmatched [")
 
-$pc: Integer = 0
+$pc: Int = 0
 
 while ($pc < length $instructions) =>
   $instr = $instructions[$pc]

@@ -127,7 +127,7 @@ def _index_type(typ: T.Type, *, key: bool = False) -> T.Type:
     ):
         return typ.args[0 if key else 1]
     if key:
-        return T.Integer
+        return T.Int
     if isinstance(typ, T.CollectionType):
         return T.collection_item_type(typ)
     if isinstance(typ, T.TupleType):
@@ -155,7 +155,7 @@ def _selector_sequence_item_type(receiver_type: T.Type) -> T.Type | None:
     if isinstance(receiver, (T.ListExactType, T.ListMinType, T.ListRuggedType)) or (
         isinstance(receiver, T.NominalType) and receiver.name.text == "String"
     ):
-        return T.Integer
+        return T.Int
     if (
         isinstance(receiver, T.NominalType)
         and receiver.name.text == "Dict"
@@ -179,7 +179,7 @@ def _selector_mode(
         modes = {_selector_mode(item, selector, ctx) for item in receiver.items}
         return modes.pop() if len(modes) == 1 and None not in modes else None
 
-    # Boolean-tagged sequences are masks even though Integer is also the normal
+    # Boolean-tagged sequences are masks even though Int is also the normal
     # positional index type. This ordering preserves the semantic distinction.
     if isinstance(selector, T.TaggedType):
         if any(
@@ -201,21 +201,21 @@ def _selector_mode(
         isinstance(receiver, (T.ListExactType, T.ListMinType, T.ListRuggedType))
         and isinstance(selector, T.TupleType)
         and selector.params
-        and all(T.assignable(item, T.optional(T.Integer), ctx) for item in selector.params)
-        and any(not T.assignable(item, T.Integer, ctx) for item in selector.params)
+        and all(T.assignable(item, T.optional(T.Int), ctx) for item in selector.params)
+        and any(not T.assignable(item, T.Int, ctx) for item in selector.params)
     ):
         return "path_pattern"
 
     if (
         isinstance(receiver, (T.ListExactType, T.ListMinType, T.ListRuggedType))
-        and T.assignable(selector, T.ExactList(T.optional(T.Integer)), ctx)
-        and not T.assignable(selector, T.ExactList(T.Integer), ctx)
+        and T.assignable(selector, T.ExactList(T.optional(T.Int)), ctx)
+        and not T.assignable(selector, T.ExactList(T.Int), ctx)
     ):
         return "path_pattern"
 
     if (
         isinstance(receiver, (T.ListExactType, T.ListMinType, T.ListRuggedType))
-        and T.assignable(selector, T.ExactList(T.Integer, rank=2), ctx)
+        and T.assignable(selector, T.ExactList(T.Int, rank=2), ctx)
     ):
         return "paths"
 
@@ -346,7 +346,7 @@ def _selectors_assignable(
     """Return whether supplied selector values match the receiver's index types."""
     typ = T.normalize(receiver_type)
     expected: list[T.Type] = []
-    slice_bound = T.U(T.Integer, T.ExactList(T.Integer))
+    slice_bound = T.U(T.Int, T.ExactList(T.Int))
     parallel_scalar_selectors = (
         len(selectors) > 1 and all(not selector.is_slice for selector in selectors)
     )
@@ -356,7 +356,7 @@ def _selectors_assignable(
         if selector.stop:
             expected.append(slice_bound)
         if selector.step:
-            expected.append(T.Integer)
+            expected.append(T.Int)
         if not parallel_scalar_selectors:
             typ = typ if selector.is_slice else _index_type(typ)
     if len(expected) != len(index_types):

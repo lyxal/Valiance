@@ -183,9 +183,9 @@ class ConcurrencyStressTests(unittest.TestCase):
         self.assertEqual(executions, [1] * 250)
 
     def test_nested_concurrency_survives_optimization_and_serialization(self):
-        source = """$outer = fn -> Integer =>
-  concurrent -> Integer =>
-    $child = fn -> Integer => 7 end | spawn
+        source = """$outer = fn -> Int =>
+  concurrent -> Int =>
+    $child = fn -> Int => 7 end | spawn
     $child wait
   end
 end

@@ -6,7 +6,7 @@ from valiance.parsing import parse
 from valiance.runtime import ClosedFault, compile_program, dumps, loads, run
 from valiance.runtime.concurrency import Receive
 from valiance.runtime.runtime_values import RuntimeNumber
-from valiance.vtypes import Integer, N
+from valiance.vtypes import Int, N
 from valiance.vtypes.symbols import Symbol
 
 
@@ -28,27 +28,27 @@ def execute(source: str, *, optimize: bool = False, round_trip: bool = False):
 
 class ChannelSourceAnalysisTests(unittest.TestCase):
     def test_bounded_constructor_has_typed_channel(self):
-        analyser, typed = analyse("2 Channel[Integer]")
+        analyser, typed = analyse("2 Channel[Int]")
         self.assertEqual(analyser.diagnostics, [])
         node = typed[-1]
         self.assertIsInstance(node, TypedChannelNode)
         self.assertTrue(node.has_capacity)
-        self.assertEqual(node.typ, N(Symbol("Channel"), Integer))
+        self.assertEqual(node.typ, N(Symbol("Channel"), Int))
 
     def test_receive_uses_distinct_receive_type(self):
-        analyser, typed = analyse("$channel = Channel[Integer]\n$channel close\n$channel receive")
+        analyser, typed = analyse("$channel = Channel[Int]\n$channel close\n$channel receive")
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, N(Symbol("Receive"), Integer))
+        self.assertEqual(typed[-1].typ, N(Symbol("Receive"), Int))
 
     def test_incompatible_send_is_rejected(self):
-        analyser, _ = analyse('$channel = Channel[Integer]\n$channel "bad" send')
-        self.assertTrue(any("channel send expects Integer" in item for item in analyser.diagnostics))
+        analyser, _ = analyse('$channel = Channel[Int]\n$channel "bad" send')
+        self.assertTrue(any("channel send expects Int" in item for item in analyser.diagnostics))
 
 
 class ChannelSourceExecutionTests(unittest.TestCase):
     def test_bounded_fifo_send_receive(self):
         result = execute(
-            """$channel = 2 Channel[Integer]
+            """$channel = 2 Channel[Int]
 $channel 1 send
 $channel 2 send
 $channel receive
@@ -61,7 +61,7 @@ $channel receive"""
 
     def test_close_drains_then_returns_closed(self):
         result = execute(
-            """$channel = 1 Channel[Integer]
+            """$channel = 1 Channel[Int]
 $channel 4 send
 $channel close
 $channel receive
@@ -75,19 +75,19 @@ $channel receive"""
     def test_send_after_close_raises_closed_fault(self):
         with self.assertRaisesRegex(Exception, "closed channel"):
             execute(
-                """$channel = 1 Channel[Integer]
+                """$channel = 1 Channel[Int]
 $channel close
 $channel 1 send"""
             )
 
     def test_unbuffered_block_is_explicitly_diagnosed(self):
         with self.assertRaisesRegex(Exception, "would block"):
-            execute("$channel = Channel[Integer]\n$channel 1 send")
+            execute("$channel = Channel[Int]\n$channel 1 send")
 
     def test_spawned_unbuffered_sender_and_receiver_rendezvous(self):
-        source = """$channel = Channel[Integer]
+        source = """$channel = Channel[Int]
 $sender = fn -> => $channel 41 send end
-$receiver = fn -> Receive[Integer] => $channel receive end
+$receiver = fn -> Receive[Int] => $channel receive end
 $sendTask = $sender spawn
 $receiveTask = $receiver spawn
 $receiveTask wait
@@ -98,8 +98,8 @@ $sendTask wait"""
         )
 
     def test_receiver_can_block_before_sender_is_scheduled(self):
-        source = """$channel = Channel[Integer]
-$receiver = fn -> Receive[Integer] => $channel receive end
+        source = """$channel = Channel[Int]
+$receiver = fn -> Receive[Int] => $channel receive end
 $sender = fn -> => $channel 17 send end
 $receiveTask = $receiver spawn
 $sendTask = $sender spawn
@@ -111,13 +111,13 @@ $sendTask wait"""
         )
 
     def test_bounded_backpressure_resumes_producer_in_fifo_order(self):
-        source = """$channel = 1 Channel[Integer]
+        source = """$channel = 1 Channel[Int]
 $producer = fn -> =>
   $channel 1 send
   $channel 2 send
   $channel 3 send
 end
-$consumer = fn -> Receive[Integer], Receive[Integer], Receive[Integer] =>
+$consumer = fn -> Receive[Int], Receive[Int], Receive[Int] =>
   $channel receive
   $channel receive
   $channel receive
@@ -136,8 +136,8 @@ $producerTask wait"""
         )
 
     def test_close_wakes_an_already_blocked_receiver(self):
-        source = """$channel = Channel[Integer]
-$receiver = fn -> Receive[Integer] => $channel receive end
+        source = """$channel = Channel[Int]
+$receiver = fn -> Receive[Int] => $channel receive end
 $closer = fn -> => $channel close end
 $receiverTask = $receiver spawn
 $closerTask = $closer spawn
@@ -146,7 +146,7 @@ $closerTask wait"""
         self.assertEqual(execute(source), [Receive.Closed()])
 
     def test_close_faults_an_already_blocked_sender(self):
-        source = """$channel = Channel[Integer]
+        source = """$channel = Channel[Int]
 $sender = fn -> => $channel 1 send end
 $closer = fn -> => $channel close end
 $senderTask = $sender spawn
@@ -159,9 +159,9 @@ $closerTask wait"""
             execute(source)
 
     def test_structured_rendezvous_matches_after_optimization_and_round_trip(self):
-        source = """$channel = Channel[Integer]
+        source = """$channel = Channel[Int]
 $sender = fn -> => $channel 23 send end
-$receiver = fn -> Receive[Integer] => $channel receive end
+$receiver = fn -> Receive[Int] => $channel receive end
 $sendTask = $sender spawn
 $receiveTask = $receiver spawn
 $receiveTask wait

@@ -1,8 +1,8 @@
-$channel = Channel[Integer]
+$channel = Channel[Int]
 $producer = fn -> =>
   $channel 1 send
 end
-$consumer = fn -> Receive[Integer] => $channel receive end
+$consumer = fn -> Receive[Int] => $channel receive end
 $producerTask = $producer spawn
 $consumerTask = $consumer spawn
 $consumerTask wait

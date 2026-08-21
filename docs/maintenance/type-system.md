@@ -122,7 +122,7 @@ This file provides readable constructors and normalization:
 ```python
 T.Number
 T.TypeVariable("T")
-T.U(T.Integer, T.String)
+T.U(T.Int, T.String)
 T.ExactList(T.Number, rank=2)
 T.Fn((T.Number,), (T.String,))
 T.Row(T.TypeVariable("T"), T.Field(Symbol("name"), T.String))
@@ -270,7 +270,7 @@ kind.
 A `NominalType` is identified by a declared name and optional arguments:
 
 ```text
-Integer
+Int
 Person
 Box[String]
 Result[Number, ValueError]
@@ -294,7 +294,7 @@ names and source presentation differ.
 A union means a value can come from any member:
 
 ```text
-Integer | String
+Int | String
 ```
 
 An intersection means the required facts must all hold:
@@ -332,7 +332,7 @@ Number^   exact-rank array
 ```
 
 A rank describes nesting independently from the atomic base type. This is why
-solving `T+` against `Integer+2` can infer `T = Integer+`: one rank is consumed
+solving `T+` against `Int+2` can infer `T = Int+`: one rank is consumed
 by the pattern, leaving one rank in the generic solution.
 
 #### Function types
@@ -340,7 +340,7 @@ by the pattern, leaving one rank in the generic solution.
 A `FunctionType` stores a stack effect:
 
 ```text
-Function[Integer, String -> Boolean]
+Function[Int, String -> Boolean]
 ```
 
 Its parameter tuple and return tuple are ordered. It may also carry element-tag
@@ -410,7 +410,7 @@ through relation checks without widening the canonical type itself.
 For example, construction through `T.U(...)` normalizes immediately:
 
 ```python
-T.U(T.Integer, T.Never()) == T.Integer
+T.U(T.Int, T.Never()) == T.Int
 ```
 
 The practical rule is:
@@ -454,7 +454,7 @@ Examples:
 - detecting whether substitution changed a parameter; and
 - deduplicating equivalent inferred signatures.
 
-`same(Integer, Number)` is false even though an integer can be used as a number.
+`same(Int, Number)` is false even though an integer can be used as a number.
 
 ## `subtype`: safe subsumption
 
@@ -470,7 +470,7 @@ T.subtype(source, target, ctx)
 Its rules include:
 
 - `Never` is a subtype of every type;
-- `Integer <: Real <: Number`;
+- `Int <: Real <: Number`;
 - nominal trait implementations;
 - variant member to variant parent;
 - declared generic variance;
@@ -483,8 +483,8 @@ Its rules include:
 Example:
 
 ```python
-T.subtype(T.Integer, T.Number, ctx)  # True
-T.subtype(T.Number, T.Integer, ctx)  # False
+T.subtype(T.Int, T.Number, ctx)  # True
+T.subtype(T.Number, T.Int, ctx)  # False
 ```
 
 The implementation is practical rather than a pure academic calculus. Tuple
@@ -592,18 +592,18 @@ Given:
 define[T] identity(x: T) -> T
 ```
 
-and an `Integer` argument:
+and an `Int` argument:
 
 ```text
 pattern: T
-actual:  Integer
-result:  T -> [Integer]
+actual:  Int
+result:  T -> [Int]
 ```
 
 The combined substitution is:
 
 ```text
-T = Integer
+T = Int
 ```
 
 ### Example: repeated generic
@@ -614,25 +614,25 @@ Given:
 define[T] choose(x: T, y: T) -> T
 ```
 
-and arguments `Integer, Real`:
+and arguments `Int, Real`:
 
 ```text
-first parameter:  T -> [Integer]
-second parameter: T -> [Integer, Real]
+first parameter:  T -> [Int]
+second parameter: T -> [Int, Real]
 ```
 
-The combiner sees that `Integer` is assignable to `Real`, so the shared solution
+The combiner sees that `Int` is assignable to `Real`, so the shared solution
 is `Real`.
 
-With `Integer, String`, neither type accepts the other and there is no safe
+With `Int, String`, neither type accepts the other and there is no safe
 single generic solution. The overload fails.
 
 This is important:
 
 > Generic evidence combination is not branch merging.
 
-`merge_types(Integer, String)` may produce `Integer | String` because a branch
-result can be either. `_combine(Integer, String)` returns failure because one
+`merge_types(Int, String)` may produce `Int | String` because a branch
+result can be either. `_combine(Int, String)` returns failure because one
 invocation of a repeated `T` requires one coherent substitution.
 
 ### Example: a generic inside a nominal type
@@ -660,13 +660,13 @@ subtype rules are checked at other stages.
 
 ### Example: collection rank peeling
 
-For parameter `T+` and argument `Integer+2`:
+For parameter `T+` and argument `Int+2`:
 
 ```text
 parameter rank: 1
 argument rank:  2
 difference:     1
-solution:       T = Integer+
+solution:       T = Int+
 ```
 
 The solved `T` is the remainder after the parameter consumes its declared rank.
@@ -674,10 +674,10 @@ This rule is implemented by `_solve_collection(...)`.
 
 ### Example: optional generic
 
-For `T?` and `Integer`:
+For `T?` and `Int`:
 
 ```text
-T = Integer
+T = Int
 ```
 
 For `T?` and `None`, `None` supplies no evidence for `T`. Another parameter or
@@ -694,7 +694,7 @@ T(.name: U)
 against an inferred row:
 
 ```text
-Person(.name: String, .age: Integer)
+Person(.name: String, .age: Int)
 ```
 
 solving collects:
@@ -838,16 +838,16 @@ For each generic variable:
 Examples:
 
 ```text
-Integer <: T                      => T = Integer
+Int <: T                      => T = Int
 T <: Number                       => T = Number
 T <: Printable, T <: Serializable => T = Printable & Serializable
-Integer <: T, T <: Number         => T = Integer
+Int <: T, T <: Number         => T = Int
 ```
 
 Generic lower evidence forms a least representable upper bound. It first uses
 an existing common supertype, then existing structural joins such as collection
-widening, and finally a reduced union. Thus `Integer` plus `Real` becomes
-`Real`, while `Integer` plus `String` becomes `Integer | String`. This join is
+widening, and finally a reduced union. Thus `Int` plus `Real` becomes
+`Real`, while `Int` plus `String` becomes `Int | String`. This join is
 order-independent.
 
 ### Step 5: revisit deferred callables
@@ -979,8 +979,8 @@ relations.
 `apply_overload_to_stack(...)` is a convenience for pure type-stack work:
 
 ```text
-stack before: [String, Integer, Real]
-overload:              (Integer, Real) -> Number
+stack before: [String, Int, Real]
+overload:              (Int, Real) -> Number
 stack after:  [String, Number]
 ```
 
@@ -1156,8 +1156,8 @@ must be joined.
 Examples:
 
 ```text
-merge(Integer, Real)   -> Real
-merge(Integer, String) -> Integer | String
+merge(Int, Real)   -> Real
+merge(Int, String) -> Int | String
 merge(None, String)    -> String?
 ```
 
@@ -1196,21 +1196,21 @@ initial function branch
   mode: INFER_INPUTS
 
 condition branch
-  true produces #boolean Integer
+  true produces #boolean Int
   condition consumes it
   body input stack: []
 
 then branch
-  stack: [Integer]
+  stack: [Int]
 
 else branch
   stack: [String]
 
 join
-  stack: [Integer | String]
+  stack: [Int | String]
 
 function signature
-  Function[ -> Integer | String]
+  Function[ -> Int | String]
 ```
 
 Nothing guessed that union in advance. It appears because two valid branch
@@ -1626,7 +1626,7 @@ question.
 The canonical optional representation remains `Some[T] | None` for analysis and
 relations. User-facing type rendering recognizes that exact normalized shape and
 prints `T?`; compound payloads are parenthesized, for example
-`(Integer | String)?`. This applies uniformly because the REPL, diagnostics,
+`(Int | String)?`. This applies uniformly because the REPL, diagnostics,
 documentation, and stack previews all use the central `vtypes.show` formatter.
 
 ## Reading a type failure without getting lost
@@ -1638,7 +1638,7 @@ When a program reports an overload error, write down these facts in order.
 Use rendered types, but also inspect their node kinds and ranks.
 
 ```text
-actual: [Foo, Integer+]
+actual: [Foo, Int+]
 ```
 
 ### 2. Candidate declaration
@@ -1652,7 +1652,7 @@ returns:           T
 
 ```text
 first T:  Foo
-second T: Integer
+second T: Int
 ```
 
 Does `_combine_all` have one safe solution? If not, the failure is generic
@@ -1694,9 +1694,9 @@ from valiance import types as T
 
 ctx = T.Context()
 
-assert T.same(T.U(T.Integer, T.Never()), T.Integer)
-assert T.assignable(T.Integer, T.Number, ctx)
-assert not T.assignable(T.Number, T.Integer, ctx)
+assert T.same(T.U(T.Int, T.Never()), T.Int)
+assert T.assignable(T.Int, T.Number, ctx)
+assert not T.assignable(T.Number, T.Int, ctx)
 
 T_var = T.TypeVariable("T")
 overload = T.Overload(
@@ -1706,7 +1706,7 @@ overload = T.Overload(
 
 attempt = T.try_apply_overload(
     overload,
-    (T.Integer, T.Real),
+    (T.Int, T.Real),
     ctx,
 )
 

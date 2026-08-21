@@ -81,12 +81,12 @@ class CallableOverloadSelectionTests(unittest.TestCase):
 
     def test_overload_set_chooses_more_specific_candidate(self) -> None:
         broad = T.Overload((T.Number,), (T.String,))
-        specific = T.Overload((T.Integer,), (T.Boolean,))
+        specific = T.Overload((T.Int,), (T.Boolean,))
         callable_type = T.Overloads(broad, specific)
 
         chosen = choose_best_overload(
             callable_type,
-            T.TypeStack((T.Integer,)),
+            T.TypeStack((T.Int,)),
         )
 
         self.assertIsNotNone(chosen)
@@ -122,12 +122,12 @@ class CallableOverloadSelectionTests(unittest.TestCase):
 
     def test_multiple_stack_states_choose_one_exact_overload(self) -> None:
         shared = T.Overload((T.Number,), (T.String,))
-        first_only = T.Overload((T.Integer,), (T.Boolean,))
+        first_only = T.Overload((T.Int,), (T.Boolean,))
 
         chosen = choose_best_overload(
             T.Overloads(shared, first_only),
             (
-                T.TypeStack((T.Integer,)),
+                T.TypeStack((T.Int,)),
                 T.TypeStack((T.Real,)),
             ),
         )

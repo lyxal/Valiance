@@ -1,3 +1,3 @@
 $values = [1, 2, 3]
-$task = fn -> Integer+ => $values end | spawn
+$task = fn -> Int+ => $values end | spawn
 $task wait

@@ -320,7 +320,7 @@ class TaskDiagnosticContextTests(unittest.TestCase):
         from valiance.parsing import parse
         from valiance.runtime import compile_program, dumps, loads, run
 
-        source = 'fn -> Integer => panic ValueFault("boom") end | spawn | wait'
+        source = 'fn -> Int => panic ValueFault("boom") end | spawn | wait'
         analyser = Analyser()
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])

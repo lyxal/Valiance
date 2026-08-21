@@ -43,7 +43,7 @@ class PerformanceToolTests(unittest.TestCase):
                 "modules",
                 "test",
                 "import { helper.double }\ndouble(4)",
-                (("helper.vlnc", "public define double(n: Integer) -> Integer => $n * 2\n"),),
+                (("helper.vlnc", "public define double(n: Int) -> Int => $n * 2\n"),),
             ),
             runs=1,
             warmups=0,

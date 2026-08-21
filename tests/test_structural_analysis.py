@@ -37,7 +37,7 @@ accept
             parse(
                 '''
 object Car =>
-  public $value: Integer
+  public $value: Int
 end
 define[T] get(value: T(.value: Number)) -> T => $value
 Car(1)

@@ -5,6 +5,6 @@ from valiance.vtypes.builders import N, Tagged
 
 Number = N(Symbol("Number"))
 Real = N(Symbol("Real"))
-Integer = N(Symbol("Integer"))
+Int = N(Symbol("Int"))
 String = N(Symbol("String"))
-Boolean = Tagged(Integer, "boolean")
+Boolean = Tagged(Int, "boolean")

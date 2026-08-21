@@ -47,7 +47,7 @@ from valiance.vtypes.context import (
     TraitImplementationPattern,
     Variance,
 )
-from valiance.vtypes.default_types import Boolean, Integer, Number, Real, String
+from valiance.vtypes.default_types import Boolean, Int, Number, Real, String
 from valiance.vtypes.environment import (
     AppliedElement,
     ConstructorDefinition,
@@ -183,7 +183,7 @@ __all__ = [
     "FunctionType",
     "GenericConstraint",
     "I",
-    "Integer",
+    "Int",
     "IntersectionType",
     "ListExactType",
     "ListMinType",

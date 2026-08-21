@@ -1,10 +1,10 @@
-$channel = 1 Channel[Integer]
+$channel = 1 Channel[Int]
 $producer = fn -> =>
   $channel 1 send
   $channel 2 send
   $channel 3 send
 end
-$consumer = fn -> Receive[Integer], Receive[Integer], Receive[Integer] =>
+$consumer = fn -> Receive[Int], Receive[Int], Receive[Int] =>
   $channel receive
   $channel receive
   $channel receive

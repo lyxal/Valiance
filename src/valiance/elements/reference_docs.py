@@ -187,7 +187,7 @@ def collect_concurrency_references() -> tuple[ElementReference, ...]:
         ("concurrent", "concurrent => ... end", "Run a structured task scope and join its children."),
         ("spawn", "spawn(function) -> Task[outputs...]", "Create a cooperatively scheduled task in the current scope."),
         ("wait", "wait(Task[T...]) -> T...", "Observe a task result; observation is repeatable."),
-        ("Channel", "Channel[T] | Integer Channel[T] -> Channel[T]", "Create an invariant unbuffered or bounded FIFO channel."),
+        ("Channel", "Channel[T] | Int Channel[T] -> Channel[T]", "Create an invariant unbuffered or bounded FIFO channel."),
         ("send", "send(Channel[T], T) ->", "Send one transferable value with rendezvous or backpressure."),
         ("receive", "receive(Channel[T]) -> Receive[T]", "Receive Value(value) or Closed without conflating None."),
         ("close", "close(Channel[T]) ->", "Close a channel; buffered values remain drainable."),

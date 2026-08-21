@@ -96,7 +96,7 @@ Important token rules:
   literal form such as `3i4`. Scientific exponents may themselves be real-valued,
   so `1.3e5.2` is one NUMBER token rather than a number followed by field access.
   Numeric inference uses the normalized value: a zero imaginary component does
-  not force `Number`, so `1i0` is `Integer` and `1.5i0` is `Real`.
+  not force `Number`, so `1i0` is `Int` and `1.5i0` is `Real`.
 - Alphanumeric identifiers use `_` or alphabetic start characters followed by
   `_`, alphabetic characters, or digits.
 - Symbolic operators are made from `_OP_CHARS`. `_operator()` emits exactly one
@@ -348,7 +348,7 @@ full member chain, for example `$->a->b->c`.
 
 ### Record literals and row types
 
-Record and dictionary entries use `=>`. Every field, key, and value expression is isolated on its own empty stack. Records use the ordinary row postfix: `record(.cmd: String, .jump: Integer)`. The removed bracketed record type spelling is a parse error.
+Record and dictionary entries use `=>`. Every field, key, and value expression is isolated on its own empty stack. Records use the ordinary row postfix: `record(.cmd: String, .jump: Int)`. The removed bracketed record type spelling is a parse error.
 
 ### Control-chain ordering
 
@@ -454,7 +454,7 @@ element[generic arguments]{overload parameter hints}(call arguments): modifier
 Square brackets bind declaration generics by position. An underscore leaves a
 position for inference. Adjacent curly braces provide positional parameter-type
 hints to overload selection and do not bind generics. For example,
-`convert[Integer, _]{Number}(1)` explicitly binds the first generic, infers the
+`convert[Int, _]{Number}(1)` explicitly binds the first generic, infers the
 second, and asks overload selection to treat the first call parameter as
 `Number`.
 

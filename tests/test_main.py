@@ -96,8 +96,8 @@ class MainTests(unittest.TestCase):
         output = io.StringIO()
         error = io.StringIO()
         input_stream = io.StringIO(
-            "define left(n: Integer) -> Integer => right($n) end\n"
-            "define right(n: Integer) -> Integer => left($n) end\n"
+            "define left(n: Int) -> Int => right($n) end\n"
+            "define right(n: Int) -> Int => left($n) end\n"
             ":quit\n"
         )
         with (
@@ -145,7 +145,7 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         rendered = output.getvalue()
-        self.assertIn("Stack types: [Integer]", rendered)
+        self.assertIn("Stack types: [Int]", rendered)
         self.assertNotIn("top\n", rendered)
 
     def test_repl_type_command_uses_current_stack_without_mutating_it(self):
@@ -156,7 +156,7 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         rendered = output.getvalue()
-        self.assertIn("Stack types: [Integer]", rendered)
+        self.assertIn("Stack types: [Int]", rendered)
         self.assertIn("top\n─ 3\nbottom", rendered)
 
     def test_help_flag_prints_help(self):
@@ -231,7 +231,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         rendered = output.getvalue()
         self.assertIn("Typed AST:", rendered)
-        self.assertIn("TypedNode(type=Integer", rendered)
+        self.assertIn("TypedNode(type=Int", rendered)
 
     def test_main_annotates_inline_code(self):
         output = io.StringIO()
@@ -714,7 +714,7 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         rendered = error.getvalue()
-        self.assertIn("Runtime error: checked cast failed: 1 is Integer", rendered)
+        self.assertIn("Runtime error: checked cast failed: 1 is Int", rendered)
         self.assertIn("runtime context:", rendered)
         self.assertIn("<main> ip", rendered)
 
@@ -1389,8 +1389,8 @@ class MainTests(unittest.TestCase):
                 [
                     "compile",
                     "--code",
-                    'define convert(value: Integer) -> String => ""\n'
-                    "define convert(text: String) -> Integer => 0\n"
+                    'define convert(value: Int) -> String => ""\n'
+                    "define convert(text: String) -> Int => 0\n"
                     "None convert",
                 ]
             )
@@ -1398,10 +1398,10 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         rendered = error.getvalue()
         self.assertIn(
-            "available overloads:\n  - convert(value: Integer) -> String",
+            "available overloads:\n  - convert(value: Int) -> String",
             rendered,
         )
-        self.assertIn("  - convert(text: String) -> Integer", rendered)
+        self.assertIn("  - convert(text: String) -> Int", rendered)
         self.assertNotIn("Function[", rendered)
 
     def test_main_renders_lints_with_actionable_replacement(self):

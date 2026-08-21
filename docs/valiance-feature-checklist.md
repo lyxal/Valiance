@@ -54,8 +54,8 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Parse complex-number literals.
 - [x] Parse scientific notation with real-valued exponents.
 - [x] Reject exponent syntax without a leading coefficient.
-- [x] Provide the `Integer`, `Real`, and general `Number` types.
-- [ ] Implement `Integer` as the appropriate tagged `Number` type.
+- [x] Provide the `Int`, `Real`, and general `Number` types.
+- [ ] Implement `Int` as the appropriate tagged `Number` type.
 - [ ] Implement `Real` as the appropriate tagged `Number` type.
 - [x] Treat numeric zero as false and every other number as true at runtime.
 - [x] Provide `true` as an alias for numeric `1`.
@@ -581,7 +581,7 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Infer upper-only generics from their upper meet.
 - [x] Infer normalized intersections from multiple unrelated upper bounds.
 - [x] Infer reduced unions from unrelated covariant lower bounds.
-- [x] Preserve the narrow numeric join `Integer | Real -> Real` during generic
+- [x] Preserve the narrow numeric join `Int | Real -> Real` during generic
       inference.
 - [x] Prefer a compatible lower join when both lower and upper evidence exist.
 - [x] Preserve contextual and rank/vectorisation-aware callable inference while
@@ -958,5 +958,5 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Provide `std.string.\Alphabet` and `std.string.transliterate`.
 - [x] Provide string mapping, splitting, integer parsing, and Unicode code-point conversion.
 - [x] Provide finite-sequence helpers used by the worked examples (`first`, `last`, `drop`, `dropLast`, `overtake`, `groupConsecutive`, `removeAt`, `reshape`, and `rotate`).
-- [x] Return `Integer` from `length` for finite lists and strings.
+- [x] Return `Int` from `length` for finite lists and strings.
 - [x] Provide numeric exponentiation, `square`, `inc`, membership, structural equality, and half-open range checks.

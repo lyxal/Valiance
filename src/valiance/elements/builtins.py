@@ -38,7 +38,7 @@ from valiance.vtypes.symbols import Symbol
 # Symbols reused across trait wiring, generic variance, and runtime type
 # checks below. Builtins that only ever need their own name (dup, +, map, ...)
 # are registered with plain string literals instead -- see `builtin()`.
-INTEGER = Symbol("Integer")
+INT = Symbol("Int")
 NUMBER = Symbol("Number")
 REAL = Symbol("Real")
 STRING = Symbol("String")
@@ -98,7 +98,7 @@ BUILTIN_FAULT_TYPES = tuple(
 )
 
 TRAIT_IMPLS = (
-    (INTEGER, REAL),
+    (INT, REAL),
     (REAL, NUMBER),
     *((error_type, ERR) for error_type in BUILTIN_ERROR_TYPES),
     *((fault_type, FAULT) for fault_type in BUILTIN_FAULT_TYPES),
@@ -380,7 +380,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
     "length": element_documentation(
         "Return the number of items in a finite list or string.",
         parameters=(("values", "Finite list or string whose size is required."),),
-        returns="The value length as an `Integer`.",
+        returns="The value length as an `Int`.",
         category="Collections",
         see_also=("len",),
     ),
@@ -431,7 +431,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
     "parseInt": element_documentation(
         "Parse a base-ten integer string.",
         parameters=(("value", "String to parse."),),
-        returns="The parsed `Integer`, or `None` when parsing fails.",
+        returns="The parsed `Int`, or `None` when parsing fails.",
         category="Strings",
     ),
     "peek": element_documentation(
@@ -597,7 +597,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         "Return a copy of an iterable with an indexed selection replaced.",
         parameters=(
             ("iterable", "Input list or string."),
-            ("index", "An index or Integer+ selection."),
+            ("index", "An index or Int+ selection."),
             ("value", "Replacement value or selection-shaped replacement."),
         ),
         returns="The reconstructed iterable; the input binding is unchanged.",
@@ -607,7 +607,7 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         "Return a copy of an iterable after applying a function to an indexed selection.",
         parameters=(
             ("iterable", "Input list or string."),
-            ("index", "An index or Integer+ selection."),
+            ("index", "An index or Int+ selection."),
             (
                 "function",
                 "Unary function applied once to the indexed value or selection.",
@@ -670,7 +670,7 @@ def _runtime_type_is_ownership_trivial(typ: T.Type) -> bool:
     if isinstance(typ, T.NominalType):
         return not typ.args and typ.name.text in {
             "Boolean",
-            "Integer",
+            "Int",
             "Number",
             "Real",
             "String",
@@ -1017,7 +1017,7 @@ def _runtime_assignable(value: Any, typ: T.Type) -> bool:
             return isinstance(value, RuntimeNumber)
         if typ.name == REAL:
             return isinstance(value, RuntimeNumber)
-        if typ.name == INTEGER:
+        if typ.name == INT:
             return (
                 isinstance(value, RuntimeNumber) and value == value.to_integral_value()
             )
@@ -1715,33 +1715,33 @@ def _not_equals(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (_truth(args[0] != args[1]),)
 
 
-@builtin("%", (T.Integer, T.Integer), (T.Integer,))
+@builtin("%", (T.Int, T.Int), (T.Int,))
 @builtin("%", (T.Real, T.Real), (T.Real,))
-@builtin("%", (T.Real, T.Integer), (T.Real,))
-@builtin("%", (T.Integer, T.Real), (T.Real,))
+@builtin("%", (T.Real, T.Int), (T.Real,))
+@builtin("%", (T.Int, T.Real), (T.Real,))
 @builtin("%", (T.Number, T.Number), (T.Number,))
 def _percent(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `%`, `%`, `%`, `%`, `%` built-in runtime overloads."""
     return (_wrapping_mod(args[0], args[1]),)
 
 
-@builtin("*", (T.Integer, T.Integer), (T.Integer,))
+@builtin("*", (T.Int, T.Int), (T.Int,))
 @builtin("*", (T.Real, T.Real), (T.Real,))
-@builtin("*", (T.Real, T.Integer), (T.Real,))
-@builtin("*", (T.Integer, T.Real), (T.Real,))
+@builtin("*", (T.Real, T.Int), (T.Real,))
+@builtin("*", (T.Int, T.Real), (T.Real,))
 @builtin("*", (T.Number, T.Number), (T.Number,))
 def _multiply(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `*`, `*`, `*`, `*`, `*` built-in runtime overloads."""
     return (args[0] * args[1],)
 
 
-@builtin("*", (T.Integer, T.String), (T.String,))
+@builtin("*", (T.Int, T.String), (T.String,))
 def _string_repeat(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `*` built-in runtime overload."""
     return (int(args[0]) * args[1],)
 
 
-@builtin("*", (T.String, T.Integer), (T.String,))
+@builtin("*", (T.String, T.Int), (T.String,))
 def _string_repeat_reverse(
     args: tuple[Any, ...], ctx: RuntimeContext
 ) -> tuple[Any, ...]:
@@ -1760,10 +1760,10 @@ def _power(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         raise RuntimeError("invalid numeric exponentiation") from exc
 
 
-@builtin("+", (T.Integer, T.Integer), (T.Integer,))
+@builtin("+", (T.Int, T.Int), (T.Int,))
 @builtin("+", (T.Real, T.Real), (T.Real,))
-@builtin("+", (T.Real, T.Integer), (T.Real,))
-@builtin("+", (T.Integer, T.Real), (T.Real,))
+@builtin("+", (T.Real, T.Int), (T.Real,))
+@builtin("+", (T.Int, T.Real), (T.Real,))
 @builtin("+", (T.Number, T.Number), (T.Number,))
 @builtin("+", (T.String, T.String), (T.String,))
 def _plus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -1771,20 +1771,20 @@ def _plus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (args[0] + args[1],)
 
 
-@builtin("-", (T.Integer, T.Integer), (T.Integer,))
+@builtin("-", (T.Int, T.Int), (T.Int,))
 @builtin("-", (T.Real, T.Real), (T.Real,))
-@builtin("-", (T.Real, T.Integer), (T.Real,))
-@builtin("-", (T.Integer, T.Real), (T.Real,))
+@builtin("-", (T.Real, T.Int), (T.Real,))
+@builtin("-", (T.Int, T.Real), (T.Real,))
 @builtin("-", (T.Number, T.Number), (T.Number,))
 def _minus(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `-`, `-`, `-`, `-`, `-` built-in runtime overloads."""
     return (args[0] - args[1],)
 
 
-@builtin("/", (T.Integer, T.Integer), (T.Real,))
+@builtin("/", (T.Int, T.Int), (T.Real,))
 @builtin("/", (T.Real, T.Real), (T.Real,))
-@builtin("/", (T.Real, T.Integer), (T.Real,))
-@builtin("/", (T.Integer, T.Real), (T.Real,))
+@builtin("/", (T.Real, T.Int), (T.Real,))
+@builtin("/", (T.Int, T.Real), (T.Real,))
 @builtin("/", (T.Number, T.Number), (T.Number,))
 def _slash(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `/`, `/`, `/`, `/`, `/` built-in runtime overloads."""
@@ -1805,8 +1805,8 @@ def _slash(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin(
     "/",
     (
-        T.Tup(T.Integer, T.String),
-        T.Fn((T.Integer, T.String), (T.String,)),
+        T.Tup(T.Int, T.String),
+        T.Fn((T.Int, T.String), (T.String,)),
     ),
     (T.String,),
 )
@@ -1926,16 +1926,16 @@ def _double(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin(
     "drop",
-    (T.ExactList(T.V("Item")), T.Integer),
+    (T.ExactList(T.V("Item")), T.Int),
     (T.ExactList(T.V("Item")),),
 )
 @builtin(
     "drop",
-    (T.Integer, T.ExactList(T.V("Item"))),
+    (T.Int, T.ExactList(T.V("Item"))),
     (T.ExactList(T.V("Item")),),
 )
-@builtin("drop", (T.String, T.Integer), (T.String,))
-@builtin("drop", (T.Integer, T.String), (T.String,))
+@builtin("drop", (T.String, T.Int), (T.String,))
+@builtin("drop", (T.Int, T.String), (T.String,))
 def _drop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Drop a non-negative number of leading items from a list or string."""
 
@@ -2100,11 +2100,11 @@ def _contains(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin(
     "inc",
-    (T.Integer,),
-    (T.Integer,),
+    (T.Int,),
+    (T.Int,),
     documentation=element_documentation(
         "Increase an integer by one.",
-        parameters=(("value", "Integer to increment."),),
+        parameters=(("value", "Int to increment."),),
         returns="The next integer.",
         category="Arithmetic",
     ),
@@ -2164,10 +2164,10 @@ def _last_value(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 @builtin(
     "length",
     (T.WithoutTag(T.ExactList(T.TypeVariable("Item")), "infinite"),),
-    (T.Integer,),
+    (T.Int,),
     vectorisable=False,
 )
-@builtin("length", (T.String,), (T.Integer,), vectorisable=False)
+@builtin("length", (T.String,), (T.Int,), vectorisable=False)
 @alias("len")
 def _length(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Return the exact length, evaluating lazy lists until they terminate."""
@@ -2335,7 +2335,7 @@ def _numeric(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin(
     "overtake",
-    (T.ExactList(T.V("Item")), T.Integer),
+    (T.ExactList(T.V("Item")), T.Int),
     (T.ExactList(T.V("Item")),),
     documentation=element_documentation(
         "Repeat a finite list cyclically until the requested length is reached.",
@@ -2360,7 +2360,7 @@ def _overtake(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (list(islice(cycle(materialized), count)),)
 
 
-@builtin("parseInt", (T.String,), (T.optional(T.Integer),))
+@builtin("parseInt", (T.String,), (T.optional(T.Int),))
 def _parse_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Parse a base-ten integer, returning `None` when parsing fails."""
 
@@ -2376,7 +2376,7 @@ def _is_positive(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (_truth(args[0] > 0),)
 
 
-@builtin("range", (T.Integer, T.Integer), (T.ExactList(T.Integer),))
+@builtin("range", (T.Int, T.Int), (T.ExactList(T.Int),))
 @builtin("range", (T.Number, T.Number), (T.ExactList(T.Number),))
 def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Implement the `range` built-in runtime overload."""
@@ -2388,7 +2388,7 @@ def _range(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin(
     "removeAt",
-    (T.ExactList(T.V("Item")), T.Integer),
+    (T.ExactList(T.V("Item")), T.Int),
     (T.ExactList(T.V("Item")),),
     param_names=("values", "index"),
 )
@@ -2474,10 +2474,10 @@ def _reshape(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     return (build(0),)
 
 
-@builtin("rotate", (T.String, T.Integer), (T.String,))
+@builtin("rotate", (T.String, T.Int), (T.String,))
 @builtin(
     "rotate",
-    (T.ExactList(T.V("Item")), T.Integer),
+    (T.ExactList(T.V("Item")), T.Int),
     (T.ExactList(T.V("Item")),),
 )
 def _rotate(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -2531,7 +2531,7 @@ def _sum(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin(
     "take",
-    (T.ExactList(T.TypeVariable("Item")), T.Integer),
+    (T.ExactList(T.TypeVariable("Item")), T.Int),
     (T.ExactList(T.TypeVariable("Item")),),
 )
 def _take(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
@@ -2565,7 +2565,7 @@ def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "update",
     (
         T.C(T.ListMinType, T.V("Item")),
-        T.ExactList(T.optional(T.Integer)),
+        T.ExactList(T.optional(T.Int)),
         T.V("Replacement"),
     ),
     (T.C(T.ListMinType, T.V("Item")),),
@@ -2576,7 +2576,7 @@ def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "update",
     (
         T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),
-        T.TupRepeat(T.optional(T.Integer)),
+        T.TupRepeat(T.optional(T.Int)),
         T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),
     ),
     (T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),),
@@ -2596,14 +2596,14 @@ def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 @builtin(
     "update",
-    (T.ExactList(T.V("Item")), T.Integer, T.V("Item")),
+    (T.ExactList(T.V("Item")), T.Int, T.V("Item")),
     (T.ExactList(T.V("Item")),),
     param_names=("iterable", "index", "value"),
     vectorisable=False,
 )
 @builtin(
     "update",
-    (T.ExactList(T.V("Item")), T.ExactList(T.Integer), T.V("Item")),
+    (T.ExactList(T.V("Item")), T.ExactList(T.Int), T.V("Item")),
     (T.ExactList(T.V("Item")),),
     param_names=("iterable", "index", "value"),
     vectorisable=False,
@@ -2612,7 +2612,7 @@ def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "update",
     (
         T.ExactList(T.V("Item")),
-        T.ExactList(T.Integer),
+        T.ExactList(T.Int),
         T.ExactList(T.V("Item")),
     ),
     (T.ExactList(T.V("Item")),),
@@ -2621,14 +2621,14 @@ def _unpair(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 @builtin(
     "update",
-    (T.String, T.Integer, T.String),
+    (T.String, T.Int, T.String),
     (T.String,),
     param_names=("iterable", "index", "value"),
     vectorisable=False,
 )
 @builtin(
     "update",
-    (T.String, T.ExactList(T.Integer), T.String),
+    (T.String, T.ExactList(T.Int), T.String),
     (T.String,),
     param_names=("iterable", "index", "value"),
     vectorisable=False,
@@ -2645,7 +2645,7 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "updateBy",
     (
         T.C(T.ListMinType, T.V("Item")),
-        T.ExactList(T.optional(T.Integer)),
+        T.ExactList(T.optional(T.Int)),
         T.Fn((T.C(T.ListMinType, T.V("Item")),), (T.C(T.ListMinType, T.V("Item")),)),
     ),
     (T.C(T.ListMinType, T.V("Item")),),
@@ -2656,7 +2656,7 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "updateBy",
     (
         T.C(T.ListExactType, T.V("Item"), T.RankVariable("n")),
-        T.TupRepeat(T.optional(T.Integer)),
+        T.TupRepeat(T.optional(T.Int)),
         T.Fn(
             (T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),),
             (T.C(T.ListExactType, T.V("Item"), T.RankVariable("m")),),
@@ -2681,7 +2681,7 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "updateBy",
     (
         T.ExactList(T.V("Item")),
-        T.Integer,
+        T.Int,
         T.Fn((T.V("Item"),), (T.V("Item"),)),
     ),
     (T.ExactList(T.V("Item")),),
@@ -2692,7 +2692,7 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     "updateBy",
     (
         T.ExactList(T.V("Item")),
-        T.ExactList(T.Integer),
+        T.ExactList(T.Int),
         T.Fn(
             (T.ExactList(T.V("Item")),),
             (T.ExactList(T.V("Item")),),
@@ -2704,14 +2704,14 @@ def _update(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 )
 @builtin(
     "updateBy",
-    (T.String, T.Integer, T.Fn((T.String,), (T.String,))),
+    (T.String, T.Int, T.Fn((T.String,), (T.String,))),
     (T.String,),
     param_names=("iterable", "index", "function"),
     vectorisable=False,
 )
 @builtin(
     "updateBy",
-    (T.String, T.ExactList(T.Integer), T.Fn((T.String,), (T.String,))),
+    (T.String, T.ExactList(T.Int), T.Fn((T.String,), (T.String,))),
     (T.String,),
     param_names=("iterable", "index", "function"),
     vectorisable=False,
@@ -2948,7 +2948,7 @@ def _none(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @builtin(
     "fromCharcode",
-    (T.Integer,),
+    (T.Int,),
     (T.String,),
     documentation=element_documentation(
         "Convert an integer Unicode code point to a one-character string.",

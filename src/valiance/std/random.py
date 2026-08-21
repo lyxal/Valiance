@@ -15,7 +15,7 @@ from valiance.elements.stdlib_native import stdlib_element
 @stdlib_element(
     "randbit",
     (),
-    (T.Integer,),
+    (T.Int,),
     documentation=element_documentation(
         "Return a uniformly random binary integer.",
         returns="Either zero or one, each with equal probability.",
@@ -30,8 +30,8 @@ def _randbit(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 @stdlib_element(
     "between",
-    (T.Integer, T.Integer),
-    (T.Integer,),
+    (T.Int, T.Int),
+    (T.Int,),
     param_names=("minimum", "maximum"),
     documentation=element_documentation(
         "Return a uniformly random integer in an inclusive range.",

@@ -49,7 +49,7 @@ RESULT = Symbol("Result")
 ERR = Symbol("Err")
 NUMBER = Symbol("Number")
 REAL = Symbol("Real")
-INTEGER = Symbol("Integer")
+INT = Symbol("Int")
 
 
 def Never() -> Type:
@@ -503,7 +503,7 @@ def _normalize_numeric_intersection(items: set[Type]) -> set[Type]:
         item.name for item in items if isinstance(item, NominalType) and not item.args
     }
     remove: set[Type] = set()
-    if INTEGER in names:
+    if INT in names:
         remove.update(
             item
             for item in items
@@ -532,13 +532,13 @@ def _normalize_numeric_union(items: set[Type]) -> set[Type]:
             for item in items
             if isinstance(item, NominalType)
             and not item.args
-            and item.name in {INTEGER, REAL}
+            and item.name in {INT, REAL}
         )
     elif REAL in names:
         remove.update(
             item
             for item in items
-            if isinstance(item, NominalType) and not item.args and item.name == INTEGER
+            if isinstance(item, NominalType) and not item.args and item.name == INT
         )
     return items - remove
 

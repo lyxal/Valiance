@@ -11,7 +11,7 @@ from valiance.runtime import RuntimeError, compile_program, dumps, loads, run
 from valiance.runtime.runtime_values import TaggedValue
 from valiance.vtypes import (
     ExactTags,
-    Integer,
+    Int,
     Number,
     Tagged,
     assignable,
@@ -59,10 +59,10 @@ class DataTagUnitTests(unittest.TestCase):
         self.assertEqual(show(parse_type("[] Number")), "[] Number")
 
     def test_exact_tag_sets_require_exactly_the_present_tags(self):
-        self.assertTrue(assignable(Tagged(Integer, "a"), ExactTags(Number, "a")))
-        self.assertFalse(assignable(Tagged(Integer, "a", "b"), ExactTags(Number, "a")))
-        self.assertTrue(assignable(Integer, ExactTags(Number)))
-        self.assertFalse(assignable(Tagged(Integer, "a"), ExactTags(Number)))
+        self.assertTrue(assignable(Tagged(Int, "a"), ExactTags(Number, "a")))
+        self.assertFalse(assignable(Tagged(Int, "a", "b"), ExactTags(Number, "a")))
+        self.assertTrue(assignable(Int, ExactTags(Number)))
+        self.assertFalse(assignable(Tagged(Int, "a"), ExactTags(Number)))
 
     def test_unit_tag_cannot_be_laundered_into_an_index(self):
         analyser, _ = analyse_source("""
@@ -70,7 +70,7 @@ tag #km as unit
 [10, 20] $[1 #km]
 """)
         self.assertIn(
-            "list indexing requires Integer index",
+            "list indexing requires Int index",
             diagnostics_text(analyser),
         )
 
@@ -120,7 +120,7 @@ tag #ascending as #sorted
 1 #ascending
 """)
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(show(typed[-1].typ), "#sorted Integer")
+        self.assertEqual(show(typed[-1].typ), "#sorted Int")
 
         [value] = run(compile_program(typed, optimize=False))
         self.assertIsInstance(value, TaggedValue)
@@ -210,7 +210,7 @@ define #sorted(value: Number) -> #boolean Number => $value 0 > end
         [value] = execute("""
 tag #positive as computed
 define #positive(value: Number) -> #boolean Number => false end
-define #positive(value: Integer) -> #boolean Number => true end
+define #positive(value: Int) -> #boolean Number => true end
 1 #positive
 """)
         self.assertIsInstance(value, TaggedValue)
@@ -263,7 +263,7 @@ tag #infinite as constructed
 #infinite [1, 2, 3] + 4
 """
         typed, outputs = execute_all_modes(source)
-        self.assertEqual(show(typed[-1].typ), "#infinite Integer+")
+        self.assertEqual(show(typed[-1].typ), "#infinite Int+")
         for output in outputs:
             [value] = output
             self.assertIsInstance(value, TaggedValue)
@@ -290,7 +290,7 @@ tag #sticky as constructed
         for source in sources:
             with self.subTest(source=source):
                 typed, outputs = execute_all_modes(source)
-                self.assertEqual(show(typed[-1].typ), "#sticky Integer")
+                self.assertEqual(show(typed[-1].typ), "#sticky Int")
                 for output in outputs:
                     [value] = output
                     self.assertIsInstance(value, TaggedValue)
@@ -304,7 +304,7 @@ define[T] identity(value: T) -> T => $value end
 #sticky [1, 2, 3] | identity
 """
         typed, outputs = execute_all_modes(source)
-        self.assertEqual(show(typed[-1].typ), "#sticky Integer+")
+        self.assertEqual(show(typed[-1].typ), "#sticky Int+")
         for output in outputs:
             [value] = output
             self.assertIsInstance(value, TaggedValue)
@@ -454,7 +454,7 @@ tag #sorted as computed
 #stream #sorted [1, 2, 3] + 4
 """
         typed, outputs = execute_all_modes(source)
-        self.assertEqual(show(typed[-1].typ), "#stream Integer+")
+        self.assertEqual(show(typed[-1].typ), "#stream Int+")
         for output in outputs:
             [value] = output
             self.assertIsInstance(value, TaggedValue)
@@ -467,7 +467,7 @@ tag #stream as constructed
 #cached #stream [1, 2, 3] + 4
 """
         typed, outputs = execute_all_modes(source)
-        self.assertEqual(show(typed[-1].typ), "#cached #stream Integer+")
+        self.assertEqual(show(typed[-1].typ), "#cached #stream Int+")
         for output in outputs:
             [value] = output
             self.assertIsInstance(value, TaggedValue)
@@ -562,8 +562,8 @@ define strip(value: #sticky Number) -> [] Number => #-sticky $value end
 
     def test_later_disjoint_constructed_input_wins_automatic_flow(self):
         cases = (
-            ("1 #a 2 #b +", "#b Integer", {"b"}),
-            ("1 #b 2 #a +", "#a Integer", {"a"}),
+            ("1 #a 2 #b +", "#b Int", {"b"}),
+            ("1 #b 2 #a +", "#a Int", {"a"}),
         )
         for expression, expected_type, expected_tags in cases:
             source = f"""
@@ -657,10 +657,10 @@ define invalid(value: #nested++ Number+) -> Number => 0 end
         source = """
 tag #sticky as constructed
 $values = [1 #sticky, 2]
-$plain = $values as[Integer+]
+$plain = $values as[Int+]
 $plain $[0] |
 match =>
-  as :#sticky Integer => "leaked"
+  as :#sticky Int => "leaked"
   _ => "plain"
 end
 """
@@ -674,11 +674,11 @@ end
     def test_constructed_tag_erasure_recurses_through_function_returns(self):
         source = """
 tag #sticky as constructed
-define make(dummy: Number) -> Integer+ => [1 #sticky, 2] end
+define make(dummy: Number) -> Int+ => [1 #sticky, 2] end
 $plain = make 0
 $plain $[0] |
 match =>
-  as :#sticky Integer => "leaked"
+  as :#sticky Int => "leaked"
   _ => "plain"
 end
 """
@@ -696,7 +696,7 @@ $outer = [[1, 2] #nested]
 $inner = $outer $[0]
 $inner |
 match =>
-  as :#nested Integer+ => "tagged"
+  as :#nested Int+ => "tagged"
   _ => "plain"
 end
 """
@@ -714,7 +714,7 @@ $outer = [[1, 2] #nested, [3, 4] #nested]
 $slice = $outer[0:0]
 $slice |
 match =>
-  as :#nested+ Integer+2 => "tagged"
+  as :#nested+ Int+2 => "tagged"
   _ => "plain"
 end
 """
@@ -795,7 +795,7 @@ tag #nested as constructed
 """
         analyser, typed = analyse_source(source)
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(show(typed[-1].typ), "#nested+ Integer+2")
+        self.assertEqual(show(typed[-1].typ), "#nested+ Int+2")
         [value] = run(compile_program(typed, optimize=False))
         self.assertIsInstance(value, TaggedValue)
         self.assertEqual(

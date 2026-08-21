@@ -218,9 +218,9 @@ class CompiledModuleTests(unittest.TestCase):
             root = Path(tmp)
             library = root / "parity.vlnc"
             library.write_text(
-                "public define even(n: Integer) -> #boolean Integer => "
+                "public define even(n: Int) -> #boolean Int => "
                 "if ($n == 0) => true else => odd($n - 1) end end\n"
-                "public define odd(n: Integer) -> #boolean Integer => "
+                "public define odd(n: Int) -> #boolean Int => "
                 "if ($n == 0) => false else => even($n - 1) end end\n",
                 encoding="utf-8",
             )
@@ -273,7 +273,7 @@ class CompiledGenericTraitImplementationTests(unittest.TestCase):
             )
             analyser.analyse(parse(
                 "import { generic.[Box, Producer, Iterable] }\n"
-                "Box(1) as[Iterable[Integer]]\n"
+                "Box(1) as[Iterable[Int]]\n"
             ))
             self.assertEqual(analyser.diagnostics, [])
 
@@ -293,10 +293,10 @@ class CompiledGenericTraitImplementationTests(unittest.TestCase):
             )
             analyser.analyse(parse(
                 "import { generic.[Box, Producer, Iterable] }\n"
-                'Box("value") as[Iterable[Integer]]\n'
+                'Box("value") as[Iterable[Int]]\n'
             ))
             self.assertTrue(any(
-                "cannot safely cast Box[String] to Iterable[Integer]" in diagnostic
+                "cannot safely cast Box[String] to Iterable[Int]" in diagnostic
                 for diagnostic in analyser.diagnostics
             ))
 

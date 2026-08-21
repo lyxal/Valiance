@@ -54,7 +54,7 @@ WORKLOADS = (
     ),
     Workload(
         "vectorised-user-function",
-        "const $f = fn (n: Integer) -> Integer => ($n * 2) + 1 end\n"
+        "const $f = fn (n: Int) -> Int => ($n * 2) + 1 end\n"
         "$f(range(1, 10000)) sum",
     ),
     Workload(
@@ -74,7 +74,7 @@ WORKLOADS = (
     ),
     Workload(
         "guarded-match-map",
-        """range(1, 10000) map fn (n: Integer) =>
+        """range(1, 10000) map fn (n: Int) =>
   match =>
     if % 15 == 0 => "FizzBuzz"
     if % 5 == 0 => "Buzz"

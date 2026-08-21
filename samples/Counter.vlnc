@@ -1,15 +1,15 @@
 object Counter =>
-  $value: Integer
+  $value: Int
   private $timesIncremented = 0
 
-  define Counter(initialValue: Integer) => $self.value = $initialValue
+  define Counter(initialValue: Int) => $self.value = $initialValue
 
   @self define increment =>
     $self.value := + 1
     $self.timesIncremented := + 1
   end
 
-  @self define +(:Integer) =>
+  @self define +(:Int) =>
     $self.value := +
     $self.timesIncremented := + 1
   end

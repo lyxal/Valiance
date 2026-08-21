@@ -173,7 +173,7 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
         end
         flatMap(
           [[1,2],3,[[4],[[5,6]]]],
-          fn (x: Integer) -> String => "v${$x}" end
+          fn (x: Int) -> String => "v${$x}" end
         )
         """
         self.assertEqual(execute(source), [["v1", "v2", "v3", "v4", "v5", "v6"]])
@@ -182,8 +182,8 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
 
     def test_minimum_rank_match_subtraction_expands_exact_interval(self):
         source = """
-        define[T] accept(xs: T+2 | T+3 | T+4) -> Integer => 1 end
-        define[T] classify(xs: T*2) -> Integer =>
+        define[T] accept(xs: T+2 | T+3 | T+4) -> Int => 1 end
+        define[T] classify(xs: T*2) -> Int =>
           match =>
             as :T*5 => 0
             _ => accept
@@ -206,8 +206,8 @@ class RuggedFlattenRegressionTests(unittest.TestCase):
 
     def test_rugged_rank_match_subtraction_expands_exact_interval(self):
         source = """
-        define[T] accept(xs: T+2 | T+3 | T+4) -> Integer => 1 end
-        define[T] classify(xs: T~2) -> Integer =>
+        define[T] accept(xs: T+2 | T+3 | T+4) -> Int => 1 end
+        define[T] classify(xs: T~2) -> Int =>
           match =>
             as :T*5 => 0
             _ => accept
@@ -298,8 +298,8 @@ end
         """Keep large scalar lists cheap across closures and indexed updates."""
         source = """
 $tape = [0] overtake 30000
-$i: Integer = 0
-define identity(n: Integer) => $n
+$i: Int = 0
+define identity(n: Int) => $n
 while ($i < 2) =>
   $tape[0] := + 1
   $i := + 1
@@ -322,7 +322,7 @@ end
         """Keep scalar records out of recursive retain and release walks."""
         source = """
 $point = record{x => 0, y => 1}
-$i: Integer = 0
+$i: Int = 0
 while ($i < 2) =>
   $point.x := + 1
   $i := + 1
@@ -385,7 +385,7 @@ $record.x = 9
         """Run recursive Valiance calls beyond Python's recursion limit."""
         self.assertEqual(
             execute("""
-$down = @recursive fn (n: Integer) -> Integer =>
+$down = @recursive fn (n: Int) -> Int =>
   if ($n == 0) => return 0
   this($n - 1)
 end
@@ -398,7 +398,7 @@ $down(5000)
         """Propagate panics through deep iterative activations into handlers."""
         self.assertEqual(
             execute("""
-$down = @recursive fn (n: Integer) -> Integer =>
+$down = @recursive fn (n: Int) -> Int =>
   if ($n == 0) => ValueFault("done") panic
   this($n - 1)
 end
@@ -635,7 +635,7 @@ define pick(a: Number, b: Number = 2) -> Number => $a $b +
 
     def test_symbolic_match_prepares_index_reduction_and_aggregate_patterns(self):
         source = """
-fn (values: Integer+) -> Integer =>
+fn (values: Int+) -> Int =>
   [$values[1], sum removeAt($values, 1)] match =>
     [_, 4] => 9
     [2, 2] => 8
@@ -661,7 +661,7 @@ end
 
     def test_guarded_match_uses_prepared_dispatch_plan(self):
         source = """
-fn (n: Integer) -> String =>
+fn (n: Int) -> String =>
   match =>
     if % 15 == 0 => "FizzBuzz"
     if % 5 == 0 => "Buzz"
@@ -694,7 +694,7 @@ end
     def test_guard_bytecode_retains_statically_selected_overloads(self):
         """Do not discard analysed element slots while lowering match guards."""
         source = """
-fn (n: Integer) -> String =>
+fn (n: Int) -> String =>
   match =>
     if % 3 == 0 => "multiple"
     _ => "other"
@@ -746,7 +746,7 @@ end
     def test_prepared_stats_report_structural_rejection_reasons(self):
         """Expose attempted prepared strategies only when statistics are enabled."""
         analyser = Analyser()
-        typed = analyser.analyse(parse("fn (n: Integer) => $n + 1 end"))
+        typed = analyser.analyse(parse("fn (n: Int) => $n + 1 end"))
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(
             output=lambda _value: None,
@@ -762,7 +762,7 @@ end
 
     def test_guarded_match_map_preserves_source_order(self):
         result = execute("""
-range(1, 16) map fn (n: Integer) =>
+range(1, 16) map fn (n: Int) =>
   match =>
     if % 15 == 0 => "FizzBuzz"
     if % 5 == 0 => "Buzz"
@@ -798,7 +798,7 @@ end
 
     def test_optimization_stats_report_prepared_plan_reuse(self):
         analyser = Analyser()
-        typed = analyser.analyse(parse("fn (value: Integer) -> Integer => $value end"))
+        typed = analyser.analyse(parse("fn (value: Int) -> Int => $value end"))
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(
             output=lambda _value: None,
@@ -822,7 +822,7 @@ end
 
     def test_prepared_leaf_treats_exact_rank_collection_as_scalar(self):
         source = """
-fn (cells: Integer+) -> Integer => $cells[1] end
+fn (cells: Int+) -> Int => $cells[1] end
 """
         analyser = Analyser()
         typed = analyser.analyse(parse(source))
@@ -860,7 +860,7 @@ fn (cells: Integer+) -> Integer => $cells[1] end
 
     def test_prepared_leaf_still_vectorises_above_parameter_rank(self):
         source = """
-fn (cells: Integer+) -> Integer => $cells[0] end
+fn (cells: Int+) -> Int => $cells[0] end
 """
         analyser = Analyser()
         typed = analyser.analyse(parse(source))
@@ -880,7 +880,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
     def test_prepared_call_exposes_arity_specialised_invocation(self):
         analyser = Analyser()
         typed = analyser.analyse(
-            parse("fn (a: Integer, b: Integer) -> Integer => $a $b + end")
+            parse("fn (a: Int, b: Int) -> Int => $a $b + end")
         )
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
@@ -932,7 +932,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
     def test_user_function_vectorisation_reuses_prepared_scalar_plan(self):
         analyser = Analyser()
         typed = analyser.analyse(
-            parse("fn (n: Integer) -> Integer => ($n * 2) + 1 end")
+            parse("fn (n: Int) -> Int => ($n * 2) + 1 end")
         )
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
@@ -1034,7 +1034,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
 
     def test_length_counts_a_terminating_unfold_without_python_size(self):
         result = execute(
-            "1 unfold (< 5) -> (n: Integer) => $n 1 + end | #-infinite | length"
+            "1 unfold (< 5) -> (n: Int) => $n 1 + end | #-infinite | length"
         )
 
         self.assertEqual(result, [RuntimeNumber(4)])
@@ -1074,7 +1074,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
         self.assertEqual(result, [RuntimeNumber(54)])
 
     def test_straight_line_plan_handles_multiple_resolved_calls(self):
-        source = "fn (n: Integer) -> Integer => ($n * 2) + 1 end"
+        source = "fn (n: Int) -> Int => ($n * 2) + 1 end"
         analyser = Analyser()
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
@@ -1087,7 +1087,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
 
     def test_prepared_niladic_scalar_uses_constant_strategy(self):
         analyser = Analyser()
-        typed = analyser.analyse(parse("fn () -> Integer => 7 end"))
+        typed = analyser.analyse(parse("fn () -> Int => 7 end"))
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
         function = vm.run(compile_program(typed))[0]
@@ -1099,7 +1099,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
 
     def test_prepared_unary_identity_uses_identity_strategy(self):
         analyser = Analyser()
-        typed = analyser.analyse(parse("fn (value: Integer) -> Integer => $value end"))
+        typed = analyser.analyse(parse("fn (value: Int) -> Int => $value end"))
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
         function = vm.run(compile_program(typed))[0]
@@ -1110,7 +1110,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
 
     def test_prepared_unary_wrapper_uses_resolved_builtin_strategy(self):
         analyser = Analyser()
-        typed = analyser.analyse(parse("fn (n: Integer) -> Integer => $n % 7 end"))
+        typed = analyser.analyse(parse("fn (n: Int) -> Int => $n % 7 end"))
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
         function = vm.run(compile_program(typed))[0]
@@ -1125,7 +1125,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
     def test_prepared_binary_wrapper_uses_resolved_builtin_strategy(self):
         analyser = Analyser()
         typed = analyser.analyse(
-            parse("fn (a: Integer, b: Integer) -> Integer => " "$a $b + end")
+            parse("fn (a: Int, b: Int) -> Int => " "$a $b + end")
         )
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
@@ -1140,7 +1140,7 @@ fn (cells: Integer+) -> Integer => $cells[0] end
 
     def test_prepared_wrapper_falls_back_for_collection_vectorisation(self):
         analyser = Analyser()
-        typed = analyser.analyse(parse("fn (n: Integer) -> Integer => $n % 7 end"))
+        typed = analyser.analyse(parse("fn (n: Int) -> Int => $n % 7 end"))
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
         function = vm.run(compile_program(typed))[0]
@@ -1222,7 +1222,7 @@ end
 
     def test_extend_applies_to_vectorised_user_functions(self):
         source = """
-define add(a: Integer, b: Integer) -> Integer => $a $b + end
+define add(a: Int, b: Int) -> Int => $a $b + end
 [1, 2, 3] [4, 5] add extend(0)
 """
         program = parse(source)
@@ -1300,7 +1300,7 @@ end
 define[T: trait => extend ==(:T, :T) -> #boolean Number end] findScalar(
   xs: T+,
   x: T exact
-) -> Integer? =>
+) -> Int? =>
   $xs foreach (item, pos) =>
     if ($item == $x) => return $pos
   end
@@ -1317,7 +1317,7 @@ end
 define[T: trait => extend ==(:T, :T) -> #boolean Number end] findScalar(
   xs: T+,
   x: T exact
-) -> Integer? =>
+) -> Int? =>
   $xs foreach (item, pos) =>
     if ($item == $x) => return $pos
   end
@@ -1667,7 +1667,7 @@ $lst map: classify | println
         source = """
 define widen(n: Number) -> Number => $n
 define choose(n: Number) -> String => "number"
-define choose(n: Integer) -> String => "integer"
+define choose(n: Int) -> String => "integer"
 define choose(s: String) -> String => "string"
 [1 | widen, "A"] map: choose | println
 """
@@ -1777,8 +1777,8 @@ define describe(x: String) -> String => "string"
 tag #left as computed
 tag #right as computed
 tag #left disjoint #right
-define label(x: #left Integer) -> String => "left"
-define label(x: #right Integer) -> String => "right"
+define label(x: #left Int) -> String => "left"
+define label(x: #right Int) -> String => "right"
 [1 #left, 2 #right] map: label | println
 """
 
@@ -1837,7 +1837,7 @@ define label(x: #right Integer) -> String => "right"
         self.assertEqual(
             execute("""
 define choose(n: Number) -> Number => $n 1 +
-define choose(i: Integer) -> String => "int"
+define choose(i: Int) -> String => "int"
 fn => choose end | call{Number}(6)
 """),
             [RuntimeNumber("7")],
@@ -2179,7 +2179,7 @@ define add_one(n: Number) -> Number => $n 1 +
 
     def test_control_flow_bodies_keep_resolved_element_calls(self):
         source = """
-define fibonacci(n: Integer) -> Integer =>
+define fibonacci(n: Int) -> Int =>
   $n match =>
     0 => 0
     1 => 1
@@ -2219,8 +2219,8 @@ $total
     def test_inline_control_flow_keeps_resolved_element_calls(self):
         """Do not redo overload search inside while, assert, or try bodies."""
         source = """
-define add1(n: Integer) => $n + 1
-$i: Integer = 0
+define add1(n: Int) => $n + 1
+$i: Int = 0
 while ($i < 1) =>
   $i := add1 $i
 end
@@ -2959,7 +2959,7 @@ $double($triple(4))
     def test_closure_assignment_does_not_persist_between_calls(self):
         output = io.StringIO()
         source = """
-define foo(x: Integer) =>
+define foo(x: Int) =>
   fn () =>
     $x := 1 +
     println $x
@@ -3148,17 +3148,17 @@ Person("Ada", 36)
         output = io.StringIO()
         source = """
 object Counter =>
-  $value: Integer
+  $value: Int
   private $timesIncremented = 0
 
-  define Counter(initialValue: Integer) => $self.value = $initialValue
+  define Counter(initialValue: Int) => $self.value = $initialValue
 
   @self define increment =>
     $self.value := + 1
     $self.timesIncremented := + 1
   end
 
-  @self define +(:Integer) =>
+  @self define +(:Int) =>
     $self.value := +
     $self.timesIncremented := + 1
   end
@@ -3345,7 +3345,7 @@ $f(10, 20, 30)
 
     def test_equal_explicit_return_branch_multiplicity_executes(self):
         source = """
-$f = fn (a: String, b: Integer) -> String, String =>
+$f = fn (a: String, b: Int) -> String, String =>
   if (0 == 0) => return ($a, $a)
   else => return ("unused", "unused")
 end
@@ -3426,8 +3426,8 @@ subtractUnder(10, 3, 99)
     def test_parameter_cycle_starts_at_top_of_conceptual_input_stack(self):
         self.assertEqual(
             execute(
-                "define addSecond(first: Integer, second: Integer) "
-                "-> Integer => + 1\n"
+                "define addSecond(first: Int, second: Int) "
+                "-> Int => + 1\n"
                 "addSecond(10, 20)"
             ),
             [RuntimeNumber("21")],
@@ -3444,7 +3444,7 @@ Box(1)
 
         self.assertIsInstance(box, ObjectValue)
         self.assertEqual(box.fields, {"value": RuntimeNumber("1")})
-        self.assertEqual(box.type_args, ("Integer",))
+        self.assertEqual(box.type_args, ("Int",))
 
     def test_overloaded_explicit_constructor_uses_resolved_initializer(self):
         self.assertEqual(
@@ -4105,7 +4105,7 @@ $.value = 2
         self.assertEqual(len(stack), 1)
         self.assertIsInstance(stack[0], ObjectValue)
         self.assertEqual(stack[0].type_name, "Box")
-        self.assertEqual(stack[0].type_args, ("Integer",))
+        self.assertEqual(stack[0].type_args, ("Int",))
         self.assertEqual(stack[0].fields["value"], RuntimeNumber("2"))
 
     def test_nested_generic_constructor_inference_executes(self):
@@ -4116,7 +4116,7 @@ define[T, U] Map(
   f: Function[T -> U]
 ) -> Box[U] => Box($f($b.v))
 
-$b = Box[Integer](21)
+$b = Box[Int](21)
 $doubled = $b Map: * 2
 $label = $doubled Map: "value = ${top}"
 println $label.v
@@ -4142,7 +4142,7 @@ Box
 
         self.assertEqual(len(stack), 1)
         self.assertIsInstance(stack[0], ObjectValue)
-        self.assertEqual(stack[0].type_args, ("Integer",))
+        self.assertEqual(stack[0].type_args, ("Int",))
 
     def test_explicit_object_constructor_survives_bytecode_round_trip(self):
         source = """
@@ -4222,7 +4222,7 @@ Some
         self.assertEqual(len(stack), 1)
         self.assertIsInstance(stack[0], ObjectValue)
         self.assertEqual(stack[0].type_name, "Maybe.Some")
-        self.assertEqual(stack[0].type_args, ("Integer",))
+        self.assertEqual(stack[0].type_args, ("Int",))
         self.assertEqual(stack[0].fields["value"], RuntimeNumber("1"))
 
     def test_executes_match_literal_guard_and_wildcard_patterns(self):
@@ -4447,7 +4447,7 @@ println
             "[1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14, "
             "FizzBuzz]\n"
         )
-        for function in ("fn =>", "fn (n: Integer) =>"):
+        for function in ("fn =>", "fn (n: Int) =>"):
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 self.assertEqual(execute(source.format(function=function)), [])
@@ -4656,7 +4656,7 @@ end
         self.assertEqual(
             execute(
                 """
-                define countdown(n: Integer) -> Integer =>
+                define countdown(n: Int) -> Int =>
                   if ($n == 0) => 0
                   else => +(countdown($n - 1), 1)
                   end
@@ -4729,7 +4729,7 @@ end
 
     def test_unfold_cycles_state_and_supports_separate_emission(self):
         explicit = execute("""
-0 1 unfold (true) -> (prev: Integer, next: Integer) =>
+0 1 unfold (true) -> (prev: Int, next: Int) =>
   +
 end | #-infinite | 7 take
 """)
@@ -4762,7 +4762,7 @@ end | 7 take
         self.assertEqual(list(tagged[0]), explicit_prefix)
 
         separate = execute("""
-1 unfold (< 10) -> (n: Integer) =>
+1 unfold (< 10) -> (n: Int) =>
   $n + 1
   if ($n % 2 == 0) => \\None
   else => $n Some
@@ -4781,13 +4781,13 @@ end | #-infinite | 4 take
 
     def test_unfold_condition_gatekeeps_initial_value(self):
         stack = execute(
-            "5 unfold (< 5) -> (n: Integer) => $n 1 + end | #-infinite | 1 take"
+            "5 unfold (< 5) -> (n: Int) => $n 1 + end | #-infinite | 1 take"
         )
         self.assertEqual(list(stack[0]), [])
 
     def test_unfold_condition_gatekeeps_each_state_emission(self):
         stack = execute("""
-0 1 unfold (< 100) -> (prev: Integer, next: Integer) =>
+0 1 unfold (< 100) -> (prev: Int, next: Int) =>
   $prev + $next
 end | #-infinite | 20 take
 """)
@@ -5564,10 +5564,10 @@ end
 
     def test_dictionary_function_selector_supports_augmented_assignment(self):
         source = (
-            "define keep(value: Dict[String, Integer]) -> "
-            "Dict[String, Integer] => $value end\n"
+            "define keep(value: Dict[String, Int]) -> "
+            "Dict[String, Int] => $value end\n"
             '$data = dict{"a" => 1, "b" => 2}\n'
-            "$data[fn (key: String, value: Integer) -> #boolean Number => "
+            "$data[fn (key: String, value: Int) -> #boolean Number => "
             "$value > 1 end] := keep\n"
             "$data"
         )
@@ -5626,7 +5626,7 @@ end
         message = str(error.exception)
         self.assertIn("cannot call element '-'", message)
         self.assertIn("stack: ['x', 1]", message)
-        self.assertIn("stack types: [String, Integer]", message)
+        self.assertIn("stack types: [String, Int]", message)
         self.assertIn("attempted input shapes:", message)
         self.assertIn("(Number, Number)", message)
         self.assertIn("runtime context:", message)
@@ -5688,7 +5688,7 @@ end
             run(program)
 
         message = str(error.exception)
-        self.assertIn("checked cast failed: 1 is Integer", message)
+        self.assertIn("checked cast failed: 1 is Int", message)
         self.assertIn("target: function 'bad_cast'", message)
         self.assertIn("arguments: [1]", message)
         self.assertIn("bad_cast ip 1: check_cast", message)
@@ -5794,7 +5794,7 @@ class ImportedOverloadRuntimeTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (source_dir / "fib.vlnc").write_text(
-                "public define fibonacci(n: Integer) -> Integer =>\n"
+                "public define fibonacci(n: Int) -> Int =>\n"
                 "  $n match =>\n"
                 "    0 => 0\n"
                 "    1 => 1\n"
@@ -5844,7 +5844,7 @@ class ImportedOverloadRuntimeTests(unittest.TestCase):
             )
             (source_dir / "app.vlnc").write_text(
                 'public define greeting(name: String) -> String => "Hello, $name!"\n'
-                "public define greeting(x: Integer) -> Integer => $x + 1\n",
+                "public define greeting(x: Int) -> Int => $x + 1\n",
                 encoding="utf-8",
             )
             main = source_dir / "main.vlnc"
@@ -5958,8 +5958,8 @@ class MinimumRankAssuranceTests(unittest.TestCase):
 
     def test_default_rank_is_equivalent_to_explicit_one(self):
         self.assertEqual(execute("1 ^+"), execute("1 ^+1"))
-        self.assertEqual(self.infer_type("1 ^+"), "Integer+")
-        self.assertEqual(self.infer_type("1 ^+1"), "Integer+")
+        self.assertEqual(self.infer_type("1 ^+"), "Int+")
+        self.assertEqual(self.infer_type("1 ^+1"), "Int+")
 
     def test_wraps_atomic_and_lower_rank_values(self):
         self.assertEqual(execute("1 ^+2"), [[[RuntimeNumber(1)]]])
@@ -5970,7 +5970,7 @@ class MinimumRankAssuranceTests(unittest.TestCase):
 
     def test_wraps_repeatedly_to_a_higher_requested_rank(self):
         self.assertEqual(execute("1 ^+4"), [[[[[RuntimeNumber(1)]]]]])
-        self.assertEqual(self.infer_type("1 ^+4"), "Integer+4")
+        self.assertEqual(self.infer_type("1 ^+4"), "Int+4")
 
     def test_wraps_ragged_runtime_value_by_its_shallowest_branch(self):
         self.assertEqual(

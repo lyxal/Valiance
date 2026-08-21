@@ -91,7 +91,7 @@ class LanguageServerTests(unittest.TestCase):
 
     def test_completion_suggests_variables_parameters_and_elements(self):
         source = (
-            "define demo(input: Integer) =>\n"
+            "define demo(input: Int) =>\n"
             "  $count = $input\n"
             "  $co\n"
             "end"
@@ -175,7 +175,7 @@ class LanguageServerTests(unittest.TestCase):
         self.assertIn("print", {item["label"] for item in completion})
 
     def test_completion_suggests_named_parameter(self):
-        source = "define demo(input: Integer) => $input"
+        source = "define demo(input: Int) => $input"
         results = self.session(source, {
             "jsonrpc": "2.0",
             "id": 2,
@@ -188,14 +188,14 @@ class LanguageServerTests(unittest.TestCase):
         completion = next(item["result"] for item in results if item.get("id") == 2)
         candidate = next(item for item in completion if item["label"] == "$input")
         self.assertEqual(candidate["kind"], 6)
-        self.assertIn("Integer", candidate["detail"])
+        self.assertIn("Int", candidate["detail"])
 
     def test_hover_renders_full_overload_signatures(self):
         source = "1 2 +"
         results = self.session(source, {"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {"textDocument": {"uri": "file:///tmp/main.vlnc"}, "position": {"line": 0, "character": 4}}})
         hover = next(item["result"] for item in results if item.get("id") == 2)
         value = hover["contents"]["value"]
-        self.assertIn("+(_1: Integer, _2: Integer) -> Integer", value)
+        self.assertIn("+(_1: Int, _2: Int) -> Int", value)
         self.assertNotEqual(value.strip(), "overload")
 
     def test_selected_builtin_hover_includes_documentation(self):
@@ -211,7 +211,7 @@ class LanguageServerTests(unittest.TestCase):
         })
         hover = next(item["result"] for item in results if item.get("id") == 2)
         value = hover["contents"]["value"]
-        self.assertIn("+(_1: Integer, _2: Integer) -> Integer", value)
+        self.assertIn("+(_1: Int, _2: Int) -> Int", value)
         self.assertIn("Add numbers or concatenate strings.", value)
 
     def test_builtin_hover_renders_structured_documentation(self):
@@ -292,7 +292,7 @@ class WorkspaceRefreshTests(unittest.TestCase):
             library = root / "library.vlnc"
             consumer = root / "consumer.vlnc"
             library.write_text(
-                "public define convert(x: Integer) -> Integer => $x\n",
+                "public define convert(x: Int) -> Int => $x\n",
                 encoding="utf-8",
             )
             consumer.write_text(
@@ -630,7 +630,7 @@ class OverloadAwareNavigationTests(unittest.TestCase):
                 "#?? Increment an integer.\n"
                 "#?? @param x An integer to increment.\n"
                 "#?? @returns The incremented integer.\n"
-                "public define greeting(x: Integer) -> Integer => $x 1 +\n",
+                "public define greeting(x: Int) -> Int => $x 1 +\n",
                 encoding="utf-8",
             )
             main = root / "main.vlnc"
@@ -643,7 +643,7 @@ class OverloadAwareNavigationTests(unittest.TestCase):
 
         value = hover["contents"]["value"]
         self.assertNotIn("greeting(name: String) -> String", value)
-        selected = value.index("greeting(x: Integer) -> Integer")
+        selected = value.index("greeting(x: Int) -> Int")
         selected_doc = value.index("Increment an integer.")
         self.assertLess(selected, selected_doc)
         self.assertNotIn("Return a greeting for name.", value)
@@ -662,7 +662,7 @@ class OverloadAwareNavigationTests(unittest.TestCase):
             target = root / "greetings.vlnc"
             target.write_text(
                 "public define greeting(name: String) -> String => name\n"
-                "public define greeting(x: Integer) -> Integer => $x\n",
+                "public define greeting(x: Int) -> Int => $x\n",
                 encoding="utf-8",
             )
             main = root / "main.vlnc"
@@ -700,8 +700,8 @@ class OverloadAwareNavigationTests(unittest.TestCase):
             source = (
                 "#?? String docs.\n"
                 "define greeting(name: String) -> String => $name\n"
-                "#?? Integer docs.\n"
-                "define greeting(x: Integer) -> Integer => $x\n"
+                "#?? Int docs.\n"
+                "define greeting(x: Int) -> Int => $x\n"
             )
             server, uri = self.server_for(main, source)
             hover = server._hover({
@@ -710,8 +710,8 @@ class OverloadAwareNavigationTests(unittest.TestCase):
             })
 
         value = hover["contents"]["value"]
-        self.assertIn("greeting(x: Integer) -> Integer", value)
-        self.assertIn("Integer docs.", value)
+        self.assertIn("greeting(x: Int) -> Int", value)
+        self.assertIn("Int docs.", value)
         self.assertNotIn("greeting(name: String)", value)
         self.assertNotIn("String docs.", value)
 
@@ -722,10 +722,10 @@ class OverloadAwareNavigationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             main = Path(tmp) / "main.vlnc"
             source = (
-                "define outer(x: Integer) =>\n"
+                "define outer(x: Int) =>\n"
                 "  #?? Print the nested integer.\n"
                 "  #?? @param y The integer to print.\n"
-                "  define inner(y: Integer) =>\n"
+                "  define inner(y: Int) =>\n"
                 "    println $y\n"
                 "  end\n"
                 "  inner 5\n"
@@ -738,7 +738,7 @@ class OverloadAwareNavigationTests(unittest.TestCase):
             })
 
         value = hover["contents"]["value"]
-        self.assertIn("inner(y: Integer)", value)
+        self.assertIn("inner(y: Int)", value)
         self.assertIn("Print the nested integer.", value)
         self.assertIn("**Parameter `y`:** The integer to print.", value)
 
@@ -749,10 +749,10 @@ class OverloadAwareNavigationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             main = Path(tmp) / "main.vlnc"
             source = (
-                "define outer(x: Integer) =>\n"
+                "define outer(x: Int) =>\n"
                 "  #?? Print the nested integer.\n"
                 "  #?? @param y The integer to print.\n"
-                "  define inner(y: Integer) =>\n"
+                "  define inner(y: Int) =>\n"
                 "    println $y\n"
                 "  end\n"
                 "  inner 5\n"
@@ -765,7 +765,7 @@ class OverloadAwareNavigationTests(unittest.TestCase):
             })
 
         value = hover["contents"]["value"]
-        self.assertIn("inner(y: Integer)", value)
+        self.assertIn("inner(y: Int)", value)
         self.assertIn("Print the nested integer.", value)
         self.assertIn("**Parameter `y`:** The integer to print.", value)
 
@@ -778,8 +778,8 @@ class OverloadAwareNavigationTests(unittest.TestCase):
             source = (
                 "#?? String conversion docs.\n"
                 "define convert(value: String) -> String => $value\n"
-                "#?? Integer conversion docs.\n"
-                "define convert(value: Integer) -> Integer => $value\n"
+                "#?? Int conversion docs.\n"
+                "define convert(value: Int) -> Int => $value\n"
                 "1 convert\n"
             )
             server, uri = self.server_for(main, source)
@@ -789,8 +789,8 @@ class OverloadAwareNavigationTests(unittest.TestCase):
             })
 
         value = hover["contents"]["value"]
-        self.assertIn("convert(value: Integer) -> Integer", value)
-        self.assertIn("Integer conversion docs.", value)
+        self.assertIn("convert(value: Int) -> Int", value)
+        self.assertIn("Int conversion docs.", value)
         self.assertNotIn("convert(value: String)", value)
         self.assertNotIn("String conversion docs.", value)
 
@@ -834,10 +834,10 @@ class HoverLimitAndFallbackTests(unittest.TestCase):
                 "#?? @param name The name to greet.\n"
                 "#?? @returns A friendly greeting.\n"
                 "public define greeting(name: String) -> String => $name\n"
-                "#?? Integer overload documentation.\n"
+                "#?? Int overload documentation.\n"
                 "#?? @param x An integer to increment.\n"
                 "#?? @returns The incremented integer.\n"
-                "public define greeting(x: Integer) -> Integer => $x + 1\n",
+                "public define greeting(x: Int) -> Int => $x + 1\n",
                 encoding="utf-8",
             )
             main = root / "main.vlnc"
@@ -853,8 +853,8 @@ class HoverLimitAndFallbackTests(unittest.TestCase):
             })
 
         value = hover["contents"]["value"]
-        self.assertIn("greeting(x: Integer) -> Integer", value)
-        self.assertIn("Integer overload documentation.", value)
+        self.assertIn("greeting(x: Int) -> Int", value)
+        self.assertIn("Int overload documentation.", value)
         self.assertIn("**Parameter `x`:** An integer to increment.", value)
         self.assertNotIn("Return a greeting for `name`.", value)
 
@@ -873,7 +873,7 @@ class HoverLimitAndFallbackTests(unittest.TestCase):
                 "#?? Increment an integer.\n"
                 "#?? @param x An integer to increment.\n"
                 "#?? @returns The incremented integer.\n"
-                "public define greeting(x: Integer) -> Integer => $x\n",
+                "public define greeting(x: Int) -> Int => $x\n",
                 encoding="utf-8",
             )
             main = root / "main.vlnc"
@@ -886,8 +886,8 @@ class HoverLimitAndFallbackTests(unittest.TestCase):
             import valiance.vtypes as T
             from valiance.vtypes.symbols import Symbol
             selected = T.Overload(
-                params=(T.NominalType(Symbol("Integer")),),
-                returns=(T.NominalType(Symbol("Integer")),),
+                params=(T.NominalType(Symbol("Int")),),
+                returns=(T.NominalType(Symbol("Int")),),
                 param_names=(Symbol("x"),),
             )
 

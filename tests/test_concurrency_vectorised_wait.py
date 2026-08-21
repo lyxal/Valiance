@@ -5,7 +5,7 @@ from valiance.asts import TypedWaitNode
 from valiance.parsing import parse
 from valiance.runtime import compile_program, run
 from valiance.runtime.runtime_values import RuntimeNumber
-from valiance.vtypes import ExactList, Integer, String, Task
+from valiance.vtypes import ExactList, Int, String, Task
 
 
 def analyse(source: str):
@@ -24,7 +24,7 @@ def execute(source: str):
 class VectorisedWaitAnalysisTests(unittest.TestCase):
     def test_task_list_lifts_each_native_output(self):
         analyser, typed = analyse(
-            '[fn -> Integer, String => 1 "a" end | spawn] | wait'
+            '[fn -> Int, String => 1 "a" end | spawn] | wait'
         )
         self.assertEqual(analyser.diagnostics, [])
         wait = typed[-1]
@@ -32,7 +32,7 @@ class VectorisedWaitAnalysisTests(unittest.TestCase):
         self.assertTrue(wait.vectorised)
         self.assertEqual(
             wait.output_types,
-            (ExactList(Integer), ExactList(String)),
+            (ExactList(Int), ExactList(String)),
         )
 
     def test_non_task_collection_is_rejected(self):
@@ -45,8 +45,8 @@ class VectorisedWaitExecutionTests(unittest.TestCase):
         self.assertEqual(
             execute(
                 """[
-  fn -> Integer => 2 end | spawn,
-  fn -> Integer => 1 end | spawn
+  fn -> Int => 2 end | spawn,
+  fn -> Int => 1 end | spawn
 ] | wait"""
             ),
             [[RuntimeNumber(2), RuntimeNumber(1)]],
@@ -56,8 +56,8 @@ class VectorisedWaitExecutionTests(unittest.TestCase):
         self.assertEqual(
             execute(
                 """[
-  fn -> Integer, String => 1 "one" end | spawn,
-  fn -> Integer, String => 2 "two" end | spawn
+  fn -> Int, String => 1 "one" end | spawn,
+  fn -> Int, String => 2 "two" end | spawn
 ] | wait"""
             ),
             [
@@ -88,13 +88,13 @@ class VectorisedWaitExecutionTests(unittest.TestCase):
 
     def test_empty_typed_task_collection_returns_shaped_empty_output(self):
         self.assertEqual(
-            execute("[] as[Task[Integer]+] | wait"),
+            execute("[] as[Task[Int]+] | wait"),
             [[]],
         )
 
     def test_empty_multiple_output_task_collection_returns_one_empty_per_output(self):
         self.assertEqual(
-            execute("[] as[Task[Integer, String]+] | wait"),
+            execute("[] as[Task[Int, String]+] | wait"),
             [[], []],
         )
 

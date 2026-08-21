@@ -170,7 +170,7 @@ class VmActivationQuantumTests(unittest.TestCase):
 
     def test_source_spawn_uses_resumable_activation_runner(self):
         analyser = Analyser()
-        typed = analyser.analyse(parse("fn -> Integer => 42 end | spawn | wait"))
+        typed = analyser.analyse(parse("fn -> Int => 42 end | spawn | wait"))
         self.assertEqual(analyser.diagnostics, [])
         vm = VirtualMachine(output=lambda _value: None)
         vm.task_instruction_quantum = 1

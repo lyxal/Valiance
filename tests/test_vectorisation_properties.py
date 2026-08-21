@@ -25,7 +25,7 @@ from valiance.vtypes import (
     assignable,
     same,
 )
-from valiance.vtypes.default_types import Integer, Number, Real, String
+from valiance.vtypes.default_types import Int, Number, Real, String
 
 
 def _analyse(source: str):
@@ -70,7 +70,7 @@ class VectorisationPlanPropertyTests(unittest.TestCase):
     """Check metadata invariants over a deterministic type-shape matrix."""
 
     def test_plan_metadata_is_consistent_across_collection_shapes(self):
-        atoms = (Integer, Real, Number, String)
+        atoms = (Int, Real, Number, String)
         collections = tuple(
             constructor(atom, rank)
             for atom, rank, constructor in product(
@@ -91,7 +91,7 @@ class VectorisationPlanPropertyTests(unittest.TestCase):
         parameters = (
             *atoms,
             *collections,
-            U(Integer, AtLeastList(Integer)),
+            U(Int, AtLeastList(Int)),
             U(Number, AtLeastList(Number)),
         )
 
@@ -118,11 +118,11 @@ class VectorisationPlanPropertyTests(unittest.TestCase):
 
     def test_every_vectorised_argument_has_complete_runtime_metadata(self):
         applied = apply_overload(
-            Overload((Integer, ExactList(Integer), Integer), (String,)),
+            Overload((Int, ExactList(Int), Int), (String,)),
             (
-                AtLeastList(Integer, 2),
-                ExactList(Integer),
-                Integer,
+                AtLeastList(Int, 2),
+                ExactList(Int),
+                Int,
             ),
         )
 
@@ -183,7 +183,7 @@ println Mag [[3, 5], [4, 12]]
     def test_minimum_rank_empty_value_retains_rank_evidence(self):
         self.assert_all_modes(
             """
-define \\empty -> Integer* => []
+define \\empty -> Int* => []
 \\empty | + 1
 """,
             ("[]",),
@@ -214,7 +214,7 @@ println washed? wash $subject
     def test_mixed_dynamic_and_broadcast_arguments_keep_their_policies(self):
         self.assert_all_modes(
             """
-define shift(xs: Integer*, delta: Integer) => +
+define shift(xs: Int*, delta: Int) => +
 shift([[1, 2], [3, 4]], 10)
 """,
             ("[[11, 12], [13, 14]]",),
@@ -223,7 +223,7 @@ shift([[1, 2], [3, 4]], 10)
     def test_exact_collection_parameter_consumes_each_runtime_slice_whole(self):
         self.assert_all_modes(
             """
-define outerLength(xs: Number+) -> Integer => $xs | length
+define outerLength(xs: Number+) -> Int => $xs | length
 outerLength [[1, 2], [3, 4]]
 """,
             ("[2, 2]",),

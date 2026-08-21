@@ -94,11 +94,11 @@ REAL = Symbol("Real")
 STRING = Symbol("String")
 BOOL = Symbol("Bool")
 BAX = Symbol("Bax")
-INTEGER = Symbol("Integer")
+INT = Symbol("Int")
 
 Number = N(NUMBER)
 Real = N(REAL)
-Integer = N(INTEGER)
+Int = N(INT)
 String = N(STRING)
 Bool = N(BOOL)
 PLUS = Symbol("+")
@@ -142,7 +142,7 @@ class AnalyserTests(unittest.TestCase):
     def test_stack_shuffle_move_removes_labelled_values_and_keeps_skips(self):
         branches = Analyser().analyse_node(
             BranchSet(
-                (AnalysisBranch(stack=TypeStack((String, Bool, Integer, Number))),)
+                (AnalysisBranch(stack=TypeStack((String, Bool, Int, Number))),)
             ),
             StackShuffleNode(
                 Symbol("move"),
@@ -153,7 +153,7 @@ class AnalyserTests(unittest.TestCase):
 
         self.assertEqual(
             next(iter(branches)).stack,
-            TypeStack((String, Integer, Bool, Bool, Number)),
+            TypeStack((String, Int, Bool, Bool, Number)),
         )
 
     def test_stack_shuffle_copy_rejects_uncopyable_object(self):
@@ -203,7 +203,7 @@ move(file -> file, file)
             ],
         )
 
-        self.assertEqual([node.typ for node in typed], [Integer, Integer, Integer])
+        self.assertEqual([node.typ for node in typed], [Int, Int, Int])
 
     def test_number_literals_infer_integer_or_real_precision(self):
         typed = analyse(
@@ -222,7 +222,7 @@ move(file -> file, file)
 
         self.assertEqual(
             [node.typ for node in typed],
-            [Integer, Real, Real, Integer, Integer, Real, Number, Real, Integer],
+            [Int, Real, Real, Int, Int, Real, Number, Real, Int],
         )
 
     def test_builtin_elements_are_declared_before_installation(self):
@@ -443,25 +443,25 @@ define \\f<Read, Write> => 1
         self.assertEqual(len(typed[-1].modifier_args), 1)
         modifier = typed[-1].modifier_args[0]
         self.assertIsInstance(modifier, TypedFunctionNode)
-        self.assertEqual(modifier.typ, Fn((Integer,), (Number,)))
+        self.assertEqual(modifier.typ, Fn((Int,), (Number,)))
 
     def test_colon_context_sets_modifier_signature_before_inference(self):
         typed = analyse(parse("[1, 2, 3] map: +"))
 
         mapped = typed[-1]
         self.assertIsInstance(mapped, TypedElementNode)
-        self.assertEqual(mapped.modifier_args[0].typ, Fn((Integer,), (Integer,)))
+        self.assertEqual(mapped.modifier_args[0].typ, Fn((Int,), (Int,)))
 
     def test_modifier_overloads_cover_union_item_type(self):
         typed = analyse(parse('$lst = [1, 2, "A", "B"]\n$lst map: * 2'))
 
         mapped = typed[-1]
         self.assertIsInstance(mapped, TypedElementNode)
-        self.assertEqual(mapped.typ, C(ListExactType, U(Integer, String)))
+        self.assertEqual(mapped.typ, C(ListExactType, U(Int, String)))
         self.assertEqual(len(mapped.modifier_args), 1)
         self.assertEqual(
             mapped.modifier_args[0].typ,
-            Fn((U(Integer, String),), (U(Integer, String),)),
+            Fn((U(Int, String),), (U(Int, String),)),
         )
         self.assertGreater(len(mapped.modifier_args[0].overloads), 1)
 
@@ -471,7 +471,7 @@ define \\f<Read, Write> => 1
         self.assertEqual(
             typed[0].typ,
             Overloads(
-                Overload((C(ListExactType, Integer),), (Integer,)),
+                Overload((C(ListExactType, Int),), (Int,)),
                 Overload((C(ListExactType, Number),), (Number,)),
                 Overload((C(ListExactType, Real),), (Real,)),
                 Overload((C(ListExactType, String),), (String,)),
@@ -501,7 +501,7 @@ define \\f<Read, Write> => 1
             env,
         )
 
-        self.assertEqual([node.typ for node in typed], [Integer, Integer, Number])
+        self.assertEqual([node.typ for node in typed], [Int, Int, Number])
         self.assertIsInstance(typed[-1], TypedElementNode)
         self.assertEqual(typed[-1].overload_index, 0)
         self.assertEqual(
@@ -517,7 +517,7 @@ define \\f<Read, Write> => 1
         self.assertEqual(
             typed[-1].typ,
             Tagged(
-                C(ListExactType, Integer),
+                C(ListExactType, Int),
                 DataTag("boolean", depth=1),
             ),
         )
@@ -529,7 +529,7 @@ define \\f<Read, Write> => 1
         self.assertTrue(typed[-1].overload.vectorised)
         self.assertEqual(
             typed[-1].overload.actual_returns,
-            (C(ListExactType, Integer),),
+            (C(ListExactType, Int),),
         )
 
     def test_exact_function_parameter_is_visible_in_type_but_not_body(self):
@@ -577,7 +577,7 @@ define[T] rankOne(xs: T+ exact) -> T+ => $xs end
         )
         self.assertEqual(show(definition.overloads[0].body[0].typ), "T+")
         self.assertIsNotNone(definition.overloads[0].body[0].typ.base.identity)
-        self.assertEqual(typed[-1].typ, C(ListExactType, Integer))
+        self.assertEqual(typed[-1].typ, C(ListExactType, Int))
 
     def test_atomic_requirement_is_retained_across_generic_forwarding(self):
         analyser = Analyser()
@@ -673,7 +673,7 @@ end
 """))
 
         problem = N(Symbol("Problem"))
-        expected_result = N(Symbol("Result"), Integer, problem)
+        expected_result = N(Symbol("Result"), Int, problem)
         [choose] = analyser.env.overloads_for(Symbol("choose"))
         self.assertEqual(choose.returns, (expected_result,))
         function_nodes = [node for node in typed if isinstance(node, TypedFunctionNode)]
@@ -695,7 +695,7 @@ end
         self.assertEqual(
             analyser.diagnostics,
             [
-                "5:1: function body can return Result[Integer, Problem], but the "
+                "5:1: function body can return Result[Int, Problem], but the "
                 "explicit return annotation is Number; declare a compatible Result "
                 "return type"
             ],
@@ -740,7 +740,7 @@ define \\rugged -> Number~ => []
         analyser = Analyser()
 
         analyser.analyse(parse("""
-define choose(a: Integer?) -> Integer? => $a end
+define choose(a: Int?) -> Int? => $a end
 [1, 2] [3] + extend: choose
 """))
 
@@ -781,7 +781,7 @@ end
         analyser = Analyser()
 
         analyser.analyse(parse("""
-define choose(a: Integer?, b: Integer?) -> Integer?+ => [$a] end
+define choose(a: Int?, b: Int?) -> Int?+ => [$a] end
 [1, 2] [3] + extend: choose
 """))
 
@@ -864,7 +864,7 @@ choose[Number, _](1, "value")
         analyser = Analyser()
 
         analyser.analyse(parse("""
-                define discrim(:Integer, :Integer, :Integer) -> Integer =>
+                define discrim(:Int, :Int, :Int) -> Int =>
                   copy(a, b, c -> a, c)
                   * * 4
                   dip: (^^ 2)
@@ -972,7 +972,7 @@ choose[Number, _](1, "value")
         )
 
         self.assertEqual(len(branches), 1)
-        self.assertEqual(next(iter(branches)).stack, TypeStack((Integer,)))
+        self.assertEqual(next(iter(branches)).stack, TypeStack((Int,)))
 
     def test_branch_set_condition_validation_pops_control_value(self):
         analyser = Analyser(Environment())
@@ -991,7 +991,7 @@ choose[Number, _](1, "value")
         self.assertEqual(len(branches), 1)
         branch = next(iter(branches))
         self.assertEqual(branch.stack, TypeStack())
-        self.assertEqual([node.typ for node in branch.typed_body], [Integer])
+        self.assertEqual([node.typ for node in branch.typed_body], [Int])
 
     def test_branch_set_condition_validation_rejects_any_non_bool_path(self):
         env = Environment()
@@ -1857,7 +1857,7 @@ Some
 """))
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, N(Symbol("Maybe"), Integer))
+        self.assertEqual(typed[-1].typ, N(Symbol("Maybe"), Int))
 
     def test_object_generic_variance_is_inferred_from_readable_fields(self):
         env = Environment()
@@ -2102,7 +2102,7 @@ sum
 """))
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, N(Symbol("Integer")))
+        self.assertEqual(typed[-1].typ, N(Symbol("Int")))
 
     def test_anonymous_trait_requirement_contributes_generic_constraints(self):
         analyser = Analyser()
@@ -2122,7 +2122,7 @@ end
 """))
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, N(Symbol("Integer")))
+        self.assertEqual(typed[-1].typ, N(Symbol("Int")))
 
     def test_enum_declaration_registers_niladic_members(self):
         env = Environment()
@@ -2469,10 +2469,10 @@ end
         self.assertEqual(
             typed[0].typ,
             Overloads(
-                Overload((Integer, Integer), (Integer,)),
-                Overload((Integer, Real), (Real,)),
+                Overload((Int, Int), (Int,)),
+                Overload((Int, Real), (Real,)),
                 Overload((Number, Number), (Number,)),
-                Overload((Real, Integer), (Real,)),
+                Overload((Real, Int), (Real,)),
                 Overload((Real, Real), (Real,)),
                 Overload((String, String), (String,)),
             ),
@@ -2491,7 +2491,7 @@ end
         self.assertEqual(
             typed[0].typ,
             Overloads(
-                Overload((Integer,), (Integer,)),
+                Overload((Int,), (Int,)),
                 Overload((Number,), (Number,)),
                 Overload((Real,), (Real,)),
                 Overload((String,), (String,)),
@@ -2504,7 +2504,7 @@ end
         self.assertEqual(
             typed[0].typ,
             Overloads(
-                Overload((Integer,), (Integer,)),
+                Overload((Int,), (Int,)),
                 Overload((Number,), (Number,)),
                 Overload((Real,), (Real,)),
                 Overload((String,), (String,)),
@@ -2588,7 +2588,7 @@ define timesFive(y: Number) -> Number => $x $y *
         self.assertEqual(
             function.typ,
             Overloads(
-                Overload((Integer,), (Integer,)),
+                Overload((Int,), (Int,)),
                 Overload((Number,), (Number,)),
                 Overload((Real,), (Real,)),
                 Overload((String,), (String,)),
@@ -2601,7 +2601,7 @@ define timesFive(y: Number) -> Number => $x $y *
                 for overload in function.overloads
             ],
             [
-                [Integer, Integer, Integer],
+                [Int, Int, Int],
                 [Number, Number, Number],
                 [Real, Real, Real],
                 [String, String, String],
@@ -2616,10 +2616,10 @@ define timesFive(y: Number) -> Number => $x $y *
         self.assertEqual(
             [overload.typ for overload in function.overloads],
             [
-                Fn((Integer, Integer), (Integer,)),
-                Fn((Integer, Real), (Real,)),
+                Fn((Int, Int), (Int,)),
+                Fn((Int, Real), (Real,)),
                 Fn((Number, Number), (Number,)),
-                Fn((Real, Integer), (Real,)),
+                Fn((Real, Int), (Real,)),
                 Fn((Real, Real), (Real,)),
                 Fn((String, String), (String,)),
             ],
@@ -2629,7 +2629,7 @@ define timesFive(y: Number) -> Number => $x $y *
                 [body_node.typ for body_node in overload.body]
                 for overload in function.overloads
             ],
-            [[Integer], [Real], [Number], [Real], [Real], [String]],
+            [[Int], [Real], [Number], [Real], [Real], [String]],
         )
 
     def test_overloaded_function_node_drops_never_returning_overloads(self):
@@ -2713,7 +2713,7 @@ where ($n = length $shape) => $xs as![T+$n]
         typed = analyser.analyse(parse(source))
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, C(ListExactType, Integer, 3))
+        self.assertEqual(typed[-1].typ, C(ListExactType, Int, 3))
         self.assertEqual(typed[-1].overload.rank_values, (("n", 3),))
 
     def test_arbitrary_length_tuple_parameter_matches_mixed_pattern(self):
@@ -3064,10 +3064,10 @@ fn (x: Number, y: String) -> Number => 1 end arity_rank
         self.assertEqual(
             typ,
             Overloads(
-                Overload((Integer, Integer), (Number,)),
-                Overload((Integer, Real), (Number,)),
+                Overload((Int, Int), (Number,)),
+                Overload((Int, Real), (Number,)),
                 Overload((Number, Number), (Number,)),
-                Overload((Real, Integer), (Number,)),
+                Overload((Real, Int), (Number,)),
                 Overload((Real, Real), (Number,)),
             ),
         )
@@ -3087,7 +3087,7 @@ fn (x: Number, y: String) -> Number => 1 end arity_rank
             Environment(),
         )
 
-        self.assertEqual(typ, Fn((), (Integer,)))
+        self.assertEqual(typ, Fn((), (Int,)))
 
     def test_omitted_returns_keep_only_top_stack_value(self):
         env = Environment()
@@ -3098,7 +3098,7 @@ fn (x: Number, y: String) -> Number => 1 end arity_rank
 
         typ = analyse_function(node, env)
 
-        self.assertEqual(typ, Fn((), (Integer,)))
+        self.assertEqual(typ, Fn((), (Int,)))
 
     def test_explicit_empty_returns_return_no_values(self):
         env = Environment()
@@ -3184,7 +3184,7 @@ define get(:Foo) => $f.x + 5
 
         self.assertEqual(
             show(typed[0].typ),
-            "OverloadSet[Function[Integer -> Integer], "
+            "OverloadSet[Function[Int -> Int], "
             "Function[Number -> Number], Function[Real -> Real]]",
         )
 
@@ -3206,7 +3206,7 @@ end
     def test_explicit_return_branches_require_equal_multiplicity(self):
         analyser = Analyser()
         analyser.analyse(parse("""
-fn (a: String, b: Integer) =>
+fn (a: String, b: Int) =>
   if (0 == 0) => return ($a, $a)
   else => return $b
 end
@@ -3378,7 +3378,7 @@ getName $joe
     def test_explicit_parameter_cycle_pops_from_the_conceptual_stack_top(self):
         branch = AnalysisBranch(
             input_mode=InputMode.CYCLE_EXPLICIT_PARAMS,
-            cycle_params=(Integer, Real, String),
+            cycle_params=(Int, Real, String),
             cycle_stack_remaining=3,
             cycle_from_top=True,
         )
@@ -3390,7 +3390,7 @@ getName $joe
             args, branch = sourced
             observed.extend(args)
 
-        self.assertEqual(observed, [String, Real, Integer, String])
+        self.assertEqual(observed, [String, Real, Int, String])
 
     def test_match_consumption_advances_explicit_parameter_cycle(self):
         analyser = Analyser()
@@ -3504,17 +3504,17 @@ end
 
     def test_branch_variables_allow_assignable_reassignment(self):
         ctx = Environment().context
-        ctx.trait_impls.setdefault(INTEGER, set()).add(NUMBER)
+        ctx.trait_impls.setdefault(INT, set()).add(NUMBER)
         variables = BranchVariables(function_locals=((X, Number),))
 
-        write = variables.write(X, N(INTEGER), ctx=ctx)
+        write = variables.write(X, N(INT), ctx=ctx)
 
         self.assertIsNone(write.error)
         self.assertIsNotNone(write.variables)
         self.assertEqual(write.variables.read(X), Number)
 
     def test_branch_variables_widen_mutable_numeric_reassignment(self):
-        variables = BranchVariables(function_locals=((X, Integer),))
+        variables = BranchVariables(function_locals=((X, Int),))
 
         write = variables.write(X, Number)
 
@@ -3535,9 +3535,9 @@ end
 
     def test_function_parameters_are_read_only_in_nested_scopes(self):
         sources = (
-            "define f(x: Integer) -> Integer => if (true) => $x = 2 end | $x end",
-            "define f(x: Integer) -> Integer => if (true) => $x := + 1 end | $x end",
-            "define f(x: Integer) -> Integer => [1] foreach (n) => $x = $n end | $x end",
+            "define f(x: Int) -> Int => if (true) => $x = 2 end | $x end",
+            "define f(x: Int) -> Int => if (true) => $x := + 1 end | $x end",
+            "define f(x: Int) -> Int => [1] foreach (n) => $x = $n end | $x end",
         )
         for source in sources:
             with self.subTest(source=source):
@@ -3552,7 +3552,7 @@ end
     def test_nested_function_parameter_remains_read_only(self):
         analyser = Analyser()
         analyser.analyse(
-            parse("define f(x: Integer) => fn (y: Integer) => $y = $x end end")
+            parse("define f(x: Int) => fn (y: Int) => $y = $x end end")
         )
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn(
@@ -3609,7 +3609,7 @@ end
     def test_multiple_assignment_sets_corresponding_types(self):
         typed = analyse(parse('$(a, b) = 1 "x"\n$a\n$b'))
 
-        self.assertEqual(typed[-2].typ, Integer)
+        self.assertEqual(typed[-2].typ, Int)
         self.assertEqual(typed[-1].typ, String)
 
     def test_explicit_variable_type_rejects_incompatible_initializer(self):
@@ -3640,8 +3640,8 @@ end
     def test_return_all_annotation_returns_full_function_stack(self):
         typed = analyse(parse("@returnAll define \\pair => 1 2\n\\pair"))
 
-        self.assertEqual(typed[0].typ, Fn((), (Integer, Integer)))
-        self.assertEqual(typed[-1].overload.actual_returns, (Integer, Integer))
+        self.assertEqual(typed[0].typ, Fn((), (Int, Int)))
+        self.assertEqual(typed[-1].overload.actual_returns, (Int, Int))
 
     def test_error_annotation_reports_selected_overload_message(self):
         analyser = Analyser()
@@ -3843,10 +3843,10 @@ end
             ],
         )
 
-        self.assertEqual(typed[-1].typ, Integer)
+        self.assertEqual(typed[-1].typ, Int)
         self.assertIsInstance(typed[-1], TypedCallNode)
-        self.assertEqual(typed[-1].overload.params, (Integer, Integer))
-        self.assertEqual(typed[-1].overload.actual_returns, (Integer,))
+        self.assertEqual(typed[-1].overload.params, (Int, Int))
+        self.assertEqual(typed[-1].overload.actual_returns, (Int,))
         self.assertFalse(typed[-1].overload.vectorised)
 
     def test_branch_substitution_solves_generic_optional_payload(self):
@@ -3861,7 +3861,7 @@ end
     def test_call_node_named_arguments_explain_function_value_rule(self):
         analyser = Analyser()
 
-        analyser.analyse(parse("$double = fn (v: Integer) => * 2\n" "$double(v = 5)"))
+        analyser.analyse(parse("$double = fn (v: Int) => * 2\n" "$double(v = 5)"))
 
         self.assertEqual(
             analyser.diagnostics,
@@ -3882,10 +3882,10 @@ end
             ],
         )
 
-        self.assertEqual(typed[0].typ, Integer)
+        self.assertEqual(typed[0].typ, Int)
         self.assertIsInstance(typed[1], TypedFunctionNode)
-        self.assertEqual(typed[2].typ, Integer)
-        self.assertEqual(typed[3].typ, Integer)
+        self.assertEqual(typed[2].typ, Int)
+        self.assertEqual(typed[3].typ, Int)
 
     def test_call_node_resolves_overloaded_function_type(self):
         typed = analyse(
@@ -3912,8 +3912,8 @@ end
         typed = analyse(parse("fn => + end | call(1, 2)"))
 
         self.assertIsInstance(typed[-1], TypedElementNode)
-        self.assertEqual(typed[-1].typ, Integer)
-        self.assertEqual(typed[-1].overload.actual_returns, (Integer,))
+        self.assertEqual(typed[-1].typ, Int)
+        self.assertEqual(typed[-1].overload.actual_returns, (Int,))
         self.assertEqual(len(typed[-1].overload.params), 3)
 
     def test_optional_parameters_do_not_change_plain_element_arity(self):
@@ -4335,7 +4335,7 @@ define sort(:Number+) -> #sorted Number+ => top
 
         self.assertEqual(
             branch.stack,
-            TypeStack((Tagged(Integer, "sticky"),)),
+            TypeStack((Tagged(Int, "sticky"),)),
         )
 
     def test_tag_overlay_preserves_computed_tag_without_runtime_override(self):
@@ -4366,7 +4366,7 @@ define #checked(:Number) -> #boolean Number => true end
 """)),
         )
 
-        self.assertEqual(branch.stack, TypeStack((Tagged(Integer, "checked"),)))
+        self.assertEqual(branch.stack, TypeStack((Tagged(Int, "checked"),)))
         self.assertIsInstance(branch.typed_body[-1], TypedTagApplicationNode)
         self.assertIsNone(branch.typed_body[-1].validator_index)
 
@@ -4668,7 +4668,7 @@ define f(value: #left #right Number) -> Number => $value
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             [node.typ for node in typed],
-            [C(ListExactType, Integer), Integer, None],
+            [C(ListExactType, Int), Int, None],
         )
 
     def test_negative_tag_requirement_refines_only_the_used_parameter(self):
@@ -4775,7 +4775,7 @@ define f(value: #left #right Number) -> Number => $value
 
         self.assertIn(
             "no overloads for element 'length' match stack "
-            "[Integer | Integer+ | Number+]",
+            "[Int | Int+ | Number+]",
             analyser.diagnostics[0],
         )
 
@@ -4809,9 +4809,9 @@ define f(value: #left #right Number) -> Number => $value
             analyser.diagnostics,
             [
                 "1:25: no overloads for element 'length' match stack [#infinite "
-                "Integer+]\navailable overloads:\n"
-                "  - length(String) -> Integer\n"
-                "  - length(#-infinite Item+) -> Integer"
+                "Int+]\navailable overloads:\n"
+                "  - length(String) -> Int\n"
+                "  - length(#-infinite Item+) -> Int"
             ],
         )
 
@@ -4862,7 +4862,7 @@ define f(value: #left #right Number) -> Number => $value
         analyser = Analyser()
         typed = analyser.analyse(parse('{1, "two", 3} $[-1]'))
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, Integer)
+        self.assertEqual(typed[-1].typ, Int)
 
     def test_tuple_literal_index_out_of_bounds_is_compile_error(self):
         analyser = Analyser()
@@ -4873,7 +4873,7 @@ define f(value: #left #right Number) -> Number => $value
         analyser = Analyser()
         typed = analyser.analyse(parse('{1, "two", 3} $[0 + 1]'))
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, U(Integer, String))
+        self.assertEqual(typed[-1].typ, U(Int, String))
         self.assertIn(
             "expression index will not return the exact type of item 1",
             "\n".join(analyser.warnings),
@@ -4893,10 +4893,10 @@ define f(value: #left #right Number) -> Number => $value
 
     def test_tuple_dynamic_integer_index_returns_union_without_warning(self):
         analyser = Analyser()
-        typed = analyser.analyse(parse('$i: Integer = 1\n{1, "two", 3} $[$i]'))
+        typed = analyser.analyse(parse('$i: Int = 1\n{1, "two", 3} $[$i]'))
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(analyser.warnings, [])
-        self.assertEqual(typed[-1].typ, U(Integer, String))
+        self.assertEqual(typed[-1].typ, U(Int, String))
 
     def test_tuple_slicing_is_rejected_during_analysis(self):
         analyser = Analyser()
@@ -4918,7 +4918,7 @@ define f(value: #left #right Number) -> Number => $value
         analyser.analyse(parse("[1, 2, 3, 4, 5] $[5 / 2]"))
 
         self.assertIn(
-            "list indexing requires Integer index value(s)",
+            "list indexing requires Int index value(s)",
             "\n".join(str(item) for item in analyser.diagnostics),
         )
 
@@ -4940,7 +4940,7 @@ define f(value: #left #right Number) -> Number => $value
         )
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[1].typ, ExactList(Integer))
+        self.assertEqual(typed[1].typ, ExactList(Int))
 
     def test_sum_accumulator_widens_from_integer_initializer(self):
         analyser = Analyser()
@@ -4979,7 +4979,7 @@ end
 
         self.assertEqual(len(branches), 1)
         branch = next(iter(branches))
-        self.assertEqual(branch.stack, TypeStack((optional(U(Integer, String)),)))
+        self.assertEqual(branch.stack, TypeStack((optional(U(Int, String)),)))
 
     def test_analyses_assert_while_and_unfold(self):
         analyser = Analyser()
@@ -4994,7 +4994,7 @@ $n
 """))
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, Integer)
+        self.assertEqual(typed[-1].typ, Int)
 
         analyser = Analyser()
         typed = analyser.analyse(parse("1 unfold (< 5) -> (n: Number) => $n 1 + end"))
@@ -5006,7 +5006,7 @@ $n
         typed = analyser.analyse(parse("0 1 unfold => + end"))
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, WithTag(ExactList(Integer), "infinite"))
+        self.assertEqual(typed[-1].typ, WithTag(ExactList(Int), "infinite"))
 
     def test_unfold_condition_uses_explicit_untyped_state_params(self):
         analyser = Analyser()
@@ -5019,7 +5019,7 @@ end
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             typed[-1].typ,
-            WithTag(ExactList(Integer), "infinite"),
+            WithTag(ExactList(Int), "infinite"),
         )
 
     def test_unfold_condition_uses_inferred_state_params(self):
@@ -5033,7 +5033,7 @@ end
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             typed[-1].typ,
-            WithTag(ExactList(Integer), "infinite"),
+            WithTag(ExactList(Int), "infinite"),
         )
 
     def test_unfold_condition_can_reference_named_state_param(self):
@@ -5047,7 +5047,7 @@ end
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             typed[-1].typ,
-            WithTag(ExactList(Integer), "infinite"),
+            WithTag(ExactList(Int), "infinite"),
         )
 
     def test_at_binds_named_levels_and_tracks_stop_ranks(self):
@@ -5060,7 +5060,7 @@ at (list+, item) => $list append $item
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertIsInstance(typed[-1], TypedAtNode)
-        self.assertEqual(typed[-1].typ, ExactList(ExactList(Integer)))
+        self.assertEqual(typed[-1].typ, ExactList(ExactList(Int)))
         self.assertEqual(typed[-1].overload.vectorised_depths, (1, 1))
         self.assertEqual(
             typed[-1].overload.vectorised_target_ranks,
@@ -5072,14 +5072,14 @@ at (list+, item) => $list append $item
         analyser.analyse(parse("[1, 2] at (items++) => top"))
 
         self.assertIn(
-            "1:8: at level 'items' requires rank 2, but received Integer+",
+            "1:8: at level 'items' requires rank 2, but received Int+",
             analyser.diagnostics,
         )
 
     def test_unfold_rejects_more_than_state_plus_emission(self):
         analyser = Analyser()
         analyser.analyse(parse("""
-1 unfold -> (n: Integer) =>
+1 unfold -> (n: Int) =>
   $n
   dup
   dup
@@ -5104,7 +5104,7 @@ end
             Environment(),
         )
 
-        self.assertEqual(typed[0].typ, C(ListExactType, U(Integer, String)))
+        self.assertEqual(typed[0].typ, C(ListExactType, U(Int, String)))
 
     def test_union_argument_preserves_scalar_or_vectorised_result(self):
         analyser = Analyser()
@@ -5112,7 +5112,7 @@ end
         typed = analyser.analyse(parse("(if true => 1 else => [2] end) + 3"))
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, U(Integer, ExactList(Integer)))
+        self.assertEqual(typed[-1].typ, U(Int, ExactList(Int)))
 
     def test_generic_consumer_does_not_vectorise_matching_union_argument(self):
         typed = analyse(parse("""
@@ -5138,7 +5138,7 @@ println Mag [[3, 5], [4, 12]]
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             typed[-1].typ,
-            U(Integer, ExactList(Integer), ExactList(Integer, 2)),
+            U(Int, ExactList(Int), ExactList(Int, 2)),
         )
 
     def test_generic_vectorisation_preserves_nested_union_shape(self):
@@ -5154,7 +5154,7 @@ println Mag [[3, 5], [4, 12]]
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             typed[-1].typ,
-            ExactList(U(Integer, ExactList(Integer))),
+            ExactList(U(Int, ExactList(Int))),
         )
 
     def test_vectorised_addition_preserves_heterogeneous_list_shape(self):
@@ -5165,7 +5165,7 @@ println Mag [[3, 5], [4, 12]]
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             typed[-1].typ,
-            ExactList(U(Integer, ExactList(Integer))),
+            ExactList(U(Int, ExactList(Int))),
         )
 
     def test_list_literal_factors_common_exact_list_rank(self):
@@ -5176,13 +5176,13 @@ println Mag [[3, 5], [4, 12]]
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             typed[-1].typ,
-            ExactList(U(Integer, ExactList(Integer), ExactList(Integer, 2)), 2),
+            ExactList(U(Int, ExactList(Int), ExactList(Int, 2)), 2),
         )
 
     def test_list_literal_keeps_scalar_and_list_items_as_a_union(self):
         typed = analyse(parse("[1, [2, 3]]"))
 
-        self.assertEqual(typed[-1].typ, ExactList(U(Integer, ExactList(Integer))))
+        self.assertEqual(typed[-1].typ, ExactList(U(Int, ExactList(Int))))
 
     def test_empty_list_literal_requires_annotation_or_cast(self):
         analyser = Analyser(Environment())
@@ -5720,7 +5720,7 @@ end
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             typed[-1].typ,
-            U(Integer, String),
+            U(Int, String),
         )
 
     def test_generic_numeric_arguments_infer_real_for_integer_and_decimal(self):
@@ -5826,7 +5826,7 @@ class SmartDiagnosticTests(unittest.TestCase):
         env = Environment()
         env.define_overload(
             Symbol("increment"),
-            Overload((Integer,), (Integer,), param_names=(Symbol("value"),)),
+            Overload((Int,), (Int,), param_names=(Symbol("value"),)),
         )
         env.define_overload(
             Symbol("incrementText"),
@@ -5841,7 +5841,7 @@ class SmartDiagnosticTests(unittest.TestCase):
             [
                 "1:3: unknown element 'incremnt'\n"
                 "did you mean:\n"
-                "  - increment(value: Integer) -> Integer"
+                "  - increment(value: Int) -> Int"
             ],
         )
 
@@ -5849,7 +5849,7 @@ class SmartDiagnosticTests(unittest.TestCase):
         env = Environment()
         env.define_overload(
             Symbol("format"),
-            Overload((Integer,), (String,), param_names=(Symbol("value"),)),
+            Overload((Int,), (String,), param_names=(Symbol("value"),)),
         )
         env.define_overload(
             Symbol("format"),
@@ -5864,7 +5864,7 @@ class SmartDiagnosticTests(unittest.TestCase):
             [
                 "1:1: unknown element 'formt'\n"
                 "did you mean:\n"
-                "  - format(value: Integer) -> String"
+                "  - format(value: Int) -> String"
             ],
         )
 
@@ -5872,7 +5872,7 @@ class SmartDiagnosticTests(unittest.TestCase):
         env = Environment()
         env.define_overload(
             Symbol("convert"),
-            Overload((Integer,), (String,), param_names=(Symbol("value"),)),
+            Overload((Int,), (String,), param_names=(Symbol("value"),)),
         )
         analyser = Analyser(env)
 
@@ -5884,7 +5884,7 @@ class SmartDiagnosticTests(unittest.TestCase):
                 "1:1: unknown named argument 'vaule' for element 'convert'\n"
                 "did you mean 'value'?\n"
                 "available overloads:\n"
-                "  - convert(value: Integer) -> String"
+                "  - convert(value: Int) -> String"
             ],
         )
 
@@ -5918,7 +5918,7 @@ class SmartDiagnosticTests(unittest.TestCase):
         env.define_overload(
             Symbol("join"),
             Overload(
-                (Integer, String),
+                (Int, String),
                 (String,),
                 param_names=(Symbol("text"),),
             ),
@@ -5931,18 +5931,18 @@ class SmartDiagnosticTests(unittest.TestCase):
         )
 
         [message] = analyser.diagnostics
-        self.assertIn("  - join(Integer, text: String) -> String", message)
-        self.assertNotIn("join(text: Integer, String)", message)
+        self.assertIn("  - join(Int, text: String) -> String", message)
+        self.assertNotIn("join(text: Int, String)", message)
 
     def test_overload_failure_formats_signatures_as_multiline_list(self):
         env = Environment()
         env.define_overload(
             Symbol("convert"),
-            Overload((Integer,), (String,), param_names=(Symbol("value"),)),
+            Overload((Int,), (String,), param_names=(Symbol("value"),)),
         )
         env.define_overload(
             Symbol("convert"),
-            Overload((String,), (Integer,), param_names=(Symbol("text"),)),
+            Overload((String,), (Int,), param_names=(Symbol("text"),)),
         )
         analyser = Analyser(env)
         branches = analyser.analyse_node(
@@ -5956,8 +5956,8 @@ class SmartDiagnosticTests(unittest.TestCase):
             [
                 "no overloads for element 'convert' match stack [None]\n"
                 "available overloads:\n"
-                "  - convert(value: Integer) -> String\n"
-                "  - convert(text: String) -> Integer"
+                "  - convert(value: Int) -> String\n"
+                "  - convert(text: String) -> Int"
             ],
         )
         self.assertNotIn("Function", analyser.diagnostics[0])
@@ -5975,21 +5975,21 @@ class SmartDiagnosticTests(unittest.TestCase):
                 "remove `move(value -> value)`"
             ],
         )
-        self.assertEqual(typed[-1].typ, Integer)
+        self.assertEqual(typed[-1].typ, Int)
 
     def test_identity_cast_is_a_lint_and_analysis_continues(self):
         analyser = Analyser()
 
-        typed = analyser.analyse(parse("1 as[Integer] 2 +"))
+        typed = analyser.analyse(parse("1 as[Int] 2 +"))
 
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             analyser.lints,
             [
-                "1:3: [L013/redundant-cast] unnecessary cast to Integer; remove `as[Integer]`"
+                "1:3: [L013/redundant-cast] unnecessary cast to Int; remove `as[Int]`"
             ],
         )
-        self.assertEqual(typed[-1].typ, Integer)
+        self.assertEqual(typed[-1].typ, Int)
 
     def test_statically_safe_checked_cast_is_a_lint_with_replacement(self):
         analyser = Analyser()
@@ -6009,13 +6009,13 @@ class SmartDiagnosticTests(unittest.TestCase):
     def test_lint_findings_expose_structured_rewrite_metadata(self):
         analyser = Analyser()
 
-        analyser.analyse(parse("1 as[Integer]"))
+        analyser.analyse(parse("1 as[Int]"))
 
         [finding] = analyser.lint_findings
         self.assertEqual(finding.code, "redundant-cast")
         self.assertEqual(
             finding.message,
-            "unnecessary cast to Integer; remove `as[Integer]`",
+            "unnecessary cast to Int; remove `as[Int]`",
         )
         self.assertIsInstance(finding.node, CastNode)
         self.assertIsNotNone(finding.rewrite)
@@ -6026,7 +6026,7 @@ class SmartDiagnosticTests(unittest.TestCase):
     def test_nested_function_propagates_structured_lint_findings(self):
         analyser = Analyser()
 
-        analyser.analyse(parse("fn => 1 as[Integer] end"))
+        analyser.analyse(parse("fn => 1 as[Int] end"))
 
         self.assertEqual(len(analyser.lints), 1)
         self.assertEqual(len(analyser.lint_findings), 1)
@@ -6050,7 +6050,7 @@ class SmartDiagnosticTests(unittest.TestCase):
             analyser.lint_findings[0].rewrite.kind,
             RewriteKind.REMOVE_NODE,
         )
-        self.assertEqual(typed[-1].typ, Integer)
+        self.assertEqual(typed[-1].typ, Int)
 
     def test_code_after_explicit_return_is_linted_as_unreachable(self):
         analyser = Analyser()
@@ -6281,7 +6281,7 @@ end
         typed = analyser.analyse(parse("1\nmatch =>\n  _ => + 0\nend"))
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, Integer)
+        self.assertEqual(typed[-1].typ, Int)
 
     def test_match_result_can_supply_an_explicit_call_argument_above_outer_stack(self):
         analyser = Analyser()
@@ -6374,7 +6374,7 @@ end
         )
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, Integer)
+        self.assertEqual(typed[-1].typ, Int)
 
     def test_guarded_type_pattern_does_not_narrow_the_catch_all_branch(self):
         analyser = Analyser()
@@ -6390,7 +6390,7 @@ end
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("no overloads for element 'length'", analyser.diagnostics[0])
-        self.assertIn("Integer | String", analyser.diagnostics[0])
+        self.assertIn("Int | String", analyser.diagnostics[0])
 
     def test_literal_pattern_does_not_narrow_the_catch_all_branch_by_type(self):
         analyser = Analyser()
@@ -6406,7 +6406,7 @@ end
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("no overloads for element 'length'", analyser.diagnostics[0])
-        self.assertIn("Integer | String", analyser.diagnostics[0])
+        self.assertIn("Int | String", analyser.diagnostics[0])
 
     def test_catchall_or_pattern_does_not_narrow_to_only_its_typed_arm(self):
         analyser = Analyser()
@@ -6421,7 +6421,7 @@ end
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("overload", analyser.diagnostics[0])
-        self.assertIn("Integer | String", analyser.diagnostics[0])
+        self.assertIn("Int | String", analyser.diagnostics[0])
 
     def test_list_pattern_does_not_narrow_unconstrained_items(self):
         analyser = Analyser()
@@ -6451,7 +6451,7 @@ end
 
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("no overloads for element 'length'", analyser.diagnostics[0])
-        self.assertIn("Integer | String", analyser.diagnostics[0])
+        self.assertIn("Int | String", analyser.diagnostics[0])
 
     def test_wildcard_coordinate_allows_independent_subject_narrowing(self):
         analyser = Analyser()
@@ -6467,7 +6467,7 @@ end
         )
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, Integer)
+        self.assertEqual(typed[-1].typ, Int)
 
     def test_repeated_case_binding_is_not_an_exhaustive_catchall(self):
         analyser = Analyser()
@@ -6579,7 +6579,7 @@ class WildcardPathSelectionAnalysisTests(unittest.TestCase):
         analyser = Analyser()
         typed = analyser.analyse(parse(source))
         self.assertEqual(analyser.diagnostics, [])
-        self.assertTrue(same(typed[-1].typ, C(ListExactType, Integer, 2)))
+        self.assertTrue(same(typed[-1].typ, C(ListExactType, Int, 2)))
 
     def test_wildcard_path_rank_is_gather_plus_unconsumed_receiver_rank(self):
         """Literal path depth consumes ranks before one gathered rank is added."""
@@ -6593,7 +6593,7 @@ class WildcardPathSelectionAnalysisTests(unittest.TestCase):
                 analyser = Analyser()
                 typed = analyser.analyse(parse(source))
                 self.assertEqual(analyser.diagnostics, [])
-                self.assertTrue(same(typed[-1].typ, C(ListExactType, Integer, rank)))
+                self.assertTrue(same(typed[-1].typ, C(ListExactType, Int, rank)))
 
 
 class TraitElementTagConformanceTests(unittest.TestCase):
@@ -6771,7 +6771,7 @@ class ForeachRefactoringLintTests(unittest.TestCase):
     def test_node_lint_off_can_suppress_only_prefer_fold(self):
         analyser = self._analyse(
             '$total = 0\n@lintOff("prefer-fold")\n'
-            "[1, 2, 3] foreach (n) => $total := + ($n as[Integer]) end"
+            "[1, 2, 3] foreach (n) => $total := + ($n as[Int]) end"
         )
         codes = [finding.code for finding in analyser.lint_findings]
         self.assertNotIn("prefer-fold", codes)
@@ -6782,7 +6782,7 @@ class ForeachRefactoringLintTests(unittest.TestCase):
             '@lintFileOff("prefer-fold")\n'
             "$total = 0\n"
             "[1, 2, 3] foreach (n) => $total := + $n end\n"
-            "1 as[Integer]"
+            "1 as[Int]"
         )
         codes = [finding.code for finding in analyser.lint_findings]
         self.assertNotIn("prefer-fold", codes)
@@ -6793,7 +6793,7 @@ class ForeachRefactoringLintTests(unittest.TestCase):
             "@lintFileOff\n"
             "$total = 0\n"
             "[1, 2, 3] foreach (n) => $total := + $n end\n"
-            "1 as[Integer]"
+            "1 as[Int]"
         )
         self.assertEqual(analyser.lint_findings, [])
 
@@ -6825,7 +6825,7 @@ class DeclaredDefinitionInterfaceTests(unittest.TestCase):
     def test_fully_typed_definition_is_visible_inside_nested_call_arguments(self):
         analyser = Analyser()
         source = """
-        define countdown(n: Integer) -> Integer =>
+        define countdown(n: Int) -> Int =>
           if ($n == 0) => 0
           else => +(countdown($n - 1), 1)
           end
@@ -6836,13 +6836,13 @@ class DeclaredDefinitionInterfaceTests(unittest.TestCase):
         typed = analyser.analyse(parse(source))
 
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(typed[-1].typ, Integer)
+        self.assertEqual(typed[-1].typ, Int)
 
     def test_declared_interface_remains_visible_after_invalid_body(self):
         analyser = Analyser()
         typed = analyser.analyse(
             parse(
-                "define bad(x: Integer) -> String => $x end\n"
+                "define bad(x: Int) -> String => $x end\n"
                 "bad 1"
             )
         )
@@ -6882,4 +6882,4 @@ $f = fn (xs) => $xs 1 rotate end
 [[1, 2], [3, 4], [5, 6]] $f()
 """))
         self.assertEqual(analyser.diagnostics, [])
-        self.assertEqual(T.show(typed[-1].typ), "Integer+2")
+        self.assertEqual(T.show(typed[-1].typ), "Int+2")

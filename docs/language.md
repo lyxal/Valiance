@@ -50,8 +50,8 @@ Which equals
 - Imaginary parts supported too.
 - Can also have `${x}e{$y}` for `x * 10 ** y`. Just `e{y}` is a syntax error. `y` can be any real number.
 
-- Numeric types form an explicit hierarchy: `Integer <: Real <: Number`. An
-  `Integer` represents a whole number, `Real` represents a number with no
+- Numeric types form an explicit hierarchy: `Int <: Real <: Number`. An
+  `Int` represents a whole number, `Real` represents a number with no
   complex part, and `Number` is the overarching type for all numbers.
 - Implemented numeric helpers include:
   - `**` for exponentiation.
@@ -99,8 +99,8 @@ $brainrot = "6 7"
   - `split(separator)`; an empty separator splits into individual characters.
   - `rotate(amount)`; positive amounts rotate left and negative amounts rotate right.
   - `numeric?`; tests whether the complete string is a base-ten integer.
-  - `parseInt`; returns `Integer?`, using `None` when parsing fails.
-  - `fromCharcode` / `fromCharCode`; converts an `Integer` Unicode code point to a one-character string.
+  - `parseInt`; returns `Int?`, using `None` when parsing fails.
+  - `fromCharcode` / `fromCharCode`; converts an `Int` Unicode code point to a one-character string.
 - `input(prompt)` prints the prompt and returns one line from standard input without its trailing newline. It carries the normal eager I/O effects.
 
 ## 1.3. Tuples
@@ -144,12 +144,12 @@ $brainrot = "6 7"
   - Items can be retrieved, if they are in the dictionary, by indexing by key.
   - Effectively anonymous objects
   - Basically hashmaps with bareword keys.
-- Records use ordinary row types. For example, `record(.cmd: String, .jump: Integer)` requires those fields on the `record` base.
+- Records use ordinary row types. For example, `record(.cmd: String, .jump: Int)` requires those fields on the `record` base.
 - Example:
 
 ```
 $store = record{a => 1, b => 2, c => 3}
-#? record(.a: Integer, .b: Integer, .c: Integer)
+#? record(.a: Int, .b: Int, .c: Int)
 $store.a #? 1
 $store.c #? 3
 ```
@@ -218,7 +218,7 @@ $instructions[$i].jump = $open
 
 ### 1.6.1. Common Finite-Sequence Elements
 
-- `length` returns an `Integer` for finite lists and strings. It is deliberately non-vectorising: `[[1, 2], [3]] length` returns `2`, not `[2, 1]`.
+- `length` returns an `Int` for finite lists and strings. It is deliberately non-vectorising: `[[1, 2], [3]] length` returns `2`, not `[2, 1]`.
 - `first` and `last` return the first or final item. Their inputs must be non-empty.
 - `drop(count)` removes a non-negative prefix; `dropLast` removes the final item of a non-empty finite list.
 - `overtake(count)` cycles a non-empty finite list until exactly `count` items have been produced.
@@ -525,7 +525,7 @@ println("main: x = $x")
 + (Number, Number) -> Number   | Addition
 + (String, String) -> String   | Concatenation
 - (Number, Number) -> Number   | Subtraction
-length [T](T+) -> Integer      | Length
+length [T](T+) -> Int      | Length
 sum (Number+) -> Number        | Summate numeric list
 ** (Number, Number) -> Number  | Exponentiation
 === [T](T, T) -> #boolean Number | Structural equality
@@ -834,7 +834,7 @@ $wrapped call #? 6
 ```
 
 ```
-define foo(x: Integer) =>
+define foo(x: Int) =>
   fn () =>
     $x := 1 +
     println $x
@@ -1070,7 +1070,7 @@ fn (:Number+, :Number+) => +
   spaced tuple expression distinct: `map{Number}` disambiguates `map`, while
   `map {Number}` applies `map` to a tuple expression.
 - Square brackets have a separate meaning at a call site: they supply generic
-  arguments, as in `convert[Integer, _]{Number}(1)`. Generic arguments come
+  arguments, as in `convert[Int, _]{Number}(1)`. Generic arguments come
   before overload disambiguation when both are present.
 
 ## 7.2. Disabling Vectorisation in an Overload
@@ -1085,7 +1085,7 @@ fn (:Number+, :Number+) => +
   direct calls and calls through function values enforce the same policy, then
   erased from the parameter type visible inside the body.
 - `novec` does not require the runtime value to have novecly the same nominal
-  type. Ordinary assignability still applies, so an `Integer` can satisfy
+  type. Ordinary assignability still applies, so an `Int` can satisfy
   `Number novec`. It only disables the vectorisation fallback for that
   parameter.
 - `novec` is a terminal postfix for the type expression it marks. Put rank,
@@ -1239,7 +1239,7 @@ fork: (sum, length) /
 
 - If `:` is used, then _all_ function arguments must be specified. This ensures 0 ambiguity as to which function-typed parameters are being filled.
 - Modifier shorthand is stack-oriented. `apply: -1` wraps subtraction by one, not a constant function returning negative one. Write `apply(fn => -1)` when a constant function is intended.
-- The higher-order parameter supplies the modifier function's contextual signature. This applies to shorthand bodies and explicit inferred functions written after `:`. Missing inputs cycle from those contextual parameters, so `[1, 2, 3] map: +` treats `+` as `Function[Integer -> Integer]`. Passing the same inferred function as an ordinary stack value does not request this adaptation and retains normal inference errors.
+- The higher-order parameter supplies the modifier function's contextual signature. This applies to shorthand bodies and explicit inferred functions written after `:`. Missing inputs cycle from those contextual parameters, so `[1, 2, 3] map: +` treats `+` as `Function[Int -> Int]`. Passing the same inferred function as an ordinary stack value does not request this adaptation and retains normal inference errors.
 
 
 # 9. Indexing
@@ -1311,8 +1311,8 @@ $[1:3] = 4
 - Whole-selection augmented assignment is available for lists and strings. Results are paired with the sorted selected positions. Selected positions without a corresponding result are removed, and results without a corresponding selected position are discarded. Results are never repeated or cycled.
 - Repeated positions in a multiple-index augmented assignment are a runtime error; no replacement is stored.
 - A list, string, or dictionary may also be indexed by a selector function. List and string selectors accept one item; dictionary selectors accept the key and value. The function must return `#boolean Number`, and the selected values retain their original collection kind.
-- Any expression valid in a list item may appear inside one index selector. Its top result must be `Integer`, `Integer+`, `Integer++`, an applicable Boolean selector function, or a `#boolean+ Number+` mask.
-- `Integer+` is an ordered sequence of positional indices. `Integer++` is an ordered sequence of multidimensional paths: each inner `Integer+` is applied as chained indexing. For example, `$matrix[[[0, 1], [1, 0]]]` gathers the same values as the paths `$matrix[[0, 1]]` and `$matrix[[1, 0]]`. Replacement and augmented assignment use the same paths.
+- Any expression valid in a list item may appear inside one index selector. Its top result must be `Int`, `Int+`, `Int++`, an applicable Boolean selector function, or a `#boolean+ Number+` mask.
+- `Int+` is an ordered sequence of positional indices. `Int++` is an ordered sequence of multidimensional paths: each inner `Int+` is applied as chained indexing. For example, `$matrix[[[0, 1], [1, 0]]]` gathers the same values as the paths `$matrix[[0, 1]]` and `$matrix[[1, 0]]`. Replacement and augmented assignment use the same paths.
 - Lists and strings may be indexed by a `#boolean+ Number+` mask. True positions are selected. A shorter mask truncates selection at the mask length; a mask longer than the receiver is a runtime error.
 - Function and mask selectors work with normal indexing, normal assignment, and augmented assignment. They change only the selected positions: replacement and whole-selection augmented-assignment rules remain otherwise unchanged.
 
@@ -1696,7 +1696,7 @@ unfold -> (<parameters>) => <body>
 * The value on top of that stack is also generated as the next item in the list.
 
 ```
-0 1 unfold (true) -> (prev: Integer, next: Integer) =>
+0 1 unfold (true) -> (prev: Int, next: Int) =>
   +
 end
 
@@ -1749,7 +1749,7 @@ prev next -> next (prev + next)
 * The state produced by each iteration must align with the number and types of the parameters.
 
 ```
-0 1 unfold ($next < 50) -> (prev: Integer, next: Integer) =>
+0 1 unfold ($next < 50) -> (prev: Int, next: Int) =>
   +
 end
 
@@ -1895,8 +1895,8 @@ define[T] sort(:T+, key: Function[T -> Comparable] = fn => top end) -> T+ => ...
  - Captured variables are restored to that captured state at the start of every call. Assignment to a captured name inside the function does not persist into the next call.
 
 ```
-define makeMultiplier(x: Integer) =>
-  fn (y: Integer) => $x * $y
+define makeMultiplier(x: Int) =>
+  fn (y: Int) => $x * $y
 end
 
 $double = makeMultiplier(2)
@@ -2146,7 +2146,7 @@ end
 
 ```
 object Counter =>
-  $count: Integer = 0
+  $count: Int = 0
   define increment =>
     $self.count := + 1
     $self
@@ -2628,7 +2628,7 @@ tag #<name> as <category>
 - A constructed tag is removed only by an explicit absence contract such as `#-infinite`, direct `#-infinite`/`#-infinite` removal, an exact return tag set that excludes it, or omission from that tag's own overlay return contract. Computed tags remain non-sticky.
 - If a tagged input has effective rank `n`, the output carries the tag at depth `(output rank - 1)` when the output rank is at least `n`. For a tag at depth `d` on a rank-`r` input, its effective rank is `max(r - d, 0)`. If the output rank is lower, the tag is not carried.
 - Runtime evidence follows the same rule through built-ins, user functions, casts, optimization, and serialized bytecode. Recursive return and cast contracts remove only evidence that their explicit tag policy excludes.
-- For example, `#infinite [1, 2, 3] + 4` has type `#infinite Integer+`; no overlay is required for the constructed tag to survive the vectorized addition.
+- For example, `#infinite [1, 2, 3] + 4` has type `#infinite Int+`; no overlay is required for the constructed tag to survive the vectorized addition.
 - Automatic propagation processes inputs from left to right. If different inputs carry disjoint constructed tags, the later input's tag replaces the earlier one, matching ordinary explicit tag-application order.
 - Collection construction canonicalizes a tag shared by every item onto the collection at one greater depth. This keeps nested static types and runtime evidence aligned without wrapping each child redundantly.
 - A constructed-tagged value can otherwise be used where the untagged base type is expected. Unit tags are the exception described below.
@@ -4804,7 +4804,7 @@ The main concurrency features are:
 A task runs a function concurrently with the task that spawned it. Create the function first, then pass it to `spawn`:
 
 ```valiance
-$worker = fn -> Integer =>
+$worker = fn -> Int =>
   40 2 +
 end
 
@@ -4812,12 +4812,12 @@ $task = $worker spawn
 $answer = $task wait
 ```
 
-`$task` has type `Task[Integer]`. Calling `wait` returns the task's `Integer` result, so `$answer` is `42`.
+`$task` has type `Task[Int]`. Calling `wait` returns the task's `Int` result, so `$answer` is `42`.
 
 The pipeline form is often more convenient:
 
 ```valiance
-$task = fn -> Integer => 40 2 + end | spawn
+$task = fn -> Int => 40 2 + end | spawn
 $task wait
 ```
 
@@ -4836,7 +4836,7 @@ $task wait
 Arguments appear before the function, just as they do for an ordinary first-class call:
 
 ```valiance
-$double = fn (value: Integer) -> Integer =>
+$double = fn (value: Int) -> Int =>
   $value 2 *
 end
 
@@ -4850,7 +4850,7 @@ The modifier form can also make the moved or captured values visually explicit:
 
 ```valiance
 41
-spawn: fn (value: Integer) -> Integer =>
+spawn: fn (value: Int) -> Int =>
   $value 1 +
 end
 | wait
@@ -4861,7 +4861,7 @@ end
 A `Task[...]` stores the complete output row of its function. A function with two outputs produces a task with two output types:
 
 ```valiance
-$worker = fn -> Integer, String =>
+$worker = fn -> Int, String =>
   42
   "complete"
 end
@@ -4873,7 +4873,7 @@ $task wait
 The task has type:
 
 ```valiance
-Task[Integer, String]
+Task[Int, String]
 ```
 
 Waiting restores both outputs in their original order.
@@ -4885,7 +4885,7 @@ A function with no outputs produces a zero-output task. Waiting for it synchroni
 A task is an immutable handle to one runtime task. Waiting does not consume that task or invalidate the handle.
 
 ```valiance
-$task = fn -> Integer => 42 end | spawn
+$task = fn -> Int => 42 end | spawn
 
 $first = $task wait
 $second = $task wait
@@ -4909,9 +4909,9 @@ If the task failed, every wait observes the same underlying failure.
 
 ```valiance
 $tasks = [
-  fn -> Integer => 1 end | spawn,
-  fn -> Integer => 2 end | spawn,
-  fn -> Integer => 3 end | spawn
+  fn -> Int => 1 end | spawn,
+  fn -> Int => 2 end | spawn,
+  fn -> Int => 3 end | spawn
 ]
 
 $results = $tasks wait
@@ -4927,8 +4927,8 @@ If each task has multiple outputs, `wait` returns one collection for each output
 
 ```valiance
 $tasks = [
-  fn -> Integer, String => 1 "one" end | spawn,
-  fn -> Integer, String => 2 "two" end | spawn
+  fn -> Int, String => 1 "one" end | spawn,
+  fn -> Int, String => 2 "two" end | spawn
 ]
 
 $numbers $names = $tasks wait
@@ -4944,10 +4944,10 @@ Conceptually, the two resulting collections are:
 An empty typed task collection still preserves the output shape:
 
 ```valiance
-$results = [] as[Task[Integer]+] | wait
+$results = [] as[Task[Int]+] | wait
 ```
 
-Here `$results` is an empty `Integer` collection.
+Here `$results` is an empty `Int` collection.
 
 ## 25.5. Structured concurrency with `concurrent`
 
@@ -4966,8 +4966,8 @@ You should still use `wait` when you need a child's returned values inside the s
 
 ```valiance
 concurrent =>
-  $left = fn -> Integer => 20 end | spawn
-  $right = fn -> Integer => 22 end | spawn
+  $left = fn -> Int => 20 end | spawn
+  $right = fn -> Int => 22 end | spawn
 
   $left wait
   $right wait
@@ -4997,7 +4997,7 @@ If one child fails, the scope selects a deterministic primary failure, requests 
 
 ```valiance
 concurrent =>
-  fn -> Integer =>
+  fn -> Int =>
     panic ValueFault("worker failed")
   end | spawn
 
@@ -5016,7 +5016,7 @@ A spawned closure may capture ordinary transferable values:
 ```valiance
 $values = [1, 2, 3]
 
-$task = fn -> Integer+ =>
+$task = fn -> Int+ =>
   $values
 end | spawn
 
@@ -5056,27 +5056,27 @@ Using `copy` instead of `move` does not authorize isolated-resource transfer.
 An unbuffered channel is created with `Channel[T]`:
 
 ```valiance
-$channel = Channel[Integer]
+$channel = Channel[Int]
 ```
 
 A bounded channel is created by placing its capacity before the constructor:
 
 ```valiance
-$channel = 4 Channel[Integer]
+$channel = 4 Channel[Int]
 ```
 
-`Channel[T]` is invariant because it both accepts and produces `T`. For example, a `Channel[Integer]` is not interchangeable with a `Channel[Number]`.
+`Channel[T]` is invariant because it both accepts and produces `T`. For example, a `Channel[Int]` is not interchangeable with a `Channel[Number]`.
 
 Channel handles can be shared between tasks:
 
 ```valiance
-$channel = Channel[Integer]
+$channel = Channel[Int]
 
 $sender = fn -> =>
   $channel 42 send
 end
 
-$receiver = fn -> Receive[Integer] =>
+$receiver = fn -> Receive[Int] =>
   $channel receive
 end
 
@@ -5113,9 +5113,9 @@ This distinction is important for optional element types. A `Channel[T?]` may tr
 An unbuffered send waits until a receiver can commit the same operation. The sender and receiver may reach the channel in either order:
 
 ```valiance
-$channel = Channel[Integer]
+$channel = Channel[Int]
 
-$receiver = fn -> Receive[Integer] =>
+$receiver = fn -> Receive[Int] =>
   $channel receive
 end
 
@@ -5137,7 +5137,7 @@ Running an unbuffered `send` or `receive` directly when no other task can match 
 A bounded channel accepts values until its buffer reaches capacity. Further sends suspend until receivers make room:
 
 ```valiance
-$channel = 1 Channel[Integer]
+$channel = 1 Channel[Int]
 
 $producer = fn -> =>
   $channel 1 send
@@ -5145,7 +5145,7 @@ $producer = fn -> =>
   $channel 3 send
 end
 
-$consumer = fn -> Receive[Integer], Receive[Integer], Receive[Integer] =>
+$consumer = fn -> Receive[Int], Receive[Int], Receive[Int] =>
   $channel receive
   $channel receive
   $channel receive
@@ -5179,7 +5179,7 @@ Closing has the following effects:
 Example:
 
 ```valiance
-$channel = 2 Channel[Integer]
+$channel = 2 Channel[Int]
 
 $channel 7 send
 $channel 8 send
@@ -5205,13 +5205,13 @@ Closing an already closed channel has no additional effect.
 A minimal producer/consumer program uses an unbuffered channel and two tasks:
 
 ```valiance
-$channel = Channel[Integer]
+$channel = Channel[Int]
 
 $producer = fn -> =>
   $channel 1 send
 end
 
-$consumer = fn -> Receive[Integer] =>
+$consumer = fn -> Receive[Int] =>
   $channel receive
 end
 
@@ -5241,11 +5241,11 @@ Deadlock diagnostics identify the blocked tasks and resources. When source infor
 A simple deadlock is two tasks waiting to receive from an unbuffered channel when no task can send:
 
 ```valiance
-$channel = Channel[Integer]
+$channel = Channel[Int]
 
 concurrent =>
-  fn -> Receive[Integer] => $channel receive end | spawn
-  fn -> Receive[Integer] => $channel receive end | spawn
+  fn -> Receive[Int] => $channel receive end | spawn
+  fn -> Receive[Int] => $channel receive end | spawn
 end
 ```
 
@@ -5254,14 +5254,14 @@ end
 Use a task result when one computation has a fixed output that another part of the program needs later:
 
 ```valiance
-$task = fn -> Integer => 42 end | spawn
+$task = fn -> Int => 42 end | spawn
 $answer = $task wait
 ```
 
 Use a channel when tasks need to exchange a sequence of values or apply backpressure:
 
 ```valiance
-$channel = 8 Channel[Integer]
+$channel = 8 Channel[Int]
 ```
 
 Use a `concurrent` block when several tasks form one operation and must not outlive that operation:
@@ -5721,7 +5721,7 @@ trait[T] Iterable => end
 trait[T] Producer as Iterable[T] => end
 ```
 
-Here, `Producer[Integer]` implies `Iterable[Integer]`, but not
+Here, `Producer[Int]` implies `Iterable[Int]`, but not
 `Iterable[String]`. Constraints on the implementation binder are checked after
 the source arguments are inferred. A failed constraint makes that behaviour set
 inapplicable rather than ambiguous.

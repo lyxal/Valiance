@@ -138,7 +138,7 @@ def _for_node(
     body_branch = branch.with_stack(body_stack)
     cycle_params = (item_type,)
     if node.index_variable is not None:
-        cycle_params = (item_type, T.Integer)
+        cycle_params = (item_type, T.Int)
     body_branch = replace(
         body_branch,
         input_mode=_core.InputMode.CYCLE_EXPLICIT_PARAMS,
@@ -152,7 +152,7 @@ def _for_node(
     )
     if node.index_variable is not None:
         body_branch = body_branch.with_variables(
-            body_branch.variables.with_block_local(node.index_variable, T.Integer)
+            body_branch.variables.with_block_local(node.index_variable, T.Int)
         )
 
     body_outputs = self.analyse_from(body_branch, node.body)

@@ -30,7 +30,7 @@ rewrite family.
 | `ConwayGameOfLife.vlnc` | `std.grids.allNeighbors`, `std.random.randbit`, named arguments, niladic mapping, `removeAt`, `sum`, `reshape`, grouped constants |
 | `GuessingGame.vlnc` | `std.random.between`, `input`, `parseInt`, matching an optional parse result, `break` |
 | `CeaserCipher.vlnc` | local imports, `string.\Alphabet`, `rotate`, `string.transliterate` |
-| `RunLengthEncoding.vlnc` | `groupConsecutive`, tuple construction, `length: Integer`, `first`, `reduce`, `join` |
+| `RunLengthEncoding.vlnc` | `groupConsecutive`, tuple construction, `length: Int`, `first`, `reduce`, `join` |
 | `StackCalculator.vlnc` | `split`, membership with `in`, `numeric?`, `parseInt`, function values, `drop`, `last` |
 | `SumOfSquares.vlnc` | contextual vectorisation, `square`, and `**` |
 | `TrapezodialRule.vlnc` | higher-order functions, vectorised function calls, numeric ranges, `sum` |
@@ -66,7 +66,7 @@ enabled every neighborhood contains nine values.
 
 ### Run-length encoding
 
-`length` returns `Integer`, so an encoded run has type `{Integer, String}`.
+`length` returns `Int`, so an encoded run has type `{Int, String}`.
 When feeding one pipeline directly into another, use `|` to establish the
 boundary:
 
