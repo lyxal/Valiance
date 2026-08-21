@@ -29,6 +29,7 @@ from valiance.asts import (
     ImportSpec,
     IndexAccessNode,
     IndexSetNode,
+    IndexUpdateNode,
     ListLiteralNode,
     ListPatternNode,
     MatchNode,
@@ -665,19 +666,25 @@ end
 
         self.assertIsInstance(program[1], StackShuffleNode)
         self.assertIsInstance(program[4], IndexSetNode)
-        self.assertIsInstance(program[-1], IndexSetNode)
+        self.assertIsInstance(program[-1], IndexUpdateNode)
 
-    def test_stack_index_augmented_assignment_stashes_receiver(self):
+    def test_stack_index_augmented_assignment_is_atomic_in_raw_ast(self):
         program = parse("10 [1, 2, 3, 4] $[2] := *")
 
-        temporary_store = program[2]
-        self.assertIsInstance(temporary_store, SetVariableNode)
-        self.assertTrue(temporary_store.name.text.startswith("\x00index_receiver_"))
-        self.assertEqual(program[3], GetVariableNode(temporary_store.name))
-        self.assertIsInstance(program[5], IndexAccessNode)
-        self.assertEqual(program[6], ElementNode(Symbol("*")))
-        self.assertEqual(program[7], GetVariableNode(temporary_store.name))
-        self.assertIsInstance(program[9], IndexSetNode)
+        self.assertEqual(len(program), 3)
+        update = program[-1]
+        self.assertIsInstance(update, IndexUpdateNode)
+        self.assertEqual(update.body, (ElementNode(Symbol("*")),))
+        self.assertEqual(
+            update.selectors[0].start,
+            (NumberLiteralNode("2"),),
+        )
+        self.assertFalse(
+            any(
+                isinstance(node, (GetVariableNode, SetVariableNode))
+                for node in program
+            )
+        )
 
     def test_parses_index_augmented_assignment_as_copy_update(self):
         program = parse("$data[1] := + 3")

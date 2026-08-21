@@ -17,6 +17,7 @@ from valiance.asts.nodes import (
     FunctionParam,
     GetVariableNode,
     ImportNode,
+    IndexUpdateNode,
     MinimumRankNode,
     NumberLiteralNode,
     SetVariableNode,
@@ -162,6 +163,12 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
             f"CastNode(as{suffix}[{_type_label(value.typ)}]"
             f"{_location_arg(value)})"
         )
+    if isinstance(value, IndexUpdateNode):
+        lines = [f"IndexUpdateNode({_location_arg(value).lstrip(', ')}, selectors={value.selectors}, body=["]
+        for item in value.body:
+            lines.extend(_indent(_pretty(item, level + 1).splitlines()))
+        lines.append("])" )
+        return "\n".join(lines)
     if isinstance(value, MinimumRankNode):
         return f"MinimumRankNode(rank={value.rank}{_location_arg(value)})"
     if isinstance(value, PopNNode):

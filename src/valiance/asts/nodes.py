@@ -493,6 +493,19 @@ class IndexSetNode(ASTNode):
 
 
 @dataclass(frozen=True)
+class IndexUpdateNode(ASTNode):
+    """Apply an update body to one indexed selection of a stack receiver.
+
+    The receiver and selector expressions are evaluated exactly once. Lowering
+    to the read/modify/write sequence belongs to analysis rather than parsing.
+    """
+
+    selectors: tuple[IndexSelector, ...] = ()
+    body: tuple[ASTNode, ...] = ()
+    grouped_update: bool = True
+
+
+@dataclass(frozen=True)
 class CallNode(ASTNode):
     """Call a function with provided arguments, falling back
     to taking values from the stack."""

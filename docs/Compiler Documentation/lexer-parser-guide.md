@@ -213,6 +213,22 @@ parse_program()
 Declarations and control flow return AST nodes directly. Ordinary expressions
 are parsed as chains.
 
+## Indexed update lowering
+
+Stack-receiver augmented index assignments such as ``$[start:stop] := body``
+remain one ``IndexUpdateNode`` in the raw AST. The node owns its selector
+expressions and update body, so source expressions appear once and parser output
+does not expose temporary variables. During analysis, the node is lowered into
+the existing typed index-access and index-set operations. That lowering stores
+the receiver and evaluated selector values under reserved internal names, which
+preserves ambient-stack semantics while guaranteeing that every selector is
+evaluated exactly once. User-facing lint rules must ignore these reserved
+NUL-prefixed bindings.
+
+Do not lower indexed updates into duplicated selector nodes in the parser. Apart
+from making the raw AST misleading, that changes observable behaviour for
+selectors with variable reads, writes, calls, or other effects.
+
 ## Chain Lowering
 
 This is the most important parser invariant.

@@ -66,7 +66,8 @@ def constants_never_reassigned(context: BlockLintContext):
         write
         for index, node in enumerate(context.nodes)
         for write in _direct_writes(node)
-        if not _reads_name(context.nodes[:index], write.name)
+        if not _is_internal_name(write.name)
+        and not _reads_name(context.nodes[:index], write.name)
     )
     all_writes = tuple(_nested_writes(context.nodes))
     findings = []
@@ -86,6 +87,11 @@ def constants_never_reassigned(context: BlockLintContext):
             )
         )
     return tuple(findings)
+
+
+def _is_internal_name(name: object) -> bool:
+    """Return whether a binding name is reserved for compiler-generated state."""
+    return getattr(name, "text", "").startswith("\x00")
 
 
 def _direct_writes(node: ASTNode):

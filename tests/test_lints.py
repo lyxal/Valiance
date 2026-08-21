@@ -6,8 +6,9 @@ import unittest
 
 from valiance.analysis import Analyser, LintRegistry, finding
 from valiance.analysis.lints import NodeLintContext
-from valiance.asts import NumberLiteralNode
+from valiance.asts import GetVariableNode, NumberLiteralNode
 from valiance.parsing import parse
+from valiance.vtypes.symbols import Symbol
 
 
 class LintRegistryTests(unittest.TestCase):
@@ -120,6 +121,33 @@ class BuiltinLintRuleTests(unittest.TestCase):
     def test_mutable_binding_written_once_can_be_const(self) -> None:
         """A binding with one write and a later read can be constant."""
         self.assertIn("constant-never-reassigned", self._codes("$x = 1\n$x 2 +"))
+
+    def test_grouped_index_update_does_not_lint_internal_receiver(self) -> None:
+        """Compiler-generated receiver storage must not produce user lints."""
+        source = "[3, 5, 4, 2]\n$[0:1] := /: *"
+
+        self.assertNotIn("constant-never-reassigned", self._codes(source))
+
+    def test_stack_index_update_analyses_selector_once(self) -> None:
+        """An indexed update must not revisit an effectful selector expression."""
+        registry = LintRegistry()
+        visits = 0
+
+        def count_index_reads(context: NodeLintContext):
+            nonlocal visits
+            if (
+                isinstance(context.node, GetVariableNode)
+                and context.node.name == Symbol("i")
+            ):
+                visits += 1
+            return ()
+
+        registry.register_node(GetVariableNode, count_index_reads)
+        analyser = Analyser(lint_registry=registry)
+        analyser.analyse(parse("$i = 0\n[1, 2]\n$[$i] := + 1"))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(visits, 1)
 
     def test_captured_write_warns_that_state_is_not_persistent(self) -> None:
         """Closure-local writes to captures have surprising persistence semantics."""

@@ -26,6 +26,7 @@ from valiance.asts import (
     ImportNode,
     IndexAccessNode,
     IndexSetNode,
+    IndexUpdateNode,
     ListLiteralNode,
     LintSuppressionNode,
     NumberLiteralNode,
@@ -405,6 +406,66 @@ def _index_access_node(
     return _core.BranchSet(
         (base_branch.push(result_type).emit(TypedNode(node, result_type)),)
     )
+
+def _index_update_selector_expressions(
+    selectors: tuple,
+) -> tuple[ASTNode, ...]:
+    """Flatten selector components in their source evaluation order."""
+    return tuple(
+        expression
+        for selector in selectors
+        for component in (selector.start, selector.stop, selector.step)
+        if component
+        for expression in component
+    )
+
+
+@_core.register(IndexUpdateNode)
+def _index_update_node(
+    self: _core.Analyser,
+    node: IndexUpdateNode,
+    branch: _core.AnalysisBranch,
+) -> _core.BranchSet:
+    """Analyse one atomic indexed read/modify/write expression.
+
+    Internal bindings are introduced only after parsing. They preserve the
+    receiver and evaluated selector values without duplicating source
+    expressions or exposing compiler mechanics in the raw AST.
+    """
+    offset = node.location.offset if node.location is not None else id(node)
+    receiver = Symbol(f"\x00index_receiver_{offset}")
+    expressions = _index_update_selector_expressions(node.selectors)
+    selector_names = tuple(
+        Symbol(f"\x00index_selector_{offset}_{index}")
+        for index in range(sum(
+            bool(selector.start) + bool(selector.stop) + bool(selector.step)
+            for selector in node.selectors
+        ))
+    )
+    location = node.location
+    lowered = (
+        SetVariableNode(receiver, location=location),
+        GetVariableNode(receiver, location=location),
+        *expressions,
+        *(
+            SetVariableNode(name, location=location)
+            for name in reversed(selector_names)
+        ),
+        PopNNode(1, location=location),
+        GetVariableNode(receiver, location=location),
+        *(GetVariableNode(name, location=location) for name in selector_names),
+        IndexAccessNode(
+            node.selectors, grouped_update=node.grouped_update, location=location
+        ),
+        *node.body,
+        GetVariableNode(receiver, location=location),
+        *(GetVariableNode(name, location=location) for name in selector_names),
+        IndexSetNode(
+            node.selectors, grouped_update=node.grouped_update, location=location
+        ),
+    )
+    return self.analyse_from(branch, lowered)
+
 
 @_core.register(IndexSetNode)
 def _index_set_node(
