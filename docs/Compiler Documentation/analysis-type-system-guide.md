@@ -958,7 +958,7 @@ The standard environment also defines message-bearing built-in `Fault` objects:
 `DivisionByZeroFault`, `IndexFault`, `KeyFault`, `ShapeFault`, `StateFault`,
 `IOFault`, `NotFoundFault`, `AlreadyExistsFault`, `PermissionFault`,
 `ClosedFault`, `TimeoutFault`, `CancelledFault`, `UnwrappedNoneFault`,
-`UnwrappedResultFault`, `DuplicationFault`, and `CleanupFault`. Each has the
+`UnwrappedResultFault`, `DuplicationFault`, and `MustCallFault`. Each has the
 same native one-`String` constructor and readable `message` field as built-in
 errors, but implements `Fault` rather than `Err`.
 
@@ -989,6 +989,39 @@ The built-in helper elements are defined in `analysis/builtins.py`:
 Do not broaden `_is_err_nominal` casually. Rewriting ordinary unions into
 `Result` is intentionally conservative because it changes overload resolution
 and display.
+
+## Destructor return validation
+
+Lifecycle validation rejects explicit return types on `~Type`. After the body is
+analysed, object declaration handling also rejects any destructor overload with a
+normal non-empty return. `Never` returns from an always-panicking body are treated
+as having no normal result and remain valid.
+
+## Destructor effect propagation
+
+`ObjectDefinition.destructor_effects` stores the positive element tags inferred
+for an object's `~Type` overload. Use `Environment.destructor_effects(type)` to
+query them rather than looking up destructor names at each release site. The
+query traverses nominal generic arguments, unions, fixed tuples, collection base
+types, and transparent tagged/call-policy wrappers.
+
+Function signature construction conservatively merges the destructor effects of
+owned values visible at function exit into the body's inferred element tags.
+This makes implicit final release participate in the same `Panic[...]` inference,
+explicit effect contracts, and disjoint validation as an ordinary call.
+
+## Static must-call flow
+
+`analysis/contracts/mustcall_flow.py` proves a bounded set of local protocol
+violations. Direct constructor results receive allocation tokens; assignments and
+variable reads propagate aliases; qualifying object-friendly calls update the
+shared token state. Branch outputs remain separate so one unresolved path is
+enough for a diagnostic.
+
+The pass treats a token on a return stack as transferred rather than destroyed.
+It does not invent obligations for parameters or unknown dynamic values, because
+those cases are not provably local. Runtime object state remains the required
+backstop for all unproven ownership paths.
 
 ## Function Literals
 

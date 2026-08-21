@@ -31,6 +31,7 @@ _EXPORT_MODULES = {
     "dumps_module": "valiance.runtime.compiled_module",
     "loads_module": "valiance.runtime.compiled_module",
     "AssertionFailure": "valiance.runtime.vm",
+    "DoublePanicAbort": "valiance.runtime.vm",
     "RuntimeError": "valiance.runtime.vm",
     "VirtualMachine": "valiance.runtime.vm",
     "run": "valiance.runtime.vm",

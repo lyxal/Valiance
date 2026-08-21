@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
+from valiance.analysis.contracts.mustcall_flow import prove_local_mustcall
 import valiance.vtypes as T
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.elements.builtins import default_environment
@@ -101,6 +102,8 @@ class _FunctionDeclarations:
         this provisional declaration with the body-validated overload. Definitions
         whose parameters or returns require inference are deliberately skipped.
         """
+        if node.name.text.startswith("\\") and node.function.params:
+            return
         function_node = annotation_hooks.DEFAULT_REGISTRY.transform_function(
             node.function,
             node.annotations,
@@ -146,6 +149,12 @@ class _FunctionDeclarations:
         """Analyse a `DefineNode` node and return the surviving branches."""
         name = node.name
         function_node = node.function
+        if name.text.startswith("\\") and function_node.params:
+            self._diagnose(
+                f"niladic element '{name}' cannot declare parameters",
+                node,
+            )
+            return BranchSet((branch.emit(TypedNode(node, None)),))
         if not self._validate_annotations(node.annotations, "define", node):
             return BranchSet((branch.emit(TypedNode(node, None)),))
         function_node = annotation_hooks.DEFAULT_REGISTRY.transform_function(
@@ -201,6 +210,14 @@ class _FunctionDeclarations:
         if result is None:
             return BranchSet((branch.emit(TypedNode(node, None)),))
         function, typed_branch = result
+        for violation in prove_local_mustcall(function_node.body, self.env):
+            methods = ", ".join(violation.methods)
+            requirement = "all of" if violation.mode == "all" else "one of"
+            self._diagnose(
+                f"{violation.type_name} reaches destruction without calling "
+                f"{requirement}: {methods}",
+                node,
+            )
         generic_constraints = _functions._generic_constraints(
             node.generics,
             node.generic_variances,

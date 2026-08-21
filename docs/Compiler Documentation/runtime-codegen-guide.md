@@ -77,7 +77,7 @@ The runtime implementation is small, but several files must evolve together.
   `MAKE_OBJECT_CONSTRUCTOR`; enum members compile constants with
   `MAKE_ENUM_MEMBER` and optional backing-value globals.
 - `MAKE_OBJECT_CONSTRUCTOR` also carries runtime lifecycle metadata for
-  destructors, custom `pop`, duplication faults, and `@mustcall` cleanup rules.
+  destructors, duplication faults, and `@mustcall` protocol contracts.
 - When an object declares same-name definitions, codegen stores those compiled
   initializer functions on the constructor value instead of emitting the
   synthesized field-order constructor. The VM allocates a fresh object,
@@ -85,12 +85,19 @@ The runtime implementation is small, but several files must evolve together.
   all required fields are initialized before exposing the result.
 - Permitted object/record member writes compile to `SET_FIELD`, which returns a
   reconstructed value instead of mutating the original visible value.
+  Reconstructed object values preserve the receiver's shared
+  `ObjectLifecycleState`, so `@mustcall` calls remain allocation-wide across old
+  aliases and updated wrappers.
 - `TagApplicationNode` is a compile-time no-op unless analysis resolved a
   tag validator. Validated applications emit `VALIDATE_TAG`, which calls the
   resolved validator overload and leaves the tagged value on the stack.
 - `TryNode` compiles to `TRY_BEGIN` / `TRY_END` plus handler jumps. Runtime
   panics are carried by `PanicSignal` and caught by the nearest active handler
   whose nominal type name matches, or by a catch-all handler.
+- Panic-driven frame release enters explicit VM unwind state. If `~Type`
+  panics while another panic is releasing values, the VM raises non-catchable
+  `DoublePanicAbort` with both panic values and the destroying type. A second
+  destructor panic in one teardown cascade is handled identically.
 - `GET_INDEX` and `SET_INDEX` convert out-of-range sequence access into an
   `IndexFault` `PanicSignal`, and missing dictionary keys into `KeyFault`.
   These instructions route the signal through the same nearest-handler lookup

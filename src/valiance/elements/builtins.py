@@ -92,7 +92,7 @@ BUILTIN_FAULT_TYPES = tuple(
         "UnwrappedNoneFault",
         "UnwrappedResultFault",
         "DuplicationFault",
-        "CleanupFault",
+        "MustCallFault",
         "VectorisationFault",
     )
 )

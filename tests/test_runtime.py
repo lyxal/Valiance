@@ -28,11 +28,18 @@ from valiance.runtime.bytecode import (
     Program,
     ResolvedElementReference,
 )
-from valiance.runtime.vm import FunctionValue
+from valiance.runtime.vm import (
+    FunctionValue,
+    _mark_mustcall_method,
+    _retain_value,
+    _run_object_cleanup,
+    _set_field,
+)
 from valiance.runtime.runtime_values import (
     DictValue,
     LazyList,
     ListValue,
+    ObjectRuntimeType,
     ObjectValue,
     LazyPipelineStage,
     PlannedLazyList,
@@ -49,6 +56,26 @@ def execute(source: str, source_file: Path | None = None):
     typed = analyser.analyse(program)
     if analyser.diagnostics:
         raise AssertionError(analyser.diagnostics)
+    return run(compile_program(typed, optimize=False))
+
+
+def execute_with_static_mustcall_backstop(source: str):
+    """Execute code whose deliberate static violation exercises runtime fallback."""
+    program = parse(source)
+    analyser = Analyser()
+    typed = analyser.analyse(program)
+    unexpected = [
+        message
+        for message in analyser.diagnostics
+        if "reaches destruction without calling" not in message
+    ]
+    if unexpected:
+        raise AssertionError(unexpected)
+    if not any(
+        "reaches destruction without calling" in message
+        for message in analyser.diagnostics
+    ):
+        raise AssertionError("expected a static @mustcall violation")
     return run(compile_program(typed, optimize=False))
 
 
@@ -3573,6 +3600,319 @@ end
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "released\n")
 
+    def test_destructor_panic_is_catchable_after_structural_teardown(self):
+        output = io.StringIO()
+        source = """
+object Child =>
+  define ~Child => "child released" println
+end
+
+object Parent =>
+  private $child: Child
+  define ~Parent => RuntimeFault("parent cleanup failed") panic
+end
+
+define \\makeParent =>
+  $parent = Parent(Child)
+end
+
+try =>
+  \\makeParent
+handle RuntimeFault =>
+  "caught" println
+end
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "child released\ncaught\n")
+
+    def test_destroyed_object_cannot_be_resurrected_by_retained_occurrence(self):
+        value = ObjectValue("Resource", {})
+        value.refcount = 0
+        _run_object_cleanup(value, VirtualMachine())
+
+        self.assertTrue(value.destroyed)
+        self.assertEqual(value.refcount, 0)
+        with self.assertRaises(RuntimeError) as caught:
+            _retain_value(value)
+        self.assertIn("use after destruction of Resource", str(caught.exception))
+
+    def test_reconstructed_object_wrappers_share_mustcall_state(self):
+        runtime_type = ObjectRuntimeType(
+            mustcall_mode="any",
+            mustcall_methods=("finish",),
+        )
+        original = ObjectValue(
+            "Work",
+            {"value": RuntimeNumber("1")},
+            runtime_type=runtime_type,
+        )
+
+        reconstructed = _set_field(
+            original,
+            "value",
+            RuntimeNumber("2"),
+        )
+
+        self.assertIsInstance(reconstructed, ObjectValue)
+        self.assertIs(original.lifecycle_state, reconstructed.lifecycle_state)
+        reconstructed.mustcall_called = frozenset({"finish"})
+        self.assertEqual(original.mustcall_called, frozenset({"finish"}))
+
+    def test_mustcall_result_adopts_receiver_lifecycle_state(self):
+        runtime_type = ObjectRuntimeType(
+            mustcall_mode="any",
+            mustcall_methods=("finish",),
+        )
+        receiver = ObjectValue("Work", {}, runtime_type=runtime_type)
+        independently_built_result = ObjectValue("Work", {}, runtime_type=runtime_type)
+        callee = FunctionValue(
+            FunctionCode(
+                instructions=(),
+                params=("self",),
+                name="Work::finish",
+            ),
+            {},
+        )
+
+        _mark_mustcall_method(
+            (receiver,),
+            [independently_built_result],
+            callee,
+        )
+
+        self.assertIs(
+            independently_built_result.lifecycle_state,
+            receiver.lifecycle_state,
+        )
+        self.assertEqual(receiver.mustcall_called, frozenset({"finish"}))
+        self.assertEqual(
+            independently_built_result.mustcall_called,
+            frozenset({"finish"}),
+        )
+
+    def test_mustcall_all_requires_every_method(self):
+        source = """
+@mustcall(all = ["flush", "close"])
+object Stream =>
+  define flush => end
+  define close => end
+  define ~Stream => end
+end
+
+define \\partial =>
+  $stream = Stream
+  $stream flush
+end
+
+\\partial
+"""
+
+        with self.assertRaises(RuntimeError) as caught:
+            execute_with_static_mustcall_backstop(source)
+
+        self.assertIn("uncaught panic: MustCallFault", str(caught.exception))
+        self.assertIn("Stream requires all of: flush, close", str(caught.exception))
+
+    def test_panicking_required_method_does_not_satisfy_mustcall(self):
+        source = """
+@mustcall(any = ["finish"])
+object Work =>
+  define finish => RuntimeFault("finish failed") panic
+  define ~Work => end
+end
+
+define \\attempt -> =>
+  $work = Work
+  $work finish
+end
+
+\\attempt
+"""
+
+        with self.assertRaises(RuntimeError) as caught:
+            execute(source)
+
+        self.assertIn("uncaught panic: RuntimeFault", str(caught.exception))
+        self.assertIn("finish failed", str(caught.exception))
+        secondary = tuple(getattr(caught.exception, "secondary_faults", ()))
+        self.assertEqual(len(secondary), 1)
+        self.assertEqual(secondary[0].value.type_name, "MustCallFault")
+
+    def test_normally_returned_error_value_satisfies_mustcall(self):
+        self.assertEqual(
+            execute("""
+@mustcall(any = ["finish"])
+object Work =>
+  define finish => ValueError("operation failed")
+  define ~Work => end
+end
+
+define \\attempt =>
+  $work = Work
+  $result = $work finish
+end
+
+\\attempt
+"""),
+            [],
+        )
+
+    def test_destructor_call_does_not_satisfy_mustcall_contract(self):
+        output = io.StringIO()
+        source = """
+@mustcall(any = ["finish"])
+object Work =>
+  define finish => "finish called" println
+  define ~Work => $self finish
+end
+
+define \\abandon =>
+  $work = Work
+end
+
+\\abandon
+"""
+
+        with (
+            self.assertRaises(RuntimeError) as caught,
+            contextlib.redirect_stdout(output),
+        ):
+            execute_with_static_mustcall_backstop(source)
+
+        self.assertEqual(output.getvalue(), "finish called\n")
+        self.assertIn("uncaught panic: MustCallFault", str(caught.exception))
+        self.assertIn("Work requires one of: finish", str(caught.exception))
+
+    def test_mustcall_violation_is_secondary_during_panic_unwind(self):
+        source = """
+@mustcall(any = ["finish"])
+object Work =>
+  define finish => end
+  define ~Work => end
+end
+
+define \\fail =>
+  $work = Work
+  RuntimeFault("body failed") panic
+end
+
+\\fail
+"""
+
+        with self.assertRaises(RuntimeError) as caught:
+            execute_with_static_mustcall_backstop(source)
+
+        self.assertIn("uncaught panic: RuntimeFault", str(caught.exception))
+        self.assertIn("body failed", str(caught.exception))
+        secondary = tuple(getattr(caught.exception, "secondary_faults", ()))
+        self.assertEqual(len(secondary), 1)
+        self.assertEqual(secondary[0].value.type_name, "MustCallFault")
+        self.assertEqual(
+            secondary[0].value.fields["message"],
+            "Work requires one of: finish",
+        )
+
+    def test_destructor_panic_during_unwind_aborts_with_both_panics(self):
+        source = """
+object Bomb =>
+  define ~Bomb => IOFault("cleanup exploded") panic
+end
+
+define \\fail =>
+  $bomb = Bomb
+  RuntimeFault("body exploded") panic
+end
+
+\\fail
+"""
+
+        with self.assertRaises(RuntimeError) as caught:
+            execute(source)
+
+        message = str(caught.exception)
+        self.assertIn("fatal: destructor panicked during panic unwinding", message)
+        self.assertIn("original panic: RuntimeFault", message)
+        self.assertIn("body exploded", message)
+        self.assertIn("destructor panic: IOFault", message)
+        self.assertIn("cleanup exploded", message)
+        self.assertIn("while destroying: Bomb", message)
+
+    def test_second_destructor_panic_in_teardown_cascade_aborts(self):
+        source = """
+object InnerBomb =>
+  define ~InnerBomb => IOFault("inner cleanup exploded") panic
+end
+
+object OuterBomb =>
+  private $inner: InnerBomb
+  define ~OuterBomb => RuntimeFault("outer cleanup exploded") panic
+end
+
+define \\release =>
+  $bomb = OuterBomb(InnerBomb)
+end
+
+\\release
+"""
+
+        with self.assertRaises(RuntimeError) as caught:
+            execute(source)
+
+        message = str(caught.exception)
+        self.assertIn("fatal: destructor panicked during panic unwinding", message)
+        self.assertIn("original panic: RuntimeFault", message)
+        self.assertIn("outer cleanup exploded", message)
+        self.assertIn("destructor panic: IOFault", message)
+        self.assertIn("inner cleanup exploded", message)
+        self.assertIn("while destroying: OuterBomb", message)
+
+    def test_destructor_panic_remains_primary_over_mustcall_fault(self):
+        source = """
+@mustcall(any = ["finish"])
+object Work =>
+  define finish => end
+  define ~Work => RuntimeFault("destructor failed") panic
+end
+
+define \\makeWork =>
+  $work = Work
+end
+
+\\makeWork
+"""
+
+        with self.assertRaises(RuntimeError) as caught:
+            execute_with_static_mustcall_backstop(source)
+
+        self.assertIn("uncaught panic: RuntimeFault", str(caught.exception))
+        self.assertIn("destructor failed", str(caught.exception))
+        self.assertNotIn("uncaught panic: MustCallFault", str(caught.exception))
+
+    def test_object_friendly_pop_is_not_a_lifecycle_hook(self):
+        output = io.StringIO()
+        source = """
+object Temp =>
+  define pop => "custom pop" println
+  define ~Temp => "destructor" println
+end
+
+define \\makeTemp =>
+  $value = Temp
+end
+
+\\makeTemp
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "destructor\n")
+
     def test_unduplicatable_object_raises_duplication_fault(self):
         with self.assertRaises(RuntimeError) as caught:
             execute("""
@@ -3589,7 +3929,7 @@ $file
         self.assertIn("uncaught panic: DuplicationFault", str(caught.exception))
         self.assertIn("Writeable files cannot be duplicated", str(caught.exception))
 
-    def test_mustcall_cleanup_fault_still_runs_destructor(self):
+    def test_mustcall_fault_still_runs_destructor(self):
         output = io.StringIO()
         source = """
 @mustcall(any = ["commit"])
@@ -3609,9 +3949,9 @@ end
             self.assertRaises(RuntimeError) as caught,
             contextlib.redirect_stdout(output),
         ):
-            execute(source)
+            execute_with_static_mustcall_backstop(source)
 
-        self.assertIn("uncaught panic: CleanupFault", str(caught.exception))
+        self.assertIn("uncaught panic: MustCallFault", str(caught.exception))
         self.assertEqual(output.getvalue(), "released\n")
 
     def test_generic_object_runtime_values_keep_type_arguments(self):

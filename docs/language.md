@@ -2056,69 +2056,90 @@ $person->age = 37
 
 ## 12.5. Destructors
 
-- A destructor is an element called automatically when an object is no longer reachable - that is, when its reference count hits zero.
-- Syntax:
-  
-```
+- An object may define a destructor named `~<ObjectName>`.
+- The runtime invokes the destructor exactly once when the object's reference
+  count reaches zero.
+- Destruction is deterministic. The destructor runs before the object's fields
+  are released.
+- A destructor cannot declare explicit parameters. It receives `$self` as the
+  object being destroyed.
+- A destructor returns no values.
+- Destructor element tags are inferred from its body like those of any other
+  function. This includes `Panic[...]`: a destructor may panic when its cleanup
+  operations can panic.
+- A destructor panic propagates normally when no panic is already unwinding.
+  Mandatory runtime teardown still destroys the object and releases its fields
+  before the panic continues.
+- If a destructor panics while another panic is already unwinding, execution
+  aborts with a double-panic diagnostic that retains both panic values.
+- `$self` is borrowed during destruction. It cannot be retained, returned,
+  captured, transferred to another task, or otherwise used to resurrect the
+  object.
+
+Syntax:
+
+```valiance
 define ~<ObjectName> => ... end
 ```
 
-- Destructors are intended for infallible, silent cleanup - releasing handles, freeing resources that cannot fail, etc.
-- The destructor of an object must not panic. That is, the destructor cannot call any elements that have the `Panic` tag. If cleanup may fail, use `@mustcall` instead to enforce explicit handling before the object goes out of scope.
+For example:
 
-- Consider:
-  
-```
+```valiance
 import {system}
 object File =>
   private $handle: system.StreamHandle
+
   define File(filename: String) =>
     $handle = system.openFile($filename)
   end
+
   define read -> String => system.readStream($self.handle, all = true)
   define write(:String) => system.writeStream($self.handle, _)
-  define close => system.closeStream($self.handle)
-  define ~File => system.releaseHandle($self.handle)
-end
-```
 
-- Here, close handles the fallible cleanup - if enforcement is needed, `@mustcall` can be used to ensure it is called before the object goes out of scope. `~File` handles only the infallible release of the underlying handle.
-
-## 12.6. Objects, Stack Manipulation, and Memory Management
-
-- When `dup` is called on an object, it's reference count is incremented.
-- Note that `copy` calls `dup` for each reference to an item in the poststack.
-- `move` only calls `dup` if there is more than one reference to an item in the poststack.
-- If an object should not be allowed to be duplicated, then an object can define `dup` as an object friendly element with the `@error` annotation
-- For example:
-
-```
-object WriteFile =>
-  ...
-  @error("Writeable files cannot be duplicated")
-  define dup => end
-  ...
-end
-```
-
-- A compile error will be raised if an object marked as un-duplicatable is duplicated.
-- A `DuplicationFault` will be raised if an object marked as un-duplicatable ever has its reference count exceed 1. This is for cases where duplication may not be detectable by the compiler (e.g. duplication of a generic type or pushing a variable multiple times)
-
-- When `pop` is called on an object, the reference count for that object is decremented. If a `pop` would make the reference count reach 0, then the destructor is called.
-- `pop` will panic with a `CleanupFault` if an object would be destructed without any of its `@mustcall` obligations being met.
-- However, an element can define `pop` as an object friendly element with `@mustcall` elements. This element will only be called when the reference count reaches 0.
-- `pop` can be fallible, but will always call the destructor, even on panic.
-- Example:
-
-```
-@mustcall(all = ["commit"])
-object Transaction =>
-  ...
-  define pop =>
-    $self commit
+  define ~File =>
+    system.closeStream($self.handle)
   end
 end
 ```
+
+When the final `File` reference is released, `~File` closes the stream. If
+`closeStream` can panic, that `Panic[...]` effect is inferred on `~File` and may
+propagate from the release that triggers destruction.
+
+Destructor effects are also included in functions that may release owned values.
+For example, if `~File` carries `Panic[IOFault]`, a function whose local or
+parameter `File` reference is released at function exit also infers
+`Panic[IOFault]`. This is automatic; the function does not need to declare the
+tag unless it uses an explicit effect contract.
+
+## 12.6. Objects, Stack Manipulation, and Memory Management
+
+- `dup` retains a second reference to an object.
+- `copy` retains once for each additional occurrence it creates.
+- `move` retains only when its poststack contains more occurrences of a value
+  than the prestack supplied.
+- If an object must not be duplicated, it can define an object-friendly `dup`
+  element with `@error`:
+
+```valiance
+object WriteFile =>
+  @error("Writable files cannot be duplicated")
+  define dup => end
+end
+```
+
+- A statically visible invalid duplication is a compile error.
+- `DuplicationFault` is the runtime backstop for duplication that cannot be
+  rejected statically.
+- `pop` is the fundamental, non-overridable stack operation that releases one
+  value occurrence.
+- Releasing a non-final reference invokes no user code.
+- Releasing the final reference begins destruction and invokes `~Type` when the
+  object defines one.
+- An ordinary object-friendly element named `pop` has no lifecycle meaning.
+- After the destructor completes or panics, the runtime destroys the object and
+  releases its fields. User code cannot override or prevent this structural
+  teardown.
 
 ## 12.7. Object Example - `Counter`
 
@@ -3094,43 +3115,83 @@ end
 
 ## 19.9. `@mustcall`
 
-_Note: The exact semantics of this annotation are still being determined.
-It is an open question as to whether this annotation is feasible_
+`@mustcall` declares a protocol contract. It is independent of resource cleanup:
+`~Type` remains responsible for RAII cleanup and always runs when the final
+reference is released.
 
-- On object definition, this annotation makes it so that a set of object-friendly methods must be called on an instance of the object before that instance goes out of scope.
-- This is helpful for ensuring that clean-up-time invariants are enforced before the object's destructor is called.
-- Two forms: `@mustcall(all = [<methods>])` and `@mustcall(any = [<methods>])`
-  - `all` means that all of the methods in the set must be called before the object goes out of scope. `any` means that at least one of the methods in the set must be called before the object goes out of scope.
-  - The methods in the set must be object-friendly methods defined on the object. If a method in the set is not object-friendly, or is not defined on the object, that's a compile error.
-  - Methods are specified as strings. 
-- For example:
+Two forms are available:
 
+```valiance
+@mustcall(all = ["flush", "close"])
+@mustcall(any = ["commit", "rollback"])
 ```
+
+- `all` requires every named method to be called during the object's ordinary
+  lifetime.
+- `any` requires at least one named method to be called during the object's
+  ordinary lifetime.
+- Every named method must be an object-friendly method defined on the object.
+- Required methods are specified as strings.
+- A required method satisfies the contract only when it returns normally. If it
+  panics, it does not count.
+- Returning an error value normally still counts as calling the method. The
+  annotation requires the protocol operation to be attempted and observed; it
+  does not claim that the operation's application-level goal succeeded.
+- Calls made after destruction begins, including calls from `~Type`, do not
+  satisfy the contract. The runtime snapshots the contract state before invoking
+  the destructor.
+- Aliases of one object share the same contract state. A qualifying call through
+  any alias satisfies the obligation for that object.
+- Immutable object-friendly updates may reconstruct the visible object wrapper.
+  The old wrapper and reconstructed result retain one shared protocol identity,
+  so satisfying `@mustcall` through either version satisfies the logical object.
+- Returning or otherwise retaining an object transfers its still-pending
+  obligation with the object. The obligation is checked only when the final
+  reference is released.
+
+For example:
+
+```valiance
 @mustcall(any = ["commit", "rollback"])
 object DBTransaction =>
-  define commit => ...
-  define rollback => ...
+  define commit => ... end
+  define rollback => ... end
+
+  define ~DBTransaction =>
+    #? Safely roll back if the transaction is still open.
+    #? This destructor call does not satisfy @mustcall.
+    ...
+  end
 end
 ```
 
-- When a `DBTransaction` instance goes out of scope, if neither `commit` nor `rollback` has been called on that instance, a compile error is raised.
-- Again, this requirement only applies to the scope where the object would no longer be kept alive. It is okay to return an object that has not been `@mustcall` handled.
-- Additionally, calling `@mustcall` elements in a scope where the object is returned does not impact the consideration of whether the methods have been called in the destruction scope.
+When destruction begins, the runtime checks the contract before running the
+destructor. The destructor and mandatory field teardown always run, regardless
+of the result.
 
-```
-define foo(:DBTransaction) =>
-  commit
-end
+- During ordinary execution, an unsatisfied contract raises `MustCallFault`
+  after destruction finishes.
+- If the destructor also panics, the destructor panic remains primary and the
+  contract violation is secondary context.
+- During panic unwinding, the existing panic remains primary and an unsatisfied
+  contract is secondary context. A contract violation alone does not cause a
+  double-panic abort.
+- A destructor panic during panic unwinding is a true double panic and aborts
+  execution.
 
-define bar(:DBTransaction) =>
-  DBTransaction() foo #? mustcall not considered satisfied here
-  commit #? mustcall considered satisfied here
-end
-```
+A leading backslash names a niladic element and therefore cannot be combined
+with declared parameters. Parameterized examples in this section use ordinary
+element names such as `update(flag: #boolean Number)`, not `\update(...)`.
 
-- The calls to `@mustcall` elements must be provably called. This means that if a `@mustcall` element is called in a context where it may not be called, then the compiler will not consider that element as satisfying the `@mustcall` requirement.
-  - This means that if a `@mustcall` element is called in a branch of an if statement (without an else statement that also calls such an element), or in a loop, then the compiler will not consider that element as satisfying the `@mustcall` requirement, because there are execution paths where that element is not called.
- 
+The compiler diagnoses violations statically when a directly constructed local
+object can reach destruction without the required call. The analysis follows
+local aliases, checks each conditional path, handles early returns, and treats a
+returned object as transferring its unresolved obligation to the caller.
+
+Runtime enforcement remains a backstop for parameters, dynamic containers,
+generics, separately compiled code, and other cases that cannot be decided
+statically.
+
 ## 19.10. `@commutative`
 - Sometimes, it can be useful to make elements type commutative.
 - For example, `get[T] (T+, Number)` could have an overload `get[T] (Number, T+)` that simply swaps the arguments before calling.
@@ -3301,7 +3362,7 @@ and implements `Fault`:
   `AlreadyExistsFault`, `PermissionFault`, `ClosedFault`, `TimeoutFault`, and
   `CancelledFault`.
 - Language runtime faults: `UnwrappedNoneFault`, `UnwrappedResultFault`,
-  `DuplicationFault`, and `CleanupFault`.
+  `DuplicationFault`, `MustCallFault`, and cleanup-specific faults.
 
 For example:
 

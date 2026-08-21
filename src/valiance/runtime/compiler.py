@@ -1981,18 +1981,15 @@ def _object_runtime_metadata(
     name: str,
     annotations: tuple[ASTNode, ...],
     definitions: tuple[DefineNode, ...],
-) -> tuple[str | None, str | None, str | None, str | None, str | None, tuple[str, ...]]:
+) -> tuple[str | None, str | None, str | None, str | None, tuple[str, ...]]:
     """Return all lifecycle metadata required by an object's runtime type."""
     destructor_name = None
-    pop_name = None
     dup_name = None
     dup_error = None
     for definition in definitions:
         definition_name = definition.name.text
         if definition_name == f"~{name.rsplit('.', 1)[-1]}":
             destructor_name = f"{name}::{definition_name}"
-        elif definition_name == "pop":
-            pop_name = f"{name}::pop"
         elif definition_name == "dup":
             dup_name = f"{name}::dup"
             for annotation in definition.annotations:
@@ -2036,7 +2033,6 @@ def _object_runtime_metadata(
 
     return (
         destructor_name,
-        pop_name,
         dup_name,
         dup_error,
         mustcall_mode,

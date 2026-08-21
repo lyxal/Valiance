@@ -6,6 +6,7 @@ import builtins as _py_builtins
 import re
 from collections import Counter
 from collections.abc import Callable, Iterable
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice, zip_longest
@@ -133,6 +134,27 @@ def _concurrency_runtime_error(message: str, cause: BaseException) -> RuntimeErr
 
 class AssertionFailure(RuntimeError):
     """Raised when a bare Valiance assertion fails."""
+
+
+class DoublePanicAbort(RuntimeError):
+    """Fatal, non-catchable failure caused by a panic during panic unwinding."""
+
+    def __init__(
+        self,
+        original: PanicSignal,
+        destructor: PanicSignal,
+        destroying_type: str,
+    ) -> None:
+        """Retain both panic values for an embedding or CLI diagnostic."""
+        self.original_panic = original
+        self.destructor_panic = destructor
+        self.destroying_type = destroying_type
+        super().__init__(
+            "fatal: destructor panicked during panic unwinding\n"
+            f"original panic: {_format_value(original.value)}\n"
+            f"destructor panic: {_format_value(destructor.value)}\n"
+            f"while destroying: {destroying_type}"
+        )
 
 
 _stack_shuffle_spec = partial(decode_stack_shuffle_spec, error_type=RuntimeError)
@@ -564,6 +586,7 @@ class VirtualMachine:
         self.scheduler = Scheduler()
         self._scope_stack: list[TaskScope] = [self.scheduler.root_scope]
         self.task_instruction_quantum = 64
+        self._unwind_panics: list[PanicSignal] = []
         self._resolved_builtin_cache: dict[
             int,
             tuple[ResolvedElementReference, BuiltinValue, BuiltinOverload],
@@ -586,6 +609,30 @@ class VirtualMachine:
                 runtime_elements() | runtime_stdlib_elements()
             ).items()
         }
+
+    @property
+    def active_unwind_panic(self) -> PanicSignal | None:
+        """Return the panic whose propagation is currently releasing values."""
+        return self._unwind_panics[-1] if self._unwind_panics else None
+
+    @contextmanager
+    def _unwinding(self, error: BaseException):
+        """Mark cleanup as panic unwinding for the duration of one release walk."""
+        panic = error if isinstance(error, PanicSignal) else None
+        if panic is not None:
+            self._unwind_panics.append(panic)
+        try:
+            yield
+        finally:
+            if panic is not None:
+                popped = self._unwind_panics.pop()
+                if popped is not panic:
+                    raise RuntimeError("panic unwind stack became unbalanced")
+
+    def _discard_frame_during(self, frame: _Frame, error: BaseException) -> None:
+        """Discard a failed frame while exposing any active panic to destructors."""
+        with self._unwinding(error):
+            self._discard_frame(frame)
 
     def _raise_pending_cancellation(self) -> None:
         """Observe task cancellation after one synchronous VM call returns."""
@@ -2431,7 +2478,8 @@ class VirtualMachine:
             error = _with_call_detail(error, request.target, request.args)
         if request.release_after is not None:
             try:
-                _release_value(request.release_after, self)
+                with self._unwinding(error):
+                    _release_value(request.release_after, self)
             except Exception as exc:
                 error = exc
         self._raise_activation_error(activation, error)
@@ -2458,9 +2506,9 @@ class VirtualMachine:
                 activation.code.instructions[activation.ip],
                 frame.stack,
             )
-            self._discard_frame(frame)
+            self._discard_frame_during(frame, error)
             raise runtime_error from error
-        self._discard_frame(frame)
+        self._discard_frame_during(frame, error)
         raise error
 
     def _new_activation(
@@ -3521,8 +3569,8 @@ class VirtualMachine:
                 self._discard_frame(frame)
                 raise
             return self._finalize_frame(frame, list(signal.values), code.return_count)
-        except Exception:
-            self._discard_frame(frame)
+        except Exception as error:
+            self._discard_frame_during(frame, error)
             raise
 
     def _finalize_frame(
@@ -4799,19 +4847,19 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
     """Determine the type of object runtime during VM execution."""
     if value is None:
         return None
-    if not isinstance(value, tuple) or len(value) not in {6, 9, 10}:
+    if not isinstance(value, tuple) or len(value) not in {5, 8, 9}:
         raise RuntimeError(f"invalid object runtime metadata {value!r}")
     accepted_names: tuple[str, ...] = ()
     generic_variances: tuple[str, ...] = ()
     type_facts: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = ()
     generic_supertypes: tuple[tuple[str, tuple[str, ...]], ...] = ()
-    if len(value) in {9, 10}:
-        accepted_names = _runtime_string_tuple(value[6], "accepted type names")
-        generic_variances = _runtime_string_tuple(value[7], "generic variances")
-        if not isinstance(value[8], tuple):
-            raise RuntimeError(f"invalid runtime type facts {value[8]!r}")
+    if len(value) in {8, 9}:
+        accepted_names = _runtime_string_tuple(value[5], "accepted type names")
+        generic_variances = _runtime_string_tuple(value[6], "generic variances")
+        if not isinstance(value[7], tuple):
+            raise RuntimeError(f"invalid runtime type facts {value[7]!r}")
         facts: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
-        for fact in value[8]:
+        for fact in value[7]:
             if (
                 not isinstance(fact, tuple)
                 or len(fact) != 3
@@ -4826,11 +4874,11 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
                 )
             )
         type_facts = tuple(facts)
-    if len(value) == 10:
-        if not isinstance(value[9], tuple):
-            raise RuntimeError(f"invalid generic supertype metadata {value[9]!r}")
+    if len(value) == 9:
+        if not isinstance(value[8], tuple):
+            raise RuntimeError(f"invalid generic supertype metadata {value[8]!r}")
         supertypes: list[tuple[str, tuple[str, ...]]] = []
-        for supertype in value[9]:
+        for supertype in value[8]:
             if (
                 not isinstance(supertype, tuple)
                 or len(supertype) != 2
@@ -4846,11 +4894,10 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
         generic_supertypes = tuple(supertypes)
     return ObjectRuntimeType(
         destructor_name=cast(str | None, value[0]),
-        pop_name=cast(str | None, value[1]),
-        dup_name=cast(str | None, value[2]),
-        dup_error=cast(str | None, value[3]),
-        mustcall_mode=cast(str | None, value[4]),
-        mustcall_methods=cast(tuple[str, ...], value[5]),
+        dup_name=cast(str | None, value[1]),
+        dup_error=cast(str | None, value[2]),
+        mustcall_mode=cast(str | None, value[3]),
+        mustcall_methods=cast(tuple[str, ...], value[4]),
         accepted_names=accepted_names,
         generic_variances=generic_variances,
         type_facts=type_facts,
@@ -5049,6 +5096,16 @@ def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
     return value
 
 
+def _borrow_destructor_receiver(value: ObjectValue) -> ObjectValue:
+    """Create the VM-owned temporary receiver occurrence used only by ``~Type``."""
+    if not value.cleaning_up or value.destroyed or value.refcount != 0:
+        raise RuntimeError(
+            f"invalid destructor receiver state for {object_type_name(value)}"
+        )
+    value.refcount = 1
+    return value
+
+
 def _release_value(value: Any, vm: VirtualMachine) -> None:
     """Release value during VM execution."""
     if isinstance(value, TaggedValue):
@@ -5143,53 +5200,117 @@ def _release_task_terminal(
 
 
 def _run_object_cleanup(value: ObjectValue, vm: VirtualMachine) -> None:
-    """Update run object cleanup state during VM execution."""
+    """Run one final-reference destructor and always complete structural teardown."""
     if value.destroyed:
         return
+    if value.cleaning_up:
+        raise RuntimeError(
+            f"recursive destruction of {object_type_name(value)}"
+        )
+
     value.cleaning_up = True
     runtime = value.runtime_type
-    pop_error: PanicSignal | None = None
-    if runtime is not None and runtime.pop_name is not None:
-        try:
-            vm.call_value(
-                _load_name(runtime.pop_name, {}, vm.globals),
-                [_retain_value(value)],
-            )
-        except PanicSignal as exc:
-            pop_error = exc
-    if runtime is not None and runtime.mustcall_mode and runtime.mustcall_methods:
-        required = set(runtime.mustcall_methods)
-        called = value.mustcall_called
-        satisfied = (
-            required.issubset(called)
-            if runtime.mustcall_mode == "all"
-            else bool(required & set(called))
-        )
-        if not satisfied:
-            names = ", ".join(runtime.mustcall_methods)
-            pop_error = PanicSignal(
-                _fault_object(
-                    "CleanupFault",
-                    f"{object_type_name(value)} requires one of: {names}",
-                )
-            )
-    if runtime is not None and runtime.destructor_name is not None:
-        try:
-            vm.call_value(
-                _load_name(runtime.destructor_name, {}, vm.globals),
-                [_retain_value(value)],
-            )
-        except PanicSignal as exc:
-            raise RuntimeError(
-                f"destructor for {object_type_name(value)} must not panic"
-            ) from exc
-    value.cleaning_up = False
-    value.destroyed = True
-    for item in value.fields.values():
-        _release_value(item, vm)
-    if pop_error is not None:
-        raise pop_error
+    mustcall_error = _mustcall_error(value)
+    destructor_error: BaseException | None = None
+    field_errors: list[BaseException] = []
 
+    try:
+        if runtime is not None and runtime.destructor_name is not None:
+            try:
+                vm.call_value(
+                    _load_name(runtime.destructor_name, {}, vm.globals),
+                    [_borrow_destructor_receiver(value)],
+                )
+            except BaseException as exc:
+                destructor_error = exc
+    finally:
+        # Snapshot every field before releasing it. The destroyed marker prevents
+        # a second teardown pass, while retaining field data keeps panic values
+        # and runtime diagnostics inspectable after their ownership is released.
+        fields = tuple(value.fields.values())
+        # Any temporary or escaped occurrences created by destructor code are
+        # invalidated unconditionally. Destruction cannot resurrect the wrapper.
+        value.refcount = 0
+        value.destroyed = True
+        value.cleaning_up = False
+        for item in fields:
+            try:
+                _release_value(item, vm)
+            except BaseException as exc:
+                field_errors.append(exc)
+
+    active_unwind = vm.active_unwind_panic
+    cleanup_panics = tuple(
+        error
+        for error in (destructor_error, *field_errors)
+        if isinstance(error, PanicSignal)
+    )
+    if active_unwind is not None and cleanup_panics:
+        raise DoublePanicAbort(
+            active_unwind,
+            cleanup_panics[0],
+            object_type_name(value),
+        )
+    if len(cleanup_panics) > 1:
+        raise DoublePanicAbort(
+            cleanup_panics[0],
+            cleanup_panics[1],
+            object_type_name(value),
+        )
+
+    errors = tuple(
+        error
+        for error in (destructor_error, *field_errors, mustcall_error)
+        if error is not None
+    )
+    if active_unwind is not None and errors == (mustcall_error,):
+        # A protocol violation is diagnostic context, not a second operational
+        # panic. Preserve the panic that initiated unwinding and let it continue.
+        assert mustcall_error is not None
+        _attach_secondary_faults(active_unwind, (mustcall_error,))
+        return
+    if errors:
+        primary, *secondary = errors
+        _attach_secondary_faults(primary, tuple(secondary))
+        raise primary
+
+
+def _mustcall_error(value: ObjectValue) -> PanicSignal | None:
+    """Build the protocol fault captured before an object's destructor starts."""
+    runtime = value.runtime_type
+    if runtime is None or not runtime.mustcall_mode or not runtime.mustcall_methods:
+        return None
+    required = set(runtime.mustcall_methods)
+    called = value.mustcall_called
+    satisfied = (
+        required.issubset(called)
+        if runtime.mustcall_mode == "all"
+        else bool(required & set(called))
+    )
+    if satisfied:
+        return None
+    names = ", ".join(runtime.mustcall_methods)
+    requirement = "all of" if runtime.mustcall_mode == "all" else "one of"
+    return PanicSignal(
+        _fault_object(
+            "MustCallFault",
+            f"{object_type_name(value)} requires {requirement}: {names}",
+        )
+    )
+
+
+def _attach_secondary_faults(
+    primary: BaseException,
+    secondary: tuple[BaseException, ...],
+) -> None:
+    """Attach cleanup failures that must not replace the primary failure."""
+    if not secondary:
+        return
+    existing = tuple(getattr(primary, "secondary_faults", ()))
+    try:
+        setattr(primary, "secondary_faults", (*existing, *secondary))
+    except (AttributeError, TypeError):
+        pass
 
 def _fault_object(type_name: str, message: str) -> ObjectValue:
     """Compute fault object during VM execution."""
@@ -5214,6 +5335,10 @@ def _mark_mustcall_method(
     """Update mark mustcall method state during VM execution."""
     if not args or not isinstance(args[0], ObjectValue):
         return
+    if args[0].cleaning_up or args[0].destroyed:
+        # Calls made by ~Type happen after the ordinary-lifetime contract was
+        # snapshotted and must never retroactively satisfy that contract.
+        return
     runtime = args[0].runtime_type
     if runtime is None or not runtime.mustcall_methods:
         return
@@ -5224,7 +5349,7 @@ def _mark_mustcall_method(
     args[0].mustcall_called = called
     for value in result:
         if isinstance(value, ObjectValue) and value.type_name == args[0].type_name:
-            value.mustcall_called = called
+            value.lifecycle_state = args[0].lifecycle_state
 
 
 def _finalize_builtin_result_ownership(
@@ -8261,7 +8386,7 @@ def _set_field(
             fields,
             receiver.type_args,
             runtime_type=receiver.runtime_type,
-            mustcall_called=receiver.mustcall_called,
+            lifecycle_state=receiver.lifecycle_state,
         )
     if isinstance(receiver, dict):
         if field not in receiver:

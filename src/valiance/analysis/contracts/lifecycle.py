@@ -110,7 +110,13 @@ class _LifecycleContracts:
         """Return whether an object's lifecycle annotations are valid."""
         ok = True
         mustcall = _utils._mustcall_methods(node.annotations)
-        defined = {definition.name.text for definition in node.definitions}
+        object_name = node.name.text.rsplit(".", 1)[-1]
+        defined = {
+            definition.name.text
+            for definition in node.definitions
+            if definition.name.text != object_name
+            and not definition.name.text.startswith("~")
+        }
         for method in mustcall:
             if method not in defined:
                 self._diagnose(
@@ -134,6 +140,11 @@ class _LifecycleContracts:
             if definition.function.params:
                 self._diagnose(
                     "destructors cannot declare explicit parameters", definition
+                )
+                ok = False
+            if definition.function.returns:
+                self._diagnose(
+                    "destructors cannot declare return values", definition
                 )
                 ok = False
         return ok

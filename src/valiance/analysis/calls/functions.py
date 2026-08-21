@@ -681,7 +681,18 @@ class _CallableValues:
         """Build the signatures for function during static analysis."""
         signatures: dict[T.Overload, tuple[TypedNode, ...]] = {}
         surviving_element_tags = frozenset(
-            tag for branch in branches for tag in branch.element_tags
+            (
+                tag
+                for branch in branches
+                for tag in (
+                    *branch.element_tags,
+                    *(
+                        release_tag
+                        for _name, typ in branch.variables.visible_items()
+                        for release_tag in self.env.destructor_effects(typ)
+                    ),
+                )
+            )
         )
         surviving_data_element_uses = frozenset(
             use for branch in branches for use in branch.data_element_uses

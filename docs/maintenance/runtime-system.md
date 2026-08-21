@@ -918,25 +918,115 @@ whole-container copies. Return-tag and collection-rank attachment similarly
 return immediately when the analysed metadata is empty. These are performance
 fast paths, not changes to ownership or value semantics.
 
-### Object duplication, cleanup, and must-call rules
+### Object duplication, destruction, and must-call rules
 
 `ObjectRuntimeType` may describe:
 
-- a destructor element;
-- a custom pop hook;
+- a `~Type` destructor element;
 - duplication behaviour or a duplication fault;
 - `mustcall` mode; and
 - required method names.
 
-When an object's reference count reaches zero, cleanup runs once. The VM may:
+`pop` itself is not customizable. It releases one reference, and only a release
+that reaches zero begins destruction. The VM then:
 
-1. invoke the pop hook;
-2. check required method calls;
-3. invoke the destructor; and
-4. release field values.
+1. snapshots whether the ordinary-lifetime `@mustcall` contract was satisfied;
+2. invokes the `~Type` destructor, if present;
+3. marks the object destroyed and releases its fields regardless of destructor
+   success; and
+4. propagates the destructor panic or reports `MustCallFault` according to the
+   lifecycle fault-precedence rules.
 
-A destructor is not allowed to panic. A missing must-call obligation becomes a
-cleanup fault.
+Destructors may panic and retain the inferred `Panic[...]` effect from their
+bodies. A destructor panic propagates normally outside unwinding. The VM keeps an
+explicit stack of panics whose propagation is currently releasing frame values;
+this state is entered before failed frames, pending callees, and their owned
+values are discarded. Cleanup remains scheduler-atomic, so another cooperative
+task cannot observe or overwrite that state during a release walk.
+
+A destructor panic while that unwind stack is non-empty raises the non-catchable
+`DoublePanicAbort`. The diagnostic retains the original panic, the destructor
+panic, and the type being destroyed. A second destructor panic in one ordinary
+teardown cascade follows the same fatal path, with the first cleanup panic treated
+as the original. Calls made while the receiver is being destroyed cannot satisfy
+`@mustcall`. The contract is snapshotted before `~Type` starts, and every
+successful-call marking path also rejects receivers that are destroying or
+already destroyed.
+
+A lone must-call violation during panic unwinding is attached to the active
+`PanicSignal` as secondary context and does not replace it or trigger double
+panic. Outside unwinding, `MustCallFault` remains an ordinary catchable panic
+after destruction. A real destructor panic stays primary over the contractual
+fault.
+
+### Destructor effects are part of static function effects
+
+After an object's friendly definitions are analysed, the environment records the
+positive element tags inferred for its `~Type` overload. `Environment.destructor_effects(...)`
+projects those effects through nominal generic arguments, unions, fixed tuples,
+collections, and transparent type wrappers.
+
+Function signature construction includes the destructor effects of owned values
+visible at function exit. Consequently, accepting or locally owning a `File`
+whose destructor carries `Panic[IOFault]` conservatively gives the function the
+same `Panic[IOFault]` effect. Explicit absent-effect contracts such as `<!Panic>`
+are checked against these implicit final-release effects in the ordinary tag
+validation path.
+
+This first implementation is deliberately conservative: a visible owned
+parameter contributes its destructor effects even when a returned alias may keep
+the allocation alive. Later ownership-flow refinement may move that potential
+release outward, but must never omit an effect from a release that can be final.
+
+### Destructor receivers cannot survive teardown
+
+A destructor overload must have zero normal return values. An explicit return
+signature is rejected during lifecycle validation, and an inferred non-empty
+return is rejected after body analysis. A body that always panics is valid because
+its `Never` result has no normal return path.
+
+At runtime the VM creates one internal receiver occurrence for `~Type` after the
+external reference count reaches zero. Destructor code may read and call through
+that receiver normally. Mandatory teardown then resets the wrapper reference
+count to zero and marks it destroyed before field release, invalidating any
+occurrence that destructor code attempted to retain. Every later retain reports
+use after destruction, so user code cannot resurrect the object.
+
+### Reconstructed wrappers share protocol identity
+
+Visible object updates preserve immutable value semantics by constructing a new
+`ObjectValue` wrapper. Protocol state cannot live directly on each wrapper,
+because an old alias and a reconstructed result may still represent one logical
+resource. `ObjectLifecycleState` therefore owns the mutable `mustcall_called` set,
+and every reconstruction of the same logical object shares that state object.
+
+The ordinary field-reconstruction path copies `lifecycle_state` by identity.
+Successful object-friendly calls also make every same-typed object result adopt
+the receiver's lifecycle state. Satisfying a contract through either an old alias
+or a reconstructed wrapper is consequently visible to every related wrapper.
+Reference counts, destruction guards, and field storage remain wrapper-local.
+
+### Static must-call proof covers definite local lifetimes
+
+Parameterized functions used by the flow pass obey the ordinary naming rule:
+a leading `\` denotes a nilad and is rejected when the definition declares any
+parameters. This validation occurs before overload publication or body analysis.
+
+
+The analyser runs a conservative path-sensitive `@mustcall` pass over ordinary
+function bodies after their types are established. It creates obligations only
+for direct construction of known must-call object types, then tracks local aliases
+by allocation token. Required calls through any tracked alias update the shared
+obligation.
+
+`if` branches are analysed independently, so every destruction path must satisfy
+the contract. `try` bodies and handlers, zero-or-one representative loop paths,
+and early returns are also considered. Returning a tracked allocation transfers
+the unresolved obligation to the caller instead of diagnosing local destruction.
+
+The pass intentionally diagnoses only provable local violations. Values entering
+through parameters, dynamic containers, generic erasure, and other uncertain
+ownership shapes remain governed by the runtime `MustCallFault` backstop.
 
 ### Visible updates use ownership-aware copy-on-write
 

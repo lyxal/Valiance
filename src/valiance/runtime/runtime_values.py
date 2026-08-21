@@ -500,7 +500,6 @@ class ObjectRuntimeType:
     """Runtime lifecycle metadata attached to nominal object values."""
 
     destructor_name: str | None = None
-    pop_name: str | None = None
     dup_name: str | None = None
     dup_error: str | None = None
     mustcall_mode: str | None = None
@@ -509,6 +508,13 @@ class ObjectRuntimeType:
     generic_variances: tuple[str, ...] = ()
     type_facts: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = ()
     generic_supertypes: tuple[tuple[str, tuple[str, ...]], ...] = ()
+
+
+@dataclass
+class ObjectLifecycleState:
+    """Mutable protocol state shared by immutable wrappers of one logical object."""
+
+    mustcall_called: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass
@@ -524,13 +530,23 @@ class ObjectValue:
         repr=False,
     )
     refcount: int = field(default=1, compare=False, repr=False)
-    mustcall_called: frozenset[str] = field(
-        default_factory=frozenset,
+    lifecycle_state: ObjectLifecycleState = field(
+        default_factory=ObjectLifecycleState,
         compare=False,
         repr=False,
     )
     cleaning_up: bool = field(default=False, compare=False, repr=False)
     destroyed: bool = field(default=False, compare=False, repr=False)
+
+    @property
+    def mustcall_called(self) -> frozenset[str]:
+        """Return contractual calls shared by all wrappers of this object."""
+        return self.lifecycle_state.mustcall_called
+
+    @mustcall_called.setter
+    def mustcall_called(self, called: frozenset[str]) -> None:
+        """Update contractual calls for every wrapper sharing this lifecycle."""
+        self.lifecycle_state.mustcall_called = called
 
 
 class PanicSignal(Exception):

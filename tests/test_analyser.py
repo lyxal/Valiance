@@ -1118,6 +1118,285 @@ end
         [constructor] = analyser.env.overloads_for(Symbol("Person"))
         self.assertEqual(constructor.params, ())
 
+    def test_static_mustcall_rejects_provably_unresolved_local(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+@mustcall(any = ["commit", "rollback"])
+object Tx =>
+  define commit => end
+  define rollback => end
+  define ~Tx => end
+end
+
+define \\bad -> =>
+  $tx = Tx
+end
+"""))
+
+        self.assertTrue(
+            any(
+                "Tx reaches destruction without calling one of: commit, rollback"
+                in message
+                for message in analyser.diagnostics
+            ),
+            analyser.diagnostics,
+        )
+
+    def test_static_mustcall_accepts_resolution_on_every_branch(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+@mustcall(any = ["commit", "rollback"])
+object Tx =>
+  define commit => end
+  define rollback => end
+  define ~Tx => end
+end
+
+define resolve(flag: #boolean Number) -> =>
+  $tx = Tx
+  if $flag =>
+    $tx commit
+  else =>
+    $tx rollback
+  end
+end
+"""))
+
+        self.assertFalse(
+            any("reaches destruction without calling" in message for message in analyser.diagnostics),
+            analyser.diagnostics,
+        )
+
+    def test_static_mustcall_rejects_one_unresolved_branch(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+@mustcall(any = ["commit", "rollback"])
+object Tx =>
+  define commit => end
+  define rollback => end
+  define ~Tx => end
+end
+
+define maybe(flag: #boolean Number) -> =>
+  $tx = Tx
+  if $flag =>
+    $tx commit
+  end
+end
+"""))
+
+        self.assertTrue(
+            any("reaches destruction without calling" in message for message in analyser.diagnostics),
+            analyser.diagnostics,
+        )
+
+    def test_static_mustcall_tracks_alias_calls_and_return_transfer(self):
+        alias = Analyser()
+        alias.analyse(parse("""
+@mustcall(any = ["commit"])
+object Tx =>
+  define commit => end
+  define ~Tx => end
+end
+
+define \\alias -> =>
+  $tx = Tx
+  $other = $tx
+  $other commit
+end
+"""))
+        self.assertFalse(
+            any("reaches destruction without calling" in message for message in alias.diagnostics),
+            alias.diagnostics,
+        )
+
+        transfer = Analyser()
+        transfer.analyse(parse("""
+@mustcall(any = ["commit"])
+object Tx =>
+  define commit => end
+  define ~Tx => end
+end
+
+define \\make -> Tx => Tx
+"""))
+        self.assertFalse(
+            any("reaches destruction without calling" in message for message in transfer.diagnostics),
+            transfer.diagnostics,
+        )
+
+    def test_destructor_cannot_declare_or_infer_return_values(self):
+        declared = Analyser()
+        declared.analyse(parse("""
+object Resource =>
+  define ~Resource -> String => "closed"
+end
+"""))
+        self.assertTrue(
+            any(
+                "destructors cannot declare return values" in message
+                for message in declared.diagnostics
+            ),
+            declared.diagnostics,
+        )
+
+        inferred = Analyser()
+        inferred.analyse(parse("""
+object Resource =>
+  define ~Resource => "closed"
+end
+"""))
+        self.assertTrue(
+            any(
+                "destructor '~Resource' must return no values" in message
+                for message in inferred.diagnostics
+            ),
+            inferred.diagnostics,
+        )
+        self.assertEqual(
+            inferred.env.overloads_for(Symbol("Resource::~Resource")),
+            (),
+        )
+
+    def test_panicking_destructor_has_no_normal_return_value(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object Resource =>
+  define ~Resource => IOFault("close failed") panic
+end
+"""))
+
+        self.assertFalse(
+            any("must return no values" in message for message in analyser.diagnostics),
+            analyser.diagnostics,
+        )
+        [destructor] = analyser.env.overloads_for(Symbol("Resource::~Resource"))
+        self.assertTrue(
+            not destructor.returns
+            or all(isinstance(T.normalize(item), T.NeverType) for item in destructor.returns)
+        )
+
+    def test_destructor_effects_are_recorded_on_object_definition(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object File =>
+  define ~File => IOFault("close failed") panic
+end
+"""))
+
+        definition = analyser.env.lookup_object(Symbol("File"))
+        self.assertIsNotNone(definition)
+        assert definition is not None
+        self.assertEqual(
+            {tag.name.text for tag in definition.destructor_effects},
+            {"Panic"},
+        )
+        [panic] = tuple(definition.destructor_effects)
+        self.assertEqual(T.show(panic.args[0]), "IOFault")
+
+    def test_function_exit_infers_destructor_panic_effect(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object File =>
+  define ~File => IOFault("close failed") panic
+end
+
+define consume(file: File) -> => end
+"""))
+
+        [overload] = analyser.env.overloads_for(Symbol("consume"))
+        panic_tags = {tag for tag in overload.element_tags if tag.name == Symbol("Panic")}
+        self.assertEqual(len(panic_tags), 1)
+        [panic] = tuple(panic_tags)
+        self.assertEqual(T.show(panic.args[0]), "IOFault")
+
+    def test_absent_panic_contract_rejects_fallible_destructor_release(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object File =>
+  define ~File => IOFault("close failed") panic
+end
+
+define consume(file: File)<!Panic> -> => end
+"""))
+
+        self.assertTrue(
+            any(
+                "Panic" in message and "required to be absent" in message
+                for message in analyser.diagnostics
+            ),
+            analyser.diagnostics,
+        )
+
+    def test_destructor_effects_flow_through_owned_collections_and_tuples(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object File =>
+  define ~File => IOFault("close failed") panic
+end
+"""))
+
+        for typ in (T.ExactList(T.N(Symbol("File"))), T.Tup(T.N(Symbol("File")), T.String)):
+            with self.subTest(typ=T.show(typ)):
+                effects = analyser.env.destructor_effects(typ)
+                self.assertEqual({tag.name.text for tag in effects}, {"Panic"})
+
+    def test_mustcall_requires_a_nonempty_unique_method_set(self):
+        empty = Analyser()
+        empty.analyse(parse("""
+@mustcall(any = [])
+object Tx => end
+"""))
+        self.assertTrue(
+            any(
+                "@mustcall requires at least one method name" in message
+                for message in empty.diagnostics
+            )
+        )
+
+        duplicate = Analyser()
+        duplicate.analyse(parse("""
+@mustcall(all = ["close", "close"])
+object Stream =>
+  define close => end
+end
+"""))
+        self.assertTrue(
+            any(
+                "@mustcall method names must be unique" in message
+                for message in duplicate.diagnostics
+            )
+        )
+
+    def test_mustcall_cannot_name_constructor_or_destructor(self):
+        constructor = Analyser()
+        constructor.analyse(parse("""
+@mustcall(any = ["Tx"])
+object Tx =>
+  define Tx => end
+end
+"""))
+        self.assertTrue(
+            any(
+                "@mustcall method 'Tx' is not defined on Tx" in message
+                for message in constructor.diagnostics
+            )
+        )
+
+        destructor = Analyser()
+        destructor.analyse(parse("""
+@mustcall(any = ["~Tx"])
+object Tx =>
+  define ~Tx => end
+end
+"""))
+        self.assertTrue(
+            any(
+                "@mustcall method '~Tx' is not defined on Tx" in message
+                for message in destructor.diagnostics
+            )
+        )
+
     def test_object_mustcall_methods_must_exist(self):
         analyser = Analyser()
 
@@ -1935,6 +2214,19 @@ end
             analyser.diagnostics,
             ["1:1: PI inferred as nilad, but not named as one"],
         )
+
+    def test_backslash_define_cannot_declare_parameters(self):
+        analyser = Analyser()
+
+        analyser.analyse(
+            parse("define \\update(flag: #boolean Number) -> => end")
+        )
+
+        self.assertEqual(
+            analyser.diagnostics,
+            ["1:1: niladic element '\\update' cannot declare parameters"],
+        )
+        self.assertEqual(analyser.env.overloads_for(Symbol("\\update")), ())
 
     def test_backslash_define_must_infer_niladic_stack_effect(self):
         analyser = Analyser()

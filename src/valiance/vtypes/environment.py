@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 
 from valiance.vtypes.symbols import Symbol, tag_symbol
@@ -14,15 +14,23 @@ from valiance.vtypes.context import (
     Variance,
 )
 from valiance.vtypes.nodes import (
+    CollectionType,
+    ElementTag,
     FunctionType,
     GenericConstraint,
     NeverType,
     NominalType,
+    TaggedType,
+    NoVecType,
+    ExactType,
+    TupleType,
+    UnionType,
     Overload,
     OverloadSetType,
     Type,
     VariadicTupleType,
 )
+from valiance.vtypes.builders import normalize
 from valiance.vtypes.stack import StackApplication, TypeStack
 
 
@@ -82,13 +90,16 @@ class ObjectAttribute:
 
 @dataclass(frozen=True)
 class ObjectDefinition:
-    """The structural facts known about one object type in scope."""
+    """The structural and lifecycle facts known about one object type in scope."""
 
     name: Symbol
     generics: tuple[Symbol, ...] = ()
     generic_variance: tuple[Variance, ...] = ()
     attributes: tuple[ObjectAttribute, ...] = ()
     task_isolated: bool = False
+    destructor_effects: frozenset[ElementTag] = frozenset()
+    mustcall_mode: str | None = None
+    mustcall_methods: tuple[str, ...] = ()
 
     def attribute_type(self, name: Symbol) -> Type | None:
         """Return an attribute's type, if the object declares it."""
@@ -302,6 +313,8 @@ class Environment:
         generics: tuple[Symbol, ...] = (),
         generic_variance: tuple[Variance, ...] = (),
         task_isolated: bool = False,
+        mustcall_mode: str | None = None,
+        mustcall_methods: tuple[str, ...] = (),
     ) -> None:
         """Register or replace an object type visible in this environment."""
         seen: set[Symbol] = set()
@@ -313,7 +326,13 @@ class Environment:
             seen.add(attribute.name)
         variances = _generic_variance(generics, generic_variance)
         self.objects[name] = ObjectDefinition(
-            name, generics, variances, attributes, task_isolated
+            name=name,
+            generics=generics,
+            generic_variance=variances,
+            attributes=attributes,
+            task_isolated=task_isolated,
+            mustcall_mode=mustcall_mode,
+            mustcall_methods=mustcall_methods,
         )
         self.context.set_generic_variance(name, variances)
 
@@ -324,6 +343,44 @@ class Environment:
         if self.parent is not None:
             return self.parent.lookup_object(name)
         return None
+
+    def set_object_destructor_effects(
+        self,
+        name: Symbol,
+        effects: frozenset[ElementTag],
+    ) -> None:
+        """Record the inferred effects of one object's final-release destructor."""
+        definition = self.objects.get(name)
+        if definition is None:
+            if self.parent is not None:
+                self.parent.set_object_destructor_effects(name, effects)
+                return
+            raise KeyError(f"unknown object {name}")
+        self.objects[name] = replace(definition, destructor_effects=effects)
+
+    def destructor_effects(self, typ: Type) -> frozenset[ElementTag]:
+        """Return effects that may occur when one owned value is released."""
+        typ = normalize(typ)
+        if isinstance(typ, NominalType):
+            definition = self.lookup_object(typ.name)
+            own = frozenset() if definition is None else definition.destructor_effects
+            nested = frozenset(
+                tag for argument in typ.args for tag in self.destructor_effects(argument)
+            )
+            return own | nested
+        if isinstance(typ, UnionType):
+            return frozenset(
+                tag for item in typ.items for tag in self.destructor_effects(item)
+            )
+        if isinstance(typ, TupleType):
+            return frozenset(
+                tag for item in typ.params for tag in self.destructor_effects(item)
+            )
+        if isinstance(typ, CollectionType):
+            return self.destructor_effects(typ.base)
+        if isinstance(typ, (TaggedType, NoVecType, ExactType)):
+            return self.destructor_effects(typ.inner)
+        return frozenset()
 
     def define_constructor_metadata(
         self,

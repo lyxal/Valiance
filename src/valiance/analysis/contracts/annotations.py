@@ -369,9 +369,15 @@ def _validate_mustcall(
     value = kwargs[key]
     if not isinstance(value, ListLiteralNode):
         return ("@mustcall expects a list literal of method names",)
+    methods: list[str] = []
     for item in value.items:
         if len(item) != 1 or not isinstance(item[0], StringLiteralNode):
             return ("@mustcall method names must be string literals",)
+        methods.append(item[0].value)
+    if not methods:
+        return ("@mustcall requires at least one method name",)
+    if len(set(methods)) != len(methods):
+        return ("@mustcall method names must be unique",)
     return ()
 
 

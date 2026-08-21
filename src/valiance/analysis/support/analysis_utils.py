@@ -117,7 +117,8 @@ def _show_overload_signature(
     signature = f"{prefix}({', '.join(rendered_params)}) -> {rendered_returns}"
     if overload.element_tags:
         tags = ", ".join(
-            _show_element_tag(tag) for tag in sorted(overload.element_tags)
+            _show_element_tag(tag)
+            for tag in sorted(overload.element_tags, key=_show_element_tag)
         )
         signature += f" <{tags}>"
     if overload.generic_constraints:

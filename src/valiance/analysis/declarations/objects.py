@@ -43,6 +43,7 @@ from valiance.asts import (
     ImportComponent,
     ImportPath,
     ImportSpec,
+    ListLiteralNode,
     ListPatternNode,
     MatchCaseNode,
     MatchNode,
@@ -51,6 +52,7 @@ from valiance.asts import (
     OrPatternNode,
     PopNNode,
     SourceLocation,
+    StringLiteralNode,
     TraitRequirementNode,
     TryHandlerNode,
     TryNode,
@@ -202,6 +204,14 @@ class _ObjectDeclarations:
             node.name,
             friendly_definitions,
         )
+        destructor_name = Symbol(f"{node.name}::~{node.name.text.rsplit('.', 1)[-1]}")
+        destructor_effects = frozenset(
+            tag
+            for overload in self.env.overloads_for(destructor_name)
+            for tag in overload.element_tags
+            if not tag.absent
+        )
+        self.env.set_object_destructor_effects(node.name, destructor_effects)
         return BranchSet((current,))
 
     def _specialized_trait_requirements(
@@ -333,6 +343,27 @@ class _ObjectDeclarations:
             if generic_constraints is None
             else generic_constraints
         )
+        mustcall_mode: str | None = None
+        mustcall_methods: tuple[str, ...] = ()
+        for annotation in node.annotations:
+            if not isinstance(annotation, AnnotationNode) or annotation.name.text != "mustcall":
+                continue
+            kwargs = dict(annotation.kwargs)
+            for mode in ("all", "any"):
+                value = kwargs.get(Symbol(mode))
+                if not isinstance(value, ListLiteralNode):
+                    continue
+                methods = tuple(
+                    item[0].value
+                    for item in value.items
+                    if len(item) == 1 and isinstance(item[0], StringLiteralNode)
+                )
+                if len(methods) == len(value.items):
+                    mustcall_mode = mode
+                    mustcall_methods = methods
+                    break
+            break
+
         self.env.define_object(
             name,
             attributes,
@@ -345,6 +376,8 @@ class _ObjectDeclarations:
                 self.env.context,
             ),
             task_isolated=bool(_utils._mustcall_methods(node.annotations)),
+            mustcall_mode=mustcall_mode,
+            mustcall_methods=mustcall_methods,
         )
         if annotation_hooks.has_annotation(node.annotations, "errType"):
             self.env.add_trait_impl(name, Symbol("Err"))
@@ -603,6 +636,22 @@ class _ObjectDeclarations:
         if result is None:
             return branch.emit(TypedNode(definition, None))
         function, typed_branch = result
+        if definition.name.text.startswith("~"):
+            invalid_returns = any(
+                typing.overload.returns
+                and not all(
+                    isinstance(T.normalize(returned), T.NeverType)
+                    for returned in typing.overload.returns
+                )
+                for typing in function.overloads
+                if isinstance(typing.overload, T.Overload)
+            )
+            if invalid_returns:
+                self._diagnose(
+                    f"destructor '{definition.name}' must return no values",
+                    definition,
+                )
+                return typed_branch
         if trait_requirement is not None:
             required_tags = trait_requirement.overload.element_tags
             actual_tag_sets = {
