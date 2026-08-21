@@ -5205,6 +5205,43 @@ end
         restored = loads(dumps(compile_program(typed, optimize=False)))
         self.assertEqual(run(restored), expected)
 
+    def test_augmented_selection_does_not_refill_short_results(self):
+        cases = (
+            "[3, 5, 4, 2]\n$[0:1] := /: *",
+            "[3, 5, 4, 2]\n$[0, 1] := /: *",
+            "[3, 5, 4, 2]\n$[range(0, 1)] := /: *",
+        )
+        expected = [[
+            RuntimeNumber("15"),
+            RuntimeNumber("4"),
+            RuntimeNumber("2"),
+        ]]
+        for source in cases:
+            with self.subTest(source=source):
+                self.assertEqual(execute(source), expected)
+
+    def test_augmented_sparse_selection_removes_unmatched_positions(self):
+        self.assertEqual(
+            execute("[3, 5, 4, 2]\n$[0, 2] := /: *"),
+            [[RuntimeNumber("12"), RuntimeNumber("5"), RuntimeNumber("2")]],
+        )
+
+    def test_augmented_selection_discards_excess_results(self):
+        self.assertEqual(
+            execute("[3, 5, 4, 2]\n$[0, 2] := 99 append"),
+            [[RuntimeNumber("3"), RuntimeNumber("5"), RuntimeNumber("4"), RuntimeNumber("2")]],
+        )
+
+    def test_augmented_selection_gathers_in_selector_order(self):
+        self.assertEqual(
+            execute("[10, 3, 2]\n$[2, 0] := /: -"),
+            [[RuntimeNumber("-8"), RuntimeNumber("3")]],
+        )
+        self.assertEqual(
+            execute("[10, 3, 2]\n$[0, 2] := /: -"),
+            [[RuntimeNumber("8"), RuntimeNumber("3")]],
+        )
+
     def test_multiple_index_string_augmented_assignment_scatters_characters(self):
         self.assertEqual(
             execute('$text = "abcdef"\n' "$text[1, 3, 5] := 1 rotate\n" "$text"),

@@ -448,10 +448,21 @@ def _indexed_assignment_type(
                 spread=False,
                 grouped_update=grouped_update,
             )
-        return receiver_type if T.assignable(value_type, item, ctx) else None
+        if T.assignable(value_type, item, ctx):
+            return receiver_type
+        if grouped_update and T.assignable(
+            value_type, _selection_replacement_item_type(receiver_type), ctx
+        ):
+            return receiver_type
+        return None
     if selectors[0].is_slice:
         slice_type = _indexed_type(receiver_type, selectors, spread=False)
-        if T.assignable(value_type, slice_type, ctx):
+        if T.assignable(value_type, slice_type, ctx) or (
+            grouped_update
+            and T.assignable(
+                value_type, _selection_replacement_item_type(receiver_type), ctx
+            )
+        ):
             return receiver_type
     return _single_index_assignment_type(receiver_type, value_type, ctx)
 

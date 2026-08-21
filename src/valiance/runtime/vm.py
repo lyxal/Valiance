@@ -7495,7 +7495,9 @@ def _set_index(
     if len(selectors) == 1 and not selectors[0][0]:
         selection = _selection_positions(receiver, selectors[0][1], vm)
         if selection is not None:
-            if grouped_update and len({_selection_identity(item) for item in selection}) != len(selection):
+            if grouped_update and len(
+                {_selection_identity(item) for item in selection}
+            ) != len(selection):
                 raise RuntimeError(
                     "whole-selection augmented assignment contains duplicate indices"
                 )
@@ -7508,16 +7510,26 @@ def _set_index(
             )
     if len(selectors) == 1 and selectors[0][0]:
         _, start, stop, step = selectors[0]
-        return _set_slice_value(receiver, start, stop, step, value, in_place=in_place)
+        return _set_slice_value(
+            receiver,
+            start,
+            stop,
+            step,
+            value,
+            grouped_update=grouped_update,
+            in_place=in_place,
+        )
     if len(selectors) != 1:
         if all(not item[0] for item in selectors):
             if grouped_update:
                 _validate_distinct_selection_indices(receiver, selectors)
-                replacements = value
-            else:
-                replacements = [value] * len(selectors)
+            replacements = value if grouped_update else [value] * len(selectors)
             return _set_many_indices(
-                receiver, selectors, replacements, in_place=in_place
+                receiver,
+                selectors,
+                replacements,
+                grouped_update=grouped_update,
+                in_place=in_place,
             )
         raise RuntimeError("indexed assignment requires non-slice indices")
     return _set_index_path(receiver, selectors[0][1], value, in_place=in_place)
@@ -7685,6 +7697,51 @@ def _gather_selection(receiver: Any, positions: list[Any]) -> Any:
     raise RuntimeError("value is not selectable")
 
 
+def _replace_selected_eager_positions(
+    receiver: Any,
+    positions: list[int],
+    replacements: list[Any],
+    *,
+    in_place: bool = False,
+) -> list[Any]:
+    """Rebuild an eager sequence from sorted selected positions and results."""
+    ordered = sorted(positions)
+    selected = frozenset(ordered)
+    updated = (
+        receiver
+        if in_place
+        and isinstance(receiver, ListValue)
+        and receiver.refcount == 1
+        and _list_ownership_is_trivial(receiver)
+        else _copy_eager_list(receiver, skip_indexes=selected)
+    )
+    paired = min(len(ordered), len(replacements))
+    for index, replacement in zip(ordered[:paired], replacements[:paired], strict=True):
+        list.__setitem__(updated, index, replacement)
+    for index in reversed(ordered[paired:]):
+        list.__delitem__(updated, index)
+    _update_list_ownership_after_replacements(updated, replacements[:paired])
+    return updated
+
+
+def _replace_selected_string_positions(
+    receiver: str,
+    positions: list[int],
+    replacements: list[str],
+) -> str:
+    """Rebuild a string from sorted selected positions and result characters."""
+    if any(not isinstance(item, str) or len(item) != 1 for item in replacements):
+        raise RuntimeError("string selection assignment requires characters")
+    ordered = sorted(positions)
+    updated = list(receiver)
+    paired = min(len(ordered), len(replacements))
+    for index, replacement in zip(ordered[:paired], replacements[:paired], strict=True):
+        updated[index] = replacement
+    for index in reversed(ordered[paired:]):
+        del updated[index]
+    return "".join(updated)
+
+
 def _set_selected_positions(
     receiver: Any,
     positions: list[Any],
@@ -7721,6 +7778,10 @@ def _set_selected_positions(
     if isinstance(receiver, str):
         if isinstance(value, str):
             replacements = list(value)
+            if grouped_update:
+                return _replace_selected_string_positions(
+                    receiver, positions, replacements
+                )
             if len(replacements) != len(positions):
                 raise RuntimeError("selection assignment replacement length mismatch")
         elif grouped_update:
@@ -7737,12 +7798,16 @@ def _set_selected_positions(
         return "".join(updated)
     if is_list_like(value):
         replacements = list(value)
-        if len(replacements) != len(positions):
+        if not grouped_update and len(replacements) != len(positions):
             raise RuntimeError("selection assignment replacement length mismatch")
     elif grouped_update:
-        raise RuntimeError("augmented list selection must return a list")
+        replacements = [value]
     else:
         replacements = [value] * len(positions)
+    if grouped_update and is_eager_sequence(receiver):
+        return _replace_selected_eager_positions(
+            receiver, positions, replacements, in_place=in_place
+        )
     if is_eager_sequence(receiver):
         updated = (
             receiver
@@ -7756,12 +7821,19 @@ def _set_selected_positions(
             list.__setitem__(updated, index, replacement)
         _update_list_ownership_after_replacements(updated, replacements)
         return updated
-    replacement_by_index = dict(zip(positions, replacements, strict=True))
+    ordered_positions = sorted(positions) if grouped_update else positions
+    replacement_by_index = dict(
+        zip(ordered_positions, replacements, strict=not grouped_update)
+    )
+    selected = frozenset(positions)
 
     def updated_items():
-        """Yield a lazy list with selected positions replaced."""
+        """Yield a lazy list with selected positions replaced or removed."""
         for index, item in enumerate(receiver):
-            yield replacement_by_index.get(index, item)
+            if index in replacement_by_index:
+                yield replacement_by_index[index]
+            elif index not in selected:
+                yield item
 
     return LazyList(updated_items())
 
@@ -7797,7 +7869,11 @@ def _validate_distinct_selection_indices(
         raise RuntimeError(
             "whole-selection augmented assignment requires a list or string"
         )
-    length = len(receiver) if isinstance(receiver, str) or is_eager_sequence(receiver) else None
+    length = (
+        len(receiver)
+        if isinstance(receiver, str) or is_eager_sequence(receiver)
+        else None
+    )
     normalized: list[int] = []
     for _, index, _, _ in selectors:
         if _is_path(index):
@@ -7831,6 +7907,7 @@ def _set_many_indices(
     selectors: list[tuple[bool, Any, Any, Any]],
     value: Any,
     *,
+    grouped_update: bool = False,
     in_place: bool = False,
 ) -> Any:
     """Scatter one transformed selection back into its source positions."""
@@ -7852,20 +7929,31 @@ def _set_many_indices(
                 "whole-selection string assignment requires a string result"
             )
         replacements = list(value)
+        normalized = [_normal_index(index, len(receiver)) for index in raw_indices]
+        if grouped_update:
+            return _replace_selected_string_positions(
+                receiver, normalized, replacements
+            )
         if len(replacements) != len(raw_indices):
             raise RuntimeError("selection assignment replacement length mismatch")
-        normalized = [_normal_index(index, len(receiver)) for index in raw_indices]
         updated = list(receiver)
         for index, replacement in zip(normalized, replacements, strict=True):
             updated[index] = replacement
         return "".join(updated)
-    if not is_list_like(value):
+    if is_list_like(value):
+        replacements = list(value)
+    elif grouped_update:
+        replacements = [value]
+    else:
         raise RuntimeError("whole-selection list assignment requires a list result")
-    replacements = list(value)
-    if len(replacements) != len(raw_indices):
+    if not grouped_update and len(replacements) != len(raw_indices):
         raise RuntimeError("selection assignment replacement length mismatch")
     if is_eager_sequence(receiver):
         normalized = [_normal_index(index, len(receiver)) for index in raw_indices]
+        if grouped_update:
+            return _replace_selected_eager_positions(
+                receiver, normalized, replacements, in_place=in_place
+            )
         updated = (
             receiver
             if in_place
@@ -8101,17 +8189,30 @@ def _set_slice_value(
     step: Any,
     value: Any,
     *,
+    grouped_update: bool = False,
     in_place: bool = False,
 ) -> Any:
     """Update slice value during VM execution."""
     if _is_path(start) or _is_path(stop):
         raise RuntimeError("multidimensional slice assignment is not implemented")
     if isinstance(receiver, str):
-        return _set_string_slice(receiver, start, stop, step, value)
+        return _set_string_slice(
+            receiver, start, stop, step, value, grouped_update=grouped_update
+        )
     if is_eager_sequence(receiver):
-        return _set_eager_slice(receiver, start, stop, step, value, in_place=in_place)
+        return _set_eager_slice(
+            receiver,
+            start,
+            stop,
+            step,
+            value,
+            grouped_update=grouped_update,
+            in_place=in_place,
+        )
     if is_list_like(receiver):
-        return _set_lazy_slice(receiver, start, stop, step, value)
+        return _set_lazy_slice(
+            receiver, start, stop, step, value, grouped_update=grouped_update
+        )
     raise RuntimeError("value is not slice-assignable")
 
 
@@ -8122,10 +8223,16 @@ def _set_eager_slice(
     step: Any,
     value: Any,
     *,
+    grouped_update: bool = False,
     in_place: bool = False,
 ) -> list[Any]:
     """Update eager slice during VM execution."""
     indexes = _eager_slice_indexes(len(receiver), start, stop, step)
+    if grouped_update:
+        replacements = list(value) if is_list_like(value) else [value]
+        return _replace_selected_eager_positions(
+            receiver, indexes, replacements, in_place=in_place
+        )
     if is_list_like(value):
         replacements = list(value)
         if len(replacements) != len(indexes):
@@ -8155,12 +8262,16 @@ def _set_string_slice(
     stop: Any,
     step: Any,
     value: Any,
+    *,
+    grouped_update: bool = False,
 ) -> str:
     """Update string slice during VM execution."""
     if not isinstance(value, str):
         raise RuntimeError("string slice assignment requires a string value")
     indexes = _eager_slice_indexes(len(receiver), start, stop, step)
     replacements = list(value)
+    if grouped_update:
+        return _replace_selected_string_positions(receiver, indexes, replacements)
     if len(replacements) != len(indexes):
         raise RuntimeError("slice assignment replacement length mismatch")
     updated = list(receiver)
@@ -8175,6 +8286,8 @@ def _set_lazy_slice(
     stop: Any,
     step: Any,
     value: Any,
+    *,
+    grouped_update: bool = False,
 ) -> LazyList:
     """Update lazy slice during VM execution."""
     step_int = 1 if step is None else _int_index(step)
@@ -8199,12 +8312,14 @@ def _set_lazy_slice(
                     try:
                         yield next(replacement_iter)
                     except StopIteration as exc:
+                        if grouped_update:
+                            continue
                         raise RuntimeError(
                             "slice assignment replacement length mismatch"
                         ) from exc
             else:
                 yield item
-        if replacement_iter is not None:
+        if replacement_iter is not None and not grouped_update:
             try:
                 next(replacement_iter)
             except StopIteration:

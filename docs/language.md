@@ -1307,8 +1307,8 @@ $[1:3] = 4
 
 - Slice assignment accepts either a single replacement value, which is written to every selected item, or a list-shaped replacement with exactly one value for each selected item.
 - Normal `=` assignment remains replacement assignment.
-- For augmented assignment with a slice or several indices, Valiance gathers the selected values, runs the augmented-assignment code once on that whole selection, and scatters the result back pairwise in selector order.
-- Whole-selection augmented assignment is available for lists and strings. It must return the same collection kind and a compatible element type, with exactly one result item or character per selected position.
+- For augmented assignment with a slice or several indices, Valiance gathers the selected values in selector order and runs the augmented-assignment code once on that whole selection.
+- Whole-selection augmented assignment is available for lists and strings. Results are paired with the sorted selected positions. Selected positions without a corresponding result are removed, and results without a corresponding selected position are discarded. Results are never repeated or cycled.
 - Repeated positions in a multiple-index augmented assignment are a runtime error; no replacement is stored.
 - A list, string, or dictionary may also be indexed by a selector function. List and string selectors accept one item; dictionary selectors accept the key and value. The function must return `#boolean Number`, and the selected values retain their original collection kind.
 - Any expression valid in a list item may appear inside one index selector. Its top result must be `Integer`, `Integer+`, `Integer++`, an applicable Boolean selector function, or a `#boolean+ Number+` mask.

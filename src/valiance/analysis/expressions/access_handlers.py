@@ -485,9 +485,8 @@ def _index_set_node(
             receiver_type,
             selector_mode,
         )
-        if T.assignable(value_type, item_type, self.env.context) or (
-            not grouped
-            and T.assignable(value_type, replacement_item, self.env.context)
+        if T.assignable(value_type, item_type, self.env.context) or T.assignable(
+            value_type, replacement_item, self.env.context
         ):
             updated_receiver_type = receiver_type
         else:
