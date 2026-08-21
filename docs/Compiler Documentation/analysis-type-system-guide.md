@@ -990,6 +990,42 @@ Do not broaden `_is_err_nominal` casually. Rewriting ordinary unions into
 `Result` is intentionally conservative because it changes overload resolution
 and display.
 
+## Lifecycle effect closure
+
+Static release accounting covers every compiler-modelled release site currently exposed by the language,
+and implicit multi-value returns retain direct-variable provenance for each
+returned stack occurrence. The analyser does not infer transfer from type
+identity, constructor adjacency, or chain separators.
+
+## Return ownership transfer
+
+At function exit, direct variable-read return expressions carry their variable
+name as ownership provenance. Only that named occurrence transfers to the caller
+and leaves the release set. Computed values, constructors, and unmatched names do
+not suppress cleanup merely because their types match a local. This keeps
+identity-style transfer precise while remaining conservative for derived values.
+
+## Release-site destructor effects
+
+Destructor effects are computed through a shared ownership-disposition API.
+Definite releases inherit the released type's destructor tags, proven borrows or
+transfers do not, and unknown ownership remains conservative. Current explicit
+sites include single and parallel replacement assignment, field and index
+reconstruction, `pop_n` discard, and function-exit local cleanup. Parallel
+replacement snapshots all prior target types before updating branch variables. Reconstruction preserves receiver ownership in the updated replacement, while
+the overwritten field or indexed item may be finally released and therefore
+contributes effects. Later ownership precision can extend
+the same operation without redefining effect semantics.
+
+## Destructor receiver capability
+
+Object lifecycle validation treats `$self` in `~Type` as a non-owning capability.
+A compact flow pass propagates that capability through local assignments and
+rejects definite escapes through returns, aggregates, closures, duplication,
+tasks, and channels. Ordinary cleanup calls consume only the temporary stack
+occurrence and remain legal. This static pass complements, rather than replaces,
+the VM's non-owning destructor receiver.
+
 ## Destructor return validation
 
 Lifecycle validation rejects explicit return types on `~Type`. After the body is

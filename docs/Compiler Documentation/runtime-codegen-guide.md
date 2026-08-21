@@ -94,6 +94,16 @@ The runtime implementation is small, but several files must evolve together.
 - `TryNode` compiles to `TRY_BEGIN` / `TRY_END` plus handler jumps. Runtime
   panics are carried by `PanicSignal` and caught by the nearest active handler
   whose nominal type name matches, or by a catch-all handler.
+- Cleanup failures carry structured object context. The VM boundary renders the
+  primary fault, each ordered secondary lifecycle fault, and nested destruction
+  contexts without changing panic catchability.
+- Object runtime metadata includes field names in declaration order. Final
+  cleanup traverses that tuple in reverse, independent of dictionary layout, and
+  legacy metadata falls back to reverse insertion order.
+- `~Type` runs with an explicit non-owning destructor receiver. Its object
+  wrapper stays at reference count zero; variable loads may borrow it, but retain
+  operations fail and borrowed releases are no-ops. Frame locals are detached
+  before release so a cleanup failure cannot trigger the same final release twice.
 - Panic-driven frame release enters explicit VM unwind state. If `~Type`
   panics while another panic is releasing values, the VM raises non-catchable
   `DoublePanicAbort` with both panic values and the destroying type. A second

@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
+from valiance.analysis.contracts.release_effects import released_types_effects
 from valiance.analysis.lints import canonical_lint_code, finding
 import valiance.vtypes as T
 from valiance.asts import (
@@ -603,7 +604,8 @@ def _pop_n_node(
             node,
         )
         return _core.BranchSet()
-    _args, popped = sourced
+    args, popped = sourced
+    popped = popped.with_element_tags(released_types_effects(self.env, args))
     return _core.BranchSet((popped.emit(TypedNode(node)),))
 
 

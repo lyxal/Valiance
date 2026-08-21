@@ -7,6 +7,10 @@ from dataclasses import replace
 from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
+from valiance.analysis.contracts.release_effects import (
+    release_effects,
+    released_types_effects,
+)
 from valiance.analysis.lints import KNOWN_LINT_CODES, finding
 import valiance.vtypes as T
 from valiance.asts import (
@@ -280,12 +284,12 @@ def _set_variable(
             )
         )
 
+    replaced_type = branch.variables.read(node.name)
+    assigned = branch.with_variables(write.variables).pop()
+    if replaced_type is not None:
+        assigned = assigned.with_element_tags(release_effects(self.env, replaced_type))
     return _core.BranchSet(
-        (
-            branch.with_variables(write.variables)
-            .pop()
-            .emit(TypedNode(node, variable_type)),
-        )
+        (assigned.emit(TypedNode(node, variable_type)),)
     )
 
 @_core.register(SetVariablesNode)
@@ -323,6 +327,11 @@ def _set_variables_node(
     )
     value_types = inferred + branch.stack.items[len(branch.stack) - available :]
     variables = branch.variables
+    replaced_types = tuple(
+        existing
+        for target in node.targets
+        if (existing := branch.variables.read(target.name)) is not None
+    )
     for target, value_type in zip(node.targets, value_types, strict=True):
         if target.declared_type is not None and not self._validate_data_tags(
             ((target.declared_type,),),
@@ -372,7 +381,11 @@ def _set_variables_node(
             )
         variables = write.variables
 
+    assigned = branch.with_variables(variables).pop(available)
+    assigned = assigned.with_element_tags(
+        released_types_effects(self.env, replaced_types)
+    )
     return _core.BranchSet(
-        (branch.with_variables(variables).pop(available).emit(TypedNode(node, None)),)
+        (assigned.emit(TypedNode(node, None)),)
     )
 

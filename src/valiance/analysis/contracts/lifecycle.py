@@ -17,6 +17,9 @@ from pathlib import Path
 from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
+from valiance.analysis.contracts.destructor_borrows import (
+    destructor_borrow_violations,
+)
 import valiance.vtypes as T
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.elements.builtins import default_environment
@@ -146,6 +149,11 @@ class _LifecycleContracts:
                 self._diagnose(
                     "destructors cannot declare return values", definition
                 )
+                ok = False
+            for message, violation_node in destructor_borrow_violations(
+                definition.function.body
+            ):
+                self._diagnose(message, violation_node)
                 ok = False
         return ok
 

@@ -115,7 +115,48 @@ class RuntimeError(_py_builtins.RuntimeError):
             lines.append("runtime context:")
             for context in self.execution_contexts:
                 lines.append(f"  - {_format_execution_context(context)}")
+        lines.extend(_render_lifecycle_diagnostics(self))
         return "\n".join(lines)
+
+
+def _render_lifecycle_diagnostics(exc: BaseException) -> list[str]:
+    """Render cleanup context and every retained secondary lifecycle fault."""
+    lines: list[str] = []
+    cleanup_context = tuple(getattr(exc, "cleanup_context", ()))
+    if cleanup_context:
+        lines.append("while cleaning up:")
+        lines.extend(f"  {item}" for item in cleanup_context)
+    secondary = tuple(getattr(exc, "secondary_faults", ()))
+    for index, fault in enumerate(secondary, 1):
+        lines.append(f"secondary lifecycle diagnostic {index}:")
+        lines.extend(f"  {line}" for line in _fault_diagnostic_lines(fault))
+        nested_context = tuple(getattr(fault, "cleanup_context", ()))
+        lines.extend(f"  while cleaning up: {item}" for item in nested_context)
+    return lines
+
+
+def _fault_diagnostic_lines(exc: BaseException) -> list[str]:
+    """Return concise lines for one operational or protocol cleanup fault."""
+    if isinstance(exc, PanicSignal):
+        value = exc.value
+        if isinstance(value, ObjectValue):
+            short_name = value.type_name.rsplit(".", 1)[-1]
+            message = value.fields.get("message")
+            if short_name == "MustCallFault" and isinstance(message, str):
+                return [f"MustCallFault: {message}"]
+        return [f"panic: {_format_value(value)}"]
+    return [f"{type(exc).__name__}: {exc}"]
+
+
+def _set_cleanup_context(exc: BaseException, context: str) -> None:
+    """Attach one deterministic object-cleanup context without duplication."""
+    existing = tuple(getattr(exc, "cleanup_context", ()))
+    if context in existing:
+        return
+    try:
+        setattr(exc, "cleanup_context", (*existing, context))
+    except (AttributeError, TypeError):
+        pass
 
 
 def _concurrency_runtime_error(message: str, cause: BaseException) -> RuntimeError:
@@ -2695,6 +2736,10 @@ class VirtualMachine:
                                 value
                                 if isinstance(value, _SCALAR_RUNTIME_TYPES)
                                 or not _needs_release(value)
+                                or (
+                                    isinstance(value, ObjectValue)
+                                    and value.destructor_borrowed
+                                )
                                 else _retain_value(value)
                             )
                         case OpCode.LOAD_VAR_BORROW:
@@ -3615,13 +3660,14 @@ class VirtualMachine:
         self._release_frame_locals(frame)
 
     def _release_frame_locals(self, frame: _Frame) -> None:
-        """Release frame locals during VM execution."""
-        for name, value in frame.locals.items():
+        """Release each frame local at most once, even when cleanup itself fails."""
+        locals_ = tuple(frame.locals.items())
+        frame.locals.clear()
+        for name, value in locals_:
             if (
                 name in frame.retained_locals or frame.globals.get(name) is not value
             ) and _needs_release(value):
                 _release_value(value, self)
-        frame.locals.clear()
 
     def _handle_panic(self, frame: _Frame, panic: PanicSignal) -> int | None:
         """Handle panic during VM execution."""
@@ -4844,22 +4890,34 @@ def _bind_recursive_value(value: Any, name: str) -> None:
 
 
 def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
-    """Determine the type of object runtime during VM execution."""
+    """Decode lifecycle metadata, including declaration-order field names."""
     if value is None:
         return None
-    if not isinstance(value, tuple) or len(value) not in {5, 8, 9}:
+    if not isinstance(value, tuple) or len(value) not in {5, 8, 9, 10}:
         raise RuntimeError(f"invalid object runtime metadata {value!r}")
+    has_field_order = len(value) == 10
+    offset = 1 if has_field_order else 0
+    field_order = (
+        _runtime_string_tuple(value[5], "object field order")
+        if has_field_order
+        else ()
+    )
     accepted_names: tuple[str, ...] = ()
     generic_variances: tuple[str, ...] = ()
     type_facts: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = ()
     generic_supertypes: tuple[tuple[str, tuple[str, ...]], ...] = ()
-    if len(value) in {8, 9}:
-        accepted_names = _runtime_string_tuple(value[5], "accepted type names")
-        generic_variances = _runtime_string_tuple(value[6], "generic variances")
-        if not isinstance(value[7], tuple):
-            raise RuntimeError(f"invalid runtime type facts {value[7]!r}")
+    if len(value) in ({9, 10} if has_field_order else {8, 9}):
+        accepted_names = _runtime_string_tuple(
+            value[5 + offset], "accepted type names"
+        )
+        generic_variances = _runtime_string_tuple(
+            value[6 + offset], "generic variances"
+        )
+        raw_facts = value[7 + offset]
+        if not isinstance(raw_facts, tuple):
+            raise RuntimeError(f"invalid runtime type facts {raw_facts!r}")
         facts: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
-        for fact in value[7]:
+        for fact in raw_facts:
             if (
                 not isinstance(fact, tuple)
                 or len(fact) != 3
@@ -4874,17 +4932,22 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
                 )
             )
         type_facts = tuple(facts)
-    if len(value) == 9:
-        if not isinstance(value[8], tuple):
-            raise RuntimeError(f"invalid generic supertype metadata {value[8]!r}")
+    if len(value) == 9 + offset:
+        raw_supertypes = value[8 + offset]
+        if not isinstance(raw_supertypes, tuple):
+            raise RuntimeError(
+                f"invalid generic supertype metadata {raw_supertypes!r}"
+            )
         supertypes: list[tuple[str, tuple[str, ...]]] = []
-        for supertype in value[8]:
+        for supertype in raw_supertypes:
             if (
                 not isinstance(supertype, tuple)
                 or len(supertype) != 2
                 or not isinstance(supertype[0], str)
             ):
-                raise RuntimeError(f"invalid generic supertype metadata {supertype!r}")
+                raise RuntimeError(
+                    f"invalid generic supertype metadata {supertype!r}"
+                )
             supertypes.append(
                 (
                     supertype[0],
@@ -4902,8 +4965,8 @@ def _object_runtime_type(value: object) -> ObjectRuntimeType | None:
         generic_variances=generic_variances,
         type_facts=type_facts,
         generic_supertypes=generic_supertypes,
+        field_order=field_order,
     )
-
 
 def _runtime_string_tuple(value: object, description: str) -> tuple[str, ...]:
     """Validate one tuple of serializable runtime type metadata."""
@@ -5057,6 +5120,11 @@ def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
     if isinstance(value, ObjectValue):
         if value.destroyed:
             raise RuntimeError(f"use after destruction of {object_type_name(value)}")
+        if value.destructor_borrowed:
+            raise RuntimeError(
+                f"cannot retain borrowed destructor receiver "
+                f"{object_type_name(value)}"
+            )
         if (
             check_duplication
             and value.runtime_type is not None
@@ -5097,12 +5165,17 @@ def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
 
 
 def _borrow_destructor_receiver(value: ObjectValue) -> ObjectValue:
-    """Create the VM-owned temporary receiver occurrence used only by ``~Type``."""
-    if not value.cleaning_up or value.destroyed or value.refcount != 0:
+    """Expose ``~Type`` receiver without creating an owning occurrence."""
+    if (
+        not value.cleaning_up
+        or value.destructor_borrowed
+        or value.destroyed
+        or value.refcount != 0
+    ):
         raise RuntimeError(
             f"invalid destructor receiver state for {object_type_name(value)}"
         )
-    value.refcount = 1
+    value.destructor_borrowed = True
     return value
 
 
@@ -5131,11 +5204,34 @@ def _release_value(value: Any, vm: VirtualMachine) -> None:
             _release_value(item, vm)
         return
     if isinstance(value, ObjectValue):
+        if value.destructor_borrowed:
+            return
+        lifecycle_guarded = (
+            value.runtime_type is not None
+            and (
+                value.runtime_type.destructor_name is not None
+                or value.runtime_type.mustcall_mode is not None
+            )
+        )
+        if value.destroyed:
+            if lifecycle_guarded:
+                raise RuntimeError(
+                    f"release after destruction of {object_type_name(value)}"
+                )
+            return
+        if value.refcount <= 0:
+            if lifecycle_guarded:
+                raise RuntimeError(
+                    f"reference count underflow for {object_type_name(value)}"
+                )
+            return
         value.refcount -= 1
         if value.refcount > 0:
             return
         if value.cleaning_up:
-            return
+            raise RuntimeError(
+                f"recursive destruction of {object_type_name(value)}"
+            )
         _run_object_cleanup(value, vm)
         return
     if isinstance(value, FunctionValue):
@@ -5227,10 +5323,20 @@ def _run_object_cleanup(value: ObjectValue, vm: VirtualMachine) -> None:
         # Snapshot every field before releasing it. The destroyed marker prevents
         # a second teardown pass, while retaining field data keeps panic values
         # and runtime diagnostics inspectable after their ownership is released.
-        fields = tuple(value.fields.values())
-        # Any temporary or escaped occurrences created by destructor code are
-        # invalidated unconditionally. Destruction cannot resurrect the wrapper.
-        value.refcount = 0
+        declared_order = () if runtime is None else runtime.field_order
+        declared_names = set(declared_order)
+        fields = tuple(
+            value.fields[name]
+            for name in reversed(declared_order)
+            if name in value.fields
+        ) + tuple(
+            value.fields[name]
+            for name in reversed(tuple(value.fields))
+            if name not in declared_names
+        )
+        # End the VM-only borrow before the wrapper becomes observably destroyed.
+        # The owning reference count remained zero throughout destructor execution.
+        value.destructor_borrowed = False
         value.destroyed = True
         value.cleaning_up = False
         for item in fields:
@@ -5238,6 +5344,11 @@ def _run_object_cleanup(value: ObjectValue, vm: VirtualMachine) -> None:
                 _release_value(item, vm)
             except BaseException as exc:
                 field_errors.append(exc)
+
+    cleanup_context = f"destroying {object_type_name(value)}"
+    for error in (destructor_error, *field_errors, mustcall_error):
+        if error is not None:
+            _set_cleanup_context(error, cleanup_context)
 
     active_unwind = vm.active_unwind_panic
     cleanup_panics = tuple(

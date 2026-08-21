@@ -872,6 +872,7 @@ class _Compiler:
                             type_name,
                             node.annotations,
                             node.definitions,
+                            tuple(field.name.text for field in node.fields),
                         ),
                     )
                     self.object_constructor(
@@ -905,6 +906,7 @@ class _Compiler:
                             runtime_name,
                             node.annotations,
                             member.definitions,
+                            tuple(field.name.text for field in member.fields),
                         ),
                     )
                     self.object_constructor(
@@ -990,7 +992,7 @@ class _Compiler:
                     name,
                     self._runtime_metadata(
                         name,
-                        (None, None, None, None, None, ()),
+                        (None, None, None, None, None, (), tuple(field_names)),
                     ),
                 ),
                 initializer=initializer_code,
@@ -1981,7 +1983,15 @@ def _object_runtime_metadata(
     name: str,
     annotations: tuple[ASTNode, ...],
     definitions: tuple[DefineNode, ...],
-) -> tuple[str | None, str | None, str | None, str | None, tuple[str, ...]]:
+    field_order: tuple[str, ...],
+) -> tuple[
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    tuple[str, ...],
+    tuple[str, ...],
+]:
     """Return all lifecycle metadata required by an object's runtime type."""
     destructor_name = None
     dup_name = None

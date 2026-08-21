@@ -978,6 +978,86 @@ parameter contributes its destructor effects even when a returned alias may keep
 the allocation alive. Later ownership-flow refinement may move that potential
 release outward, but must never omit an effect from a release that can be final.
 
+### Lifecycle ownership
+
+The lifecycle sequence now uses one release-effect model for function exit,
+single and parallel replacement, field and index reconstruction, and explicit
+stack discard. Return transfer is provenance-backed for both explicit returns
+and implicit multi-value stack results. Direct variable reads transfer the named
+occurrence; computed values remain conservative. Runtime destruction continues
+to preserve primary-fault precedence, secondary diagnostics, nested cleanup
+context, and fatal double-panic behavior.
+
+Future lifecycle changes should be treated as independent bug fixes or language
+features rather than extensions to this patch sequence.
+
+### Returned values transfer ownership out of scope
+
+Function-exit effect inference transfers ownership only when a return expression
+is a direct read of a named variable. The exact variable name is removed from the
+release set, so returning the sole owned value does not inherit its destructor
+effect. Type equality alone is deliberately insufficient: a separately produced
+value of the same type cannot suppress cleanup of a local. Explicit and implicit
+direct returns retain this provenance; computed returns remain conservative.
+
+### Release-site effects are centralized
+
+`analysis/contracts/release_effects.py` defines ownership dispositions and the
+single operation used to turn a released type into destructor element tags.
+Borrowed, transferred, and retained occurrences add no release effect; released
+and unknown occurrences conservatively inherit the type's destructor effects.
+
+The analyser now invokes this operation at single and parallel replacement
+assignment, field and index reconstruction, explicit `pop_n` stack discard, and
+function-exit cleanup. Parallel assignment snapshots every old target type before
+performing any write, so release effects are independent of target order.
+Replacement accounts for the old stored type before writing the new occurrence,
+while `pop_n` accounts for the exact sourced stack values. Reconstruction
+accounts for the overwritten field or indexed item while ownership of the
+reconstructed receiver continues in the returned replacement. This
+makes effects properties of release operations rather than incidental
+appearances of destructible types.
+
+### Lifecycle diagnostics retain structured cleanup context
+
+Every destructor panic, field-cleanup failure, and runtime `MustCallFault` receives
+a deterministic `cleanup_context` entry naming the logical object being
+destroyed. Primary failures retain ordered `secondary_faults`; the VM boundary
+renders those as `secondary lifecycle diagnostic` blocks rather than leaving the
+structured information accessible only to embedding code. Nested field cleanup
+adds both inner and outer destruction contexts while preserving catch behavior.
+
+Double-panic diagnostics remain fatal and continue to render original panic,
+cleanup panic, and the object whose teardown exposed the conflict.
+
+### Object fields release in reverse declaration order
+
+Object constructor metadata carries an explicit tuple of field names in source
+declaration order. Final cleanup never relies on dictionary iteration order. It
+releases declared fields in reverse order after `~Type` completes, then releases
+any runtime-only compatibility fields in reverse insertion order. This mirrors
+stack-like acquisition and teardown.
+
+The field-order tuple is included in runtime metadata, survives bytecode
+serialization, and is available to optimized and unoptimized execution alike.
+The VM still supports legacy metadata without an explicit field order, where it
+uses reverse runtime insertion order as a compatibility fallback.
+
+### Destructor receiver escapes are rejected statically
+
+`analysis/contracts/destructor_borrows.py` gives destructor `$self` and every
+local alias derived from it a borrowed capability. Lifecycle validation rejects
+statically recognizable ownership escapes before the destructor overload is
+published: returning the receiver, embedding it in an aggregate, capturing it in
+a closure, duplicating it, transferring it to a task, or sending it through a
+channel. Reassignment removes the capability when an alias is overwritten with a
+non-borrowed value. Ordinary field reads and non-escaping cleanup method calls are
+permitted.
+
+The checker is deliberately bounded to definite syntax-level escapes. Runtime
+borrow enforcement from Patch 9 remains the mandatory backstop for dynamic or
+indirect behavior.
+
 ### Destructor receivers cannot survive teardown
 
 A destructor overload must have zero normal return values. An explicit return
@@ -985,12 +1065,13 @@ signature is rejected during lifecycle validation, and an inferred non-empty
 return is rejected after body analysis. A body that always panics is valid because
 its `Never` result has no normal return path.
 
-At runtime the VM creates one internal receiver occurrence for `~Type` after the
-external reference count reaches zero. Destructor code may read and call through
-that receiver normally. Mandatory teardown then resets the wrapper reference
-count to zero and marks it destroyed before field release, invalidating any
-occurrence that destructor code attempted to retain. Every later retain reports
-use after destruction, so user code cannot resurrect the object.
+At runtime the VM exposes one explicit non-owning receiver borrow for `~Type`
+after the external reference count reaches zero. The wrapper remains at reference
+count zero throughout destructor execution. Ordinary `$self` loads and cleanup
+calls can use the borrow, dropping it is a no-op, and any attempt to retain it is
+rejected. Mandatory teardown ends the borrow and marks the wrapper destroyed
+before field release. Every later retain or release reports a lifecycle integrity
+error, so user code cannot resurrect or repeatedly release the object.
 
 ### Reconstructed wrappers share protocol identity
 

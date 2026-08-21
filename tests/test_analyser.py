@@ -1225,6 +1225,88 @@ define \\make -> Tx => Tx
             transfer.diagnostics,
         )
 
+    def test_destructor_receiver_cannot_escape_or_be_duplicated(self):
+        cases = (
+            ("return $self", "destructor receiver cannot be returned"),
+            ("[$self]", "destructor receiver cannot be stored in an aggregate"),
+            (
+                "fn () => $self end",
+                "destructor receiver cannot be captured by a closure",
+            ),
+            ("$self dup", "destructor receiver cannot be duplicated"),
+        )
+        for body, expected in cases:
+            with self.subTest(body=body):
+                analyser = Analyser()
+                analyser.analyse(parse(f"""
+object Resource =>
+  define ~Resource => {body}
+end
+"""))
+                self.assertTrue(
+                    any(expected in message for message in analyser.diagnostics),
+                    analyser.diagnostics,
+                )
+
+    def test_destructor_receiver_cannot_cross_task_or_channel_boundaries(self):
+        cases = (
+            (
+                "$self fn (resource: Resource) => end spawn",
+                "destructor receiver cannot be transferred to a task",
+            ),
+            (
+                "$channel $self send",
+                "destructor receiver cannot be sent through a channel",
+            ),
+        )
+        for body, expected in cases:
+            with self.subTest(body=body):
+                analyser = Analyser()
+                analyser.analyse(parse(f"""
+object Resource =>
+  define ~Resource => {body}
+end
+"""))
+                self.assertTrue(
+                    any(expected in message for message in analyser.diagnostics),
+                    analyser.diagnostics,
+                )
+
+    def test_destructor_receiver_alias_remains_borrowed(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object Resource =>
+  define ~Resource =>
+    $alias = $self
+    [$alias]
+  end
+end
+"""))
+        self.assertTrue(
+            any(
+                "destructor receiver cannot be stored in an aggregate" in message
+                for message in analyser.diagnostics
+            ),
+            analyser.diagnostics,
+        )
+
+    def test_destructor_receiver_allows_non_escaping_cleanup_calls(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object Resource =>
+  $name: String = "resource"
+  define close => $self.name println
+  define ~Resource =>
+    $alias = $self
+    $alias close
+  end
+end
+"""))
+        self.assertFalse(
+            any("destructor receiver cannot" in message for message in analyser.diagnostics),
+            analyser.diagnostics,
+        )
+
     def test_destructor_cannot_declare_or_infer_return_values(self):
         declared = Analyser()
         declared.analyse(parse("""
@@ -1310,6 +1392,115 @@ define consume(file: File) -> => end
         [panic] = tuple(panic_tags)
         self.assertEqual(T.show(panic.args[0]), "IOFault")
 
+    def test_returned_owned_value_transfers_without_destructor_effect(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object File =>
+  define ~File => IOFault("close failed") panic
+end
+
+define identity(file: File)<!Panic> -> File => $file
+"""))
+        self.assertEqual(analyser.diagnostics, [])
+        [overload] = analyser.env.overloads_for(Symbol("identity"))
+        self.assertFalse(
+            any(
+                tag.name == Symbol("Panic") and not tag.absent
+                for tag in overload.element_tags
+            )
+        )
+
+    def test_implicit_multi_value_return_transfers_each_direct_variable(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object Left =>
+  define ~Left => IOFault("left cleanup failed") panic
+end
+
+object Right =>
+  define ~Right => RuntimeFault("right cleanup failed") panic
+end
+
+@returnAll
+define pair(left: Left, right: Right)<!Panic> =>
+  $left $right
+end
+"""))
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_multi_value_return_keeps_unreturned_occurrence_in_release_set(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object File =>
+  define ~File => IOFault("close failed") panic
+end
+
+@returnAll
+define keepTwo(first: File, second: File, third: File)<!Panic> =>
+  $first $second
+end
+"""))
+        self.assertTrue(
+            any(
+                "Panic" in message and "required to be absent" in message
+                for message in analyser.diagnostics
+            ),
+            analyser.diagnostics,
+        )
+
+    def test_scope_exit_transfer_requires_matching_variable_provenance(self):
+        from valiance.analysis.contracts.release_effects import scope_exit_effects
+
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object File =>
+  define ~File => IOFault("close failed") panic
+end
+"""))
+        file_type = T.N(Symbol("File"))
+        effects = scope_exit_effects(
+            analyser.env,
+            ((Symbol("owned"), file_type),),
+            (Symbol("different"),),
+        )
+        self.assertEqual({tag.name.text for tag in effects}, {"Panic"})
+        self.assertEqual(
+            scope_exit_effects(
+                analyser.env,
+                ((Symbol("owned"), file_type),),
+                (Symbol("owned"),),
+            ),
+            frozenset(),
+        )
+
+    def test_explicit_direct_return_transfers_named_variable(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object File =>
+  define ~File => IOFault("close failed") panic
+end
+
+define identity(file: File)<!Panic> -> File => return $file
+"""))
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_return_transfer_only_consumes_one_matching_owned_occurrence(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object File =>
+  define ~File => IOFault("close failed") panic
+end
+
+define choose(first: File, second: File)<!Panic> -> File => $first
+"""))
+        self.assertTrue(
+            any(
+                "Panic" in message and "required to be absent" in message
+                for message in analyser.diagnostics
+            ),
+            analyser.diagnostics,
+        )
+
     def test_absent_panic_contract_rejects_fallible_destructor_release(self):
         analyser = Analyser()
         analyser.analyse(parse("""
@@ -1327,6 +1518,121 @@ define consume(file: File)<!Panic> -> => end
             ),
             analyser.diagnostics,
         )
+
+    def test_replacement_assignment_infers_old_value_destructor_effect(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object File =>
+  define ~File => IOFault("close failed") panic
+end
+
+define replace<!Panic> -> =>
+  $file = File
+  $file = File
+end
+"""))
+        self.assertTrue(
+            any(
+                "Panic" in message and "required to be absent" in message
+                for message in analyser.diagnostics
+            ),
+            analyser.diagnostics,
+        )
+
+    def test_explicit_stack_discard_infers_destructor_effect(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object File =>
+  define ~File => IOFault("close failed") panic
+end
+
+define discard<!Panic> -> =>
+  File
+  pop_n(1)
+end
+"""))
+        self.assertTrue(
+            any(
+                "Panic" in message and "required to be absent" in message
+                for message in analyser.diagnostics
+            ),
+            analyser.diagnostics,
+        )
+
+    def test_parallel_replacement_infers_all_old_value_destructor_effects(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object Left =>
+  define ~Left => IOFault("left cleanup failed") panic
+end
+
+object Right =>
+  define ~Right => RuntimeFault("right cleanup failed") panic
+end
+
+define replaceBoth(
+  oldLeft: Left,
+  oldRight: Right,
+  newLeft: Left,
+  newRight: Right
+)<!Panic> -> =>
+  $left = $oldLeft
+  $right = $oldRight
+  $(left, right) = $newLeft $newRight
+end
+"""))
+        messages = "\n".join(analyser.diagnostics)
+        self.assertIn("Panic", messages)
+        self.assertIn("required to be absent", messages)
+
+    def test_parallel_initial_declaration_uses_independent_stack_values(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object File =>
+  define ~File => IOFault("close failed") panic
+end
+
+define declare(firstFile: File, secondFile: File) -> =>
+  $(first, second) = $firstFile $secondFile
+end
+"""))
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_release_effects_distinguish_release_from_nonrelease_dispositions(self):
+        from valiance.analysis.contracts.release_effects import (
+            OwnershipDisposition,
+            release_effects,
+        )
+
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object File =>
+  define ~File => IOFault("close failed") panic
+end
+"""))
+        file_type = T.N(Symbol("File"))
+        released = release_effects(
+            analyser.env,
+            file_type,
+            OwnershipDisposition.RELEASED,
+        )
+        unknown = release_effects(
+            analyser.env,
+            file_type,
+            OwnershipDisposition.UNKNOWN,
+        )
+        self.assertEqual({tag.name.text for tag in released}, {"Panic"})
+        self.assertEqual(unknown, released)
+        for disposition in (
+            OwnershipDisposition.BORROWED,
+            OwnershipDisposition.TRANSFERRED,
+            OwnershipDisposition.RETAINED,
+        ):
+            with self.subTest(disposition=disposition):
+                self.assertEqual(
+                    release_effects(analyser.env, file_type, disposition),
+                    frozenset(),
+                )
 
     def test_destructor_effects_flow_through_owned_collections_and_tuples(self):
         analyser = Analyser()

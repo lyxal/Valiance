@@ -508,6 +508,7 @@ class ObjectRuntimeType:
     generic_variances: tuple[str, ...] = ()
     type_facts: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = ()
     generic_supertypes: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    field_order: tuple[str, ...] = ()
 
 
 @dataclass
@@ -536,6 +537,7 @@ class ObjectValue:
         repr=False,
     )
     cleaning_up: bool = field(default=False, compare=False, repr=False)
+    destructor_borrowed: bool = field(default=False, compare=False, repr=False)
     destroyed: bool = field(default=False, compare=False, repr=False)
 
     @property

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
+from valiance.analysis.contracts.release_effects import scope_exit_effects
 import valiance.vtypes as T
 import valiance.analysis.contracts.where_clauses as static_where
 from valiance.elements.builtins import default_environment
@@ -64,6 +65,7 @@ from valiance.asts import (
     TypedImportedObjectNode,
     TypedMatchNode,
     TypedNode,
+    TypedReturnNode,
     TypedTagApplicationNode,
     TypedTryNode,
     VariantMemberNode,
@@ -169,6 +171,37 @@ def _rigidify_declared_generics(
     if isinstance(value, frozenset):
         return frozenset(_rigidify_declared_generics(item, keys) for item in value)
     return value
+
+
+def _direct_variable_name(nodes: tuple[TypedNode, ...]) -> Symbol | None:
+    """Return a variable name only for one direct variable-read expression."""
+    if len(nodes) != 1 or not isinstance(nodes[0].node, GetVariableNode):
+        return None
+    return nodes[0].node.name
+
+
+def _returned_variable_names(branch: AnalysisBranch) -> tuple[Symbol, ...]:
+    """Return proven variable origins transferred by this branch's result."""
+    if not branch.typed_body:
+        return ()
+    terminal = branch.typed_body[-1]
+    if isinstance(terminal, TypedReturnNode):
+        return tuple(
+            name
+            for expression in terminal.expressions
+            if (name := _direct_variable_name(expression)) is not None
+        )
+    if branch.return_stack is None:
+        return_count = len(branch.stack)
+        if return_count == 0:
+            return ()
+        candidates = branch.typed_body[-return_count:]
+        return tuple(
+            name
+            for typed in candidates
+            if (name := _direct_variable_name((typed,))) is not None
+        )
+    return ()
 
 
 class _CallableValues:
@@ -673,6 +706,7 @@ class _CallableValues:
         signatures = self._function_signatures(call_site_node, final)
         return _functions._function_analysis_from_signatures(signatures)
 
+
     def _function_signatures(
         self,
         node: FunctionNode,
@@ -686,10 +720,10 @@ class _CallableValues:
                 for branch in branches
                 for tag in (
                     *branch.element_tags,
-                    *(
-                        release_tag
-                        for _name, typ in branch.variables.visible_items()
-                        for release_tag in self.env.destructor_effects(typ)
+                    *scope_exit_effects(
+                        self.env,
+                        branch.variables.visible_items(),
+                        _returned_variable_names(branch),
                     ),
                 )
             )

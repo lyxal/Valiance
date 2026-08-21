@@ -8,6 +8,7 @@ from decimal import DecimalException, InvalidOperation
 from typing import cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
+from valiance.analysis.contracts.release_effects import release_effects
 from valiance.analysis.lints import KNOWN_LINT_CODES, finding
 import valiance.vtypes as T
 from valiance.asts import (
@@ -172,8 +173,11 @@ def _field_set_node(
 
     result_type = receiver_type if refined_receiver is None else refined_receiver
     stack = T.TypeStack(branch.stack.items[:-2]).push(result_type)
+    reconstructed = branch.with_stack(stack).with_element_tags(
+        release_effects(self.env, field_type)
+    )
     return _core.BranchSet(
-        (branch.with_stack(stack).emit(TypedNode(node, result_type)),)
+        (reconstructed.emit(TypedNode(node, result_type)),)
     )
 
 def _literal_integer_index(node: IndexAccessNode) -> int | None:
@@ -505,7 +509,10 @@ def _index_set_node(
         return _core.BranchSet()
 
     stack = T.TypeStack(branch.stack.items[:-required]).push(updated_receiver_type)
+    reconstructed = branch.with_stack(stack).with_element_tags(
+        release_effects(self.env, item_type)
+    )
     return _core.BranchSet(
-        (branch.with_stack(stack).emit(TypedNode(node, updated_receiver_type)),)
+        (reconstructed.emit(TypedNode(node, updated_receiver_type)),)
     )
 

@@ -30,7 +30,9 @@ from valiance.runtime.bytecode import (
 )
 from valiance.runtime.vm import (
     FunctionValue,
+    _borrow_destructor_receiver,
     _mark_mustcall_method,
+    _release_value,
     _retain_value,
     _run_object_cleanup,
     _set_field,
@@ -3579,6 +3581,58 @@ $.name
             ["Grace"],
         )
 
+    def test_object_fields_destroy_in_reverse_declaration_order(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            execute("""
+object Tracer =>
+  $name: String
+  define ~Tracer => $self.name println
+end
+
+object Owner =>
+  $first: Tracer
+  $second: Tracer
+  $third: Tracer
+end
+
+define \\releaseOwner -> =>
+  Owner(Tracer("first"), Tracer("second"), Tracer("third"))
+end
+\\releaseOwner
+""")
+
+        self.assertEqual(output.getvalue(), "third\nsecond\nfirst\n")
+
+    def test_reverse_field_destruction_survives_bytecode_round_trip(self):
+        output = io.StringIO()
+        source = """
+object Tracer =>
+  $name: String
+  define ~Tracer => $self.name println
+end
+
+object Owner =>
+  $first: Tracer
+  $second: Tracer
+  $third: Tracer
+end
+
+define \\releaseOwner -> =>
+  Owner(Tracer("first"), Tracer("second"), Tracer("third"))
+end
+\\releaseOwner
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        restored = loads(dumps(program))
+        with contextlib.redirect_stdout(output):
+            run(restored)
+
+        self.assertEqual(output.getvalue(), "third\nsecond\nfirst\n")
+
     def test_object_destructor_runs_when_last_reference_leaves_scope(self):
         output = io.StringIO()
         source = """
@@ -3628,6 +3682,41 @@ end
 
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "child released\ncaught\n")
+
+    def test_destructor_receiver_is_a_non_owning_borrow(self):
+        value = ObjectValue("Resource", {})
+        value.refcount = 0
+        value.cleaning_up = True
+
+        borrowed = _borrow_destructor_receiver(value)
+
+        self.assertIs(borrowed, value)
+        self.assertEqual(value.refcount, 0)
+        self.assertTrue(value.destructor_borrowed)
+        with self.assertRaises(RuntimeError) as caught:
+            _retain_value(value)
+        self.assertIn(
+            "cannot retain borrowed destructor receiver Resource",
+            str(caught.exception),
+        )
+        _release_value(value, VirtualMachine())
+        self.assertEqual(value.refcount, 0)
+
+    def test_release_integrity_rejects_underflow_and_post_destruction(self):
+        guarded_runtime = ObjectRuntimeType(destructor_name="Underflow::~Underflow")
+        underflow = ObjectValue("Underflow", {}, runtime_type=guarded_runtime)
+        underflow.refcount = 0
+        with self.assertRaises(RuntimeError) as caught:
+            _release_value(underflow, VirtualMachine())
+        self.assertIn("reference count underflow for Underflow", str(caught.exception))
+
+        destroyed_runtime = ObjectRuntimeType(destructor_name="Destroyed::~Destroyed")
+        destroyed = ObjectValue("Destroyed", {}, runtime_type=destroyed_runtime)
+        destroyed.destroyed = True
+        destroyed.refcount = 0
+        with self.assertRaises(RuntimeError) as caught:
+            _release_value(destroyed, VirtualMachine())
+        self.assertIn("release after destruction of Destroyed", str(caught.exception))
 
     def test_destroyed_object_cannot_be_resurrected_by_retained_occurrence(self):
         value = ObjectValue("Resource", {})
@@ -3869,6 +3958,55 @@ end
         self.assertIn("destructor panic: IOFault", message)
         self.assertIn("inner cleanup exploded", message)
         self.assertIn("while destroying: OuterBomb", message)
+
+    def test_secondary_mustcall_fault_is_rendered_with_cleanup_context(self):
+        source = """
+@mustcall(any = ["finish"])
+object Work =>
+  define finish => end
+  define ~Work => RuntimeFault("cleanup failed") panic
+end
+
+define \\makeWork -> => Work
+\\makeWork
+"""
+        program = parse(source)
+        analyser = Analyser()
+        typed = analyser.analyse(program)
+        self.assertEqual(analyser.diagnostics, [])
+        with self.assertRaises(RuntimeError) as caught:
+            run(compile_program(typed, optimize=False))
+
+        message = str(caught.exception)
+        self.assertIn("uncaught panic: RuntimeFault", message)
+        self.assertIn("while cleaning up:", message)
+        self.assertIn("destroying Work", message)
+        self.assertIn("secondary lifecycle diagnostic 1:", message)
+        self.assertIn("MustCallFault:", message)
+
+    def test_nested_field_cleanup_context_is_rendered(self):
+        source = """
+object Inner =>
+  define ~Inner => RuntimeFault("inner cleanup failed") panic
+end
+
+object Outer =>
+  $inner: Inner
+end
+
+define \\makeInner -> Inner => Inner
+
+define \\makeOuter -> => \\makeInner Outer
+\\makeOuter
+"""
+        with self.assertRaises(RuntimeError) as caught:
+            execute(source)
+
+        message = str(caught.exception)
+        self.assertIn("uncaught panic: RuntimeFault", message)
+        self.assertIn("while cleaning up:", message)
+        self.assertIn("destroying Inner", message)
+        self.assertIn("destroying Outer", message)
 
     def test_destructor_panic_remains_primary_over_mustcall_fault(self):
         source = """

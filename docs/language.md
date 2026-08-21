@@ -2060,7 +2060,7 @@ $person->age = 37
 - The runtime invokes the destructor exactly once when the object's reference
   count reaches zero.
 - Destruction is deterministic. The destructor runs before the object's fields
-  are released.
+  are released. Fields are then released in reverse declaration order.
 - A destructor cannot declare explicit parameters. It receives `$self` as the
   object being destroyed.
 - A destructor returns no values.
@@ -2073,8 +2073,9 @@ $person->age = 37
 - If a destructor panics while another panic is already unwinding, execution
   aborts with a double-panic diagnostic that retains both panic values.
 - `$self` is borrowed during destruction. It cannot be retained, returned,
-  captured, transferred to another task, or otherwise used to resurrect the
-  object.
+  duplicated, stored in an aggregate, captured by a closure, sent through a
+  channel, transferred to another task, or otherwise used to resurrect the
+  object. Local aliases preserve the same borrowed restriction.
 
 Syntax:
 
