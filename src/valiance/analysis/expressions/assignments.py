@@ -230,6 +230,31 @@ def _set_variable(
         )
 
     value_type = branch.stack[-1]
+    source_name: Symbol | None = None
+    if branch.typed_body:
+        source_node = branch.typed_body[-1].node
+        if isinstance(source_node, GetVariableNode):
+            source_name = source_node.name
+    if source_name is not None:
+        reason = _utils._duplication_requirement(value_type, self.env).reason
+        if reason is not None:
+            message = (
+                f"cannot store the value of '${source_name}' in '${node.name}'\n\n"
+                f"'${source_name}' remains available after this assignment, so "
+                f"storing its value in '${node.name}' would create an additional "
+                f"occurrence of {T.show(value_type)}.\n\n"
+                f"{reason}"
+            )
+            self._diagnose(message, node)
+            return _core.BranchSet(
+                (
+                    branch.error(
+                        message,
+                        node.location,
+                        code="invalid-duplication",
+                    ).emit(TypedNode(node, None)),
+                )
+            )
     declared_type = node.declared_type or _declared_variable_type(branch, node.name)
     variable_type = declared_type or value_type
 

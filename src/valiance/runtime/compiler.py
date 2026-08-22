@@ -173,6 +173,9 @@ class _Compiler:
         self.tag_parents: dict[str, str] = {}
         self._temporary_index = 0
         self._borrowed_assignment_nodes: set[int] = set()
+        self._observational_access_nodes: set[int] = set()
+        self._assignment_materializations: dict[int, str] = {}
+        self._literal_storage: str | None = None
 
     def prepare_runtime_type_facts(
         self,
@@ -321,6 +324,8 @@ class _Compiler:
     ) -> FunctionCode:
         """Compile a typed function body and its captured runtime metadata."""
         self._borrowed_assignment_nodes = _borrowed_assignment_receivers(body)
+        self._observational_access_nodes = _observational_access_roots(body)
+        self._assignment_materializations = _assignment_materialization_roots(body)
         for index, node in enumerate(body):
             self.node(node)
             ast = _unwrap(node)
@@ -332,8 +337,25 @@ class _Compiler:
             ):
                 self.emit(OpCode.POP)
         self.emit(OpCode.RETURN)
+        instructions = tuple(self.instructions)
+        occurrence_effects: tuple[int | None, ...] = ()
+        if (
+            return_count == 1
+            and len(instructions) == 2
+            and instructions[0].op is OpCode.LOAD_VAR
+            and instructions[0].arg in params
+            and instructions[1].op is OpCode.RETURN
+        ):
+            param_index = params.index(instructions[0].arg)
+            occurrence_effects = (param_index,)
+            instructions = (
+                Instruction(OpCode.LOAD_VAR_FORWARD, instructions[0].arg),
+                instructions[1],
+            )
+        elif return_count is not None:
+            occurrence_effects = tuple(None for _ in range(return_count))
         return FunctionCode(
-            instructions=tuple(self.instructions),
+            instructions=instructions,
             params=params,
             name=name,
             cycle_params=cycle_params,
@@ -344,6 +366,7 @@ class _Compiler:
             multi=multi,
             dispatch_types=dispatch_types,
             return_count=return_count,
+            occurrence_effects=occurrence_effects,
             return_tags=return_tags,
             return_tag_specs=return_tag_specs,
             return_collection_ranks=return_collection_ranks,
@@ -421,12 +444,26 @@ class _Compiler:
             case StringInterpolationNode(parts):
                 self.string_interpolation(parts)
             case GetVariableNode(name):
-                opcode = (
-                    OpCode.LOAD_VAR_BORROW
-                    if id(source_node) in self._borrowed_assignment_nodes
-                    else OpCode.LOAD_VAR
-                )
-                self.emit(opcode, _symbol_runtime_name(name))
+                source_name = _symbol_runtime_name(name)
+                destination_name = self._assignment_materializations.get(id(source_node))
+                if destination_name is not None:
+                    self.emit(
+                        OpCode.LOAD_VAR_MATERIALIZE,
+                        ("storage", source_name, destination_name),
+                    )
+                elif self._literal_storage is not None:
+                    self.emit(
+                        OpCode.LOAD_VAR_MATERIALIZE,
+                        ("aggregate", source_name, self._literal_storage),
+                    )
+                else:
+                    opcode = (
+                        OpCode.LOAD_VAR_BORROW
+                        if id(source_node) in self._borrowed_assignment_nodes
+                        or id(source_node) in self._observational_access_nodes
+                        else OpCode.LOAD_VAR
+                    )
+                    self.emit(opcode, source_name)
                 if (
                     isinstance(typed_node, TypedFunctionNode)
                     and typed_node.dispatch_plan is not None
@@ -441,6 +478,14 @@ class _Compiler:
                 for target in reversed(targets):
                     self.emit(OpCode.STORE_VAR, _symbol_runtime_name(target.name))
             case ElementNode(name, modifier_args):
+                if (
+                    name == Symbol("dup")
+                    and not modifier_args
+                    and not node.call_args
+                ):
+                    label = ("value",)
+                    self.emit(OpCode.STACK_SHUFFLE, ("copy", label, label))
+                    return
                 runtime_name = (
                     typed_node.runtime_name
                     if isinstance(typed_node, TypedElementNode)
@@ -707,7 +752,12 @@ class _Compiler:
                 keys = []
                 for index, (key, expr) in enumerate(fields):
                     self.emit(OpCode.ISOLATE_STACK_BEGIN)
-                    self.expression(typed_items[index] if typed_items else expr)
+                    previous_storage = self._literal_storage
+                    self._literal_storage = "a record field"
+                    try:
+                        self.expression(typed_items[index] if typed_items else expr)
+                    finally:
+                        self._literal_storage = previous_storage
                     self.emit(OpCode.ISOLATE_STACK_END)
                     keys.append(key.text)
                 self.emit(OpCode.BUILD_RECORD, tuple(keys))
@@ -716,7 +766,12 @@ class _Compiler:
                 expressions = tuple(expr for entry in entries for expr in entry)
                 for index, expr in enumerate(expressions):
                     self.emit(OpCode.ISOLATE_STACK_BEGIN)
-                    self.expression(typed_items[index] if typed_items else expr)
+                    previous_storage = self._literal_storage
+                    self._literal_storage = "a dictionary entry"
+                    try:
+                        self.expression(typed_items[index] if typed_items else expr)
+                    finally:
+                        self._literal_storage = previous_storage
                     self.emit(OpCode.ISOLATE_STACK_END)
                 self.emit(OpCode.BUILD_DICT, len(entries))
             case ObjectNode():
@@ -817,7 +872,14 @@ class _Compiler:
             name = f"\x00literal_{self._temporary_index}"
             self._temporary_index += 1
             self.emit(OpCode.CYCLE_BEGIN, ("current", 0))
-            self.expression(item)
+            previous_storage = self._literal_storage
+            self._literal_storage = (
+                "a list element" if op is OpCode.BUILD_LIST else "a tuple element"
+            )
+            try:
+                self.expression(item)
+            finally:
+                self._literal_storage = previous_storage
             self.emit(OpCode.CYCLE_END)
             self.emit(OpCode.STORE_VAR, name)
             temporaries.append(name)
@@ -1612,6 +1674,46 @@ def _single_element_function_arity(ast: FunctionNode) -> int | None:
         if overload.call_site_body is None
     }
     return next(iter(arities)) if len(arities) == 1 else None
+
+
+def _assignment_materialization_roots(
+    body: tuple[ASTNode | TypedNode, ...],
+) -> dict[int, str]:
+    """Map direct variable reads to the variable storage they materialise."""
+    materializations: dict[int, str] = {}
+    for source, destination in zip(body, body[1:]):
+        source_ast = _unwrap(source)
+        destination_ast = _unwrap(destination)
+        if isinstance(source_ast, GetVariableNode) and isinstance(
+            destination_ast, SetVariableNode
+        ):
+            materializations[id(source)] = _symbol_runtime_name(destination_ast.name)
+    return materializations
+
+
+def _observational_access_roots(
+    body: tuple[ASTNode | TypedNode, ...],
+) -> set[int]:
+    """Find variable-rooted accesses consumed directly by print operations."""
+    observed: set[int] = set()
+    for index, candidate in enumerate(body):
+        ast = _unwrap(candidate)
+        if not isinstance(ast, GetVariableNode):
+            continue
+        cursor = index + 1
+        while cursor < len(body) and isinstance(_unwrap(body[cursor]), FieldAccessNode):
+            cursor += 1
+        if cursor >= len(body):
+            continue
+        consumer = _unwrap(body[cursor])
+        if (
+            isinstance(consumer, ElementNode)
+            and consumer.name.text in {"print", "println"}
+            and not consumer.modifier_args
+            and not consumer.call_args
+        ):
+            observed.add(id(candidate))
+    return observed
 
 
 def _borrowed_assignment_receivers(

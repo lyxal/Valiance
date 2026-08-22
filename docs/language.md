@@ -2118,10 +2118,33 @@ tag unless it uses an explicit effect contract.
 
 ## 12.6. Objects, Stack Manipulation, and Memory Management
 
-- `dup` retains a second reference to an object.
-- `copy` retains once for each additional occurrence it creates.
-- `move` retains only when its poststack contains more occurrences of a value
-  than the prestack supplied.
+A value occurrence is an independently usable appearance of a value on the data
+stack or in a persistent runtime location such as a variable, field, collection,
+closure capture, task, or channel. Occurrences describe evaluation and storage;
+they are distinct from value equality and from the runtime's internal reference
+count.
+
+Duplication occurs when evaluation establishes an additional occurrence while an
+existing occurrence remains available. Accessing an existing stored occurrence
+for immediate observation or consumption does not itself duplicate the value.
+For example, `println $value` may observe the occurrence stored in `$value`
+without establishing another persistent occurrence.
+
+Materialisation is the point where access to a stored occurrence becomes an
+additional independently usable occurrence. Materialisation must use the value's
+`dup` behaviour. A statically visible invalid materialisation is a compile error;
+when the concrete type or occurrence behaviour cannot be established statically,
+the runtime performs the same check at the materialisation site.
+
+- `dup` establishes a second stack occurrence.
+- `copy` preserves its prestack occurrences, so every occurrence named in its
+  poststack is additional. In particular, `copy(x -> x)` duplicates `x`, while
+  `copy(x ->)` does not.
+- `move` rearranges stack occurrences and does not describe memory ownership.
+  `move(x -> x)` does not duplicate `x`, while `move(x -> x, x)` requires one
+  additional occurrence.
+- Storing `$a` in `$b` while `$a` remains available establishes an additional
+  persistent occurrence and therefore requires `dup`.
 - If an object must not be duplicated, it can define an object-friendly `dup`
   element with `@error`:
 
@@ -2133,6 +2156,16 @@ end
 ```
 
 - A statically visible invalid duplication is a compile error.
+- A union is copyable only when every possible member is statically known to be
+  copyable. If any member is known to be noncopyable, the union must be narrowed
+  with a checked cast or pattern match before duplication.
+- An intersection is noncopyable when any constituent constraint is known to be
+  noncopyable, because every value of the intersection must satisfy that
+  restriction.
+- Collections whose item type is a union follow the same rule. A literal list
+  index may therefore retain a union item type even for a literal index; `dup`
+  succeeds statically when all members are copyable and otherwise uses the union
+  rule above.
 - `DuplicationFault` is the runtime backstop for duplication that cannot be
   rejected statically.
 - `pop` is the fundamental, non-overridable stack operation that releases one

@@ -30,10 +30,12 @@ from valiance.runtime.bytecode import (
 )
 from valiance.runtime.vm import (
     FunctionValue,
+    PanicSignal,
     _borrow_destructor_receiver,
+    _duplicate_occurrence,
     _mark_mustcall_method,
     _release_value,
-    _retain_value,
+    _retain_runtime_reference,
     _run_object_cleanup,
     _set_field,
 )
@@ -571,6 +573,241 @@ define #checked(value: Number) -> #boolean Number => $value 2 == end
                 RuntimeNumber("4"),
             ],
         )
+
+    def test_generic_copy_reports_runtime_stack_duplication_context(self):
+        source = """
+object Foo =>
+  @error("Foo cannot be duplicated")
+  define dup => end
+end
+
+define[T] duplicate(value: T) =>
+  copy(item -> item)
+end
+
+Foo | duplicate
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+
+        for candidate in (program, loads(dumps(program))):
+            with self.subTest(serialized=candidate is not program):
+                with self.assertRaises(RuntimeError) as caught:
+                    run(candidate)
+                message = str(caught.exception)
+                self.assertIn("uncaught panic: DuplicationFault", message)
+                self.assertIn(
+                    "stack copy requires an additional occurrence of Foo",
+                    message,
+                )
+                self.assertIn(
+                    "copy preserves the original occurrence of 'item'",
+                    message,
+                )
+                self.assertIn("Foo cannot be duplicated", message)
+
+    def test_generic_move_reports_runtime_stack_duplication_context(self):
+        source = """
+object Foo =>
+  @error("Foo cannot be duplicated")
+  define dup => end
+end
+
+define[T] duplicate(value: T) =>
+  move(item -> item, item)
+end
+
+Foo | duplicate
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+
+        for candidate in (program, loads(dumps(program))):
+            with self.subTest(serialized=candidate is not program):
+                with self.assertRaises(RuntimeError) as caught:
+                    run(candidate)
+                message = str(caught.exception)
+                self.assertIn("uncaught panic: DuplicationFault", message)
+                self.assertIn(
+                    "stack move requires an additional occurrence of Foo",
+                    message,
+                )
+                self.assertIn(
+                    "move received one occurrence of 'item' but its poststack requested 2",
+                    message,
+                )
+                self.assertIn("Foo cannot be duplicated", message)
+
+    def test_generic_stack_transformations_accept_duplicatable_values(self):
+        source = """
+define[T] copied(value: T) => copy(item -> item) end
+define[T] moved(value: T) => move(item -> item, item) end
+5 | copied
+6 | moved
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        expected = [RuntimeNumber("5"), RuntimeNumber("6")]
+
+        self.assertEqual(run(program), expected)
+        self.assertEqual(run(loads(dumps(program))), expected)
+
+    def test_generic_literal_storage_reports_materialisation_context(self):
+        templates = (
+            ("[$value]", "a list element"),
+            ("{$value}", "a tuple element"),
+            ("record{item => $value}", "a record field"),
+            ('dict{"item" => $value}', "a dictionary entry"),
+        )
+        for literal, destination in templates:
+            source = f"""
+object Resource =>
+  @error("Resource cannot be duplicated")
+  define dup => end
+end
+
+define[T] store(value: T) =>
+  $stored = {literal}
+end
+
+Resource | store
+"""
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertEqual(analyser.diagnostics, [])
+            program = compile_program(typed, optimize=False)
+            for candidate in (program, loads(dumps(program))):
+                with self.subTest(destination=destination, serialized=candidate is not program):
+                    with self.assertRaises(RuntimeError) as caught:
+                        run(candidate)
+                    message = str(caught.exception)
+                    self.assertIn(
+                        f"cannot store the value of '$value' in {destination}",
+                        message,
+                    )
+                    self.assertIn("Resource cannot be duplicated", message)
+
+    def test_closure_capture_reports_materialisation_context(self):
+        source = """
+object Resource =>
+  @error("Resource cannot be duplicated")
+  define dup => end
+end
+
+define make(resource: Resource) =>
+  fn => println $resource end
+end
+
+Resource | make
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        for candidate in (program, loads(dumps(program))):
+            with self.subTest(serialized=candidate is not program):
+                with self.assertRaises(RuntimeError) as caught:
+                    run(candidate)
+                message = str(caught.exception)
+                self.assertIn(
+                    "cannot capture the value of '$resource' in a closure",
+                    message,
+                )
+                self.assertIn("Resource cannot be duplicated", message)
+
+    def test_identity_function_forwards_unduplicatable_parameter_occurrence(self):
+        source = """
+object Resource =>
+  @error("Resource cannot be duplicated")
+  define dup => end
+end
+
+define identity(value: Resource) -> Resource => $value end
+Resource | identity
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        identity_code = next(
+            instruction.arg
+            for instruction in program.main.instructions
+            if instruction.op is OpCode.MAKE_FUNCTION
+            and instruction.arg.name == "identity"
+        )
+        self.assertEqual(identity_code.occurrence_effects, (0,))
+        self.assertEqual(
+            identity_code.instructions[0],
+            Instruction(OpCode.LOAD_VAR_FORWARD, "value"),
+        )
+
+        direct = run(program)
+        restored = run(loads(dumps(program)))
+        self.assertEqual(len(direct), 1)
+        self.assertEqual(len(restored), 1)
+        self.assertIsInstance(direct[0], ObjectValue)
+        self.assertIsInstance(restored[0], ObjectValue)
+
+    def test_generic_identity_forwards_runtime_occurrence(self):
+        source = """
+object Resource =>
+  @error("Resource cannot be duplicated")
+  define dup => end
+end
+
+define[T] identity(value: T) -> T => $value end
+Resource | identity
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+
+        self.assertEqual(len(run(program)), 1)
+        self.assertEqual(len(run(loads(dumps(program)))), 1)
+
+    def test_non_forwarding_function_has_unknown_occurrence_effect(self):
+        source = """
+define replace(value: Int) -> Int => 5 end
+replace(1)
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        replace_code = next(
+            instruction.arg
+            for instruction in program.main.instructions
+            if instruction.op is OpCode.MAKE_FUNCTION
+            and instruction.arg.name == "replace"
+        )
+
+        self.assertEqual(replace_code.occurrence_effects, (None,))
+        restored = loads(dumps(program))
+        restored_code = next(
+            instruction.arg
+            for instruction in restored.main.instructions
+            if instruction.op is OpCode.MAKE_FUNCTION
+            and instruction.arg.name == "replace"
+        )
+        self.assertEqual(restored_code.occurrence_effects, (None,))
+
+    def test_heterogeneous_list_index_duplication_executes(self):
+        expected = [RuntimeNumber("10"), RuntimeNumber("10")]
+        source = '[10, "anc"] $[0] | dup'
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+
+        self.assertEqual(run(program), expected)
+        self.assertEqual(run(loads(dumps(program))), expected)
 
     def test_optional_arguments_use_ecs_overrides_at_runtime(self):
         self.assertEqual(
@@ -3683,6 +3920,42 @@ end
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "child released\ncaught\n")
 
+    def test_runtime_retain_does_not_apply_language_duplication_policy(self):
+        runtime_type = ObjectRuntimeType(dup_error="Resource cannot be duplicated")
+        value = ObjectValue("Resource", {}, runtime_type=runtime_type)
+
+        retained = _retain_runtime_reference(value)
+
+        self.assertIs(retained, value)
+        self.assertEqual(value.refcount, 2)
+        _release_value(retained, VirtualMachine())
+        self.assertEqual(value.refcount, 1)
+
+    def test_duplicate_occurrence_applies_language_duplication_policy(self):
+        runtime_type = ObjectRuntimeType(dup_error="Resource cannot be duplicated")
+        value = ObjectValue("Resource", {}, runtime_type=runtime_type)
+
+        with self.assertRaises(PanicSignal) as caught:
+            _duplicate_occurrence(value)
+
+        self.assertEqual(value.refcount, 1)
+        self.assertIn("Resource cannot be duplicated", str(caught.exception.value))
+
+    def test_failed_recursive_duplication_does_not_partially_retain_runtime_reference(self):
+        allowed = ObjectValue("Allowed", {})
+        denied = ObjectValue(
+            "Denied",
+            {},
+            runtime_type=ObjectRuntimeType(dup_error="Denied cannot be duplicated"),
+        )
+        aggregate = [allowed, denied]
+
+        with self.assertRaises(PanicSignal):
+            _duplicate_occurrence(aggregate)
+
+        self.assertEqual(allowed.refcount, 1)
+        self.assertEqual(denied.refcount, 1)
+
     def test_destructor_receiver_is_a_non_owning_borrow(self):
         value = ObjectValue("Resource", {})
         value.refcount = 0
@@ -3694,7 +3967,7 @@ end
         self.assertEqual(value.refcount, 0)
         self.assertTrue(value.destructor_borrowed)
         with self.assertRaises(RuntimeError) as caught:
-            _retain_value(value)
+            _retain_runtime_reference(value)
         self.assertIn(
             "cannot retain borrowed destructor receiver Resource",
             str(caught.exception),
@@ -3726,7 +3999,7 @@ end
         self.assertTrue(value.destroyed)
         self.assertEqual(value.refcount, 0)
         with self.assertRaises(RuntimeError) as caught:
-            _retain_value(value)
+            _retain_runtime_reference(value)
         self.assertIn("use after destruction of Resource", str(caught.exception))
 
     def test_reconstructed_object_wrappers_share_mustcall_state(self):
@@ -4050,6 +4323,175 @@ end
 
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "destructor\n")
+
+    def test_unduplicatable_variable_can_be_printed(self):
+        output = io.StringIO()
+        source = """
+object Foo =>
+  public $x: Int
+  @error("Foo cannot be duplicated")
+  define dup => end
+end
+
+$temp = Foo 5
+println $temp
+"""
+
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(execute(source), [])
+
+        self.assertIn("5", output.getvalue())
+
+    def test_unduplicatable_variable_can_be_printed_without_newline(self):
+        output = io.StringIO()
+        source = """
+object Foo =>
+  public $x: Int
+  @error("Foo cannot be duplicated")
+  define dup => end
+end
+
+$temp = Foo 5
+print $temp.x
+"""
+
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(execute(source), [])
+
+        self.assertEqual(output.getvalue(), "5")
+
+    def test_unduplicatable_variable_can_be_observed_sequentially(self):
+        output = io.StringIO()
+        source = """
+object Foo =>
+  public $x: Int
+  @error("Foo cannot be duplicated")
+  define dup => end
+end
+
+$temp = Foo 5
+println $temp
+println $temp
+"""
+
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(execute(source), [])
+
+        self.assertEqual(output.getvalue().count("5"), 2)
+
+    def test_field_of_unduplicatable_variable_can_be_printed(self):
+        output = io.StringIO()
+        source = """
+object Foo =>
+  public $x: Int
+  @error("Foo cannot be duplicated")
+  define dup => end
+end
+
+$temp = Foo 5
+println $temp.x
+"""
+
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(execute(source), [])
+
+        self.assertEqual(output.getvalue(), "5\n")
+
+    def test_unduplicatable_variable_observation_survives_bytecode_round_trip(self):
+        source = """
+object Foo =>
+  public $x: Int
+  @error("Foo cannot be duplicated")
+  define dup => end
+end
+
+$temp = Foo 5
+println $temp.x
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        borrowed_loads = [
+            instruction
+            for instruction in program.main.instructions
+            if instruction.op is OpCode.LOAD_VAR_BORROW
+        ]
+        self.assertEqual([instruction.arg for instruction in borrowed_loads], ["temp"])
+        restored = loads(dumps(program))
+        direct_output = io.StringIO()
+        restored_output = io.StringIO()
+
+        with contextlib.redirect_stdout(direct_output):
+            self.assertEqual(run(program), [])
+        with contextlib.redirect_stdout(restored_output):
+            self.assertEqual(run(restored), [])
+
+        self.assertEqual(direct_output.getvalue(), "5\n")
+        self.assertEqual(restored_output.getvalue(), "5\n")
+
+    def test_dynamic_assignment_fault_identifies_storage_materialisation(self):
+        source = """
+object Foo =>
+  @error("Foo cannot be duplicated")
+  define dup => end
+end
+
+define[T] store(value: T) =>
+  $stored = $value
+end
+
+Foo | store
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+        store_code = next(
+            instruction.arg
+            for instruction in program.main.instructions
+            if instruction.op is OpCode.MAKE_FUNCTION
+            and instruction.arg.name == "store"
+        )
+        materializations = [
+            instruction
+            for instruction in store_code.instructions
+            if instruction.op is OpCode.LOAD_VAR_MATERIALIZE
+        ]
+        self.assertEqual(
+            [instruction.arg for instruction in materializations],
+            [("storage", "value", "stored")],
+        )
+
+        for candidate in (program, loads(dumps(program))):
+            with self.subTest(serialized=candidate is not program):
+                with self.assertRaises(RuntimeError) as caught:
+                    run(candidate)
+
+                message = str(caught.exception)
+                self.assertIn("uncaught panic: DuplicationFault", message)
+                self.assertIn(
+                    "cannot store the value of '$value' in '$stored'",
+                    message,
+                )
+                self.assertIn("Foo cannot be duplicated", message)
+
+    def test_generic_assignment_materialises_duplicatable_values(self):
+        source = """
+define[T] store(value: T) =>
+  $stored = $value
+  $stored
+end
+
+5 | store
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = compile_program(typed, optimize=False)
+
+        self.assertEqual(run(program), [RuntimeNumber("5")])
+        self.assertEqual(run(loads(dumps(program))), [RuntimeNumber("5")])
 
     def test_unduplicatable_object_raises_duplication_fault(self):
         with self.assertRaises(RuntimeError) as caught:

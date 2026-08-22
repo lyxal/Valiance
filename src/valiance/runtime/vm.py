@@ -442,8 +442,19 @@ class _FunctionCallRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class _DuplicationContext:
+    """Describe the language operation requesting an additional occurrence."""
+
+    operation: str
+    source: str | None = None
+    destination: str | None = None
+    label: str | None = None
+    requested: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class _BorrowedValue:
-    """A non-owning assignment receiver reference carried on the VM stack."""
+    """A non-owning access to an existing occurrence carried on the VM stack."""
 
     value: Any
 
@@ -933,7 +944,7 @@ class VirtualMachine:
         instructions = value.code.instructions
         if not (
             len(instructions) == 2
-            and instructions[0].op is OpCode.LOAD_VAR
+            and instructions[0].op in {OpCode.LOAD_VAR, OpCode.LOAD_VAR_FORWARD}
             and instructions[0].arg == value.code.params[0]
             and instructions[1].op is OpCode.RETURN
         ):
@@ -977,8 +988,19 @@ class VirtualMachine:
             op = instruction.op
             if op is OpCode.PUSH_CONST:
                 stack.append(("const", instruction.arg))
-            elif op in {OpCode.LOAD_VAR, OpCode.LOAD_VAR_BORROW}:
-                expression = locals_.get(instruction.arg)
+            elif op in {
+                OpCode.LOAD_VAR,
+                OpCode.LOAD_VAR_FORWARD,
+                OpCode.LOAD_VAR_BORROW,
+                OpCode.LOAD_VAR_MATERIALIZE,
+            }:
+                name = (
+                    instruction.arg[-2]
+                    if op is OpCode.LOAD_VAR_MATERIALIZE
+                    and isinstance(instruction.arg, tuple)
+                    else instruction.arg
+                )
+                expression = locals_.get(name)
                 if expression is None:
                     return None
                 stack.append(expression)
@@ -1776,8 +1798,19 @@ class VirtualMachine:
             op = instruction.op
             if op is OpCode.PUSH_CONST:
                 stack.append(("const", instruction.arg))
-            elif op in {OpCode.LOAD_VAR, OpCode.LOAD_VAR_BORROW}:
-                expression = locals_.get(instruction.arg)
+            elif op in {
+                OpCode.LOAD_VAR,
+                OpCode.LOAD_VAR_FORWARD,
+                OpCode.LOAD_VAR_BORROW,
+                OpCode.LOAD_VAR_MATERIALIZE,
+            }:
+                name = (
+                    instruction.arg[-2]
+                    if op is OpCode.LOAD_VAR_MATERIALIZE
+                    and isinstance(instruction.arg, tuple)
+                    else instruction.arg
+                )
+                expression = locals_.get(name)
                 if expression is None:
                     return None
                 stack.append(expression)
@@ -2583,7 +2616,7 @@ class VirtualMachine:
 
     def _retain_task_row(self, row: tuple[Any, ...]) -> tuple[Any, ...]:
         """Create fresh owned occurrences for one observed terminal task row."""
-        return tuple(_retain_value(value) for value in row)
+        return tuple(_duplicate_occurrence(value) for value in row)
 
     def _run_activation(
         self,
@@ -2740,7 +2773,34 @@ class VirtualMachine:
                                     isinstance(value, ObjectValue)
                                     and value.destructor_borrowed
                                 )
-                                else _retain_value(value)
+                                else _duplicate_occurrence(value)
+                            )
+                        case OpCode.LOAD_VAR_FORWARD:
+                            name = instruction.arg
+                            if name not in frame.locals:
+                                raise RuntimeError(
+                                    f"cannot forward non-local variable '{name}'"
+                                )
+                            frame.stack.append(frame.locals.pop(name))
+                        case OpCode.LOAD_VAR_MATERIALIZE:
+                            operation, source_name, destination_name = instruction.arg
+                            value = _load_name(
+                                source_name,
+                                frame.locals,
+                                frame.globals,
+                            )
+                            frame.stack.append(
+                                value
+                                if isinstance(value, _SCALAR_RUNTIME_TYPES)
+                                or not _needs_release(value)
+                                else _duplicate_occurrence(
+                                    value,
+                                    context=_DuplicationContext(
+                                        operation,
+                                        source=source_name,
+                                        destination=destination_name,
+                                    ),
+                                )
                             )
                         case OpCode.LOAD_VAR_BORROW:
                             frame.stack.append(
@@ -2801,7 +2861,7 @@ class VirtualMachine:
                                 value
                                 if isinstance(value, _SCALAR_RUNTIME_TYPES)
                                 or not _needs_release(value)
-                                else _retain_value(value)
+                                else _duplicate_occurrence(value)
                             )
                         case OpCode.MAKE_FUNCTION:
                             frame.stack.append(
@@ -2821,7 +2881,7 @@ class VirtualMachine:
                                     "function dispatch plan requires an overload set"
                                 )
                             for overload in value.overloads:
-                                _retain_value(overload)
+                                _duplicate_occurrence(overload)
                             planned = OverloadedFunctionValue(
                                 value.overloads, instruction.arg.dispatch_plan
                             )
@@ -3010,6 +3070,9 @@ class VirtualMachine:
                             frame.cycle_index = next_cycle_index
                             frame.cycle_stack_remaining = next_cycle_stack_remaining
                             receiver = args[0]
+                            observational = isinstance(receiver, _BorrowedValue)
+                            if observational:
+                                receiver = receiver.value
                             if optional_safe:
                                 frame.stack.append(
                                     _optional_safe_get_field(
@@ -3020,7 +3083,11 @@ class VirtualMachine:
                                 )
                             elif isinstance(receiver, ObjectValue):
                                 frame.stack.append(
-                                    _extract_object_field(
+                                    _BorrowedValue(
+                                        _read_object_field(receiver, field)
+                                    )
+                                    if observational
+                                    else _extract_object_field(
                                         receiver,
                                         field,
                                         self,
@@ -3176,7 +3243,7 @@ class VirtualMachine:
                         case OpCode.MATCH_ERROR:
                             raise RuntimeError("non-exhaustive match at runtime")
                         case OpCode.ASSERT_PEEK_BEGIN:
-                            saved = [_retain_value(value) for value in frame.stack]
+                            saved = [_duplicate_occurrence(value) for value in frame.stack]
                             frame.assert_peek_stacks.append(
                                 (
                                     saved,
@@ -3823,10 +3890,10 @@ class VirtualMachine:
             return None
         if isinstance(value, ObjectValue):
             _require_single_resolved_slot(reference, "enum member")
-            frame.stack.append(_retain_value(value))
+            frame.stack.append(_duplicate_occurrence(value))
             return None
         if reference.overload_index == 0 and not callable(value):
-            frame.stack.append(_retain_value(value))
+            frame.stack.append(_duplicate_occurrence(value))
             return None
         raise RuntimeError(f"resolved element '{reference.name}' is not callable")
 
@@ -3887,7 +3954,7 @@ class VirtualMachine:
             raise RuntimeError(f"cannot validate {tag_name} on an empty stack")
         if overload_index is not None:
             validator = _load_name(tag_name, frame.locals, frame.globals)
-            value = _retain_value(frame.stack[-1])
+            value = _duplicate_occurrence(frame.stack[-1])
             try:
                 result = self.call_value_overload(validator, [value], overload_index)
             finally:
@@ -4575,7 +4642,10 @@ def _make_function_value(
     captured.update(local_values)
     owned_names = frozenset(local_values)
     for name in owned_names:
-        captured[name] = _retain_value(captured[name])
+        captured[name] = _duplicate_occurrence(
+            captured[name],
+            context=_DuplicationContext("capture", source=name),
+        )
     if isinstance(code, FunctionCode):
         value = FunctionValue(code, captured, owned_names)
         if code.recursive:
@@ -4708,7 +4778,7 @@ def _function_call_locals(
     for name in function.owned_names:
         if name in locals_ or name not in function.globals:
             continue
-        locals_[name] = _retain_value(function.globals[name])
+        locals_[name] = _duplicate_occurrence(function.globals[name])
         retained.add(name)
     return locals_, frozenset(retained)
 
@@ -4854,7 +4924,7 @@ def _store_value(existing: Any, value: Any) -> Any:
     function_types = (FunctionValue, OverloadedFunctionValue)
     if isinstance(existing, function_types) and isinstance(value, function_types):
         for overload in _function_overloads(existing) + _function_overloads(value):
-            _retain_value(overload)
+            _duplicate_occurrence(overload)
         return OverloadedFunctionValue(
             _function_overloads(existing) + _function_overloads(value)
         )
@@ -5099,10 +5169,91 @@ def _dict_ownership_is_trivial(value: dict[Any, Any]) -> bool:
     return trivial
 
 
-def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
-    """Retain value during VM execution."""
+def _check_duplication_allowed(
+    value: Any,
+    context: _DuplicationContext | None = None,
+) -> None:
+    """Reject a semantic duplicate before any runtime references are retained."""
     if isinstance(value, TaggedValue):
-        _retain_value(value.value, check_duplication=check_duplication)
+        _check_duplication_allowed(value.value, context)
+        return
+    if isinstance(value, Receive):
+        if not value.closed:
+            _check_duplication_allowed(value.value, context)
+        return
+    if isinstance(value, ObjectValue):
+        if value.destroyed:
+            raise RuntimeError(f"use after destruction of {object_type_name(value)}")
+        if value.destructor_borrowed:
+            raise RuntimeError(
+                f"cannot retain borrowed destructor receiver "
+                f"{object_type_name(value)}"
+            )
+        if (
+            value.runtime_type is not None
+            and value.runtime_type.dup_error is not None
+            and value.refcount >= 1
+        ):
+            reason = value.runtime_type.dup_error
+            if context is not None:
+                type_name = object_type_name(value)
+                if context.operation == "storage":
+                    reason = (
+                        f"cannot store the value of '${context.source}' in "
+                        f"'${context.destination}'\n\n"
+                        f"The assignment would create an additional occurrence of "
+                        f"{type_name}.\n\n{reason}"
+                    )
+                elif context.operation == "aggregate":
+                    reason = (
+                        f"cannot store the value of '${context.source}' in "
+                        f"{context.destination}\n\n"
+                        f"The literal would create an additional occurrence of "
+                        f"{type_name}.\n\n{reason}"
+                    )
+                elif context.operation == "capture":
+                    reason = (
+                        f"cannot capture the value of '${context.source}' in a closure"
+                        f"\n\nThe closure would create an additional occurrence of "
+                        f"{type_name}.\n\n{reason}"
+                    )
+                elif context.operation == "copy":
+                    reason = (
+                        f"stack copy requires an additional occurrence of "
+                        f"{type_name}\n\n"
+                        f"copy preserves the original occurrence of "
+                        f"'{context.label}' and emits another.\n\n{reason}"
+                    )
+                elif context.operation == "move":
+                    reason = (
+                        f"stack move requires an additional occurrence of "
+                        f"{type_name}\n\n"
+                        f"move received one occurrence of '{context.label}' but "
+                        f"its poststack requested {context.requested}.\n\n{reason}"
+                    )
+            raise PanicSignal(_fault_object("DuplicationFault", reason))
+        return
+    if isinstance(value, list):
+        if _list_ownership_is_trivial(value):
+            return
+        for item in value:
+            _check_duplication_allowed(item, context)
+        return
+    if isinstance(value, tuple):
+        for item in value:
+            _check_duplication_allowed(item, context)
+        return
+    if isinstance(value, dict):
+        if _dict_ownership_is_trivial(value):
+            return
+        for item in value.values():
+            _check_duplication_allowed(item, context)
+
+
+def _retain_runtime_reference(value: Any) -> Any:
+    """Retain one runtime reference without deciding language-level duplication."""
+    if isinstance(value, TaggedValue):
+        _retain_runtime_reference(value.value)
         return value
     if isinstance(value, TaskHandle):
         value.control.retain_handle()
@@ -5112,7 +5263,7 @@ def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
         return value
     if isinstance(value, Receive):
         if not value.closed:
-            _retain_value(value.value, check_duplication=check_duplication)
+            _retain_runtime_reference(value.value)
         return value
     if isinstance(value, LazyList):
         value.refcount += 1
@@ -5124,15 +5275,6 @@ def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
             raise RuntimeError(
                 f"cannot retain borrowed destructor receiver "
                 f"{object_type_name(value)}"
-            )
-        if (
-            check_duplication
-            and value.runtime_type is not None
-            and value.runtime_type.dup_error is not None
-            and value.refcount >= 1
-        ):
-            raise PanicSignal(
-                _fault_object("DuplicationFault", value.runtime_type.dup_error)
             )
         value.refcount += 1
         return value
@@ -5149,19 +5291,29 @@ def _retain_value(value: Any, *, check_duplication: bool = True) -> Any:
         if _list_ownership_is_trivial(value):
             return value
         for item in value:
-            _retain_value(item, check_duplication=check_duplication)
+            _retain_runtime_reference(item)
         return value
     if isinstance(value, tuple):
         for item in value:
-            _retain_value(item, check_duplication=check_duplication)
+            _retain_runtime_reference(item)
         return value
     if isinstance(value, dict):
         if _dict_ownership_is_trivial(value):
             return value
         for item in value.values():
-            _retain_value(item, check_duplication=check_duplication)
+            _retain_runtime_reference(item)
         return value
     return value
+
+
+def _duplicate_occurrence(
+    value: Any,
+    *,
+    context: _DuplicationContext | None = None,
+) -> Any:
+    """Create one additional language-level occurrence of a runtime value."""
+    _check_duplication_allowed(value, context)
+    return _retain_runtime_reference(value)
 
 
 def _borrow_destructor_receiver(value: ObjectValue) -> ObjectValue:
@@ -5492,7 +5644,7 @@ def _finalize_builtin_result_ownership(
     for ident, count in counts.items():
         retains = count if ident in arg_ids else count - 1
         for _ in range(max(retains, 0)):
-            _retain_value(values[ident])
+            _duplicate_occurrence(values[ident])
 
     visited: set[int] = set()
     for value in result:
@@ -5534,7 +5686,7 @@ def _retain_embedded_builtin_args(
         return
     ident = id(value)
     if ident in arg_ids:
-        _retain_value(value)
+        _duplicate_occurrence(value)
         return
     if ident in visited:
         return
@@ -5569,7 +5721,7 @@ def _bind_lazy_result_owners(
             continue
         owned: list[Any] = []
         for arg in args:
-            retained = _retain_value(arg)
+            retained = _duplicate_occurrence(arg)
             owned.append(retained)
         value.owned_values = tuple(owned)
         bound.append(value)
@@ -6032,8 +6184,15 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
             ) = frame.source_args(arity)
         except _StackUnderflow:
             continue
-        if not overload.runtime_matches(args):
-            vectorized = _call_vectorized_builtin(overload, args, callee.context)
+        runtime_args = (
+            tuple(_accessed_value(value) for value in args)
+            if callee.element.name.text in {"print", "println"}
+            else args
+        )
+        if not overload.runtime_matches(runtime_args):
+            vectorized = _call_vectorized_builtin(
+                overload, runtime_args, callee.context
+            )
             if vectorized is None:
                 continue
             vectorized = _bind_lazy_result_owners(args, vectorized)
@@ -6052,7 +6211,9 @@ def _call_builtin(callee: BuiltinValue, frame: _Frame) -> None:
         if implementation is None:
             continue
         try:
-            result = implementation(overload.runtime_arguments(args), callee.context)
+            result = implementation(
+                overload.runtime_arguments(runtime_args), callee.context
+            )
             if overload.runtime_return_tags:
                 result = _apply_cached_runtime_return_tags(
                     result,
@@ -6201,6 +6362,13 @@ def _object_constructor_initializer(
     raise RuntimeError(f"constructor '{callee.type_name}' has no initializer")
 
 
+def _accessed_value(value: Any) -> Any:
+    """Return the runtime value represented by nested non-owning access wrappers."""
+    while isinstance(value, _BorrowedValue):
+        value = value.value
+    return value
+
+
 def _call_resolved_builtin(
     callee: BuiltinValue,
     overload: BuiltinOverload,
@@ -6297,8 +6465,16 @@ def _call_resolved_builtin(
         return
     implementation = overload.implementation
     assert implementation is not None
+    runtime_args = (
+        tuple(
+            _accessed_value(value)
+            for value in args
+        )
+        if callee.element.name.text in {"print", "println"}
+        else args
+    )
     try:
-        result = implementation(overload.runtime_arguments(args), context)
+        result = implementation(overload.runtime_arguments(runtime_args), context)
         if overload.runtime_return_tags:
             result = _apply_cached_runtime_return_tags(
                 result,
@@ -6344,7 +6520,7 @@ def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
     """Update stack shuffle state during VM execution."""
     mode, prestack, poststack, permutation = _stack_shuffle_spec(spec)
     arity = len(prestack)
-    if permutation is not None and len(frame.stack) >= arity:
+    if mode == "move" and permutation is not None and len(frame.stack) >= arity:
         if permutation == (1, 0) and arity == 2:
             frame.stack[-2], frame.stack[-1] = frame.stack[-1], frame.stack[-2]
             return
@@ -6368,8 +6544,11 @@ def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
     }
     outputs = tuple(labelled[label] for label in poststack)
     if mode == "copy":
-        for value in outputs:
-            _retain_value(value, check_duplication=False)
+        for label, value in zip(poststack, outputs, strict=True):
+            _duplicate_occurrence(
+                value,
+                context=_DuplicationContext("copy", label=label),
+            )
         frame.cycle_index = next_cycle_index
         frame.cycle_stack_remaining = next_cycle_stack_remaining
         frame.stack.extend(outputs)
@@ -6381,12 +6560,19 @@ def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
     for index, label in enumerate(prestack):
         if label is None:
             if index < stack_arg_start:
-                _retain_value(args[index], check_duplication=False)
+                _duplicate_occurrence(args[index])
             continue
         count = output_counts[label]
         retains = count if index < stack_arg_start else max(count - 1, 0)
         for _ in range(retains):
-            _retain_value(args[index], check_duplication=False)
+            _duplicate_occurrence(
+                args[index],
+                context=_DuplicationContext(
+                    "move",
+                    label=label,
+                    requested=count,
+                ),
+            )
         if count:
             retained_outputs.add(label)
 
@@ -6402,6 +6588,17 @@ def _stack_shuffle(frame: _Frame, spec: object, vm: VirtualMachine) -> None:
     frame.stack.extend(outputs)
 
 
+def _read_object_field(receiver: ObjectValue, field: str) -> Any:
+    """Read an object field without creating or releasing an occurrence."""
+    try:
+        value = receiver.fields[field]
+    except KeyError as exc:
+        raise RuntimeError(f"{receiver.type_name} has no field '{field}'") from exc
+    if value is _UNINITIALIZED_OBJECT_FIELD:
+        raise RuntimeError(f"{receiver.type_name} field '{field}' is not initialized")
+    return value
+
+
 def _extract_object_field(receiver: ObjectValue, field: str, vm: VirtualMachine) -> Any:
     """Compute extract object field during VM execution."""
     try:
@@ -6410,7 +6607,7 @@ def _extract_object_field(receiver: ObjectValue, field: str, vm: VirtualMachine)
         raise RuntimeError(f"{receiver.type_name} has no field '{field}'") from exc
     if value is _UNINITIALIZED_OBJECT_FIELD:
         raise RuntimeError(f"{receiver.type_name} field '{field}' is not initialized")
-    retained = _retain_value(value)
+    retained = _duplicate_occurrence(value)
     _release_value(receiver, vm)
     return retained
 
@@ -6424,7 +6621,7 @@ def _try_unwrap(stack: list[Any], vm: VirtualMachine) -> bool:
     if isinstance(value, ObjectValue):
         short_name = value.type_name.rsplit(".", 1)[-1]
         if value.type_name == "OK" or short_name in {"OK", "Some"}:
-            retained = _retain_value(value.fields.get("value"))
+            retained = _duplicate_occurrence(value.fields.get("value"))
             _release_value(value, vm)
             stack.append(retained)
             return False
@@ -7445,7 +7642,7 @@ def _consume_receiver_result(
     if isinstance(result, LazyList):
         result.owned_values = (*result.owned_values, receiver)
         return result
-    retained = _retain_value(result)
+    retained = _duplicate_occurrence(result)
     _release_value(receiver, vm)
     return retained
 
@@ -8360,7 +8557,7 @@ def _copy_eager_list(
     if copied._ownership_trivial is not True:
         for index, item in enumerate(copied):
             if index not in skip_indexes:
-                _retain_value(item)
+                _duplicate_occurrence(item)
     return copied
 
 
@@ -8402,7 +8599,7 @@ def _set_index_one(
                 if updated._ownership_trivial is not True:
                     for key, item in updated.items():
                         if key != index:
-                            _retain_value(item)
+                            _duplicate_occurrence(item)
         if isinstance(updated, DictValue):
             dict.__setitem__(updated, index, value)
             if updated._ownership_trivial is True and _needs_release(value):
@@ -8540,7 +8737,7 @@ def _optional_safe_get_field(
     if kind != "some" or not isinstance(receiver, ObjectValue):
         raise RuntimeError("optional-safe field access requires Some or None")
 
-    payload = _retain_value(receiver.fields["value"])
+    payload = _duplicate_occurrence(receiver.fields["value"])
     _release_value(receiver, vm)
     if isinstance(payload, ObjectValue):
         result = _extract_object_field(payload, field, vm)
@@ -8635,7 +8832,7 @@ def _set_field(
                 if fields._ownership_trivial is not True:
                     for key, item in fields.items():
                         if key != field:
-                            _retain_value(item)
+                            _duplicate_occurrence(item)
         if isinstance(fields, DictValue):
             dict.__setitem__(fields, field, value)
             if fields._ownership_trivial is True and _needs_release(value):

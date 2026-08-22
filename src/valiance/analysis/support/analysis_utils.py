@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from itertools import count
 from typing import cast
@@ -528,75 +528,144 @@ def _types_overlap(source: T.Type, target: T.Type, ctx: T.Context) -> bool:
     return False
 
 
-def _copied_stack_shuffle_types(
+@dataclass(frozen=True, slots=True)
+class DuplicationRequirement:
+    """Describe whether one type permits, rejects, or defers duplication."""
+
+    reason: str | None = None
+    runtime_check: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class StackDuplication:
+    """Describe additional occurrences requested for one labelled stack input."""
+
+    label: Symbol
+    typ: T.Type
+    count: int
+
+
+def _duplication_requirement(
+    typ: T.Type,
+    env: T.Environment,
+) -> DuplicationRequirement:
+    """Return whether duplication is allowed, forbidden, or runtime-dependent."""
+    normalized = T.normalize(typ)
+    if isinstance(normalized, (T.VarType, T.MetaVarType)):
+        return DuplicationRequirement(runtime_check=True)
+    if isinstance(normalized, T.TaggedType):
+        return _duplication_requirement(normalized.inner, env)
+    if isinstance(normalized, T.UnionType):
+        decisions = tuple(
+            _duplication_requirement(item, env) for item in normalized.items
+        )
+        forbidden = next(
+            (item for item in decisions if item.reason is not None),
+            None,
+        )
+        if forbidden is not None:
+            return forbidden
+        return DuplicationRequirement(
+            runtime_check=any(item.runtime_check for item in decisions)
+        )
+    if isinstance(normalized, T.IntersectionType):
+        decisions = tuple(
+            _duplication_requirement(item, env) for item in normalized.items
+        )
+        forbidden = next(
+            (item for item in decisions if item.reason is not None),
+            None,
+        )
+        if forbidden is not None:
+            return forbidden
+        return DuplicationRequirement(
+            runtime_check=any(item.runtime_check for item in decisions)
+        )
+    if isinstance(normalized, T.CollectionType):
+        return _duplication_requirement(normalized.base, env)
+    if isinstance(normalized, T.TupleType):
+        decisions = tuple(
+            _duplication_requirement(item, env) for item in normalized.params
+        )
+        forbidden = next(
+            (item for item in decisions if item.reason is not None),
+            None,
+        )
+        if forbidden is not None:
+            return forbidden
+        return DuplicationRequirement(
+            runtime_check=any(item.runtime_check for item in decisions)
+        )
+    if isinstance(normalized, T.VariadicTupleType):
+        decisions = tuple(
+            _duplication_requirement(item.typ, env) for item in normalized.items
+        )
+        forbidden = next(
+            (item for item in decisions if item.reason is not None),
+            None,
+        )
+        if forbidden is not None:
+            return forbidden
+        return DuplicationRequirement(
+            runtime_check=any(item.runtime_check for item in decisions)
+        )
+    if isinstance(normalized, T.NominalType):
+        reason = _nominal_copy_error(normalized.name, env)
+        return DuplicationRequirement(reason=reason)
+    return DuplicationRequirement()
+
+
+def _stack_duplications(
     node: StackShuffleNode,
     args: tuple[T.Type, ...],
-    labelled: dict[Symbol, T.Type],
     stack_arg_start: int,
-) -> tuple[T.Type, ...]:
-    """Determine the types used for copied stack shuffle during static analysis."""
-    if node.mode == Symbol("copy"):
-        return tuple(dict.fromkeys(labelled[label] for label in node.poststack))
-
-    copied: list[T.Type] = []
-    counts: dict[Symbol, int] = {}
+) -> tuple[StackDuplication, ...]:
+    """Count additional occurrences requested from every labelled stack input."""
+    output_counts: dict[Symbol, int] = {}
     for label in node.poststack:
-        counts[label] = counts.get(label, 0) + 1
+        output_counts[label] = output_counts.get(label, 0) + 1
 
+    duplications: list[StackDuplication] = []
     for index, (label, typ) in enumerate(zip(node.prestack, args, strict=True)):
         if label is None:
-            if index < stack_arg_start:
-                copied.append(typ)
             continue
-        count = counts.get(label, 0)
-        retains = count if index < stack_arg_start else max(count - 1, 0)
-        if retains:
-            copied.append(typ)
-    return tuple(dict.fromkeys(copied))
+        preserved = int(node.mode == Symbol("copy") or index < stack_arg_start)
+        additional = max(preserved + output_counts.get(label, 0) - 1, 0)
+        if additional:
+            duplications.append(StackDuplication(label, typ, additional))
+    return tuple(duplications)
 
 
-def _copy_diagnostic(typ: T.Type, env: T.Environment) -> str | None:
-    """Compute copy diagnostic during static analysis."""
-    reason = _noncopyable_reason(typ, env)
-    if reason is None:
+def _stack_duplication_diagnostic(
+    mode: Symbol,
+    duplication: StackDuplication,
+    env: T.Environment,
+) -> str | None:
+    """Explain why one stack transformation cannot create its requested outputs."""
+    decision = _duplication_requirement(duplication.typ, env)
+    if decision.reason is None:
         return None
-    return f"cannot copy value of type {T.show(typ)}: {reason}"
+    noun = "occurrence" if duplication.count == 1 else "occurrences"
+    if mode == Symbol("copy"):
+        explanation = (
+            f"copy preserves the original occurrence of '{duplication.label}' and "
+            f"requests {duplication.count} additional {noun}"
+        )
+    else:
+        requested = duplication.count + 1
+        explanation = (
+            f"move receives one occurrence of '{duplication.label}', but its "
+            f"poststack requests {requested}"
+        )
+    return (
+        f"cannot create {duplication.count} additional {noun} of "
+        f"{T.show(duplication.typ)}\n\n{explanation}.\n\n{decision.reason}"
+    )
 
 
 def _noncopyable_reason(typ: T.Type, env: T.Environment) -> str | None:
-    """Compute noncopyable reason during static analysis."""
-    typ = T.normalize(typ)
-    if isinstance(typ, T.TaggedType):
-        return _noncopyable_reason(typ.inner, env)
-    if isinstance(typ, T.UnionType):
-        for item in typ.items:
-            reason = _noncopyable_reason(item, env)
-            if reason is not None:
-                return reason
-        return None
-    if isinstance(typ, T.IntersectionType):
-        for item in typ.items:
-            reason = _noncopyable_reason(item, env)
-            if reason is not None:
-                return reason
-        return None
-    if isinstance(typ, T.CollectionType):
-        return _noncopyable_reason(typ.base, env)
-    if isinstance(typ, T.TupleType):
-        for item in typ.params:
-            reason = _noncopyable_reason(item, env)
-            if reason is not None:
-                return reason
-        return None
-    if isinstance(typ, T.VariadicTupleType):
-        for item in typ.items:
-            reason = _noncopyable_reason(item.typ, env)
-            if reason is not None:
-                return reason
-        return None
-    if isinstance(typ, T.NominalType):
-        return _nominal_copy_error(typ.name, env)
-    return None
+    """Return a reason only when every runtime value of the type is noncopyable."""
+    return _duplication_requirement(typ, env).reason
 
 
 def _nominal_copy_error(name: Symbol, env: T.Environment) -> str | None:

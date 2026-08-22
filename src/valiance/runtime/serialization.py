@@ -28,7 +28,7 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x20
+BYTECODE_VERSION = 0x22
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
@@ -95,6 +95,8 @@ _OP_TO_BYTE = {
     OpCode.CHANNEL_RECEIVE: 0x3D,
     OpCode.CHANNEL_CLOSE: 0x3E,
     OpCode.CANCEL_POLL: 0x3F,
+    OpCode.LOAD_VAR_MATERIALIZE: 0x40,
+    OpCode.LOAD_VAR_FORWARD: 0x41,
 }
 _BYTE_TO_OP = {value: key for key, value in _OP_TO_BYTE.items()}
 
@@ -111,6 +113,25 @@ _VECTOR_EXTENSION_REFERENCE = 0x09
 _OBJECT_CONSTRUCTOR_REFERENCE = 0x0A
 _BOOL = 0x0B
 _INDEX_OPERATION_SPEC = 0x0C
+
+
+def _validate_occurrence_effects(
+    params: tuple[str, ...],
+    return_count: int | None,
+    effects: tuple[int | None, ...],
+) -> None:
+    """Validate one function's serialized occurrence-flow contract."""
+    if return_count is not None and len(effects) != return_count:
+        raise BytecodeFormatError(
+            "function occurrence effects must match its return count"
+        )
+    if any(
+        item is not None and (item < 0 or item >= len(params))
+        for item in effects
+    ):
+        raise BytecodeFormatError(
+            "function occurrence effect references an invalid parameter"
+        )
 
 
 class BytecodeFormatError(Exception):
@@ -514,6 +535,11 @@ class _Writer:
 
     def function(self, function: FunctionCode) -> None:
         """Encode function in the portable bytecode stream."""
+        _validate_occurrence_effects(
+            function.params,
+            function.return_count,
+            function.occurrence_effects,
+        )
         self.optional_string(function.name)
         self.u8(1 if function.cycle_params else 0)
         self.u32(function.cycle_param_offset)
@@ -530,6 +556,7 @@ class _Writer:
         for typ in function.dispatch_types:
             self.optional_string(typ)
         self.optional_int(function.return_count)
+        self.value(function.occurrence_effects)
         self.u32(len(function.return_tags))
         for tags in function.return_tags:
             self.u32(len(tags))
@@ -868,6 +895,12 @@ class _Reader:
         return_count = self.optional_int()
         if return_count is not None and return_count < 0:
             raise BytecodeFormatError("invalid function return count")
+        occurrence_effects = self.value()
+        if not isinstance(occurrence_effects, tuple) or not all(
+            item is None or isinstance(item, int) for item in occurrence_effects
+        ):
+            raise BytecodeFormatError("invalid function occurrence effects")
+        _validate_occurrence_effects(params, return_count, occurrence_effects)
         return_tags = tuple(
             tuple(
                 DataTag(self.string(), self.i64(), self.bool())
@@ -908,6 +941,7 @@ class _Reader:
             multi=bool(multi),
             dispatch_types=dispatch_types,
             return_count=return_count,
+            occurrence_effects=occurrence_effects,
             return_tags=return_tags,
             return_tag_specs=return_tag_specs,
             return_collection_ranks=return_collection_ranks,

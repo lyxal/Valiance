@@ -673,6 +673,7 @@ Most opcodes fall into a few families.
 
 - `PUSH_CONST`
 - `LOAD_VAR`
+- `LOAD_VAR_MATERIALIZE`
 - `LOAD_VAR_BORROW`
 - `STORE_VAR`
 - `LOAD_ELEMENT`
@@ -681,9 +682,22 @@ Most opcodes fall into a few families.
 - `SOURCE_ARGS`
 
 These move values while applying retain/release rules. `LOAD_VAR_BORROW` is
-emitted only for the root variable of a field or indexed assignment that stores
-back to the same binding. It places a non-owning receiver wrapper on the stack;
-ordinary reads continue to use `LOAD_VAR` and retain ownership normally. Plain
+emitted for the root variable of a field or indexed assignment that stores back
+to the same binding, and for variable-rooted access chains consumed directly by
+`print` or `println`. It places a non-owning access wrapper on the stack. Field
+reads preserve that wrapper without retaining or releasing the object receiver,
+and the observational built-in unwraps it immediately before formatting. The
+wrapper cannot enter persistent storage through this lowering, while ordinary
+reads continue to use `LOAD_VAR` and materialise an additional occurrence. A
+direct variable-to-variable assignment uses `LOAD_VAR_MATERIALIZE` with both
+source and destination names. Literal construction uses the same instruction
+with aggregate context for list and tuple elements, record fields, and dictionary
+entries. Known invalid storage is rejected by the analyser; generic or otherwise
+uncertain storage retains this instruction as a runtime backstop, and any
+`DuplicationFault` identifies the materialisation destination. Closure creation
+also supplies capture context when retaining lexical locals, so an indirect
+capture failure names the captured variable.
+Plain
 immutable scalar values and containers already classified as ownership-trivial
 take a direct stack path because they cannot own runtime resources. Closures,
 objects, tagged payloads, lazy values, and containers with lifecycle-bearing
@@ -721,6 +735,21 @@ Field opcode payloads retain whether the source used ordinary `.` or optional-sa
 and vectorise over list-shaped receivers. Safe writes reconstruct the wrapped
 payload and return `None` unchanged when the write is cancelled. Deep or mixed
 chains are just consecutive field operations; each operation keeps its own flag.
+
+### Function occurrence effects
+
+`FunctionCode.occurrence_effects` records the input provenance of each selected
+return. An integer identifies the parameter whose occurrence is forwarded;
+`None` means the output is fresh or its provenance cannot yet be proven. The
+compiler currently proves the exact one-parameter, one-result forwarding form
+and lowers its terminal parameter read to `LOAD_VAR_FORWARD`. That opcode removes
+the parameter from the completed frame's locals and places the same occurrence
+on the result stack, so frame cleanup cannot release it or force a duplicate.
+Generic identity functions therefore preserve unduplicatable values without a
+special type rule. Other bodies remain conservative and continue through the
+ordinary runtime duplication boundaries when they store, capture, or multiply
+values. Occurrence effects are serialized as part of the bytecode function
+contract and are available to prepared-call optimization.
 
 ### Calls
 
@@ -896,7 +925,7 @@ wrapper whose payload has already been destroyed.
 ### Retain and release
 
 Loading, copying, capturing, returning, consuming, and dropping values call
-`_retain_value(...)` or `_release_value(...)` as appropriate.
+`_retain_runtime_reference(...)` or `_release_value(...)` as appropriate.
 
 Containers recursively retain or release contained values. Tagged values defer
 to their payload. Lazy results retain their input owners so deferred iteration
@@ -919,6 +948,45 @@ return immediately when the analysed metadata is empty. These are performance
 fast paths, not changes to ownership or value semantics.
 
 ### Object duplication, destruction, and must-call rules
+
+Language-level duplication and runtime reference maintenance use separate VM
+entry points. Static assignment, explicit `dup`, and stack-transformation checks
+use one `_duplication_requirement(...)` query, which returns a definite
+rejection, definite permission, or the need for a runtime check. Unions require
+every alternative to permit duplication; any known noncopyable alternative makes
+the union noncopyable until source code narrows it with a cast or pattern match.
+Intersections are also rejected when any constituent is known to be noncopyable.
+Runtime fallback is reserved for unresolved type variables or other genuinely
+unknown evidence, not known mixed unions. Stack shuffles count additional occurrences per
+labelled input: `copy` includes its preserved prestack occurrence, while `move`
+counts only its requested poststack outputs. Explicit `dup` lowers to the same
+checked `copy` stack transformation used by the runtime, avoiding a second
+object-friendly overload decision after analysis.
+
+`_duplicate_occurrence(...)` first validates the complete value
+without changing any reference counts, then delegates to `_retain_runtime_reference(...)`.
+The latter only maintains runtime references and must not be called by an
+operation that establishes an independently usable language occurrence. This
+keeps a failed recursive duplication atomic and prevents internal reference
+counts from defining the language's duplication semantics. Explicit `dup`,
+`copy` outputs, multiplicity-increasing `move` outputs, variable loads, captures,
+and other existing occurrence-producing paths use `_duplicate_occurrence(...)`.
+
+The duplication implementation maintains these invariants:
+
+1. `_retain_runtime_reference(...)` only maintains VM references and never
+   decides whether a language occurrence may be created.
+2. `_duplicate_occurrence(...)` preflights the complete nested value before any
+   reference count changes, so failure cannot partially retain an aggregate.
+3. `LOAD_VAR_BORROW` never enters persistent storage.
+4. `LOAD_VAR_MATERIALIZE` always carries an operation, source, and destination;
+   obsolete unstructured payloads are not accepted by the current bytecode.
+5. `LOAD_VAR_FORWARD` removes its source parameter from frame locals before the
+   result escapes the frame.
+6. Serialized occurrence effects must match the declared return count and may
+   reference only valid parameter indexes.
+7. Stack-shuffle duplication is counted per labelled input and tested across
+   zero through multiple requested outputs for both `copy` and `move`.
 
 `ObjectRuntimeType` may describe:
 
@@ -1546,7 +1614,7 @@ A productive first pass is:
 6. `_Frame.source_args`, `_call_resolved_element`, and `_call_function`.
 7. vectorisation helpers around `_call_vectorized_resolved_builtin` and
    `_vectorize_*`.
-8. ownership helpers `_retain_value`, `_release_value`, and object cleanup.
+8. ownership helpers `_retain_runtime_reference`, `_release_value`, and object cleanup.
 9. `runtime/serialization.py` writer and reader in parallel.
 10. focused cases in `tests/test_optimizer.py`, `tests/test_runtime.py`, and
     `tests/test_bytecode_serialization.py`.

@@ -145,12 +145,12 @@ class TaskRuntimeTests(unittest.TestCase):
 
     def test_task_scope_releases_child_but_visible_alias_keeps_outcome(self):
         from valiance.runtime.runtime_values import ListValue, RuntimeNumber
-        from valiance.runtime.vm import VirtualMachine, _release_value, _retain_value
+        from valiance.runtime.vm import VirtualMachine, _release_value, _retain_runtime_reference
 
         vm = VirtualMachine(output=lambda _value: None)
         output = ListValue([RuntimeNumber(2)])
         task = vm.scheduler.root_scope.spawn(lambda: (output,))
-        alias = _retain_value(task)
+        alias = _retain_runtime_reference(task)
         vm.scheduler.root_scope.close()
         _release_value(task, vm)
         self.assertFalse(alias.control.destroyed)
@@ -225,11 +225,11 @@ class ChannelRuntimeTests(unittest.TestCase):
 
     def test_channel_alias_preserves_entity_until_final_release(self):
         from valiance.runtime.runtime_values import ListValue, RuntimeNumber
-        from valiance.runtime.vm import VirtualMachine, _release_value, _retain_value
+        from valiance.runtime.vm import VirtualMachine, _release_value, _retain_runtime_reference
 
         vm = VirtualMachine(output=lambda _value: None)
         channel = Channel[ListValue](1)
-        alias = _retain_value(channel)
+        alias = _retain_runtime_reference(channel)
         value = ListValue([RuntimeNumber(5)])
         channel.try_send(value)
         _release_value(channel, vm)

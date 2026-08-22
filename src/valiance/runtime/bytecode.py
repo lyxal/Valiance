@@ -15,6 +15,8 @@ class OpCode(Enum):
 
     PUSH_CONST = "push_const"
     LOAD_VAR = "load_var"
+    LOAD_VAR_FORWARD = "load_var_forward"
+    LOAD_VAR_MATERIALIZE = "load_var_materialize"
     LOAD_VAR_BORROW = "load_var_borrow"
     STORE_VAR = "store_var"
     LOAD_ELEMENT = "load_element"
@@ -196,6 +198,7 @@ class FunctionCode:
     multi: bool = False
     dispatch_types: tuple[str | None, ...] = ()
     return_count: int | None = None
+    occurrence_effects: tuple[int | None, ...] = ()
     return_tags: tuple[tuple[DataTag, ...], ...] = ()
     return_tag_specs: tuple[object, ...] = ()
     return_collection_ranks: tuple[int | None, ...] = ()

@@ -253,7 +253,7 @@ class BytecodeSerializationTests(unittest.TestCase):
         data = dumps(program)
         decoded = loads(data)
 
-        self.assertTrue(data.startswith(b"VLNCBC\x20"))
+        self.assertTrue(data.startswith(b"VLNCBC\x22"))
         self.assertNotIn(b"push_const", data)
         self.assertNotIn(b"valiance-bytecode", data)
         self.assertEqual(decoded, program)
@@ -278,10 +278,43 @@ class BytecodeSerializationTests(unittest.TestCase):
                 (Instruction(OpCode.RETURN),),
                 name="one",
                 return_count=1,
+                occurrence_effects=(None,),
             )
         )
 
         self.assertEqual(loads(dumps(program)), program)
+
+    def test_rejects_occurrence_effects_with_wrong_return_arity(self):
+        program = Program(
+            FunctionCode(
+                (Instruction(OpCode.RETURN),),
+                params=("value",),
+                return_count=1,
+                occurrence_effects=(),
+            )
+        )
+
+        with self.assertRaisesRegex(
+            BytecodeFormatError,
+            "occurrence effects must match",
+        ):
+            dumps(program)
+
+    def test_rejects_occurrence_effects_with_invalid_parameter_index(self):
+        program = Program(
+            FunctionCode(
+                (Instruction(OpCode.RETURN),),
+                params=("value",),
+                return_count=1,
+                occurrence_effects=(1,),
+            )
+        )
+
+        with self.assertRaisesRegex(
+            BytecodeFormatError,
+            "invalid parameter",
+        ):
+            dumps(program)
 
     def test_serializes_nested_function_code(self):
         inner = FunctionCode(

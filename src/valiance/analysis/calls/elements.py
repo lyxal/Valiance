@@ -119,6 +119,11 @@ class _ElementCalls:
     ) -> BranchSet:
         """Analyse a `ElementNode` node and return the surviving branches."""
         overloads = self.env.overloads_for(node.name)
+        if node.name == Symbol("dup") and branch.stack:
+            decision = _utils._duplication_requirement(branch.stack[-1], self.env)
+            if decision.reason is not None:
+                self._diagnose(decision.reason, node)
+                return BranchSet()
         if not overloads:
             self._diagnose(self._unknown_element_message(node, branch), node)
             return BranchSet()

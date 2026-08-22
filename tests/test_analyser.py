@@ -17,6 +17,10 @@ from valiance.analysis import (
     default_environment,
 )
 from valiance.analysis.analyser import _branch_argument_substitution
+from valiance.analysis.support.analysis_utils import (
+    _duplication_requirement,
+    _stack_duplications,
+)
 from valiance.analysis.contracts.annotations import AnnotationSpec, register_annotation
 from valiance.elements.builtins import (
     BUILTIN_ELEMENTS,
@@ -156,6 +160,48 @@ class AnalyserTests(unittest.TestCase):
             TypeStack((String, Int, Bool, Bool, Number)),
         )
 
+    def test_dup_rejects_object_with_error_annotated_dup(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object WriteFile =>
+  @error("Writeable files cannot be duplicated")
+  define dup => end
+end
+
+WriteFile | dup
+"""))
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("Writeable files cannot be duplicated", analyser.diagnostics[0])
+
+    def test_stack_shuffle_copy_without_output_does_not_duplicate(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object WriteFile =>
+  @error("Writeable files cannot be duplicated")
+  define dup => end
+end
+
+WriteFile
+copy(file ->)
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_stack_shuffle_move_with_one_output_does_not_duplicate(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object WriteFile =>
+  @error("Writeable files cannot be duplicated")
+  define dup => end
+end
+
+WriteFile
+move(file -> file)
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+
     def test_stack_shuffle_copy_rejects_uncopyable_object(self):
         analyser = Analyser()
         analyser.analyse(parse("""
@@ -169,7 +215,14 @@ copy(file -> file)
 """))
 
         self.assertEqual(len(analyser.diagnostics), 1)
-        self.assertIn("cannot copy value of type WriteFile", analyser.diagnostics[0])
+        self.assertIn(
+            "cannot create 1 additional occurrence of WriteFile",
+            analyser.diagnostics[0],
+        )
+        self.assertIn(
+            "copy preserves the original occurrence of 'file'",
+            analyser.diagnostics[0],
+        )
         self.assertIn(
             "Writeable files cannot be duplicated",
             analyser.diagnostics[0],
@@ -188,11 +241,173 @@ move(file -> file, file)
 """))
 
         self.assertEqual(len(analyser.diagnostics), 1)
-        self.assertIn("cannot copy value of type WriteFile", analyser.diagnostics[0])
+        self.assertIn(
+            "cannot create 1 additional occurrence of WriteFile",
+            analyser.diagnostics[0],
+        )
+        self.assertIn(
+            "move receives one occurrence of 'file', but its poststack requests 2",
+            analyser.diagnostics[0],
+        )
         self.assertIn(
             "Writeable files cannot be duplicated",
             analyser.diagnostics[0],
         )
+
+    def test_heterogeneous_list_literal_index_can_be_duplicated(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse('[10, "anc"] $[0] | dup'))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertEqual(typed[-2].typ, U(Int, String))
+
+    def test_mixed_union_requires_explicit_narrowing_before_duplication(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object Locked =>
+  @error("Locked cannot be duplicated")
+  define dup => end
+end
+
+define duplicate(value: Locked | Int) => $value | dup end
+"""))
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("Locked cannot be duplicated", analyser.diagnostics[0])
+
+    def test_fully_noncopyable_union_is_rejected_statically(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object Left =>
+  @error("Left cannot be duplicated")
+  define dup => end
+end
+object Right =>
+  @error("Right cannot be duplicated")
+  define dup => end
+end
+
+define duplicate(value: Left | Right) => $value | dup end
+"""))
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("cannot be duplicated", analyser.diagnostics[0])
+
+    def test_intersection_is_noncopyable_when_any_constraint_is_noncopyable(self):
+        env = Environment()
+        locked = Symbol("Locked")
+        open_type = Symbol("Open")
+        env.define_overload(
+            Symbol("Locked::dup"),
+            Overload((N(locked),), (), annotation_error="Locked cannot be duplicated"),
+        )
+
+        decision = _duplication_requirement(T.I(N(locked), N(open_type)), env)
+
+        self.assertEqual(decision.reason, "Locked cannot be duplicated")
+        self.assertFalse(decision.runtime_check)
+
+    def test_mixed_union_is_statically_forbidden(self):
+        env = Environment()
+        locked = Symbol("Locked")
+        env.define_overload(
+            Symbol("Locked::dup"),
+            Overload((N(locked),), (), annotation_error="Locked cannot be duplicated"),
+        )
+
+        decision = _duplication_requirement(U(N(locked), Int), env)
+
+        self.assertEqual(decision.reason, "Locked cannot be duplicated")
+        self.assertFalse(decision.runtime_check)
+
+    def test_stack_shuffle_additional_occurrence_counts_follow_mode_semantics(self):
+        label = Symbol("value")
+        for mode in (Symbol("copy"), Symbol("move")):
+            for output_count in range(6):
+                with self.subTest(mode=mode.text, output_count=output_count):
+                    node = StackShuffleNode(
+                        mode,
+                        (label,),
+                        tuple(label for _ in range(output_count)),
+                    )
+                    duplications = _stack_duplications(
+                        node,
+                        (N(Symbol("Resource")),),
+                        0,
+                    )
+                    expected = (
+                        output_count
+                        if mode == Symbol("copy")
+                        else max(output_count - 1, 0)
+                    )
+                    actual = 0 if not duplications else duplications[0].count
+                    self.assertEqual(actual, expected)
+
+    def test_stack_shuffle_reports_every_requested_additional_occurrence(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object WriteFile =>
+  @error("Writeable files cannot be duplicated")
+  define dup => end
+end
+
+WriteFile
+move(file -> file, file, file)
+"""))
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "cannot create 2 additional occurrences of WriteFile",
+            analyser.diagnostics[0],
+        )
+        self.assertIn("poststack requests 3", analyser.diagnostics[0])
+
+    def test_assignment_rejects_storing_an_additional_unduplicatable_occurrence(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object WriteFile =>
+  @error("Writeable files cannot be duplicated")
+  define dup => end
+end
+
+$source = WriteFile
+$destination = $source
+"""))
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "cannot store the value of '$source' in '$destination'",
+            analyser.diagnostics[0],
+        )
+        self.assertIn("Writeable files cannot be duplicated", analyser.diagnostics[0])
+
+    def test_literals_reject_storing_unduplicatable_variables(self):
+        declarations = """
+object Resource =>
+  @error("Resource cannot be duplicated")
+  define dup => end
+end
+$resource = Resource
+"""
+        cases = (
+            ("$stored = [$resource]", "a list element"),
+            ("$stored = {$resource}", "a tuple element"),
+            ("$stored = record{value => $resource}", "a record field"),
+            ('$stored = dict{"value" => $resource}', "a dictionary entry"),
+        )
+        for expression, destination in cases:
+            with self.subTest(destination=destination):
+                analyser = Analyser()
+                analyser.analyse(parse(declarations + expression))
+                self.assertEqual(len(analyser.diagnostics), 1)
+                self.assertIn(
+                    f"cannot store the value of '$resource' in {destination}",
+                    analyser.diagnostics[0],
+                )
+                self.assertIn(
+                    "Resource cannot be duplicated",
+                    analyser.diagnostics[0],
+                )
 
     def test_default_environment_includes_builtin_plus(self):
         typed = analyse(

@@ -1058,7 +1058,9 @@ def _exact_straight_line_depth(
     if instruction.op in {
         OpCode.PUSH_CONST,
         OpCode.LOAD_VAR,
+        OpCode.LOAD_VAR_FORWARD,
         OpCode.LOAD_VAR_BORROW,
+        OpCode.LOAD_VAR_MATERIALIZE,
         OpCode.LOAD_ELEMENT,
         OpCode.MAKE_FUNCTION,
         OpCode.MAKE_OBJECT_CONSTRUCTOR,

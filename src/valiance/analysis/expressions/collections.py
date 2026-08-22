@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import replace
+from dataclasses import fields, is_dataclass, replace
 from typing import Callable, cast
 
 import valiance.analysis.contracts.annotations as annotation_hooks
@@ -122,6 +122,44 @@ def _string_interpolation_node(
         )
     )
 
+def _direct_variable_expressions(value: object) -> Iterable[GetVariableNode]:
+    """Yield direct variable expressions stored by one literal."""
+    if isinstance(value, GetVariableNode):
+        yield value
+        return
+    if isinstance(value, tuple):
+        for item in value:
+            yield from _direct_variable_expressions(item)
+        return
+    if is_dataclass(value) and not isinstance(value, type):
+        for item in fields(value):
+            yield from _direct_variable_expressions(getattr(value, item.name))
+
+
+def _reject_noncopyable_literal_storage(
+    self: _core.Analyser,
+    node: ASTNode,
+    branch: _core.AnalysisBranch,
+    description: str,
+) -> bool:
+    """Reject definite variable duplication into persistent literal storage."""
+    for source in _direct_variable_expressions(node):
+        typ = branch.variables.read(source.name)
+        if typ is None:
+            continue
+        reason = _utils._duplication_requirement(typ, self.env).reason
+        if reason is None:
+            continue
+        self._diagnose(
+            f"cannot store the value of '${source.name}' in {description}\n\n"
+            f"the variable remains available, so the literal would create an "
+            f"additional occurrence of {T.show(typ)}.\n\n{reason}",
+            source,
+        )
+        return True
+    return False
+
+
 @_core.register(ListLiteralNode)
 def _list_literal_node(
     self: _core.Analyser,
@@ -129,6 +167,8 @@ def _list_literal_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse a `ListLiteralNode` node and return the surviving branches."""
+    if _reject_noncopyable_literal_storage(self, node, branch, "a list element"):
+        return _core.BranchSet()
     if not node.items:
         if node.typ is not None:
             typ = T.normalize(node.typ)
@@ -203,6 +243,8 @@ def _tuple_literal_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse a `TupleLiteralNode` node and return the surviving branches."""
+    if _reject_noncopyable_literal_storage(self, node, branch, "a tuple element"):
+        return _core.BranchSet()
     item_options = self._literal_item_options(branch, node.items, node)
     if item_options is None:
         return _core.BranchSet()
@@ -259,6 +301,8 @@ def _record_literal_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse each record field independently on an empty stack."""
+    if _reject_noncopyable_literal_storage(self, node, branch, "a record field"):
+        return _core.BranchSet()
     expressions = tuple(expr for _, expr in node.fields)
     item_options = _isolated_literal_item_options(self, branch, expressions, node)
     if item_options is None:
@@ -279,6 +323,8 @@ def _dict_literal_node(
     branch: _core.AnalysisBranch,
 ) -> _core.BranchSet:
     """Analyse every dictionary key and value independently on an empty stack."""
+    if _reject_noncopyable_literal_storage(self, node, branch, "a dictionary entry"):
+        return _core.BranchSet()
     expressions = tuple(expr for entry in node.entries for expr in entry)
     item_options = _isolated_literal_item_options(self, branch, expressions, node)
     if item_options is None:

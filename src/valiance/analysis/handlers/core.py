@@ -639,16 +639,13 @@ def _stack_shuffle_node(
         len(branch.stack),
         len(node.prestack),
     )
-    copy_errors = tuple(
-        _utils._copy_diagnostic(typ, self.env)
-        for typ in _utils._copied_stack_shuffle_types(
-            node,
-            args,
-            labelled,
-            stack_arg_start,
+    duplications = _utils._stack_duplications(node, args, stack_arg_start)
+    for duplication in duplications:
+        error = _utils._stack_duplication_diagnostic(
+            node.mode,
+            duplication,
+            self.env,
         )
-    )
-    for error in copy_errors:
         if error is not None:
             self._diagnose(error, node)
             return _core.BranchSet()
