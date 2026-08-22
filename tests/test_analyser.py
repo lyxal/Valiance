@@ -1093,9 +1093,326 @@ end
 
         self.assertEqual(
             analyser.diagnostics,
-            ["4:3: constructor 'Counter' does not initialize field(s): value"],
+            [
+                "4:21: constructor member 'value' may be read before initialization",
+                "4:3: constructor 'Counter' does not initialize field(s): value",
+            ],
         )
         self.assertEqual(analyser.env.overloads_for(Symbol("Counter")), ())
+
+    def test_panicking_constructor_branch_does_not_require_initialization(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+object Rectangle =>
+  $width: Number
+  define Rectangle(width: Number) =>
+    if ($width > 0) => $self.width = $width
+    else => panic ValueFault("Width can't be negative")
+  end
+end
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertTrue(analyser.env.overloads_for(Symbol("Rectangle")))
+
+    def test_panicking_branch_does_not_weaken_later_member_read(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+object Rectangle =>
+  $width: Number
+  $area: Number
+  define Rectangle(width: Number) =>
+    if ($width > 0) => $self.width = $width
+    else => panic ValueFault("Width can't be negative")
+    $self.area = $self.width
+  end
+end
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_constructor_that_always_panics_needs_no_initialized_members(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+object Rectangle =>
+  $width: Number
+  define Rectangle(width: Number) =>
+    panic ValueFault("Rectangle unavailable")
+  end
+end
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_constructor_handler_must_terminate_with_panic(self):
+        cases = (
+            (
+                'println "failed"',
+                "constructor handler may complete normally",
+            ),
+            (
+                'return',
+                "cannot use 'return' in a constructor handler",
+            ),
+        )
+        for handler_body, expected in cases:
+            with self.subTest(handler_body=handler_body):
+                analyser = Analyser()
+                analyser.analyse(parse(f"""
+object Rectangle =>
+  $width: Number
+  define Rectangle(width: Number) =>
+    try =>
+      if ($width < 0) => panic ValueFault("bad")
+      $self.width = $width
+    handle ValueFault =>
+      {handler_body}
+    end
+  end
+end
+"""))
+                self.assertTrue(
+                    any(expected in message for message in analyser.diagnostics),
+                    analyser.diagnostics,
+                )
+
+    def test_constructor_handler_all_paths_must_terminate(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object Rectangle =>
+  $width: Number
+  define Rectangle(width: Number) =>
+    try =>
+      if ($width < 0) => panic ValueFault("bad")
+      $self.width = $width
+    handle ValueFault =>
+      if ($width < -10) => panic ValueFault("very bad")
+    end
+  end
+end
+"""))
+        self.assertTrue(
+            any(
+                "constructor handler may complete normally" in message
+                for message in analyser.diagnostics
+            ),
+            analyser.diagnostics,
+        )
+
+    def test_constructor_handler_discarded_self_write_warns(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object Rectangle =>
+  $width: Number
+  define Rectangle(width: Number) =>
+    try =>
+      if ($width < 0) => panic ValueFault("bad")
+      $self.width = $width
+    handle ValueFault =>
+      $self.width = 0
+      panic ValueFault("construction failed")
+    end
+  end
+end
+"""))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertTrue(
+            any(
+                "assignment to '$self.width' has no effect in this constructor handler" in warning
+                for warning in analyser.warnings
+            ),
+            analyser.warnings,
+        )
+
+    def test_constructor_handler_with_terminating_branches_is_valid(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object Rectangle =>
+  $width: Number
+  define Rectangle(width: Number) =>
+    try =>
+      if ($width < 0) => panic ValueFault("bad")
+      $self.width = $width
+    handle ValueFault =>
+      if ($width < -10) => panic ValueFault("very bad")
+      else => panic ValueFault("bad width")
+    end
+  end
+end
+"""))
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_try_continuation_uses_only_normal_try_body_state(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+object Rectangle =>
+  $width: Number
+  $copy: Number
+  define Rectangle(width: Number) =>
+    try =>
+      if ($width < 0) => panic ValueFault("Width can't be negative")
+      $self.width = $width
+    handle ValueFault =>
+      panic ValueFault("construction failed")
+    end
+    $self.copy = $self.width
+  end
+end
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_try_handler_initialization_does_not_reach_following_code(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+object Rectangle =>
+  $width: Number
+  $copy: Number
+  define Rectangle(width: Number) =>
+    try =>
+      if ($width < 0) => panic ValueFault("Width can't be negative")
+    handle ValueFault =>
+      $self.width = 0
+      panic ValueFault("construction failed")
+    end
+    $self.copy = $self.width
+  end
+end
+"""))
+
+        self.assertTrue(
+            any(
+                "constructor member 'width' may be read before initialization"
+                in message
+                for message in analyser.diagnostics
+            ),
+            analyser.diagnostics,
+        )
+        self.assertTrue(
+            any(
+                "constructor 'Rectangle' does not initialize field(s): width"
+                in message
+                for message in analyser.diagnostics
+            ),
+            analyser.diagnostics,
+        )
+
+    def test_constructor_members_cannot_be_read_before_initialization(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+object Rectangle =>
+  $width: Number
+  $height: Number
+  $area: Number
+  define Rectangle(width: Number, height: Number) =>
+    if ($width > 0) => $self.width = $width
+    if ($height > 0) => $self.height = $height
+    $self.area = $self.width * $self.height
+  end
+end
+"""))
+
+        self.assertTrue(
+            any(
+                "constructor member 'width' may be read before initialization"
+                in message
+                for message in analyser.diagnostics
+            ),
+            analyser.diagnostics,
+        )
+        self.assertTrue(
+            any(
+                "constructor member 'height' may be read before initialization"
+                in message
+                for message in analyser.diagnostics
+            ),
+            analyser.diagnostics,
+        )
+        self.assertTrue(
+            any(
+                "constructor 'Rectangle' does not initialize field(s): width, height"
+                in message
+                for message in analyser.diagnostics
+            ),
+            analyser.diagnostics,
+        )
+
+    def test_constructor_member_read_after_definite_initialization_is_valid(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+object Rectangle =>
+  $width: Number
+  $height: Number
+  $area: Number
+  define Rectangle(width: Number, height: Number) =>
+    $self.width = $width
+    $self.height = $height
+    $self.area = $self.width * $self.height
+  end
+end
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_constructor_receiver_cannot_escape(self):
+        cases = (
+            ("$self consume", "constructor receiver cannot be passed to an element"),
+            ("consume($self)", "constructor receiver cannot be passed to an element"),
+            ("[$self]", "constructor receiver cannot be stored in an aggregate"),
+            (
+                "fn () => $self end",
+                "constructor receiver cannot be captured by a closure",
+            ),
+            (
+                "$alias = $self",
+                "constructor receiver cannot be assigned to another binding",
+            ),
+            (
+                "return $self",
+                "constructor receiver cannot be returned explicitly",
+            ),
+        )
+        for use, expected in cases:
+            with self.subTest(use=use):
+                analyser = Analyser()
+                analyser.analyse(parse(f"""
+define consume(value: Resource) => end
+object Resource =>
+  $name: String
+  define Resource(name: String) =>
+    $self.name = $name
+    {use}
+  end
+end
+"""))
+                self.assertTrue(
+                    any(expected in message for message in analyser.diagnostics),
+                    analyser.diagnostics,
+                )
+
+    def test_constructor_receiver_allows_member_initialization_and_reads(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object Label =>
+  $source: String
+  $copy: String
+  define Label(source: String) =>
+    $self.source = $source
+    $self.copy = $self.source
+  end
+end
+"""))
+        self.assertFalse(
+            any("constructor receiver cannot" in message for message in analyser.diagnostics),
+            analyser.diagnostics,
+        )
 
     def test_explicit_constructor_arity_mismatch_is_a_diagnostic(self):
         analyser = Analyser(Environment())

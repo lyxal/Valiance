@@ -75,7 +75,10 @@ from valiance.asts.nodes import GetVariableNode, ObjectFieldNode
 from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
 from valiance.asts.object_constructors import (
     constructor_definitions,
-    definitely_initialized_fields,
+    constructor_handler_violations,
+    constructor_initialization_flow,
+    constructor_self_escape_violations,
+    constructor_uninitialized_read_violations,
     prepare_constructor_body,
 )
 from valiance.vtypes.symbols import Symbol
@@ -453,9 +456,34 @@ class _ObjectDeclarations:
             return branch
 
         body = prepare_constructor_body(definition.function.body)
-        initialized = definitely_initialized_fields(body, defaults)
-        missing = tuple(
-            field.name for field in owner_node.fields if field.name not in initialized
+        handler_errors, handler_warnings = constructor_handler_violations(owner, body)
+        for message, warning_node in handler_warnings:
+            self._warn(message, warning_node)
+        if handler_errors:
+            for message, violation_node in handler_errors:
+                self._diagnose(message, violation_node)
+            return branch
+
+        escape_violations = constructor_self_escape_violations(body)
+        if escape_violations:
+            for message, violation_node in escape_violations:
+                self._diagnose(message, violation_node)
+            return branch
+        read_violations = constructor_uninitialized_read_violations(body, defaults)
+        for message, violation_node in read_violations:
+            self._diagnose(message, violation_node)
+
+        initialized, constructor_continues = constructor_initialization_flow(
+            body, defaults
+        )
+        missing = (
+            tuple(
+                field.name
+                for field in owner_node.fields
+                if field.name not in initialized
+            )
+            if constructor_continues
+            else ()
         )
         if missing:
             self._diagnose(

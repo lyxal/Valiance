@@ -1947,6 +1947,9 @@ end
 ```
 
 - However, that leads to noise like `$self.name = $name`.
+- `$self` is a construction receiver until the constructor completes. It may be used to initialize members and to read members that are definitely initialized on the current path, but the receiver itself cannot escape: it cannot be passed to an element or function, copied to another binding, captured by a closure, stored in an aggregate or member, indexed, or returned explicitly. Reaching the end of a valid constructor implicitly produces the completed `$self`.
+- Constructor initialization is required only on paths that complete normally. A branch ending in `panic` does not continue to later member reads or successful construction, so it is excluded when definite initialization states are joined.
+- A `handle` reached inside a constructor cannot complete construction because finishing the handler returns from the containing function. Every path through a constructor handler must therefore terminate with `panic`; normal handler completion and explicit `return` are compile errors. Assigning to a `$self` member in such a handler produces a warning because the reconstructed receiver is discarded. Only normal completion of the `try` body contributes initialization state to code after the `try/handle`.
 - If no constructors are defined, then a default constructor will be created. This default constructor will have one parameter per field, in the order they are defined.
 
 ```

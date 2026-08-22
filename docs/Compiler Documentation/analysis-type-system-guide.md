@@ -568,7 +568,24 @@ while analysing its body. Constructor field writes are tracked across control
 flow, and every non-default field must be definitely initialized on every
 successful path before the overload is registered. Private fields participate
 in this initialization check but never add implicit public parameters to an
-explicit constructor.
+explicit constructor. The prepared constructor body is also checked with a
+source-stack escape pass: the construction receiver may flow through member
+reads and the field-write/rebind sequence, but it may not reach calls, aliases,
+aggregates, closures, indexing, member values, or explicit returns. This keeps
+partially constructed receivers local to the constructor even though ordinary
+Valiance values are immutable and there is no global mutable state. A second
+branch-sensitive pass diagnoses a direct `$self.member` read unless that member
+is definitely initialized on every path reaching the read. Constructor flow also
+records whether each path can continue normally. A path ending in the stack-style
+`panic` element is excluded from branch joins and from successful-completion
+initialization requirements. For `try/handle`, only normal completion of the try
+body reaches following code. A reached handler returns immediately from the
+containing function, so handler initialization state is checked locally but is
+never merged into the post-try state.
+Constructor handlers are additionally required to terminate with `panic` on
+every path. Explicit returns and normal handler completion are diagnosed as
+errors. Prepared field-write/rebind sequences inside handlers produce warnings
+because their reconstructed receiver cannot become the constructor result.
 
 Surface generic parameter lists accept bounds. Unlabelled `T: U` and labelled
 `T: any U` are upper bounds: overload application first solves `T` from the
