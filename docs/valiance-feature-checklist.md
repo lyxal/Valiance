@@ -675,6 +675,7 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Supply or transform the implicit object receiver as specified.
 - [x] Implement `@@tupled`.
 - [ ] Generate tuple-taking forms as specified.
+- [x] Implement `@nonduplicable`.
 - [x] Implement `@error`.
 - [x] Emit compile errors using annotation-provided diagnostics.
 - [x] Implement `@warn`.

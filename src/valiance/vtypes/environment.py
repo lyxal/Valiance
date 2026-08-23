@@ -97,6 +97,7 @@ class ObjectDefinition:
     generic_variance: tuple[Variance, ...] = ()
     attributes: tuple[ObjectAttribute, ...] = ()
     task_isolated: bool = False
+    duplication_error: str | None = None
     destructor_effects: frozenset[ElementTag] = frozenset()
     mustcall_mode: str | None = None
     mustcall_methods: tuple[str, ...] = ()
@@ -313,6 +314,7 @@ class Environment:
         generics: tuple[Symbol, ...] = (),
         generic_variance: tuple[Variance, ...] = (),
         task_isolated: bool = False,
+        duplication_error: str | None = None,
         mustcall_mode: str | None = None,
         mustcall_methods: tuple[str, ...] = (),
     ) -> None:
@@ -331,6 +333,7 @@ class Environment:
             generic_variance=variances,
             attributes=attributes,
             task_isolated=task_isolated,
+            duplication_error=duplication_error,
             mustcall_mode=mustcall_mode,
             mustcall_methods=mustcall_methods,
         )

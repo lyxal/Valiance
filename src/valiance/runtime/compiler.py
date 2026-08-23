@@ -2098,26 +2098,24 @@ def _object_runtime_metadata(
     destructor_name = None
     dup_name = None
     dup_error = None
+    for annotation in annotations:
+        if (
+            isinstance(annotation, AnnotationNode)
+            and annotation.name.text == "nonduplicable"
+        ):
+            dup_error = next(
+                (
+                    argument.value
+                    for argument in annotation.args
+                    if isinstance(argument, StringLiteralNode)
+                ),
+                f"{name} cannot be duplicated",
+            )
+            break
     for definition in definitions:
         definition_name = definition.name.text
         if definition_name == f"~{name.rsplit('.', 1)[-1]}":
             destructor_name = f"{name}::{definition_name}"
-        elif definition_name == "dup":
-            dup_name = f"{name}::dup"
-            for annotation in definition.annotations:
-                if (
-                    isinstance(annotation, AnnotationNode)
-                    and annotation.name.text == "error"
-                ):
-                    dup_error = next(
-                        (
-                            arg.value
-                            for arg in annotation.args
-                            if isinstance(arg, StringLiteralNode)
-                        ),
-                        None,
-                    )
-                    break
 
     mustcall_mode = None
     mustcall_methods: tuple[str, ...] = ()

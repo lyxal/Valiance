@@ -159,6 +159,21 @@ def annotation_error_message(annotations: tuple[ASTNode, ...]) -> str | None:
     return None
 
 
+def nonduplicable_message(
+    annotations: tuple[ASTNode, ...],
+    type_name: Symbol | str,
+) -> str | None:
+    """Return the duplication diagnostic declared for an object type."""
+    for annotation in annotation_nodes(annotations):
+        if annotation.name.text != "nonduplicable":
+            continue
+        for argument in annotation.args:
+            if isinstance(argument, StringLiteralNode):
+                return argument.value
+        return f"{type_name} cannot be duplicated"
+    return None
+
+
 def annotation_warning_message(annotations: tuple[ASTNode, ...]) -> str | None:
     """Format the message for annotation warning while applying compiler annotations."""
     for annotation in annotation_nodes(annotations):
@@ -324,6 +339,23 @@ def _validate_test_annotation(
             diagnostics.append(
                 f"@{annotation.name.text} cannot annotate a generic define"
             )
+    return tuple(diagnostics)
+
+
+def _validate_nonduplicable(
+    annotation: AnnotationNode,
+    target: str,
+    node: ASTNode,
+) -> tuple[str, ...]:
+    """Validate the object-level duplication policy annotation."""
+    del target, node
+    diagnostics: list[str] = []
+    if annotation.kwargs:
+        diagnostics.append("@nonduplicable does not accept named arguments")
+    if len(annotation.args) > 1 or any(
+        not isinstance(argument, StringLiteralNode) for argument in annotation.args
+    ):
+        diagnostics.append("@nonduplicable accepts at most one string message")
     return tuple(diagnostics)
 
 
@@ -529,6 +561,13 @@ def _install_builtin_annotations() -> None:
             "commutative",
             frozenset({"define"}),
             validate=_validate_commutative,
+        )
+    )
+    register_annotation(
+        AnnotationSpec(
+            "nonduplicable",
+            frozenset({"object"}),
+            validate=_validate_nonduplicable,
         )
     )
     register_annotation(

@@ -1384,6 +1384,8 @@ Implemented annotations:
   body and return type when possible.
 - `@@tupled`: element annotation that wraps all selected element returns into a
   fixed tuple.
+- `@nonduplicable`: stores an optional duplication diagnostic on an object type;
+  all static occurrence-creation checks consult that object metadata.
 - `@error`: stores an annotation-provided compile-time error on the overload;
   using a matching overload reports that message.
 - `@returnAll`: changes omitted-return inference to return every remaining

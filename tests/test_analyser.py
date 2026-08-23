@@ -163,9 +163,8 @@ class AnalyserTests(unittest.TestCase):
     def test_dup_rejects_object_with_error_annotated_dup(self):
         analyser = Analyser()
         analyser.analyse(parse("""
+@nonduplicable("Writeable files cannot be duplicated")
 object WriteFile =>
-  @error("Writeable files cannot be duplicated")
-  define dup => end
 end
 
 WriteFile | dup
@@ -174,12 +173,59 @@ WriteFile | dup
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("Writeable files cannot be duplicated", analyser.diagnostics[0])
 
+    def test_nonduplicable_uses_default_message(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+@nonduplicable
+object Locked =>
+end
+
+Locked | dup
+"""))
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn("Locked cannot be duplicated", analyser.diagnostics[0])
+
+    def test_nonduplicable_rejects_invalid_arguments(self):
+        for annotation, message in (
+            ("@nonduplicable(1)", "accepts at most one string message"),
+            (
+                '@nonduplicable("first", "second")',
+                "accepts at most one string message",
+            ),
+            (
+                '@nonduplicable(message = "no")',
+                "does not accept named arguments",
+            ),
+        ):
+            with self.subTest(annotation=annotation):
+                analyser = Analyser()
+                analyser.analyse(parse(f"{annotation} object Locked => end"))
+                self.assertEqual(len(analyser.diagnostics), 1)
+                self.assertIn(message, analyser.diagnostics[0])
+
+    def test_dup_is_reserved_for_objects(self):
+        analyser = Analyser()
+        analyser.analyse(parse("""
+object Foo =>
+  define dup -> Foo, Foo =>
+    $self
+    $self
+  end
+end
+"""))
+
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "'dup' is a reserved stack operation and cannot be defined",
+            analyser.diagnostics[0],
+        )
+
     def test_stack_shuffle_copy_without_output_does_not_duplicate(self):
         analyser = Analyser()
         analyser.analyse(parse("""
+@nonduplicable("Writeable files cannot be duplicated")
 object WriteFile =>
-  @error("Writeable files cannot be duplicated")
-  define dup => end
 end
 
 WriteFile
@@ -191,9 +237,8 @@ copy(file ->)
     def test_stack_shuffle_move_with_one_output_does_not_duplicate(self):
         analyser = Analyser()
         analyser.analyse(parse("""
+@nonduplicable("Writeable files cannot be duplicated")
 object WriteFile =>
-  @error("Writeable files cannot be duplicated")
-  define dup => end
 end
 
 WriteFile
@@ -205,9 +250,8 @@ move(file -> file)
     def test_stack_shuffle_copy_rejects_uncopyable_object(self):
         analyser = Analyser()
         analyser.analyse(parse("""
+@nonduplicable("Writeable files cannot be duplicated")
 object WriteFile =>
-  @error("Writeable files cannot be duplicated")
-  define dup => end
 end
 
 WriteFile
@@ -231,9 +275,8 @@ copy(file -> file)
     def test_stack_shuffle_move_rejects_uncopyable_repeated_output(self):
         analyser = Analyser()
         analyser.analyse(parse("""
+@nonduplicable("Writeable files cannot be duplicated")
 object WriteFile =>
-  @error("Writeable files cannot be duplicated")
-  define dup => end
 end
 
 WriteFile
@@ -264,9 +307,8 @@ move(file -> file, file)
     def test_mixed_union_requires_explicit_narrowing_before_duplication(self):
         analyser = Analyser()
         analyser.analyse(parse("""
+@nonduplicable("Locked cannot be duplicated")
 object Locked =>
-  @error("Locked cannot be duplicated")
-  define dup => end
 end
 
 define duplicate(value: Locked | Int) => $value | dup end
@@ -278,13 +320,11 @@ define duplicate(value: Locked | Int) => $value | dup end
     def test_fully_noncopyable_union_is_rejected_statically(self):
         analyser = Analyser()
         analyser.analyse(parse("""
+@nonduplicable("Left cannot be duplicated")
 object Left =>
-  @error("Left cannot be duplicated")
-  define dup => end
 end
+@nonduplicable("Right cannot be duplicated")
 object Right =>
-  @error("Right cannot be duplicated")
-  define dup => end
 end
 
 define duplicate(value: Left | Right) => $value | dup end
@@ -297,9 +337,9 @@ define duplicate(value: Left | Right) => $value | dup end
         env = Environment()
         locked = Symbol("Locked")
         open_type = Symbol("Open")
-        env.define_overload(
-            Symbol("Locked::dup"),
-            Overload((N(locked),), (), annotation_error="Locked cannot be duplicated"),
+        env.define_object(
+            locked,
+            duplication_error="Locked cannot be duplicated",
         )
 
         decision = _duplication_requirement(T.I(N(locked), N(open_type)), env)
@@ -310,9 +350,9 @@ define duplicate(value: Left | Right) => $value | dup end
     def test_mixed_union_is_statically_forbidden(self):
         env = Environment()
         locked = Symbol("Locked")
-        env.define_overload(
-            Symbol("Locked::dup"),
-            Overload((N(locked),), (), annotation_error="Locked cannot be duplicated"),
+        env.define_object(
+            locked,
+            duplication_error="Locked cannot be duplicated",
         )
 
         decision = _duplication_requirement(U(N(locked), Int), env)
@@ -346,9 +386,8 @@ define duplicate(value: Left | Right) => $value | dup end
     def test_stack_shuffle_reports_every_requested_additional_occurrence(self):
         analyser = Analyser()
         analyser.analyse(parse("""
+@nonduplicable("Writeable files cannot be duplicated")
 object WriteFile =>
-  @error("Writeable files cannot be duplicated")
-  define dup => end
 end
 
 WriteFile
@@ -365,9 +404,8 @@ move(file -> file, file, file)
     def test_assignment_rejects_storing_an_additional_unduplicatable_occurrence(self):
         analyser = Analyser()
         analyser.analyse(parse("""
+@nonduplicable("Writeable files cannot be duplicated")
 object WriteFile =>
-  @error("Writeable files cannot be duplicated")
-  define dup => end
 end
 
 $source = WriteFile
@@ -383,9 +421,8 @@ $destination = $source
 
     def test_literals_reject_storing_unduplicatable_variables(self):
         declarations = """
+@nonduplicable("Resource cannot be duplicated")
 object Resource =>
-  @error("Resource cannot be duplicated")
-  define dup => end
 end
 $resource = Resource
 """

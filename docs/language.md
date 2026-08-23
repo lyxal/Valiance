@@ -2145,13 +2145,11 @@ the runtime performs the same check at the materialisation site.
   additional occurrence.
 - Storing `$a` in `$b` while `$a` remains available establishes an additional
   persistent occurrence and therefore requires `dup`.
-- If an object must not be duplicated, it can define an object-friendly `dup`
-  element with `@error`:
+- If an object must not be duplicated, annotate it with `@nonduplicable`:
 
 ```valiance
+@nonduplicable("Writable files cannot be duplicated")
 object WriteFile =>
-  @error("Writable files cannot be duplicated")
-  define dup => end
 end
 ```
 
@@ -3082,7 +3080,26 @@ foo #? Pushes 6, 7
         - Because that only takes the last returned item
         - `(foo)` would return `(7)`
 
-## 19.4. `@error`
+## 19.4. `@nonduplicable`
+
+- Only usable on an `object` declaration.
+- Marks values of the object type as unable to gain additional occurrences.
+- Accepts an optional string used for static diagnostics and runtime
+  `DuplicationFault` messages.
+- Without an explicit message, the diagnostic is `<Type> cannot be duplicated`.
+
+```valiance
+@nonduplicable("Writable files cannot be duplicated")
+object WriteFile =>
+  ...
+end
+```
+
+All duplication checks use this policy, including `dup`, materialisation into
+storage and aggregates, closure capture, and stack shuffles that request an
+additional occurrence.
+
+## 19.5. `@error`
 - An invocation convention annotation
 - Only usable on `define`
 - Marks an overload as a compile time error
@@ -3096,7 +3113,7 @@ foo #? Pushes 6, 7
 @error("Cannot get the length of an infinite list.") define[T] #infinite length(:#infinite T+) => ...
 ```
 
-## 19.5. `@warn`
+## 19.6. `@warn`
 - Also an invocation convention annotation
 - Similar to `@error`, but generates a warning instead of an error.
 - Useful for when something isn't an error, but also isn't the best.
@@ -3108,7 +3125,7 @@ foo #? Pushes 6, 7
 @warn("This function is experimental. Use with caution") define foo() => ...
 ```
 
-## 19.6. `@deprecated`
+## 19.7. `@deprecated`
 
 - A more specific `@warn` that doesn't require a full message.
 - Only requires the name of what should be used instead

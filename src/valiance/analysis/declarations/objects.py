@@ -379,6 +379,9 @@ class _ObjectDeclarations:
                 self.env.context,
             ),
             task_isolated=bool(_utils._mustcall_methods(node.annotations)),
+            duplication_error=annotation_hooks.nonduplicable_message(
+                node.annotations, name
+            ),
             mustcall_mode=mustcall_mode,
             mustcall_methods=mustcall_methods,
         )
@@ -586,6 +589,12 @@ class _ObjectDeclarations:
     ) -> AnalysisBranch:
         """Register friendly definition during static analysis."""
         if not self._validate_annotations(definition.annotations, "define", definition):
+            return branch.emit(TypedNode(definition, None))
+        if definition.name == Symbol("dup"):
+            self._diagnose(
+                "'dup' is a reserved stack operation and cannot be defined",
+                definition,
+            )
             return branch.emit(TypedNode(definition, None))
         owner_definition = self.env.lookup_object(owner)
         owner_generics = (

@@ -576,9 +576,8 @@ define #checked(value: Number) -> #boolean Number => $value 2 == end
 
     def test_generic_copy_reports_runtime_stack_duplication_context(self):
         source = """
+@nonduplicable("Foo cannot be duplicated")
 object Foo =>
-  @error("Foo cannot be duplicated")
-  define dup => end
 end
 
 define[T] duplicate(value: T) =>
@@ -610,9 +609,8 @@ Foo | duplicate
 
     def test_generic_move_reports_runtime_stack_duplication_context(self):
         source = """
+@nonduplicable("Foo cannot be duplicated")
 object Foo =>
-  @error("Foo cannot be duplicated")
-  define dup => end
 end
 
 define[T] duplicate(value: T) =>
@@ -667,9 +665,8 @@ define[T] moved(value: T) => move(item -> item, item) end
         )
         for literal, destination in templates:
             source = f"""
+@nonduplicable("Resource cannot be duplicated")
 object Resource =>
-  @error("Resource cannot be duplicated")
-  define dup => end
 end
 
 define[T] store(value: T) =>
@@ -695,9 +692,8 @@ Resource | store
 
     def test_closure_capture_reports_materialisation_context(self):
         source = """
+@nonduplicable("Resource cannot be duplicated")
 object Resource =>
-  @error("Resource cannot be duplicated")
-  define dup => end
 end
 
 define make(resource: Resource) =>
@@ -723,9 +719,8 @@ Resource | make
 
     def test_identity_function_forwards_unduplicatable_parameter_occurrence(self):
         source = """
+@nonduplicable("Resource cannot be duplicated")
 object Resource =>
-  @error("Resource cannot be duplicated")
-  define dup => end
 end
 
 define identity(value: Resource) -> Resource => $value end
@@ -756,9 +751,8 @@ Resource | identity
 
     def test_generic_identity_forwards_runtime_occurrence(self):
         source = """
+@nonduplicable("Resource cannot be duplicated")
 object Resource =>
-  @error("Resource cannot be duplicated")
-  define dup => end
 end
 
 define[T] identity(value: T) -> T => $value end
@@ -4327,10 +4321,9 @@ end
     def test_unduplicatable_variable_can_be_printed(self):
         output = io.StringIO()
         source = """
+@nonduplicable("Foo cannot be duplicated")
 object Foo =>
   public $x: Int
-  @error("Foo cannot be duplicated")
-  define dup => end
 end
 
 $temp = Foo 5
@@ -4345,10 +4338,9 @@ println $temp
     def test_unduplicatable_variable_can_be_printed_without_newline(self):
         output = io.StringIO()
         source = """
+@nonduplicable("Foo cannot be duplicated")
 object Foo =>
   public $x: Int
-  @error("Foo cannot be duplicated")
-  define dup => end
 end
 
 $temp = Foo 5
@@ -4363,10 +4355,9 @@ print $temp.x
     def test_unduplicatable_variable_can_be_observed_sequentially(self):
         output = io.StringIO()
         source = """
+@nonduplicable("Foo cannot be duplicated")
 object Foo =>
   public $x: Int
-  @error("Foo cannot be duplicated")
-  define dup => end
 end
 
 $temp = Foo 5
@@ -4382,10 +4373,9 @@ println $temp
     def test_field_of_unduplicatable_variable_can_be_printed(self):
         output = io.StringIO()
         source = """
+@nonduplicable("Foo cannot be duplicated")
 object Foo =>
   public $x: Int
-  @error("Foo cannot be duplicated")
-  define dup => end
 end
 
 $temp = Foo 5
@@ -4399,10 +4389,9 @@ println $temp.x
 
     def test_unduplicatable_variable_observation_survives_bytecode_round_trip(self):
         source = """
+@nonduplicable("Foo cannot be duplicated")
 object Foo =>
   public $x: Int
-  @error("Foo cannot be duplicated")
-  define dup => end
 end
 
 $temp = Foo 5
@@ -4432,9 +4421,8 @@ println $temp.x
 
     def test_dynamic_assignment_fault_identifies_storage_materialisation(self):
         source = """
+@nonduplicable("Foo cannot be duplicated")
 object Foo =>
-  @error("Foo cannot be duplicated")
-  define dup => end
 end
 
 define[T] store(value: T) =>
@@ -4496,9 +4484,8 @@ end
     def test_unduplicatable_object_raises_duplication_fault(self):
         with self.assertRaises(RuntimeError) as caught:
             execute("""
+@nonduplicable("Writeable files cannot be duplicated")
 object WriteFile =>
-  @error("Writeable files cannot be duplicated")
-  define dup => end
 end
 
 $file = WriteFile

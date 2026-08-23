@@ -669,12 +669,9 @@ def _noncopyable_reason(typ: T.Type, env: T.Environment) -> str | None:
 
 
 def _nominal_copy_error(name: Symbol, env: T.Environment) -> str | None:
-    """Return the error description for nominal copy during static analysis."""
-    overloads = env.overloads_for(Symbol(f"{name}::dup"))
-    for overload in overloads:
-        if overload.annotation_error is not None:
-            return overload.annotation_error
-    return None
+    """Return the declared duplication error for a nominal object type."""
+    definition = env.lookup_object(name)
+    return None if definition is None else definition.duplication_error
 
 
 def _number_literal_type(value: str) -> T.Type:
