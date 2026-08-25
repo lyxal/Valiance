@@ -163,7 +163,7 @@ class AnalyserTests(unittest.TestCase):
     def test_dup_rejects_object_with_error_annotated_dup(self):
         analyser = Analyser()
         analyser.analyse(parse("""
-@nonduplicable("Writeable files cannot be duplicated")
+@nodup("Writeable files cannot be duplicated")
 object WriteFile =>
 end
 
@@ -173,10 +173,10 @@ WriteFile | dup
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("Writeable files cannot be duplicated", analyser.diagnostics[0])
 
-    def test_nonduplicable_uses_default_message(self):
+    def test_nodup_uses_default_message(self):
         analyser = Analyser()
         analyser.analyse(parse("""
-@nonduplicable
+@nodup
 object Locked =>
 end
 
@@ -186,15 +186,15 @@ Locked | dup
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("Locked cannot be duplicated", analyser.diagnostics[0])
 
-    def test_nonduplicable_rejects_invalid_arguments(self):
+    def test_nodup_rejects_invalid_arguments(self):
         for annotation, message in (
-            ("@nonduplicable(1)", "accepts at most one string message"),
+            ("@nodup(1)", "accepts at most one string message"),
             (
-                '@nonduplicable("first", "second")',
+                '@nodup("first", "second")',
                 "accepts at most one string message",
             ),
             (
-                '@nonduplicable(message = "no")',
+                '@nodup(message = "no")',
                 "does not accept named arguments",
             ),
         ):
@@ -224,7 +224,7 @@ end
     def test_stack_shuffle_copy_without_output_does_not_duplicate(self):
         analyser = Analyser()
         analyser.analyse(parse("""
-@nonduplicable("Writeable files cannot be duplicated")
+@nodup("Writeable files cannot be duplicated")
 object WriteFile =>
 end
 
@@ -237,7 +237,7 @@ copy(file ->)
     def test_stack_shuffle_move_with_one_output_does_not_duplicate(self):
         analyser = Analyser()
         analyser.analyse(parse("""
-@nonduplicable("Writeable files cannot be duplicated")
+@nodup("Writeable files cannot be duplicated")
 object WriteFile =>
 end
 
@@ -250,7 +250,7 @@ move(file -> file)
     def test_stack_shuffle_copy_rejects_uncopyable_object(self):
         analyser = Analyser()
         analyser.analyse(parse("""
-@nonduplicable("Writeable files cannot be duplicated")
+@nodup("Writeable files cannot be duplicated")
 object WriteFile =>
 end
 
@@ -275,7 +275,7 @@ copy(file -> file)
     def test_stack_shuffle_move_rejects_uncopyable_repeated_output(self):
         analyser = Analyser()
         analyser.analyse(parse("""
-@nonduplicable("Writeable files cannot be duplicated")
+@nodup("Writeable files cannot be duplicated")
 object WriteFile =>
 end
 
@@ -307,7 +307,7 @@ move(file -> file, file)
     def test_mixed_union_requires_explicit_narrowing_before_duplication(self):
         analyser = Analyser()
         analyser.analyse(parse("""
-@nonduplicable("Locked cannot be duplicated")
+@nodup("Locked cannot be duplicated")
 object Locked =>
 end
 
@@ -320,10 +320,10 @@ define duplicate(value: Locked | Int) => $value | dup end
     def test_fully_noncopyable_union_is_rejected_statically(self):
         analyser = Analyser()
         analyser.analyse(parse("""
-@nonduplicable("Left cannot be duplicated")
+@nodup("Left cannot be duplicated")
 object Left =>
 end
-@nonduplicable("Right cannot be duplicated")
+@nodup("Right cannot be duplicated")
 object Right =>
 end
 
@@ -386,7 +386,7 @@ define duplicate(value: Left | Right) => $value | dup end
     def test_stack_shuffle_reports_every_requested_additional_occurrence(self):
         analyser = Analyser()
         analyser.analyse(parse("""
-@nonduplicable("Writeable files cannot be duplicated")
+@nodup("Writeable files cannot be duplicated")
 object WriteFile =>
 end
 
@@ -404,7 +404,7 @@ move(file -> file, file, file)
     def test_assignment_rejects_storing_an_additional_unduplicatable_occurrence(self):
         analyser = Analyser()
         analyser.analyse(parse("""
-@nonduplicable("Writeable files cannot be duplicated")
+@nodup("Writeable files cannot be duplicated")
 object WriteFile =>
 end
 
@@ -421,7 +421,7 @@ $destination = $source
 
     def test_literals_reject_storing_unduplicatable_variables(self):
         declarations = """
-@nonduplicable("Resource cannot be duplicated")
+@nodup("Resource cannot be duplicated")
 object Resource =>
 end
 $resource = Resource

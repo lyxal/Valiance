@@ -2145,10 +2145,10 @@ the runtime performs the same check at the materialisation site.
   additional occurrence.
 - Storing `$a` in `$b` while `$a` remains available establishes an additional
   persistent occurrence and therefore requires `dup`.
-- If an object must not be duplicated, annotate it with `@nonduplicable`:
+- If an object must not be duplicated, annotate it with `@nodup`:
 
 ```valiance
-@nonduplicable("Writable files cannot be duplicated")
+@nodup("Writable files cannot be duplicated")
 object WriteFile =>
 end
 ```
@@ -3080,7 +3080,7 @@ foo #? Pushes 6, 7
         - Because that only takes the last returned item
         - `(foo)` would return `(7)`
 
-## 19.4. `@nonduplicable`
+## 19.4. `@nodup`
 
 - Only usable on an `object` declaration.
 - Marks values of the object type as unable to gain additional occurrences.
@@ -3089,7 +3089,7 @@ foo #? Pushes 6, 7
 - Without an explicit message, the diagnostic is `<Type> cannot be duplicated`.
 
 ```valiance
-@nonduplicable("Writable files cannot be duplicated")
+@nodup("Writable files cannot be duplicated")
 object WriteFile =>
   ...
 end

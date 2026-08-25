@@ -379,7 +379,7 @@ class _ObjectDeclarations:
                 self.env.context,
             ),
             task_isolated=bool(_utils._mustcall_methods(node.annotations)),
-            duplication_error=annotation_hooks.nonduplicable_message(
+            duplication_error=annotation_hooks.nodup_message(
                 node.annotations, name
             ),
             mustcall_mode=mustcall_mode,

@@ -159,13 +159,13 @@ def annotation_error_message(annotations: tuple[ASTNode, ...]) -> str | None:
     return None
 
 
-def nonduplicable_message(
+def nodup_message(
     annotations: tuple[ASTNode, ...],
     type_name: Symbol | str,
 ) -> str | None:
     """Return the duplication diagnostic declared for an object type."""
     for annotation in annotation_nodes(annotations):
-        if annotation.name.text != "nonduplicable":
+        if annotation.name.text != "nodup":
             continue
         for argument in annotation.args:
             if isinstance(argument, StringLiteralNode):
@@ -342,7 +342,7 @@ def _validate_test_annotation(
     return tuple(diagnostics)
 
 
-def _validate_nonduplicable(
+def _validate_nodup(
     annotation: AnnotationNode,
     target: str,
     node: ASTNode,
@@ -351,11 +351,11 @@ def _validate_nonduplicable(
     del target, node
     diagnostics: list[str] = []
     if annotation.kwargs:
-        diagnostics.append("@nonduplicable does not accept named arguments")
+        diagnostics.append("@nodup does not accept named arguments")
     if len(annotation.args) > 1 or any(
         not isinstance(argument, StringLiteralNode) for argument in annotation.args
     ):
-        diagnostics.append("@nonduplicable accepts at most one string message")
+        diagnostics.append("@nodup accepts at most one string message")
     return tuple(diagnostics)
 
 
@@ -565,9 +565,9 @@ def _install_builtin_annotations() -> None:
     )
     register_annotation(
         AnnotationSpec(
-            "nonduplicable",
+            "nodup",
             frozenset({"object"}),
-            validate=_validate_nonduplicable,
+            validate=_validate_nodup,
         )
     )
     register_annotation(

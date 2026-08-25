@@ -2101,7 +2101,7 @@ def _object_runtime_metadata(
     for annotation in annotations:
         if (
             isinstance(annotation, AnnotationNode)
-            and annotation.name.text == "nonduplicable"
+            and annotation.name.text == "nodup"
         ):
             dup_error = next(
                 (
