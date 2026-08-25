@@ -337,5 +337,5 @@ class TaskDiagnosticContextTests(unittest.TestCase):
                     )
                 )
         self.assertTrue(all(item == observed[0] for item in observed))
-        self.assertIn("spawned at 1:49", observed[0][0])
-        self.assertEqual(observed[0][1], "1:57")
+        self.assertIn("spawned at 1:45", observed[0][0])
+        self.assertEqual(observed[0][1], "1:53")

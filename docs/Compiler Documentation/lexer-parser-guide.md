@@ -276,7 +276,7 @@ Current chain-breaking rules:
 - Literals break chains and are included in the segment they break.
 - Variables and parenthesized values break chains.
 - `fn`, `if`, `while`, `foreach`, `break`, and `return` break chains.
-- List, tuple, array, record, and dictionary literals break chains.
+- List, tuple, record, and dictionary literals break chains.
 - Backslash-prefixed niladic element names break chains and are included.
 - Element call syntax such as `foo(...)` breaks chains.
 - The `:` modifier breaks chains.

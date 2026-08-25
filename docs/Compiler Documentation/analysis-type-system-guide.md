@@ -435,7 +435,7 @@ The relation layer represents these observations per variable as lower and
 upper evidence. Lower evidence is joined with the existing order-independent
 `_combine_all(...)` rules. This preserves established behaviour such as
 `Int` plus `Number` solving to `Number`, along with the existing exact,
-minimum-rank, rugged, array, optional, `Result`, row, and tag-aware joins.
+minimum-rank, rugged, optional, `Result`, row, and tag-aware joins.
 If no existing or structural common supertype represents all lower evidence,
 the lower join becomes a reduced union. For example, `Int` and `String`
 solve a shared covariant `T` as `Int | String`. Redundant union members are
@@ -628,8 +628,6 @@ Readable constructors:
 T.ExactList(base, rank=1)    # T+
 T.AtLeastList(base, rank=1)  # T*
 T.RuggedList(base, rank=1)   # T~
-T.ExactArray(base, rank=1)   # T^
-T.AtLeastArray(base, rank=1) # T>
 ```
 
 The lower-level constructor is:
@@ -703,28 +701,6 @@ both `_can_vectorise` and `_vectorisation_excess`, so ordinary overload matching
 and explicit disambiguation agree. Exact- and minimum-rank collections retain
 their collection-to-collection vectorisation rules.
 
-### Arrays
-
-Arrays have exact and minimum-rank forms:
-
-```text
-Number^   == ExactArray(Number, 1)
-Number>   == AtLeastArray(Number, 1)
-```
-
-Arrays can often be treated as corresponding list types by relation checks:
-
-- exact arrays can satisfy exact list parameters of the same rank
-- minimum arrays can satisfy minimum list parameters of the same rank
-- vectorisation preserves arrays only when the vectorised inputs are arrays
-- mixing arrays and lists produces list results
-- collection item types are covariant for assignability; for example `Car+` can
-  satisfy `Vehicle+` when `Car` implements `Vehicle`, while rank rules still
-  apply independently
-
-Do not assume arrays are fully implemented runtime rectangular values just
-because the type layer has array rank nodes.
-
 ### Exact Parameter Markers
 
 `T.Exact(inner)` / `ExactType(inner)` is a parameter call-policy marker, not a
@@ -761,19 +737,16 @@ tagged type so `#tag T exact` has the same call-policy behaviour as
 
 ### Nested Collection Normalization
 
-Surface type syntax rejects mixed rank postfixes unless the outer marker is a
-direct superset of the inner marker. For example, `Number+*` is accepted as
-`Number**`, and `Number^>` is accepted as `Number>>`, but `Number*+`,
-`Number+~`, and `Number^+` are errors. Optional postfixes are a meaningful
-barrier, so `Number+?+` and `Number+?*` describe collections of optional
-ranked lists and are valid.
+Surface type syntax rejects mixed list-rank postfixes unless the outer marker
+is a direct superset of the inner marker. For example, `Number+*` is accepted
+as `Number**`, while `Number*+` and `Number+~` are errors. Optional postfixes
+are a meaningful barrier, so `Number+?+` and `Number+?*` describe collections
+of optional ranked lists and are valid.
 
-`normalize` still collapses nested collection nodes when they are created by
-type builders or generic solving and the rank modes have a clear combined
-meaning. It combines list-with-list and array-with-array ranks, but preserves a
-list whose item type is an array: that boundary carries useful item-type facts
-and flattening it would incorrectly widen the type. Use `T.normalize(...)`
-before comparing types structurally. Use `T.same(...)` for canonical equality.
+`normalize` still collapses nested list collection nodes when they are created
+by type builders or generic solving and the rank modes have a clear combined
+meaning. Use `T.normalize(...)` before comparing types structurally. Use
+`T.same(...)` for canonical equality.
 
 ### Collection Item Types
 
@@ -824,7 +797,7 @@ parameter.
 
 Collection ranks may be an `int` or a `RankVariable`. Surface syntax uses
 `$name` after a rank marker, for example `T+$n`, `T*$n`, `T~$n`, `T^$n`, or
-`T>$n`.
+`$name` after a rank marker, for example `T+$n`, `T*$n`, or `T~$n`.
 
 `Overload.where_clause` stores the parsed static expression body,
 `Overload.param_names` maps overload parameters back to source parameter names,

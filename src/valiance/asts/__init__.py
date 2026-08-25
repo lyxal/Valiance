@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from valiance.asts.nodes import (
     AnnotationNode,
-    ArrayLiteralNode,
     AssertNode,
     ASTNode,
     AtLevel,
@@ -114,7 +113,6 @@ __all__ = [
     "AnnotationNode",
     "FileLintSuppressionNode",
     "LintSuppressionNode",
-    "ArrayLiteralNode",
     "AssertNode",
     "AtLevel",
     "AtNode",

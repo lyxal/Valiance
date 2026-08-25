@@ -12,7 +12,6 @@ from valiance.analysis.lints import canonical_lint_code, finding
 import valiance.vtypes as T
 from valiance.asts import (
     AnnotationNode,
-    ArrayLiteralNode,
     AssertNode,
     AtNode,
     CastNode,
@@ -209,8 +208,8 @@ def _at_level_type(source: T.Type, target_rank: int) -> T.Type | None:
         collection_type = T.ListExactType
     elif isinstance(source, T.ListRuggedType):
         collection_type = T.ListRuggedType
-    elif isinstance(source, (T.ArrayExactType, T.ArrayMinType)):
-        collection_type = T.ArrayExactType
+    elif isinstance(source, (T.ListExactType, T.ListMinType)):
+        collection_type = T.ListExactType
     else:
         return None
     return T.C(collection_type, source.base, target_rank)

@@ -12,7 +12,6 @@ import valiance.vtypes as T
 from valiance.asts import (
     AnnotationNode,
     ASTNode,
-    ArrayLiteralNode,
     AssertNode,
     AtNode,
     CastNode,
@@ -338,13 +337,4 @@ def _dict_literal_node(
         ),
     )
 
-
-@_core.register(ArrayLiteralNode)
-def _array_literal_node(
-    self: _core.Analyser,
-    node: ArrayLiteralNode,
-    branch: _core.AnalysisBranch,
-) -> _core.BranchSet:
-    """Analyse a `ArrayLiteralNode` node and return the surviving branches."""
-    return _core.BranchSet((branch.emit(TypedNode(node, None)),))
 

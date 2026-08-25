@@ -209,14 +209,6 @@ class ListRuggedType(CollectionType):
     """A rugged list with at least the specified rank."""
 
 
-@dataclass(frozen=True)
-class ArrayExactType(CollectionType):
-    """An array with exactly the specified rank."""
-
-
-@dataclass(frozen=True)
-class ArrayMinType(CollectionType):
-    """An array with at least the specified rank."""
 
 
 @dataclass(frozen=True, order=True)

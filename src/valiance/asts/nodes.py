@@ -744,12 +744,6 @@ class TupleLiteralNode(ASTNode):
     items: tuple[tuple[ASTNode, ...], ...] = ()
 
 
-@dataclass(frozen=True)
-class ArrayLiteralNode(ASTNode):
-    """An array literal whose items are stack expressions."""
-
-    items: tuple[tuple[ASTNode, ...], ...] = ()
-
 
 @dataclass(frozen=True)
 class RecordLiteralNode(ASTNode):

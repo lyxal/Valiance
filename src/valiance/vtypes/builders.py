@@ -9,8 +9,6 @@ from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.nodes import (
     AnonymousTraitRequirement,
     AnonymousTraitType,
-    ArrayExactType,
-    ArrayMinType,
     ExactType,
     CollectionType,
     DataTag,
@@ -182,16 +180,6 @@ def AtLeastList(base: Type, rank: int = 1) -> Type:
 def RuggedList(base: Type, rank: int = 1) -> Type:
     """Create a potentially-ragged list type."""
     return C(ListRuggedType, base, rank)
-
-
-def ExactArray(base: Type, rank: int = 1) -> Type:
-    """Create a fixed-rank array type."""
-    return C(ArrayExactType, base, rank)
-
-
-def AtLeastArray(base: Type, rank: int = 1) -> Type:
-    """Create a minimum-rank array type."""
-    return C(ArrayMinType, base, rank)
 
 
 def Fn(
@@ -572,25 +560,12 @@ def collapse_nested_collection(
         return C(outer_type, inner.base, total_rank)
 
     list_like = (ListExactType, ListMinType, ListRuggedType)
-    array_like = (ArrayExactType, ArrayMinType)
-
     if issubclass(inner_type, list_like) and issubclass(outer_type, list_like):
-        # Within list ranks, rugged is weakest, then minimum, then exact.
         if ListRuggedType in {inner_type, outer_type}:
             return C(ListRuggedType, inner.base, total_rank)
         if ListMinType in {inner_type, outer_type}:
             return C(ListMinType, inner.base, total_rank)
         return C(ListExactType, inner.base, total_rank)
-
-    if issubclass(inner_type, array_like) and issubclass(outer_type, array_like):
-        if ArrayMinType in {inner_type, outer_type}:
-            return C(ArrayMinType, inner.base, total_rank)
-        return C(ArrayExactType, inner.base, total_rank)
-
-    # Do not flatten a list whose item type is an array.  Arrays are usable as
-    # lists at a relation boundary, but an outer list of arrays still carries a
-    # meaningful item boundary.  Erasing it would widen the type and can break
-    # covariance when the target item type specifically requires an array.
     return None
 
 
@@ -852,8 +827,6 @@ def _show(
             ListExactType: "+",
             ListMinType: "*",
             ListRuggedType: "~",
-            ArrayExactType: "^",
-            ArrayMinType: ">",
         }[type(t)]
         if isinstance(t.rank, RankVariable):
             rank = f"${t.rank.name}"

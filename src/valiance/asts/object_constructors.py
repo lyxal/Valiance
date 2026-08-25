@@ -257,13 +257,13 @@ def constructor_self_escape_violations(
     """
     from dataclasses import fields, is_dataclass
     from valiance.asts import (
-        ArrayLiteralNode, CallNode, DictLiteralNode, ElementNode, FunctionNode,
+        CallNode, DictLiteralNode, ElementNode, FunctionNode,
         IndexAccessNode, IndexSetNode, IndexUpdateNode, ListLiteralNode,
         RecordLiteralNode, ReturnNode, SetVariablesNode, TupleLiteralNode,
     )
 
     aggregate_nodes = (
-        ArrayLiteralNode, DictLiteralNode, ListLiteralNode,
+        DictLiteralNode, ListLiteralNode,
         RecordLiteralNode, TupleLiteralNode,
     )
     violations: list[tuple[str, ASTNode]] = []

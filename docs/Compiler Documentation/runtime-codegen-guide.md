@@ -71,7 +71,7 @@ The runtime implementation is small, but several files must evolve together.
   nested import is initialized once rather than once per call, branch, or loop
   iteration. Typed references carry an internal runtime name when a lexical
   import alias must remain distinct from the same alias in another block.
-- List literals and array literals currently both compile to `BUILD_LIST`.
+- List literals compile to `BUILD_LIST`.
 - Record fields and dictionary keys/values are wrapped in `ISOLATE_STACK_BEGIN` / `ISOLATE_STACK_END`; the VM hides the caller stack, requires one result, restores the caller stack, and appends that result.
 - Object and variant declarations compile constructor globals with
   `MAKE_OBJECT_CONSTRUCTOR`; enum members compile constants with
@@ -1120,7 +1120,6 @@ These are known constraints of the current runtime/codegen layer:
   validator and disjoint/parent tag metadata.
 - Unresolved element calls still compile through `LOAD_ELEMENT` / `CALL` and
   are runtime-dispatched.
-- Runtime arrays are currently represented like lists.
 - Multimethod runtime dispatch currently matches exact runtime nominal names
   recorded on compiled `multi` user-defined overloads.
 - Runtime vectorisation length mismatches raise intrinsic, catchable

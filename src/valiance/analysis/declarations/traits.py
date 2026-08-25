@@ -124,7 +124,7 @@ class _TraitDeclarations:
             generic_names = {generic.text for generic in node.generics}
 
             def pattern_type(typ: T.Type) -> T.Type:
-                """Convert implementation-local generic names to type variables."""
+                """Convert trait-implementation generic names to type variables."""
                 typ = T.normalize(typ)
                 if (
                     isinstance(typ, T.NominalType)
@@ -281,4 +281,28 @@ class _TraitDeclarations:
         )
         if parent_name is not None:
             self.env.add_trait_parent(name, parent_name)
+            if node.generics and isinstance(target, T.NominalType):
+                generic_names = {generic.text for generic in node.generics}
+
+                def parent_pattern_type(typ: T.Type) -> T.Type:
+                    """Convert inherited-trait generic names to pattern variables."""
+                    typ = T.normalize(typ)
+                    if (
+                        isinstance(typ, T.NominalType)
+                        and not typ.args
+                        and not typ.name.namespace
+                        and typ.name.text in generic_names
+                    ):
+                        return T.V(typ.name.text)
+                    if isinstance(typ, T.NominalType):
+                        return T.N(typ.name, *(parent_pattern_type(arg) for arg in typ.args))
+                    return typ
+
+                self.env.add_trait_impl(
+                    name, parent_name, provider=Symbol("<local>"),
+                    object_pattern=T.N(name, *(T.V(generic.text) for generic in node.generics)),
+                    trait_pattern=parent_pattern_type(target), generic_names=node.generics,
+                    generic_constraints=tuple(parent_pattern_type(c) if c is not None else None for c in node.generic_constraints),
+                    subject_kind=Symbol("trait"),
+                )
 

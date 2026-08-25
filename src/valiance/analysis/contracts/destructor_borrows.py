@@ -6,7 +6,6 @@ from dataclasses import fields, is_dataclass
 
 from valiance.asts import (
     ASTNode,
-    ArrayLiteralNode,
     DictLiteralNode,
     ElementNode,
     FunctionNode,
@@ -22,7 +21,6 @@ from valiance.vtypes.symbols import Symbol
 
 
 _AGGREGATE_NODES = (
-    ArrayLiteralNode,
     DictLiteralNode,
     ListLiteralNode,
     RecordLiteralNode,

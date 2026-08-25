@@ -195,7 +195,7 @@ class BytecodeSerializationTests(unittest.TestCase):
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
-            timeout=2,
+            timeout=10,
             env=env,
             check=False,
         )

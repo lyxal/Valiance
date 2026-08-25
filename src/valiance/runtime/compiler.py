@@ -11,7 +11,6 @@ import valiance.analysis.contracts.where_clauses as static_where
 from valiance.elements.builtins import BUILTIN_ELEMENTS, runtime_elements
 from valiance.asts import (
     AnnotationNode,
-    ArrayLiteralNode,
     AssertNode,
     ASTNode,
     AtNode,
@@ -110,8 +109,6 @@ from valiance.runtime.runtime_values import RuntimeNumber
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes import (
     AppliedOverload,
-    ArrayExactType,
-    ArrayMinType,
     ExactType,
     CollectionType,
     DataTag,
@@ -724,7 +721,7 @@ class _Compiler:
                 self.emit(OpCode.STORE_VAR, _symbol_runtime_name(runtime_name))
             case ImportNode():
                 pass
-            case ListLiteralNode(items) | ArrayLiteralNode(items):
+            case ListLiteralNode(items):
                 compiled_items = (
                     typed_node.items
                     if isinstance(typed_node, TypedLiteralNode)
@@ -2306,7 +2303,7 @@ def _runtime_collection_rank(typ: Type | None) -> int | None:
     typ = normalize(typ)
     if isinstance(typ, (TaggedType, NoVecType, ExactType)):
         return _runtime_collection_rank(typ.inner)
-    if isinstance(typ, (ListExactType, ArrayExactType)) and isinstance(typ.rank, int):
+    if isinstance(typ, (ListExactType,)) and isinstance(typ.rank, int):
         return typ.rank
     return None
 
@@ -2586,8 +2583,8 @@ def _runtime_tag_contract_spec(typ: Type) -> object:
             ListExactType: "list_exact",
             ListMinType: "list_min",
             ListRuggedType: "list_rugged",
-            ArrayExactType: "array_exact",
-            ArrayMinType: "array_min",
+            ListExactType: "list_exact",
+            ListMinType: "list_min",
         }[type(typ)]
         return (
             "collection",
@@ -2632,8 +2629,8 @@ def _cast_type_spec(typ: Type) -> object:
             ListExactType: "list_exact",
             ListMinType: "list_min",
             ListRuggedType: "list_rugged",
-            ArrayExactType: "array_exact",
-            ArrayMinType: "array_min",
+            ListExactType: "list_exact",
+            ListMinType: "list_min",
         }[type(typ)]
         return ("collection", kind, typ.rank, _cast_type_spec(typ.base))
     if isinstance(typ, (NoVecType, ExactType)):

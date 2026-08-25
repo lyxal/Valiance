@@ -50,13 +50,11 @@ from valiance.vtypes import (
     AnonymousTrait,
     AnonymousTraitRequirement,
     Exact,
-    AtLeastArray,
     AtLeastList,
     Boolean,
     Context,
     DataTag,
     NoVec,
-    ExactArray,
     ExactTags,
     Environment,
     ExactList,
@@ -665,7 +663,7 @@ def _random_pattern(rng: random.Random, depth: int) -> RuntimeTypePattern:
         rank=None if rng.random() < 0.4 else rng.randint(0, 5),
         collection_kind=None
         if rng.random() < 0.4
-        else rng.choice(("list", "array", "rugged")),
+        else rng.choice(("list", "rugged")),
     )
 
 
@@ -1253,10 +1251,6 @@ def _random_concrete_type(rng: random.Random, depth: int):
         return ExactList(_random_concrete_type(rng, depth - 1), rng.randint(1, 4))
     if choice == 5:
         return AtLeastList(_random_concrete_type(rng, depth - 1), rng.randint(1, 4))
-    if choice == 6:
-        return ExactArray(_random_concrete_type(rng, depth - 1), rng.randint(1, 4))
-    if choice == 7:
-        return AtLeastArray(_random_concrete_type(rng, depth - 1), rng.randint(1, 4))
     if choice == 8:
         return Tup(
             *(
@@ -1321,17 +1315,12 @@ def _fuzz_type_relations(
             covariance_cases = (
                 (ExactList(left, rank), ExactList(right, rank), "exact list"),
                 (AtLeastList(left, rank), AtLeastList(right, rank), "minimum list"),
-                (ExactArray(left, rank), ExactArray(right, rank), "exact array"),
-                (AtLeastArray(left, rank), AtLeastArray(right, rank), "minimum array"),
-                (ExactArray(left, rank), ExactList(right, rank), "array-to-list"),
             )
             for wrapped_left, wrapped_right, label in covariance_cases:
                 if not assignable(wrapped_left, wrapped_right):
                     raise AssertionError(
                         f"{label} covariance did not preserve assignability"
                     )
-            if assignable(ExactList(left, rank), ExactArray(right, rank)):
-                raise AssertionError("list values became assignable to arrays")
 
         tag_name = _random_string(rng, 8) or "tag"
         tagged = Tagged(left, DataTag(tag_name, rng.randint(0, 2)))
@@ -1451,7 +1440,7 @@ def _fuzz_overload_markers(
     """Exercise exact/novec call policy without leaking markers into values."""
     scalar = rng.choice((Int, Real, Number, String))
     rank = rng.randint(1, 3)
-    collection_type = rng.choice((ExactList, ExactArray))
+    collection_type = ExactList
     collection = collection_type(scalar, rank)
     case = (scalar, rank, type(collection).__name__, iteration)
     try:

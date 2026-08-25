@@ -236,11 +236,6 @@ $instructions[$i].jump = $open
 range(1, 6) reshape {2, 3}     #? [[1, 2, 3], [4, 5, 6]]
 ```
  
-## 1.7. Arrays
-
-- Also a core data type
-- Arrays are like lists except rectangular, always finite (to ensure rectangularity), and backed by actual arrays
-- `arr{}` syntax - same as lists, but `arr{`instead of `[` and `}` instead of `]`
 ## 1.8. Booleans
 - Valiance does not actually have booleans. Instead, `0` is considered false, and all other numbers are considered true.
 - However, `#boolean Number` can be used as a type. This means that the number will always be 0 or 1 (enforced by tag validator). (Note: validator may or may not be dropped before full release)
@@ -254,7 +249,7 @@ range(1, 6) reshape {2, 3}     #? [[1, 2, 3], [4, 5, 6]]
 	- Union (`T|U`) - either T or U
 	- Intersection (`T&U`) - two traits implemented
 	- Optional (`T?`) - a union of `Some[T]|None`. More on this later because there's more to the story than normal.
-	- Or a list/array type
+	- Or a list type
 
 ## 2.1. List Types
 - Traditionally, lists are expressed as a composition of generics.
@@ -293,31 +288,6 @@ range(1, 6) reshape {2, 3}     #? [[1, 2, 3], [4, 5, 6]]
 	- Rugged rank only exists as a compile-time construct.
 		- `[1, [[2, 3], 4], [[[5]]]` at runtime is always `(Number|(Number+|Number)+|Number+++)+`, but can be considered `Number~` for type checking purposes.
 - A list with exact rank `n` or minimum rank `m` can be passed where rugged rank `x` is expected, if `n >= x` (or `m >= x`).
-
-## 2.2. Array Types
-
-### 2.2.1. Exact Array Rank
-- Just like lists, arrays have an exact rank type. `^` after a type represents 1 level of exact array rank.
-- An array with exact rank `n` can be used anywhere a list with exact rank `n` is expected. That is, you can pass a `T^n` where a `T+n` is expected.
-
-### 2.2.2. Minimum Array Rank
-- Just like lists, arrays have a miminum rank type. `>` after a type represents 1 level of minimum array rank.
-- An array with minimum rank `n` can be used anywhere a list with minimum rank `n` is expected. That is, you can pass a `T>n` where a `T*n` is expected.
-- There is no concept of rugged rank for arrays.
-
-## 2.3. Mixing Lists and Arrays
-
-- As stated, arrays can be passed anywhere lists are expected, given the relative ranks match.
-- However, some lists can also be passed anywhere an array is expected.
-- `T+n` can be treated as `T^n`
-- `T*n` can be treated as `T>n`
-- But! Doing so will generate a compile time warning AND perform a runtime check to make sure that the conversion is valid. Additionally, the list will not be reorganised as an array in memory.
-	- The above is not performed if the list type is known to have come from an array type.
-- `T~` can never be passed where an array type is expected.
-
-- Use list types for 99% of cases (`T+`, `T*`, `T~`)
-- Use array types if you really do need rectangularity. (`T^`, `T>`)
-
 
 ## 2.4. Type casting
 
@@ -1010,7 +980,7 @@ external("math.dll") define sqrt(:Number as FFI.float) -> FFI.float as Number =>
 
 - When one or more arguments to an element are of a higher rank than a parameter expects, those arguments are zipped together and the element applied to each combination. Arguments that have reached their expected rank are reused across all combinations. This process repeats until all parameters have received arguments at their expected rank. If no overload exists that can handle an argument at its given rank - either directly or through vectorisation - that is a compile error.
 
-- When an element is applied to multiple array arguments, all arrays must have equal length at each corresponding dimension.
+- When an element is applied to multiple list arguments, all lists must have equal length at each corresponding dimension.
 - For example, `[1, 2, 3] + [4, 5]` is an error, because the `3` is unpaired.
   - While it would be possible to have a trimming/re-use/universal default fill option, these can lead to surprising results.
 - `[[1, 2], [3, 4, 5]] + [[6, 7], [8, 9]]` also raises a runtime error
@@ -1020,12 +990,6 @@ external("math.dll") define sqrt(:Number as FFI.float) -> FFI.float as Number =>
 	- `VectorisationFault`s do not attach a `Panic` element tag.
 	- However, a `try/handle` can handle a `VectorisationFault`
  
-### 7.0.1. Mixing Lists and Arrays
-
-- If all arguments in vectorisation are lists, then the output will be a list.
-- If all arguments in vectorisation are arrays, and the return type doesn't lose arrayness, then the output will be an array.
-- If there is a mix, then the result will be a list.
-
 ## 7.1. Fine Grained Vectorisation Control
 
 - Pairwise behaviour may not always be useful.
@@ -1057,7 +1021,6 @@ But what if you want:
 fn (:Number+, :Number+) => +
 ```
 
-- But this can lose array types - passing two `Number^`s to this function will result in a `Number+`, not a `Number^`
 - Thus you can also specify how to treat a higher-ranked argument using element overload disambiguation syntax.
   Curly braces contain positional parameter-type hints; `_` leaves a position
   unconstrained:
@@ -2525,7 +2488,7 @@ define[T] sum(
   the complete structural shape named by the pattern; only after that check
   succeeds are generics unified normally against the unmarked pattern.
 - `T+4 exact` therefore accepts only an exact-rank 4 list (or compatible
-  exact-rank 4 array view) whose scalar leaves can bind `T`. Rank 3 and rank 5
+  exact-rank 4 list view) whose scalar leaves can bind `T`. Rank 3 and rank 5
   arguments are removed from the candidate set, so `T` cannot absorb excess
   rank.
 
@@ -2557,8 +2520,6 @@ solve(T~n, U~m) = T := U~(m-n)
 solve(T*n, U+m) = T := U*(m-n)
 solve(T~n, U+m) = T := U~(m-n)
 solve(T~n, U*m) = T := U~(m-n)
-solve(T^n, U^m) = T := U^(m-n)
-solve(T>n, U>m) = T := U>(m-n)
 solve(T+n, U^m) = T := U+(m-n) // List type takes precendence
 solve(T*n, U>m) = T := U*(m-n)
 solve(T*n, U^m) = T := U*(m-n)
@@ -2580,9 +2541,7 @@ Additionally:
 ```
 combine(T, T) = T
 combine(T*n, T*m) = T*(min(n, m))
-combine(T>n, T>m) = T>(min(n, m))
 combine(T*n, T+m) = T*(min(n, m))
-combine(T>n, T^m) = T>(min(n, m))
 combine(T+n, T) = T+n
 combine(T*n, T) = T*n
 combine(T~n, T) = T~n
@@ -3527,7 +3486,6 @@ define name(...) -> ... where (<static expressions>) => ...
   - `T+$n` is still an exact rank type.
   - `T*$n` allows for minimum rank list types to be used.
   - `T~$n` names a rugged list rank.
-  - `T^$n` and `T>$n` name exact and minimum array ranks.
 
 ## 22.2. Allowed Operations
 

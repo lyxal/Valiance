@@ -7558,25 +7558,25 @@ def _matches_collection_cast(
         # cannot prove the base item type from rank metadata alone.
         if not allow_lazy_rank or actual_rank is None:
             return False
-        if kind in {"list_exact", "array_exact"}:
+        if kind in {"list_exact"}:
             return actual_rank == rank
-        if kind in {"list_min", "array_min"}:
+        if kind in {"list_min"}:
             return actual_rank >= rank
         return False
-    if kind in {"list_exact", "array_exact"} and actual_rank != rank:
+    if kind in {"list_exact"} and actual_rank != rank:
         return False
-    if kind in {"list_min", "array_min"} and (
+    if kind in {"list_min"} and (
         actual_rank is None or actual_rank < rank
     ):
         return False
-    if kind in {"list_exact", "array_exact"}:
+    if kind in {"list_exact"}:
         return all(
             _matches_collection_cast(
                 item, kind, rank - 1, base, allow_lazy_rank=allow_lazy_rank
             )
             for item in value
         )
-    if kind in {"list_min", "array_min"}:
+    if kind in {"list_min"}:
         return all(
             _matches_collection_cast(
                 item, kind, rank - 1, base, allow_lazy_rank=allow_lazy_rank
@@ -9222,7 +9222,7 @@ def _canonicalize_runtime_collection_tag_contract(
 
     def item_spec(item: Any) -> object:
         """Return the child contract appropriate for one collection item."""
-        if kind in {"list_exact", "array_exact"}:
+        if kind in {"list_exact"}:
             return base_spec if rank == 1 else ("collection", kind, rank - 1, base_spec)
         if is_list_like(unwrap_runtime_value(item)):
             next_rank = max(rank - 1, 1)

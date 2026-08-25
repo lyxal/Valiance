@@ -6,7 +6,6 @@ from valiance.vtypes import (
     AnonymousTrait,
     AnonymousTraitRequirement,
     Exact,
-    AtLeastArray,
     AtLeastList,
     C,
     Context,
@@ -17,7 +16,6 @@ from valiance.vtypes import (
     ElementTagKind,
     Environment,
     NoVec,
-    ExactArray,
     ExactList,
     Field,
     Fn,
@@ -327,34 +325,8 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertEqual(normalize(once), once)
         self.assertEqual(once, AtLeastList(String, 9))
 
-    def test_list_covariance_preserves_nested_array_item_type(self):
-        source_item = ExactArray(Number, 4)
-        target_item = U(AtLeastArray(Number, 3), Real)
-        source = ExactList(source_item, 2)
-        target = ExactList(target_item, 2)
 
-        self.assertTrue(assignable(source_item, target_item))
-        self.assertEqual(normalize(source), source)
-        self.assertTrue(assignable(source, target))
-        self.assertTrue(subtype(source, target))
 
-    def test_nested_array_to_list_covariance_survives_normalization(self):
-        source = ExactList(ExactArray(NoneType(), 4), 2)
-        target = ExactList(ExactList(NoneType(), 4), 2)
-
-        self.assertTrue(assignable(source, target))
-        self.assertTrue(subtype(source, target))
-        self.assertTrue(assignable(normalize(source), normalize(target)))
-        self.assertTrue(subtype(normalize(source), normalize(target)))
-
-    def test_list_view_does_not_make_lists_assignable_to_arrays(self):
-        source = ExactList(Number, 2)
-        target = ExactArray(Number, 2)
-
-        self.assertFalse(assignable(source, target))
-        self.assertFalse(subtype(source, target))
-        self.assertFalse(assignable(normalize(source), normalize(target)))
-        self.assertFalse(subtype(normalize(source), normalize(target)))
 
     def test_collection_item_types_are_covariant(self):
         ctx = Context(trait_impls={CAR: {VEHICLE}})
@@ -829,15 +801,6 @@ class TypeLibraryTests(unittest.TestCase):
             (U(String, ExactList(String), ExactList(String, 2)),),
         )
 
-    def test_union_vectorisation_preserves_list_and_array_alternatives(self):
-        argument = U(ExactList(Int), ExactArray(Int))
-        applied = apply_overload(Overload((Int,), (String,)), (argument,))
-
-        self.assertIsNotNone(applied)
-        self.assertEqual(
-            applied.actual_returns,
-            (U(ExactList(String), ExactArray(String)),),
-        )
 
     def test_nested_union_vectorisation_substitutes_every_scalar_leaf(self):
         shape = ExactList(
@@ -1102,17 +1065,6 @@ class TypeLibraryTests(unittest.TestCase):
             )
         )
 
-    def test_atomic_list_pattern_preserves_direct_array_to_list_compatibility(self):
-        overload = Overload(
-            (C(ListExactType, Exact(V("T"))),),
-            (C(ListExactType, V("T")),),
-        )
-
-        applied = apply_overload(overload, (ExactArray(Int),))
-
-        self.assertIsNotNone(applied)
-        self.assertEqual(applied.substitution["T"], Int)
-        self.assertFalse(applied.vectorised)
 
     def test_atomic_evidence_validates_without_overriding_regular_evidence(self):
         overload = Overload(

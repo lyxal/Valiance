@@ -32,8 +32,6 @@ from valiance.vtypes.nodes import (
     AnonymousTraitRequirement,
     AnonymousTraitType,
     AppliedOverload,
-    ArrayExactType,
-    ArrayMinType,
     ExactType,
     CollectionType,
     DataTag,
@@ -1045,13 +1043,6 @@ def _collection_subtype(source: Type, target: Type, ctx: Context) -> bool:
     if _direct_collection_subtype(source, target, ctx):
         return True
 
-    # A nested array can be viewed as the corresponding nested list without
-    # discarding its canonical array boundary.  This matters when the other
-    # side has already collapsed adjacent list ranks during normalization.
-    source_view = _collection_list_view(source)
-    normalized_target = normalize(target)
-    if source_view != source or normalized_target != target:
-        return _direct_collection_subtype(source_view, normalized_target, ctx)
     return False
 
 
@@ -1094,17 +1085,15 @@ def _direct_collection_subtype(source: Type, target: Type, ctx: Context) -> bool
         # Rugged ranks are minimum-depth guarantees. A value whose minimum
         # leaf depth is n satisfies every rugged requirement m <= n.
         return _rank_ge(sr, tr)
-    if sk is ArrayExactType and tk is ListExactType and sr == tr:
+    if sk is ListExactType and tk is ListExactType and sr == tr:
         return True
-    if sk is ArrayMinType and tk is ListMinType and sr == tr:
+    if sk is ListMinType and tk is ListMinType and sr == tr:
         return True
-    if sk in {ListExactType, ArrayExactType} and tk in {ListMinType, ArrayMinType}:
-        return _rank_ge(sr, tr) and ((sk is ArrayExactType) == (tk is ArrayMinType))
+    if sk in {ListExactType} and tk in {ListMinType}:
+        return _rank_ge(sr, tr) and ((sk is ListExactType) == (tk is ListMinType))
     if tk is ListRuggedType and sk in {
         ListExactType,
         ListMinType,
-        ArrayExactType,
-        ArrayMinType,
     }:
         return _rank_ge(sr, tr)
     return False
@@ -1116,8 +1105,8 @@ def _collection_list_view(collection: CollectionType) -> CollectionType:
     if isinstance(base, CollectionType):
         base = _collection_list_view(base)
     collection_type = {
-        ArrayExactType: ListExactType,
-        ArrayMinType: ListMinType,
+        ListExactType: ListExactType,
+        ListMinType: ListMinType,
     }.get(type(collection), type(collection))
     viewed = collection_type(base, collection.rank)
     normalized = normalize(viewed)
@@ -1154,10 +1143,10 @@ def _exact_pattern_shape_matches(pattern: Type, actual: Type) -> bool:
         if pattern.rank != actual.rank:
             return False
         if isinstance(pattern, ListExactType):
-            if not isinstance(actual, (ListExactType, ArrayExactType)):
+            if not isinstance(actual, (ListExactType,)):
                 return False
-        elif isinstance(pattern, ArrayExactType):
-            if not isinstance(actual, ArrayExactType):
+        elif isinstance(pattern, ListExactType):
+            if not isinstance(actual, ListExactType):
                 return False
         elif type(pattern) is not type(actual):
             return False
@@ -1667,26 +1656,22 @@ def _atomic_collection_shape_matches(
         return type(pattern) is type(actual) and n == m
     pk, ak = type(pattern), type(actual)
     if pk is ListExactType:
-        return m == n and ak in {ListExactType, ArrayExactType}
+        return m == n and ak in {ListExactType}
     if pk is ListMinType:
         return m >= n and ak in {
             ListExactType,
-            ArrayExactType,
             ListMinType,
-            ArrayMinType,
         }
     if pk is ListRuggedType:
         return m >= n and ak in {
             ListExactType,
-            ArrayExactType,
             ListMinType,
-            ArrayMinType,
             ListRuggedType,
         }
-    if pk is ArrayExactType:
-        return m == n and ak is ArrayExactType
-    if pk is ArrayMinType:
-        return m >= n and ak in {ArrayExactType, ArrayMinType}
+    if pk is ListExactType:
+        return m == n and ak is ListExactType
+    if pk is ListMinType:
+        return m >= n and ak in {ListExactType, ListMinType}
     return False
 
 
@@ -1724,21 +1709,19 @@ def _solve_collection(
         add(type_var_key(pattern.base), _collection_remainder(collection_type, base, diff))
         return True
 
-    if pk is ListExactType and ak in {ListExactType, ArrayExactType}:
+    if pk is ListExactType and ak in {ListExactType}:
         return bind_as(ListExactType)
     if pk is ListExactType and ak in {ListMinType, ListRuggedType}:
         return bind_as(ak)
     if pk is ListMinType:
-        if ak in {ListExactType, ArrayExactType}:
+        if ak in {ListExactType}:
             return bind_as(ListExactType)
-        if ak in {ListMinType, ArrayMinType}:
+        if ak in {ListMinType}:
             return bind_as(ListMinType)
     if pk is ListRuggedType:
         if ak in {
             ListExactType,
-            ArrayExactType,
             ListMinType,
-            ArrayMinType,
             ListRuggedType,
         }:
             # T~ owns every varying collection layer. Solve T only from the
@@ -1747,13 +1730,13 @@ def _solve_collection(
             leaf = _rugged_scalar_leaf_type(actual)
             add(type_var_key(pattern.base), leaf)
             return True
-    if pk is ArrayExactType and ak is ArrayExactType:
-        return bind_as(ArrayExactType)
-    if pk is ArrayMinType:
-        if ak is ArrayExactType:
-            return bind_as(ArrayExactType)
-        if ak is ArrayMinType:
-            return bind_as(ArrayMinType)
+    if pk is ListExactType and ak is ListExactType:
+        return bind_as(ListExactType)
+    if pk is ListMinType:
+        if ak is ListExactType:
+            return bind_as(ListExactType)
+        if ak is ListMinType:
+            return bind_as(ListMinType)
     return False
 
 
@@ -1765,7 +1748,7 @@ def _collection_remainder(
         return C(collection_type, base, rank)
     # Peeling all known rank from a minimum/rugged type leaves an element that
     # may be atomic or may still contain more nesting at runtime.
-    if collection_type in {ListMinType, ArrayMinType}:
+    if collection_type in {ListMinType}:
         return U(base, C(collection_type, base, 1))
     if collection_type is ListRuggedType:
         return U(base, C(ListRuggedType, base, 1))
@@ -1842,21 +1825,21 @@ def _combine_collections(a: Type, b: Type) -> Type | None:
     base = a.base
     if ak is bk is ListExactType:
         return a if ar == br else None
-    if ak is bk is ArrayExactType:
+    if ak is bk is ListExactType:
         return a if ar == br else None
     if ak is bk is ListMinType:
         return C(ListMinType, base, min(ar, br))
-    if ak is bk is ArrayMinType:
-        return C(ArrayMinType, base, min(ar, br))
+    if ak is bk is ListMinType:
+        return C(ListMinType, base, min(ar, br))
     if {ak, bk} <= {ListExactType, ListMinType}:
         return C(ListMinType, base, min(ar, br))
-    if {ak, bk} <= {ArrayExactType, ArrayMinType}:
-        return C(ArrayMinType, base, min(ar, br))
+    if {ak, bk} <= {ListExactType, ListMinType}:
+        return C(ListMinType, base, min(ar, br))
     if ListRuggedType in {ak, bk}:
         return C(ListRuggedType, base, min(ar, br))
-    if {ak, bk} == {ListExactType, ArrayExactType} and ar == br:
+    if {ak, bk} == {ListExactType} and ar == br:
         return C(ListExactType, base, ar)
-    if {ak, bk} == {ListMinType, ArrayMinType}:
+    if {ak, bk} == {ListMinType}:
         return C(ListMinType, base, min(ar, br))
     return None
 
@@ -2661,7 +2644,7 @@ def _join_vector_collection_type(
         ListMinType,
     }:
         return ListExactType
-    return ArrayExactType
+    return ListExactType
 
 
 def _vector_result_collection_type(
@@ -2670,8 +2653,8 @@ def _vector_result_collection_type(
     """Return the safe result collection class for a fixed vector shape."""
     if vector_type is ListRuggedType:
         return ListRuggedType
-    if vector_type is ArrayExactType:
-        return ArrayExactType
+    if vector_type is ListExactType:
+        return ListExactType
     return ListExactType
 
 
@@ -2756,7 +2739,7 @@ def _union_vectorisation_target_rank(
     parameter_collection = _collection_view(parameter)
     if parameter_collection is None:
         return 0
-    if not isinstance(parameter_collection, (ListExactType, ArrayExactType)):
+    if not isinstance(parameter_collection, (ListExactType,)):
         return None
     return parameter_collection.rank if isinstance(parameter_collection.rank, int) else None
 
@@ -2771,13 +2754,13 @@ def _dynamic_vectorisation_target_rank(
     parameter_collection = _collection_view(parameter)
     if argument_collection is None:
         return None
-    if not isinstance(argument_collection, (ListMinType, ArrayMinType)):
+    if not isinstance(argument_collection, (ListMinType,)):
         return None
     if parameter_collection is None:
         if not isinstance(argument_collection.rank, int):
             return None
         return 0 if compatible(argument_collection.base, parameter, ctx) else None
-    if not isinstance(parameter_collection, (ListExactType, ArrayExactType)):
+    if not isinstance(parameter_collection, (ListExactType,)):
         return None
     if not isinstance(argument_collection.rank, int) or not isinstance(
         parameter_collection.rank,
@@ -2785,11 +2768,6 @@ def _dynamic_vectorisation_target_rank(
     ):
         return None
     if argument_collection.rank < parameter_collection.rank:
-        return None
-    if isinstance(parameter_collection, ArrayExactType) and not isinstance(
-        argument_collection,
-        ArrayMinType,
-    ):
         return None
     if not compatible(argument_collection.base, parameter_collection.base, ctx):
         return None
@@ -2961,15 +2939,15 @@ def _correlated_min_rank_returns(
     for argument, parameter in zip(args, params, strict=False):
         argument_view = _collection_view(argument)
         parameter_view = _collection_view(parameter)
-        if not isinstance(argument_view, (ListMinType, ArrayMinType)):
+        if not isinstance(argument_view, (ListMinType,)):
             continue
-        if not isinstance(parameter_view, (ListExactType, ArrayExactType)):
+        if not isinstance(parameter_view, (ListExactType,)):
             continue
         if not isinstance(argument_view.rank, int) or not isinstance(parameter_view.rank, int):
             continue
         if argument_view.rank < parameter_view.rank:
             continue
-        family = ArrayMinType if isinstance(argument_view, ArrayMinType) else ListMinType
+        family = ListMinType if isinstance(argument_view, ListMinType) else ListMinType
         candidates.append((family, argument_view.rank - parameter_view.rank, argument_view.base))
     if not candidates:
         return returns
@@ -2977,7 +2955,7 @@ def _correlated_min_rank_returns(
     result: list[Type] = []
     for returned in returns:
         view = _collection_view(returned)
-        if not isinstance(view, (ListExactType, ArrayExactType)) or not isinstance(view.rank, int):
+        if not isinstance(view, (ListExactType,)) or not isinstance(view.rank, int):
             result.append(returned)
             continue
         family, excess, source_base = max(candidates, key=lambda item: item[1])
@@ -2986,8 +2964,8 @@ def _correlated_min_rank_returns(
         if same(output_base, approximated_item):
             output_base = source_base
         minimum_rank = view.rank + excess
-        if isinstance(view, ArrayExactType) and family is ArrayMinType:
-            result.append(C(ArrayMinType, output_base, minimum_rank))
+        if isinstance(view, ListExactType) and family is ListMinType:
+            result.append(C(ListMinType, output_base, minimum_rank))
         else:
             result.append(C(ListMinType, output_base, minimum_rank))
     return tuple(result)
@@ -3014,11 +2992,7 @@ def _wrap_returns_for_vectorisation(
         )
         if depth > 0 or target is not None
     )
-    array_only = bool(vector_args) and all(
-        isinstance(_collection_view(arg), (ArrayExactType, ArrayMinType))
-        for arg in vector_args
-    )
-    output_type = ArrayMinType if array_only else ListMinType
+    output_type = ListMinType
     if minimum_rank > 0:
         return tuple(
             _wrap_vectorised_return(ret, output_type, minimum_rank)

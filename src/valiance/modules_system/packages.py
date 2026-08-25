@@ -957,6 +957,7 @@ def _path_managed_roots(manifest: Manifest) -> tuple[Path, ...]:
     visiting: set[Path] = set()
 
     def visit(current: Manifest) -> None:
+        """Collect managed roots recursively without revisiting dependency cycles."""
         canonical = current.root.resolve()
         if canonical in visiting:
             return

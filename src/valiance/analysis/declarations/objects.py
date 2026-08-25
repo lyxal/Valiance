@@ -136,7 +136,7 @@ class _ObjectDeclarations:
                 generic_names = {generic.text for generic in node.generics}
 
                 def pattern_type(typ: T.Type) -> T.Type:
-                    """Convert implementation-local generic names to type variables."""
+                    """Convert object-implementation generic names to type variables."""
                     typ = T.normalize(typ)
                     if (
                         isinstance(typ, T.NominalType)

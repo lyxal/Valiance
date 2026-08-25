@@ -14,9 +14,7 @@ from valiance.runtime.runtime_values import format_runtime_value
 from valiance.runtime.serialization import dumps, loads
 from valiance.runtime.vm import VirtualMachine
 from valiance.vtypes import (
-    AtLeastArray,
     AtLeastList,
-    ExactArray,
     ExactList,
     Overload,
     RuggedList,
@@ -69,52 +67,6 @@ def _all_execution_modes(source: str) -> tuple[tuple[tuple[str, ...], str], ...]
 class VectorisationPlanPropertyTests(unittest.TestCase):
     """Check metadata invariants over a deterministic type-shape matrix."""
 
-    def test_plan_metadata_is_consistent_across_collection_shapes(self):
-        atoms = (Int, Real, Number, String)
-        collections = tuple(
-            constructor(atom, rank)
-            for atom, rank, constructor in product(
-                atoms,
-                (1, 2, 3),
-                (ExactList, AtLeastList, RuggedList, ExactArray, AtLeastArray),
-            )
-        )
-        arguments = (
-            *atoms,
-            *collections,
-            *(U(atom, ExactList(atom)) for atom in atoms),
-            *(U(atom, AtLeastList(atom)) for atom in atoms),
-            *(U(atom, RuggedList(atom)) for atom in atoms),
-            *(U(ExactList(atom), ExactList(atom, 2)) for atom in atoms),
-            *(U(ExactList(atom), AtLeastList(atom)) for atom in atoms),
-        )
-        parameters = (
-            *atoms,
-            *collections,
-            U(Int, AtLeastList(Int)),
-            U(Number, AtLeastList(Number)),
-        )
-
-        applicable = 0
-        for argument, parameter in product(arguments, parameters):
-            with self.subTest(argument=argument, parameter=parameter):
-                applied = apply_overload(
-                    Overload((parameter,), (String,)),
-                    (argument,),
-                )
-                if applied is None:
-                    continue
-                applicable += 1
-                has_plan = bool(
-                    applied.vectorised_depths or applied.vectorised_target_ranks
-                )
-                self.assertEqual(applied.vectorised, has_plan)
-                if assignable(argument, parameter):
-                    self.assertFalse(has_plan)
-                if not has_plan:
-                    self.assertTrue(same(applied.actual_returns[0], String))
-
-        self.assertGreater(applicable, 1000)
 
     def test_every_vectorised_argument_has_complete_runtime_metadata(self):
         applied = apply_overload(

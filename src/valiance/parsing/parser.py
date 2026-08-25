@@ -7,7 +7,6 @@ from dataclasses import dataclass, replace
 
 from valiance.asts import (
     AnnotationNode,
-    ArrayLiteralNode,
     AssertNode,
     ASTNode,
     AtLevel,
@@ -86,8 +85,6 @@ from valiance.parsing.lexer import LexError, Token, TokenKind, lex, lex_with_dia
 from valiance.vtypes import (
     AnonymousTrait,
     AnonymousTraitRequirement,
-    ArrayExactType,
-    ArrayMinType,
     NoVec,
     ExactType,
     C,
@@ -1623,17 +1620,7 @@ class Parser:
                 ),
                 True,
             )
-        if self._match_ident("arr") and self._match(TokenKind.LBRACE):
-            token = self._previous
-            return _ChainPiece(
-                (
-                    ArrayLiteralNode(
-                        self._comma_expressions(TokenKind.RBRACE),
-                        location=_loc(token),
-                    ),
-                ),
-                True,
-            )
+
         if (
             self._check_ident("record")
             and self._peek(1).kind is TokenKind.DOT
@@ -3029,8 +3016,6 @@ class Parser:
                 "+",
                 "*",
                 "~",
-                "^",
-                ">",
                 "?",
             }:
                 op_token = self._advance()
@@ -3045,8 +3030,6 @@ class Parser:
                     "+": ListExactType,
                     "*": ListMinType,
                     "~": ListRuggedType,
-                    "^": ArrayExactType,
-                    ">": ArrayMinType,
                 }.get(op)
                 if collection is not None:
                     typ = self._apply_collection_postfix(
@@ -3532,7 +3515,6 @@ def _collection_postfix_superset(
         return True
     return (inner, outer) in {
         (ListExactType, ListMinType),
-        (ArrayExactType, ArrayMinType),
     }
 
 

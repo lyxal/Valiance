@@ -46,8 +46,7 @@ base seed, and iteration number.
   `RuntimeError`, but Python implementation exceptions must not escape.
 - `type-relations` generates nested concrete types and checks normalization,
   equality, subtyping, assignability, commutative upper-bound merging,
-  exact/minimum list and array covariance, one-way array-to-list compatibility,
-  tags, rows, and display invariants. Failure reports include both generated
+  exact/minimum/rugged list covariance, tags, rows, and display invariants. Failure reports include both generated
   types and the wrapper rank.
 - `data-tags` exercises exact and absent tag constraints, unit-tag index
   safety, explicit unit erasure, variant parent/runtime evidence, validator

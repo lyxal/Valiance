@@ -136,16 +136,6 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Support immutable list updates through indexed assignment syntax.
 - [x] Support immutable slice updates through indexed and augmented assignment syntax.
 
-## 9. Arrays
-
-- [ ] Implement finite rectangular arrays.
-- [x] Parse array literals using `arr{...}`.
-- [ ] Validate rectangularity.
-- [ ] Store array rank and shape.
-- [ ] Preserve array results through vectorisation when all applicable inputs and outputs remain arrays.
-- [ ] Produce list results when vectorisation mixes lists and arrays.
-- [x] Support array indexing and multidimensional slicing.
-
 ## 10. Type system foundations
 
 - [x] Assign a static type to every stack value.
@@ -180,19 +170,6 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Reject rugged-to-collection vectorisation, regardless of relative rugged rank.
 - [ ] Recognise equivalent expanded-union rugged types during vectorisation.
 
-## 12. Ranked array types
-
-- [x] Parse exact array-rank syntax using `^`.
-- [x] Parse numeric exact-array-rank shorthand.
-- [x] Parse minimum array-rank syntax using `>`.
-- [x] Parse numeric minimum-array-rank shorthand.
-- [x] Allow compatible arrays where corresponding list types are expected.
-- [ ] Support checked list-to-array treatment.
-- [ ] Emit compile-time warnings for list-to-array conversions requiring runtime validation.
-- [ ] Perform rectangularity checks for checked list-to-array conversions.
-- [ ] Avoid redundant checks when a list type is known to have originated as an array.
-- [x] Reject rugged lists where array types are expected.
-
 ## 13. Type casting
 
 - [x] Require bracket-delimited targets for every cast form.
@@ -207,8 +184,6 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Reject runtime refinements whose target cannot be checked.
 - [x] Reject casts whose source and target cannot overlap.
 - [x] Preserve optional-cast bytecode through serialization.
-- [ ] Complete checked list-to-array rectangularity validation.
-- [ ] Preserve zero-cost array-to-list-to-array restoration where provenance permits.
 - [ ] Support inline parameter casts.
 - [ ] Support inline return-value casts.
 
@@ -343,8 +318,6 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Prevent user code from producing `VectorisationFault` through `panic`.
 - [x] Exclude the `Panic` element tag from intrinsic `VectorisationFault`s.
 - [x] Produce lists when all vectorised arguments are lists.
-- [x] Produce arrays when all arguments are arrays and the return type retains arrayness.
-- [x] Produce lists when vectorisation mixes lists and arrays.
 - [x] Support fine-grained vectorisation depth through overload disambiguation.
 - [x] Parse exact parameter types.
 - [x] Prevent vectorisation through exact parameters.
@@ -389,7 +362,7 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Use zero-based indexing.
 - [x] Support negative indices from the end.
 - [ ] Dispatch indexing through the `index` overload mechanism.
-- [x] Support tuple, list, array, string, and dictionary indexing.
+- [x] Support tuple, list, string, and dictionary indexing.
 - [x] Parse multiple indices and return the selected values as a list.
 - [x] Parse direct variable indexing.
 - [x] Parse inclusive slices with start, stop, and step.
@@ -595,7 +568,7 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [x] Preserve atomic guarantees through generic function analysis without
       exposing markers as body value types.
 - [x] Implement generic unification across concrete generic constructors.
-- [x] Implement unification across exact, minimum, rugged, and array ranks.
+- [x] Implement unification across exact, minimum, and rugged list ranks.
 - [x] Implement optional-type unification.
 - [x] Respect the defined rank-zero interpretations.
 - [x] Reject inconsistent generic solutions.
@@ -865,8 +838,6 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [ ] Reject direct foreign-struct field writes.
 - [ ] Support wrapping opaque handles in ordinary Valiance objects.
 - [ ] Support explicit foreign-resource destructors.
-- [ ] Define FFI list/array conversion behavior.
-- [ ] Define rectangular shape validation for list-to-C-array conversion.
 - [ ] Define FFI function-object and callback behavior.
 - [ ] Parse inline external function bindings.
 - [ ] Apply inline parameter and return casts around an external call.
@@ -912,7 +883,6 @@ Audit refreshed against the repository implementation and full test suite on 202
 - [ ] Report ignored `@mustcall` results.
 - [x] Emit annotation-driven warnings and errors.
 - [x] Emit deprecation warnings.
-- [ ] Emit list-to-array runtime-check warnings.
 - [x] Include runtime stack values in call-error diagnostics.
 - [x] Include runtime stack value types in call-error diagnostics.
 - [x] Include attempted overload input shapes in call-error diagnostics.

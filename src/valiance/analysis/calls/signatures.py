@@ -246,8 +246,8 @@ def _empty_list_return_type(expected: T.Type) -> T.Type | None:
         return _empty_list_return_type(expected.inner)
     if isinstance(expected, (T.ListExactType, T.ListMinType, T.ListRuggedType)):
         return T.C(T.ListExactType, expected.base, expected.rank)
-    if isinstance(expected, (T.ArrayExactType, T.ArrayMinType)):
-        return T.C(T.ArrayExactType, expected.base, expected.rank)
+    if isinstance(expected, (T.ListExactType, T.ListMinType)):
+        return T.C(T.ListExactType, expected.base, expected.rank)
     return None
 
 def _substitute_rank_variables_in_ast(

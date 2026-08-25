@@ -15,7 +15,6 @@ from valiance.analysis.lints import KNOWN_LINT_CODES, finding
 import valiance.vtypes as T
 from valiance.asts import (
     AnnotationNode,
-    ArrayLiteralNode,
     AssertNode,
     AtNode,
     CastNode,

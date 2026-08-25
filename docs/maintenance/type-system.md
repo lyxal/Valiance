@@ -320,7 +320,7 @@ All collection nodes have:
 kind + base type + rank
 ```
 
-The kinds encode exact/minimum/rugged list and exact/minimum array semantics.
+The kinds encode exact, minimum, and rugged list semantics.
 Examples:
 
 ```text
@@ -328,7 +328,6 @@ Number+   exact-rank list, rank 1
 Number+2  exact-rank list, rank 2
 Number*   minimum-rank list, rank at least 1
 Number~   rugged list
-Number^   exact-rank array
 ```
 
 A rank describes nesting independently from the atomic base type. This is why
@@ -402,10 +401,8 @@ Normalization performs operations such as:
 - recursively normalizing function and nominal arguments; and
 - collapsing compatible nested collection ranks.
 
-Compatible rank collapse preserves collection-family information. Adjacent list
-ranks and adjacent array ranks combine, but a list whose item is an array keeps
-that item boundary. Arrays can still satisfy corresponding list requirements
-through relation checks without widening the canonical type itself.
+Compatible rank collapse preserves list-rank information. Adjacent compatible
+list ranks combine without weakening exact, minimum, or rugged semantics.
 
 For example, construction through `T.U(...)` normalizes immediately:
 
@@ -1392,7 +1389,7 @@ Collection compatibility has two related but distinct jobs.
 ### Collection subtyping
 
 This asks whether one collection description can be viewed as another by kind,
-rank, and base type. Exact arrays may be viewed as exact lists of the same rank;
+rank, and base type.
 exact ranks can satisfy compatible minimum-rank requirements. Rugged ranks are
 also minimum-depth guarantees, so `T~n` is a subtype of `U~m` when `n >= m` and
 the scalar leaf type `T` is assignable to `U`. Rugged values remain weaker than
