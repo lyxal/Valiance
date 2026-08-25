@@ -297,7 +297,6 @@ you are changing. Most regressions here look like elements in the wrong order.
 - `$` variables, assignments, and variable call syntax
 - `.field` access
 - List literals: `[...]`
-- Array literals: `arr{...}`
 - Record literals: `record{...}`
 - Dictionary literals: `dict{...}`
 - Parenthesized grouping: `(...)`
@@ -567,7 +566,6 @@ The type parser currently supports:
   `Function[...]` parameter types
 - List rank postfixes: `T+`, `T+3`, `T+$n`, `T*`, `T*3`, `T*$n`,
   `T~`, `T~3`, `T~$n`
-- Array rank postfixes: `T^`, `T^3`, `T^$n`, `T>`, `T>3`, `T>$n`
 - Contiguous repeated rank/optional markers count as numeric shorthand:
   `T++ == T+2`, `T*** == T*3`, `T~~~~ == T~4`, `T??? == T?3`
 - Mixed rank postfixes are rejected unless the outer marker is a direct

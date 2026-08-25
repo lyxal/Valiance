@@ -796,7 +796,6 @@ parameter.
 ## Rank Variables And `where` Clauses
 
 Collection ranks may be an `int` or a `RankVariable`. Surface syntax uses
-`$name` after a rank marker, for example `T+$n`, `T*$n`, `T~$n`, `T^$n`, or
 `$name` after a rank marker, for example `T+$n`, `T*$n`, or `T~$n`.
 
 `Overload.where_clause` stores the parsed static expression body,
