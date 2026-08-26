@@ -328,6 +328,27 @@ class _ElementCalls:
                 f"'{failed_import}' could not be imported\n"
                 "help: fix the import above before checking this element name"
             )
+        if node.name.namespace:
+            namespace = Symbol(node.name.namespace[0])
+            exports = self._imported_namespace_exports.get(namespace)
+            if exports is not None:
+                private_object = any(
+                    obj.name == Symbol(node.name.text) and not obj.public
+                    for obj in exports.objects
+                )
+                private_definition = any(
+                    definition.name == Symbol(node.name.text) and not definition.public
+                    for definition in exports.definitions
+                )
+                if private_object or private_definition:
+                    module = self._imported_namespace_sources.get(namespace, str(namespace))
+                    return (
+                        f"{message}\n"
+                        f"note: '{node.name.text}' is declared in module '{module}' "
+                        "but is not public\n"
+                        f"help: mark '{node.name.text}' as public to export it from "
+                        f"module '{module}'"
+                    )
         if branch.variables.read(node.name) is not None:
             return f"{message}\ndid you mean '${node.name}'?"
         suggestions = self._element_name_suggestions(node, branch)

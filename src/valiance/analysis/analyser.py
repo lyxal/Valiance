@@ -92,7 +92,9 @@ from valiance.asts import (
 from valiance.asts.nodes import (
     GetVariableNode, ObjectFieldNode, SetVariableNode, SetVariablesNode,
 )
-from valiance.modules_system.modules import ModuleLoader, ModuleLoadError, import_definitions
+from valiance.modules_system.modules import (
+    ModuleExports, ModuleLoader, ModuleLoadError, import_definitions,
+)
 from valiance.asts.object_constructors import (
     constructor_definitions,
     definitely_initialized_fields,
@@ -334,6 +336,7 @@ class Analyser:
         self._imported_overload_sources: dict[tuple[Symbol, tuple[T.Type, ...]], str] = {}
         self._imported_object_sources: dict[Symbol, str] = {}
         self._imported_namespace_sources: dict[Symbol, str] = {}
+        self._imported_namespace_exports: dict[Symbol, ModuleExports] = {}
         self._public_import_definitions = []
         self._public_import_objects = []
         self._public_import_tags = []
@@ -712,6 +715,7 @@ class Analyser:
         overload_sources = self._imported_overload_sources.copy()
         object_sources = self._imported_object_sources.copy()
         namespace_sources = self._imported_namespace_sources.copy()
+        namespace_exports = self._imported_namespace_exports.copy()
         trait_impl_sources = self._imported_trait_impl_sources.copy()
         self.env = outer.lexical_child_scope()
         self._scope_depth += 1
@@ -724,6 +728,7 @@ class Analyser:
             self._imported_overload_sources = overload_sources
             self._imported_object_sources = object_sources
             self._imported_namespace_sources = namespace_sources
+            self._imported_namespace_exports = namespace_exports
             self._imported_trait_impl_sources = trait_impl_sources
 
     def _child_analyser(self, env: T.Environment) -> Analyser:
@@ -743,6 +748,7 @@ class Analyser:
         child._imported_overload_sources = self._imported_overload_sources.copy()
         child._imported_object_sources = self._imported_object_sources.copy()
         child._imported_namespace_sources = self._imported_namespace_sources.copy()
+        child._imported_namespace_exports = self._imported_namespace_exports.copy()
         child._imported_trait_impl_sources = self._imported_trait_impl_sources.copy()
         child.project_lints_enabled = self.project_lints_enabled
         child.project_disabled_lint_codes = self.project_disabled_lint_codes

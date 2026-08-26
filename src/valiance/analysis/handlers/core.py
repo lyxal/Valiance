@@ -909,6 +909,7 @@ def _import_node(
             self._imported_namespace_sources[namespace_name] = (
                 _show_import_path_for_diagnostic(resolved_spec.path)
             )
+            self._imported_namespace_exports[namespace_name] = exports
         reexport = node.public and self._scope_depth == 0
         if reexport:
             self._public_import_trait_implementations.extend(trait_implementations)

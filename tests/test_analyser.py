@@ -7516,3 +7516,39 @@ $f = fn (xs) => $xs 1 rotate end
 """))
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(T.show(typed[-1].typ), "Int+2")
+
+
+def test_unknown_namespaced_private_object_explains_visibility():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "shapes.vlnc").write_text(
+            "object Rectangle =>\n  $width: Number\n  $height: Number\nend\n",
+            encoding="utf-8",
+        )
+        main = root / "main.vlnc"
+        analyser = Analyser(module_loader=ModuleLoader(), source_file=main)
+
+        analyser.analyse(parse("import { shapes }\nshapes.Rectangle(10, 20)"))
+
+    diagnostic = analyser.diagnostics[-1]
+    assert "unknown element 'shapes.Rectangle'" in diagnostic
+    assert "'Rectangle' is declared in module 'shapes' but is not public" in diagnostic
+    assert "mark 'Rectangle' as public" in diagnostic
+
+
+def test_unknown_namespaced_private_definition_explains_visibility():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "math.vlnc").write_text(
+            "define double(n: Number) => $n 2 *\n",
+            encoding="utf-8",
+        )
+        main = root / "main.vlnc"
+        analyser = Analyser(module_loader=ModuleLoader(), source_file=main)
+
+        analyser.analyse(parse("import { math }\n3 math.double"))
+
+    diagnostic = analyser.diagnostics[-1]
+    assert "unknown element 'math.double'" in diagnostic
+    assert "'double' is declared in module 'math' but is not public" in diagnostic
+    assert "mark 'double' as public" in diagnostic
