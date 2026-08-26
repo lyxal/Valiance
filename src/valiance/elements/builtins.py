@@ -2340,16 +2340,6 @@ def _numeric(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
 
 
 @builtin(
-    "pop",
-    (T.V("Item"),),
-    (),
-)
-def _pop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Discard the top value from of the stack, returning nothing."""
-    return ()
-
-
-@builtin(
     "overtake",
     (T.ExactList(T.V("Item")), T.Int),
     (T.ExactList(T.V("Item")),),
@@ -2384,6 +2374,16 @@ def _parse_int(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
         return (RuntimeNumber(int(args[0].strip(), 10)),)
     except ValueError:
         return (ObjectValue("None", {}),)
+
+
+@builtin(
+    "pop",
+    (T.V("Item"),),
+    (),
+)
+def _pop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Discard the top value from of the stack, returning nothing."""
+    return ()
 
 
 @builtin("positive?", (T.Number,), (T.Boolean,))
