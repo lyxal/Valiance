@@ -200,8 +200,26 @@ class _AnalysisPrelude:
 
     def add_declaration(self, node: TypedNode, source_name: Symbol) -> Symbol:
         """Hoist one declaration and return its hidden runtime binding."""
-        for existing, existing_source, runtime_name in self.bindings:
+        for index, (existing, existing_source, runtime_name) in enumerate(
+            self.bindings
+        ):
             if existing == node and existing_source == source_name:
+                return runtime_name
+            if (
+                existing_source == source_name
+                and isinstance(existing, TypedFunctionNode)
+                and isinstance(node, TypedFunctionNode)
+            ):
+                merged = replace(
+                    existing,
+                    overloads=existing.overloads + node.overloads,
+                )
+                runtime_merged = with_import_runtime_name(merged, runtime_name)
+                node_index = self.nodes.index(
+                    with_import_runtime_name(existing, runtime_name)
+                )
+                self.nodes[node_index] = runtime_merged
+                self.bindings[index] = (merged, source_name, runtime_name)
                 return runtime_name
         index = len(self.bindings)
         runtime_name = Symbol(

@@ -2238,6 +2238,11 @@ def _resolved_element_reference(
             else ()
         )
     multidispatch = bool(node.overload is not None and node.overload.multidispatch)
+    union_dispatch_plan = (
+        node.overload.union_dispatch_plan.branches
+        if node.overload is not None and node.overload.union_dispatch_plan is not None
+        else ()
+    )
     vectorised_depths = (
         tuple(node.overload.vectorised_depths) if node.overload is not None else ()
     )
@@ -2292,6 +2297,7 @@ def _resolved_element_reference(
         arity_override=arity_override,
         consumed_override=consumed_override,
         multidispatch=multidispatch,
+        union_dispatch_plan=union_dispatch_plan,
         extension=_compiled_element_extension(node.extension),
     )
 

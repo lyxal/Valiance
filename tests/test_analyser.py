@@ -7552,3 +7552,33 @@ def test_unknown_namespaced_private_definition_explains_visibility():
     assert "unknown element 'math.double'" in diagnostic
     assert "'double' is declared in module 'math' but is not public" in diagnostic
     assert "mark 'double' as public" in diagnostic
+
+
+def test_element_union_coverage_merges_returns_and_records_dispatch_plan():
+    analyser = Analyser()
+    typed = analyser.analyse(parse("""
+define describe(n: Number) -> Number => $n
+define describe(s: String) -> String => $s
+$choice: Number|String = 1
+$choice describe
+"""))
+
+    assert analyser.diagnostics == []
+    applied = typed[-1].overload
+    assert applied.union_dispatch_plan is not None
+    assert len(applied.union_dispatch_plan.branches) == 2
+    assert T.same(applied.actual_returns[0], T.U(T.Number, T.String))
+
+
+def test_element_union_coverage_requires_cartesian_product():
+    analyser = Analyser()
+    analyser.analyse(parse("""
+define combine(a: Number, b: Number) -> Number => $a $b +
+define combine(a: Number, b: String) -> String => $b
+$left: Number|String = 1
+$right: Number|String = 2
+$left $right combine
+"""))
+
+    assert len(analyser.diagnostics) == 1
+    assert "no overloads for element 'combine' match" in analyser.diagnostics[0]

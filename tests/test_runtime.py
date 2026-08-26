@@ -6652,3 +6652,29 @@ end
         self.assertTrue(
             any("extract requires at least one" in str(item) for item in analyser.diagnostics)
         )
+
+
+def test_imported_vectorised_element_union_coverage_dispatches_each_item():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "shapes.vlnc").write_text("""
+public object Rectangle =>
+  $width: Real
+  $height: Real
+end
+public object Circle =>
+  $radius: Real
+end
+public define perimeter(r: Rectangle) => $r.width * 2 | $r.height * 2 | +
+public define perimeter(c: Circle) => 2 * 3.14 * $c.radius
+""", encoding="utf-8")
+        main = root / "main.vlnc"
+        source = """
+import {shapes}
+shapes.perimeter [shapes.Rectangle(10, 20), shapes.Circle(10)]
+"""
+        main.write_text(source, encoding="utf-8")
+
+        result = execute(source, main)
+
+    assert list(result[-1]) == [60, 62.8]

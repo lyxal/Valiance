@@ -180,6 +180,7 @@ class ResolvedElementReference:
     arity_override: int | None = None
     consumed_override: int | None = None
     multidispatch: bool = False
+    union_dispatch_plan: tuple[UnionDispatchBranch, ...] = ()
     extension: VectorExtensionReference | None = None
 
 
@@ -248,3 +249,4 @@ class Program:
 
     main: FunctionCode
     tag_parents: tuple[tuple[str, str], ...] = ()
+    UnionDispatchBranch,

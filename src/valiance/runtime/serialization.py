@@ -458,6 +458,9 @@ class _Writer:
         self.optional_int(reference.arity_override)
         self.optional_int(reference.consumed_override)
         self.bool(reference.multidispatch)
+        self.u32(len(reference.union_dispatch_plan))
+        for branch in reference.union_dispatch_plan:
+            self.union_dispatch_branch(branch)
         self.value(reference.extension)
 
     def extension_rule_reference(self, reference: ExtensionRuleReference) -> None:
@@ -714,6 +717,9 @@ class _Reader:
         arity_override = self.optional_int()
         consumed_override = self.optional_int()
         multidispatch = self.bool()
+        union_dispatch_plan = tuple(
+            self.union_dispatch_branch() for _ in range(self.u32())
+        )
         extension = self.value()
         if not isinstance(vectorised_depths, tuple) or not all(
             isinstance(depth, int) for depth in vectorised_depths
@@ -758,6 +764,7 @@ class _Reader:
             arity_override=arity_override,
             consumed_override=consumed_override,
             multidispatch=multidispatch,
+            union_dispatch_plan=union_dispatch_plan,
             extension=extension,
         )
 

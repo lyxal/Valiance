@@ -361,7 +361,130 @@ class _CallSelection:
                     ),
                 )
             )
+        if not candidates:
+            covered = self._union_coverage_candidate(node, overloads, tuple(sources))
+            if covered is not None:
+                candidates.append(covered)
         return candidates
+
+    def _union_coverage_candidate(
+        self,
+        node: ElementNode,
+        overloads: tuple[T.Overload, ...],
+        sources: tuple[ElementArguments, ...],
+    ) -> CallCandidate | None:
+        """Build one runtime-dispatched candidate when overloads cover union inputs."""
+        if node.modifier_args or not sources:
+            return None
+        source = sources[0]
+        args = source.arguments
+        normalized_args = tuple(T.normalize(arg) for arg in args)
+        vector_sources = tuple(
+            (index, arg)
+            for index, arg in enumerate(normalized_args)
+            if isinstance(arg, T.CollectionType)
+            and isinstance(T.normalize(arg.base), T.UnionType)
+            and isinstance(arg.rank, int)
+        )
+        if vector_sources:
+            ranks = {arg.rank for _, arg in vector_sources}
+            if len(ranks) != 1:
+                return None
+            scalar_args = tuple(
+                arg.base if isinstance(arg, T.CollectionType) else arg
+                for arg in normalized_args
+            )
+        else:
+            scalar_args = args
+        if not any(
+            isinstance(T.normalize(arg), T.UnionType) for arg in scalar_args
+        ):
+            return None
+        if any(
+            item.arguments != args
+            or item.branch != source.branch
+            or item.call_arg_order != source.call_arg_order
+            for item in sources
+        ):
+            return None
+        return_counts = {len(overload.returns) for overload in overloads}
+        if len(return_counts) != 1:
+            return None
+        return_count = next(iter(return_counts))
+        expected_returns = tuple(
+            T.U(*(overload.returns[index] for overload in overloads))
+            for index in range(return_count)
+        )
+        expected = T.Fn(scalar_args, expected_returns)
+        dispatch_overloads = tuple(
+            replace(
+                overload,
+                params=tuple(
+                    self._union_dispatch_parameter_view(param, arg)
+                    for param, arg in zip(
+                        overload.params, scalar_args, strict=True
+                    )
+                ),
+            )
+            for overload in overloads
+        )
+        plan = T.union_dispatched_callable_plan(
+            T.Overloads(*dispatch_overloads), expected, self.env.context
+        )
+        if plan is None:
+            return None
+        representative = overloads[plan.branches[0].overload_index]
+        actual_returns = plan.returns
+        vectorised = bool(vector_sources)
+        vectorised_depths: tuple[int, ...] = ()
+        vectorised_target_ranks: tuple[int | None, ...] = ()
+        if vectorised:
+            rank = vector_sources[0][1].rank
+            collection_type = type(vector_sources[0][1])
+            actual_returns = tuple(
+                T.C(collection_type, result, rank) for result in plan.returns
+            )
+            vectorised_depths = tuple(
+                arg.rank if isinstance(arg, T.CollectionType) else 0
+                for arg in normalized_args
+            )
+            vectorised_target_ranks = tuple(None for _ in scalar_args)
+        applied = T.AppliedOverload(
+            representative,
+            {},
+            scalar_args,
+            plan.returns,
+            actual_returns,
+            (),
+            vectorised=vectorised,
+            vectorised_depths=vectorised_depths,
+            union_dispatch_plan=plan,
+            vectorised_target_ranks=vectorised_target_ranks,
+        )
+        return CallCandidate(
+            applied=applied,
+            branch=source.branch,
+            call_arg_order=source.call_arg_order,
+            overload_index=plan.branches[0].overload_index,
+        )
+
+    @staticmethod
+    def _union_dispatch_parameter_view(param: T.Type, arg: T.Type) -> T.Type:
+        """Qualify imported nominal parameters from matching union branches."""
+        param = T.normalize(param)
+        arg = T.normalize(arg)
+        alternatives = arg.items if isinstance(arg, T.UnionType) else (arg,)
+        if isinstance(param, T.NominalType) and not param.name.namespace:
+            matches = tuple(
+                item
+                for item in alternatives
+                if isinstance(item, T.NominalType)
+                and item.name.text == param.name.text
+                and len(item.args) == len(param.args)
+            )
+            if len(matches) == 1:
+                return replace(param, name=matches[0].name)
+        return param
 
     def commit_element_candidate(
         self,

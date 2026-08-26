@@ -398,6 +398,9 @@ class AppliedOverload:
     runtime_consumed_count: int | None = None
     element_tags: frozenset[ElementTag] = field(default_factory=frozenset[ElementTag])
     multidispatch: bool = field(default=False, compare=False, hash=False)
+    union_dispatch_plan: UnionDispatchPlan | None = field(
+        default=None, compare=False, hash=False
+    )
     vectorised_target_ranks: tuple[int | None, ...] = ()
     runtime_static_values: tuple[object, ...] = field(
         default=(),

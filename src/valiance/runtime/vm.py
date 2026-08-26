@@ -3933,7 +3933,23 @@ class VirtualMachine:
                 f"resolved function '{reference.name}' has no overload "
                 f"{reference.overload_index}"
             ) from exc
-        if reference.multidispatch:
+        if reference.union_dispatch_plan:
+            arity = len(overload.code.params)
+            dispatch_value = OverloadedFunctionValue(
+                value.overloads,
+                reference.union_dispatch_plan,
+            )
+            if reference.vectorised:
+                args = _source_args(frame, arity, "union-dispatched vector call")
+                results = _vectorize_declared_callable(self, dispatch_value, args)
+                frame.stack.extend(results)
+                return None
+            try:
+                args, _, _, _ = frame.source_args(arity)
+            except _StackUnderflow:
+                args = ()
+            overload = _select_union_dispatch_overload(dispatch_value, tuple(args))
+        elif reference.multidispatch:
             overload = _select_multimethod_overload(value, overload, frame)
         frame.stack.extend(reference.static_values)
         return self._call_function(
