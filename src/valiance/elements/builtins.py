@@ -441,6 +441,12 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         returns="The preserved inputs followed by the callable results.",
         category="Functions",
     ),
+    "pop": element_documentation(
+        "Discard a value from the stack",
+        parameters=(("value", "The value to discard"),),
+        returns="Nothing.",
+        category="Stack",
+    ),
     "positive?": element_documentation(
         "Test whether a number is greater than zero.",
         parameters=(("value", "Number to test."),),
@@ -2331,6 +2337,16 @@ def _numeric(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     except ValueError:
         return (_truth(False),)
     return (_truth(True),)
+
+
+@builtin(
+    "pop",
+    (T.V("Item"),),
+    (),
+)
+def _pop(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Discard the top value from of the stack, returning nothing."""
+    return ()
 
 
 @builtin(
