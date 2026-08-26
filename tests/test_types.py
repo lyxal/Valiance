@@ -1275,6 +1275,17 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertTrue(assignable(Tup(Number, String, String), numbers_then_strings))
         self.assertFalse(assignable(Tup(String, Number), numbers_then_string))
 
+    def test_union_of_fixed_tuples_assigns_to_variadic_pattern(self):
+        actual = U(
+            Tup(Int, Int, Int),
+            Tup(Int, Int, Int, Int),
+        )
+        self.assertTrue(assignable(actual, TupVariadic(TupleTypeItem(Int, True))))
+
+    def test_union_tuple_rejects_when_one_branch_misses_variadic_pattern(self):
+        actual = U(Tup(Int, Int), Tup(Int, String))
+        self.assertFalse(assignable(actual, TupVariadic(TupleTypeItem(Int, True))))
+
     def test_arbitrary_length_tuple_pattern_solves_generics(self):
         constraints = _solve(
             TupVariadic(TupleTypeItem(V("T"), repeated=True), TupleTypeItem(String)),

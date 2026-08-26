@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
-from itertools import permutations
+from itertools import permutations, product
 from typing import cast
 
 import valiance.vtypes as T
@@ -1100,6 +1100,83 @@ def _unique_permutations(
         yield candidate
 
 
+def _where_union_argument_products(
+    overload: T.Overload,
+    args: tuple[T.Type, ...],
+    ctx: T.Context,
+) -> tuple[tuple[T.Type, ...], ...] | None:
+    """Expand union tuple arguments consumed by variadic tuple parameters.
+
+    Static tuple operations such as ``length`` need one concrete tuple branch.
+    Expand all independently reachable branches here so the ordinary where-clause
+    evaluator retains the correlation between a tuple shape and its computed
+    rank. ``None`` means no expansion is required.
+    """
+    static_overload = _call_site_static_overload(overload)
+    if not static_overload.where_clause or len(args) != len(static_overload.params):
+        return None
+    choices: list[tuple[T.Type, ...]] = []
+    expanded = False
+    for arg, param in zip(args, static_overload.params, strict=True):
+        normalized_arg = T.normalize(arg)
+        normalized_param = T.normalize(param)
+        if (
+            isinstance(normalized_param, T.VariadicTupleType)
+            and isinstance(normalized_arg, T.UnionType)
+            and all(
+                isinstance(branch, T.TupleType)
+                and T.assignable(branch, normalized_param, ctx)
+                for branch in normalized_arg.items
+            )
+        ):
+            choices.append(tuple(normalized_arg.items))
+            expanded = True
+        else:
+            choices.append((arg,))
+    return tuple(product(*choices)) if expanded else None
+
+
+def _merge_where_union_applications(
+    overload: T.Overload,
+    args: tuple[T.Type, ...],
+    applications: tuple[_core.OverloadApplication, ...],
+) -> _core.OverloadApplication:
+    """Merge successful static products while preserving their return relation."""
+    first = applications[0]
+    applied = first.applied
+    actual_returns = tuple(
+        T.U(*(candidate.applied.actual_returns[index] for candidate in applications))
+        for index in range(len(applied.actual_returns))
+    )
+    declared_returns = tuple(
+        T.U(*(candidate.applied.returns[index] for candidate in applications))
+        for index in range(len(applied.returns))
+    )
+    common_ranks = tuple(
+        item
+        for item in applied.rank_values
+        if all(item in candidate.applied.rank_values for candidate in applications[1:])
+    )
+    runtime_values = (
+        applied.runtime_static_values
+        if all(
+            candidate.applied.runtime_static_values == applied.runtime_static_values
+            for candidate in applications[1:]
+        )
+        else ()
+    )
+    merged = replace(
+        applied,
+        overload=overload,
+        params=args,
+        returns=declared_returns,
+        actual_returns=actual_returns,
+        rank_values=common_ranks,
+        runtime_static_values=runtime_values,
+    )
+    return _core.OverloadApplication(merged, first.branch)
+
+
 def _apply_overload_to_branch(
     overload: T.Overload,
     args: tuple[T.Type, ...],
@@ -1111,6 +1188,30 @@ def _apply_overload_to_branch(
     generic_args: tuple[T.Type | None, ...] = (),
 ) -> _core.OverloadApplication | None:
     """Apply overload to branch during static analysis."""
+    products = _where_union_argument_products(overload, args, ctx)
+    if products is not None:
+        applications = tuple(
+            candidate
+            for product_args in products
+            if (
+                candidate := _apply_overload_to_branch(
+                    overload,
+                    product_args,
+                    branch.with_stack(
+                        T.TypeStack((*branch.stack[:-len(args)], *product_args))
+                    ),
+                    ctx,
+                    env,
+                    disambiguation,
+                    analyser,
+                    generic_args,
+                )
+            ) is not None
+        )
+        # Every independently reachable product must satisfy the overload.
+        if len(applications) != len(products):
+            return None
+        return _merge_where_union_applications(overload, args, applications)
     if _overload_needs_call_site_checking(overload):
         return _apply_call_site_checked_overload(
             overload,

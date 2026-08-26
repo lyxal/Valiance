@@ -3285,6 +3285,38 @@ where ($n = length $shape) => $xs as![T+$n]
         self.assertEqual(typed[-1].typ, C(ListExactType, Int, 3))
         self.assertEqual(typed[-1].overload.rank_values, (("n", 3),))
 
+    def test_where_clause_distributes_over_variadic_tuple_union(self):
+        source = """
+define[T] reshape(xs: T*, shape: {Number...}) -> T+$n
+where ($n = length $shape) => $xs as![T+$n]
+$shape = {1, 2, 3} as[{Number, Number, Number} | {Number, Number, Number, Number}]
+[[1, 2], [3, 4]] reshape $shape
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertTrue(
+            same(
+                typed[-1].typ,
+                C(ListExactType, U(Int, C(ListExactType, Int)), 3),
+            )
+        )
+
+    def test_where_clause_requires_every_tuple_union_branch_to_match(self):
+        source = """
+define size(shape: {Number...}) -> Number+$n
+where ($n = length $shape) => [1] as![Number+$n]
+$shape = {1, 2} as[{Number, Number} | {Number, String}]
+size($shape)
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+
+        self.assertTrue(
+            any("no overloads for element 'size' match" in item for item in analyser.diagnostics)
+        )
+
     def test_arbitrary_length_tuple_parameter_matches_mixed_pattern(self):
         source = """
 define accept(shape: {Number..., String..., Number}) -> String => "ok"
