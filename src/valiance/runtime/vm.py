@@ -7841,8 +7841,9 @@ def _sequence_selection_positions(receiver: Any, selector: Any) -> list[Any]:
         raise RuntimeError(
             "a sequence selector requires a list, string, or dictionary receiver"
         )
-    paths = any(_is_path(value) for value in requested)
-    if paths and not all(_is_path(value) for value in requested):
+    is_path = lambda value: _is_path(value) or isinstance(value, tuple)
+    paths = any(is_path(value) for value in requested)
+    if paths and not all(is_path(value) for value in requested):
         raise RuntimeError("multidimensional selectors require one path per item")
     if paths:
         for path in requested:
@@ -7948,7 +7949,9 @@ def _set_selected_positions(
     in_place: bool,
 ) -> Any:
     """Replace values chosen by a mask or predicate selector."""
-    if positions and all(_is_path(position) for position in positions):
+    if positions and all(
+        _is_path(position) or isinstance(position, tuple) for position in positions
+    ):
         return _set_selected_paths(
             receiver,
             positions,
@@ -8369,7 +8372,7 @@ def _set_index_path(
     in_place: bool = False,
 ) -> Any:
     """Update index path during VM execution."""
-    if _is_path(index):
+    if _is_path(index) or (isinstance(index, tuple) and not isinstance(receiver, dict)):
         if not index:
             return value
         head, *tail = index

@@ -394,6 +394,10 @@ def _index_access_node(
         receiver_type,
         selector_mode,
         path_depth=_literal_path_pattern_depth(node, selector_mode),
+        path_depths=(
+            _patterns._tuple_path_depths(index_types[0], self.env.context)
+            if selector_mode == "paths" else None
+        ),
     )
     if result_type is None:
         result_type = _patterns._indexed_type(
@@ -532,6 +536,10 @@ def _index_set_node(
         receiver_type,
         selector_mode,
         path_depth=_literal_path_pattern_depth(node, selector_mode),
+        path_depths=(
+            _patterns._tuple_path_depths(index_types[0], self.env.context)
+            if selector_mode == "paths" else None
+        ),
     )
     if item_type is None:
         item_type = _patterns._indexed_type(
@@ -544,6 +552,10 @@ def _index_set_node(
         replacement_item = _patterns._selection_replacement_item_type(
             receiver_type,
             selector_mode,
+            path_depths=(
+                _patterns._tuple_path_depths(index_types[0], self.env.context)
+                if selector_mode == "paths" else None
+            ),
         )
         if T.assignable(value_type, item_type, self.env.context) or T.assignable(
             value_type, replacement_item, self.env.context

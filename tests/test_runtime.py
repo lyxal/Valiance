@@ -5765,7 +5765,7 @@ end
     def test_integer_rank_two_selector_gathers_multidimensional_paths(self):
         source = (
             "$matrix = [[1, 2], [3, 4]]\n"
-            "$paths = [[0, 1], [1, 0]]\n"
+            "$paths = [{0, 1}, {1, 0}]\n"
             "$matrix[$paths]"
         )
         expected = [[RuntimeNumber("2"), RuntimeNumber("3")]]
@@ -5777,11 +5777,22 @@ end
         restored = loads(dumps(compile_program(typed, optimize=False)))
         self.assertEqual(run(restored), expected)
 
+    def test_tuple_path_union_gathers_mixed_result_ranks(self):
+        source = (
+            "$xs = [[[[10]]]]\n"
+            "$paths = [{0, 0, 0}, {0, 0, 0, 0}]\n"
+            "$xs[$paths]"
+        )
+        self.assertEqual(
+            execute(source),
+            [[[RuntimeNumber("10")], RuntimeNumber("10")]],
+        )
+
     def test_integer_rank_two_selector_supports_assignment_and_augmentation(self):
         self.assertEqual(
             execute(
                 "$matrix = [[1, 2], [3, 4]]\n"
-                "$matrix[[[0, 1], [1, 0]]] = 9\n"
+                "$matrix[[{0, 1}, {1, 0}]] = 9\n"
                 "$matrix"
             ),
             [
@@ -5794,7 +5805,7 @@ end
         self.assertEqual(
             execute(
                 "$matrix = [[1, 2], [3, 4]]\n"
-                "$matrix[[[0, 1], [1, 0]]] := 1 rotate\n"
+                "$matrix[[{0, 1}, {1, 0}]] := 1 rotate\n"
                 "$matrix"
             ),
             [
@@ -5811,7 +5822,7 @@ end
             "whole-selection augmented assignment contains duplicate indices",
         ):
             execute(
-                "$matrix = [[1, 2], [3, 4]]\n" "$matrix[[[0, 1], [0, 1]]] := 1 rotate"
+                "$matrix = [[1, 2], [3, 4]]\n" "$matrix[[{0, 1}, {0, 1}]] := 1 rotate"
             )
 
     def test_none_path_component_gathers_strict_wildcard_column(self):

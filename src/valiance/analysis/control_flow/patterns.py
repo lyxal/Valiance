@@ -165,6 +165,53 @@ def _selector_sequence_item_type(receiver_type: T.Type) -> T.Type | None:
     return None
 
 
+def _tuple_path_depths(selector_type: T.Type, ctx: T.Context) -> frozenset[int] | None:
+    """Return every statically known depth in a tuple-path collection.
+
+    A multidimensional path selector is a rank-one exact list whose item type is
+    either one fixed integer tuple or a union of fixed integer tuples. Arbitrary
+    ``Int++`` values are deliberately excluded because their inner lengths are
+    not represented by the type.
+    """
+    selector = T.normalize(selector_type)
+    if isinstance(selector, T.TaggedType):
+        return _tuple_path_depths(selector.inner, ctx)
+    if not isinstance(selector, T.ListExactType) or selector.rank != 1:
+        return None
+    item = T.normalize(selector.base)
+    branches = item.items if isinstance(item, T.UnionType) else (item,)
+    depths: set[int] = set()
+    for branch in branches:
+        if (
+            not isinstance(branch, T.TupleType)
+            or not branch.params
+            or not all(T.assignable(part, T.Int, ctx) for part in branch.params)
+        ):
+            return None
+        depths.add(len(branch.params))
+    return frozenset(depths) if depths else None
+
+
+def _select_path_depth(receiver_type: T.Type, depth: int) -> T.Type | None:
+    """Select through exactly ``depth`` receiver levels."""
+    selected = receiver_type
+    for _ in range(depth):
+        normalized = T.normalize(selected)
+        if isinstance(normalized, T.UnionType):
+            branches = tuple(_select_path_depth(item, 1) for item in normalized.items)
+            if any(branch is None for branch in branches):
+                return None
+            selected = T.U(*branches)
+            continue
+        if not isinstance(normalized, (T.CollectionType, T.TupleType)) and not (
+            isinstance(normalized, T.NominalType)
+            and normalized.name.text in {"String", "Dict"}
+        ):
+            return None
+        selected = _index_type(selected)
+    return selected
+
+
 def _selector_mode(
     receiver_type: T.Type,
     selector_type: T.Type,
@@ -215,7 +262,7 @@ def _selector_mode(
 
     if (
         isinstance(receiver, (T.ListExactType, T.ListMinType, T.ListRuggedType))
-        and T.assignable(selector, T.ExactList(T.Int, rank=2), ctx)
+        and _tuple_path_depths(selector, ctx) is not None
     ):
         return "paths"
 
@@ -247,6 +294,7 @@ def _selection_type(
     mode: str | None,
     *,
     path_depth: int | None = None,
+    path_depths: frozenset[int] | None = None,
 ) -> T.Type | None:
     """Return the gathered type for one whole-selection selector.
 
@@ -259,17 +307,26 @@ def _selection_type(
     if mode not in {"mask", "predicate", "sequence", "paths", "path_pattern"}:
         return None
     if mode == "path_pattern" and path_depth is not None:
-        selected = receiver_type
-        for _ in range(path_depth):
-            selected = _index_type(selected)
-        return T.ExactList(selected)
+        selected = _select_path_depth(receiver_type, path_depth)
+        return None if selected is None else T.ExactList(selected)
+    if mode == "paths" and path_depths:
+        selected = tuple(
+            _select_path_depth(receiver_type, depth) for depth in path_depths
+        )
+        if any(item is None for item in selected):
+            return None
+        return T.U(*(T.ExactList(item) for item in selected))
     typ = T.normalize(receiver_type)
     if isinstance(typ, T.TaggedType):
-        selected = _selection_type(typ.inner, mode, path_depth=path_depth)
+        selected = _selection_type(
+            typ.inner, mode, path_depth=path_depth, path_depths=path_depths
+        )
         return None if selected is None else T.Tagged(selected, *typ.tags, exact=typ.exact)
     if isinstance(typ, T.UnionType):
         selected = tuple(
-            _selection_type(item, mode, path_depth=path_depth)
+            _selection_type(
+                item, mode, path_depth=path_depth, path_depths=path_depths
+            )
             for item in typ.items
         )
         return None if any(item is None for item in selected) else T.U(*selected)
@@ -407,21 +464,27 @@ def _grouped_update_receiver(typ: T.Type) -> bool:
 def _selection_replacement_item_type(
     receiver_type: T.Type,
     mode: str | None = None,
+    *,
+    path_depths: frozenset[int] | None = None,
 ) -> T.Type:
     """Return the scalar value type broadcast by selection replacement."""
     typ = T.normalize(receiver_type)
     if isinstance(typ, T.TaggedType):
-        return _selection_replacement_item_type(typ.inner, mode)
+        return _selection_replacement_item_type(
+            typ.inner, mode, path_depths=path_depths
+        )
     if isinstance(typ, T.UnionType):
         return T.U(*(
-            _selection_replacement_item_type(item, mode) for item in typ.items
+            _selection_replacement_item_type(
+                item, mode, path_depths=path_depths
+            ) for item in typ.items
         ))
     if isinstance(typ, T.CollectionType):
-        return (
-            typ.base
-            if mode in {"paths", "path_pattern"}
-            else T.collection_item_type(typ)
-        )
+        if mode == "paths" and path_depths:
+            selected = tuple(_select_path_depth(typ, depth) for depth in path_depths)
+            if all(item is not None for item in selected):
+                return T.U(*selected)
+        return typ.base if mode == "path_pattern" else T.collection_item_type(typ)
     if isinstance(typ, T.NominalType) and typ.name.text == "String":
         return T.String
     if isinstance(typ, T.NominalType) and typ.name.text == "Dict" and len(typ.args) == 2:

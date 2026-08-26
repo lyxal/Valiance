@@ -7165,6 +7165,38 @@ end
 
 
 
+class TuplePathSelectionAnalysisTests(unittest.TestCase):
+    """Keep tuple-path depths reflected in gathered result types."""
+
+    def test_tuple_path_union_normalizes_mixed_result_ranks(self):
+        source = """
+$xs = [[[[10]]]]
+$paths = [{0, 0, 0}, {0, 0, 0, 0}]
+$xs[$paths]
+"""
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        self.assertTrue(
+            same(
+                typed[-1].typ,
+                C(ListExactType, U(Int, C(ListExactType, Int))),
+            )
+        )
+
+    def test_arbitrary_int_rank_two_is_not_a_path_selector(self):
+        source = """
+$xs = [[1, 2], [3, 4]]
+$paths = [[0, 1], [1, 0]]
+$xs[$paths]
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        self.assertTrue(
+            any("list indexing requires Int index value(s)" in item for item in analyser.diagnostics)
+        )
+
+
 class WildcardPathSelectionAnalysisTests(unittest.TestCase):
     """Keep wildcard-path ranks aligned with runtime path gathering."""
 
