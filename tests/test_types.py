@@ -96,6 +96,34 @@ class TypeLibraryTests(unittest.TestCase):
     def test_atomic_marker_normalization_is_idempotent(self):
         self.assertEqual(normalize(Exact(Exact(Int))), Exact(Int))
 
+    def test_exact_list_union_factors_common_outer_rank(self):
+        self.assertEqual(
+            U(ExactList(Int, 2), ExactList(Int)),
+            ExactList(U(ExactList(Int), Int)),
+        )
+
+    def test_exact_list_union_factors_only_shared_rank(self):
+        self.assertEqual(
+            U(ExactList(Int, 4), ExactList(Int, 2)),
+            ExactList(U(ExactList(Int, 2), Int), 2),
+        )
+
+    def test_exact_list_union_factors_different_bases(self):
+        self.assertEqual(
+            U(ExactList(Int, 2), ExactList(String, 2)),
+            ExactList(U(Int, String), 2),
+        )
+
+    def test_exact_list_union_factors_collection_subset(self):
+        self.assertEqual(
+            U(String, ExactList(Int, 2), ExactList(Int)),
+            U(String, ExactList(U(ExactList(Int), Int))),
+        )
+
+    def test_factored_exact_list_union_is_idempotent(self):
+        factored = U(ExactList(Int, 4), ExactList(Int, 2))
+        self.assertEqual(normalize(factored), factored)
+
     def test_intersection_with_never_normalizes_to_bottom(self):
         self.assertEqual(I(Int, Never()), Never())
         self.assertEqual(I(Never(), String), Never())

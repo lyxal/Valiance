@@ -5344,7 +5344,7 @@ define f(value: #left #right Number) -> Number => $value
 
         self.assertIn(
             "no overloads for element 'length' match stack "
-            "[Int | Int+ | Number+]",
+            "[Int | Number+]",
             analyser.diagnostics[0],
         )
 

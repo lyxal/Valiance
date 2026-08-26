@@ -280,6 +280,37 @@ def _optional_inner(t: UnionType) -> Type | None:
     return U(*non_none) if len(non_none) > 1 else non_none[0]
 
 
+def _normalize_exact_list_union(items: set[Type]) -> Type | None:
+    """Factor the common outer rank from exact-list union members.
+
+    ``A+n | B+n`` is equivalent to ``(A | B)+n``. Differing exact
+    ranks share their minimum rank, so ``T+4 | T+2`` becomes
+    ``(T+2 | T)+2``. Other union members remain alongside the factored
+    collection. Rank variables are excluded because their common depth is
+    not statically known.
+    """
+    exact = [
+        item
+        for item in items
+        if isinstance(item, ListExactType) and isinstance(item.rank, int)
+    ]
+    if len(exact) < 2:
+        return None
+
+    common_rank = min(item.rank for item in exact)
+    residuals = tuple(
+        item.base
+        if item.rank == common_rank
+        else ListExactType(item.base, item.rank - common_rank)
+        for item in exact
+    )
+    factored = ListExactType(UnionType(frozenset(residuals)), common_rank)
+    remainder = items.difference(exact)
+    if not remainder:
+        return factored
+    return UnionType(frozenset((*remainder, factored)))
+
+
 def normalize(t: Type) -> Type:
     """Canonicalize unions, intersections, nested collections, and wrappers."""
     if isinstance(t, NominalType) and t.name == Symbol("Task"):
@@ -305,6 +336,9 @@ def normalize(t: Type) -> Type:
         if result is not None:
             return result
         flat = _normalize_numeric_union(flat)
+        factored = _normalize_exact_list_union(flat)
+        if factored is not None:
+            return normalize(factored)
         if len(flat) == 1:
             return next(iter(flat))
         return UnionType(frozenset(flat))

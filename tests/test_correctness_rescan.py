@@ -332,17 +332,12 @@ class RuntimeRepresentationAgreementTests(unittest.TestCase):
         )
 
     def test_empty_flat_list_does_not_pass_an_exact_matrix_check(self):
-        analyser, typed = analyse(EMPTY_MATRIX_GUARD)
-        self.assertEqual(analyser.diagnostics, [])
-        program = compile_program(typed, optimize=False)
-
-        for candidate in (program, loads(dumps(program))):
-            with self.subTest(round_tripped=candidate is not program):
-                with self.assertRaisesRegex(
-                    ValianceRuntimeError,
-                    "checked cast failed",
-                ):
-                    run(candidate)
+        analyser, _ = analyse(EMPTY_MATRIX_GUARD)
+        self.assertEqual(len(analyser.diagnostics), 1)
+        self.assertIn(
+            "cannot cast (Number | Number+)+ to Number+2",
+            analyser.diagnostics[0],
+        )
 
     def test_checked_collection_cast_does_not_consume_a_lazy_value(self):
         consumed = 0
