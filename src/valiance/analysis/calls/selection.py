@@ -421,9 +421,7 @@ class _CallSelection:
                 overload,
                 params=tuple(
                     self._union_dispatch_parameter_view(param, arg)
-                    for param, arg in zip(
-                        overload.params, scalar_args, strict=True
-                    )
+                    for param, arg in zip(overload.params, scalar_args, strict=True)
                 ),
             )
             for overload in overloads
@@ -520,9 +518,17 @@ class _CallSelection:
             if candidate.overload_index is not None
             else _calls._overload_index(overloads, overload)
         )
-        # An imported source overload is compiled as its own one-slot function.
-        # Its visible overload-set index therefore must not be reused at runtime.
-        runtime_index = 0 if overload_runtime_name is not None else selected_index
+        # Imported overloads may share one hidden runtime overload set. Preserve
+        # the slot assigned while registering that resolved import group.
+        imported_runtime_index = self.env.overload_runtime_index_for(
+            node.name,
+            overload,
+        )
+        runtime_index = (
+            imported_runtime_index
+            if overload_runtime_name is not None and imported_runtime_index is not None
+            else (0 if overload_runtime_name is not None else selected_index)
+        )
         behaviour_matches = tuple(
             (behaviour.provider, definition)
             for behaviour in self.env.context.trait_impl_behaviours

@@ -281,34 +281,38 @@ def _optional_inner(t: UnionType) -> Type | None:
 
 
 def _normalize_exact_list_union(items: set[Type]) -> Type | None:
-    """Factor the common outer rank from exact-list union members.
+    """Factor exact-list union members only when their ranks are identical.
 
-    ``A+n | B+n`` is equivalent to ``(A | B)+n``. Differing exact
-    ranks share their minimum rank, so ``T+4 | T+2`` becomes
-    ``(T+2 | T)+2``. Other union members remain alongside the factored
-    collection. Rank variables are excluded because their common depth is
-    not statically known.
+    ``A+n | B+n`` is equivalent to ``(A | B)+n``. Exact lists with different
+    ranks must remain separate union branches: factoring ``T+3 | T+2`` as
+    ``(T+ | T)+2`` would admit mixed-depth values that neither original branch
+    describes.
     """
-    exact = [
-        item
-        for item in items
-        if isinstance(item, ListExactType) and isinstance(item.rank, int)
-    ]
-    if len(exact) < 2:
+    by_rank: dict[int, list[ListExactType]] = {}
+    for item in items:
+        if isinstance(item, ListExactType) and isinstance(item.rank, int):
+            by_rank.setdefault(item.rank, []).append(item)
+
+    groups = tuple(
+        (rank, members)
+        for rank, members in sorted(by_rank.items())
+        if len(members) >= 2
+    )
+    if not groups:
         return None
 
-    common_rank = min(item.rank for item in exact)
-    residuals = tuple(
-        item.base
-        if item.rank == common_rank
-        else ListExactType(item.base, item.rank - common_rank)
-        for item in exact
-    )
-    factored = ListExactType(UnionType(frozenset(residuals)), common_rank)
-    remainder = items.difference(exact)
-    if not remainder:
-        return factored
-    return UnionType(frozenset((*remainder, factored)))
+    factored_items = set(items)
+    for rank, members in groups:
+        factored_items.difference_update(members)
+        factored_items.add(
+            ListExactType(
+                UnionType(frozenset(member.base for member in members)),
+                rank,
+            )
+        )
+    if len(factored_items) == 1:
+        return next(iter(factored_items))
+    return UnionType(frozenset(factored_items))
 
 
 def normalize(t: Type) -> Type:

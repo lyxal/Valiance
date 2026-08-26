@@ -349,6 +349,12 @@ class _ElementCalls:
                         f"help: mark '{node.name.text}' as public to export it from "
                         f"module '{module}'"
                     )
+        private_friendly = self._private_friendly_element_message(
+            node.name,
+            branch,
+        )
+        if private_friendly is not None:
+            return f"{message}\n{private_friendly}"
         if branch.variables.read(node.name) is not None:
             return f"{message}\ndid you mean '${node.name}'?"
         suggestions = self._element_name_suggestions(node, branch)
@@ -357,6 +363,53 @@ class _ElementCalls:
         return f"{message}\ndid you mean:\n" + "\n".join(
             f"  - {suggestion}" for suggestion in suggestions
         )
+
+    def _private_friendly_element_message(
+        self,
+        name: Symbol,
+        branch: AnalysisBranch,
+    ) -> str | None:
+        """Explain when an imported object's matching friendly element is private."""
+        if not branch.stack:
+            return None
+        receiver = branch.stack[-1]
+        candidates = tuple(
+            candidate
+            for candidate in self._private_imported_friendly_elements.get(name, ())
+            if self._receiver_may_be_owner(receiver, candidate[0])
+        )
+        if not candidates:
+            return None
+        unique = tuple(dict.fromkeys(candidates))
+        if len(unique) == 1:
+            owner, module = unique[0]
+            return (
+                f"note: object-friendly element '{name.text}' is declared for "
+                f"object '{owner}' in module '{module}' but is not public\n"
+                f"help: mark '{name.text}' as public to make it available when "
+                f"importing '{owner}'"
+            )
+        rendered = "\n".join(
+            f"  - {module}.{owner}::{name.text}"
+            for owner, module in sorted(unique, key=lambda item: (item[1], str(item[0])))
+        )
+        return (
+            "note: matching private object-friendly elements were found:\n"
+            f"{rendered}\n"
+            "help: mark the intended definition as public, or use a different "
+            "public element"
+        )
+
+    def _receiver_may_be_owner(self, receiver: T.Type, owner: Symbol) -> bool:
+        """Return whether one runtime receiver branch can have the imported owner."""
+        receiver = T.normalize(receiver)
+        if isinstance(receiver, (T.TaggedType, T.NoVecType, T.ExactType)):
+            return self._receiver_may_be_owner(receiver.inner, owner)
+        if isinstance(receiver, T.UnionType):
+            return any(
+                self._receiver_may_be_owner(item, owner) for item in receiver.items
+            )
+        return T.assignable(receiver, T.N(owner), self.env.context)
 
     def _element_name_suggestions(
         self,

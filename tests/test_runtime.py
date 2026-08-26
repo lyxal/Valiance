@@ -2975,7 +2975,7 @@ end
 public object Person =>
   $name: String
   $age: Number
-  define label -> String => $self.name
+  public define label -> String => $self.name
 end
 """,
                 encoding="utf-8",
@@ -2996,7 +2996,7 @@ end
                 """
 public object Foo =>
   $x: Number
-  define get => $self.x
+  public define get => $self.x
 end
 """,
                 encoding="utf-8",
@@ -3036,7 +3036,7 @@ public object Rectangle =>
 end
 
 object Rectangle as Shape =>
-  define getArea => $self.shortSide * $self.longSide
+  public define getArea => $self.shortSide * $self.longSide
 end
 """,
                 encoding="utf-8",
@@ -3697,7 +3697,7 @@ Value("x") $.text
         source = """
 object Foo =>
   $x: Number
-  define get => $self.x
+  public define get => $self.x
 end
 
 define get(:Foo) => $.x + 5
@@ -3717,7 +3717,7 @@ Foo(10) | Foo::get | println
             execute("""
 object Foo =>
   $x: Number
-  define get => $self.x
+  public define get => $self.x
 end
 
 define get(f: Foo) => $f.x + 5
@@ -6669,12 +6669,22 @@ public define perimeter(r: Rectangle) => $r.width * 2 | $r.height * 2 | +
 public define perimeter(c: Circle) => 2 * 3.14 * $c.radius
 """, encoding="utf-8")
         main = root / "main.vlnc"
-        source = """
-import {shapes}
-shapes.perimeter [shapes.Rectangle(10, 20), shapes.Circle(10)]
-"""
+        source = "import {shapes}\nshapes.perimeter [shapes.Rectangle(10, 20), shapes.Circle(10)]\n"
         main.write_text(source, encoding="utf-8")
-
         result = execute(source, main)
-
     assert list(result[-1]) == [60, 62.8]
+
+
+def test_imported_object_exposes_only_public_friendly_elements_at_runtime():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "person.vlnc").write_text("""
+public object Person =>
+  $name: String
+  define secret -> String => "hidden"
+  public define label -> String => $self.name
+end
+""", encoding="utf-8")
+        main = root / "main.vlnc"
+        stack = execute('import { person.Person }\nPerson("Joe") label', main)
+    assert stack == ["Joe"]

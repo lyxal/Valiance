@@ -245,11 +245,20 @@ class _ImportDeclarations:
         name: Symbol,
         typed_node: TypedFunctionNode,
         runtime_name: Symbol,
+        runtime_index_offset: int = 0,
     ) -> None:
         """Register imported definition during static analysis."""
-        for overload in self._selected_import_overloads(typed_node):
+        for runtime_index, overload in enumerate(
+            self._selected_import_overloads(typed_node),
+            start=runtime_index_offset,
+        ):
             self.env.define_overload(name, overload)
-            self.env.bind_runtime_name(name, runtime_name, overload)
+            self.env.bind_runtime_name(
+                name,
+                runtime_name,
+                overload,
+                runtime_index,
+            )
 
     def _register_imported_friendly_runtime_elements(
         self,

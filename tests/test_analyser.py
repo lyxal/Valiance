@@ -1282,7 +1282,7 @@ choose[Number, _](1, "value")
 object Person =>
   $name: String
   $age: Number
-  define label -> String => $self.name
+  public define label -> String => $self.name
 end
 Person("Ada", 36) $.name
 """))
@@ -3299,7 +3299,7 @@ $shape = {1, 2, 3} as[{Number, Number, Number} | {Number, Number, Number, Number
         self.assertTrue(
             same(
                 typed[-1].typ,
-                C(ListExactType, U(Int, C(ListExactType, Int)), 3),
+                U(C(ListExactType, Int, 3), C(ListExactType, Int, 4)),
             )
         )
 
@@ -6129,7 +6129,7 @@ end
 public object Person =>
   $name: String
   $age: Number
-  define label -> String => $self.name
+  public define label -> String => $self.name
 end
 """,
                 encoding="utf-8",
@@ -6165,7 +6165,7 @@ public object Rectangle =>
 end
 
 object Rectangle as Shape =>
-  define getArea => $self.shortSide * $self.longSide
+  public define getArea => $self.shortSide * $self.longSide
 end
 """,
                 encoding="utf-8",
@@ -6188,7 +6188,7 @@ end
 public object Rectangle =>
   $shortSide: Number
   $longSide: Number
-  define getArea => $self.shortSide * $self.longSide
+  public define getArea => $self.shortSide * $self.longSide
 end
 """,
                 encoding="utf-8",
@@ -7180,7 +7180,7 @@ $xs[$paths]
         self.assertTrue(
             same(
                 typed[-1].typ,
-                C(ListExactType, U(Int, C(ListExactType, Int))),
+                U(C(ListExactType, Int), C(ListExactType, Int, 2)),
             )
         )
 
@@ -7527,31 +7527,11 @@ def test_unknown_namespaced_private_object_explains_visibility():
         )
         main = root / "main.vlnc"
         analyser = Analyser(module_loader=ModuleLoader(), source_file=main)
-
         analyser.analyse(parse("import { shapes }\nshapes.Rectangle(10, 20)"))
-
     diagnostic = analyser.diagnostics[-1]
     assert "unknown element 'shapes.Rectangle'" in diagnostic
     assert "'Rectangle' is declared in module 'shapes' but is not public" in diagnostic
     assert "mark 'Rectangle' as public" in diagnostic
-
-
-def test_unknown_namespaced_private_definition_explains_visibility():
-    with TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        (root / "math.vlnc").write_text(
-            "define double(n: Number) => $n 2 *\n",
-            encoding="utf-8",
-        )
-        main = root / "main.vlnc"
-        analyser = Analyser(module_loader=ModuleLoader(), source_file=main)
-
-        analyser.analyse(parse("import { math }\n3 math.double"))
-
-    diagnostic = analyser.diagnostics[-1]
-    assert "unknown element 'math.double'" in diagnostic
-    assert "'double' is declared in module 'math' but is not public" in diagnostic
-    assert "mark 'double' as public" in diagnostic
 
 
 def test_element_union_coverage_merges_returns_and_records_dispatch_plan():
@@ -7562,7 +7542,6 @@ define describe(s: String) -> String => $s
 $choice: Number|String = 1
 $choice describe
 """))
-
     assert analyser.diagnostics == []
     applied = typed[-1].overload
     assert applied.union_dispatch_plan is not None
@@ -7579,6 +7558,130 @@ $left: Number|String = 1
 $right: Number|String = 2
 $left $right combine
 """))
-
     assert len(analyser.diagnostics) == 1
     assert "no overloads for element 'combine' match" in analyser.diagnostics[0]
+
+
+def test_direct_object_import_does_not_export_private_friendly_element():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "person.vlnc").write_text("""
+public object Person =>
+  $name: String
+  define label -> String => $self.name
+end
+""", encoding="utf-8")
+        main = root / "main.vlnc"
+        analyser = Analyser(source_file=main)
+        analyser.analyse(parse('import { person.Person }\nPerson("Joe") label'))
+    assert len(analyser.diagnostics) == 1
+    assert "unknown element 'label'" in analyser.diagnostics[0]
+
+
+def test_namespace_object_import_only_exports_public_friendly_elements():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "person.vlnc").write_text("""
+public object Person =>
+  $name: String
+  define secret -> String => $self.name
+  public define label -> String => $self.name
+end
+""", encoding="utf-8")
+        main = root / "main.vlnc"
+        analyser = Analyser(source_file=main)
+        typed = analyser.analyse(parse('import { person }\nperson.Person("Joe") person.label'))
+        assert analyser.diagnostics == []
+        assert typed[-1].typ == String
+        analyser = Analyser(source_file=main)
+        analyser.analyse(parse('import { person }\nperson.Person("Joe") person.secret'))
+    assert len(analyser.diagnostics) == 1
+    assert "unknown element 'person.secret'" in analyser.diagnostics[0]
+
+
+def test_direct_private_object_friendly_element_explains_visibility():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "person.vlnc").write_text("""
+public object Person =>
+  $name: String
+  define secret -> String => $self.name
+end
+""", encoding="utf-8")
+        main = root / "main.vlnc"
+        analyser = Analyser(source_file=main)
+        analyser.analyse(parse(
+            'import { person.Person }\nPerson("Joe") secret'
+        ))
+
+    diagnostic = analyser.diagnostics[-1]
+    assert "unknown element 'secret'" in diagnostic
+    assert "object-friendly element 'secret'" in diagnostic
+    assert "object 'Person' in module 'person' but is not public" in diagnostic
+    assert "mark 'secret' as public" in diagnostic
+
+
+def test_namespaced_private_object_friendly_element_explains_visibility():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "person.vlnc").write_text("""
+public object Person =>
+  $name: String
+  define secret -> String => $self.name
+end
+""", encoding="utf-8")
+        main = root / "main.vlnc"
+        analyser = Analyser(source_file=main)
+        analyser.analyse(parse(
+            'import { person }\nperson.Person("Joe") person.secret'
+        ))
+
+    diagnostic = analyser.diagnostics[-1]
+    assert "unknown element 'person.secret'" in diagnostic
+    assert "object-friendly element 'secret'" in diagnostic
+    assert "object 'person.Person' in module 'person' but is not public" in diagnostic
+
+
+def test_private_object_friendly_diagnostic_lists_union_receiver_candidates():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "models.vlnc").write_text("""
+public object Person =>
+  $name: String
+  define secret -> String => $self.name
+end
+public object Account =>
+  $name: String
+  define secret -> String => $self.name
+end
+""", encoding="utf-8")
+        main = root / "main.vlnc"
+        analyser = Analyser(source_file=main)
+        analyser.analyse(parse("""
+import { models.Person, models.Account }
+$value: Person|Account = Person("Joe")
+$value secret
+"""))
+
+    diagnostic = analyser.diagnostics[-1]
+    assert "matching private object-friendly elements were found" in diagnostic
+    assert "models.Account::secret" in diagnostic
+    assert "models.Person::secret" in diagnostic
+
+
+def test_unimported_private_object_friendly_element_keeps_generic_diagnostic():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "person.vlnc").write_text("""
+public object Person =>
+  $name: String
+  define secret -> String => $self.name
+end
+""", encoding="utf-8")
+        main = root / "main.vlnc"
+        analyser = Analyser(source_file=main)
+        analyser.analyse(parse('"Joe" secret'))
+
+    diagnostic = analyser.diagnostics[-1]
+    assert "unknown element 'secret'" in diagnostic
+    assert "object-friendly element" not in diagnostic

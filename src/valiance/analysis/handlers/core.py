@@ -853,32 +853,58 @@ def _import_node(
         for obj in objects:
             runtime_name = self._prelude.add_declaration(obj.typed, obj.name)
             self._register_imported_object(obj, runtime_name)
+            module_source = _show_import_path_for_diagnostic(resolved_spec.path)
+            for definition in obj.private_friendly_definitions:
+                candidate = (obj.name, module_source)
+                candidates = self._private_imported_friendly_elements.setdefault(
+                    definition.name, []
+                )
+                if candidate not in candidates:
+                    candidates.append(candidate)
         for obj in behaviour_objects:
             runtime_name = self._prelude.add_declaration(obj.typed, obj.name)
             self._register_imported_object(obj, runtime_name)
+        definitions_by_name: dict[Symbol, list] = {}
         for definition in definitions:
-            runtime_name = self._prelude.add_declaration(
-                definition.typed,
-                definition.name,
+            definitions_by_name.setdefault(definition.name, []).append(definition)
+        for definition_name, definition_group in definitions_by_name.items():
+            first_typed = definition_group[0].typed
+            merged_typed = TypedFunctionNode(
+                first_typed.node,
+                first_typed.typ,
+                tuple(
+                    overload
+                    for definition in definition_group
+                    for overload in definition.typed.overloads
+                ),
+                first_typed.dispatch_plan,
             )
-            try:
-                self._register_imported_definition(
-                    definition.name,
-                    definition.typed,
-                    runtime_name,
-                )
-            except ValueError as exc:
-                self._diagnose(
-                    self._import_arity_diagnostic(
-                        str(exc),
-                        resolved_spec,
+            runtime_name = self._prelude.add_declaration(
+                merged_typed,
+                definition_name,
+            )
+            runtime_index_offset = 0
+            for definition in definition_group:
+                try:
+                    self._register_imported_definition(
                         definition.name,
-                    ),
-                    node,
-                )
-                return _core.BranchSet(
-                    (branch.emit(TypedNode(node, None)),)
-                )
+                        definition.typed,
+                        runtime_name,
+                        runtime_index_offset,
+                    )
+                except ValueError as exc:
+                    self._diagnose(
+                        self._import_arity_diagnostic(
+                            str(exc),
+                            resolved_spec,
+                            definition.name,
+                        ),
+                        node,
+                    )
+                    return _core.BranchSet(
+                        (branch.emit(TypedNode(node, None)),)
+                    )
+                runtime_index_offset += len(definition.typed.overloads)
         provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
         for implementation in trait_implementations:
             self.env.add_trait_impl(

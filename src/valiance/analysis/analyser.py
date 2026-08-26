@@ -200,26 +200,8 @@ class _AnalysisPrelude:
 
     def add_declaration(self, node: TypedNode, source_name: Symbol) -> Symbol:
         """Hoist one declaration and return its hidden runtime binding."""
-        for index, (existing, existing_source, runtime_name) in enumerate(
-            self.bindings
-        ):
+        for existing, existing_source, runtime_name in self.bindings:
             if existing == node and existing_source == source_name:
-                return runtime_name
-            if (
-                existing_source == source_name
-                and isinstance(existing, TypedFunctionNode)
-                and isinstance(node, TypedFunctionNode)
-            ):
-                merged = replace(
-                    existing,
-                    overloads=existing.overloads + node.overloads,
-                )
-                runtime_merged = with_import_runtime_name(merged, runtime_name)
-                node_index = self.nodes.index(
-                    with_import_runtime_name(existing, runtime_name)
-                )
-                self.nodes[node_index] = runtime_merged
-                self.bindings[index] = (merged, source_name, runtime_name)
                 return runtime_name
         index = len(self.bindings)
         runtime_name = Symbol(
@@ -355,6 +337,9 @@ class Analyser:
         self._imported_object_sources: dict[Symbol, str] = {}
         self._imported_namespace_sources: dict[Symbol, str] = {}
         self._imported_namespace_exports: dict[Symbol, ModuleExports] = {}
+        self._private_imported_friendly_elements: dict[
+            Symbol, list[tuple[Symbol, str]]
+        ] = {}
         self._public_import_definitions = []
         self._public_import_objects = []
         self._public_import_tags = []
@@ -734,6 +719,10 @@ class Analyser:
         object_sources = self._imported_object_sources.copy()
         namespace_sources = self._imported_namespace_sources.copy()
         namespace_exports = self._imported_namespace_exports.copy()
+        private_friendly = {
+            name: list(candidates)
+            for name, candidates in self._private_imported_friendly_elements.items()
+        }
         trait_impl_sources = self._imported_trait_impl_sources.copy()
         self.env = outer.lexical_child_scope()
         self._scope_depth += 1
@@ -747,6 +736,7 @@ class Analyser:
             self._imported_object_sources = object_sources
             self._imported_namespace_sources = namespace_sources
             self._imported_namespace_exports = namespace_exports
+            self._private_imported_friendly_elements = private_friendly
             self._imported_trait_impl_sources = trait_impl_sources
 
     def _child_analyser(self, env: T.Environment) -> Analyser:
@@ -767,6 +757,10 @@ class Analyser:
         child._imported_object_sources = self._imported_object_sources.copy()
         child._imported_namespace_sources = self._imported_namespace_sources.copy()
         child._imported_namespace_exports = self._imported_namespace_exports.copy()
+        child._private_imported_friendly_elements = {
+            name: list(candidates)
+            for name, candidates in self._private_imported_friendly_elements.items()
+        }
         child._imported_trait_impl_sources = self._imported_trait_impl_sources.copy()
         child.project_lints_enabled = self.project_lints_enabled
         child.project_disabled_lint_codes = self.project_disabled_lint_codes

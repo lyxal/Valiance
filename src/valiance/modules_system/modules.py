@@ -57,6 +57,7 @@ class ModuleObject:
     public: bool = False
     friendly_definitions: tuple[DefineNode, ...] = ()
     import_friendly: bool = False
+    private_friendly_definitions: tuple[DefineNode, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -759,11 +760,23 @@ def _renamed_object(
         definition
         for definition in obj.friendly_definitions
         if definition not in explicit_constructors
+        and definition.visibility == Symbol("public")
+    )
+    private_friendly_definitions = tuple(
+        definition
+        for definition in obj.friendly_definitions
+        if definition not in explicit_constructors
+        and definition.visibility != Symbol("public")
     )
     definitions = renamed_constructors
+    renamed_private_friendly_definitions: tuple[DefineNode, ...] = ()
     if import_friendly:
         definitions += _renamed_friendly_definitions(
             friendly_definitions,
+            friendly_prefix,
+        )
+        renamed_private_friendly_definitions = _renamed_friendly_definitions(
+            private_friendly_definitions,
             friendly_prefix,
         )
     renamed = ObjectNode(
@@ -788,6 +801,7 @@ def _renamed_object(
         obj.public,
         definitions,
         import_friendly,
+        renamed_private_friendly_definitions,
     )
 
 

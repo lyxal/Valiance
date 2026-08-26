@@ -256,6 +256,9 @@ class Environment:
     overload_runtime_names: dict[tuple[Symbol, Overload], Symbol] = field(
         default_factory=dict[tuple[Symbol, Overload], Symbol]
     )
+    overload_runtime_indexes: dict[tuple[Symbol, Overload], int] = field(
+        default_factory=dict[tuple[Symbol, Overload], int]
+    )
 
     def child_scope(self) -> Environment:
         """Return a child frame that can read this environment."""
@@ -270,12 +273,28 @@ class Environment:
         source_name: Symbol,
         runtime_name: Symbol,
         overload: Overload | None = None,
+        runtime_index: int | None = None,
     ) -> None:
         """Bind a source name, optionally for one overload, to runtime storage."""
         if overload is None:
             self.runtime_names[source_name] = runtime_name
         else:
             self.overload_runtime_names[(source_name, overload)] = runtime_name
+            if runtime_index is not None:
+                self.overload_runtime_indexes[(source_name, overload)] = runtime_index
+
+    def overload_runtime_index_for(
+        self,
+        source_name: Symbol,
+        overload: Overload,
+    ) -> int | None:
+        """Return an overload's slot within its hidden imported overload set."""
+        runtime_index = self.overload_runtime_indexes.get((source_name, overload))
+        if runtime_index is not None:
+            return runtime_index
+        if self.parent is not None:
+            return self.parent.overload_runtime_index_for(source_name, overload)
+        return None
 
     def overload_runtime_name_for(
         self,
