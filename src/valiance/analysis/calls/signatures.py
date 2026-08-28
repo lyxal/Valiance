@@ -48,6 +48,7 @@ from valiance.asts import (
     TypedNode,
 )
 from valiance.asts.nodes import (
+    ForNode,
     GetVariableNode,
     IfNode,
     SetVariableNode,
@@ -88,6 +89,56 @@ def _genericize_overload(
         lambda typ: _genericize_type(typ, generics, scope),
     )
 
+def _inferred_parameter_shapes(
+    function: FunctionNode,
+) -> tuple[set[Symbol], set[Symbol]]:
+    """Collect unambiguous collection and callable uses of named parameters."""
+    parameter_names = {
+        param.name
+        for param in function.params or ()
+        if param.name is not None and param.typ is None
+    }
+    collection_names: set[Symbol] = set()
+    callable_names: set[Symbol] = set()
+
+    def visit_nodes(nodes: tuple[ASTNode, ...]) -> None:
+        for previous, current in zip(nodes, nodes[1:]):
+            if not isinstance(previous, GetVariableNode):
+                continue
+            if previous.name not in parameter_names:
+                continue
+            if isinstance(current, ForNode):
+                collection_names.add(previous.name)
+            elif (
+                isinstance(current, ElementNode)
+                and current.name == Symbol("call")
+                and current.explicit_call
+            ):
+                callable_names.add(previous.name)
+        for node in nodes:
+            if isinstance(node, FunctionNode):
+                continue
+            for owned_field in fields(node):
+                visit_value(getattr(node, owned_field.name))
+
+    def visit_value(value: object) -> None:
+        if isinstance(value, FunctionNode):
+            return
+        if isinstance(value, ASTNode):
+            visit_nodes((value,))
+        elif isinstance(value, tuple):
+            ast_nodes = tuple(item for item in value if isinstance(item, ASTNode))
+            if ast_nodes:
+                visit_nodes(ast_nodes)
+            for item in value:
+                if not isinstance(item, ASTNode):
+                    visit_value(item)
+
+    visit_nodes(function.body)
+    ambiguous = collection_names & callable_names
+    return collection_names - ambiguous, callable_names - ambiguous
+
+
 def _genericize_function_node(
     function: FunctionNode,
     generics: tuple[Symbol, ...],
@@ -109,17 +160,42 @@ def _genericize_function_node(
     scope = _generic_scope(generics, scope_id)
     params = None
     if function.params is not None:
-        params = tuple(
-            replace(
-                cast(FunctionParam, _genericize_ast_value(param, generics, scope)),
-                inference_identity=(
-                    param.inference_identity
-                    if param.inference_identity is not None
-                    else T.MetaVarId(binder_id, index)
-                ),
+        collection_names, callable_names = _inferred_parameter_shapes(function)
+        item_indices = {
+            name: index
+            for index, name in enumerate(
+                sorted(collection_names, key=lambda item: item.text),
+                start=1,
             )
-            for index, param in enumerate(function.params)
-        )
+        }
+        parameter_items: list[FunctionParam] = []
+        for index, param in enumerate(function.params):
+            genericized = cast(
+                FunctionParam, _genericize_ast_value(param, generics, scope)
+            )
+            inferred_type = genericized.typ
+            if inferred_type is None and param.name in callable_names:
+                inferred_type = T.Fn()
+            elif inferred_type is None and param.name in collection_names:
+                item_index = item_indices[param.name]
+                inferred_type = T.ExactList(
+                    T.M(
+                        f"@{item_index}",
+                        T.MetaVarId(binder_id, len(function.params) + item_index),
+                    )
+                )
+            parameter_items.append(
+                replace(
+                    genericized,
+                    typ=inferred_type,
+                    inference_identity=(
+                        param.inference_identity
+                        if param.inference_identity is not None
+                        else T.MetaVarId(binder_id, index)
+                    ),
+                )
+            )
+        params = tuple(parameter_items)
     returns = None
     if function.returns is not None:
         returns = tuple(

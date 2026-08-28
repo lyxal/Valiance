@@ -26,6 +26,7 @@ from valiance.asts import (
     TypedNode,
 )
 from valiance.asts.nodes import (
+    ForNode,
     GetVariableNode,
     IfNode,
     SetVariableNode,
@@ -619,6 +620,14 @@ def _top_level_capture_reads_in_nodes(
                     visible,
                     bound,
                 )
+            )
+            continue
+        if isinstance(node, ForNode):
+            loop_bound = bound | {node.variable}
+            if node.index_variable is not None:
+                loop_bound = loop_bound | {node.index_variable}
+            reads.extend(
+                _top_level_capture_reads_in_nodes(node.body, visible, loop_bound)
             )
             continue
         for item in fields(node):

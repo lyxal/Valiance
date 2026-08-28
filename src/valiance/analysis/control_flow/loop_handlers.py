@@ -126,12 +126,28 @@ def _for_node(
 
     item_type = T.collection_item_type(iterable_type)
     if not item_type:
-        self._diagnose(
-            "for loop iterable must actually be iterable. "
-            f"Got {T.show(iterable_type)}",
-            node,
-        )
-        return _core.BranchSet()
+        source = branch.typed_body[-1].node if branch.typed_body else None
+        if (
+            isinstance(source, GetVariableNode)
+            and source.name in branch.input_names
+            and isinstance(T.normalize(iterable_type), T.MetaVarType)
+        ):
+            item_type = _functions._anonymous_type_var(branch, 1)
+            inferred_iterable = T.ExactList(item_type)
+            branch = branch.refine_named_input_requirement(
+                source.name, iterable_type, inferred_iterable
+            )
+            branch = branch.with_stack(
+                T.TypeStack((*branch.stack.items[:-1], inferred_iterable))
+            )
+            iterable_type = inferred_iterable
+        else:
+            self._diagnose(
+                "for loop iterable must actually be iterable. "
+                f"Got {T.show(iterable_type)}",
+                node,
+            )
+            return _core.BranchSet()
 
     body_stack = branch.stack.pop() if consumes_stack_iterable else branch.stack
     body_branch = branch.with_stack(body_stack)
