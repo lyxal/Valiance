@@ -44,6 +44,7 @@ from valiance.runtime.runtime_values import (
     ListValue,
     RuntimeNumber,
     RecordValue,
+    ObjectLifecycleState,
     ObjectRuntimeType,
     ObjectValue,
     PanicSignal,
@@ -3125,6 +3126,7 @@ class VirtualMachine:
                                     receiver,
                                     field,
                                     value,
+                                    vm=self,
                                     in_place=borrowed,
                                 )
                             )
@@ -5198,6 +5200,10 @@ def _check_duplication_allowed(
             _check_duplication_allowed(value.value, context)
         return
     if isinstance(value, ObjectValue):
+        if value.ownership_transferred:
+            raise RuntimeError(
+                f"use after ownership transfer of {object_type_name(value)}"
+            )
         if value.destroyed:
             raise RuntimeError(f"use after destruction of {object_type_name(value)}")
         if value.destructor_borrowed:
@@ -5285,6 +5291,10 @@ def _retain_runtime_reference(value: Any) -> Any:
         value.refcount += 1
         return value
     if isinstance(value, ObjectValue):
+        if value.ownership_transferred:
+            raise RuntimeError(
+                f"use after ownership transfer of {object_type_name(value)}"
+            )
         if value.destroyed:
             raise RuntimeError(f"use after destruction of {object_type_name(value)}")
         if value.destructor_borrowed:
@@ -5372,6 +5382,8 @@ def _release_value(value: Any, vm: VirtualMachine) -> None:
             _release_value(item, vm)
         return
     if isinstance(value, ObjectValue):
+        if value.ownership_transferred:
+            return
         if value.destructor_borrowed:
             return
         lifecycle_guarded = (
@@ -8782,7 +8794,7 @@ def _optional_safe_set_field(
         raise RuntimeError("optional-safe field assignment requires Some or None")
 
     payload = receiver.fields["value"]
-    updated = _set_field(payload, field, value)
+    updated = _set_field(payload, field, value, vm=vm)
     return ObjectValue("Some", {"value": updated})
 
 
@@ -8814,6 +8826,7 @@ def _set_field(
     field: str,
     value: Any,
     *,
+    vm: VirtualMachine | None = None,
     in_place: bool = False,
 ) -> Any:
     """Update field during VM execution."""
@@ -8821,14 +8834,46 @@ def _set_field(
     if isinstance(receiver, ObjectValue):
         if field not in receiver.fields:
             raise RuntimeError(f"{receiver.type_name} has no field '{field}'")
+
         fields = dict(receiver.fields)
         fields[field] = value
+        shared = receiver.refcount > 1
+
+        if shared:
+            # The old immutable version remains observable through another
+            # occurrence. Give the replacement independent ownership and retain
+            # every unchanged owned field for its new structural lifetime.
+            for name, item in receiver.fields.items():
+                if name != field:
+                    _duplicate_occurrence(item)
+            if not in_place:
+                # This stack occurrence was consumed by reconstruction. Other
+                # occurrences continue to own the old immutable version.
+                receiver.refcount -= 1
+            lifecycle_state = ObjectLifecycleState(
+                mustcall_called=receiver.mustcall_called,
+            )
+        else:
+            # A consumed uniquely owned version can hand its structural lifetime
+            # to the replacement. Retiring the old wrapper avoids an observable
+            # destructor call for an intermediate immutable reconstruction.
+            replaced = receiver.fields[field]
+            if _needs_release(replaced):
+                if vm is None:
+                    raise RuntimeError(
+                        "object field reconstruction requires a VM to release "
+                        "the replaced owned value"
+                    )
+                _release_value(replaced, vm)
+            receiver.ownership_transferred = True
+            lifecycle_state = receiver.lifecycle_state
+
         return ObjectValue(
             receiver.type_name,
             fields,
             receiver.type_args,
             runtime_type=receiver.runtime_type,
-            lifecycle_state=receiver.lifecycle_state,
+            lifecycle_state=lifecycle_state,
         )
     if isinstance(receiver, dict):
         if field not in receiver:

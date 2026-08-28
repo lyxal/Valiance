@@ -513,7 +513,7 @@ class ObjectRuntimeType:
 
 @dataclass
 class ObjectLifecycleState:
-    """Mutable protocol state shared by immutable wrappers of one logical object."""
+    """Mutable protocol state propagated across versions of a logical object."""
 
     mustcall_called: frozenset[str] = field(default_factory=frozenset)
 
@@ -539,15 +539,16 @@ class ObjectValue:
     cleaning_up: bool = field(default=False, compare=False, repr=False)
     destructor_borrowed: bool = field(default=False, compare=False, repr=False)
     destroyed: bool = field(default=False, compare=False, repr=False)
+    ownership_transferred: bool = field(default=False, compare=False, repr=False)
 
     @property
     def mustcall_called(self) -> frozenset[str]:
-        """Return contractual calls shared by all wrappers of this object."""
+        """Return contractual calls propagated across object versions."""
         return self.lifecycle_state.mustcall_called
 
     @mustcall_called.setter
     def mustcall_called(self, called: frozenset[str]) -> None:
-        """Update contractual calls for every wrapper sharing this lifecycle."""
+        """Update contractual calls for versions sharing this protocol state."""
         self.lifecycle_state.mustcall_called = called
 
 

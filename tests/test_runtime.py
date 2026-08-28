@@ -31,6 +31,7 @@ from valiance.runtime.bytecode import (
 from valiance.runtime.vm import (
     FunctionValue,
     PanicSignal,
+    _bind_global_function_declaration,
     _borrow_destructor_receiver,
     _duplicate_occurrence,
     _mark_mustcall_method,
@@ -3142,6 +3143,47 @@ $value 1 +
 
         self.assertIs(value.globals["this"], value)
 
+    def test_recursive_function_self_binding_is_non_owning(self):
+        inner = FunctionCode(
+            (
+                Instruction(OpCode.LOAD_ELEMENT, "this"),
+                Instruction(OpCode.RETURN),
+            ),
+            recursive=True,
+        )
+        program = Program(
+            FunctionCode(
+                (
+                    Instruction(OpCode.MAKE_FUNCTION, inner),
+                    Instruction(OpCode.RETURN),
+                )
+            )
+        )
+
+        [value] = run(program)
+
+        self.assertIs(value.globals["this"], value)
+        self.assertNotIn("this", value.owned_names)
+        self.assertEqual(value.refcount, 1)
+        _release_value(value, VirtualMachine())
+        self.assertEqual(value.refcount, 0)
+        self.assertEqual(value.globals, {})
+
+    def test_top_level_function_cross_bindings_are_non_owning(self):
+        first = FunctionValue(FunctionCode((), name="first"), {})
+        second = FunctionValue(FunctionCode((), name="second"), {})
+        globals_ = {"first": first, "second": second}
+
+        _bind_global_function_declaration(globals_, "first", first)
+        _bind_global_function_declaration(globals_, "second", second)
+
+        self.assertIs(first.globals["second"], second)
+        self.assertIs(second.globals["first"], first)
+        self.assertNotIn("second", first.owned_names)
+        self.assertNotIn("first", second.owned_names)
+        self.assertEqual(first.refcount, 1)
+        self.assertEqual(second.refcount, 1)
+
     def test_tupled_annotation_wraps_element_returns_at_runtime(self):
         self.assertEqual(
             execute("""
@@ -3885,6 +3927,143 @@ end
         self.assertEqual(stack, [])
         self.assertEqual(output.getvalue(), "released\n")
 
+    def test_reconstructed_object_runs_destructor_once_with_latest_fields(self):
+        output = io.StringIO()
+        source = """
+object Counter =>
+  private $count = 0
+  private $numberOfTimesIncremented = 0
+  define Counter(initial: Int) =>
+    $self.count = $initial
+  end
+
+  @self define increment =>
+    $self.count := + 1
+    $self.numberOfTimesIncremented := + 1
+  end
+  @self define reset => $self.count = 0
+
+  define getCount => $self.count
+
+  define ~Counter =>
+    println "This counter was incremented ${$self.numberOfTimesIncremented} times"
+  end
+end
+
+Counter 0
+increment increment increment
+dup | getCount | println
+reset
+increment
+dup | getCount | println
+pop
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(
+            output.getvalue(),
+            "3\n1\nThis counter was incremented 4 times\n",
+        )
+
+    def test_destructor_lifetimes_split_for_every_duplicate_occurrence_path(self):
+        prefix = """
+object Counter =>
+  private $count = 0
+  private $times = 0
+
+  define Counter(initial: Int) => $self.count = $initial end
+
+  @self define increment =>
+    $self.count := + 1
+    $self.times := + 1
+  end
+
+  define ~Counter => println "destroy ${$self.count}, ${$self.times}"
+end
+"""
+        programs = {
+            "dup": "Counter 0 | dup | increment | swap | pop | pop",
+            "repeated move output": (
+                "Counter 0 | move(a -> a, a) | increment | swap | pop | pop"
+            ),
+            "copy": "Counter 0 | copy(a -> a) | increment | swap | pop | pop",
+        }
+
+        for name, body in programs.items():
+            with self.subTest(name=name):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    stack = execute(prefix + body)
+
+                self.assertEqual(stack, [])
+                self.assertEqual(
+                    output.getvalue(),
+                    "destroy 0, 0\ndestroy 1, 1\n",
+                )
+
+    def test_variable_materialization_tracks_each_object_occurrence(self):
+        output = io.StringIO()
+        source = """
+object Counter =>
+  private $count = 0
+  private $times = 0
+
+  define Counter(initial: Int) => $self.count = $initial end
+
+  @self define increment =>
+    $self.count := + 1
+    $self.times := + 1
+  end
+
+  define ~Counter => println "destroy ${$self.count}, ${$self.times}"
+end
+
+define \\exercise -> =>
+  $counter = Counter 0
+  $counter $counter | increment | swap | pop | pop
+end
+
+\\exercise
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(
+            output.getvalue(),
+            "destroy 1, 1\ndestroy 0, 0\n",
+        )
+
+    def test_unique_reconstruction_defers_destructor_until_final_version(self):
+        output = io.StringIO()
+        source = """
+object Counter =>
+  private $count = 0
+  private $times = 0
+
+  define Counter(initial: Int) => $self.count = $initial end
+
+  @self define increment =>
+    $self.count := + 1
+    $self.times := + 1
+  end
+
+  define ~Counter => println "destroy ${$self.count}, ${$self.times}"
+end
+
+Counter 0 | increment | increment | increment | pop
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "destroy 3, 3\n")
+
     def test_destructor_panic_is_catchable_after_structural_teardown(self):
         output = io.StringIO()
         source = """
@@ -3995,6 +4174,75 @@ end
         with self.assertRaises(RuntimeError) as caught:
             _retain_runtime_reference(value)
         self.assertIn("use after destruction of Resource", str(caught.exception))
+
+    def test_reconstructed_object_preserves_immutable_field_snapshot(self):
+        original = ObjectValue(
+            "Work",
+            {"value": RuntimeNumber("1")},
+        )
+
+        reconstructed = _set_field(
+            original,
+            "value",
+            RuntimeNumber("2"),
+        )
+
+        self.assertIsInstance(reconstructed, ObjectValue)
+        self.assertIsNot(original, reconstructed)
+        self.assertIsNot(original.fields, reconstructed.fields)
+        self.assertEqual(original.fields["value"], RuntimeNumber("1"))
+        self.assertEqual(reconstructed.fields["value"], RuntimeNumber("2"))
+        self.assertIs(original.lifecycle_state, reconstructed.lifecycle_state)
+
+    def test_object_reconstruction_ownership_graph_remains_acyclic(self):
+        leaf = ObjectValue("Leaf", {"value": RuntimeNumber("1")})
+        original = ObjectValue("Node", {"child": leaf})
+
+        reconstructed = _set_field(
+            original,
+            "child",
+            ObjectValue("Leaf", {"value": RuntimeNumber("2")}),
+            vm=VirtualMachine(),
+        )
+
+        self.assertTrue(original.ownership_transferred)
+        self.assertIsNot(reconstructed, original)
+        self.assertIsNot(reconstructed.fields["child"], reconstructed)
+        self.assertNotIn(
+            id(reconstructed),
+            {id(value) for value in reconstructed.fields.values()},
+        )
+        with self.assertRaisesRegex(RuntimeError, "use after ownership transfer"):
+            _duplicate_occurrence(original)
+        with self.assertRaisesRegex(RuntimeError, "use after ownership transfer"):
+            _retain_runtime_reference(original)
+
+    def test_shared_reconstruction_creates_forward_only_owning_edges(self):
+        child = ObjectValue("Leaf", {"value": RuntimeNumber("1")})
+        original = ObjectValue("Node", {"child": child})
+        alias = _duplicate_occurrence(original)
+        replacement = ObjectValue("Leaf", {"value": RuntimeNumber("2")})
+
+        reconstructed = _set_field(
+            original,
+            "child",
+            replacement,
+            vm=VirtualMachine(),
+        )
+
+        self.assertIs(alias, original)
+        self.assertEqual(original.refcount, 1)
+        self.assertEqual(reconstructed.refcount, 1)
+        self.assertIs(original.fields["child"], child)
+        self.assertIs(reconstructed.fields["child"], replacement)
+        self.assertNotIn(
+            id(reconstructed),
+            {id(value) for value in original.fields.values()},
+        )
+        self.assertNotIn(
+            id(original),
+            {id(value) for value in reconstructed.fields.values()},
+        )
 
     def test_reconstructed_object_wrappers_share_mustcall_state(self):
         runtime_type = ObjectRuntimeType(
