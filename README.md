@@ -25,11 +25,14 @@ change playbooks, debugging guidance, a human-first [type-system guide](docs/mai
 
 ## Testing
 
-Run the full test suite with:
+Run the full test suite in balanced parallel workers with:
 
 ```powershell
-uv run python -m unittest discover -s tests -v
+uv run python -m tools.test_suite
 ```
+
+Use `--workers 1 --verbose` for serial debugging. The tests remain ordinary
+`unittest` modules, so focused modules can still be run directly.
 
 Run individual test modules with:
 
