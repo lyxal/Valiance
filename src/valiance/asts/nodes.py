@@ -63,6 +63,14 @@ class TypedElementNode(TypedNode):
 
 
 @dataclass(frozen=True, slots=True)
+class TypedProtocolIndexNode(TypedNode):
+    """An index operation lowered through statically selected providers."""
+
+    providers: tuple[TypedElementNode, ...] = ()
+    assignment: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class TypedCallNode(TypedNode):
     """A typed call expression with its compile-time resolved callable overload."""
 

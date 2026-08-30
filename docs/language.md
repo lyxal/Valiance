@@ -1206,6 +1206,30 @@ fork: (sum, length) /
 
 
 # 9. Indexing
+
+## 9.0. Custom index providers
+
+A visible `@index(Type)` definition can supply indexing for a named type that
+does not already have intrinsic indexing behaviour. Its effective signature must
+take the annotated receiver and one selector and return exactly one value. The
+receiver parameter must be normalized-equal to the annotation target. Generic
+nominal targets and named traits are supported. Provider arguments are matched
+by assignability, without vectorisation or other call compatibility adaptation.
+
+A visible `@update(Type)` definition supplies indexed replacement. It takes the
+receiver, selector, and replacement and returns exactly one updated receiver.
+For several comma-separated selectors, each update result becomes the receiver
+of the next update. The final result is checked by ordinary assignment and path
+reconstruction rules. The shared replacement must satisfy normal duplication
+rules. Custom indexed augmented assignment is not supported.
+
+Comma-separated custom reads resolve every selector independently and gather
+the one-value results into a list. A tuple such as `{1, 2}` is one selector and
+can be interpreted as a multidimensional path by a provider. Lists, masks,
+functions, `None`, and `_` likewise have only the meanings declared by the
+selected provider. Empty selector lists are invalid. Intrinsic list, tuple,
+string, record, and dictionary indexing remains sealed and cannot be overridden.
+
 - `$[<index>]` will get the `index`th item from the top of the stack. 0-indexed.
 	- Valid if a type has an overload of `index`. Built-in types that support this include list types, tuple types, and `String`
 - `[1, 2, 3] $[1]` == `2`.
@@ -1228,7 +1252,7 @@ fork: (sum, length) /
 - `$data[1:4]` == `$data[1, 2, 3, 4]`
 - `[1, 2, 3, 4, 5, 6] $[::2]` == `[1, 3, 5]`
 - Multi-dimensional indices
-- `$data[[1, 2]]` == `$data[1][2]` == `$data[1] $[2]`
+- `$data[{1, 2}]` == `$data[1][2]` == `$data[1] $[2]`
 - A multidimensional path may contain `\None` as an unconstrained coordinate.
   It expands across every valid index at that path depth. Expansion is strict:
   every concrete path produced must be valid, or the complete access or update

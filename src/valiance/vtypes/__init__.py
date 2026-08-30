@@ -59,6 +59,7 @@ from valiance.vtypes.environment import (
     NoMatchingOverload,
     ObjectAttribute,
     ObjectDefinition,
+    ProtocolProvider,
     TagOverlayDefinition,
     TraitDefinition,
     TraitRequirement,

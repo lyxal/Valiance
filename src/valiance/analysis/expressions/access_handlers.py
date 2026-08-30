@@ -47,6 +47,8 @@ from valiance.asts import (
     TypedFunctionNode,
     TypedIfNode,
     TypedNode,
+    TypedElementNode,
+    TypedProtocolIndexNode,
     TypedTagApplicationNode,
     TypedUnfoldNode,
     TypedWhileNode,
@@ -285,6 +287,119 @@ def _literal_path_pattern_depth(
     return len(expression.items) if isinstance(expression, (ListLiteralNode, TupleLiteralNode)) else None
 
 
+
+
+def _simple_protocol_selectors(node: IndexAccessNode | IndexSetNode) -> bool:
+    """Return whether every selector is one ordinary provider argument."""
+    return bool(node.selectors) and all(
+        not selector.is_slice
+        and bool(selector.start)
+        and not selector.stop
+        and not selector.step
+        for selector in node.selectors
+    )
+
+
+def _intrinsic_index_receiver(typ: T.Type) -> bool:
+    """Return whether indexing for this receiver is sealed by the language."""
+    typ = T.normalize(typ)
+    if isinstance(typ, T.TaggedType):
+        return _intrinsic_index_receiver(typ.inner)
+    if isinstance(typ, (T.CollectionType, T.TupleType, T.RowType)):
+        return True
+    return isinstance(typ, T.NominalType) and typ.name.text in {"String", "Dict"}
+
+
+def _protocol_application(
+    self: _core.Analyser,
+    protocol: str,
+    args: tuple[T.Type, ...],
+    node: ASTNode,
+) -> tuple[TypedElementNode, T.AppliedOverload] | None:
+    """Resolve one custom index provider using assignability-only arguments."""
+    candidates: list[tuple[T.ProtocolProvider, T.AppliedOverload]] = []
+    for provider in self.env.protocol_providers(protocol):
+        applied = T.apply_overload(provider.overload, args, self.env.context)
+        if applied is None or applied.vectorised:
+            continue
+        if not all(
+            T.assignable(actual, expected, self.env.context)
+            for actual, expected in zip(args, applied.params, strict=True)
+        ):
+            continue
+        candidates.append((provider, applied))
+    if not candidates:
+        self._diagnose(
+            f"no visible @{protocol} provider accepts "
+            f"({', '.join(T.show(arg) for arg in args)})",
+            node,
+        )
+        return None
+    winner = T.resolve_overload_result(
+        (provider.overload for provider, _ in candidates),
+        args,
+        self.env.context,
+    )
+    matches = [
+        (provider, applied)
+        for provider, applied in candidates
+        if winner is not None and provider.overload == winner.overload
+    ]
+    if len(matches) != 1:
+        self._diagnose(
+            f"ambiguous @{protocol} providers for "
+            f"({', '.join(T.show(arg) for arg in args)})",
+            node,
+        )
+        return None
+    provider, applied = matches[0]
+    element = ElementNode(provider.name, location=node.location)
+    typed = TypedElementNode(
+        element,
+        applied.actual_returns[0],
+        overload=applied,
+        overload_index=provider.overload_index,
+        runtime_name=self.env.runtime_name_for(provider.name, provider.overload),
+    )
+    return typed, applied
+
+
+def _custom_index_access(
+    self: _core.Analyser,
+    node: IndexAccessNode,
+    branch: _core.AnalysisBranch,
+    base_branch: _core.AnalysisBranch,
+    receiver_type: T.Type,
+    index_types: tuple[T.Type, ...],
+) -> _core.BranchSet | None:
+    """Analyse provider-backed reads, returning None for intrinsic receivers."""
+    if _intrinsic_index_receiver(receiver_type):
+        return None
+    if not isinstance(T.normalize(receiver_type), T.NominalType):
+        return None
+    if not _simple_protocol_selectors(node):
+        self._diagnose("custom indexing requires one value per selector", node)
+        return _core.BranchSet()
+    providers: list[TypedElementNode] = []
+    results: list[T.Type] = []
+    tags = base_branch.element_tags
+    for selector_type in index_types:
+        resolved = _protocol_application(
+            self, "index", (receiver_type, selector_type), node
+        )
+        if resolved is None:
+            return _core.BranchSet()
+        typed, applied = resolved
+        providers.append(typed)
+        results.append(applied.actual_returns[0])
+        tags = tags | applied.element_tags
+    result = results[0] if len(results) == 1 else T.ExactList(T.U(*results))
+    emitted = base_branch.push(result).with_element_tags(tags).emit(
+        TypedProtocolIndexNode(node, result, tuple(providers), False)
+    )
+    return _core.BranchSet((emitted,))
+
+
 @_core.register(IndexAccessNode)
 def _index_access_node(
     self: _core.Analyser,
@@ -322,6 +437,11 @@ def _index_access_node(
         return _core.BranchSet()
 
     index_types = branch.stack.items[-selector_values:] if selector_values else ()
+    custom = _custom_index_access(
+        self, node, branch, base_branch, receiver_type, index_types
+    )
+    if custom is not None:
+        return custom
     if not _patterns._selectors_supported(receiver_type, node.selectors):
         self._diagnose("tuple slicing is not supported", node)
         return _core.BranchSet()
@@ -492,6 +612,46 @@ def _index_set_node(
     value_type = branch.stack[-required]
     receiver_type = branch.stack[-selector_values - 1]
     index_types = branch.stack.items[-selector_values:] if selector_values else ()
+    if not _intrinsic_index_receiver(receiver_type) and isinstance(
+        T.normalize(receiver_type), T.NominalType
+    ):
+        if node.grouped_update:
+            self._diagnose(
+                "indexed augmented assignment is not supported for custom index providers",
+                node,
+            )
+            return _core.BranchSet()
+        if not _simple_protocol_selectors(node):
+            self._diagnose("custom indexed assignment requires value selectors", node)
+            return _core.BranchSet()
+        if len(node.selectors) > 1:
+            decision = _utils._duplication_requirement(value_type, self.env)
+            if decision.reason is not None:
+                self._diagnose(
+                    "replacement used for multiple indexed assignments cannot be duplicated: "
+                    + decision.reason,
+                    node,
+                )
+                return _core.BranchSet()
+        current = receiver_type
+        providers: list[TypedElementNode] = []
+        tags = branch.element_tags
+        for selector_type in index_types:
+            resolved = _protocol_application(
+                self, "update", (current, selector_type, value_type), node
+            )
+            if resolved is None:
+                return _core.BranchSet()
+            typed, applied = resolved
+            providers.append(typed)
+            current = applied.actual_returns[0]
+            tags = tags | applied.element_tags
+        stack = T.TypeStack(branch.stack.items[:-required]).push(current)
+        return _core.BranchSet((
+            branch.with_stack(stack).with_element_tags(tags).emit(
+                TypedProtocolIndexNode(node, current, tuple(providers), True)
+            ),
+        ))
     if not _patterns._selectors_supported(receiver_type, node.selectors):
         self._diagnose("tuple slicing is not supported", node)
         return _core.BranchSet()

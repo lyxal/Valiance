@@ -357,6 +357,8 @@ class Overload:
         hash=False,
     )
     generic_params: tuple[str, ...] = ()
+    index_target: Type | None = field(default=None, compare=False, hash=False)
+    update_target: Type | None = field(default=None, compare=False, hash=False)
 
 
 @dataclass(frozen=True)

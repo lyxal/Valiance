@@ -2840,7 +2840,16 @@ class Parser:
             args: tuple[ASTNode, ...] = ()
             kwargs: tuple[tuple[Symbol, ASTNode], ...] = ()
             if self._match(TokenKind.LPAREN):
-                args, kwargs = self._annotation_arguments(TokenKind.RPAREN)
+                if name.text in {"index", "update"}:
+                    self._skip_newlines()
+                    if self._check(TokenKind.RPAREN):
+                        self._error(f"@{name.text} requires one named type")
+                    target = self.parse_type_expression()
+                    self._skip_newlines()
+                    self._expect(TokenKind.RPAREN)
+                    args = (TypeLiteralNode(target, location=_loc(start)),)
+                else:
+                    args, kwargs = self._annotation_arguments(TokenKind.RPAREN)
             annotations.append(AnnotationNode(name, args, kwargs, location=_loc(start)))
             self._skip_newlines()
         return tuple(annotations)

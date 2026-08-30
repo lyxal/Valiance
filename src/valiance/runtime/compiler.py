@@ -77,6 +77,7 @@ from valiance.asts import (
     TypedLiteralNode,
     TypedMatchNode,
     TypedNode,
+    TypedProtocolIndexNode,
     TypedTagApplicationNode,
     TypedTryNode,
     TypedReturnNode,
@@ -431,6 +432,9 @@ class _Compiler:
                 else OpCode.WAIT_TASK,
                 (len(typed_node.output_types), _source_site(typed_node.node)),
             )
+            return
+        if isinstance(typed_node, TypedProtocolIndexNode):
+            self.protocol_index(typed_node)
             return
         node = _unwrap(node)
         match node:
@@ -1225,6 +1229,43 @@ class _Compiler:
                 consumed_override=arity,
             ),
         )
+
+    def protocol_index(self, typed_node: TypedProtocolIndexNode) -> None:
+        """Lower a provider-backed index read or sequential indexed update."""
+        node = typed_node.node
+        if not isinstance(node, (IndexAccessNode, IndexSetNode)):
+            raise CompileError("custom indexing requires an index AST node")
+        count = len(typed_node.providers)
+        if count == 0:
+            raise CompileError("custom indexing requires at least one provider")
+        offset = node.location.offset if node.location is not None else id(node)
+        selectors = [f"\x00protocol_selector_{offset}_{index}" for index in range(count)]
+        receiver = f"\x00protocol_receiver_{offset}"
+        replacement = f"\x00protocol_replacement_{offset}"
+        for name in reversed(selectors):
+            self.emit(OpCode.STORE_VAR, name)
+        if typed_node.assignment:
+            self.emit(OpCode.STORE_VAR, receiver)
+            self.emit(OpCode.STORE_VAR, replacement)
+            self.emit(OpCode.LOAD_VAR, receiver)
+            for index, provider in enumerate(typed_node.providers):
+                self.emit(OpCode.LOAD_VAR, selectors[index])
+                self.emit(OpCode.LOAD_VAR, replacement)
+                resolved = _resolved_element_reference(provider)
+                if resolved is None:
+                    raise CompileError("custom updater is missing resolved call metadata")
+                self.emit(OpCode.CALL_RESOLVED_ELEMENT, resolved)
+            return
+        self.emit(OpCode.STORE_VAR, receiver)
+        for index, provider in enumerate(typed_node.providers):
+            self.emit(OpCode.LOAD_VAR, receiver)
+            self.emit(OpCode.LOAD_VAR, selectors[index])
+            resolved = _resolved_element_reference(provider)
+            if resolved is None:
+                raise CompileError("custom indexer is missing resolved call metadata")
+            self.emit(OpCode.CALL_RESOLVED_ELEMENT, resolved)
+        if count > 1:
+            self.emit(OpCode.BUILD_LIST, count)
 
     def foreach_node(self, node: ForNode, typed_node: TypedNode | None) -> None:
         """Lower a foreach loop and its break-result handling."""

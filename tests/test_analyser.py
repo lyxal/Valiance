@@ -7685,3 +7685,60 @@ end
     diagnostic = analyser.diagnostics[-1]
     assert "unknown element 'secret'" in diagnostic
     assert "object-friendly element" not in diagnostic
+
+
+def test_custom_index_annotations_validate_provider_shapes_and_targets():
+    analyser = Analyser()
+    analyser.analyse(parse("""
+object Point => $x: Int
+@index(Point)
+define bad(point: Point) -> Int => $point.x
+"""))
+    assert any("@index provider 'bad' must take exactly 2 inputs" in item for item in analyser.diagnostics)
+
+    analyser = Analyser()
+    analyser.analyse(parse("""
+@index(String)
+define bad(text: String, index: Int) -> String => $text $[$index]
+"""))
+    assert any("sealed intrinsic indexing behaviour" in item for item in analyser.diagnostics)
+
+
+def test_custom_index_generic_provider_uses_assignability_without_vectorisation():
+    analyser = Analyser()
+    typed = analyser.analyse(parse("""
+object[T] Box => $value: T
+@index(Box[T])
+define[T] get(box: Box[T], key: Int) -> T => $box.value
+$box = Box(7)
+$box[0]
+"""))
+    assert not analyser.diagnostics
+    assert T.same(typed[-1].typ, T.Int)
+
+    analyser = Analyser()
+    analyser.analyse(parse("""
+object Point => $x: Int
+@index(Point)
+define get(point: Point, key: Int) -> Int => $point.x
+$point = Point(1)
+$point[[0, 1]]
+"""))
+    assert any("no visible @index provider" in item for item in analyser.diagnostics)
+
+
+def test_custom_index_trait_provider_resolves_statically():
+    analyser = Analyser()
+    typed = analyser.analyse(parse("""
+trait Indexable =>
+end
+object Point => $x: Int
+object Point as Indexable =>
+end
+@index(Indexable)
+define get(value: Indexable, key: Int) -> Int => 42
+$point = Point(7)
+$point[0]
+"""))
+    assert not analyser.diagnostics
+    assert T.same(typed[-1].typ, T.Int)

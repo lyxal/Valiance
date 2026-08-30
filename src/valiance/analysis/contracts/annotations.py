@@ -25,6 +25,7 @@ from valiance.asts import (
     StringLiteralNode,
     TypedElementNode,
     TypedNode,
+    TypeLiteralNode,
 )
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.default_types import String
@@ -504,9 +505,115 @@ def _ensure_message_definition(
     )
 
 
+
+
+def _protocol_target(
+    annotations: tuple[AnnotationNode, ...],
+    name: str,
+) -> T.Type | None:
+    """Return the type supplied to one indexing protocol annotation."""
+    for annotation in annotations:
+        if annotation.name.text != name:
+            continue
+        if len(annotation.args) != 1 or annotation.kwargs:
+            return None
+        argument = annotation.args[0]
+        return argument.typ if isinstance(argument, TypeLiteralNode) else None
+    return None
+
+
+def _validate_protocol_annotation(
+    annotation: AnnotationNode,
+    _target: str,
+    _node: ASTNode,
+) -> tuple[str, ...]:
+    """Validate the source shape of @index and @update."""
+    if annotation.kwargs or len(annotation.args) != 1:
+        return (f"@{annotation.name} requires exactly one named type",)
+    argument = annotation.args[0]
+    if not isinstance(argument, TypeLiteralNode):
+        return (f"@{annotation.name} requires a type argument",)
+    target = T.normalize(argument.typ)
+    if not isinstance(target, T.NominalType):
+        return (f"@{annotation.name} requires a single named type",)
+    if target.name.text in {"String", "Dict"}:
+        return (
+            f"@{annotation.name} cannot target {T.show(target)} because it has "
+            "sealed intrinsic indexing behaviour",
+        )
+    return ()
+
+
+
+
+def _protocol_target_generics(target: T.Type, overload: T.Overload) -> T.Type:
+    """Rewrite annotation-local generic names to the overload's type variables."""
+    variables: dict[str, T.VarType] = {}
+
+    def collect(typ: T.Type) -> None:
+        """Record named declaration variables found in a protocol signature."""
+        typ = T.normalize(typ)
+        if isinstance(typ, T.VarType):
+            variables.setdefault(typ.name, typ)
+            return
+        if isinstance(typ, T.NominalType):
+            for argument in typ.args:
+                collect(argument)
+        elif isinstance(typ, T.CollectionType):
+            collect(typ.base)
+        elif isinstance(typ, (T.TaggedType, T.NoVecType, T.ExactType)):
+            collect(typ.inner)
+        elif isinstance(typ, T.TupleType):
+            for item in typ.params:
+                collect(item)
+
+    for item in (*overload.params, *overload.returns):
+        collect(item)
+
+    def rewrite(typ: T.Type) -> T.Type:
+        """Replace annotation nominal placeholders with signature variables."""
+        typ = T.normalize(typ)
+        if isinstance(typ, T.NominalType):
+            if not typ.args and typ.name.text in variables:
+                return variables[typ.name.text]
+            return T.N(typ.name, *(rewrite(arg) for arg in typ.args))
+        return typ
+
+    return T.normalize(rewrite(target))
+
+
+def _protocol_overload_transform(
+    overload: T.Overload,
+    annotations: tuple[AnnotationNode, ...],
+) -> T.Overload:
+    """Attach indexing protocol targets to one overload."""
+    index_target = _protocol_target(annotations, "index")
+    update_target = _protocol_target(annotations, "update")
+    if index_target is not None:
+        overload = replace(
+            overload,
+            index_target=_protocol_target_generics(index_target, overload),
+        )
+    if update_target is not None:
+        overload = replace(
+            overload,
+            update_target=_protocol_target_generics(update_target, overload),
+        )
+    return overload
+
+
 def _install_builtin_annotations() -> None:
     """Install builtin annotations while applying compiler annotations."""
     register_annotation(AnnotationSpec("recursive", frozenset({"define", "fn"})))
+    for protocol_name in ("index", "update"):
+        register_annotation(
+            AnnotationSpec(
+                protocol_name,
+                frozenset({"define"}),
+                validate=_validate_protocol_annotation,
+                transform_overload=_protocol_overload_transform,
+            )
+        )
     register_annotation(
         AnnotationSpec(
             "test",

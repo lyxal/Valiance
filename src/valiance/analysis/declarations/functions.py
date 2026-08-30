@@ -252,6 +252,15 @@ class _FunctionDeclarations:
                 continue
             overload_typings[typing_index] = replace(typing, overload=overload)
             if typing_declared_index is not None:
+                # Replacement bypasses define_overload, so protocol metadata
+                # must still be validated against the fully prepared overload.
+                try:
+                    self.env.validate_protocol_provider(name, overload)
+                except ValueError as exc:
+                    self._diagnose(str(exc), node)
+                    return BranchSet(
+                        (typed_branch.emit(TypedNode(node, None)),)
+                    )
                 # Replace this definition's provisional interface with its
                 # validated form without disturbing equal slots owned by other
                 # source definitions.

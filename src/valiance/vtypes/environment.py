@@ -30,7 +30,7 @@ from valiance.vtypes.nodes import (
     Type,
     VariadicTupleType,
 )
-from valiance.vtypes.builders import normalize
+from valiance.vtypes.builders import normalize, same, show
 from valiance.vtypes.stack import StackApplication, TypeStack
 
 
@@ -76,6 +76,17 @@ class NoMatchingOverload(EnvironmentApplyResult):
     stack: TypeStack
     params: tuple[Type, ...]
     actual_returns: tuple[Type, ...]
+
+
+
+
+@dataclass(frozen=True)
+class ProtocolProvider:
+    """One visible element overload providing custom index behaviour."""
+
+    name: Symbol
+    overload: Overload
+    overload_index: int
 
 
 @dataclass(frozen=True)
@@ -562,6 +573,28 @@ class Environment:
         """Return whether an object declares the requested attribute."""
         return self.lookup_attribute(object_name, attribute_name) is not None
 
+    def validate_protocol_provider(self, name: Symbol, overload: Overload) -> None:
+        """Validate compiler protocol metadata on one prepared overload."""
+        for protocol, target, arity in (
+            ("index", overload.index_target, 2),
+            ("update", overload.update_target, 3),
+        ):
+            if target is None:
+                continue
+            if len(overload.params) != arity:
+                raise ValueError(
+                    f"@{protocol} provider '{name}' must take exactly {arity} inputs"
+                )
+            if len(overload.returns) != 1:
+                raise ValueError(
+                    f"@{protocol} provider '{name}' must return exactly one value"
+                )
+            if not same(overload.params[0], target):
+                raise ValueError(
+                    f"@{protocol} provider '{name}' first parameter must be "
+                    f"{show(target)}, got {show(overload.params[0])}"
+                )
+
     def define_overload(
         self,
         name: Symbol,
@@ -570,6 +603,7 @@ class Environment:
         object_friendly: bool = False,
     ) -> None:
         """Append one overload to a named overload set."""
+        self.validate_protocol_provider(name, overload)
         candidates = self.overloads.setdefault(name, [])
         if candidates:
             fixed_candidates = tuple(
@@ -654,6 +688,26 @@ class Environment:
             candidate == overload and index not in friendly
             for index, candidate in enumerate(self.overloads.get(name, ()))
         )
+
+    def protocol_providers(self, protocol: str) -> tuple[ProtocolProvider, ...]:
+        """Return visible custom index providers across element names."""
+        attribute = f"{protocol}_target"
+        providers: list[ProtocolProvider] = []
+        seen_names: set[Symbol] = set()
+        seen_overloads: set[Overload] = set()
+        current: Environment | None = self
+        while current is not None:
+            for name, overloads in current.overloads.items():
+                if name in seen_names:
+                    continue
+                seen_names.add(name)
+                for index, overload in enumerate(overloads):
+                    if getattr(overload, attribute) is None or overload in seen_overloads:
+                        continue
+                    seen_overloads.add(overload)
+                    providers.append(ProtocolProvider(name, overload, index))
+            current = current.parent
+        return tuple(providers)
 
     def overloads_for(self, name: Symbol) -> tuple[Overload, ...]:
         """Return the overload candidates registered for ``name``."""

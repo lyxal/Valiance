@@ -6936,3 +6936,65 @@ end
         main = root / "main.vlnc"
         stack = execute('import { person.Person }\nPerson("Joe") label', main)
     assert stack == ["Joe"]
+
+
+def test_custom_index_read_multiple_selectors_and_update_pipeline():
+    stack = execute("""
+object Point =>
+  $x: Real
+  $y: Real
+end
+@index(Point)
+define get(point: Point, axis: Int) -> Real =>
+  [$point.x, $point.y] $[$axis]
+end
+@update(Point)
+define put(point: Point, axis: Int, value: Real) -> Point =>
+  Point($value, 0)
+end
+$point = Point(10, 20)
+$point[1]
+$point[0, 1]
+$point[0, 1] = 5
+$point.x
+""")
+    assert stack[0] == 20
+    assert list(stack[1]) == [10, 20]
+    assert stack[2] == 5
+
+
+def test_custom_index_round_trips_through_bytecode():
+    source = """
+object Box => $value: Int
+@index(Box)
+define get(box: Box, key: Int) -> Int => $box.value
+$box = Box(7)
+$box[0]
+"""
+    analyser = Analyser()
+    typed = analyser.analyse(parse(source))
+    assert not analyser.diagnostics
+    program = compile_program(typed, optimize=False)
+    assert run(loads(dumps(program))) == [7]
+
+
+def test_object_friendly_custom_index_and_sequential_update_types():
+    stack = execute("""
+object Point =>
+  $x: Int
+  $y: Int
+  @index(Point)
+  define get(axis: Int) -> Int => [$self.x, $self.y] $[$axis]
+end
+@update(Point)
+define put(point: Point, axis: Int, value: Int) -> Point =>
+  $axis match =>
+    0 => Point($value, $point.y)
+    _ => Point($point.x, $value)
+  end
+end
+$point = Point(10, 20)
+$point[0, 1] = 5
+$point[0, 1]
+""")
+    assert list(stack[-1]) == [5, 5]
