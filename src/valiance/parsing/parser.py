@@ -1590,17 +1590,6 @@ class Parser:
                 (TypeLiteralNode(self.parse_type_expression(), location=_loc(start)),),
                 True,
             )
-        if self._match(TokenKind.DOT):
-            token = self._previous
-            return _ChainPiece(
-                (
-                    FieldAccessNode(
-                        self._symbol("expected field name"),
-                        location=_loc(token),
-                    ),
-                ),
-                breaks_chain=True,
-            )
         if self._match(TokenKind.LBRACKET):
             token = self._previous
             items = self._comma_expressions(TokenKind.RBRACKET)
@@ -2294,15 +2283,28 @@ class Parser:
                 True,
             )
         path: list[tuple[str, object]] = []
+        path_anchor = self._previous
         while True:
-            if self._match(TokenKind.LBRACKET):
+            if self._check(TokenKind.LBRACKET) and self._adjacent(
+                path_anchor, self._current
+            ):
+                self._advance()
                 path.append(("index", self._index_selectors()))
+                path_anchor = self._previous
                 continue
-            if self._match(TokenKind.DOT):
+            if self._check(TokenKind.DOT) and self._adjacent(
+                path_anchor, self._current
+            ):
+                self._advance()
                 path.append(("field", self._symbol("expected field name")))
+                path_anchor = self._previous
                 continue
-            if self._match(TokenKind.ARROW):
+            if self._check(TokenKind.ARROW) and self._adjacent(
+                path_anchor, self._current
+            ):
+                self._advance()
                 path.append(("safe_field", self._symbol("expected field name")))
+                path_anchor = self._previous
                 continue
             break
 

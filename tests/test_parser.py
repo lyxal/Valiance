@@ -480,6 +480,20 @@ end
             ],
         )
 
+    def test_stack_field_access_requires_dollar(self):
+        for source in (".member", "$value .member", "$value | .member"):
+            with self.subTest(source=source):
+                with self.assertRaises(ParseError):
+                    parse(source)
+
+        self.assertEqual(
+            parse("$value | $.member"),
+            [
+                GetVariableNode(Symbol("value")),
+                FieldAccessNode(Symbol("member")),
+            ],
+        )
+
     def test_lowers_multiple_chain_segments_left_to_right(self):
         self.assertEqual(
             parse("3 + 4 * 7"),
@@ -635,6 +649,20 @@ end
         self.assertIsInstance(program[5], ListLiteralNode)
         self.assertEqual(program[7], IndexAccessNode(program[7].selectors))
         self.assertTrue(program[-1].spread)
+
+    def test_whitespace_separates_variable_from_list_literal(self):
+        program = parse("$self [$.sideA, $.sideB, $.sideC]")
+
+        self.assertEqual(program[0], GetVariableNode(Symbol("self")))
+        self.assertIsInstance(program[1], ListLiteralNode)
+        self.assertEqual(
+            program[1].items,
+            (
+                (FieldAccessNode(Symbol("sideA")),),
+                (FieldAccessNode(Symbol("sideB")),),
+                (FieldAccessNode(Symbol("sideC")),),
+            ),
+        )
 
     def test_parses_named_variable_dump_indexing(self):
         program = parse("$xs...[1, 2, 4]")
