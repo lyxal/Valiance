@@ -55,6 +55,7 @@ from valiance.runtime import (
     build_module,
     dumps_module,
 )
+from valiance.runtime.vm import _check_duplication_allowed, _duplicate_occurrence
 from valiance.runtime.runtime_values import (
     DIAGNOSTIC_LIST_PREVIEW_LIMIT,
     ObjectValue,
@@ -1124,7 +1125,9 @@ def _run_repl() -> int:
     color = should_color(sys.stdout)
     session = _ReplSession(color=color)
     frontend = create_repl_frontend(
-        prompt=lambda line_number: _repl_prompt(line_number, color=color),
+        prompt=lambda line_number: _repl_prompt(
+            line_number, color=color, branch_depth=session.branch_depth
+        ),
         completion_provider=session.completion_items,
         type_hint_provider=session.type_hint,
         documentation_provider=session.element_documentation,
@@ -1136,6 +1139,12 @@ def _run_repl() -> int:
             source = frontend.read(line_number)
         except EOFError:
             print()
+            if session.branch_depth:
+                print(
+                    f"Cannot exit with {session.branch_depth} open REPL "
+                    "branch(es). Use :restore, :continue, or :reset."
+                )
+                continue
             return 0
         except KeyboardInterrupt:
             print()
@@ -1154,7 +1163,40 @@ def _run_repl() -> int:
         if not source:
             continue
         if source in {":quit", ":q", "quit", "exit"}:
+            if session.branch_depth:
+                print(
+                    f"Cannot exit with {session.branch_depth} open REPL "
+                    "branch(es). Use :restore, :continue, or :reset."
+                )
+                continue
             return 0
+        branch_command = _parse_repl_branch_command(source)
+        if branch_command is not None:
+            name, count, error = branch_command
+            if error is not None:
+                print(error)
+                continue
+            try:
+                if name == "branch":
+                    session.open_branch()
+                    print(f"Opened REPL branch at depth {session.branch_depth}.")
+                elif name == "restore":
+                    session.restore_branch()
+                    print(f"Restored parent REPL frame; depth is {session.branch_depth}.")
+                elif name == "continue":
+                    session.continue_branch()
+                    print(f"Continued branch into parent; depth is {session.branch_depth}.")
+                elif name == "copy":
+                    assert count is not None
+                    session.copy_to_parent(count)
+                    print(f"Copied {count} value(s) to the parent frame.")
+                else:
+                    assert count is not None
+                    session.escape_to_parent(count)
+                    print(f"Escaped {count} value(s) to the parent frame.")
+            except ValueError as exc:
+                print(f"REPL branch error: {exc}")
+            continue
         if source in {":reset", ":r", "reset"}:
             session.reset()
             print("\033[2J\033[3J\033[H", end="", flush=True)
@@ -1218,7 +1260,12 @@ def _print_repl_help(*, color: bool, fancy: bool = False) -> None:
     print(_repl_style("REPL commands", _ANSI_BOLD, color))
     print("  :help   show this message")
     print("  :reset  clear the screen, stack, variables, definitions, and imports")
-    print("  :type   show stack types without executing source: :type <source>")
+    print("  :type     show stack types without executing source: :type <source>")
+    print("  :branch   open an isolated copy of the current session")
+    print("  :restore  discard the current branch")
+    print("  :continue adopt the current branch as its parent state")
+    print("  :copy [n] duplicate the top n values into the parent (default 1)")
+    print("  :escape [n] move the top n values into the parent (default 1)")
     print("  :clear    clear the terminal")
     print("  :repl     switch to one-line REPL mode")
     print("  :scratch  switch to the persistent scratch editor")
@@ -1240,9 +1287,12 @@ def _print_repl_help(*, color: bool, fancy: bool = False) -> None:
     print("Leaving a changed scratchpad runs it first, publishing its definitions.")
 
 
-def _repl_prompt(line_number: int, *, color: bool) -> str:
+def _repl_prompt(
+    line_number: int, *, color: bool, branch_depth: int = 0
+) -> str:
     """Compute REPL prompt for CLI and REPL orchestration."""
-    prompt = f"vln:{line_number}> "
+    depth = f"[{branch_depth}]" if branch_depth else ""
+    prompt = f"vln{depth}:{line_number}> "
     return _repl_style(prompt, _ANSI_GREEN, color)
 
 
@@ -1251,6 +1301,40 @@ def _repl_style(text: str, code: str, enabled: bool) -> str:
     if not enabled:
         return text
     return f"{code}{text}{_ANSI_RESET}"
+
+
+def _parse_repl_branch_command(
+    source: str,
+) -> tuple[str, int | None, str | None] | None:
+    """Parse one branching meta-command without consuming language source."""
+    parts = source.split()
+    if not parts or parts[0] not in {
+        ":branch", ":restore", ":continue", ":copy", ":escape"
+    }:
+        return None
+    name = parts[0][1:]
+    if name in {"branch", "restore", "continue"}:
+        if len(parts) != 1:
+            return name, None, f"usage: :{name}"
+        return name, None, None
+    if len(parts) > 2:
+        return name, None, f"usage: :{name} [positive count]"
+    if len(parts) == 1:
+        return name, 1, None
+    if not parts[1].isdigit() or parts[1].startswith("0"):
+        return name, None, f"usage: :{name} [positive count]"
+    return name, int(parts[1]), None
+
+
+@dataclass
+class _SavedReplFrame:
+    """One suspended parent frame in the REPL branch stack."""
+
+    analyser: Analyser
+    branch: AnalysisBranch
+    vm: VirtualMachine
+    runtime_stack: list[Any]
+    state_version: int
 
 
 @dataclass
@@ -1263,6 +1347,7 @@ class _ReplSession:
     runtime_stack: list[Any] | None = None
     _state_version: int = 0
     _hint_cache: tuple[int, str, str | None] | None = None
+    _frames: list[_SavedReplFrame] | None = None
 
     def __post_init__(self) -> None:
         """Validate invariants after constructing this REPL session."""
@@ -1275,6 +1360,96 @@ class _ReplSession:
         self.output = _OutputTracker()
         self.vm = VirtualMachine(output=self.output)
         self.runtime_stack = []
+        self._state_version += 1
+        self._hint_cache = None
+        self._frames = []
+
+    @property
+    def branch_depth(self) -> int:
+        """Return the number of currently open REPL branches."""
+        return len(self._frames or ())
+
+    def _require_parent(self, command: str) -> _SavedReplFrame:
+        if not self._frames:
+            raise ValueError(f":{command} requires an open REPL branch")
+        return self._frames[-1]
+
+    def open_branch(self) -> None:
+        """Push an isolated copy of the complete live REPL state."""
+        assert self.analyser is not None and self.branch is not None
+        assert self.vm is not None and self.runtime_stack is not None
+        assert self.output is not None
+        parent = _SavedReplFrame(
+            self.analyser, self.branch, self.vm, self.runtime_stack, self._state_version
+        )
+        analyser, branch, vm, stack = copy.deepcopy(
+            (self.analyser, self.branch, self.vm, self.runtime_stack)
+        )
+        vm.output = self.output
+        if self._frames is None:
+            self._frames = []
+        self._frames.append(parent)
+        self.analyser, self.branch, self.vm, self.runtime_stack = (
+            analyser, branch, vm, stack
+        )
+        self._state_version += 1
+        self._hint_cache = None
+
+    def restore_branch(self) -> None:
+        """Discard the current frame and restore its immediate parent."""
+        parent = self._require_parent("restore")
+        assert self._frames is not None
+        self._frames.pop()
+        self.analyser, self.branch, self.vm, self.runtime_stack = (
+            parent.analyser, parent.branch, parent.vm, parent.runtime_stack
+        )
+        self._state_version = parent.state_version + 1
+        self._hint_cache = None
+
+    def continue_branch(self) -> None:
+        """Adopt the current frame wholesale in place of its parent."""
+        self._require_parent("continue")
+        assert self._frames is not None
+        self._frames.pop()
+        self._state_version += 1
+        self._hint_cache = None
+
+    def _checked_transfer(
+        self, count: int
+    ) -> tuple[_SavedReplFrame, tuple[Any, ...], tuple[T.Type, ...]]:
+        parent = self._require_parent("copy or :escape")
+        assert self.runtime_stack is not None and self.branch is not None
+        if count < 1:
+            raise ValueError("value count must be at least 1")
+        if count > len(self.runtime_stack) or count > len(self.branch.stack):
+            raise ValueError(
+                f"cannot transfer {count} value(s) from a stack of depth "
+                f"{len(self.runtime_stack)}"
+            )
+        return parent, tuple(self.runtime_stack[-count:]), tuple(
+            self.branch.stack.items[-count:]
+        )
+
+    def copy_to_parent(self, count: int = 1) -> None:
+        """Duplicate the top values into the immediate parent frame."""
+        parent, values, types = self._checked_transfer(count)
+        for value in values:
+            _check_duplication_allowed(value)
+        duplicated = tuple(_duplicate_occurrence(value) for value in values)
+        parent.runtime_stack.extend(duplicated)
+        parent.branch = parent.branch.with_stack(parent.branch.stack.push(*types))
+        parent.state_version += 1
+        self._hint_cache = None
+
+    def escape_to_parent(self, count: int = 1) -> None:
+        """Move the top values into the immediate parent frame."""
+        parent, values, types = self._checked_transfer(count)
+        assert self.runtime_stack is not None and self.branch is not None
+        del self.runtime_stack[-count:]
+        self.branch = self.branch.with_stack(self.branch.stack.pop(count))
+        parent.runtime_stack.extend(values)
+        parent.branch = parent.branch.with_stack(parent.branch.stack.push(*types))
+        parent.state_version += 1
         self._state_version += 1
         self._hint_cache = None
 

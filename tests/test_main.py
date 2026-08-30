@@ -12,7 +12,7 @@ from valiance.analysis.diagnostics import (
     from_message,
     render,
 )
-from valiance.main import _ReplSession, _format_stack, main
+from valiance.main import _ReplSession, _format_stack, _repl_prompt, main
 
 
 class MainTests(unittest.TestCase):
@@ -1416,6 +1416,71 @@ class MainTests(unittest.TestCase):
             rendered,
         )
         self.assertIn("write `as[Number]` instead of `as![Number]`", rendered)
+
+
+    def test_repl_branch_restore_discards_stack_and_variable_changes(self):
+        session = _ReplSession()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(session.run("$x = 1"))
+            session.open_branch()
+            self.assertTrue(session.run("2"))
+            self.assertTrue(session.run("$x = 3"))
+            session.restore_branch()
+            self.assertTrue(session.run("$x"))
+        self.assertEqual(session.branch_depth, 0)
+        self.assertEqual(session.runtime_stack, [1])
+
+    def test_repl_branch_continue_adopts_complete_child_state(self):
+        session = _ReplSession()
+        session.open_branch()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(session.run("7"))
+        session.continue_branch()
+        self.assertEqual(session.branch_depth, 0)
+        self.assertEqual(session.runtime_stack, [7])
+        self.assertEqual(len(session.branch.stack), 1)
+
+    def test_repl_nested_branch_restore_affects_only_inner_frame(self):
+        session = _ReplSession()
+        session.open_branch()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(session.run("1"))
+        session.open_branch()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(session.run("2"))
+        session.restore_branch()
+        self.assertEqual(session.branch_depth, 1)
+        self.assertEqual(session.runtime_stack, [1])
+        session.restore_branch()
+        self.assertEqual(session.runtime_stack, [])
+
+    def test_repl_copy_and_escape_preserve_order_and_source_semantics(self):
+        session = _ReplSession()
+        session.open_branch()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(session.run("1 2 3"))
+        session.copy_to_parent(2)
+        self.assertEqual(session.runtime_stack, [1, 2, 3])
+        session.escape_to_parent(2)
+        self.assertEqual(session.runtime_stack, [1])
+        session.restore_branch()
+        self.assertEqual(session.runtime_stack, [2, 3, 2, 3])
+        self.assertEqual(len(session.branch.stack), 4)
+
+    def test_repl_branch_commands_reject_root_and_invalid_counts(self):
+        session = _ReplSession()
+        with self.assertRaisesRegex(ValueError, "requires an open REPL branch"):
+            session.restore_branch()
+        with self.assertRaisesRegex(ValueError, "requires an open REPL branch"):
+            session.copy_to_parent()
+        session.open_branch()
+        with self.assertRaisesRegex(ValueError, "at least 1"):
+            session.copy_to_parent(0)
+        with self.assertRaisesRegex(ValueError, "stack of depth 0"):
+            session.escape_to_parent(1)
+
+    def test_repl_prompt_displays_branch_depth(self):
+        self.assertEqual(_repl_prompt(4, color=False, branch_depth=2), "vln[2]:4> ")
 
 
 if __name__ == "__main__":

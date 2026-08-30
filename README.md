@@ -54,7 +54,10 @@ vln
 
 Running `vln` with no arguments starts the REPL. Stack state, variables,
 definitions, and imports persist between entered lines. Use `:reset` to clear
-that REPL state, and `:quit` to exit.
+that REPL state, and `:quit` to exit. REPL state can be explored transactionally
+with `:branch`; use `:restore` to discard the current branch or `:continue` to
+adopt it. `:copy [n]` duplicates the top values into the parent frame, while
+`:escape [n]` moves them. The prompt displays the current branch depth.
 
 On an interactive terminal, the REPL uses an enhanced prompt with Valiance
 syntax highlighting, completion for language keywords, built-ins, user
