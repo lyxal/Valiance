@@ -2584,15 +2584,10 @@ requireMatrix([] as[Number+])
 """
             case = ("empty-rank-cast", source)
             analyser = Analyser()
-            typed = analyser.analyse(parse(source))
-            if analyser.diagnostics:
+            analyser.analyse(parse(source))
+            expected = "cannot cast (Number | Number+)+ to Number+2"
+            if len(analyser.diagnostics) != 1 or expected not in analyser.diagnostics[0]:
                 raise AssertionError(analyser.diagnostics)
-            try:
-                run(compile_program(typed))
-            except ValianceRuntimeError:
-                pass
-            else:
-                raise AssertionError("flat empty list passed a matrix cast")
         elif mode == 4:
             left = U(Int, Some(String))
             right = Some(U(Int, String))
@@ -3447,6 +3442,37 @@ split({args})
         raise _GeneratedCaseFailure(case, exc) from exc
 
 
+
+def _fuzz_incremental_compilation(rng: random.Random, iteration: int, config: FuzzConfig) -> object:
+    import tempfile
+    from tools.incremental_validation import history_independent
+    values = [rng.randint(-20, 20) for _ in range(4)]
+    history = [f"{values[0]} {values[1]} +\n", f"define double(n: Int) -> Int => $n 2 *\n{values[2]} double\n", f"define double(n: Int) -> Int => $n 2 *\n{values[3]} double 1 +\n"]
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary); history_independent(root / "main.vlnc", root, history)
+    return {"history": history, "iteration": iteration}
+
+
+def _fuzz_incremental_artifacts(rng: random.Random, iteration: int, config: FuzzConfig) -> object:
+    import tempfile
+    from valiance.incremental import CompilationCoordinator
+    from tools.incremental_validation import assert_equivalent
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary); source = root / "main.vlnc"; output = root / "bin/main.vbc"
+        source.write_text(f"{rng.randint(0, 50)} 2 +\n", encoding="utf-8")
+        CompilationCoordinator(root).build_executable(source, output, target_identity="fuzz:main")
+        objects = sorted((root / ".vln/incremental/objects").glob("*/*")); mode = None
+        if objects:
+            data = bytearray(objects[0].read_bytes()); mode = rng.randrange(5)
+            if mode == 0: data = data[:len(data)//2]
+            elif mode == 1 and data: data[rng.randrange(len(data))] ^= 255
+            elif mode == 2: data.extend(b"trailing")
+            elif mode == 3: data = bytearray(b"bad-schema")
+            else: data = data[::-1]
+            objects[0].write_bytes(data)
+        output.unlink(missing_ok=True); assert_equivalent(source, root)
+    return {"mutation": mode, "iteration": iteration}
+
 TARGETS: dict[str, Target] = {
     "lexer-parser": _fuzz_lexer_parser,
     "source-mutations": _fuzz_source_mutations,
@@ -3468,6 +3494,8 @@ TARGETS: dict[str, Target] = {
     "match-safety": _fuzz_match_safety,
     "soundness-boundaries": _fuzz_soundness_boundaries,
     "correctness-workloads": _fuzz_correctness_workloads,
+    "incremental-compilation": _fuzz_incremental_compilation,
+    "incremental-artifacts": _fuzz_incremental_artifacts,
 }
 
 
