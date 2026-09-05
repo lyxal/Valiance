@@ -172,7 +172,7 @@ def _pretty(value: ASTNode | TypedNode | FunctionOverloadTyping, level: int) -> 
     if isinstance(value, MinimumRankNode):
         return f"MinimumRankNode(rank={value.rank}{_location_arg(value)})"
     if isinstance(value, PopNNode):
-        return f"{prefix}PopNNode(count={value.count})"
+        return f"PopNNode(count={value.count}{_location_arg(value)})"
     if isinstance(value, StackShuffleNode):
         prestack = ", ".join(_shuffle_label(label) for label in value.prestack)
         poststack = ", ".join(str(label) for label in value.poststack)

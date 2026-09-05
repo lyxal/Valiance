@@ -476,16 +476,65 @@ def _cast_node(self: _core.Analyser, node: CastNode, branch: _core.AnalysisBranc
     source = branch.stack[-1]
     statically_safe = T.assignable(source, target, self.env.context)
     runtime_refinement = node.checked or node.optional
-    if runtime_refinement and not statically_safe:
+    insufficient_collection_rank = False
+    normalized_source = T.normalize(source)
+    normalized_target = T.normalize(target)
+    source_options = (
+        normalized_source.items
+        if isinstance(normalized_source, T.UnionType)
+        else (normalized_source,)
+    )
+    if node.checked and isinstance(normalized_target, T.CollectionType):
+        for source_option in source_options:
+            if (
+                isinstance(source_option, T.CollectionType)
+                and isinstance(source_option.rank, int)
+                and isinstance(normalized_target.rank, int)
+                and source_option.rank < normalized_target.rank
+            ):
+                required_item_shape = T.C(
+                    type(normalized_target),
+                    normalized_target.base,
+                    normalized_target.rank - source_option.rank,
+                )
+                if not T.assignable(
+                    source_option.base,
+                    required_item_shape,
+                    self.env.context,
+                ):
+                    insufficient_collection_rank = True
+                    break
+    if runtime_refinement and (not statically_safe or insufficient_collection_rank):
         invalid = _patterns._uncheckable_runtime_type(target)
         if invalid is not None:
             self._diagnose(f"{T.show(invalid)} cannot be checked at runtime", node)
             return _core.BranchSet()
-        if not _utils._types_overlap(source, target, self.env.context):
+        if insufficient_collection_rank or not _utils._types_overlap(
+            source, target, self.env.context
+        ):
             if node.checked and _functions._type_contains_rank_var(target):
                 stack = T.TypeStack((*branch.stack.items[:-1], target))
                 return _core.BranchSet((branch.with_stack(stack).emit(TypedNode(node, target)),))
-            self._diagnose(f"cannot cast {T.show(source)} to {T.show(target)}", node)
+            diagnostic_source = source
+            collection_options = tuple(
+                item for item in source_options if isinstance(item, T.CollectionType)
+            )
+            if insufficient_collection_rank and collection_options:
+                minimum_rank = min(item.rank for item in collection_options)
+                lifted_items = tuple(
+                    item.base
+                    if item.rank == minimum_rank
+                    else T.C(type(item), item.base, item.rank - minimum_rank)
+                    for item in collection_options
+                )
+                diagnostic_source = T.C(
+                    type(collection_options[0]),
+                    T.U(*lifted_items),
+                    minimum_rank,
+                )
+            self._diagnose(
+                f"cannot cast {T.show(diagnostic_source)} to {T.show(target)}", node
+            )
             return _core.BranchSet()
     elif not runtime_refinement and not statically_safe:
         if (
@@ -940,7 +989,19 @@ def _import_node(
         if reexport:
             self._public_import_trait_implementations.extend(trait_implementations)
             self._public_import_objects.extend(
-                replace(obj, public=True) for obj in objects
+                replace(
+                    obj,
+                    public=True,
+                    friendly_definitions=(
+                        obj.friendly_definitions
+                        + tuple(
+                            replace(definition, visibility=Symbol("public"))
+                            for definition in obj.private_friendly_definitions
+                        )
+                    ),
+                    private_friendly_definitions=(),
+                )
+                for obj in objects
             )
             self._public_import_definitions.extend(
                 replace(definition, public=True) for definition in definitions

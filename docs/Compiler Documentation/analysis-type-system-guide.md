@@ -898,7 +898,7 @@ contains an optional-like branch.
 ### Optional Caveats
 
 The design document describes richer simplification rules such as
-`T | Some[U] -> Some[T | U]` in specific cases. The current implementation only
+`T | Some[U] -> Some[T | U]` in specific cases. Normalization applies
 has the subset needed by assignment, solving, branch merge padding, and display.
 If you implement more optional normalization, add relation tests first because
 small changes here affect overload resolution.
@@ -1501,3 +1501,18 @@ $env:UV_CACHE_DIR="$PWD\.uv-cache"; uv run ruff check .
   distinct.
 - Do not update broad docs as the main source of truth for this stage; keep
   analysis/type-system guidance focused here.
+
+### Cross-module recursive declarations
+
+Recursive module imports use the same explicit-contract boundary as recursion
+inside one module. When loading re-enters an active source module, the module
+loader parses that source and constructs a provisional semantic interface from
+public definitions with complete parameter and return signatures. Importers can
+then install those overload contracts before either module body is checked.
+
+The provisional interface contains no inferred contract and no fabricated empty
+surface. A public definition with an incomplete contract in the recursive
+component produces a stable cross-module recursion diagnostic containing the
+active module path and declaration location. This mechanism does not perform
+fixed-point type inference. Once normal analysis succeeds, the complete
+`ModuleExports` replaces the provisional interface in the loader cache.

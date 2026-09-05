@@ -43,6 +43,7 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   `tests/test_vectorisation_properties.py`.
 - [Performance baselines](performance-benchmarking.md) documents the
   stage-aware benchmark runner, same-machine comparisons, and CI policy.
+- [Declaration-level incremental analysis](declaration-incremental-analysis.md) documents stable semantic products, dependency fingerprints, and targeted invalidation.
 - [Lints and optimisation passes](lints-and-rewrites.md) documents the
   structured lint API, the bytecode optimisation pipeline, and the safety
   boundary for future typed rewrites.
@@ -127,3 +128,17 @@ A maintenance change is complete when:
 - production functions introduced or changed have useful docstrings;
 - the complete test suite passes; and
 - the maintenance guides are updated when an architectural boundary changes.
+
+### Incremental compilation coordinator
+
+`src/valiance/incremental/coordinator.py` owns cross-process build freshness,
+dependency-interface validation, recursive module artifact publication, and
+structured build dispositions. CLI commands must delegate cache decisions to
+this service rather than adding freshness checks to `main.py`, the analyser,
+compiler, or VM. `ModuleLoader` remains the source of truth for import
+resolution and analysed-interface restoration.
+
+- [Unified compilation database](unified-compilation-database.md) documents workspace overlays, targeted invalidation, and safe executable snapshots.
+
+- [Incremental build inspection](incremental-inspection.md) documents structured rebuild explanations and cache inspect, verify, and clean commands.
+

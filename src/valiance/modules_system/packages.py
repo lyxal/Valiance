@@ -110,7 +110,7 @@ class Dependency:
         return self.source_kind
 
     def manifest_value(self) -> dict[str, str]:
-        """Return the strict phase-one TOML representation."""
+        """Return the strict TOML representation for this dependency."""
         value = {
             "kind": self.source_kind,
             "package": self.package,
@@ -1268,7 +1268,7 @@ def dependency_install_root(manifest: Manifest, name: str) -> Path:
 
 
 def _parse_dependency(name: str, value: object) -> Dependency:
-    """Parse one strict phase-one dependency declaration."""
+    """Parse one strict dependency declaration."""
     _validate_dependency_name(name)
     if isinstance(value, str):
         raise PackageError(

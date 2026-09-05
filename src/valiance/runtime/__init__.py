@@ -29,6 +29,8 @@ _EXPORT_MODULES = {
     "CompiledModule": "valiance.runtime.compiled_module",
     "build_module": "valiance.runtime.compiled_module",
     "dumps_module": "valiance.runtime.compiled_module",
+    "implementation_hash": "valiance.runtime.compiled_module",
+    "interface_hash": "valiance.runtime.compiled_module",
     "loads_module": "valiance.runtime.compiled_module",
     "AssertionFailure": "valiance.runtime.vm",
     "DoublePanicAbort": "valiance.runtime.vm",

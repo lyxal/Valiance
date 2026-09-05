@@ -216,3 +216,70 @@ they should not parse, analyse, or execute independently.
 Diagnostics are assembled in `diagnostics.py`. Prefer structured diagnostic
 information from the stage that detects the error, then render it at the user
 boundary.
+
+#### Semantic and implementation invalidation
+
+Compiled module artifacts carry separate fingerprints for the semantic facts
+consumed by importers and for the executable bytecode contributed at runtime.
+The semantic fingerprint projects `ModuleExports` onto declaration contracts,
+object and trait shapes, tags, overlays, re-exports, and implementation facts;
+function bodies are excluded when their declared contract is unchanged. The
+implementation fingerprint hashes the canonical serialized `Program` together
+with compiler and optimization compatibility inputs.
+
+The incremental coordinator uses semantic fingerprints to decide whether an
+importer must be analysed again. Executable target records additionally retain
+reachable implementation fingerprints, so a body-only dependency edit relinks
+the target without treating the dependency's unchanged public contract as a
+semantic change. The persisted interface bytes also have an independent content
+hash for corruption detection; that integrity digest is not an invalidation key.
+
+#### Transactional incremental artifact store
+
+Project builds publish generated cache objects beneath `.vln/incremental/`.
+Immutable module and executable artifacts are addressed by SHA-256 under the
+sharded `objects/` tree. Small `modules` and `targets` indexes map stable build
+identities to those object hashes. Configured outputs remain in their normal
+locations and can be restored from a verified object when deleted.
+
+Writers validate bytes before publication, flush file contents, and replace
+objects, indexes, and final outputs atomically. A project writer lock serializes
+index and object publication while readers continue to read previously
+published immutable files. A failed parse, analysis, compilation, validation,
+or replacement leaves the previous index and output intact. Corrupt objects
+are rejected and rebuilt when source is available. Reachability-based garbage
+collection retains every object referenced by current module or target indexes.
+
+#### Cross-module declaration-first cycles
+
+Module loading no longer breaks recursive imports by returning an empty
+`ModuleExports`. The loader tracks the active module stack and, on re-entry,
+publishes provisional interfaces containing complete public definition
+contracts. Bodies are analysed only after those contracts are visible, matching
+the declaration-first rule used within one source module. Definitions whose
+parameters or returns require inference are rejected at the cycle boundary with
+a diagnostic that names the cycle and incomplete declarations.
+
+`incremental/graph.py` discovers source-backed imports through
+`ModuleLoader.resolve(...)` and computes deterministic Tarjan strongly connected
+components. The coordinator avoids recursively rebuilding an already active
+component member, while artifact publication ensures each completed artifact is
+validated and atomically exposed. Source-free cycle re-entry requires a valid
+compiled semantic interface and never substitutes an empty interface.
+
+##### Explicit analysed-interface schema
+
+Compiled module interfaces no longer use Python pickle. The `.vbcm` interface
+section begins with the `VLNI` interface marker and contains canonical UTF-8
+records with explicit tags for compiler dataclasses, enums, tuples, immutable
+sets, dictionaries, decimals, and primitive values. Decoding uses a closed
+registry of AST, type-system, environment, symbol, and module-export records;
+it never imports a class named by untrusted module bytes or executes a reduction
+hook.
+
+The module container format is version 4 and the interface ABI is version 2.
+Semantic hashes use the same canonical encoder while replacing source locations
+with null, so declaration coordinates remain available in the persisted full
+interface but do not invalidate importers. Unordered sets and dictionaries are
+sorted by canonical encoded keys, while tuple, field, definition, and overload
+order remains significant.

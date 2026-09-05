@@ -11,6 +11,7 @@ import valiance.vtypes as T
 from valiance.asts import (
     DefineNode,
     FunctionNode,
+    FunctionOverloadTyping,
     ImportPath,
     ImportSpec,
     ObjectNode,
@@ -111,7 +112,7 @@ class ModuleLoadError(Exception):
 
 
 # Immutable analysed stdlib exports are safe to share between loader instances.
-_PROCESS_INTERFACE_CACHE: dict[tuple[str, str], ModuleExports] = {}
+_PROCESS_INTERFACE_CACHE: dict[tuple[str, str, str], ModuleExports] = {}
 
 
 def collect_module_exports(
@@ -147,7 +148,13 @@ class ModuleLoader:
 
     std_root: Path | None = None
     _cache: dict[Path, ModuleExports] = field(default_factory=dict)
+    _interface_hashes: dict[Path, str] = field(default_factory=dict)
+    _implementation_hashes: dict[Path, str] = field(default_factory=dict)
+    _dependency_hashes: dict[Path, dict[str, str]] = field(default_factory=dict)
+    _dependency_implementation_hashes: dict[Path, dict[str, str]] = field(default_factory=dict)
     _loading: set[Path] = field(default_factory=set)
+    _loading_stack: list[Path] = field(default_factory=list)
+    _provisional: dict[Path, ModuleExports] = field(default_factory=dict)
     source_overrides: dict[Path, str] = field(default_factory=dict)
 
     def load(
@@ -162,13 +169,18 @@ class ModuleLoader:
         native_exports = _native_std_exports(path)
         cache_key = source_file if source_file.exists() else compiled_file
         if cache_key in self._cache:
-            return self._cache[cache_key]
+            exports = self._cache[cache_key]
+            self._record_dependency(current_file, path, cache_key)
+            return exports
         if cache_key in self._loading:
-            return ModuleExports(_module_name(path))
+            exports = self._provisional_exports(path, source_file, cache_key)
+            self._record_dependency(current_file, path, cache_key)
+            return exports
         if native_exports is not None and not source_file.exists() and not compiled_file.exists():
             return native_exports
 
         self._loading.add(cache_key)
+        self._loading_stack.append(cache_key)
         try:
             compiled_module = None
             if compiled_file.exists():
@@ -183,14 +195,21 @@ class ModuleLoader:
                     source_matches = not source_file.exists() or hashlib.sha256(
                         source_file.read_text(encoding="utf-8").encode("utf-8")
                     ).hexdigest() == candidate.source_hash
-                    if source_matches and candidate.analysed_interface is not None:
+                    dependencies_match = source_matches and self._compiled_dependencies_match(
+                        candidate.dependency_hashes, source_file
+                    )
+                    if dependencies_match and candidate.analysed_interface is not None:
                         expected_name = _module_name(path)
                         if candidate.module_name != expected_name:
                             raise ModuleLoadError(
                                 f"compiled module {compiled_file} declares "
                                 f"{candidate.module_name!r}, expected {expected_name!r}"
                             )
-                        shared_key = (candidate.module_name, candidate.interface_hash)
+                        shared_key = (
+                            candidate.module_name,
+                            candidate.interface_hash,
+                            candidate.implementation_hash,
+                        )
                         exports = _PROCESS_INTERFACE_CACHE.get(shared_key)
                         if exports is None:
                             exports = candidate.analysed_interface
@@ -200,6 +219,9 @@ class ModuleLoader:
                                 )
                             _PROCESS_INTERFACE_CACHE[shared_key] = exports
                         self._cache[cache_key] = exports
+                        self._interface_hashes[cache_key] = candidate.interface_hash
+                        self._implementation_hashes[cache_key] = candidate.implementation_hash
+                        self._record_dependency(current_file, path, cache_key)
                         return exports
                     if source_matches:
                         compiled_module = candidate
@@ -255,6 +277,14 @@ class ModuleLoader:
                     exports.trait_implementations,
                 )
             self._cache[cache_key] = exports
+            from valiance.runtime import compile_program
+            from valiance.runtime.compiled_module import interface_hash, implementation_hash
+
+            self._interface_hashes[cache_key] = interface_hash(exports)
+            self._implementation_hashes[cache_key] = implementation_hash(
+                compile_program(typed), options="optimize=true"
+            )
+            self._record_dependency(current_file, path, cache_key)
             return exports
         except OSError as exc:
             if native_exports is not None:
@@ -266,6 +296,159 @@ class ModuleLoader:
             raise ModuleLoadError(f"could not read module {source_file}: {exc}") from exc
         finally:
             self._loading.discard(cache_key)
+            if self._loading_stack and self._loading_stack[-1] == cache_key:
+                self._loading_stack.pop()
+            elif cache_key in self._loading_stack:
+                self._loading_stack.remove(cache_key)
+            self._provisional.pop(cache_key, None)
+
+    def _provisional_exports(
+        self, path: ImportPath, source_file: Path, cache_key: Path
+    ) -> ModuleExports:
+        """Publish complete contracts during a recursive module load.
+
+        This replaces the former empty-interface shortcut. Only declarations
+        whose parameter and return contracts are complete can cross a module
+        cycle, matching Valiance's declaration-first recursion rule.
+        """
+        existing = self._provisional.get(cache_key)
+        if existing is not None:
+            return existing
+        if not source_file.exists():
+            compiled = source_file.with_suffix(".vbcm")
+            if compiled.exists():
+                from valiance.runtime.compiled_module import load_module_file
+
+                candidate = load_module_file(compiled)
+                if isinstance(candidate.analysed_interface, ModuleExports):
+                    self._interface_hashes[cache_key] = candidate.interface_hash
+                    self._implementation_hashes[cache_key] = candidate.implementation_hash
+                    self._provisional[cache_key] = candidate.analysed_interface
+                    return candidate.analysed_interface
+            raise ModuleLoadError(
+                f"source-free cyclic module {source_file} has no valid interface"
+            )
+        source = self.source_overrides.get(
+            source_file.resolve(), source_file.read_text(encoding="utf-8")
+        )
+        program = parse(source)
+        definitions: list[ModuleDefinition] = []
+        incomplete: list[DefineNode] = []
+        from valiance.analysis.calls.callable_values import _fully_typed_overload
+
+        for node in program:
+            if not isinstance(node, DefineNode) or node.visibility != Symbol("public"):
+                continue
+            overload = _fully_typed_overload(node.function)
+            if overload is None:
+                incomplete.append(node)
+                continue
+            function_type = T.Fn(
+                overload.params, overload.returns, overload.element_tags
+            )
+            typed = TypedFunctionNode(
+                node,
+                function_type,
+                (FunctionOverloadTyping(function_type, (), overload),),
+            )
+            definitions.append(
+                ModuleDefinition(
+                    node.name,
+                    typed,
+                    public=True,
+                    attached_tag=(
+                        Symbol(node.attached_tag.name)
+                        if node.attached_tag is not None
+                        else None
+                    ),
+                )
+            )
+        if incomplete:
+            cycle = " -> ".join(
+                item.with_suffix("").name for item in (*self._loading_stack, cache_key)
+            )
+            declarations = ", ".join(
+                f"{node.name} at line {node.location.line if node.location else '?'}"
+                for node in incomplete
+            )
+            raise ModuleLoadError(
+                "cross-module recursive declarations require complete parameter "
+                f"and return signatures; cycle {cycle}; incomplete: {declarations}"
+            )
+        exports = ModuleExports(_module_name(path), definitions=tuple(definitions))
+        from valiance.runtime.compiled_module import interface_hash
+
+        self._interface_hashes[cache_key] = interface_hash(exports)
+        self._provisional[cache_key] = exports
+        return exports
+
+    def invalidate(self, source_files: object) -> frozenset[Path]:
+        """Invalidate selected source interfaces without clearing unrelated cache entries."""
+        paths={Path(item).resolve() for item in source_files}
+        for path in paths:
+            for key in (path,path.with_suffix(".vbcm")):
+                self._cache.pop(key,None); self._interface_hashes.pop(key,None); self._implementation_hashes.pop(key,None); self._provisional.pop(key,None)
+            self._dependency_hashes.pop(path,None); self._dependency_implementation_hashes.pop(path,None)
+        return frozenset(paths)
+
+    def dependency_hashes_for(self, source_file: Path) -> tuple[tuple[str, str], ...]:
+        """Return canonical direct dependency identities and semantic hashes."""
+        dependencies = self._dependency_hashes.get(source_file.resolve(), {})
+        return tuple(sorted(dependencies.items()))
+
+    def interface_hash_for(self, exports: ModuleExports) -> str:
+        """Return the semantic hash associated with a successfully loaded interface."""
+        for cache_key, cached in self._cache.items():
+            if cached is exports:
+                return self._interface_hashes[cache_key]
+        raise ModuleLoadError("module interface was not loaded by this loader")
+
+    def implementation_hash_for(self, exports: ModuleExports) -> str:
+        """Return the runtime implementation hash associated with loaded exports."""
+        for cache_key, cached in self._cache.items():
+            if cached is exports:
+                return self._implementation_hashes[cache_key]
+        raise ModuleLoadError("module implementation was not loaded by this loader")
+
+    def dependency_implementation_hashes_for(
+        self, source_file: Path
+    ) -> tuple[tuple[str, str], ...]:
+        """Return canonical direct dependency identities and implementation hashes."""
+        dependencies = self._dependency_implementation_hashes.get(
+            source_file.resolve(), {}
+        )
+        return tuple(sorted(dependencies.items()))
+
+    def _record_dependency(
+        self, current_file: Path | None, path: ImportPath, cache_key: Path
+    ) -> None:
+        """Record one direct semantic dependency of the requesting source file."""
+        if current_file is None or cache_key not in self._interface_hashes:
+            return
+        requester = current_file.resolve()
+        identity = canonical_dependency_identity(path)
+        self._dependency_hashes.setdefault(requester, {})[identity] = self._interface_hashes[
+            cache_key
+        ]
+        if cache_key in self._implementation_hashes:
+            self._dependency_implementation_hashes.setdefault(requester, {})[
+                identity
+            ] = self._implementation_hashes[cache_key]
+
+    def _compiled_dependencies_match(
+        self, dependencies: tuple[tuple[str, str], ...], source_file: Path
+    ) -> bool:
+        """Validate recorded direct dependency interfaces before artifact reuse."""
+        for identity, expected_hash in dependencies:
+            try:
+                path = dependency_path_from_identity(identity)
+                exports = self.load(path, current_file=source_file)
+                actual_hash = self.interface_hash_for(exports)
+            except ModuleLoadError:
+                return False
+            if actual_hash != expected_hash:
+                return False
+        return True
 
     def resolve(
         self,
@@ -320,6 +503,28 @@ class ModuleLoader:
             raise ModuleLoadError(str(exc)) from exc
         module_parts = path.parts[1:] or (dependency_name,)
         return _source_path(package_root, module_parts)
+
+
+def canonical_dependency_identity(path: ImportPath) -> str:
+    """Return a portable, resolution-aware identity for an imported module path."""
+    root = path.root.text if path.root is not None else "local"
+    return f"{root}:{'.'.join(path.parts)}"
+
+
+def dependency_path_from_identity(identity: str) -> ImportPath:
+    """Decode a canonical dependency identity stored in a module artifact."""
+    root, separator, module = identity.partition(":")
+    if not separator or not module or root not in {"local", "root", "dep"}:
+        if root != "std":
+            raise ModuleLoadError(f"invalid compiled dependency identity {identity!r}")
+    parts = tuple(part for part in module.split(".") if part)
+    if not parts:
+        raise ModuleLoadError(f"invalid compiled dependency identity {identity!r}")
+    if root == "local":
+        return ImportPath(parts)
+    if root == "std":
+        return ImportPath(parts)
+    return ImportPath(parts, Symbol(root))
 
 
 def import_definitions(
@@ -627,7 +832,10 @@ def import_behaviour_set_objects(
         surface = Symbol(component.trait.text, (provider.text,))
         implementation_object = replace(
             obj,
-            friendly_definitions=implementation.definitions,
+            friendly_definitions=tuple(
+                replace(definition, visibility=Symbol("public"))
+                for definition in implementation.definitions
+            ),
         )
         selected.append(
             _renamed_object(

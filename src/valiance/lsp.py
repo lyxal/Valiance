@@ -24,6 +24,7 @@ from valiance.asts import (
 from valiance.asts.nodes import TypedElementNode, TypedFunctionNode, TypedNode
 from valiance.analysis.diagnostics import DiagnosticError, from_message
 from valiance.modules_system.modules import ModuleLoadError, ModuleLoader
+from valiance.incremental import CompilationDatabase
 from valiance.elements.builtins import BUILTIN_ELEMENTS, BuiltinElement
 from valiance.elements.documentation import ElementDocumentation
 from valiance.elements.stdlib_native import native_stdlib_functions
@@ -50,7 +51,8 @@ class LanguageServer:
         self.analysers: dict[str, Analyser] = {}
         self.programs: dict[str, list[ASTNode]] = {}
         self.typed_programs: dict[str, list[TypedNode]] = {}
-        self.module_loader = ModuleLoader()
+        self.compilation_database = CompilationDatabase()
+        self.module_loader = self.compilation_database.module_loader
         self.initialized = False
         self.shutdown_requested = False
         self.exit_code = 0
@@ -125,6 +127,7 @@ class LanguageServer:
         if method == "textDocument/didClose":
             uri = params["textDocument"]["uri"]
             self.documents.pop(uri, None)
+            if (path := _uri_path(uri)) is not None: self.compilation_database.close_document(path)
             self.analysers.pop(uri, None)
             self.programs.pop(uri, None)
             self.typed_programs.pop(uri, None)
@@ -154,28 +157,29 @@ class LanguageServer:
         return NotImplemented
 
     def _refresh_workspace(self, changed_uri: str) -> None:
-        """Reanalyse open documents against all current unsaved module sources."""
-        self.module_loader.source_overrides = {
-            path.resolve(): source
-            for uri, source in self.documents.items()
-            if (path := _uri_path(uri)) is not None
-        }
-        self.module_loader._cache.clear()
-        # Analyse the changed document first, then every dependent open document.
-        ordered = [changed_uri, *(uri for uri in self.documents if uri != changed_uri)]
-        for uri in ordered:
-            self._analyse(uri)
+        """Reanalyse open documents through the unified compilation database."""
+        for uri, source in self.documents.items():
+            path=_uri_path(uri)
+            if path is None: continue
+            current=self.compilation_database._overlays.get(path.resolve())
+            if current is None: self.compilation_database.open_document(path,source)
+            elif current != source: self.compilation_database.replace_document(path,source)
+        ordered=[changed_uri,*(uri for uri in self.documents if uri != changed_uri)]
+        for uri in ordered: self._analyse(uri)
 
     def _analyse(self, uri: str) -> None:
         """Analyse an open document and publish diagnostics at source locations."""
         source = self.documents.get(uri, "")
         diagnostics: list[dict[str, Any]] = []
         try:
-            program = parse(source)
-            analyser = Analyser(
-                source_file=_uri_path(uri), module_loader=self.module_loader
-            )
-            typed_program = analyser.analyse(program)
+            source_file=_uri_path(uri)
+            if source_file is None:
+                program=parse(source); analyser=Analyser(module_loader=self.module_loader); typed_program=analyser.analyse(program)
+            else:
+                if self.compilation_database._overlays.get(source_file.resolve()) != source:
+                    self.compilation_database.open_document(source_file,source)
+                snapshot=self.compilation_database.analyse(source_file)
+                program=list(snapshot.syntax); analyser=snapshot.analyser; typed_program=list(snapshot.typed)
             self.programs[uri] = program
             self.typed_programs[uri] = typed_program
             self.analysers[uri] = analyser

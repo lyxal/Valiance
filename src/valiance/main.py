@@ -161,7 +161,7 @@ def _command_help_text(prog: str, action: str) -> str:
     usage = {
         "compile": "[<entry> | --file <file> | --code <code>] [-o <file>] [--no-optimize]",
         "compile-module": "--file <file> [-o <file>] [--no-optimize]",
-        "build": "[<target>] [--no-optimize]",
+        "build": "[<target>] [--no-optimize] [--no-incremental | --rebuild]",
         "run": "[<entry> | --file <file> | --code <code>] [--implicit-output] [--preview-lists] [--no-optimize]",
         "exec": "[<entry> | --file <file>] [--implicit-output] [--preview-lists]",
         "parse": "<file> | --code <code>",
@@ -291,6 +291,8 @@ def _run(vln_mode: bool, argv: Sequence[str] | None = None) -> int:
         return run_language_server()
     if parsed.action == "build":
         return _run_build_command(parsed)
+    if parsed.action == "cache":
+        return _run_cache_command(parsed)
     if parsed.action == "compile-module":
         return _run_compile_module_command(parsed)
     if parsed.action == "exec":
@@ -413,6 +415,15 @@ def _parse_args(args: list[str], *, prog: str = DEFAULT_PROG) -> argparse.Namesp
         parsed.action = "add"
         parsed.package_args = []
         return parsed
+    if explicit_action == "cache":
+        parser = argparse.ArgumentParser(prog=prog, add_help=False)
+        parser.add_argument("command", choices=("inspect", "verify", "clean"))
+        try:
+            parsed = parser.parse_args(args)
+        except SystemExit:
+            return None
+        parsed.action = "cache"
+        return parsed
     if explicit_action in {"tidy", "annotate"}:
         return _parse_tidy_args(explicit_action, args, prog=prog)
     if explicit_action == "docs":
@@ -422,6 +433,10 @@ def _parse_args(args: list[str], *, prog: str = DEFAULT_PROG) -> argparse.Namesp
         parser.add_argument("--file", dest="explicit_source_file")
         parser.add_argument("-o", "--output")
         parser.add_argument("--no-optimize", "--no-optimise", dest="no_optimize", action="store_true")
+        parser.add_argument("--no-incremental", action="store_true")
+        parser.add_argument("--rebuild", action="store_true")
+        if explicit_action == "build":
+            parser.add_argument("--explain", action="store_true")
         parser.add_argument("name", nargs="?")
         try:
             parsed = parser.parse_args(args)
@@ -1370,6 +1385,7 @@ class _ReplSession:
         return len(self._frames or ())
 
     def _require_parent(self, command: str) -> _SavedReplFrame:
+        """Return the immediate parent frame or reject a branch-only command."""
         if not self._frames:
             raise ValueError(f":{command} requires an open REPL branch")
         return self._frames[-1]
@@ -1417,6 +1433,7 @@ class _ReplSession:
     def _checked_transfer(
         self, count: int
     ) -> tuple[_SavedReplFrame, tuple[Any, ...], tuple[T.Type, ...]]:
+        """Validate a branch transfer and return its parent, values, and types."""
         parent = self._require_parent("copy or :escape")
         assert self.runtime_stack is not None and self.branch is not None
         if count < 1:
@@ -1989,34 +2006,22 @@ def _compile_module_artifact(
     *,
     module_name: str,
     optimize: bool,
-) -> None:
-    """Analyse and compile one reusable Valiance bytecode module."""
-    source = source_file.read_text(encoding="utf-8")
-    program = parse(source)
-    analyser = Analyser(source_file=source_file)
-    typed = analyser.analyse(program)
-    if analyser.diagnostics:
-        raise CompileError("; ".join(analyser.diagnostics))
-    bytecode = compile_program(typed, optimize=optimize)
-    from valiance.modules_system.modules import collect_module_exports
+    incremental: bool = True,
+    rebuild: bool = False,
+) -> object:
+    """Build one reusable module through the shared compilation coordinator."""
+    from valiance.incremental import CompilationCoordinator
 
-    interface = collect_module_exports(module_name, program, typed, analyser)
-    dependencies = tuple(
-        sorted(
-            (exports.module_name, "source")
-            for path, exports in analyser.module_loader._cache.items()
-            if path.resolve() != source_file.resolve()
-        )
+    root = find_project_root(source_file)
+    coordinator = CompilationCoordinator(root)
+    return coordinator.build_module(
+        source_file,
+        output,
+        module_name=module_name,
+        optimize=optimize,
+        incremental=incremental,
+        rebuild=rebuild,
     )
-    artifact = build_module(
-        module_name,
-        source,
-        bytecode,
-        analysed_interface=interface,
-        dependency_hashes=dependencies,
-    )
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(dumps_module(artifact))
 
 
 def _run_compile_module_command(parsed: argparse.Namespace) -> int:
@@ -2036,6 +2041,8 @@ def _run_compile_module_command(parsed: argparse.Namespace) -> int:
             output,
             module_name=source.stem,
             optimize=not parsed.no_optimize,
+            incremental=not parsed.no_incremental,
+            rebuild=parsed.rebuild,
         )
     except (OSError, LexError, ParseError, CompileError, BytecodeFormatError) as exc:
         _print_exception_diagnostic(exc, source_file=source)
@@ -2045,8 +2052,10 @@ def _run_compile_module_command(parsed: argparse.Namespace) -> int:
 
 
 def _run_build_command(parsed: argparse.Namespace) -> int:
-    """Build one or all named targets from the project manifest."""
+    """Build one or all named targets through the incremental coordinator."""
     try:
+        from valiance.incremental import CompilationCoordinator
+
         manifest = require_manifest()
         if parsed.target_name is None:
             targets = tuple(manifest.builds.values())
@@ -2061,6 +2070,7 @@ def _run_build_command(parsed: argparse.Namespace) -> int:
                     f"available targets: {available}"
                 )
             targets = (target,)
+        coordinator = CompilationCoordinator(manifest.root)
         for target in targets:
             if target.entry is not None:
                 source_file = project_entry_path(manifest, target.entry)
@@ -2079,27 +2089,45 @@ def _run_build_command(parsed: argparse.Namespace) -> int:
             suffix = ".vbcm" if target.kind == "module" else ".vbc"
             output = manifest.root / (target.output or f"bin/{target.name}{suffix}")
             optimize = target.optimize and not parsed.no_optimize
+            common = {
+                "optimize": optimize,
+                "incremental": not parsed.no_incremental,
+                "rebuild": parsed.rebuild,
+            }
             if target.kind == "module":
-                _compile_module_artifact(
+                result = coordinator.build_module(
+                    source_file, output, module_name=target.name, **common
+                )
+            else:
+                result = coordinator.build_executable(
                     source_file,
                     output,
-                    module_name=target.name,
-                    optimize=optimize,
+                    target_identity=f"build:{target.name}",
+                    **common,
                 )
-                print(f"Built {target.name}: {output}")
-            else:
-                source = source_file.read_text(encoding="utf-8")
-                result = _run_source(
-                    source,
-                    action="compile",
-                    bytecode_output=str(output),
-                    source_file=source_file,
-                    optimize=optimize,
-                )
-                if result:
-                    return result
+            print(f"{result.disposition.value.capitalize()} {target.name}: {output}")
+            if getattr(parsed, "explain", False):
+                print(result.reason.render(target.name))
         return 0
-    except (PackageError, OSError, LexError, ParseError, CompileError, BytecodeFormatError) as exc:
+    except (PackageError, OSError, LexError, ParseError, CompileError, BytecodeFormatError, RuntimeError) as exc:
+        _print_exception_diagnostic(exc)
+        return 1
+
+
+def _run_cache_command(parsed: argparse.Namespace) -> int:
+    """Inspect, verify, or clean project incremental artifacts."""
+    try:
+        from valiance.incremental import ArtifactStore, clean_cache, inspect_cache, render_cache_report
+        manifest = require_manifest()
+        store = ArtifactStore(manifest.root)
+        if parsed.command == "clean":
+            removed = clean_cache(store)
+            print("Removed incremental cache" if removed else "Incremental cache already clean")
+            return 0
+        report = inspect_cache(store)
+        print(render_cache_report(report))
+        return 0 if parsed.command == "inspect" or report.valid else 1
+    except (PackageError, OSError, RuntimeError) as exc:
         _print_exception_diagnostic(exc)
         return 1
 

@@ -4454,7 +4454,7 @@ source selection.
 ## 24.6. Dependencies
 
 The `[dependencies]` table maps local import names to fully specified package
-sources. Phase one accepts three source kinds: `git`, `local`, and `path`. Every
+sources. The package manager accepts three source kinds: `git`, `local`, and `path`. Every
 dependency is an inline table and must explicitly provide:
 
 - `kind`: `git` or `local`;
@@ -4500,7 +4500,7 @@ locked mode validates its canonical path, package identity, and version, but doe
 not require its source contents to remain unchanged.
 
 `registry`, `hg`, `svn`, and `fossil` are reserved future source-kind names but
-are not valid dependency declarations in phase one. Unknown and reserved kinds
+are not valid dependency declarations. Unknown and reserved kinds
 are manifest errors rather than parseable, unbuildable project states.
 
 Compact and inferred declarations are invalid:
@@ -4666,7 +4666,7 @@ Install and resolve the dependencies declared by the current project with:
 vln install
 ```
 
-Phase-one remote package management is registryless. Every installable remote
+Remote package management is registryless. Every installable remote
 dependency must use an explicit `git` source and exact numeric version. Fully
 specified `local` snapshots and live `path` dependencies are also supported. The installer resolves
 either the `v<version>` or `<version>` tag, records the resulting commit SHA,
@@ -4741,7 +4741,7 @@ versions, and resolves the complete graph recursively. Because dependencies are
 nested beneath their importer, different branches may contain different versions
 of the same source without alias leakage.
 
-The phase-one manager does not yet provide:
+The package manager does not provide:
 
 - registry acquisition, discovery, or search;
 - Mercurial, Subversion, or Fossil acquisition backends;

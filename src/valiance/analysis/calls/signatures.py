@@ -102,6 +102,7 @@ def _inferred_parameter_shapes(
     callable_names: set[Symbol] = set()
 
     def visit_nodes(nodes: tuple[ASTNode, ...]) -> None:
+        """Inspect an AST-node sequence for parameter-shape evidence."""
         for previous, current in zip(nodes, nodes[1:]):
             if not isinstance(previous, GetVariableNode):
                 continue
@@ -122,6 +123,7 @@ def _inferred_parameter_shapes(
                 visit_value(getattr(node, owned_field.name))
 
     def visit_value(value: object) -> None:
+        """Recursively inspect a nested dataclass field value."""
         if isinstance(value, FunctionNode):
             return
         if isinstance(value, ASTNode):
@@ -149,9 +151,9 @@ def _genericize_function_node(
         param.typ is not None and _contains_anonymous_trait(param.typ)
         for param in function.params or ()
     )
-    # Anonymous structural traits still bind their subject by source name in the
-    # structural solver. Keep that path unscoped until its substitution map is
-    # migrated to TypeVarId in the next phase.
+    # Anonymous structural traits bind their subject by source name in the
+    # structural solver, so that path remains unscoped while its substitution
+    # map uses source-name keys rather than TypeVarId keys.
     scope_id = (
         binder_id
         if generics and not has_structural_generic

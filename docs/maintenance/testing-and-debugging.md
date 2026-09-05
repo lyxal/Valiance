@@ -244,3 +244,29 @@ focused unit test, an `optimizer` fuzz mode, and a workload in
 
 Also run the docstring coverage test after introducing helpers. A feature is not
 finished if maintainers cannot tell why its new functions exist.
+
+### Incremental artifact publication
+
+The project-local incremental store is `.vln/incremental/`. Its `schema` file
+selects the store layout, `objects/` contains immutable content-addressed
+artifacts, `indexes/` contains module and target roots, `locks/` coordinates
+writers, and `temp/` holds unpublished files. Do not diagnose freshness from
+modification times.
+
+When investigating corruption, compare an object's SHA-256 digest with the
+identity formed by its two-character shard directory and filename. A project
+with source rebuilds a corrupt object. A source-free consumer reports the
+artifact as unavailable or corrupt rather than attempting to decode or execute
+it. Failed current builds may leave the previous known-good object in the store,
+but the coordinator does not publish a new index or overwrite the configured
+output unless the current artifact validates completely.
+
+#### Analysed-interface format checks
+
+A current compiled module uses module magic `VLNCBM` version 4 and embeds an
+interface payload starting with `VLNI` version 2. Interface failures should be
+reproduced through `loads_module(...)`, which validates container lengths,
+content hashes, the interface schema, semantic hash, and executable bytecode in
+that order. Do not inspect or load the interface with pickle. Canonical encoding
+can be tested directly with `dumps_interface(...)`; identical compiler records
+must produce identical bytes across processes.

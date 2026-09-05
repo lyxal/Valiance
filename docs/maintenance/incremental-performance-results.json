@@ -1,0 +1,171 @@
+{
+  "policy": "same-host-paired",
+  "scenarios": [
+    {
+      "disposition": "relinked",
+      "metrics": {
+        "artifacts_loaded": 0,
+        "bytes_read": 6,
+        "bytes_written": 80,
+        "definitions_analysed": 0,
+        "implementations_compiled": 1,
+        "modules_analysed": 1,
+        "modules_parsed": 1,
+        "targets_linked": 1
+      },
+      "name": "cold-single-module",
+      "seconds": 0.08360860200014031
+    },
+    {
+      "disposition": "reused",
+      "metrics": {
+        "artifacts_loaded": 1,
+        "bytes_read": 6,
+        "bytes_written": 80,
+        "definitions_analysed": 0,
+        "implementations_compiled": 0,
+        "modules_analysed": 0,
+        "modules_parsed": 0,
+        "targets_linked": 0
+      },
+      "name": "unchanged-rebuild",
+      "seconds": 0.0001810849998946651
+    },
+    {
+      "disposition": "relinked",
+      "metrics": {
+        "artifacts_loaded": 0,
+        "bytes_read": 14,
+        "bytes_written": 80,
+        "definitions_analysed": 0,
+        "implementations_compiled": 1,
+        "modules_analysed": 1,
+        "modules_parsed": 1,
+        "targets_linked": 1
+      },
+      "name": "leaf-private-body-edit",
+      "seconds": 0.03890344000001278
+    },
+    {
+      "disposition": "relinked",
+      "metrics": {
+        "artifacts_loaded": 0,
+        "bytes_read": 22,
+        "bytes_written": 80,
+        "definitions_analysed": 0,
+        "implementations_compiled": 1,
+        "modules_analysed": 1,
+        "modules_parsed": 1,
+        "targets_linked": 1
+      },
+      "name": "leaf-public-interface-edit",
+      "seconds": 0.037014610000142056
+    },
+    {
+      "disposition": "relinked",
+      "metrics": {
+        "artifacts_loaded": 0,
+        "bytes_read": 30,
+        "bytes_written": 80,
+        "definitions_analysed": 0,
+        "implementations_compiled": 1,
+        "modules_analysed": 1,
+        "modules_parsed": 1,
+        "targets_linked": 1
+      },
+      "name": "central-dependency-interface-edit",
+      "seconds": 0.03426574300010543
+    },
+    {
+      "disposition": "relinked",
+      "metrics": {
+        "artifacts_loaded": 0,
+        "bytes_read": 38,
+        "bytes_written": 80,
+        "definitions_analysed": 0,
+        "implementations_compiled": 1,
+        "modules_analysed": 1,
+        "modules_parsed": 1,
+        "targets_linked": 1
+      },
+      "name": "relink-only-implementation-edit",
+      "seconds": 0.038899219000086305
+    },
+    {
+      "disposition": "reused",
+      "metrics": {
+        "artifacts_loaded": 1,
+        "bytes_read": 38,
+        "bytes_written": 80,
+        "definitions_analysed": 0,
+        "implementations_compiled": 0,
+        "modules_analysed": 0,
+        "modules_parsed": 0,
+        "targets_linked": 0
+      },
+      "name": "one-declaration-large-module",
+      "seconds": 0.00018558199985818646
+    },
+    {
+      "disposition": "relinked",
+      "metrics": {
+        "artifacts_loaded": 0,
+        "bytes_read": 46,
+        "bytes_written": 80,
+        "definitions_analysed": 0,
+        "implementations_compiled": 1,
+        "modules_analysed": 1,
+        "modules_parsed": 1,
+        "targets_linked": 1
+      },
+      "name": "cyclic-component-edit",
+      "seconds": 0.03900207300011971
+    },
+    {
+      "disposition": "relinked",
+      "metrics": {
+        "artifacts_loaded": 0,
+        "bytes_read": 54,
+        "bytes_written": 80,
+        "definitions_analysed": 0,
+        "implementations_compiled": 1,
+        "modules_analysed": 1,
+        "modules_parsed": 1,
+        "targets_linked": 1
+      },
+      "name": "lsp-active-document-edit",
+      "seconds": 0.037374588999909975
+    },
+    {
+      "disposition": "reused",
+      "metrics": {
+        "artifacts_loaded": 1,
+        "bytes_read": 54,
+        "bytes_written": 80,
+        "definitions_analysed": 0,
+        "implementations_compiled": 0,
+        "modules_analysed": 0,
+        "modules_parsed": 0,
+        "targets_linked": 0
+      },
+      "name": "process-restart-restoration",
+      "seconds": 0.00019000299994331726
+    },
+    {
+      "disposition": "reused",
+      "metrics": {
+        "artifacts_loaded": 1,
+        "bytes_read": 54,
+        "bytes_written": 80,
+        "definitions_analysed": 0,
+        "implementations_compiled": 0,
+        "modules_analysed": 0,
+        "modules_parsed": 0,
+        "targets_linked": 0
+      },
+      "name": "multi-target-shared-dependency",
+      "seconds": 0.00014263499997468898
+    }
+  ],
+  "schema": 1
+}

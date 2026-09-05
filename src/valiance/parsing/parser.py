@@ -1638,10 +1638,15 @@ class Parser:
         if self._check_ident("record") and self._peek(1).kind is TokenKind.LBRACE:
             token = self._advance()
             self._advance()
-            return _ChainPiece(
-                (RecordLiteralNode(self._record_fields(), location=_loc(token)),),
-                True,
-            )
+            record = RecordLiteralNode(self._record_fields(), location=_loc(token))
+            nodes: tuple[ASTNode, ...] = (record,)
+            if self._check(TokenKind.DOT) and self._adjacent(
+                self._previous, self._current
+            ):
+                self._advance()
+                field = self._symbol("expected field name")
+                nodes += (FieldAccessNode(field, location=_loc(token)),)
+            return _ChainPiece(nodes, True)
         if self._match_ident("dict") and self._match(TokenKind.LBRACE):
             token = self._previous
             return _ChainPiece(

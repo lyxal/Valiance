@@ -1046,6 +1046,14 @@ main = "src/main.vlnc"
 server = "src/server.vlnc"
 ```
 
+Compiled module (`.vbcm`) containers additionally record each direct import as a
+canonical, resolution-aware dependency identity paired with the exact semantic
+interface hash used during analysis. Identities preserve local, root, and dep
+resolution instead of relying on a source-file stem. `ModuleLoader` resolves and
+validates every recorded dependency before accepting a persisted analysed
+interface, so a source-matching module is still rejected when an imported
+interface changed. Dependency records are sorted before serialization.
+
 The bytecode file contains:
 
 1. The magic/version marker.
@@ -1131,3 +1139,54 @@ These are known constraints of the current runtime/codegen layer:
 
 When completing one of these items, update this guide and
 `docs/valiance-feature-checklist.md` in the same change.
+
+#### Module semantic and implementation fingerprints
+
+The current `.vbcm` container format stores three distinct digests:
+- `interface_hash` fingerprints the semantic module surface used by importers;
+- `interface_content_hash` protects the complete persisted analysed-interface
+  payload from corruption; and
+- `implementation_hash` fingerprints canonical serialized module bytecode plus
+  compiler and optimization compatibility inputs.
+
+A declared function body edit can therefore preserve `interface_hash` while
+changing `implementation_hash`. Importers may retain semantic analysis in that
+case, while executable targets that reach the module must relink. Changes to an
+inferred public contract change `interface_hash`. Runtime preludes are compiled
+into the module `Program` and consequently participate in the implementation
+fingerprint. Documentation and lint configuration remain outside runtime
+bytecode and do not affect the implementation digest.
+
+#### Transactional module publication
+
+The incremental coordinator stores complete `.vbcm` and `.vbc` byte sequences
+as immutable SHA-256 objects beneath `.vln/incremental/objects/`. It validates
+module containers with `loads_module(...)` and executable bytecode with
+`loads(...)` before publishing either an object or configured output. Mutable
+module and target indexes are JSON roots replaced atomically only after their
+referenced objects are readable. This store integrity layer is separate from
+the hashes inside a `.vbcm` container.
+
+#### Compiled cyclic module interfaces
+
+A source-free module encountered during recursive loading may participate only
+when its `.vbcm` contains a valid analysed interface. The loader exposes that
+recorded interface provisionally and validates its interface and implementation
+hashes through the normal module-container path. It does not create an empty
+placeholder for a missing or malformed source-free cycle member.
+
+##### Explicit module-interface encoding
+
+The analysed-interface section of a version-4 `.vbcm` is independent from the
+executable bytecode serializer and begins with `VLNI` plus interface schema
+version 2. `runtime/interface_serialization.py` encodes only a closed set of
+compiler model records. Every record carries a stable module-and-record tag and
+an exact ordered field list. Enums carry an allowed enum tag and member name;
+types are ordinary explicit `valiance.vtypes` records rather than Python object
+serialization.
+
+Readers reject unknown record, enum, or value tags; missing, reordered, or extra
+record fields; duplicate dictionary keys; invalid decimal values; incompatible
+schema versions; excessive nesting or collection sizes; malformed UTF-8/JSON;
+and trailing bytes. Module section length and content-hash validation still run
+before interface decoding. The old pickle decoder is deliberately absent.

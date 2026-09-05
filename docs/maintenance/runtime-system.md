@@ -2000,7 +2000,7 @@ and lazy cancellation.
 
 ## Concurrency stress and benchmark gates
 
-`tests/test_concurrency_phase5.py` provides bounded fairness, 2,000-task runnable
+`tests/test_concurrency_scalability.py` provides bounded fairness, 2,000-task runnable
 queue, 5,000-sender/receiver cancellation storm, repeated lifecycle/GC batch,
 and 20,000-value FIFO gates. The tests assert terminal queue drainage,
 registration cleanup, entity reclamation, and no lost or duplicate values.
