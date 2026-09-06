@@ -1998,6 +1998,8 @@ def _reduced_union(*types: Type, ctx: Context | None = None) -> Type:
         for other_index, other in enumerate(ordered):
             if index == other_index or same(member, other):
                 continue
+            if _distinct_tag_evidence_same_shape(member, other):
+                continue
             if not assignable(member, other, ctx):
                 continue
             if not assignable(other, member, ctx) or other_index < index:
@@ -2006,6 +2008,17 @@ def _reduced_union(*types: Type, ctx: Context | None = None) -> Type:
         if not redundant:
             kept.append(member)
     return U(*kept)
+
+
+def _distinct_tag_evidence_same_shape(a: Type, b: Type) -> bool:
+    """Return whether equal value shapes carry different tag evidence."""
+    a_inner = a.inner if isinstance(a, TaggedType) else a
+    b_inner = b.inner if isinstance(b, TaggedType) else b
+    if not same(a_inner, b_inner):
+        return False
+    a_tags = a.tags if isinstance(a, TaggedType) else frozenset()
+    b_tags = b.tags if isinstance(b, TaggedType) else frozenset()
+    return a_tags != b_tags
 
 
 def merge_types(a: Type, b: Type, ctx: Context | None = None) -> Type:
@@ -2062,6 +2075,20 @@ def merge_types(a: Type, b: Type, ctx: Context | None = None) -> Type:
         return optional(merge_types(a_optional, _present_payload(b), ctx))
     if b_optional is not None:
         return optional(merge_types(_present_payload(a), b_optional, ctx))
+
+    # Assignment may erase tag evidence, but a branch join must preserve which
+    # alternatives carry that evidence. Values of the same shape with different
+    # positive, absent, or missing tags therefore remain distinct union members.
+    if _distinct_tag_evidence_same_shape(a, b):
+        return U(a, b)
+    if isinstance(a, UnionType) and any(
+        _distinct_tag_evidence_same_shape(item, b) for item in a.items
+    ):
+        return _reduced_union(a, b, ctx=ctx)
+    if isinstance(b, UnionType) and any(
+        _distinct_tag_evidence_same_shape(a, item) for item in b.items
+    ):
+        return _reduced_union(a, b, ctx=ctx)
 
     a_to_b = assignable(a, b, ctx)
     b_to_a = assignable(b, a, ctx)

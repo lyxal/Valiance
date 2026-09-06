@@ -197,6 +197,78 @@ class TypeLibraryTests(unittest.TestCase):
         self.assertTrue(assignable(Int, merged, ctx))
         self.assertTrue(assignable(kilometres, merged, ctx))
 
+    def test_constructed_tag_and_plain_shape_remain_union_members(self):
+        ctx = Context()
+        ctx.define_tag("infinite", TagKind.CONSTRUCTED)
+        plain = ExactList(Int)
+        infinite = Tagged(plain, "infinite")
+        expected = U(infinite, plain)
+
+        self.assertEqual(merge_types(infinite, plain, ctx), expected)
+        self.assertEqual(merge_types(plain, infinite, ctx), expected)
+        self.assertEqual(
+            merge_stacks(TypeStack((infinite,)), TypeStack((plain,)), ctx),
+            TypeStack((expected,)),
+        )
+
+    def test_tagged_plain_union_survives_repeated_branch_merges(self):
+        ctx = Context()
+        ctx.define_tag("infinite", TagKind.CONSTRUCTED)
+        plain = ExactList(Int)
+        infinite = Tagged(plain, "infinite")
+        expected = U(infinite, plain)
+
+        self.assertEqual(merge_types(expected, plain, ctx), expected)
+        self.assertEqual(merge_types(expected, infinite, ctx), expected)
+        self.assertEqual(merge_types(plain, expected, ctx), expected)
+        self.assertEqual(merge_types(infinite, expected, ctx), expected)
+
+    def test_tagged_plain_branch_join_is_permutation_invariant(self):
+        ctx = Context()
+        ctx.define_tag("infinite", TagKind.CONSTRUCTED)
+        plain = ExactList(Int)
+        infinite = Tagged(plain, "infinite")
+        values = (infinite, plain, plain)
+        merged = {
+            merge_types(merge_types(first, second, ctx), third, ctx)
+            for first, second, third in permutations(values)
+        }
+
+        self.assertEqual(merged, {U(infinite, plain)})
+
+    def test_multiple_tagged_alternatives_remain_distinct_from_plain(self):
+        ctx = Context()
+        ctx.define_tag("infinite", TagKind.CONSTRUCTED)
+        ctx.define_tag("cached", TagKind.CONSTRUCTED)
+        plain = ExactList(Int)
+        infinite = Tagged(plain, "infinite")
+        cached = Tagged(plain, "cached")
+        expected = U(infinite, cached, plain)
+
+        merged = merge_types(merge_types(infinite, cached, ctx), plain, ctx)
+
+        self.assertEqual(merged, expected)
+
+    def test_absent_tag_and_plain_shape_remain_union_members(self):
+        ctx = Context()
+        ctx.define_tag("infinite", TagKind.CONSTRUCTED)
+        plain = ExactList(Int)
+        finite = Tagged(plain, DataTag("infinite", absent=True))
+
+        self.assertEqual(merge_types(finite, plain, ctx), U(finite, plain))
+        self.assertEqual(merge_types(plain, finite, ctx), U(finite, plain))
+
+    def test_computed_tag_and_plain_shape_remain_union_members(self):
+        ctx = Context()
+        ctx.define_tag("sorted", TagKind.COMPUTED)
+        plain = ExactList(Int)
+        sorted_list = Tagged(plain, "sorted")
+
+        self.assertEqual(
+            merge_types(sorted_list, plain, ctx),
+            U(sorted_list, plain),
+        )
+
     def test_numeric_intersections_remove_redundant_supertypes(self):
         self.assertEqual(I(Int, Real), Int)
         self.assertEqual(I(Int, Number), Int)

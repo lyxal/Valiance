@@ -4881,6 +4881,65 @@ end
             ["cannot call non-function value of type Number"],
         )
 
+    def test_inferred_return_keeps_infinite_and_plain_union(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+define Foo(x) =>
+  if ($x == 1) => #infinite [1]
+  else => [1]
+end
+
+Foo 1
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+        [overload] = analyser.env.overloads_for(Symbol("Foo"))
+        plain = T.ExactList(T.Int)
+        self.assertEqual(
+            overload.returns,
+            (T.U(T.Tagged(plain, "infinite"), plain),),
+        )
+
+    def test_inferred_return_union_is_independent_of_branch_order(self):
+        return_types = []
+        for tagged_first in (True, False):
+            first = "#infinite [1]" if tagged_first else "[1]"
+            second = "[1]" if tagged_first else "#infinite [1]"
+            analyser = Analyser()
+            analyser.analyse(parse(f"""
+define Foo(x) =>
+  if ($x == 1) => {first}
+  else => {second}
+end
+"""))
+            self.assertEqual(analyser.diagnostics, [])
+            [overload] = analyser.env.overloads_for(Symbol("Foo"))
+            return_types.append(overload.returns)
+
+        plain = T.ExactList(T.Int)
+        expected = (T.U(T.Tagged(plain, "infinite"), plain),)
+        self.assertEqual(return_types, [expected, expected])
+
+    def test_inferred_return_keeps_tagged_member_across_three_branches(self):
+        analyser = Analyser()
+
+        analyser.analyse(parse("""
+define Foo(x) =>
+  if ($x == 1) => #infinite [1]
+  else if ($x == 2) => [1]
+  else => [1]
+end
+"""))
+
+        self.assertEqual(analyser.diagnostics, [])
+        [overload] = analyser.env.overloads_for(Symbol("Foo"))
+        plain = T.ExactList(T.Int)
+        self.assertEqual(
+            overload.returns,
+            (T.U(T.Tagged(plain, "infinite"), plain),),
+        )
+
     def test_computed_tags_are_stripped_unless_explicitly_returned(self):
         env = Environment()
         env.add_computed_tag("sorted")
