@@ -78,6 +78,7 @@ BUILTIN_FAULT_TYPES = tuple(
     for name in (
         "RuntimeFault",
         "ValueFault",
+        "DomainFault",
         "RangeFault",
         "ParseFault",
         "DivisionByZeroFault",
@@ -136,9 +137,16 @@ _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
         category="Arithmetic",
     ),
     "**": element_documentation(
-        "Raise a number to a numeric power.",
+        "Raise a non-negative real number to a real power.",
+        parameters=(("base", "Non-negative real base."), ("exponent", "Real exponent.")),
+        returns="The real exponentiation result.",
+        notes="Panics with DomainFault when the base is negative.",
+        category="Arithmetic",
+    ),
+    "**c": element_documentation(
+        "Raise a number to a numeric power using complex exponentiation.",
         parameters=(("base", "Number to raise."), ("exponent", "Power to apply.")),
-        returns="The exponentiated number.",
+        returns="The exponentiated Number, including complex results.",
         category="Arithmetic",
     ),
     "+": element_documentation(
@@ -1761,9 +1769,27 @@ def _string_repeat_reverse(
     return (args[0] * int(args[1]),)
 
 
-@builtin("**", (T.Number, T.Number), (T.Number,))
-def _power(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
-    """Raise one Valiance number to another numeric power."""
+@builtin("**", (T.Real, T.Real), (T.Real,))
+def _real_power(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Raise a non-negative real number to a real power."""
+
+    base, exponent = args
+    if base < 0:
+        raise PanicSignal(
+            ObjectValue(
+                "DomainFault",
+                {"message": "** is undefined for a negative real base; use **c for complex exponentiation"},
+            )
+        )
+    try:
+        return (base**exponent,)
+    except (ArithmeticError, ValueError) as exc:
+        raise RuntimeError("invalid real exponentiation") from exc
+
+
+@builtin("**c", (T.Number, T.Number), (T.Number,))
+def _complex_power(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
+    """Raise one Valiance number to another using complex exponentiation."""
 
     base, exponent = args
     try:

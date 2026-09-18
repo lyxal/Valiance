@@ -2644,7 +2644,7 @@ keep
 
         self.assertEqual(len(analyser.diagnostics), 1)
         diagnostic = analyser.diagnostics[0]
-        self.assertIn("no overloads for element 'fold' match stack [Number+]", diagnostic)
+        self.assertIn("no overloads for element 'fold' match stack [Real+]", diagnostic)
         self.assertIn("help: `fold` requires an explicit accumulator seed", diagnostic)
         self.assertIn("`0 fold: +`", diagnostic)
         self.assertIn("`reduce: +`", diagnostic)
