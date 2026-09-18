@@ -199,7 +199,7 @@ define invalid(value: Int) -> String => $value end
 """)
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("function body returns Int", analyser.diagnostics[0])
-        self.assertIn("declares String", analyser.diagnostics[0])
+        self.assertIn("expected String", analyser.diagnostics[0])
         self.assertEqual(len(analyser.env.overloads_for(parse("invalid")[0].name)), 1)
 
     def test_last_prescanned_equal_overload_wins(self):
@@ -251,7 +251,7 @@ end
 """)
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("Int | String", analyser.diagnostics[0])
-        self.assertIn("declares Int", analyser.diagnostics[0])
+        self.assertIn("expected Int", analyser.diagnostics[0])
 
     def test_explicit_overload_body_is_checked_against_each_contract(self):
         """Validate a shared body against every explicit overload signature."""
@@ -261,7 +261,7 @@ define convert(value) => $value end
 """)
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("function body returns Int", analyser.diagnostics[0])
-        self.assertIn("declares String", analyser.diagnostics[0])
+        self.assertIn("expected String", analyser.diagnostics[0])
 
     def test_generic_return_contract_is_checked_rigidly(self):
         """Do not satisfy a generic return contract with one concrete body type."""
@@ -270,7 +270,7 @@ define[T] identity(value: T) -> T => "bad" end
 """)
         self.assertEqual(len(analyser.diagnostics), 1)
         self.assertIn("function body returns String", analyser.diagnostics[0])
-        self.assertIn("declares T", analyser.diagnostics[0])
+        self.assertIn("expected T", analyser.diagnostics[0])
 
     def test_partially_declared_recursive_cycle_is_rejected(self):
         """Require every member of a recursive component to expose a full contract."""

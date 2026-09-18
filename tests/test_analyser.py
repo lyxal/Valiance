@@ -947,9 +947,9 @@ end
         self.assertEqual(
             analyser.diagnostics,
             [
-                "5:1: function body can return Result[Int, Problem], but the "
-                "explicit return annotation is Number; declare a compatible Result "
-                "return type"
+                "5:1: return type mismatch: function body can return "
+                "Result[Int, Problem], but the declared return type is Number; "
+                "declare a compatible Result return type"
             ],
         )
         [choose] = analyser.env.overloads_for(Symbol("choose"))

@@ -886,8 +886,8 @@ class _CallableValues:
             for actual, declared in zip(actual_returns, checked_returns, strict=True):
                 if _functions._is_result_type(actual) and not _functions._is_result_type(declared):
                     self._diagnose(
-                        "function body can return "
-                        f"{T.show(actual)}, but the explicit return annotation is "
+                        "return type mismatch: function body can return "
+                        f"{T.show(actual)}, but the declared return type is "
                         f"{T.show(declared)}; declare a compatible Result return type",
                         node,
                     )
@@ -908,8 +908,8 @@ class _CallableValues:
                 self._diagnose(
                     ambiguity
                     or (
-                        f"function body returns {actual_text}, but the explicit return "
-                        f"annotation declares {declared_text}"
+                        f"return type mismatch: expected {declared_text}, but the "
+                        f"function body returns {actual_text}"
                     ),
                     node,
                 )

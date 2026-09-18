@@ -119,6 +119,7 @@ class _ElementCalls:
     ) -> BranchSet:
         """Analyse a `ElementNode` node and return the surviving branches."""
         overloads = self.env.overloads_for(node.name)
+        overloads = self._trait_receiver_overloads(node.name, branch, overloads)
         if node.name == Symbol("dup") and branch.stack:
             decision = _utils._duplication_requirement(branch.stack[-1], self.env)
             if decision.reason is not None:
@@ -305,6 +306,43 @@ class _ElementCalls:
             f"`{modifier_inputs}` inputs. Check the stack-producing operation "
             "immediately before this call.\n"
         )
+
+    def _trait_receiver_overloads(
+        self,
+        name: Symbol,
+        branch: AnalysisBranch,
+        overloads: tuple[T.Overload, ...],
+    ) -> tuple[T.Overload, ...]:
+        """Add receiver-specialized contracts for a nominal trait value."""
+        if not branch.stack:
+            return overloads
+        receiver = T.normalize(branch.stack[-1])
+        if not isinstance(receiver, T.NominalType):
+            return overloads
+        trait = self.env.lookup_trait(receiver.name)
+        if trait is None:
+            return overloads
+        substitution = {
+            generic.text: argument
+            for generic, argument in zip(trait.generics, receiver.args, strict=False)
+        }
+        required = tuple(
+            replace(
+                requirement.overload,
+                params=(
+                    *(T._substitute(param, substitution) for param in requirement.overload.params),
+                    receiver,
+                ),
+                returns=tuple(
+                    T._substitute(result, substitution)
+                    for result in requirement.overload.returns
+                ),
+                param_names=(*requirement.overload.param_names, None),
+            )
+            for requirement in trait.requirements
+            if requirement.name == name
+        )
+        return (*overloads, *required)
 
     def _unknown_element_message(
         self,

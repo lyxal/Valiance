@@ -108,6 +108,7 @@ _ANALYSIS_STAGE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     ("Exhaustiveness error", ("non-exhaustive", "not exhaustive", "missing match case")),
     ("Pattern error", ("pattern ", "invalid pattern", "duplicate pattern")),
+    ("Return type error", ("return type mismatch",)),
     ("Annotation error", ("annotation ", "invalid annotation", "unknown annotation", "does not accept named arguments")),
     ("Control-flow error", ("invalid break", "invalid return", "outside a loop", "unreachable control flow")),
 )

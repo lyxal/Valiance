@@ -164,15 +164,40 @@ class _ObjectDeclarations:
                     ),
                 )
             requirements = self._specialized_trait_requirements(target)
+            requirement_map = {
+                requirement.name: requirement for requirement in requirements
+            }
+            supplied_names = {definition.name for definition in node.definitions}
             current = self._register_friendly_definitions(
                 branch.emit(TypedNode(node, None)),
                 node.name,
                 node.definitions,
-                trait_requirements={
-                    requirement.name: requirement for requirement in requirements
-                },
+                trait_requirements=requirement_map,
                 owner_node=node,
             )
+            base_type = _utils._declared_nominal(node.name, node.generics)
+            for requirement in requirements:
+                if requirement.name in supplied_names:
+                    continue
+                candidates = self.env.overloads_for(requirement.name)
+                matching = tuple(
+                    overload
+                    for overload in candidates
+                    if overload.params
+                    and T.assignable(base_type, overload.params[-1], self.env.context)
+                )
+                if not any(
+                    self._trait_requirement_implementation_compatible(
+                        overload, requirement.overload
+                    )
+                    for overload in matching
+                ):
+                    self._diagnose(
+                        f"trait implementation for '{node.name}' does not satisfy "
+                        f"required element '{requirement.name}' with signature "
+                        f"{T.show(T.Fn(requirement.overload.params, requirement.overload.returns))}",
+                        node,
+                    )
             return BranchSet((current,))
 
         object_attributes = self._object_attributes(
@@ -690,7 +715,31 @@ class _ObjectDeclarations:
                 )
                 return typed_branch
         if trait_requirement is not None:
-            required_tags = trait_requirement.overload.element_tags
+            required = trait_requirement.overload
+            implementations = tuple(
+                typing.overload
+                for typing in function.overloads
+                if isinstance(typing.overload, T.Overload)
+            )
+            if not any(
+                self._trait_requirement_implementation_compatible(
+                    implementation, required
+                )
+                for implementation in implementations
+            ):
+                actual = ", ".join(
+                    T.show(T.Fn(implementation.params[1:], implementation.returns))
+                    for implementation in implementations
+                ) or "<no implementation overload>"
+                self._diagnose(
+                    f"trait implementation element '{definition.name}' does not "
+                    f"satisfy required signature "
+                    f"{T.show(T.Fn(required.params, required.returns))}; "
+                    f"implemented: {actual}",
+                    definition,
+                )
+                return typed_branch
+            required_tags = required.element_tags
             actual_tag_sets = {
                 typing.overload.element_tags
                 for typing in function.overloads
@@ -736,6 +785,29 @@ class _ObjectDeclarations:
                     object_friendly=object_friendly,
                 )
         return typed_branch
+
+    def _trait_requirement_implementation_compatible(
+        self,
+        implementation: T.Overload,
+        requirement: T.Overload,
+    ) -> bool:
+        """Check contravariant inputs and covariant results for one requirement."""
+        implemented_params = implementation.params[1:]
+        if len(implemented_params) != len(requirement.params):
+            return False
+        if len(implementation.returns) != len(requirement.returns):
+            return False
+        return all(
+            T.assignable(required, implemented, self.env.context)
+            for implemented, required in zip(
+                implemented_params, requirement.params, strict=True
+            )
+        ) and all(
+            T.assignable(implemented, required, self.env.context)
+            for implemented, required in zip(
+                implementation.returns, requirement.returns, strict=True
+            )
+        )
 
     def _register_friendly_definitions(
         self,
