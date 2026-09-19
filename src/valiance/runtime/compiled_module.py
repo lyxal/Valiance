@@ -97,6 +97,7 @@ def _semantic_interface_value(interface: Any | None) -> Any | None:
             item.trait_name,
             tuple(_bodyless_definition(value) for value in item.definitions),
             item.owned,
+            item.public,
             item.object_pattern,
             item.trait_pattern,
             item.generics,

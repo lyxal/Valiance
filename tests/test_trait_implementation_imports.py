@@ -80,7 +80,7 @@ class TraitImplementationImportTests(unittest.TestCase):
             root = Path(tmp)
             for name, value in (("first", 1), ("second", 2)):
                 (root / f"{name}.vlnc").write_text(
-                    "public trait Shape => extend area -> Number end\n"
+                    "public trait Shape => extend area -> Real end\n"
                     "public object Rectangle => $width: Number end\n"
                     "object Rectangle as Shape => "
                     f"define area -> Number => {value} end\n",
@@ -106,7 +106,7 @@ class TraitImplementationImportTests(unittest.TestCase):
             root = Path(tmp)
             for name, value in (("first", 1), ("second", 2)):
                 (root / f"{name}.vlnc").write_text(
-                    "public trait Shape => extend area -> Number end\n"
+                    "public trait Shape => extend area -> Real end\n"
                     "public object Rectangle => $width: Number end\n"
                     "object Rectangle as Shape => "
                     f"define area -> Number => {value} end\n",
@@ -288,7 +288,7 @@ class TraitImplementationImportTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "traits.vlnc").write_text(
-                "public trait Shape => extend area -> Number end\n",
+                "public trait Shape => extend area -> Real end\n",
                 encoding="utf-8",
             )
             (root / "shapes.vlnc").write_text(
@@ -937,3 +937,69 @@ class TraitImplementationEndToEndDispatchTests(unittest.TestCase):
             Symbol("<local>"), Symbol("other")
         })
 
+
+
+class TraitImplementationVisibilityAndWitnessTests(unittest.TestCase):
+    def analyse(self, root: Path, source: str) -> Analyser:
+        analyser = Analyser(module_loader=ModuleLoader(), source_file=root / "main.vlnc")
+        analyser.analyse(parse(source))
+        return analyser
+
+    def test_object_owned_external_trait_imports_automatically(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "traits.vlnc").write_text(
+                "public trait Shape => extend area -> Real end\n",
+                encoding="utf-8",
+            )
+            (root / "squares.vlnc").write_text(
+                "import { traits.Shape }\n"
+                "public object Square =>\n"
+                "  $len: Real\n"
+                "  define area -> Real => $self.len ** 2\n"
+                "end\n"
+                "object Square as Shape => end\n",
+                encoding="utf-8",
+            )
+            analyser = self.analyse(root, "import { squares.Square }\nSquare(5.0) area\n")
+            self.assertEqual(analyser.diagnostics, [])
+
+    def test_foreign_object_implementation_requires_explicit_import(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "base.vlnc").write_text(
+                "public object Square => $len: Real end\n"
+                "public trait Shape => extend area -> Real end\n",
+                encoding="utf-8",
+            )
+            (root / "provider.vlnc").write_text(
+                "import { base.[Square, Shape] }\n"
+                "object Square as Shape => "
+                "define area -> Real => $self.len ** 2 end\n",
+                encoding="utf-8",
+            )
+            implicit = self.analyse(
+                root, "import { base.[Square, Shape] }\nSquare(5.0) area\n"
+            )
+            self.assertTrue(any("area" in d for d in implicit.diagnostics))
+            explicit = self.analyse(
+                root,
+                "import { base.[Square, Shape], "
+                "provider.object Square as Shape }\nSquare(5.0) area\n",
+            )
+            self.assertEqual(explicit.diagnostics, [])
+
+    def test_private_endpoint_blocks_explicit_behaviour_import(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "provider.vlnc").write_text(
+                "public object Square => $len: Real end\n"
+                "trait HiddenShape => extend area -> Real end\n"
+                "object Square as HiddenShape => "
+                "define area -> Real => $self.len ** 2 end\n",
+                encoding="utf-8",
+            )
+            analyser = self.analyse(
+                root, "import { provider.[object Square as HiddenShape] }\n"
+            )
+            self.assertTrue(any("not public" in d for d in analyser.diagnostics))

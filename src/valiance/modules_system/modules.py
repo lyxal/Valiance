@@ -69,6 +69,7 @@ class ModuleTraitImplementation:
     trait_name: Symbol
     definitions: tuple[DefineNode, ...] = ()
     owned: bool = False
+    public: bool = False
     object_pattern: T.Type | None = None
     trait_pattern: T.Type | None = None
     generics: tuple[Symbol, ...] = ()
@@ -129,7 +130,10 @@ def collect_module_exports(
         _deduplicate(_module_tags(program, analyser.env) + analyser.public_import_tags),
         _deduplicate(_module_overlays(program, analyser.env) + analyser.public_import_overlays),
         analyser.runtime_prelude,
-        _deduplicate(_module_trait_implementations(program, typed) + analyser.public_import_trait_implementations),
+        _deduplicate(
+            _module_trait_implementations(program, typed)
+            + analyser.public_import_trait_implementations
+        ),
     )
 
 
@@ -757,19 +761,28 @@ def _module_trait_implementations(
     program: list,
     typed: list[TypedNode],
 ) -> tuple[ModuleTraitImplementation, ...]:
-    """Collect object-to-trait implementations defined by this module."""
+    """Collect object-to-trait implementations defined by this module.
+
+    Implementations owned by the object module accompany ordinary object imports.
+    Implementations for foreign objects remain behaviour sets and require an
+    explicit ``object X as Y`` import.  Public visibility is derived from both
+    endpoints rather than from a modifier on the implementation block.
+    """
     local_objects = {
-        node.name for node in program
+        node.name: node
+        for node in program
         if isinstance(node, ObjectNode)
         and node.target is None
         and node.kind == Symbol("object")
     }
     local_traits = {
-        node.name for node in program
+        node.name: node
+        for node in program
         if isinstance(node, ObjectNode)
         and node.target is None
         and node.kind == Symbol("trait")
     }
+
     result = []
     for typed_node in typed:
         node = typed_node.node
@@ -779,30 +792,57 @@ def _module_trait_implementations(
         if node.kind != Symbol("object") and not is_trait_impl:
             continue
         target = T.normalize(node.target)
-        if isinstance(target, T.NominalType):
-            result.append(
-                ModuleTraitImplementation(
-                    node.name,
-                    target.name,
-                    node.definitions,
-                    owned=(
-                        target.name in local_traits
-                        and (node.name in local_objects or node.name in local_traits)
-                    ),
-                    object_pattern=_implementation_object_pattern(node),
-                    trait_pattern=_implementation_pattern_type(
-                        target,
-                        node.generics,
-                    ),
-                    generics=node.generics,
-                    generic_constraints=tuple(
-                        _implementation_pattern_type(constraint, node.generics)
-                        if constraint is not None else None
-                        for constraint in node.generic_constraints
-                    ),
-                    subject_kind=Symbol("trait") if is_trait_impl else Symbol("object"),
-                )
+        if not isinstance(target, T.NominalType):
+            continue
+
+        # An empty implementation block may use compatible object-friendly
+        # definitions.  Local analysis has already checked compatibility, so
+        # preserve that resolved surface in the exported implementation.
+        resolved = list(node.definitions)
+        supplied = {definition.name for definition in resolved}
+        owner = local_objects.get(node.name) or local_traits.get(node.name)
+        trait = local_traits.get(target.name)
+        if owner is not None and trait is not None:
+            friendly = {definition.name: definition for definition in owner.definitions}
+            for requirement in trait.requirements:
+                if requirement.name not in supplied and requirement.name in friendly:
+                    resolved.append(friendly[requirement.name])
+                    supplied.add(requirement.name)
+
+        object_is_public = (
+            local_objects.get(node.name) or local_traits.get(node.name)
+        )
+        object_is_public = (
+            True
+            if object_is_public is None
+            else object_is_public.visibility == Symbol("public")
+        )
+        trait_node = local_traits.get(target.name)
+        trait_is_public = (
+            True
+            if trait_node is None
+            else trait_node.visibility == Symbol("public")
+        )
+
+        result.append(
+            ModuleTraitImplementation(
+                node.name,
+                target.name,
+                tuple(resolved),
+                # Only ownership of X grants automatic import with X.
+                owned=node.name in local_objects,
+                public=object_is_public and trait_is_public,
+                object_pattern=_implementation_object_pattern(node),
+                trait_pattern=_implementation_pattern_type(target, node.generics),
+                generics=node.generics,
+                generic_constraints=tuple(
+                    _implementation_pattern_type(constraint, node.generics)
+                    if constraint is not None else None
+                    for constraint in node.generic_constraints
+                ),
+                subject_kind=Symbol("trait") if is_trait_impl else Symbol("object"),
             )
+        )
     return tuple(result)
 
 
@@ -810,48 +850,80 @@ def import_behaviour_set_objects(
     exports: ModuleExports,
     spec: ImportSpec,
 ) -> tuple[ModuleObject, ...]:
-    """Build provider-qualified friendly surfaces for behaviour set imports."""
+    """Build callable friendly surfaces for imported implementation witnesses."""
     objects_by_name = {obj.name: obj for obj in exports.objects}
     provider = Symbol(exports.module_name.rsplit(".", 1)[-1])
     selected = []
-    for component in spec.components:
-        if component.kind != Symbol("trait_impl"):
-            continue
-        implementation = next(
-            (
-                item for item in exports.trait_implementations
-                if item.object_name == component.name
-                and item.trait_name == component.trait
-                and item.subject_kind == (component.subject_kind or Symbol("object"))
-            ),
-            None,
+
+    def implementation_surface(
+        implementation: ModuleTraitImplementation,
+        *,
+        qualified: bool,
+    ) -> None:
+        obj = objects_by_name.get(implementation.object_name)
+        if obj is None:
+            return
+        definitions = tuple(
+            replace(definition, visibility=Symbol("public"))
+            for definition in implementation.definitions
         )
-        obj = objects_by_name.get(component.name)
-        if implementation is None or obj is None:
-            continue
-        surface = Symbol(component.trait.text, (provider.text,))
+        implementation_node = obj.typed.node
+        if not isinstance(implementation_node, ObjectNode):
+            return
         implementation_object = replace(
             obj,
-            friendly_definitions=tuple(
-                replace(definition, visibility=Symbol("public"))
-                for definition in implementation.definitions
+            typed=TypedNode(
+                replace(implementation_node, definitions=definitions),
+                obj.typed.typ,
             ),
+            friendly_definitions=definitions,
         )
+        if qualified:
+            surface = Symbol(implementation.trait_name.text, (provider.text,))
+            selected.append(
+                _renamed_object(
+                    implementation_object,
+                    surface,
+                    friendly_prefix=surface,
+                    import_friendly=True,
+                )
+            )
         selected.append(
             _renamed_object(
                 implementation_object,
-                surface,
-                friendly_prefix=surface,
+                implementation.object_name,
                 import_friendly=True,
             )
         )
-        selected.append(
-            _renamed_object(
-                implementation_object,
-                surface,
-                import_friendly=True,
+
+    for component in spec.components:
+        if component.kind == Symbol("trait_impl"):
+            implementation = next(
+                (
+                    item
+                    for item in exports.trait_implementations
+                    if item.object_name == component.name
+                    and item.trait_name == component.trait
+                    and item.subject_kind
+                    == (component.subject_kind or Symbol("object"))
+                ),
+                None,
             )
-        )
+            if implementation is not None and implementation.public:
+                implementation_surface(implementation, qualified=True)
+            continue
+
+        if component.kind is not None:
+            continue
+        for implementation in exports.trait_implementations:
+            if (
+                implementation.object_name == component.name
+                and implementation.subject_kind == Symbol("object")
+                and implementation.owned
+                and implementation.public
+            ):
+                implementation_surface(implementation, qualified=False)
+
     return tuple(selected)
 
 
@@ -866,7 +938,7 @@ def import_owned_trait_implementations(
             continue
         selected.extend(
             item for item in exports.trait_implementations
-            if item.owned and item.object_name == component.name
+            if item.owned and item.public and item.object_name == component.name
         )
     return tuple(selected)
 
@@ -893,6 +965,12 @@ def import_trait_implementations(
             raise ModuleLoadError(
                 f"module {exports.module_name!r} defines no implementation "
                 f"of trait {component.trait} for object {component.name}"
+            )
+        if not match.public:
+            raise ModuleLoadError(
+                f"module {exports.module_name!r} defines an implementation "
+                f"of trait {component.trait} for object {component.name}, "
+                "but that implementation is not public"
             )
         selected.append(match)
     return tuple(selected)
