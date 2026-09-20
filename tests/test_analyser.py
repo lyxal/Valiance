@@ -3762,7 +3762,7 @@ define get(:Foo) => $f.x + 5
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             show(typed[0].typ),
-            "Function[Number* -> Number | Number*]",
+            "Function[Real* -> Number | Number*]",
         )
         function = typed[0]
         self.assertIsInstance(function, TypedFunctionNode)
