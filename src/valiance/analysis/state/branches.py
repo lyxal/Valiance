@@ -327,7 +327,7 @@ class AnalysisBranch:
                     replace(
                         self,
                         stack=remaining,
-                        inputs=self.inputs + inferred,
+                        inputs=inferred + self.inputs,
                     ),
                 )
             case InputMode.CYCLE_EXPLICIT_PARAMS if self.cycle_params:
