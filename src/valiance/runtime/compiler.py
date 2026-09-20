@@ -1010,7 +1010,13 @@ class _Compiler:
                     )
                 for definition in node.definitions:
                     if definition not in constructors:
-                        self.friendly_definition(type_name, definition)
+                        self.friendly_definition(
+                            type_name,
+                            definition,
+                            variant_dispatch=(
+                                node.target is not None or definition.is_multi
+                            ),
+                        )
             case "trait":
                 runtime_name = _symbol_runtime_name(node.name)
                 for definition in node.definitions:

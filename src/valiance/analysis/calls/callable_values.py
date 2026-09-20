@@ -1194,15 +1194,11 @@ def _mark_multidispatch(
 ) -> T.AppliedOverload:
     """Compute mark multidispatch during static analysis."""
     if applied.overload.is_multi:
-        if any(
-            candidate is not applied.overload
-            and candidate.is_multi
-            and candidate.params == applied.overload.params
-            and candidate.returns == applied.overload.returns
-            for candidate in overloads
-        ):
-            return replace(applied, multidispatch=True)
-        return applied
+        # Trait implementation elements are open to implementations introduced
+        # by downstream modules.  Even when only one implementation is visible
+        # while compiling this body, preserve runtime dispatch so a later local
+        # implementation can be selected from the receiver's concrete type.
+        return replace(applied, multidispatch=True)
     if not _has_runtime_multimethod_candidate(applied.overload, overloads, ctx):
         return applied
     return replace(applied, multidispatch=True)

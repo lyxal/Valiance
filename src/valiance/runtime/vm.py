@@ -3985,18 +3985,55 @@ class VirtualMachine:
                 return None
             if isinstance(callee, OverloadedFunctionValue):
                 if len(callee.overloads) == 1:
-                    request = self._call_function(
-                        callee.overloads[0],
-                        frame,
-                        return_tag_specs=return_tag_specs,
-                    )
-                    if request is None:
-                        return None
-                    release_callee = False
-                    return replace(request, release_after=callee)
-                raise RuntimeError(
-                    "cannot call overloaded function without resolved slot"
+                    selected = callee.overloads[0]
+                else:
+                    # Calls embedded in an imported function can intentionally
+                    # remain open when their receiver is a trait.  Select among
+                    # the concrete implementation bodies from the runtime
+                    # receiver instead of requiring a compile-time slot.
+                    arities = {len(overload.code.params) for overload in callee.overloads}
+                    if len(arities) != 1:
+                        raise RuntimeError(
+                            "cannot dynamically dispatch overloaded function "
+                            "with differing arities"
+                        )
+                    arity = next(iter(arities))
+                    try:
+                        args, _, _, _ = frame.source_args(arity)
+                    except _StackUnderflow as exc:
+                        raise RuntimeError(
+                            "cannot dynamically dispatch overloaded function "
+                            "without its arguments"
+                        ) from exc
+                    matches = [
+                        overload
+                        for overload in callee.overloads
+                        if overload.code.multi
+                        and _runtime_multimethod_types_match(
+                            tuple(args), overload.code.dispatch_types
+                        )
+                    ]
+                    if len(matches) != 1:
+                        runtime_types = tuple(_runtime_type_name(arg) for arg in args)
+                        if not matches:
+                            raise RuntimeError(
+                                "no multimethod overload matches runtime types "
+                                f"{runtime_types}"
+                            )
+                        raise RuntimeError(
+                            "ambiguous multimethod call for runtime types "
+                            f"{runtime_types}"
+                        )
+                    selected = matches[0]
+                request = self._call_function(
+                    selected,
+                    frame,
+                    return_tag_specs=return_tag_specs,
                 )
+                if request is None:
+                    return None
+                release_callee = False
+                return replace(request, release_after=callee)
             raise RuntimeError(f"cannot call value {_format_value(callee)}")
         finally:
             if release_callee:
@@ -5155,9 +5192,12 @@ def _bind_global_function_declaration(
     )
     for existing_name, existing in functions:
         for overload in _function_overloads(existing):
-            overload.globals.setdefault(name, value)
+            # Top-level overload sets are open.  A function compiled earlier
+            # must observe later implementations added to the same global
+            # element name, not retain the first singleton value it captured.
+            overload.globals[name] = globals_[name]
         for overload in _function_overloads(value):
-            overload.globals.setdefault(existing_name, existing)
+            overload.globals[existing_name] = globals_[existing_name]
 
 
 def _bind_recursive_value(value: Any, name: str) -> None:

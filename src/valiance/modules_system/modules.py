@@ -864,7 +864,14 @@ def import_behaviour_set_objects(
         if obj is None:
             return
         definitions = tuple(
-            replace(definition, visibility=Symbol("public"))
+            replace(
+                definition,
+                visibility=Symbol("public"),
+                # Imported implementation witnesses remain open runtime
+                # multimethods.  The synthetic object surface otherwise loses
+                # the original ``object X as Y`` target marker.
+                is_multi=True,
+            )
             for definition in implementation.definitions
         )
         implementation_node = obj.typed.node
