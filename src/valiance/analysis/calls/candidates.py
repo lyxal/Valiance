@@ -1584,16 +1584,45 @@ def _apply_call_site_checked_overload(
             returns=specialized_source.returns,
             generic_constraints=specialized_source.generic_constraints,
         )
-        conceptual_count = (
-            len(branch.cycle_params)
-            if branch.input_mode is _core.InputMode.CYCLE_EXPLICIT_PARAMS
-            else 0
-        )
+        if branch.input_mode is _core.InputMode.CYCLE_EXPLICIT_PARAMS:
+            conceptual_count = len(branch.cycle_params)
+            inferred_preview_params: tuple[T.Type, ...] = ()
+        elif branch.input_mode is _core.InputMode.INFER_INPUTS:
+            # A call-site checked operation must be able to inspect values that
+            # will become inputs of the function currently being inferred. Seed
+            # its conceptual stack from the modifier signatures and add one
+            # unconstrained slot per modifier for values owned by the operation
+            # itself (for example, dip's held item).
+            callable_params = tuple(
+                param
+                for arg in args
+                for candidate in _functions._callable_overloads(arg)
+                for param in candidate.params
+            )
+            inferred_preview_params = (
+                *callable_params,
+                *(
+                    T.M(
+                        f"@cstc{index}",
+                        T.MetaVarId(branch.origin, -(index + 1)),
+                    )
+                    for index in range(max(1, len(args)))
+                ),
+            )
+            conceptual_count = len(inferred_preview_params)
+        else:
+            conceptual_count = 0
+            inferred_preview_params = ()
+
         for extra_count in range(len(branch.stack) + conceptual_count + 1):
             if extra_count <= len(branch.stack):
                 stack_args = branch.stack.items[-extra_count:] if extra_count else ()
             else:
-                preview = branch.source_arguments((branch.cycle_params[0],) * extra_count)
+                if branch.input_mode is _core.InputMode.CYCLE_EXPLICIT_PARAMS:
+                    preview_params = (branch.cycle_params[0],) * extra_count
+                else:
+                    preview_params = inferred_preview_params[:extra_count]
+                preview = branch.source_arguments(preview_params)
                 if preview is None:
                     continue
                 stack_args, _ = preview

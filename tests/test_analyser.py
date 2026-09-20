@@ -4759,6 +4759,22 @@ pick(_, 4)
         self.assertFalse(analyser.diagnostics)
         self.assertEqual(show(typed[0].typ), "Function[Number+ -> String]")
 
+    def test_dip_modifier_contributes_to_defined_function_input_inference(self):
+        analyser = Analyser()
+
+        typed = analyser.analyse(
+            parse(
+                "define F => dip: overtake swap | addAll\n"
+                "4 [0] [1, 2, 3] F"
+            )
+        )
+
+        self.assertFalse(analyser.diagnostics)
+        self.assertEqual(
+            show(typed[0].typ),
+            "Function[Int, (Int | Int*)+, Int* -> Int*]",
+        )
+
     def test_fork_pops_maximum_modifier_parameter_count(self):
         analyser = Analyser()
 
