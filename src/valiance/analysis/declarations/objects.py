@@ -212,13 +212,30 @@ class _ObjectDeclarations:
             for definition in node.definitions
             if definition not in constructors
         )
-        self._define_object_shape(
-            node.name,
-            node,
-            object_attributes,
-            defaults=defaults,
-            synthesize_constructor=not constructors,
-        )
+        try:
+            self._define_object_shape(
+                node.name,
+                node,
+                object_attributes,
+                defaults=defaults,
+                synthesize_constructor=not constructors,
+            )
+        except ValueError as exc:
+            # Object constructors share the callable namespace with imported
+            # constructors.  A conflicting declaration is a source diagnostic,
+            # not an analyser failure.
+            imported = self._imported_object_sources.get(node.name)
+            message = str(exc)
+            if imported is not None:
+                module = imported.rsplit(".", 1)[0]
+                namespace = module.rsplit(".", 1)[-1]
+                message += (
+                    f"\nhelp: either rename the local object `{node.name}` or "
+                    f"remove the import `{imported}`"
+                    f"\nhelp: or keep the import namespaced with "
+                )
+            self._diagnose(message, node)
+            return BranchSet((branch.emit(TypedNode(node, None)),))
         current = branch.emit(TypedNode(node, None))
         for constructor in constructors:
             current = self._register_constructor_definition(

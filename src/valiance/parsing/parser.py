@@ -854,7 +854,21 @@ class Parser:
     ) -> ObjectNode:
         """Parse object like from the current token stream."""
         generics, generic_variances, generic_constraints = self._generic_parameters()
+        name_token = self._current
         name = self._symbol("expected object name")
+        # Trait implementation blocks may target an object exposed through a
+        # module namespace, for example `object shapes.Rectangle as Shape`.
+        # Ordinary object declarations remain unqualified so a declaration
+        # cannot accidentally create a type inside an imported namespace.
+        if kind == "object" and self._check(TokenKind.DOT):
+            if not (
+                self._peek(2).kind is TokenKind.IDENT
+                and self._peek(2).value == "as"
+            ):
+                self._error(
+                    "qualified object names are only allowed in trait implementation blocks"
+                )
+            name = self._qualified_symbol(name_token)
         target = self.parse_type_expression() if self._match_ident("as") else None
         self._expect(TokenKind.FAT_ARROW)
         if kind == "enum":
