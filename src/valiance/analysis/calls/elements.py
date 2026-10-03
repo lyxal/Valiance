@@ -313,35 +313,50 @@ class _ElementCalls:
         branch: AnalysisBranch,
         overloads: tuple[T.Overload, ...],
     ) -> tuple[T.Overload, ...]:
-        """Add receiver-specialized contracts for a nominal trait value."""
+        """Add receiver-specialized contracts for trait-valued receivers."""
         if not branch.stack:
             return overloads
         receiver = T.normalize(branch.stack[-1])
-        if not isinstance(receiver, T.NominalType):
-            return overloads
-        trait = self.env.lookup_trait(receiver.name)
-        if trait is None:
-            return overloads
-        substitution = {
-            generic.text: argument
-            for generic, argument in zip(trait.generics, receiver.args, strict=False)
-        }
-        required = tuple(
-            replace(
-                requirement.overload,
-                params=(
-                    *(T._substitute(param, substitution) for param in requirement.overload.params),
-                    receiver,
-                ),
-                returns=tuple(
-                    T._substitute(result, substitution)
-                    for result in requirement.overload.returns
-                ),
-                param_names=(*requirement.overload.param_names, None),
-            )
-            for requirement in trait.requirements
-            if requirement.name == name
+        receivers = (
+            receiver.items
+            if isinstance(receiver, T.IntersectionType)
+            else (receiver,)
         )
+        required: list[T.Overload] = []
+        for trait_receiver in receivers:
+            trait_receiver = T.normalize(trait_receiver)
+            if not isinstance(trait_receiver, T.NominalType):
+                continue
+            trait = self.env.lookup_trait(trait_receiver.name)
+            if trait is None:
+                continue
+            substitution = {
+                generic.text: argument
+                for generic, argument in zip(
+                    trait.generics,
+                    trait_receiver.args,
+                    strict=False,
+                )
+            }
+            required.extend(
+                replace(
+                    requirement.overload,
+                    params=(
+                        *(
+                            T._substitute(param, substitution)
+                            for param in requirement.overload.params
+                        ),
+                        trait_receiver,
+                    ),
+                    returns=tuple(
+                        T._substitute(result, substitution)
+                        for result in requirement.overload.returns
+                    ),
+                    param_names=(*requirement.overload.param_names, None),
+                )
+                for requirement in trait.requirements
+                if requirement.name == name
+            )
         return (*overloads, *required)
 
     def _unknown_element_message(
