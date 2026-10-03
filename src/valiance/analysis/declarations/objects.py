@@ -233,6 +233,7 @@ class _ObjectDeclarations:
                     f"\nhelp: either rename the local object `{node.name}` or "
                     f"remove the import `{imported}`"
                     f"\nhelp: or keep the import namespaced with "
+                    f"`import {{ {module} }}` and use `{namespace}.{node.name.text}`"
                 )
             self._diagnose(message, node)
             return BranchSet((branch.emit(TypedNode(node, None)),))
