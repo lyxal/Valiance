@@ -1989,3 +1989,16 @@ class FFICallbackLinkParserTests(unittest.TestCase):
             "link native.apply(:Function[int -> int]) -> &int as apply"
         )
         self.assertEqual(str(node.params[0]), "Function[int -> int]")
+
+
+class SelfTypeParserTests(unittest.TestCase):
+    """Cover the receiver-relative ``$self`` type spelling."""
+
+    def test_self_type_round_trips(self):
+        typ = parse_type("$self")
+        self.assertEqual(typ, T.V("$self"))
+        self.assertEqual(T.show(typ), "$self")
+
+    def test_other_dollar_prefixed_types_are_rejected(self):
+        with self.assertRaisesRegex(ParseError, r"only \$-prefixed type is \$self"):
+            parse_type("$other")

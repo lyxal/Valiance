@@ -1172,7 +1172,7 @@ class _Compiler:
             _compile_function_node(
                 node,
                 runtime_definition_name,
-                multi=variant_dispatch,
+                multi=True,
                 dispatch_types=(
                     (owner, *(None for _ in definition.function.params or ()))
                     if variant_dispatch

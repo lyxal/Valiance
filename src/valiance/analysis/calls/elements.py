@@ -338,6 +338,7 @@ class _ElementCalls:
                     strict=False,
                 )
             }
+            substitution["$self"] = trait_receiver
             required.extend(
                 replace(
                     requirement.overload,

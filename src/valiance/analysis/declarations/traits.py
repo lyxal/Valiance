@@ -170,10 +170,22 @@ class _TraitDeclarations:
                         set(self.env.object_friendly_overloads[name])
                         if name in self.env.object_friendly_overloads else None,
                     )
+                self_substitution = {"$self": source_type}
                 overload = replace(
                     requirement.overload,
-                    params=(*requirement.overload.params, source_type),
-                    param_names=(*requirement.overload.param_names, None),
+                    params=tuple(
+                        T._substitute(param, self_substitution)
+                        for param in requirement.overload.params
+                    ),
+                    returns=tuple(
+                        T._substitute(returned, self_substitution)
+                        for returned in requirement.overload.returns
+                    ),
+                )
+                overload = replace(
+                    overload,
+                    params=(*overload.params, source_type),
+                    param_names=(*overload.param_names, None),
                 )
                 candidates = self.env.overloads.setdefault(name, [])
                 index = len(candidates)
@@ -224,10 +236,22 @@ class _TraitDeclarations:
             # Object-friendly elements receive their explicit arguments below
             # the receiver on the stack.  A default such as ``$self log``
             # therefore sees the requirement's arguments before ``self``.
+            self_substitution = {"$self": self_type}
             overload = replace(
                 requirement.overload,
-                params=(*requirement.overload.params, self_type),
-                param_names=(*requirement.overload.param_names, None),
+                params=tuple(
+                    T._substitute(param, self_substitution)
+                    for param in requirement.overload.params
+                ),
+                returns=tuple(
+                    T._substitute(returned, self_substitution)
+                    for returned in requirement.overload.returns
+                ),
+            )
+            overload = replace(
+                overload,
+                params=(*overload.params, self_type),
+                param_names=(*overload.param_names, None),
             )
             candidates = self.env.overloads.setdefault(name, [])
             index = len(candidates)

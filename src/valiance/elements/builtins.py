@@ -1769,7 +1769,9 @@ def _string_repeat_reverse(
     return (args[0] * int(args[1]),)
 
 
-@builtin("**", (T.Real, T.Real), (T.Real,))
+@builtin("**", (T.Int, T.Int), (T.Real,))
+@builtin("**", (T.Real, T.Int), (T.Real,))
+@builtin("**", (T.Number, T.Number), (T.Number,))
 def _real_power(args: tuple[Any, ...], ctx: RuntimeContext) -> tuple[Any, ...]:
     """Raise a non-negative real number to a real power."""
 

@@ -2043,6 +2043,11 @@ $person->age = 37
 - `$self $.member` and `$self.member` are both valid.
 - `$self $.member = <value>` and `$self.member = <value>` are both valid. But only `$self.member = <value>` will update what is returned by `$self`.
 - Note that returning `$self` is important if you want to chain object-friendly elements.
+- In a type position, `$self` denotes the receiver-relative self type. A trait may
+  use it in a requirement such as `extend resize(factor: Int) -> $self`. When an
+  object implements the trait, `$self` is specialized to that object type. Inside
+  an object-friendly definition, an explicit `$self` annotation likewise denotes
+  the owning object type. Other `$`-prefixed names are not valid types.
 
 ## 12.5. Destructors
 

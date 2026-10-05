@@ -7106,3 +7106,43 @@ class FFIPhaseHRuntimeTests(unittest.TestCase):
         vm.close()
         with self.assertRaisesRegex(RuntimeError, "closed"):
             vm.__enter__()
+
+
+class SelfTypeRuntimeTests(unittest.TestCase):
+    """Exercise receiver-relative trait results through analysis and runtime."""
+
+    SOURCE = """
+trait Shape =>
+  extend perimeter -> Real
+  extend area -> Real
+end
+
+trait ResizeableShape =>
+  extend resize(factor: Int) -> $self
+end
+
+trait ResizeableShape as Shape => end
+
+object Circle => $radius: Real
+object Circle as ResizeableShape =>
+  define perimeter => 2 * 3.14 * $self.radius
+  define area => $self.radius ** 2 * 3.14
+  @self define resize(factor: Int) => $self.radius := * $factor
+end
+"""
+
+    def test_trait_implementation_resolves_self_to_object(self):
+        self.assertEqual(
+            execute(self.SOURCE + "\nCircle(2.0)\nresize(3)\n$.radius\n"),
+            [RuntimeNumber(6.0)],
+        )
+
+    def test_trait_typed_call_resolves_self_to_trait_receiver(self):
+        source = self.SOURCE + """
+define resizeShape(shape: ResizeableShape) =>
+  3 | $shape | resize
+end
+"""
+        analyser = Analyser()
+        analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])

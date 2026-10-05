@@ -163,7 +163,8 @@ class _ObjectDeclarations:
                         for constraint in node.generic_constraints
                     ),
                 )
-            requirements = self._specialized_trait_requirements(target)
+            base_type = _utils._declared_nominal(node.name, node.generics)
+            requirements = self._specialized_trait_requirements(target, base_type)
             requirement_map = {
                 requirement.name: requirement for requirement in requirements
             }
@@ -175,7 +176,6 @@ class _ObjectDeclarations:
                 trait_requirements=requirement_map,
                 owner_node=node,
             )
-            base_type = _utils._declared_nominal(node.name, node.generics)
             for requirement in requirements:
                 if requirement.name in supplied_names:
                     continue
@@ -184,7 +184,7 @@ class _ObjectDeclarations:
                     overload
                     for overload in candidates
                     if overload.params
-                    and T.assignable(base_type, overload.params[-1], self.env.context)
+                    and T.assignable(base_type, overload.params[0], self.env.context)
                 )
                 if not any(
                     self._trait_requirement_implementation_compatible(
@@ -261,7 +261,9 @@ class _ObjectDeclarations:
         return BranchSet((current,))
 
     def _specialized_trait_requirements(
-        self, target: T.Type
+        self,
+        target: T.Type,
+        self_type: T.Type | None = None,
     ) -> tuple[T.TraitRequirement, ...]:
         """Specialize one implemented trait's requirements to its type arguments."""
         if not isinstance(target, T.NominalType):
@@ -273,6 +275,8 @@ class _ObjectDeclarations:
             generic.text: argument
             for generic, argument in zip(trait.generics, target.args, strict=False)
         }
+        if self_type is not None:
+            substitution["$self"] = self_type
 
         def substitute_tag(tag: T.ElementTag) -> T.ElementTag:
             """Substitute generic types nested in one element-effect tag."""
@@ -703,6 +707,40 @@ class _ObjectDeclarations:
         function_node = _functions._genericize_function_node(
             function_node,
             (*owner_generics, *definition.generics),
+        )
+        self_substitution = {"$self": self_type}
+        function_node = replace(
+            function_node,
+            params=tuple(
+                replace(
+                    param,
+                    typ=(
+                        None
+                        if param.typ is None
+                        else T._substitute(param.typ, self_substitution)
+                    ),
+                )
+                for param in function_node.params or ()
+            ),
+            returns=(
+                None
+                if function_node.returns is None
+                else tuple(
+                    T._substitute(returned, self_substitution)
+                    for returned in function_node.returns
+                )
+            ),
+            element_tags=frozenset(
+                T.ElementTag(
+                    tag.name,
+                    tuple(
+                        T._substitute(argument, self_substitution)
+                        for argument in tag.args
+                    ),
+                    tag.absent,
+                )
+                for tag in function_node.element_tags
+            ),
         )
         self._friendly_owners = self._friendly_owners + (owner,)
         try:

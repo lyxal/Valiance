@@ -3762,7 +3762,7 @@ define get(:Foo) => $f.x + 5
         self.assertEqual(analyser.diagnostics, [])
         self.assertEqual(
             show(typed[0].typ),
-            "Function[Real* -> Number | Number*]",
+            "Function[Int* -> Number | Number*]",
         )
         function = typed[0]
         self.assertIsInstance(function, TypedFunctionNode)
@@ -7852,3 +7852,22 @@ class PublicTaskControlAnalysisTests(unittest.TestCase):
         analyser = Analyser()
         analyser.analyse(parse('$task = fn -> Int => 1 end | spawn\n$task "soon" timeout'))
         self.assertTrue(any("timeout requires stack" in item for item in analyser.diagnostics))
+
+
+class PowerOverloadTypingTests(unittest.TestCase):
+    """Protect the distinct integer and general numeric power contracts."""
+
+    def test_integer_power_returns_real(self):
+        analyser = Analyser()
+        analyser.analyse(parse("define power(:Int, :Int) -> Real => ** end"))
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_real_integer_power_returns_real(self):
+        analyser = Analyser()
+        analyser.analyse(parse("define power(:Real, :Int) -> Real => ** end"))
+        self.assertEqual(analyser.diagnostics, [])
+
+    def test_number_power_returns_number(self):
+        analyser = Analyser()
+        analyser.analyse(parse("define power(:Number, :Number) -> Number => ** end"))
+        self.assertEqual(analyser.diagnostics, [])

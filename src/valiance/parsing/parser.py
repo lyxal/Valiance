@@ -3263,6 +3263,15 @@ class Parser:
             return self._ffi_type_primary()
         if self._check_ident("trait"):
             return self._anonymous_trait_type()
+        if self._match(TokenKind.DOLLAR):
+            token = self._expect(TokenKind.IDENT)
+            if token.value != "self":
+                raise ParseError(
+                    "the only $-prefixed type is $self",
+                    line=token.line,
+                    column=token.column,
+                )
+            return V("$self")
         if self._match(TokenKind.AT):
             token = self._expect(TokenKind.NUMBER)
             if not token.value.isdecimal() or int(token.value) < 1:
