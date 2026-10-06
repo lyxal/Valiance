@@ -801,6 +801,9 @@ def _valid_concurrency_argument(
         return (rng.randint(0, 4), rng.randint(0, 4), rng.randint(0, 3))
     if op in {OpCode.WAIT_TASK, OpCode.WAIT_TASKS_VECTORISED}:
         return rng.randint(0, 4)
+    if op is OpCode.TIMEOUT_TASK:
+        count = rng.randint(0, 4)
+        return (count, _random_string(rng, 12)) if rng.random() < 0.5 else count
     if op is OpCode.CHANNEL_NEW:
         return rng.choice((False, True))
     if op in {
@@ -1208,7 +1211,7 @@ def _fuzz_runtime_bytecode(
                 if op in {
                     OpCode.SPAWN_CALL, OpCode.WAIT_TASK,
                     OpCode.WAIT_TASKS_VECTORISED, OpCode.SCOPE_BEGIN,
-                    OpCode.SCOPE_END, OpCode.CHANNEL_NEW, OpCode.CHANNEL_SEND,
+                    OpCode.TIMEOUT_TASK, OpCode.SCOPE_END, OpCode.CHANNEL_NEW, OpCode.CHANNEL_SEND,
                     OpCode.CHANNEL_RECEIVE, OpCode.CHANNEL_CLOSE,
                     OpCode.CANCEL_POLL,
                 }
