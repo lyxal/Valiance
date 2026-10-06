@@ -3237,6 +3237,35 @@ $.value
 
         self.assertEqual(stack, [RuntimeNumber("7")])
 
+    def test_object_friendly_operator_keeps_builtin_operator_dispatch(self):
+        output = io.StringIO()
+        source = """
+object Counter =>
+  $value: Int
+  private $timesIncremented = 0
+  define Counter(initialValue: Int) => $self.value = $initialValue
+  @self define increment =>
+    $self.value := + 1
+    $self.timesIncremented := + 1
+  end
+  @self define +(:Int) =>
+    $self.value := +
+    $self.timesIncremented := + 1
+  end
+  define incCount => $self.timesIncremented
+end
+
+Counter(0) increment increment increment +(5)
+dup | $.value | println
+incCount | println
+"""
+
+        with contextlib.redirect_stdout(output):
+            stack = execute(source)
+
+        self.assertEqual(stack, [])
+        self.assertEqual(output.getvalue(), "8\n4\n")
+
     def test_nested_function_closure_keeps_captured_outer_value(self):
         self.assertEqual(
             execute("""

@@ -1161,6 +1161,18 @@ the receiver's lifecycle state. Satisfying a contract through either an old alia
 or a reconstructed wrapper is consequently visible to every related wrapper.
 Reference counts, destruction guards, and field storage remain wrapper-local.
 
+### Object-friendly overloads keep their qualified runtime bindings
+
+Analysis records object-friendly overloads alongside ordinary overloads so it
+can choose the implementation from the receiver and argument types. Codegen
+binds each selected friendly overload to its owner's qualified runtime name
+(such as `Counter::+`) and carries that name and overload slot in the resolved
+call. It does not publish the method under the unqualified global name: doing
+so could replace a built-in such as numeric `+`, causing a later statically
+resolved integer call to execute the object's method. External overloads keep
+their ordinary runtime binding, so static overload selection remains the sole
+dispatch decision.
+
 ### Static must-call proof covers definite local lifetimes
 
 Parameterized functions used by the flow pass obey the ordinary naming rule:

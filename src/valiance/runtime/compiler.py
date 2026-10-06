@@ -1169,20 +1169,6 @@ class _Compiler:
         runtime_definition_name = _symbol_runtime_name(definition.name)
         self.emit(
             OpCode.MAKE_FUNCTION,
-            _compile_function_node(
-                node,
-                runtime_definition_name,
-                multi=True,
-                dispatch_types=(
-                    (owner, *(None for _ in definition.function.params or ()))
-                    if variant_dispatch
-                    else ()
-                ),
-            ),
-        )
-        self.emit(OpCode.STORE_VAR, runtime_definition_name)
-        self.emit(
-            OpCode.MAKE_FUNCTION,
             _compile_function_value(node, f"{owner}::{runtime_definition_name}"),
         )
         self.emit(OpCode.STORE_VAR, f"{owner}::{runtime_definition_name}")

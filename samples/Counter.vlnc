@@ -9,7 +9,7 @@ object Counter =>
     $self.timesIncremented := + 1
   end
 
-  @self define add(:Int) =>
+  @self define +(:Int) =>
     $self.value := +
     $self.timesIncremented := + 1
   end
@@ -19,6 +19,6 @@ end
 
 Counter(0)
 increment increment increment
-add(5)
++(5)
 dup | $.value | println
 incCount | println

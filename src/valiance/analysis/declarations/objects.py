@@ -826,6 +826,9 @@ class _ObjectDeclarations:
         )
         for name in (definition.name, Symbol(f"{owner}::{definition.name}")):
             object_friendly = name == definition.name
+            friendly_runtime_index = len(
+                self.env.object_friendly_overloads.get(name, ())
+            )
             for typing in function.overloads:
                 if not isinstance(typing.overload, T.Overload):
                     continue
@@ -840,6 +843,14 @@ class _ObjectDeclarations:
                     ),
                     object_friendly=object_friendly,
                 )
+                if object_friendly:
+                    self.env.bind_runtime_name(
+                        name,
+                        Symbol(f"{owner}::{definition.name}"),
+                        self.env.overloads[name][-1],
+                        runtime_index=friendly_runtime_index,
+                    )
+                    friendly_runtime_index += 1
         return typed_branch
 
     def _trait_requirement_implementation_compatible(
@@ -887,4 +898,3 @@ class _ObjectDeclarations:
                 owner_node,
             )
         return current
-
