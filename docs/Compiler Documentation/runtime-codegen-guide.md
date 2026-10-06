@@ -120,10 +120,11 @@ The runtime implementation is small, but several files must evolve together.
 - `@@tupled` element annotations compile as the resolved element call followed
   by `BUILD_TUPLE` over the selected overload's return arity.
 - Object-friendly definitions are stored under their owner-qualified runtime
-  names. Analysis records that binding on each selected overload, allowing
-  codegen to preserve its static overload slot without replacing an unqualified
-  built-in such as `+`. `@self` definitions also retain their synthesized
-  receiver returns in runtime bytecode.
+  names. When the friendly name collides with a built-in, analysis records that
+  binding on the selected overload so codegen preserves its static slot without
+  replacing the built-in. Other friendly names also retain their existing
+  unqualified binding. `@self` definitions retain their synthesized receiver
+  returns in runtime bytecode.
 - Trait-implementation object declarations such as `object X as T => end` do
   not emit constructors; they may add object-friendly definitions, but the base
   object declaration owns runtime constructor metadata and fields.

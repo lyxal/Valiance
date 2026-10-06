@@ -122,6 +122,14 @@ class _TraitDeclarations:
                 node.name, *(T.V(generic.text) for generic in node.generics)
             )
             generic_names = {generic.text for generic in node.generics}
+            implementation_scope = (
+                T.TypeVarScope(
+                    node.generic_scope_id,
+                    tuple(generic.text for generic in node.generics),
+                )
+                if node.generics and node.generic_scope_id is not None
+                else None
+            )
 
             def pattern_type(typ: T.Type) -> T.Type:
                 """Convert trait-implementation generic names to type variables."""
@@ -137,6 +145,26 @@ class _TraitDeclarations:
                     return T.rebuild_nominal(typ, *(pattern_type(arg) for arg in typ.args))
                 return typ
 
+            def scoped_pattern_type(typ: T.Type) -> T.Type:
+                """Bind target generic names to this implementation's scope."""
+                typ = T.normalize(typ)
+                if (
+                    isinstance(typ, T.NominalType)
+                    and not typ.args
+                    and not typ.name.namespace
+                    and typ.name.text in generic_names
+                ):
+                    return (
+                        implementation_scope.variable(typ.name.text)
+                        if implementation_scope is not None
+                        else T.V(typ.name.text)
+                    )
+                if isinstance(typ, T.NominalType):
+                    return T.rebuild_nominal(
+                        typ, *(scoped_pattern_type(arg) for arg in typ.args)
+                    )
+                return typ
+
             self.env.add_trait_impl(
                 node.name,
                 target.name,
@@ -145,7 +173,7 @@ class _TraitDeclarations:
                 trait_pattern=pattern_type(target),
                 generic_names=node.generics,
                 generic_constraints=tuple(
-                    pattern_type(constraint) if constraint is not None else None
+                    constraint
                     for constraint in node.generic_constraints
                 ),
                 subject_kind=Symbol("trait"),
@@ -158,9 +186,12 @@ class _TraitDeclarations:
                     Symbol("trait"),
                     node.definitions,
                 )
-            requirements = self._specialized_trait_requirements(target)
+            specialized_target = scoped_pattern_type(target)
+            requirements = self._specialized_trait_requirements(specialized_target)
             source_trait = self.env.lookup_trait(node.name)
-            source_type = _utils._declared_nominal(node.name, node.generics)
+            source_type = _utils._declared_nominal(
+                node.name, node.generics, implementation_scope
+            )
             snapshots: dict[Symbol, tuple[list[T.Overload] | None, set[int] | None]] = {}
             for requirement in source_trait.requirements if source_trait is not None else ():
                 name = requirement.name
@@ -329,4 +360,3 @@ class _TraitDeclarations:
                     generic_constraints=tuple(parent_pattern_type(c) if c is not None else None for c in node.generic_constraints),
                     subject_kind=Symbol("trait"),
                 )
-

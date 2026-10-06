@@ -724,6 +724,23 @@ class TypeLibraryTests(unittest.TestCase):
             )
         )
 
+    def test_show_sorts_parameterized_element_tags_without_type_ordering(self):
+        rendered = T.show(
+            Fn(
+                (),
+                (),
+                (
+                    ElementTag(Symbol("Panic"), (Number,)),
+                    ElementTag(Symbol("Panic"), (String,)),
+                ),
+            )
+        )
+
+        self.assertEqual(
+            rendered,
+            "Function[ -> ]<Panic[Number], Panic[String]>",
+        )
+
     def test_element_tag_arguments_participate_in_generic_solving(self):
         pattern = Fn(
             (Number,),

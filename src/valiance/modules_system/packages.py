@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import tomllib
@@ -854,7 +855,16 @@ def _checkout_git_revision(source: str, revision: str, destination: Path) -> Non
     _git(["checkout", "--quiet", "--detach", revision], cwd=destination)
     git_dir = destination / ".git"
     if git_dir.exists():
-        shutil.rmtree(git_dir)
+        shutil.rmtree(git_dir, onerror=_remove_readonly)
+
+
+def _remove_readonly(function, path: str, error_info: tuple[object, ...]) -> None:
+    """Retry removing a read-only checkout file on platforms that require it."""
+    error = error_info[1]
+    if not isinstance(error, PermissionError):
+        raise error
+    os.chmod(path, stat.S_IWRITE)
+    function(path)
 
 
 

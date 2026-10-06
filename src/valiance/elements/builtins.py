@@ -113,6 +113,16 @@ TRAIT_IMPLS = (
 
 
 _BUILTIN_DOCUMENTATION: dict[str, ElementDocumentation] = {
+    "to": element_documentation(
+        "Convert a value to the requested target type.",
+        parameters=(("value", "The value to convert."),),
+        returns="The value represented as the requested target type.",
+        category="Conversions",
+        notes=(
+            "Target-directed conversion selects an overload using `to[Type]`; "
+            "available conversions depend on the source and target types."
+        ),
+    ),
     "%": element_documentation(
         "Return the remainder after numeric division.",
         parameters=(("left", "Dividend."), ("right", "Divisor.")),

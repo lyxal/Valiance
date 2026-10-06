@@ -271,11 +271,48 @@ class _ElementCalls:
             return ""
         if not isinstance(T.normalize(actual.base), T.VarType):
             return ""
-        if not isinstance(modifier, T.FunctionType) or not modifier.params:
+        modifier_options = (
+            (modifier,)
+            if isinstance(modifier, T.FunctionType)
+            else tuple(
+                T.normalize(T.Fn(overload.params, overload.returns))
+                for overload in modifier.overloads
+            )
+            if isinstance(modifier, T.OverloadSetType)
+            else ()
+        )
+        concrete_options = tuple(
+            option
+            for option in modifier_options
+            if isinstance(option, T.FunctionType)
+            and option.params
+            and not any(
+                isinstance(T.normalize(param), T.VarType)
+                for param in option.params
+            )
+        )
+        if not concrete_options:
             return ""
-        concrete_modifier_inputs = tuple(T.normalize(param) for param in modifier.params)
-        if any(isinstance(param, T.VarType) for param in concrete_modifier_inputs):
+        arities = {len(option.params or ()) for option in concrete_options}
+        if len(arities) != 1:
             return ""
+        # Prefer a signature whose inputs accept all the more specific
+        # overloads. This describes the common input contract without
+        # depending on overload declaration order or particular type names.
+        widest_options = tuple(
+            option
+            for option in concrete_options
+            if all(
+                all(
+                    T.assignable(other_param, param, T.Context())
+                    for param, other_param in zip(
+                        option.params or (), other.params or (), strict=True
+                    )
+                )
+                for other in concrete_options
+            )
+        )
+        modifier = widest_options[0] if widest_options else concrete_options[0]
         reducer = next(
             (
                 overload
@@ -322,12 +359,14 @@ class _ElementCalls:
             if isinstance(receiver, T.IntersectionType)
             else (receiver,)
         )
-        required: list[T.Overload] = []
+        specialized = list(overloads)
         for trait_receiver in receivers:
             trait_receiver = T.normalize(trait_receiver)
             if not isinstance(trait_receiver, T.NominalType):
                 continue
             trait = self.env.lookup_trait(trait_receiver.name)
+            if trait is None and trait_receiver.name.namespace:
+                trait = self.env.lookup_trait(Symbol(trait_receiver.name.text))
             if trait is None:
                 continue
             substitution = {
@@ -339,8 +378,10 @@ class _ElementCalls:
                 )
             }
             substitution["$self"] = trait_receiver
-            required.extend(
-                replace(
+            for requirement in trait.requirements:
+                if requirement.name != name:
+                    continue
+                contract = replace(
                     requirement.overload,
                     params=(
                         *(
@@ -355,10 +396,40 @@ class _ElementCalls:
                     ),
                     param_names=(*requirement.overload.param_names, None),
                 )
-                for requirement in trait.requirements
-                if requirement.name == name
-            )
-        return (*overloads, *required)
+                provider_name = (
+                    Symbol(trait_receiver.name.namespace[-1])
+                    if trait_receiver.name.namespace
+                    else None
+                )
+                implementations = tuple(
+                    behaviour
+                    for behaviour in self.env.context.trait_impl_behaviours
+                    if behaviour.definition(name) is not None
+                    and isinstance(
+                        T.normalize(behaviour.trait_pattern), T.NominalType
+                    )
+                    and T.normalize(behaviour.trait_pattern).name.text
+                    == trait_receiver.name.text
+                )
+                if provider_name is not None and implementations:
+                    provider_index = next(
+                        (
+                            index
+                            for index, behaviour in enumerate(implementations)
+                            if behaviour.provider == provider_name
+                        ),
+                        None,
+                    )
+                    if provider_index is not None and provider_index < len(specialized):
+                        # A trait signature is an analysis-only view of the
+                        # provider's concrete implementation. Keep its slot so
+                        # bytecode dispatch still targets the real overload.
+                        specialized[provider_index] = contract
+                    else:
+                        specialized.append(contract)
+                else:
+                    specialized.append(contract)
+        return tuple(specialized)
 
     def _unknown_element_message(
         self,
@@ -589,4 +660,3 @@ class _ElementCalls:
                 message += f"\ndid you mean '{suggestions[0]}'?"
             return message
         return None
-

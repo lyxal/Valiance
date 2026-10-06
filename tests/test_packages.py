@@ -43,13 +43,13 @@ class PackageManagementTests(unittest.TestCase):
                 base,
                 "parent",
                 "1.0.0",
-                f'leaf = {{ kind = "git", package = "leaf", location = "{leaf}", version = "1.0.0" }}\n',
+                f'leaf = {{ kind = "git", package = "leaf", location = "{leaf.as_posix()}", version = "1.0.0" }}\n',
             )
             app = base / "app"
             app.mkdir()
             (app / "valiance.toml").write_text(
                 '[project]\nname = "app"\nversion = "1.0.0"\n\n'
-                f'[dependencies]\nparent = {{ kind = "git", package = "parent", location = "{parent}", version = "1.0.0" }}\n',
+                f'[dependencies]\nparent = {{ kind = "git", package = "parent", location = "{parent.as_posix()}", version = "1.0.0" }}\n',
                 encoding="utf-8",
             )
 
@@ -73,7 +73,7 @@ class PackageManagementTests(unittest.TestCase):
             manifest_path = app / "valiance.toml"
             manifest_path.write_text(
                 '[project]\nname = "app"\nversion = "1.0.0"\n\n'
-                f'[dependencies]\nlibrary = {{ kind = "git", package = "library", location = "{package}", version = "1.0.0" }}\n',
+                f'[dependencies]\nlibrary = {{ kind = "git", package = "library", location = "{package.as_posix()}", version = "1.0.0" }}\n',
                 encoding="utf-8",
             )
             install(app)
@@ -93,7 +93,7 @@ class PackageManagementTests(unittest.TestCase):
             app.mkdir()
             (app / "valiance.toml").write_text(
                 '[project]\nname = "app"\nversion = "1.0.0"\n\n'
-                f'[dependencies]\nlibrary = {{ kind = "git", package = "library", location = "{package}", version = "1.0.0" }}\n',
+                f'[dependencies]\nlibrary = {{ kind = "git", package = "library", location = "{package.as_posix()}", version = "1.0.0" }}\n',
                 encoding="utf-8",
             )
             install(app)
@@ -114,7 +114,7 @@ class PackageProgressTests(unittest.TestCase):
             app.mkdir()
             (app / "valiance.toml").write_text(
                 '[project]\nname = "app"\nversion = "1.0.0"\n\n'
-                f'[dependencies]\nlibrary = {{ kind = "git", package = "library", location = "{package}", version = "1.0.0" }}\n',
+                f'[dependencies]\nlibrary = {{ kind = "git", package = "library", location = "{package.as_posix()}", version = "1.0.0" }}\n',
                 encoding="utf-8",
             )
             events = []
@@ -185,7 +185,7 @@ class ExplicitDependencySourceTests(unittest.TestCase):
             app.mkdir()
             (app / "valiance.toml").write_text(
                 '[project]\nname = "app"\nversion = "1.0.0"\n\n'
-                f'[dependencies]\nlibrary = {{ kind = "local", package = "library", path = "{package}", version = "1.0.0" }}\n',
+                f'[dependencies]\nlibrary = {{ kind = "local", package = "library", path = "{package.as_posix()}", version = "1.0.0" }}\n',
                 encoding="utf-8",
             )
             _, lock_path = install(app)
@@ -263,7 +263,7 @@ class LivePathDependencyTests(unittest.TestCase):
             app.mkdir()
             (app / "valiance.toml").write_text(
                 '[project]\nname = "app"\nversion = "1.0.0"\n\n'
-                f'[dependencies]\nshared = {{ kind = "path", package = "shared", path = "{package}", version = "1.0.0" }}\n',
+                f'[dependencies]\nshared = {{ kind = "path", package = "shared", path = "{package.as_posix()}", version = "1.0.0" }}\n',
                 encoding="utf-8",
             )
             install(app)
@@ -287,7 +287,7 @@ class LocalizeDependencyTests(unittest.TestCase):
             app.mkdir()
             (app / "valiance.toml").write_text(
                 '[project]\nname = "app"\nversion = "1.0.0"\n\n'
-                f'[dependencies]\nshared = {{ kind = "path", package = "shared", path = "{shared}", version = "1.0.0" }}\n',
+                f'[dependencies]\nshared = {{ kind = "path", package = "shared", path = "{shared.as_posix()}", version = "1.0.0" }}\n',
                 encoding="utf-8",
             )
             from valiance.modules_system.packages import localize_dependency
@@ -314,14 +314,14 @@ class PathOwnershipAndCliTests(unittest.TestCase):
             workspace.mkdir()
             (workspace / "valiance.toml").write_text(
                 '[project]\nname = "workspace"\nversion = "1.0.0"\n\n'
-                f'[dependencies]\nchild = {{ kind = "local", package = "child", path = "{child}", version = "1.0.0" }}\n',
+                f'[dependencies]\nchild = {{ kind = "local", package = "child", path = "{child.as_posix()}", version = "1.0.0" }}\n',
                 encoding="utf-8",
             )
             app = base / "app"
             app.mkdir()
             (app / "valiance.toml").write_text(
                 '[project]\nname = "app"\nversion = "1.0.0"\n\n'
-                f'[dependencies]\nworkspace = {{ kind = "path", package = "workspace", path = "{workspace}", version = "1.0.0" }}\n',
+                f'[dependencies]\nworkspace = {{ kind = "path", package = "workspace", path = "{workspace.as_posix()}", version = "1.0.0" }}\n',
                 encoding="utf-8",
             )
             _, lock_path = install(app)
@@ -343,8 +343,8 @@ class PathOwnershipAndCliTests(unittest.TestCase):
             missing = base / "missing"
             (workspace / "valiance.toml").write_text(
                 '[project]\nname = "workspace"\nversion = "1.0.0"\n\n[dependencies]\n'
-                f'a_good = {{ kind = "git", package = "good", location = "{good}", version = "1.0.0" }}\n'
-                f'z_bad = {{ kind = "git", package = "missing", location = "{missing}", version = "1.0.0" }}\n',
+                f'a_good = {{ kind = "git", package = "good", location = "{good.as_posix()}", version = "1.0.0" }}\n'
+                f'z_bad = {{ kind = "git", package = "missing", location = "{missing.as_posix()}", version = "1.0.0" }}\n',
                 encoding="utf-8",
             )
             managed = workspace / ".vln"
@@ -354,7 +354,7 @@ class PathOwnershipAndCliTests(unittest.TestCase):
             app.mkdir()
             (app / "valiance.toml").write_text(
                 '[project]\nname = "app"\nversion = "1.0.0"\n\n'
-                f'[dependencies]\nworkspace = {{ kind = "path", package = "workspace", path = "{workspace}", version = "1.0.0" }}\n',
+                f'[dependencies]\nworkspace = {{ kind = "path", package = "workspace", path = "{workspace.as_posix()}", version = "1.0.0" }}\n',
                 encoding="utf-8",
             )
             from valiance.modules_system.packages import upgrade_dependency

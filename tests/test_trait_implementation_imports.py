@@ -80,16 +80,16 @@ class TraitImplementationImportTests(unittest.TestCase):
             root = Path(tmp)
             for name, value in (("first", 1), ("second", 2)):
                 (root / f"{name}.vlnc").write_text(
-                    "public trait Shape => extend area -> Real end\n"
+                    "public trait Shape => extend area -> Number end\n"
                     "public object Rectangle => $width: Number end\n"
                     "object Rectangle as Shape => "
                     f"define area -> Number => {value} end\n",
                     encoding="utf-8",
                 )
             source = (
-                "import { first.Rectangle, "
-                "first.object Rectangle as Shape, "
-                "second.[object Rectangle as Shape] }\n"
+                "import { first, second }\n"
+                "import { first.object Rectangle as Shape, "
+                "second.object Rectangle as Shape }\n"
                 "Rectangle(4) as[first.Shape] | area\n"
                 "Rectangle(4) as[second.Shape] | area\n"
             )
@@ -106,15 +106,15 @@ class TraitImplementationImportTests(unittest.TestCase):
             root = Path(tmp)
             for name, value in (("first", 1), ("second", 2)):
                 (root / f"{name}.vlnc").write_text(
-                    "public trait Shape => extend area -> Real end\n"
+                    "public trait Shape => extend area -> Number end\n"
                     "public object Rectangle => $width: Number end\n"
                     "object Rectangle as Shape => "
                     f"define area -> Number => {value} end\n",
                     encoding="utf-8",
                 )
             source = (
-                "import { first.Rectangle, "
-                "first.object Rectangle as Shape, "
+                "import { first, second }\n"
+                "import { first.object Rectangle as Shape, "
                 "second.object Rectangle as Shape }\n"
                 "Rectangle(4) first.Shape.area\n"
                 "Rectangle(4) second.Shape.area\n"
@@ -288,7 +288,7 @@ class TraitImplementationImportTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "traits.vlnc").write_text(
-                "public trait Shape => extend area -> Real end\n",
+                "public trait Shape => extend area -> Number end\n",
                 encoding="utf-8",
             )
             (root / "shapes.vlnc").write_text(
@@ -310,7 +310,8 @@ class TraitImplementationImportTests(unittest.TestCase):
             analyser = self.analyse(root, source)
             self.assertTrue(
                 any(
-                    "behaviour set shapes.Shape does not provide Rectangle as Shape" in diagnostic
+                    "no overloads for element 'area' match stack [shapes.Shape]"
+                    in diagnostic
                     for diagnostic in analyser.diagnostics
                 )
             )
@@ -602,19 +603,23 @@ class GenericImplementationElementDispatchTests(unittest.TestCase):
     def test_qualified_generic_providers_dispatch_to_distinct_runtime_bodies(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for module, value in (("first", 1), ("second", 2)):
+            for module, field in (("first", "first"), ("second", "second")):
                 (root / f"{module}.vlnc").write_text(
-                    "public trait[T] Producer => extend produce -> T end\n"
-                    "public object[T] Box => $value: T end\n"
-                    "object[T] Box as Producer[T] => "
-                    f"define produce => {value} end\n",
+                    "public trait Producer => extend produce -> Int end\n"
+                    "public object Box =>\n"
+                    "  $first: Int\n"
+                    "  $second: Int\n"
+                    "end\n"
+                    "object Box as Producer => "
+                    f"define produce -> Int => $self.{field} end\n",
                     encoding="utf-8",
                 )
             source = (
-                "import { first.Box, first.object Box as Producer, "
+                "import { first, second }\n"
+                "import { first.object Box as Producer, "
                 "second.object Box as Producer }\n"
-                "Box(9) as[first.Producer[Int]] | produce\n"
-                "Box(9) as[second.Producer[Int]] | produce\n"
+                "Box(1, 2) as[first.Producer] | produce\n"
+                "Box(1, 2) as[second.Producer] | produce\n"
             )
             analyser = Analyser(
                 module_loader=ModuleLoader(), source_file=root / "main.vlnc"
@@ -657,9 +662,10 @@ class ImplementationElementGenericTests(unittest.TestCase):
 class TraitImplementationBinderTests(unittest.TestCase):
     def test_generic_trait_implementation_receives_stable_scope_identity(self):
         [producer, iterable, implementation] = parse(
-            "trait[T] Producer => end\n"
-            "trait[T] Iterable => extend first -> T end\n"
-            "trait[T] Producer as Iterable[T] => define first => 7 end\n"
+                "trait[T] Producer => extend produce -> T end\n"
+                "trait[T] Iterable => extend first -> T end\n"
+                "trait[T] Producer as Iterable[T] => "
+                "define first -> T => $self produce end\n"
         )
         analyser = Analyser()
         analyser.analyse((producer, iterable, implementation))
@@ -956,7 +962,7 @@ class TraitImplementationVisibilityAndWitnessTests(unittest.TestCase):
                 "import { traits.Shape }\n"
                 "public object Square =>\n"
                 "  $len: Real\n"
-                "  define area -> Real => $self.len ** 2\n"
+                "  public define area -> Real => $self.len ** 2\n"
                 "end\n"
                 "object Square as Shape => end\n",
                 encoding="utf-8",

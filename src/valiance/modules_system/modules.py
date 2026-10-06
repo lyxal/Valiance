@@ -196,8 +196,12 @@ class ModuleLoader:
                     if not source_file.exists():
                         raise ModuleLoadError(f"could not load module {compiled_file}: {exc}") from exc
                 else:
+                    # The artifact hashes the exact UTF-8 source bytes.  Hash
+                    # the file bytes here too: read_text() normalizes CRLF on
+                    # Windows, which made otherwise-current artifacts appear
+                    # stale and forced an unnecessary reanalysis.
                     source_matches = not source_file.exists() or hashlib.sha256(
-                        source_file.read_text(encoding="utf-8").encode("utf-8")
+                        source_file.read_bytes()
                     ).hexdigest() == candidate.source_hash
                     dependencies_match = source_matches and self._compiled_dependencies_match(
                         candidate.dependency_hashes, source_file
@@ -763,10 +767,10 @@ def _module_trait_implementations(
 ) -> tuple[ModuleTraitImplementation, ...]:
     """Collect object-to-trait implementations defined by this module.
 
-    Implementations owned by the object module accompany ordinary object imports.
-    Implementations for foreign objects remain behaviour sets and require an
-    explicit ``object X as Y`` import.  Public visibility is derived from both
-    endpoints rather than from a modifier on the implementation block.
+    Implementations owned by a local object or trait accompany ordinary imports
+    of that subject. Implementations for foreign subjects remain behaviour sets
+    and require an explicit implementation import. Public visibility is derived
+    from both endpoints rather than from a modifier on the implementation block.
     """
     local_objects = {
         node.name: node
@@ -830,7 +834,7 @@ def _module_trait_implementations(
                 target.name,
                 tuple(resolved),
                 # Only ownership of X grants automatic import with X.
-                owned=node.name in local_objects,
+                owned=node.name in local_objects or node.name in local_traits,
                 public=object_is_public and trait_is_public,
                 object_pattern=_implementation_object_pattern(node),
                 trait_pattern=_implementation_pattern_type(target, node.generics),
@@ -860,6 +864,7 @@ def import_behaviour_set_objects(
         *,
         qualified: bool,
     ) -> None:
+        """Add one implementation's public friendly definitions to the surface."""
         obj = objects_by_name.get(implementation.object_name)
         if obj is None:
             return

@@ -19,7 +19,7 @@ from typing import cast
 import valiance.analysis.contracts.annotations as annotation_hooks
 import valiance.vtypes as T
 import valiance.analysis.contracts.where_clauses as static_where
-from valiance.elements.builtins import default_environment
+from valiance.elements.builtins import BUILTIN_ELEMENTS, default_environment
 from valiance.analysis.lints import (
     DEFAULT_REGISTRY as DEFAULT_LINT_REGISTRY,
     BlockLintContext,
@@ -83,6 +83,7 @@ from valiance.asts.object_constructors import (
 )
 from valiance.vtypes.symbols import Symbol
 from valiance.vtypes.default_types import Boolean
+from valiance.vtypes.structural import nested_types
 
 from ..calls import candidates as _calls
 from ..calls import callable_values as _functions
@@ -115,6 +116,13 @@ class _ObjectDeclarations:
         node: ObjectNode,
     ) -> BranchSet:
         """Build the definition for object during static analysis."""
+        if node.target is not None and not node.generics:
+            source_trait = self.env.lookup_trait(node.name)
+            if source_trait is not None and source_trait.generics:
+                # A trait implementation inherits its subject's generic
+                # binders. Keep those binders explicit while checking its
+                # target and method bodies so both sides share one scope.
+                node = replace(node, generics=source_trait.generics)
         if node.generics and node.generic_scope_id is None:
             scope_id = (
                 2_000_000 + node.location.offset
@@ -134,6 +142,43 @@ class _ObjectDeclarations:
             target = T.normalize(node.target)
             if isinstance(target, T.NominalType):
                 generic_names = {generic.text for generic in node.generics}
+                owner_definition = self.env.lookup_object(node.name)
+                owner_variables = {}
+                if owner_definition is not None:
+                    for attribute in owner_definition.attributes:
+                        for variable in nested_types(attribute.typ):
+                            if (
+                                isinstance(variable, T.VarType)
+                                and variable.identity is not None
+                            ):
+                                owner_variables.setdefault(variable.name, variable)
+                owner_identities = tuple(
+                    owner_variables.get(generic.text).identity
+                    if generic.text in owner_variables
+                    else None
+                    for generic in node.generics
+                )
+                owner_scope_id = (
+                    owner_identities[0].scope
+                    if owner_identities
+                    and all(identity is not None for identity in owner_identities)
+                    and all(
+                        identity.scope == owner_identities[0].scope
+                        and identity.index == index
+                        for index, identity in enumerate(owner_identities)
+                    )
+                    else node.generic_scope_id
+                )
+                if owner_scope_id is not None and owner_scope_id != node.generic_scope_id:
+                    node = replace(node, generic_scope_id=owner_scope_id)
+                implementation_scope = (
+                    T.TypeVarScope(
+                        owner_scope_id,
+                        tuple(generic.text for generic in node.generics),
+                    )
+                    if node.generics and owner_scope_id is not None
+                    else None
+                )
 
                 def pattern_type(typ: T.Type) -> T.Type:
                     """Convert object-implementation generic names to type variables."""
@@ -144,7 +189,11 @@ class _ObjectDeclarations:
                         and not typ.name.namespace
                         and typ.name.text in generic_names
                     ):
-                        return T.V(typ.name.text)
+                        return (
+                            implementation_scope.variable(typ.name.text)
+                            if implementation_scope is not None
+                            else T.V(typ.name.text)
+                        )
                     if isinstance(typ, T.NominalType):
                         return T.rebuild_nominal(typ, *(pattern_type(arg) for arg in typ.args))
                     return typ
@@ -154,7 +203,13 @@ class _ObjectDeclarations:
                     target.name,
                     provider=Symbol("<local>"),
                     object_pattern=T.N(
-                        node.name, *(T.V(generic.text) for generic in node.generics)
+                        node.name,
+                        *(
+                            implementation_scope.variable(generic.text)
+                            if implementation_scope is not None
+                            else T.V(generic.text)
+                            for generic in node.generics
+                        ),
                     ),
                     trait_pattern=pattern_type(target),
                     generic_names=node.generics,
@@ -163,8 +218,12 @@ class _ObjectDeclarations:
                         for constraint in node.generic_constraints
                     ),
                 )
-            base_type = _utils._declared_nominal(node.name, node.generics)
-            requirements = self._specialized_trait_requirements(target, base_type)
+            base_type = _utils._declared_nominal(
+                node.name, node.generics, implementation_scope
+            )
+            requirements = self._specialized_trait_requirements(
+                pattern_type(target), base_type
+            )
             requirement_map = {
                 requirement.name: requirement for requirement in requirements
             }
@@ -843,7 +902,9 @@ class _ObjectDeclarations:
                     ),
                     object_friendly=object_friendly,
                 )
-                if object_friendly:
+                if object_friendly and name.text in {
+                    item.name.text for item in BUILTIN_ELEMENTS
+                }:
                     self.env.bind_runtime_name(
                         name,
                         Symbol(f"{owner}::{definition.name}"),

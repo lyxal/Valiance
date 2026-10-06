@@ -1007,7 +1007,11 @@ def _show_function_with_tags(
     if not tags:
         return base
     rendered = ", ".join(
-        _show_element_tag(tag, type_variable_name, bound) for tag in sorted(tags)
+        _show_element_tag(tag, type_variable_name, bound)
+        for tag in sorted(
+            tags,
+            key=lambda item: _show_element_tag(item, type_variable_name, bound),
+        )
     )
     return f"{base}<{rendered}>"
 

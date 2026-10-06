@@ -1,3 +1,4 @@
+import os
 import unittest
 
 from valiance.analysis import Analyser
@@ -36,6 +37,7 @@ class ConcurrencyExecutionTests(unittest.TestCase):
         self.assertFalse(registration.active)
 
 
+    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_native_calls_suspend_tasks_and_overlap_on_workers(self):
         import os
         import subprocess
@@ -272,6 +274,7 @@ if __name__ == "__main__":
     unittest.main()
 
 class FFIForeignThreadCallbackTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_foreign_thread_callback_hands_off_to_scheduler(self):
         import os
         import subprocess

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins as _py_builtins
+import copy
 import ctypes
 from threading import Event, Lock, get_ident
 import re
@@ -700,6 +701,30 @@ class VirtualMachine:
                 runtime_elements() | runtime_stdlib_elements()
             ).items()
         }
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "VirtualMachine":
+        """Copy VM language state while creating fresh scheduler resources."""
+        existing = memo.get(id(self))
+        if isinstance(existing, VirtualMachine):
+            return existing
+        clone = type(self)(
+            output=self.output,
+            collect_optimization_stats=self.optimization_stats is not None,
+        )
+        memo[id(self)] = clone
+        memo[id(self.scheduler)] = clone.scheduler
+        memo[id(self._native_executor)] = clone._native_executor
+        memo[id(self.scheduler.root_scope)] = clone.scheduler.root_scope
+        for name, value in self.globals.items():
+            replacement = clone.globals.get(name)
+            if isinstance(value, BuiltinValue) and replacement is not None:
+                memo[id(value)] = replacement
+        clone.globals = copy.deepcopy(self.globals, memo)
+        for name, value in self.__dict__.items():
+            if name in {"scheduler", "_native_executor", "globals"}:
+                continue
+            setattr(clone, name, copy.deepcopy(value, memo))
+        return clone
 
     def close(self, *, wait: bool = False) -> None:
         """Stop accepting native work and shut down this VM's worker executor."""

@@ -536,6 +536,7 @@ class BytecodeSerializationTests(unittest.TestCase):
 
 
 class FFIPlainStructTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_plain_struct_native_call_round_trip(self):
         import tempfile
         from valiance.runtime.bytecode import NativeCallReference
@@ -574,6 +575,7 @@ class FFIPlainStructTests(unittest.TestCase):
 
 
 class FFIOpaqueHandleTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_opaque_handle_lifecycle_calls_survive_bytecode(self):
         import tempfile
         from valiance.runtime.bytecode import NativeCallReference
@@ -608,6 +610,7 @@ class FFIOpaqueHandleTests(unittest.TestCase):
 
 
 class FFIFlatBufferAndEmbeddedArrayTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_flat_buffer_and_embedded_array_round_trip_through_native_abi(self):
         import tempfile
         from valiance.runtime.bytecode import NativeCallReference
@@ -664,6 +667,7 @@ class FFIFlatBufferAndEmbeddedArrayTests(unittest.TestCase):
 
 
 class FFIOwnedHandleLeaseTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_destroy_metadata_and_handle_state_survive_native_execution(self):
         import tempfile
         from valiance.runtime.bytecode import NativeCallReference
@@ -742,6 +746,7 @@ class FFIOwnedReturnTests(unittest.TestCase):
         subprocess.run(["cc", "-shared", "-fPIC", source, "-o", library], check=True)
         return library
 
+    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_owned_string_and_buffer_copy_then_free(self):
         import tempfile
         from valiance.analysis import Analyser
@@ -763,6 +768,7 @@ class FFIOwnedReturnTests(unittest.TestCase):
             self.assertIsInstance(result[1], FFIBufferValue)
             self.assertEqual(tuple(item.value for item in result[1].values), (2, 4, 6))
 
+    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_invalid_utf8_is_freed_before_failure(self):
         import ctypes
         import tempfile
@@ -784,6 +790,7 @@ class FFIOwnedReturnTests(unittest.TestCase):
             native.free_count.restype = ctypes.c_int
             self.assertEqual(native.free_count(), 1)
 
+    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_nullable_owned_return_maps_null_to_none_without_free(self):
         import tempfile
         from valiance.analysis import Analyser
@@ -802,6 +809,7 @@ class FFIOwnedReturnTests(unittest.TestCase):
             self.assertEqual(run(loads(dumps(self._compile_program(typed)))), [None])
 
 class FFIComputedLinkedFieldTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_nested_scalar_and_embedded_array_fields_survive_bytecode(self):
         import tempfile
         from valiance.analysis import Analyser
@@ -835,6 +843,7 @@ class FFIComputedLinkedFieldTests(unittest.TestCase):
             self.assertEqual(tuple(item.value for item in result[1].values), (2, 3, 5))
 
 class FFILinkedReturnConversionTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_same_module_declared_conversion_survives_optimization_and_bytecode(self):
         import tempfile
         from valiance.analysis import Analyser

@@ -1167,6 +1167,23 @@ class _Compiler:
             location=definition.location,
         )
         runtime_definition_name = _symbol_runtime_name(definition.name)
+        if runtime_definition_name not in {
+            item.name.text for item in BUILTIN_ELEMENTS
+        }:
+            self.emit(
+                OpCode.MAKE_FUNCTION,
+                _compile_function_node(
+                    node,
+                    runtime_definition_name,
+                    multi=True,
+                    dispatch_types=(
+                        (owner, *(None for _ in definition.function.params or ()))
+                        if variant_dispatch
+                        else ()
+                    ),
+                ),
+            )
+            self.emit(OpCode.STORE_VAR, runtime_definition_name)
         self.emit(
             OpCode.MAKE_FUNCTION,
             _compile_function_value(node, f"{owner}::{runtime_definition_name}"),

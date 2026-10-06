@@ -915,4 +915,3 @@ class _CallableValues:
                 )
             return None
         return node.returns, branch
-
