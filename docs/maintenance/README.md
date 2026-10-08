@@ -42,7 +42,9 @@ behaviour becomes harder to reason about and static guarantees become weaker.
 - [Testing and debugging](testing-and-debugging.md) explains the test layers,
   useful inspection commands, and a practical fault-isolation workflow.
   Cross-layer vectorisation invariants and execution-mode parity are exercised in
-  `tests/test_vectorisation_properties.py`.
+  `tests/test_vectorisation_properties.py`. The portable FFI fixture compiler
+  `tests/ffi_support.py` supports the native ABI integration tests on Windows,
+  macOS, and Linux.
 - [Performance baselines](performance-benchmarking.md) documents the
   stage-aware benchmark runner, same-machine comparisons, and CI policy.
 - [Declaration-level incremental analysis](declaration-incremental-analysis.md) documents stable semantic products, dependency fingerprints, and targeted invalidation.

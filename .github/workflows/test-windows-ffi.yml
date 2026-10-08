@@ -1,0 +1,21 @@
+name: Windows FFI tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows-ffi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Python 3.14
+        run: uv python install 3.14
+      - name: Install project dependencies
+        run: uv sync
+      - name: Exercise Windows DLL calls and core runtime tests
+        run: uv run --with pytest python -m pytest -q tests/test_bytecode_serialization.py tests/test_concurrency_execution.py tests/test_programs.py

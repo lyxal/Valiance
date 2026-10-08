@@ -2246,3 +2246,33 @@ the other registration; deadline expiry requests target cancellation and the
 waiter observes the resulting terminal state. Root-frame timeouts use
 `Scheduler.wait()` under the same timer registration. No host-thread sleep or
 wall-clock time enters deterministic scheduling.
+
+### Native library support on Windows
+
+The VM uses `ctypes.CDLL` for native `link` calls on Windows as well as Unix.
+`CDLL` uses the C calling convention (`cdecl` on 32-bit Windows; the common
+Windows x64 calling convention on 64-bit Windows). Linked functions must expose
+**C-compatible exported symbols**, not mangled C++ names; for an MSVC DLL,
+mark exported definitions `__declspec(dllexport)` and use `extern "C"` if
+compiling as C++. Win32 `stdcall`-only exports are not currently supported by
+`link`. A `.so`/`.dylib` cannot be loaded on Windows: build a `.dll` for the
+same architecture as the Python/Valiance process.
+
+Bytecode keeps the given library filename and symbol, but not a native function
+pointer, so a program built on one OS must reference an appropriately named
+library on the destination OS before calling it. Host-native primitive sizes
+matter: in particular, C `long` is 32 bits on 64-bit Windows even though it is
+64 bits on typical 64-bit Unix systems. The linked `&long` type follows the
+host's `ctypes.c_long` layout; it must match the DLL signature exactly.
+
+The FFI tests in `tests/test_bytecode_serialization.py` and
+`tests/test_concurrency_execution.py` use `tests/ffi_support.py` to build
+native fixtures with the appropriate file extension and C compiler. Windows
+fixtures use explicit DLL exports, Win32 atomics/sleep, and Win32 threads for
+the foreign-thread callback test. The `Windows FFI tests` workflow runs these
+integration tests and the fundamental-program suite on a Windows runner with
+MSVC available. Locally, with a C compiler on `PATH` (or `CC` set), run:
+
+```sh
+uv run --with pytest python -m pytest -q tests/test_bytecode_serialization.py tests/test_concurrency_execution.py tests/test_programs.py
+```

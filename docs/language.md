@@ -5448,6 +5448,34 @@ link math.add(:&int, :&int) -> (Int) &int
   memory, for instance), so every input conversion must appear explicitly,
   as a written `to[...]` call, at the point of use.
 
+### 27.1.3. Using a DLL on Windows
+
+On Windows, import a compiled **DLL** exporting C-compatible symbols, with the
+same architecture (usually x64) as the Valiance process. For example, save the
+following to `native.c` and compile it from a Visual Studio Developer PowerShell
+with `cl /LD /Fe:native.dll native.c`:
+
+```c
+__declspec(dllexport) int add(int left, int right) { return left + right; }
+```
+
+```valiance
+import {ffi("C:/work/native.dll") as native}
+link native.add(&int, &int) -> &int as add
+FFI.&int(2) FFI.&int(3) add
+```
+
+Use the DLL's actual absolute location in place of `C:/work/native.dll`, with
+**forward slashes** in Valiance string literals so the backslashes of Windows
+paths are not interpreted as escape sequences. MSVC needs explicit DLL exports;
+C++ libraries also need `extern "C"` to avoid C++ symbol mangling.
+
+Windows links currently use the C calling convention (`cdecl` on x86, the
+Windows x64 calling convention on x64), not 32-bit `stdcall`/`WINAPI`.
+FFI types follow the host C ABI: notably `&long` is 32 bits on Windows x64.
+Library files and their native ABI contracts are not interchangeable across
+platforms; for portable Valiance source, use an OS-appropriate library path.
+
 ## 27.2. FFI Types
 
 - FFI types mirror C's own keywords directly: `&int`, `&long`, `&short`,

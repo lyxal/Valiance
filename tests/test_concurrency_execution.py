@@ -1,6 +1,10 @@
 import os
 import unittest
 
+from ffi_support import (
+    build_shared_library, native_library_directory, shared_library_path,
+)
+
 from valiance.analysis import Analyser
 from valiance.parsing import parse
 from valiance.runtime import compile_program, dumps, loads, run
@@ -39,35 +43,44 @@ class ConcurrencyExecutionTests(unittest.TestCase):
         self.assertFalse(registration.active)
 
 
-    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_native_calls_suspend_tasks_and_overlap_on_workers(self):
         import os
-        import subprocess
-        import tempfile
 
-        with tempfile.TemporaryDirectory() as directory:
+        with native_library_directory() as directory:
             source_path = os.path.join(directory, "blocking.c")
-            library_path = os.path.join(directory, "libblocking.so")
+            library_path = shared_library_path(directory, "blocking")
             with open(source_path, "w", encoding="utf-8") as stream:
                 stream.write(
+                    "#ifdef _WIN32\n"
+                    "#include <windows.h>\n"
+                    "static volatile LONG active = 0;\n"
+                    "static volatile LONG maximum = 0;\n"
+                    "#define increment(p) InterlockedIncrement(p)\n"
+                    "#define decrement(p) InterlockedDecrement(p)\n"
+                    "#define compare_swap(p, old, val) "
+                    "(InterlockedCompareExchange(p, val, old) == (old))\n"
+                    "#define pause() Sleep(100)\n"
+                    "#else\n"
                     "#include <unistd.h>\n"
                     "static int active = 0;\n"
                     "static int maximum = 0;\n"
-                    "int slow(void) {\n"
-                    "  int current = __sync_add_and_fetch(&active, 1);\n"
+                    "#define increment(p) __sync_add_and_fetch(p, 1)\n"
+                    "#define decrement(p) __sync_sub_and_fetch(p, 1)\n"
+                    "#define compare_swap(p, old, val) __sync_bool_compare_and_swap(p, old, val)\n"
+                    "#define pause() usleep(100000)\n"
+                    "#endif\n"
+                    "FFI_EXPORT int slow(void) {\n"
+                    "  int current = increment(&active);\n"
                     "  int seen;\n"
                     "  do { seen = maximum; if (seen >= current) break; }\n"
-                    "  while (!__sync_bool_compare_and_swap(&maximum, seen, current));\n"
-                    "  usleep(100000);\n"
-                    "  __sync_sub_and_fetch(&active, 1);\n"
+                    "  while (!compare_swap(&maximum, seen, current));\n"
+                    "  pause();\n"
+                    "  decrement(&active);\n"
                     "  return current;\n"
                     "}\n"
-                    "int max_active(void) { return maximum; }\n"
+                    "FFI_EXPORT int max_active(void) { return maximum; }\n"
                 )
-            subprocess.run(
-                ["cc", "-shared", "-fPIC", source_path, "-o", library_path],
-                check=True,
-            )
+            build_shared_library(source_path, library_path)
             source = f"""import {{ffi(\"{library_path}\") as native}}
 link native.slow() -> &int as slow
 link native.max_active() -> &int as maxActive
@@ -387,29 +400,47 @@ if __name__ == "__main__":
     unittest.main()
 
 class FFIForeignThreadCallbackTests(unittest.TestCase):
-    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_foreign_thread_callback_hands_off_to_scheduler(self):
         import os
-        import subprocess
-        import tempfile
-        with tempfile.TemporaryDirectory() as directory:
+        with native_library_directory() as directory:
             source_path = os.path.join(directory, "callback.c")
-            library_path = os.path.join(directory, "libcallback.so")
+            library_path = shared_library_path(directory, "callback")
             with open(source_path, "w", encoding="utf-8") as stream:
                 stream.write(
-                    "#include <pthread.h>\n"
                     "typedef int (*Callback)(int);\n"
                     "typedef struct { Callback cb; int result; } Args;\n"
-                    "static void* run_cb(void* raw){Args* a=(Args*)raw;"
-                    "a->result=a->cb(a->cb(9));return 0;}\n"
-                    "int apply_foreign(Callback cb){Args a={cb,0};pthread_t t;"
-                    "pthread_create(&t,0,run_cb,&a);pthread_join(t,0);"
-                    "return a.result;}\n"
+                    "#ifdef _WIN32\n"
+                    "#include <windows.h>\n"
+                    "static DWORD WINAPI run_cb(LPVOID raw) {\n"
+                    "  Args* a = (Args*)raw;\n"
+                    "  a->result = a->cb(a->cb(9));\n"
+                    "  return 0;\n"
+                    "}\n"
+                    "FFI_EXPORT int apply_foreign(Callback cb) {\n"
+                    "  Args a = {cb, 0};\n"
+                    "  HANDLE thread = CreateThread(NULL, 0, run_cb, &a, 0, NULL);\n"
+                    "  if (!thread) return -1;\n"
+                    "  WaitForSingleObject(thread, INFINITE);\n"
+                    "  CloseHandle(thread);\n"
+                    "  return a.result;\n"
+                    "}\n"
+                    "#else\n"
+                    "#include <pthread.h>\n"
+                    "static void* run_cb(void* raw) {\n"
+                    "  Args* a = (Args*)raw;\n"
+                    "  a->result = a->cb(a->cb(9));\n"
+                    "  return 0;\n"
+                    "}\n"
+                    "FFI_EXPORT int apply_foreign(Callback cb) {\n"
+                    "  Args a = {cb, 0};\n"
+                    "  pthread_t thread;\n"
+                    "  pthread_create(&thread, NULL, run_cb, &a);\n"
+                    "  pthread_join(thread, NULL);\n"
+                    "  return a.result;\n"
+                    "}\n"
+                    "#endif\n"
                 )
-            subprocess.run(
-                ["cc", "-shared", "-fPIC", "-pthread", source_path, "-o", library_path],
-                check=True,
-            )
+            build_shared_library(source_path, library_path, threads=True)
             source = f'''import {{ffi("{library_path}") as cb}}
 link cb.apply_foreign(:Function[int -> int]) -> &int as applyForeign
 $task = fn -> int =>

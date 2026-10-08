@@ -2,6 +2,10 @@ import os
 import subprocess
 import sys
 import textwrap
+
+from ffi_support import (
+    build_shared_library, native_library_directory, shared_library_path,
+)
 import unittest
 
 from valiance.runtime import BytecodeFormatError, RuntimeError, dumps, loads, run
@@ -536,22 +540,38 @@ class BytecodeSerializationTests(unittest.TestCase):
 
 
 class FFIPlainStructTests(unittest.TestCase):
-    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
+    @unittest.skipUnless(os.name == "nt", "Windows CRT integration")
+    def test_windows_crt_dll_cdecl_function(self):
+        """Load a real Windows system DLL without compiling a fixture first."""
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+        from valiance.runtime import compile_program
+
+        source = (
+            'import {ffi("ucrtbase.dll") as crt}\n'
+            'link crt.abs(&int) -> &int as cAbs\n'
+            'FFI.&int(-7) cAbs\n'
+        )
+        analyser = Analyser()
+        typed = analyser.analyse(parse(source))
+        self.assertEqual(analyser.diagnostics, [])
+        program = loads(dumps(compile_program(typed)))
+        self.assertEqual(run(program), [FFIScalarValue("&int", 7)])
+
     def test_plain_struct_native_call_round_trip(self):
-        import tempfile
         from valiance.runtime.bytecode import NativeCallReference
         from valiance.runtime.runtime_values import FFIScalarValue, FFIStructValue
         from valiance.vtypes import FFIFieldSpec, FFIStructSpec
 
-        with tempfile.TemporaryDirectory() as directory:
+        with native_library_directory() as directory:
             source = os.path.join(directory, "point.c")
-            library = os.path.join(directory, "libpoint.so")
+            library = shared_library_path(directory, "point")
             with open(source, "w", encoding="utf-8") as stream:
                 stream.write(
                     "typedef struct { int x; int y; } Point;\n"
-                    "Point add(Point a, Point b) { Point r = {a.x+b.x,a.y+b.y}; return r; }\n"
+                    "FFI_EXPORT Point add(Point a, Point b) { Point r = {a.x+b.x,a.y+b.y}; return r; }\n"
                 )
-            subprocess.run(["cc", "-shared", "-fPIC", source, "-o", library], check=True)
+            build_shared_library(source, library)
             spec = FFIStructSpec(
                 "&Point",
                 (FFIFieldSpec("x", "&int"), FFIFieldSpec("y", "&int")),
@@ -575,25 +595,23 @@ class FFIPlainStructTests(unittest.TestCase):
 
 
 class FFIOpaqueHandleTests(unittest.TestCase):
-    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_opaque_handle_lifecycle_calls_survive_bytecode(self):
-        import tempfile
         from valiance.runtime.bytecode import NativeCallReference
         from valiance.runtime.runtime_values import FFIScalarValue, FFIHandleValue
 
-        with tempfile.TemporaryDirectory() as directory:
+        with native_library_directory() as directory:
             source = os.path.join(directory, "counter.c")
-            library = os.path.join(directory, "libcounter.so")
+            library = shared_library_path(directory, "counter")
             with open(source, "w", encoding="utf-8") as stream:
                 stream.write(
                     "#include <stdlib.h>\n"
                     "typedef struct Counter { int value; } Counter;\n"
-                    "Counter* counter_create(int n) { Counter* c=malloc(sizeof(Counter)); c->value=n; return c; }\n"
-                    "void counter_inc(Counter* c) { c->value++; }\n"
-                    "int counter_get(Counter* c) { return c->value; }\n"
-                    "void counter_destroy(Counter* c) { free(c); }\n"
+                    "FFI_EXPORT Counter* counter_create(int n) { Counter* c=malloc(sizeof(Counter)); c->value=n; return c; }\n"
+                    "FFI_EXPORT void counter_inc(Counter* c) { c->value++; }\n"
+                    "FFI_EXPORT int counter_get(Counter* c) { return c->value; }\n"
+                    "FFI_EXPORT void counter_destroy(Counter* c) { free(c); }\n"
                 )
-            subprocess.run(["cc", "-shared", "-fPIC", source, "-o", library], check=True)
+            build_shared_library(source, library)
             handles = ("&Counter",)
             create = NativeCallReference(library, "counter_create", ("&int",), "&Counter", (), handles)
             get = NativeCallReference(library, "counter_get", ("&Counter",), "&int", (), handles)
@@ -610,23 +628,21 @@ class FFIOpaqueHandleTests(unittest.TestCase):
 
 
 class FFIFlatBufferAndEmbeddedArrayTests(unittest.TestCase):
-    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_flat_buffer_and_embedded_array_round_trip_through_native_abi(self):
-        import tempfile
         from valiance.runtime.bytecode import NativeCallReference
         from valiance.runtime.runtime_values import FFIBufferValue, FFIScalarValue
         from valiance.vtypes import FFIFieldSpec, FFIStructSpec
 
-        with tempfile.TemporaryDirectory() as directory:
+        with native_library_directory() as directory:
             source = os.path.join(directory, "buffer.c")
-            library = os.path.join(directory, "libbuffer.so")
+            library = shared_library_path(directory, "buffer")
             with open(source, "w", encoding="utf-8") as stream:
                 stream.write(
                     "typedef struct { int values[4]; int checksum; } Packet;\n"
-                    "int sum_values(const int* v, int n) { int s=0; for(int i=0;i<n;i++) s+=v[i]; return s; }\n"
-                    "Packet make_packet(void) { Packet p={{1,2,3,4},10}; return p; }\n"
+                    "FFI_EXPORT int sum_values(const int* v, int n) { int s=0; for(int i=0;i<n;i++) s+=v[i]; return s; }\n"
+                    "FFI_EXPORT Packet make_packet(void) { Packet p={{1,2,3,4},10}; return p; }\n"
                 )
-            subprocess.run(["cc", "-shared", "-fPIC", source, "-o", library], check=True)
+            build_shared_library(source, library)
             values = FFIBufferValue(
                 "&int", tuple(FFIScalarValue("&int", item) for item in (1,2,3,4))
             )
@@ -667,25 +683,23 @@ class FFIFlatBufferAndEmbeddedArrayTests(unittest.TestCase):
 
 
 class FFIOwnedHandleLeaseTests(unittest.TestCase):
-    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_destroy_metadata_and_handle_state_survive_native_execution(self):
-        import tempfile
         from valiance.runtime.bytecode import NativeCallReference
         from valiance.runtime.runtime_values import FFIHandleValue, FFIScalarValue
 
-        with tempfile.TemporaryDirectory() as directory:
+        with native_library_directory() as directory:
             source = os.path.join(directory, "owned.c")
-            library = os.path.join(directory, "libowned.so")
+            library = shared_library_path(directory, "owned")
             with open(source, "w", encoding="utf-8") as stream:
                 stream.write(
                     "#include <stdlib.h>\n"
                     "typedef struct H { int value; } H;\n"
                     "static int destroyed=0;\n"
-                    "H* make_h(int n){H* h=malloc(sizeof(H));h->value=n;return h;}\n"
-                    "void free_h(H* h){destroyed++;free(h);}\n"
-                    "int destroyed_count(void){return destroyed;}\n"
+                    "FFI_EXPORT H* make_h(int n){H* h=malloc(sizeof(H));h->value=n;return h;}\n"
+                    "FFI_EXPORT void free_h(H* h){destroyed++;free(h);}\n"
+                    "FFI_EXPORT int destroyed_count(void){return destroyed;}\n"
                 )
-            subprocess.run(["cc", "-shared", "-fPIC", source, "-o", library], check=True)
+            build_shared_library(source, library)
             handles = ("&H",)
             make = NativeCallReference(library, "make_h", ("&int",), "&H", (), handles)
             destroy = NativeCallReference(
@@ -731,28 +745,26 @@ class FFIOwnedReturnTests(unittest.TestCase):
 
     def _compile_library(self, directory):
         source = os.path.join(directory, "owned_returns.c")
-        library = os.path.join(directory, "libowned_returns.so")
+        library = shared_library_path(directory, "owned_returns")
         with open(source, "w", encoding="utf-8") as stream:
             stream.write(
                 "#include <stdlib.h>\n#include <string.h>\n"
                 "static int frees=0;\n"
-                "char* greeting(void){char* p=malloc(6);memcpy(p,\"hello\",6);return p;}\n"
-                "char* bad_utf8(void){char* p=malloc(2);p[0]=(char)0xff;p[1]=0;return p;}\n"
-                "char* maybe_null(void){return 0;}\n"
-                "int* numbers(void){int* p=malloc(3*sizeof(int));p[0]=2;p[1]=4;p[2]=6;return p;}\n"
-                "void release(void* p){frees++;free(p);}\n"
-                "int free_count(void){return frees;}\n"
+                "FFI_EXPORT char* greeting(void){char* p=malloc(6);memcpy(p,\"hello\",6);return p;}\n"
+                "FFI_EXPORT char* bad_utf8(void){char* p=malloc(2);p[0]=(char)0xff;p[1]=0;return p;}\n"
+                "FFI_EXPORT char* maybe_null(void){return 0;}\n"
+                "FFI_EXPORT int* numbers(void){int* p=malloc(3*sizeof(int));p[0]=2;p[1]=4;p[2]=6;return p;}\n"
+                "FFI_EXPORT void release(void* p){frees++;free(p);}\n"
+                "FFI_EXPORT int free_count(void){return frees;}\n"
             )
-        subprocess.run(["cc", "-shared", "-fPIC", source, "-o", library], check=True)
+        build_shared_library(source, library)
         return library
 
-    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_owned_string_and_buffer_copy_then_free(self):
-        import tempfile
         from valiance.analysis import Analyser
         from valiance.parsing import parse
         from valiance.runtime.runtime_values import FFIBufferValue
-        with tempfile.TemporaryDirectory() as directory:
+        with native_library_directory() as directory:
             library = self._compile_library(directory)
             source = (
                 f'import {{ffi("{library}") as owned}}\n'
@@ -768,13 +780,10 @@ class FFIOwnedReturnTests(unittest.TestCase):
             self.assertIsInstance(result[1], FFIBufferValue)
             self.assertEqual(tuple(item.value for item in result[1].values), (2, 4, 6))
 
-    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_invalid_utf8_is_freed_before_failure(self):
-        import ctypes
-        import tempfile
         from valiance.analysis import Analyser
         from valiance.parsing import parse
-        with tempfile.TemporaryDirectory() as directory:
+        with native_library_directory() as directory:
             library = self._compile_library(directory)
             source = (
                 f'import {{ffi("{library}") as owned}}\n'
@@ -786,16 +795,19 @@ class FFIOwnedReturnTests(unittest.TestCase):
             self.assertEqual(analyser.diagnostics, [])
             with self.assertRaises(RuntimeError):
                 run(self._compile_program(typed))
-            native = ctypes.CDLL(library)
-            native.free_count.restype = ctypes.c_int
-            self.assertEqual(native.free_count(), 1)
+            from valiance.runtime.bytecode import NativeCallReference
+            count_program = Program(FunctionCode((
+                Instruction(OpCode.CALL_NATIVE, NativeCallReference(
+                    library, "free_count", (), "&int"
+                )),
+                Instruction(OpCode.RETURN),
+            ), name="<main>"))
+            self.assertEqual(run(count_program), [FFIScalarValue("&int", 1)])
 
-    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_nullable_owned_return_maps_null_to_none_without_free(self):
-        import tempfile
         from valiance.analysis import Analyser
         from valiance.parsing import parse
-        with tempfile.TemporaryDirectory() as directory:
+        with native_library_directory() as directory:
             library = self._compile_library(directory)
             source = (
                 f'import {{ffi("{library}") as owned}}\n'
@@ -809,23 +821,21 @@ class FFIOwnedReturnTests(unittest.TestCase):
             self.assertEqual(run(loads(dumps(self._compile_program(typed)))), [None])
 
 class FFIComputedLinkedFieldTests(unittest.TestCase):
-    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_nested_scalar_and_embedded_array_fields_survive_bytecode(self):
-        import tempfile
         from valiance.analysis import Analyser
         from valiance.parsing import parse
         from valiance.runtime import compile_program
         from valiance.runtime.runtime_values import FFIBufferValue, FFIScalarValue
-        with tempfile.TemporaryDirectory() as directory:
+        with native_library_directory() as directory:
             source_path = os.path.join(directory, "fields.c")
-            library = os.path.join(directory, "libfields.so")
+            library = shared_library_path(directory, "fields")
             with open(source_path, "w", encoding="utf-8") as stream:
                 stream.write(
                     "typedef struct { int x; int y; } Point;\n"
                     "typedef struct { Point origin; int samples[3]; } Shape;\n"
-                    "Shape make_shape(void){Shape s={{4,7},{2,3,5}};return s;}\n"
+                    "FFI_EXPORT Shape make_shape(void){Shape s={{4,7},{2,3,5}};return s;}\n"
                 )
-            subprocess.run(["cc", "-shared", "-fPIC", source_path, "-o", library], check=True)
+            build_shared_library(source_path, library)
             source = (
                 f'import {{ffi("{library}") as f}}\n'
                 'link f.Point as &Point =>\n  $x: &int\n  $y: &int\nend\n'
@@ -843,18 +853,16 @@ class FFIComputedLinkedFieldTests(unittest.TestCase):
             self.assertEqual(tuple(item.value for item in result[1].values), (2, 3, 5))
 
 class FFILinkedReturnConversionTests(unittest.TestCase):
-    @unittest.skipIf(os.name == "nt", "requires a POSIX shared-library compiler")
     def test_same_module_declared_conversion_survives_optimization_and_bytecode(self):
-        import tempfile
         from valiance.analysis import Analyser
         from valiance.parsing import parse
         from valiance.runtime import compile_program
-        with tempfile.TemporaryDirectory() as directory:
+        with native_library_directory() as directory:
             source_path = os.path.join(directory, "converted.c")
-            library = os.path.join(directory, "libconverted.so")
+            library = shared_library_path(directory, "converted")
             with open(source_path, "w", encoding="utf-8") as stream:
-                stream.write("int answer(void){return 42;}\n")
-            subprocess.run(["cc", "-shared", "-fPIC", source_path, "-o", library], check=True)
+                stream.write("FFI_EXPORT int answer(void){return 42;}\n")
+            build_shared_library(source_path, library)
             source = (
                 f'import {{ffi("{library}") as converted}}\n'
                 '@convert(&int -> String)\n'
