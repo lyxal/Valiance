@@ -65,6 +65,13 @@ The runtime implementation is small, but several files must evolve together.
   raw AST nodes, optimises emitted bytecode by default, and accepts a custom
   pipeline for one compilation.
 - Function literals and definitions become `MAKE_FUNCTION`.
+- A typed `concurrent` block lowers to `SCOPE_BEGIN`, `MAKE_CLOSED_FUNCTION`,
+  `CALL`, and `SCOPE_END`. The closed function receives exactly the analysed
+  scope inputs as named/inferred parameters and returns the analysed output row.
+  Unlike `MAKE_FUNCTION`, it does not capture caller locals, so concurrent
+  declarations and parameters never leak into their caller's function frame.
+  The enclosing task scope remains active while the body and its child tasks
+  execute. The dedicated opcode requires bytecode format version `0x2A`.
 - Definitions compile as `MAKE_FUNCTION` followed by `STORE_VAR`.
 - `ImportNode` itself emits no runtime instruction. Analysis prepends each
   required imported runtime declaration to a deduplicated program prelude, so a

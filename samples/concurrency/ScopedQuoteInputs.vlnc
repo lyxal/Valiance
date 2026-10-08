@@ -1,0 +1,14 @@
+#? An order-quote scope receives its own named inputs rather than reading outer
+#? locals. Each estimate closes over the scope parameter it needs, runs as an
+#? independent task, and is joined before the two quote figures are returned.
+1500 250
+concurrent (itemPrice: Int, baseShipping: Int) -> Int, Int =>
+  const $priceTask = fn -> Int => $itemPrice 2 * end | spawn
+  const $shippingTask = fn -> Int => $baseShipping 50 + end | spawn
+  const $quotedPrice = $priceTask wait
+  const $deliveryCost = $shippingTask wait
+  "computed price and shipping (cents):" println
+  [$quotedPrice, $deliveryCost] println
+  $quotedPrice
+  $deliveryCost
+end

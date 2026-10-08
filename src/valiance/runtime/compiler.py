@@ -397,6 +397,26 @@ class _Compiler:
             )
             return
         if isinstance(typed_node, TypedConcurrentNode):
+            # A concurrent block has the same closed, function-shaped input
+            # contract as the body that analysis checked.  Compiling the body
+            # inline would leave named parameters unbound and local declarations
+            # in the caller's frame.  Keep the task scope around the call, but
+            # give the body its own activation and stack/locals.
+            params = (
+                tuple(
+                    f"_{index}" if param.name is None else param.name.text
+                    for index, param in enumerate(typed_node.parameters)
+                )
+                if typed_node.parameters is not None
+                else tuple(f"_{index}" for index in range(len(typed_node.input_stack)))
+            )
+            body_code = _Compiler().compile_function(
+                typed_node.body,
+                params=params,
+                name="<concurrent>",
+                cycle_params=bool(params),
+                return_count=len(typed_node.output_stack),
+            )
             self.emit(
                 OpCode.SCOPE_BEGIN,
                 (
@@ -404,8 +424,10 @@ class _Compiler:
                     _source_site(typed_node.node),
                 ),
             )
-            for child in typed_node.body:
-                self.node(child)
+            # Unlike MAKE_FUNCTION, this operation must *not* implicitly capture
+            # caller locals: the analyser deliberately forbids direct capture.
+            self.emit(OpCode.MAKE_CLOSED_FUNCTION, body_code)
+            self.emit(OpCode.CALL)
             self.emit(
                 OpCode.SCOPE_END,
                 (

@@ -4,6 +4,8 @@ import unittest
 from valiance.analysis import Analyser
 from valiance.parsing import parse
 from valiance.runtime import compile_program, dumps, loads, run
+from valiance.runtime.bytecode import OpCode, FunctionCode
+from valiance.runtime.vm import VirtualMachine
 from valiance.runtime.runtime_values import FFIScalarValue, RuntimeNumber
 from valiance.runtime.concurrency import Scheduler
 
@@ -106,6 +108,117 @@ maxActive
             execute("concurrent -> Int => 7 end"),
             [RuntimeNumber(7)],
         )
+
+    def test_named_concurrent_parameter_is_bound_in_its_own_frame(self):
+        source = "10 concurrent (value: Int) -> Int => $value 2 * end"
+        for optimize, round_trip in ((False, False), (True, False), (False, True), (True, True)):
+            with self.subTest(optimize=optimize, round_trip=round_trip):
+                self.assertEqual(
+                    execute(source, optimize=optimize, round_trip=round_trip),
+                    [RuntimeNumber(20)],
+                )
+
+    def test_named_scope_consumes_only_its_inputs_and_keeps_output_order(self):
+        source = """5 10 20
+concurrent (left: Int, right: Int) -> Int, Int =>
+  $right $left
+end"""
+        expected = [RuntimeNumber(5), RuntimeNumber(20), RuntimeNumber(10)]
+        for optimize in (False, True):
+            self.assertEqual(execute(source, optimize=optimize, round_trip=True), expected)
+
+    def test_inferred_scope_inputs_are_bound_and_cycled(self):
+        source = "10 concurrent => 1 + end"
+        for optimize in (False, True):
+            self.assertEqual(
+                execute(source, optimize=optimize, round_trip=True),
+                [RuntimeNumber(11)],
+            )
+
+    def test_concurrent_named_parameter_does_not_shadow_caller_binding(self):
+        source = """$value = 99
+10 concurrent (value: Int) -> Int =>
+  $value 2 *
+end
+$value"""
+        expected = [RuntimeNumber(20), RuntimeNumber(99)]
+        for optimize in (False, True):
+            self.assertEqual(execute(source, optimize=optimize, round_trip=True), expected)
+
+    def test_concurrent_local_declarations_do_not_escape_to_globals(self):
+        source = """concurrent -> Int =>
+  $internal = 41
+  $internal 1 +
+end"""
+        for optimize in (False, True):
+            analyser = Analyser()
+            typed = analyser.analyse(parse(source))
+            self.assertFalse(analyser.diagnostics)
+            program = loads(dumps(compile_program(typed, optimize=optimize)))
+            with VirtualMachine() as vm:
+                self.assertEqual(vm.run(program), [RuntimeNumber(42)])
+                self.assertNotIn("internal", vm.globals)
+
+    def test_nested_concurrent_parameters_are_isolated_from_each_other(self):
+        source = """10 concurrent (value: Int) -> Int =>
+  3 concurrent (value: Int) -> Int => $value 2 * end
+  $value +
+end"""
+        for optimize in (False, True):
+            self.assertEqual(
+                execute(source, optimize=optimize, round_trip=True),
+                [RuntimeNumber(16)],
+            )
+
+    def test_concurrent_parameter_can_be_captured_by_an_explicit_child(self):
+        source = """12 concurrent (value: Int) -> Int =>
+  $task = fn -> Int => $value 3 * end | spawn
+  $task wait
+end"""
+        for optimize in (False, True):
+            self.assertEqual(
+                execute(source, optimize=optimize, round_trip=True),
+                [RuntimeNumber(36)],
+            )
+
+    def test_concurrent_closure_retains_parameter_after_scope_closes(self):
+        source = """12 concurrent (value: Int) -> Function[-> Int] =>
+  fn -> Int => $value 3 * end
+end
+call"""
+        for optimize in (False, True):
+            self.assertEqual(
+                execute(source, optimize=optimize, round_trip=True),
+                [RuntimeNumber(36)],
+            )
+
+    def test_concurrent_collection_parameter_preserves_outer_value(self):
+        source = """$original = [1, 2, 3]
+$original concurrent (items: Int+) -> Int+ => $items end
+$original"""
+        expected = [
+            [RuntimeNumber(1), RuntimeNumber(2), RuntimeNumber(3)],
+            [RuntimeNumber(1), RuntimeNumber(2), RuntimeNumber(3)],
+        ]
+        for optimize in (False, True):
+            self.assertEqual(
+                execute(source, optimize=optimize, round_trip=True),
+                expected,
+            )
+
+    def test_concurrent_lowering_uses_non_capturing_function_frame(self):
+        analyser = Analyser()
+        typed = analyser.analyse(parse("10 concurrent (x: Int) -> Int => $x end"))
+        self.assertFalse(analyser.diagnostics)
+        for optimize in (False, True):
+            program = loads(dumps(compile_program(typed, optimize=optimize)))
+            closed = tuple(
+                instruction for instruction in program.main.instructions
+                if instruction.op is OpCode.MAKE_CLOSED_FUNCTION
+            )
+            self.assertEqual(len(closed), 1)
+            self.assertIsInstance(closed[0].arg, FunctionCode)
+            self.assertEqual(closed[0].arg.params, ("x",))
 
     def test_discarded_child_is_joined_at_scope_end(self):
         self.assertEqual(

@@ -1,0 +1,20 @@
+#? A list is transferred over a channel while the sender modifies its own
+#? alias. The receiver gets the sent value, not the sender's later mutation.
+const $initial = [1, 2, 3]
+const $payloads = 1 Channel[Int+]
+const $sender = fn -> Int+ =>
+  $payloads $initial send
+  $local = $initial
+  $local[0] := 99
+  $local
+end
+const $receiver = fn -> Receive[Int+] => $payloads receive end
+const $sendTask = $sender spawn
+const $receiveTask = $receiver spawn
+const $received = $receiveTask wait
+const $changed = $sendTask wait
+"transferred, mutated, original:" println
+[$received, $changed, $initial] println
+$received
+$changed
+$initial

@@ -1,0 +1,5 @@
+#? This intentionally fails with a cancelled-task fault. The receiver has no
+#? sender; a zero logical-time deadline must cancel instead of deadlocking.
+const $channel = Channel[Int]
+const $blocked = fn -> Receive[Int] => $channel receive end | spawn
+$blocked 0 timeout

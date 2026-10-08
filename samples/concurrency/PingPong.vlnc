@@ -1,0 +1,30 @@
+#? Two unbuffered channels force alternating request/reply rendezvous.
+#? Neither participant can complete without the other making progress.
+const $requests = Channel[Int]
+const $replies = Channel[Int]
+const $client = fn -> Receive[Int], Receive[Int], Receive[Int] =>
+  $requests 10 send
+  $replies receive
+  $requests 20 send
+  $replies receive
+  $requests 30 send
+  $replies receive
+end
+const $server = fn -> Receive[Int], Receive[Int], Receive[Int] =>
+  $requests receive
+  $replies 100 send
+  $requests receive
+  $replies 200 send
+  $requests receive
+  $replies 300 send
+end
+const $clientTask = $client spawn
+const $serverTask = $server spawn
+const $(reply1, reply2, reply3) = $clientTask wait
+const $(request1, request2, request3) = $serverTask wait
+"reply messages:" println
+[$reply1, $reply2, $reply3] println
+"request messages:" println
+[$request1, $request2, $request3] println
+$reply1 $reply2 $reply3
+$request1 $request2 $request3

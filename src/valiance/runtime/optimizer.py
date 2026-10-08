@@ -1063,6 +1063,7 @@ def _exact_straight_line_depth(
         OpCode.LOAD_VAR_MATERIALIZE,
         OpCode.LOAD_ELEMENT,
         OpCode.MAKE_FUNCTION,
+        OpCode.MAKE_CLOSED_FUNCTION,
         OpCode.MAKE_OBJECT_CONSTRUCTOR,
         OpCode.MAKE_ENUM_MEMBER,
     }:

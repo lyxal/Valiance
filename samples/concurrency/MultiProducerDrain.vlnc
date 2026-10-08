@@ -1,0 +1,29 @@
+#? Two producers contend for a one-slot mailbox. The consumer drains four
+#? messages, then blocks for the close issued after both producers finish.
+#? The final receive must wake with Closed rather than hang.
+const $mailbox = 1 Channel[Int]
+const $first = fn -> =>
+  $mailbox 11 send
+  $mailbox 12 send
+end
+const $second = fn -> =>
+  $mailbox 21 send
+  $mailbox 22 send
+end
+const $consumer = fn -> Receive[Int], Receive[Int], Receive[Int], Receive[Int], Receive[Int] =>
+  $mailbox receive
+  $mailbox receive
+  $mailbox receive
+  $mailbox receive
+  $mailbox receive
+end
+const $firstTask = $first spawn
+const $secondTask = $second spawn
+const $consumerTask = $consumer spawn
+$firstTask wait
+$secondTask wait
+$mailbox close
+const $(one, two, three, four, finished) = $consumerTask wait
+"mailbox events (including closure):" println
+[$one, $two, $three, $four, $finished] println
+$one $two $three $four $finished

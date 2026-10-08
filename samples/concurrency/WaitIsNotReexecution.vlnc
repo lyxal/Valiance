@@ -1,0 +1,18 @@
+#? The worker performs an unbuffered send, then returns its result. Waiting on
+#? aliases repeatedly must not replay the send (which would deadlock).
+const $channel = Channel[Int]
+const $worker = fn -> Int =>
+  $channel 42 send
+  99
+end
+const $task = $worker spawn
+const $alias = $task
+const $receiver = fn -> Receive[Int] => $channel receive end | spawn
+const $message = $receiver wait
+const $first = $task wait
+const $second = $alias wait
+"single message, same result on both waits:" println
+[$message, $first, $second] println
+$message
+$first
+$second

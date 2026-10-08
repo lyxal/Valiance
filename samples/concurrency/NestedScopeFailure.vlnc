@@ -1,0 +1,11 @@
+#? A discarded failing child still faults the inner scope and its owner task.
+#? The outer structured scope must not silently return its fallback value.
+concurrent -> Int =>
+  const $owner = fn -> Int =>
+    concurrent -> Int =>
+      fn -> Int => ValueFault("nested child failed") panic end | spawn
+      42
+    end
+  end | spawn
+  $owner wait
+end

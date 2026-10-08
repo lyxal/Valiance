@@ -1,0 +1,22 @@
+#? A checkout page needs independent pricing, shipping, and loyalty estimates.
+#? Start all three requests before joining them; calculate the displayed total
+#? only after every result is available. Values are integer cents.
+const $subtotal = fn -> Int =>
+  1299 2499 + 750 +
+end
+const $shipping = fn -> Int =>
+  499
+end
+const $discount = fn -> Int =>
+  600
+end
+const $subtotalTask = $subtotal spawn
+const $shippingTask = $shipping spawn
+const $discountTask = $discount spawn
+const $items = $subtotalTask wait
+const $delivery = $shippingTask wait
+const $savings = $discountTask wait
+const $total = $items $delivery + $savings -
+"checkout subtotal, delivery, discount, total (cents):" println
+[$items, $delivery, $savings, $total] println
+$total

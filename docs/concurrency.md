@@ -10,6 +10,25 @@ Valiance provides deterministic, cooperative concurrency on one bytecode executo
 
 A `concurrent` scope joins all children before it exits. The first deterministic child failure becomes the primary fault; sibling tasks receive cooperative cancellation and cleanup faults are retained as secondary context.
 
+Concurrent bodies are **closed function-shaped scopes**. Explicit parameters
+consume inputs from the caller's stack, bind them to fresh locals, and keep those
+locals separate from the caller's bindings:
+
+```valiance
+10
+concurrent (value: Int) -> Int =>
+  $value 2 *
+end
+```
+
+This produces `20`. Parameters can also be captured by a function created
+*inside* the scope and passed to `spawn`. Inferred-input scopes (`concurrent =>`)
+likewise receive their inferred inputs as parameters with stack-style cycling.
+The body cannot directly capture variables from the surrounding scope: pass
+required values through its input stack or explicit parameter list instead.
+The body runs in its own VM frame and returns only its analysed output row;
+its local declarations do not leak to the caller.
+
 ## Channels
 
 `Channel[T]` is invariant. `Channel[T]` is unbuffered; `n Channel[T]` has bounded capacity `n`. Sends rendezvous or apply FIFO backpressure. Closing rejects future sends, wakes blocked operations, and leaves buffered values drainable.
@@ -31,7 +50,9 @@ Integrated timers and external wake sources suspend cooperatively. Unsupported h
 
 `cancel` requests cooperative task cancellation. `timeout` waits under a deterministic logical-time deadline and requests cancellation if the deadline expires first. The runtime uses shared bidirectional channel handles and structured task ownership. It does not provide detached tasks, priorities, work stealing, CPU-parallel bytecode execution, or unrestricted blocking host I/O.
 
-See `samples/concurrency/` for executable examples and `docs/maintenance/runtime-system.md` for implementation, bytecode, optimizer, fuzz, leak, and benchmark details.
+See the [executable concurrency sample guide](../samples/concurrency/README.md)
+for runnable scenarios, expected results, and negative diagnostics. See
+`docs/maintenance/runtime-system.md` for implementation, bytecode, optimizer, fuzz, leak, and benchmark details.
 
 ### Native calls
 

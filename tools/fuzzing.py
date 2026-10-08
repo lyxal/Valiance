@@ -797,6 +797,8 @@ def _valid_concurrency_argument(
     op: OpCode, rng: random.Random, depth: int
 ) -> object:
     """Return a serializer-valid argument for one concurrency opcode."""
+    if op is OpCode.MAKE_CLOSED_FUNCTION:
+        return _random_function(rng, max(0, depth - 1))
     if op is OpCode.SPAWN_CALL:
         return (rng.randint(0, 4), rng.randint(0, 4), rng.randint(0, 3))
     if op in {OpCode.WAIT_TASK, OpCode.WAIT_TASKS_VECTORISED}:
@@ -1211,7 +1213,8 @@ def _fuzz_runtime_bytecode(
                 if op in {
                     OpCode.SPAWN_CALL, OpCode.WAIT_TASK,
                     OpCode.WAIT_TASKS_VECTORISED, OpCode.SCOPE_BEGIN,
-                    OpCode.TIMEOUT_TASK, OpCode.SCOPE_END, OpCode.CHANNEL_NEW, OpCode.CHANNEL_SEND,
+                    OpCode.TIMEOUT_TASK, OpCode.SCOPE_END, OpCode.MAKE_CLOSED_FUNCTION,
+                    OpCode.CHANNEL_NEW, OpCode.CHANNEL_SEND,
                     OpCode.CHANNEL_RECEIVE, OpCode.CHANNEL_CLOSE,
                     OpCode.CANCEL_POLL,
                 }

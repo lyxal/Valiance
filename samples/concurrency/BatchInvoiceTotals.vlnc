@@ -1,0 +1,15 @@
+#? A batch of invoices can be evaluated independently. The group wait keeps
+#? invoice order, which lets the caller match each result to its original row.
+const $invoice = fn (cents: Int) -> Int =>
+  $cents 75 +
+end
+const $tasks = [
+  1200 $invoice spawn,
+  3500 $invoice spawn,
+  890 $invoice spawn,
+  6000 $invoice spawn
+]
+const $taxes = $tasks wait
+"invoice totals including 75-cent handling fee (cents, input order):" println
+$taxes println
+$taxes

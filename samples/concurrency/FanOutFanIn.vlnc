@@ -1,0 +1,19 @@
+#? Each task returns two values. Group wait lifts each result column into a list
+#? and preserves the original task order, independently of execution order.
+const $calculate = fn (input: Int) -> Int, Int =>
+  $input $input *
+  $input 1 +
+end
+const $jobs = [
+  7 $calculate spawn,
+  2 $calculate spawn,
+  5 $calculate spawn,
+  3 $calculate spawn
+]
+const $(squares, successors) = $jobs wait
+"fan-out squares:" println
+$squares println
+"fan-out successors:" println
+$successors println
+$squares
+$successors

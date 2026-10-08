@@ -1,6 +1,7 @@
 import unittest
 
 from valiance.runtime import dumps, loads
+from valiance.runtime.serialization import BytecodeFormatError
 from valiance.runtime.bytecode import FunctionCode, Instruction, OpCode, Program
 from valiance.vtypes import (
     Int, Number, String, Task, TaskType, V, _solve, _substitute,
@@ -47,9 +48,21 @@ class TaskTypeTests(unittest.TestCase):
 
 
 class ConcurrencyBytecodeTests(unittest.TestCase):
+    def test_closed_function_opcode_rejects_non_function_payload(self):
+        invalid = Program(FunctionCode((
+            Instruction(OpCode.MAKE_CLOSED_FUNCTION, ("not a function",)),
+            Instruction(OpCode.RETURN),
+        )))
+        with self.assertRaisesRegex(BytecodeFormatError, "closed concurrent function"):
+            dumps(invalid)
+
     def test_all_concurrency_opcodes_round_trip(self):
         instructions = (
             Instruction(OpCode.SCOPE_BEGIN),
+            Instruction(
+                OpCode.MAKE_CLOSED_FUNCTION,
+                FunctionCode((Instruction(OpCode.RETURN),), name="<concurrent>"),
+            ),
             Instruction(OpCode.SPAWN_CALL, (0, 1, 0)),
             Instruction(OpCode.WAIT_TASK, 1),
             Instruction(OpCode.WAIT_TASKS_VECTORISED, 1),

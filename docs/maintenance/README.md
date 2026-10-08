@@ -37,6 +37,8 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   serialization, and VM debugging.
 - [Change playbooks](change-playbooks.md) gives step-by-step recipes for common
   work such as adding syntax, an element, a runtime value, or a CLI command.
+- [Concurrency examples](../../samples/concurrency/README.md) links runnable
+  multi-task scenarios to their outcome-asserting regression tests.
 - [Testing and debugging](testing-and-debugging.md) explains the test layers,
   useful inspection commands, and a practical fault-isolation workflow.
   Cross-layer vectorisation invariants and execution-mode parity are exercised in

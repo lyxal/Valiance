@@ -1,0 +1,17 @@
+#? An inner concurrent scope owns both worker tasks. Its two waits produce 42;
+#? the outer task and scope must propagate that result without losing a value.
+const $answer = concurrent -> Int =>
+  const $owner = fn -> Int =>
+    concurrent -> Int =>
+      const $left = fn -> Int => 12 end | spawn
+      const $right = fn -> Int => 30 end | spawn
+      $left wait
+      $right wait
+      +
+    end
+  end | spawn
+  $owner wait
+end
+"nested scope result:" println
+$answer println
+$answer

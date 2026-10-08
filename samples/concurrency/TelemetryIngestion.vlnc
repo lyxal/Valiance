@@ -1,0 +1,25 @@
+#? A sensor producer cannot outpace its capacity-one queue. A consumer drains
+#? readings and receives Closed once the producer finishes. This is the basic
+#? shape of bounded ingestion without an unbounded in-memory backlog.
+const $readings = 1 Channel[Int]
+const $sensor = fn -> =>
+  $readings 18 send
+  $readings 24 send
+  $readings 21 send
+  $readings 27 send
+  $readings close
+end
+const $collector = fn -> Receive[Int], Receive[Int], Receive[Int], Receive[Int], Receive[Int] =>
+  $readings receive
+  $readings receive
+  $readings receive
+  $readings receive
+  $readings receive
+end
+const $producer = $sensor spawn
+const $consumer = $collector spawn
+const $(first, second, third, fourth, endOfStream) = $consumer wait
+$producer wait
+"sensor readings and end-of-stream marker:" println
+[$first, $second, $third, $fourth, $endOfStream] println
+$first $second $third $fourth $endOfStream

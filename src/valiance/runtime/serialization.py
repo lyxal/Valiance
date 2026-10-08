@@ -34,7 +34,7 @@ from valiance.vtypes import (
 )
 
 MAGIC_PREFIX = b"VLNCBC"
-BYTECODE_VERSION = 0x29
+BYTECODE_VERSION = 0x2A
 MAGIC = MAGIC_PREFIX + bytes((BYTECODE_VERSION,))
 
 _OP_TO_BYTE = {
@@ -43,6 +43,7 @@ _OP_TO_BYTE = {
     OpCode.STORE_VAR: 0x03,
     OpCode.LOAD_ELEMENT: 0x04,
     OpCode.MAKE_FUNCTION: 0x05,
+    OpCode.MAKE_CLOSED_FUNCTION: 0x46,
     OpCode.CALL: 0x06,
     OpCode.BUILD_LIST: 0x07,
     OpCode.BUILD_STRING: 0x08,
@@ -221,6 +222,8 @@ def _validate_concurrency_bytecode(code: FunctionCode) -> None:
                 raise BytecodeFormatError(
                     f"scope end without matching begin at instruction {index}"
                 )
+        elif op is OpCode.MAKE_CLOSED_FUNCTION and not isinstance(argument, FunctionCode):
+            raise BytecodeFormatError("closed concurrent function must contain function bytecode")
         elif op is OpCode.SPAWN_CALL:
             if (
                 not isinstance(argument, tuple)

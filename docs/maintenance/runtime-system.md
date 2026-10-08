@@ -165,6 +165,15 @@ policy.
 walks those nodes, emits instructions, compiles nested functions, and patches
 jump targets.
 
+`TypedConcurrentNode` lowers to `SCOPE_BEGIN`, `MAKE_CLOSED_FUNCTION`, `CALL`,
+`SCOPE_END`. The closed function receives the analyser-selected input row as
+named or inferred parameters, runs with its own locals and stack, and returns
+exactly the analysed output row. `MAKE_CLOSED_FUNCTION` deliberately does not
+capture caller locals: direct concurrent captures are prohibited by analysis,
+while ordinary functions created *inside* the scope may capture scope parameters.
+The surrounding task scope stays active until the body call and child joins
+complete. This opcode was added with a bytecode-format version bump to `0x2A`.
+
 This file should translate decisions, not invent new semantic ones. When
 compiler code needs to ask a type question that analysis should already have
 answered, first check whether a typed-node field is missing.
@@ -2228,7 +2237,8 @@ C must not retain them after the linked function returns.
 
 `cancel` and `timeout` are analyser-recognized concurrency primitives rather
 than ordinary built-ins. Dedicated typed nodes lower to `CANCEL_TASK` and
-`TIMEOUT_TASK`, preserving fixed stack effects in bytecode version 0x29.
+`TIMEOUT_TASK`, preserving fixed stack effects (introduced in bytecode version
+0x29; the current format is 0x2A).
 Cancellation delegates to `TaskControlBlock.request_cancel()`, including its
 blocked-operation wake and cleanup behavior. Timeout registers both a target
 completion waiter and a scheduler logical timer. The committed path cancels

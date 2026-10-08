@@ -2989,6 +2989,10 @@ class VirtualMachine:
                                     _closure_locals(frame),
                                 )
                             )
+                        case OpCode.MAKE_CLOSED_FUNCTION:
+                            frame.stack.append(
+                                _make_function_value(instruction.arg, frame.globals)
+                            )
                         case OpCode.APPLY_DISPATCH_PLAN:
                             value = _pop(frame.stack, "function dispatch plan")
                             if (
@@ -4463,6 +4467,7 @@ class VirtualMachine:
                     OpCode.FOREACH,
                     OpCode.LOAD_ELEMENT,
                     OpCode.MAKE_FUNCTION,
+                    OpCode.MAKE_CLOSED_FUNCTION,
                     OpCode.VALIDATE_TAG,
                 }:
                     direct_leaf = False

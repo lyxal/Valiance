@@ -3,6 +3,8 @@ import unittest
 from valiance.runtime.concurrency import (
     CancelledFault,
     Channel,
+    ChannelReceiver,
+    ChannelSender,
     ClosedFault,
     Receive,
     Scheduler,
@@ -187,6 +189,44 @@ class ChannelRuntimeTests(unittest.TestCase):
         self.assertEqual(channel.try_receive(), Receive.Value(1))
         self.assertEqual(channel.try_receive(), Receive.Value(2))
         self.assertEqual(channel.try_receive(), Receive.Value(3))
+
+    def test_one_slot_backpressure_does_not_commit_before_space_is_freed(self):
+        channel = Channel[int](1)
+        woke = []
+        self.assertTrue(channel.try_send(11))
+        pending = channel.register_send(22, wake=lambda: woke.append("sender"))
+        self.assertIsInstance(pending, ChannelSender)
+        self.assertFalse(pending.committed)
+        self.assertEqual(list(channel.buffer), [11])
+        self.assertEqual(len(channel.senders), 1)
+        self.assertEqual(woke, [])
+
+        # Receiving 11 atomically frees the slot, commits 22, and wakes its sender.
+        self.assertEqual(channel.try_receive(), Receive.Value(11))
+        self.assertTrue(pending.committed)
+        self.assertEqual(woke, ["sender"])
+        self.assertEqual(list(channel.buffer), [22])
+        self.assertFalse(channel.senders)
+        self.assertEqual(channel.try_receive(), Receive.Value(22))
+        self.assertEqual(woke, ["sender"])  # a committed send cannot wake twice
+
+    def test_close_broadcasts_to_all_waiting_receivers_once(self):
+        channel = Channel[int]()
+        woke = []
+        pending = [
+            channel.register_receive(wake=lambda i=i: woke.append(i))
+            for i in range(4)
+        ]
+        self.assertTrue(all(isinstance(item, ChannelReceiver) for item in pending))
+        self.assertEqual(len(channel.receivers), 4)
+        self.assertTrue(all(item.result is None for item in pending))
+
+        channel.close()
+        channel.close()
+        self.assertEqual(woke, [0, 1, 2, 3])
+        self.assertTrue(all(item.result == Receive.Closed() for item in pending))
+        self.assertFalse(channel.receivers)
+        self.assertEqual(channel.try_receive(), Receive.Closed())
 
     def test_unbuffered_rendezvous(self):
         channel = Channel[str]()

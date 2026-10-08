@@ -1,0 +1,6 @@
+#? This intentionally fails with a deadlock report naming the blocked channel
+#? receives. There is no possible sender and no pending wakeup.
+const $channel = Channel[Int]
+const $reader = fn -> Receive[Int] => $channel receive end
+$reader spawn
+$reader spawn

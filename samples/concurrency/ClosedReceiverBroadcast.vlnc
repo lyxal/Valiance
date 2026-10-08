@@ -1,0 +1,11 @@
+#? Start several receivers before the closer. One close must wake ALL of them,
+#? without a sender or any buffered items to rescue a stuck receiver.
+const $mailbox = Channel[Int]
+const $read = fn -> Receive[Int] => $mailbox receive end
+const $pending = [$read spawn, $read spawn, $read spawn]
+const $closer = fn -> => $mailbox close end | spawn
+const $results = $pending wait
+$closer wait
+"three closed receivers:" println
+$results println
+$results
