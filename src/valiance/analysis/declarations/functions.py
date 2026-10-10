@@ -11,6 +11,7 @@ from dataclasses import (
     replace,
 )
 from enum import Enum, auto
+from functools import cache
 from hashlib import sha1
 from itertools import count
 from pathlib import Path
@@ -88,12 +89,71 @@ from ..state import (
     AnalysisBranch, BranchSet, BranchVariables, Diagnostic,
     DiagnosticSeverity, InputMode, VariableWrite,
 )
+def _nominal_type_names(value: object) -> Iterator[Symbol]:
+    """Visit nested type records without depending on their layouts."""
+    if isinstance(value, T.NominalType) and not isinstance(value, T.FFINamedType):
+        yield value.name
+    if isinstance(value, T.AnonymousTraitType):
+        bound = set(value.generics)
+        for requirement in value.requirements:
+            yield from (
+                name for name in _nominal_type_names(requirement) if name not in bound
+            )
+    elif is_dataclass(value) and not isinstance(value, Symbol):
+        for item in fields(value):
+            yield from _nominal_type_names(getattr(value, item.name))
+    elif isinstance(value, (tuple, list, frozenset)):
+        for item in value:
+            yield from _nominal_type_names(item)
+
+
+@cache
+def _builtin_type_names() -> frozenset[Symbol]:
+    """Collect intrinsic nominal names from the builtin signature catalogue."""
+    from valiance.elements.builtins import BUILTIN_ELEMENTS
+
+    return frozenset(_nominal_type_names(tuple(
+        overload for element in BUILTIN_ELEMENTS for overload in element.overloads
+    ))) | frozenset(Symbol(name) for name in (
+        "{}", "Boolean", "Dict", "Task", "Channel", "Receive",
+    ))
+
+
 class Analyser:
     """Analysis session owning global environment, diagnostics, and dispatch."""
 
 
 class _FunctionDeclarations:
     """Own declaration operations for this domain."""
+
+    def _validate_function_type_names(
+        self, function: FunctionNode, origin: ASTNode,
+        environment: T.Environment | None = None,
+    ) -> None:
+        """Diagnose undeclared names throughout an explicit function signature."""
+        builtin_names = _builtin_type_names()
+        environment = self.env if environment is None else environment
+        annotated = tuple(
+            param.typ for param in function.params or () if param.typ is not None
+        ) + tuple(function.returns or ()) + tuple(function.generic_constraints) + tuple(
+            function.overloads
+        )
+        for name in dict.fromkeys(_nominal_type_names(annotated)):
+            if name in builtin_names or name in function.generics:
+                continue
+            if any(lookup(name) is not None for lookup in (
+                environment.lookup_object, environment.lookup_trait,
+                environment.lookup_variant, environment.lookup_enum,
+            )):
+                continue
+            locations = tuple(
+                location for type_name, location in function.type_name_locations
+                if type_name == name
+            )
+            for location in locations or (origin.location,):
+                self._diagnose(
+                    f"undefined type '{name}'", replace(origin, location=location),
+                )
 
     def prescan_define(self, node: DefineNode) -> None:
         """Publish a complete definition signature before any body is analysed.

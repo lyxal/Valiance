@@ -24,6 +24,8 @@ codegen, and runtime.
 - Owns source-to-AST lowering and type-expression parsing.
 - Converts chain syntax into normal stack-order AST.
 - Attaches `SourceLocation` to parser-produced AST nodes.
+- Retains individual signature type-name positions on `FunctionNode` and
+  `OverloadSignature`; signature rewrites must preserve this diagnostic metadata.
 - Parses `@name` annotations before declarations/function literals and
   `@@name` annotations before element calls. Semantics live in
   `analysis/contracts/annotations.py`, not in the parser.

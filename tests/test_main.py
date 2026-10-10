@@ -426,7 +426,7 @@ class MainTests(unittest.TestCase):
 
     def test_main_tidy_preserves_named_generics_beside_anonymous_ones(self):
         output = io.StringIO()
-        source = "define[T: Vehicle] choose(x: T, y) => $y"
+        source = "define[T: Number] choose(x: T, y) => $y"
 
         with contextlib.redirect_stdout(output):
             exit_code = main(["tidy", "--code", source, "--stdout"])
@@ -434,7 +434,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(
             output.getvalue(),
-            "define[T: Vehicle] choose(x: T, y: @1) -> @1 => $y\n",
+            "define[T: Number] choose(x: T, y: @1) -> @1 => $y\n",
         )
 
     def test_main_tidy_generic_output_is_idempotent(self):

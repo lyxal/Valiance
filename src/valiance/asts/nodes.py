@@ -412,6 +412,9 @@ class OverloadSignature:
 
     params: tuple[Type, ...] = ()
     returns: tuple[Type, ...] = ()
+    type_name_locations: tuple[tuple[Symbol, SourceLocation], ...] = field(
+        default=(), compare=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -445,6 +448,9 @@ class FunctionNode(ASTNode):
     generic_scope_id: int | None = field(default=None, compare=False)
     object_friendly_receiver: bool = field(default=False, compare=False)
     contextual_signature: bool = field(default=False, compare=False)
+    type_name_locations: tuple[tuple[Symbol, SourceLocation], ...] = field(
+        default=(), compare=False,
+    )
 
 
 @dataclass(frozen=True)

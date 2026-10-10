@@ -260,6 +260,7 @@ class Parser:
         self.regions: list[SourceSpan] = []
         self._allow_variadic_tuple_type = False
         self._where_clause_depth = 0
+        self._type_name_locations: list[tuple[Symbol, SourceLocation]] = []
 
     def parse_program(self) -> list[ASTNode]:
         """Parse all top-level statements from the current token stream."""
@@ -437,6 +438,7 @@ class Parser:
         """Parse overload signatures attached to the following define or fn."""
         overloads: list[OverloadSignature] = []
         while self._match_ident("overload"):
+            type_location_start = len(self._type_name_locations)
             self._expect(TokenKind.LPAREN)
             params: list[Type] = []
             returns: list[Type] = []
@@ -453,7 +455,10 @@ class Parser:
                     if not self._match(TokenKind.COMMA):
                         break
             self._expect(TokenKind.RPAREN)
-            overloads.append(OverloadSignature(tuple(params), tuple(returns)))
+            overloads.append(OverloadSignature(
+                tuple(params), tuple(returns),
+                tuple(self._type_name_locations[type_location_start:]),
+            ))
             self._skip_newlines()
         return tuple(overloads)
 
@@ -836,6 +841,7 @@ class Parser:
         overloads: tuple[OverloadSignature, ...] = (),
     ) -> DefineNode:
         """Parse define from the current token stream."""
+        type_location_start = len(self._type_name_locations)
         generics, generic_variances, generic_constraints = self._generic_parameters()
         attached_tag = None
         if (
@@ -864,6 +870,7 @@ class Parser:
             element_tag_set.add(eager_tag)
             companion_tags_allowed.add(eager_tag)
         returns = self._returns()
+        type_name_locations = tuple(self._type_name_locations[type_location_start:])
         where_clause = self._where_clause()
         self._expect(TokenKind.FAT_ARROW)
         body = self._body()
@@ -879,6 +886,7 @@ class Parser:
                 companion_tags_allowed=frozenset(companion_tags_allowed),
                 annotations=annotations,
                 overloads=overloads,
+                type_name_locations=type_name_locations,
                 location=_loc(start),
             ),
             annotations,
@@ -1136,12 +1144,14 @@ class Parser:
         overloads: tuple[OverloadSignature, ...] = (),
     ) -> FunctionNode:
         """Parse function from the current token stream."""
+        type_location_start = len(self._type_name_locations)
         generics, generic_variances, generic_constraints = self._generic_parameters()
         params = (
             self._params(allow_empty=True) if self._match(TokenKind.LPAREN) else None
         )
         element_tags, element_tags_explicit = self._function_element_tags()
         returns = self._returns()
+        type_name_locations = tuple(self._type_name_locations[type_location_start:])
         where_clause = self._where_clause()
         self._expect(TokenKind.FAT_ARROW)
         return FunctionNode(
@@ -1156,6 +1166,7 @@ class Parser:
             body=self._body(),
             generic_constraints=generic_constraints,
             overloads=overloads,
+            type_name_locations=type_name_locations,
             location=_loc(start),
         )
 
@@ -3105,7 +3116,9 @@ class Parser:
             if self._match(TokenKind.ASSIGN):
                 if not allow_defaults:
                     self._error("parameter defaults are only allowed on define")
+                default_type_start = len(self._type_name_locations)
                 default = self._chain_until({TokenKind.COMMA, TokenKind.RPAREN})
+                del self._type_name_locations[default_type_start:]
                 if not default:
                     self._error("expected default parameter value")
                 seen_default = True
@@ -3380,6 +3393,7 @@ class Parser:
                     return Tup(*(item.typ for item in items))
                 self._expect(TokenKind.COMMA)
         if self._match(TokenKind.IDENT):
+            type_name_token = self._previous
             parts = [self._previous.value]
             while self._check(TokenKind.DOT) and self._peek(1).kind == TokenKind.IDENT:
                 self._advance()
@@ -3407,6 +3421,7 @@ class Parser:
             if name == "None":
                 typ = NoneType()
                 return _optionalize_type(typ, optional_depth)
+            self._type_name_locations.append((Symbol(name, namespace), _loc(type_name_token)))
             args: list[Type] = []
             if self._match(TokenKind.LBRACKET):
                 if name == "Function":

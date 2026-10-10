@@ -245,6 +245,7 @@ class _CallableValues:
                     params=params,
                     returns=signature.returns,
                     overloads=(),
+                    type_name_locations=signature.type_name_locations,
                 )
             )
         return tuple(variants)
@@ -506,6 +507,9 @@ class _CallableValues:
 
         function_analyser = self._child_analyser(function_environment())
         final = function_analyser.analyse_block(BranchSet((initial,)), node.body)
+        self.declarations._validate_function_type_names(
+            node, node, function_analyser.env,
+        )
         signatures = self._function_signatures(node, final)
         analysis = _functions._function_analysis_from_signatures(signatures)
         if analysis is None and mode is InputMode.INFER_INPUTS:
