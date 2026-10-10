@@ -250,9 +250,11 @@ JSON without adding documentation payloads to bytecode.
 
 - Wires the CLI to project entry resolution, analysis, codegen, VM execution,
   bytecode files, and the persistent REPL compiler/runtime session.
-- `_ReplSession` owns the persistent analyser branch, VM globals, runtime stack,
-  and output tracker. Enhanced prompt features must query this session rather
-  than creating a second execution path.
+- `_ReplSession` subclasses the shared `sessions/service.py::SessionService`
+  and adapts structured events to CLI rendering. The shared service owns the
+  persistent analyser branch, VM globals, runtime stack and output dispatcher.
+  Enhanced prompt features query that service rather than creating a second
+  execution path.
 - REPL type previews analyse a deep copy of the current analyser and branch.
   They must never mutate definitions, imports, variables, stack types, runtime
   values, or VM globals.
@@ -297,6 +299,28 @@ JSON without adding documentation payloads to bytecode.
 - Both frontends return source text to the same `_ReplSession.run(...)` method.
   Do not put parsing, analysis, compilation, or runtime behaviour in a prompt
   frontend.
+
+`src/valiance/sessions/` and `src/valiance/terminal_editor/`
+
+- `SessionService.prepare` builds an isolated candidate; `execute` commits a
+  one-shot worker-local preparation. Parse/type/codegen failures leave the prior
+  session intact. Captured fresh loads validate workspace revision and disk
+  dependencies before resetting; commands continue the committed session.
+- `sessions/events.py` defines immutable requests and presentation events.
+  `sessions/worker.py` keeps prepared compiler objects and the live VM in a
+  spawned process. Its bounded output queue is separate from lifecycle/control
+  and program stdin; completion carries an output-drain boundary.
+- `terminal_editor/runtime.py` bridges the UI and worker. File runs use immutable
+  roots/imports from `incremental/snapshots.py`, including open-buffer overlays;
+  the UI approves current preparations without inspecting VM objects.
+- Stop/exit joins happen off the UI loop and can force termination. The
+  replacement session starts fresh; native cleanup is not established by the
+  process escape mechanism. Later-stage lifecycle gates remain open.
+- The internal route is `python -m valiance.terminal_editor`. Public REPL routing
+  and explicit CLI commands are unchanged. See the
+  [implementation plan](../maintenance/terminal-editor-implementation-plan.md)
+  for current status; live cursor inspection and complete REPL input/presentation
+  behavior remain later-stage work.
 
 ## Core Invariants
 

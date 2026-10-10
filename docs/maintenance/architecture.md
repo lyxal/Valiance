@@ -209,11 +209,30 @@ alternative implementations.
 
 ## User interface
 
-`main.py` owns command selection and orchestration. `repl.py` owns terminal
-presentation. The REPL frontends return source to the same persistent session;
-they should not parse, analyse, or execute independently.
+`main.py` owns command selection and orchestration. `repl.py` owns the public
+plain/prompt-toolkit presentation; `main.py::_ReplSession` adapts the shared
+`sessions/service.py::SessionService` to CLI output. The service owns persistent
+compiler/runtime state and separates isolated preparation from execution. Its
+structured output, diagnostic, result and session-start events contain no live
+VM references. Frontends must not implement independent language execution.
 
-Diagnostics are assembled in `diagnostics.py`. Prefer structured diagnostic
+`terminal_editor/` owns the internal Textual document/file/pane UI. Its runtime
+adapter sends captured sources to `sessions/worker.py`, a spawned process that
+owns one persistent service. Preparation stays in that process; the UI approves
+only a current workspace revision, and execution rechecks disk dependencies.
+Control, bounded output and program stdin use separate channels. Completion is
+presented after accepted output chunks have drained. Stop/exit reaps the process
+off the UI loop; forced termination discards runtime state. Native resource and
+child-process cleanup remain validation gates. `incremental/snapshots.py` captures
+roots/imports; document widgets and runtime state remain independently owned.
+
+The app is launched with `python -m valiance.terminal_editor`; public no-argument
+CLI routing has not changed. See the [editor design](terminal-editor-design.md)
+and [staged plan](terminal-editor-implementation-plan.md) for implemented and
+pending interactions.
+
+Structured compiler/session diagnostics are assembled in
+`analysis/diagnostics.py`. Prefer structured diagnostic
 information from the stage that detects the error, then render it at the user
 boundary.
 

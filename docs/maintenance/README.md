@@ -29,6 +29,36 @@ behaviour becomes harder to reason about and static guarantees become weaker.
 
 - [Architecture tour](architecture.md) explains the major packages and the
   ownership boundaries between them.
+- [Terminal editor and REPL design](terminal-editor-design.md) records the
+  current terminal behavior/shortcuts, the completed-product contract and
+  remaining implementation work.
+  Its [interactive HTML/CSS reference](terminal-editor-reference/index.html)
+  illustrates the proposed layouts with simulated semantic data.
+  The [staged implementation plan](terminal-editor-implementation-plan.md) maps
+  that design onto the compiler, session services, and terminal UI.
+  [Stage 0 feasibility evidence](terminal-editor-feasibility.md) documents the
+  runnable Textual/process harness, measurements and outstanding terminal gates.
+  Its subsystem coverage lives in [terminal editor tests](../../tests/test_terminal_editor.py).
+  Stage 1 uses the [shared session service](../../src/valiance/sessions/service.py)
+  and [immutable event/worker contracts](../../src/valiance/sessions/events.py),
+  [workspace source snapshots](../../src/valiance/incremental/snapshots.py), and
+  [document/session models](../../src/valiance/terminal_editor/models.py).
+  The [process transport](../../src/valiance/sessions/worker.py) and
+  [editor runtime adapter](../../src/valiance/terminal_editor/runtime.py) connect
+  fresh file runs, persistent commands, program stdin and bounded Stop/exit.
+  Stage 2's [application](../../src/valiance/terminal_editor/app.py) uses
+  [file transactions/preferences](../../src/valiance/terminal_editor/files.py),
+  [protected file dialogs](../../src/valiance/terminal_editor/dialogs.py),
+  [source editing actions](../../src/valiance/terminal_editor/editing.py), and
+  [terminal styles](../../src/valiance/terminal_editor/editor.tcss).
+  The [internal launch route](../../src/valiance/terminal_editor/__main__.py)
+  is `uv run python -m valiance.terminal_editor`; it starts blank and does not
+  change the public CLI entry points. File/Edit/View dropdowns use a common
+  inset toolbar row, anchor before their first frame and leave background panes
+  unchanged. Basic execution is wired; live inspection and full REPL input/
+  transcript controls remain later stages.
+  Session and snapshot regressions live in [CLI/session tests](../../tests/test_main.py)
+  and [compilation database tests](../../tests/test_compilation_database.py).
 - [Understanding the type system](type-system.md) gives a human-first mental
   model of type relations, generic solving, overload application, and branch
   analysis, with traced examples and an API decision table.
@@ -145,4 +175,3 @@ resolution and analysed-interface restoration.
 - [Unified compilation database](unified-compilation-database.md) documents workspace overlays, targeted invalidation, and safe executable snapshots.
 
 - [Incremental build inspection](incremental-inspection.md) documents structured rebuild explanations and cache inspect, verify, and clean commands.
-

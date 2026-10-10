@@ -23,6 +23,12 @@ The repository uses `unittest`. Important suites include:
   casually edit these tests to accommodate a regression.
 - `tests/test_main.py` and `tests/test_repl.py`: CLI and persistent-session
   behaviour.
+- `tests/test_terminal_editor.py`: document/file workflows, Textual Pilot keys,
+  mouse dismissal, first-frame dropdown placement, responsive panes and real
+  spawned-session execution/Stop/input/output boundaries. Stage 0 probe and
+  production editor behavior are covered separately within this module.
+- `tests/test_compilation_database.py`: overlays, dependency invalidation and
+  captured workspace snapshots used by fresh editor loads.
 - `tests/test_source_tools.py`: tidy and documentation generation.
 - `tests/test_docstring_coverage.py`: production module and function docstrings.
 - `tests/test_correctness_rescan.py`: cross-layer soundness regressions and
@@ -44,6 +50,16 @@ uv run python -m unittest tests.test_analyser -v
 uv run python -m unittest tests.test_runtime -v
 uv run python -m unittest tests.test_bytecode_serialization -v
 ```
+
+For terminal editor changes, start with the affected methods/classes in
+`tests.test_terminal_editor`, then run `tests.test_programs` unchanged and
+`tests.test_docstring_coverage` when production modules/functions change. Use
+`$env:UV_CACHE_DIR="$PWD\.uv-cache"` on Windows. Pilot tests validate delivered
+keys, layout and process boundaries; pair them with physical terminal review for
+actual modified-key/mouse/clipboard delivery. The historical baseline and native
+DLL-loading limitations are recorded in the
+[feasibility report](terminal-editor-feasibility.md) and
+[stage validation](terminal-editor-implementation-plan.md).
 
 A particular test can be named directly:
 

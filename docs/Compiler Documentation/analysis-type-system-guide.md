@@ -11,6 +11,23 @@ Ordinary, non-inference analysis is just the one-branch case.
 For an approachable explanation before this exhaustive reference, read
 [Understanding Valiance's type system](../maintenance/type-system.md).
 
+## Complete-program and session entry points
+
+`Analyser.analyse_program_branches(program)` runs the full top-level setup,
+declaration and executable phases and returns final branches with their semantic
+environments. `analyse(program)` wraps that path for callers needing typed nodes.
+Fresh editor loads use the branch-returning API so subsequent REPL commands keep
+the loaded definitions, variables and stack types. Compile the captured
+`runtime_prelude` with the selected branch's typed body; do not replace full-module
+analysis with incremental block analysis or lose imported runtime declarations.
+
+Persistent commands instead analyse a copied committed branch with
+`analyse_block`, compiling only newly contributed prelude nodes. The shared
+`SessionService` owns this distinction and commits only successful preparations.
+Compiler branches and typed nodes stay within the session process; editor widgets
+receive immutable presentation events, not live analyser state. Live cursor
+checkpoints and surviving-world inspection are separate, unfinished editor stages.
+
 ## Main Files
 
 - `src/valiance/analysis/state/` for immutable branch and variable state
@@ -275,6 +292,15 @@ also exists, the loader analyses it in an environment that contains only that
 module's native hooks, then combines the Python and Valiance exports. The native
 hook names are therefore visible while analysing the stdlib module itself, but
 ordinary user code still sees them only through imported module exports.
+
+Editor loads use a private `ModuleLoader` over a captured source provider.
+`incremental/snapshots.py` records the root, open-buffer overlays, resolved import
+closure, relevant configuration and absent resolution candidates. Untitled roots
+have an explicit base directory instead of a fabricated filename. Disk changes
+invalidate the preparation before execution; open-file imports use their captured
+editor source. These are shared loader/database facilities, not a terminal-specific
+module resolver. See the [session/runtime integration](runtime-codegen-guide.md)
+and [editor plan](../maintenance/terminal-editor-implementation-plan.md).
 
 Python-backed public stdlib functions pass `documentation=` to
 `@stdlib_element(...)`. Valiance-backed public stdlib definitions use contiguous

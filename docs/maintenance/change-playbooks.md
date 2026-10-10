@@ -158,8 +158,13 @@ sign that formatting logic has been duplicated instead of shared.
 5. Add command tests in `tests/test_main.py`.
 6. Update `README.md` and the relevant user guide.
 
-Terminal presentation belongs in `repl.py`; compiler state belongs in
-`_ReplSession` and the normal compiler objects.
+Terminal presentation belongs in `repl.py` for the public REPL and in
+`terminal_editor/` for the new Textual app. Shared persistent compiler/runtime
+state belongs in `sessions/service.py::SessionService`; `_ReplSession` is its CLI
+presentation adapter. Editor execution must use `sessions/worker.py` and captured
+workspace revisions rather than running a VM on the UI thread. Cover editor
+interactions/process boundaries in `tests/test_terminal_editor.py` and shared
+service behavior in `tests/test_main.py`.
 
 ## Change source tooling
 

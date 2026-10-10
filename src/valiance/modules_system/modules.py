@@ -6,6 +6,7 @@ from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 import hashlib
 from pathlib import Path
+from typing import Protocol
 
 import valiance.vtypes as T
 from valiance.asts import (
@@ -146,6 +147,18 @@ def _deduplicate(items: tuple) -> tuple:
     return tuple(result)
 
 
+class ModuleSourceProvider(Protocol):
+    """Read a captured workspace without falling back to mutable disk source."""
+
+    def exists(self, path: Path) -> bool:
+        """Report whether this source or compiled artifact exists in the view."""
+        ...
+
+    def read_bytes(self, path: Path) -> bytes:
+        """Return the exact bytes from this workspace view."""
+        ...
+
+
 @dataclass
 class ModuleLoader:
     """Resolve and analyse source modules, caching by absolute file path."""
@@ -160,6 +173,26 @@ class ModuleLoader:
     _loading_stack: list[Path] = field(default_factory=list)
     _provisional: dict[Path, ModuleExports] = field(default_factory=dict)
     source_overrides: dict[Path, str] = field(default_factory=dict)
+    base_directory: Path | None = None
+    source_provider: ModuleSourceProvider | None = None
+
+    def _exists(self, path: Path) -> bool:
+        """Include overlays and delegate captured-file existence to its owner."""
+        if path.resolve() in self.source_overrides:
+            return True
+        return self.source_provider.exists(path) if self.source_provider else path.exists()
+
+    def _read_bytes(self, path: Path) -> bytes:
+        """Read overlay bytes before consulting captured or saved source."""
+        if path.resolve() in self.source_overrides:
+            return self.source_overrides[path.resolve()].encode("utf-8")
+        return self.source_provider.read_bytes(path) if self.source_provider else path.read_bytes()
+
+    def _load_compiled(self, path: Path):
+        """Decode compiled imports from the same source view as source imports."""
+        from valiance.runtime.compiled_module import loads_module
+
+        return loads_module(self._read_bytes(path))
 
     def load(
         self,
@@ -171,7 +204,7 @@ class ModuleLoader:
         source_file = self.resolve(path, current_file=current_file)
         compiled_file = source_file.with_suffix(".vbcm")
         native_exports = _native_std_exports(path)
-        cache_key = source_file if source_file.exists() else compiled_file
+        cache_key = source_file if self._exists(source_file) else compiled_file
         if cache_key in self._cache:
             exports = self._cache[cache_key]
             self._record_dependency(current_file, path, cache_key)
@@ -180,28 +213,27 @@ class ModuleLoader:
             exports = self._provisional_exports(path, source_file, cache_key)
             self._record_dependency(current_file, path, cache_key)
             return exports
-        if native_exports is not None and not source_file.exists() and not compiled_file.exists():
+        if native_exports is not None and not self._exists(source_file) and not self._exists(compiled_file):
             return native_exports
 
         self._loading.add(cache_key)
         self._loading_stack.append(cache_key)
         try:
             compiled_module = None
-            if compiled_file.exists():
-                from valiance.runtime.compiled_module import load_module_file
+            if self._exists(compiled_file):
 
                 try:
-                    candidate = load_module_file(compiled_file)
+                    candidate = self._load_compiled(compiled_file)
                 except Exception as exc:
-                    if not source_file.exists():
+                    if not self._exists(source_file):
                         raise ModuleLoadError(f"could not load module {compiled_file}: {exc}") from exc
                 else:
                     # The artifact hashes the exact UTF-8 source bytes.  Hash
                     # the file bytes here too: read_text() normalizes CRLF on
                     # Windows, which made otherwise-current artifacts appear
                     # stale and forced an unnecessary reanalysis.
-                    source_matches = not source_file.exists() or hashlib.sha256(
-                        source_file.read_bytes()
+                    source_matches = not self._exists(source_file) or hashlib.sha256(
+                        self._read_bytes(source_file)
                     ).hexdigest() == candidate.source_hash
                     dependencies_match = source_matches and self._compiled_dependencies_match(
                         candidate.dependency_hashes, source_file
@@ -236,14 +268,13 @@ class ModuleLoader:
 
             if source_file.resolve() in self.source_overrides:
                 source = self.source_overrides[source_file.resolve()]
-            elif source_file.exists():
-                source = source_file.read_text(encoding="utf-8")
+            elif self._exists(source_file):
+                source = self._read_bytes(source_file).decode("utf-8")
             elif compiled_module is not None:
                 source = compiled_module.interface_source
                 source_file = compiled_file
-            elif compiled_file.exists():
-                from valiance.runtime.compiled_module import load_module_file
-                compiled_module = load_module_file(compiled_file)
+            elif self._exists(compiled_file):
+                compiled_module = self._load_compiled(compiled_file)
                 source = compiled_module.interface_source
                 source_file = compiled_file
             else:
@@ -322,12 +353,11 @@ class ModuleLoader:
         existing = self._provisional.get(cache_key)
         if existing is not None:
             return existing
-        if not source_file.exists():
+        if not self._exists(source_file):
             compiled = source_file.with_suffix(".vbcm")
-            if compiled.exists():
-                from valiance.runtime.compiled_module import load_module_file
+            if self._exists(compiled):
 
-                candidate = load_module_file(compiled)
+                candidate = self._load_compiled(compiled)
                 if isinstance(candidate.analysed_interface, ModuleExports):
                     self._interface_hashes[cache_key] = candidate.interface_hash
                     self._implementation_hashes[cache_key] = candidate.implementation_hash
@@ -336,9 +366,7 @@ class ModuleLoader:
             raise ModuleLoadError(
                 f"source-free cyclic module {source_file} has no valid interface"
             )
-        source = self.source_overrides.get(
-            source_file.resolve(), source_file.read_text(encoding="utf-8")
-        )
+        source = self._read_bytes(source_file).decode("utf-8")
         program = parse(source)
         definitions: list[ModuleDefinition] = []
         incomplete: list[DefineNode] = []
@@ -479,12 +507,14 @@ class ModuleLoader:
                 root = Path(__file__).parent.parent / "std"
                 return _source_path(root, path.parts)
         if path.root == Symbol("root"):
-            root = _project_root(current_file)
+            root = _project_root(current_file, self.base_directory)
             if root is None:
                 raise ModuleLoadError("root imports require an enclosing valiance.toml")
             return _source_path(root, path.parts)
         if current_file is None:
-            raise ModuleLoadError("local imports require a source file")
+            if self.base_directory is None:
+                raise ModuleLoadError("local imports require a source file")
+            return _source_path(self.base_directory, path.parts)
         # Unqualified paths are strictly relative to the importing file. For
         # The analyser first interprets a dotted final segment as a component
         # when the parent module exports it. Otherwise this complete path is
@@ -500,7 +530,7 @@ class ModuleLoader:
         """Resolve dependency during module loading and import resolution."""
         if not path.parts:
             raise ModuleLoadError("dep imports require a dependency name")
-        project_root = _project_root(current_file)
+        project_root = _project_root(current_file, self.base_directory)
         if project_root is None:
             raise ModuleLoadError("dep imports require an enclosing valiance.toml")
         dependency_name = path.parts[0]
@@ -1342,9 +1372,9 @@ def _source_path(root: Path, parts: tuple[str, ...]) -> Path:
     return root.joinpath(*parts).with_suffix(".vlnc").resolve()
 
 
-def _project_root(current_file: Path | None) -> Path | None:
+def _project_root(current_file: Path | None, base_directory: Path | None = None) -> Path | None:
     """Compute project root during module loading and import resolution."""
-    start = Path.cwd() if current_file is None else current_file.resolve().parent
+    start = (base_directory or Path.cwd()) if current_file is None else current_file.resolve().parent
     return find_project_root(start)
 
 

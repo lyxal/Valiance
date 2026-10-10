@@ -15,6 +15,115 @@ from valiance.analysis.diagnostics import (
 from valiance.main import _ReplSession, _format_stack, _repl_prompt, main
 
 
+class SessionServiceTests(unittest.TestCase):
+    """Validate compile transactions independently of terminal presentation."""
+
+    def setUp(self):
+        from valiance.sessions.service import SessionService
+
+        self.events = []
+        self.session = SessionService(event_sink=self.events.append)
+
+    def tearDown(self):
+        self.session.close()
+
+    def test_preparation_has_no_effect_and_execution_is_one_shot(self):
+        from valiance.sessions.events import OutputEvent, ResultEvent
+
+        result = self.session.prepare('42 "printed" println')
+        self.assertTrue(result.successful, result.diagnostics)
+        self.assertEqual(self.events, [])
+        self.assertEqual(self.session.runtime_stack, [])
+        outcome = self.session.execute(result.prepared)
+        self.assertTrue(outcome.successful)
+        self.assertTrue(any(isinstance(e, OutputEvent) for e in self.events))
+        self.assertEqual(
+            next(e.values for e in self.events if isinstance(e, ResultEvent)), ("42",)
+        )
+        self.assertRaises(ValueError, self.session.execute, result.prepared)
+
+    def test_failed_command_preserves_globals_definitions_and_stack(self):
+        self.assertTrue(
+            self.session.run(
+                "$x = 41\ndefine inc(n: Number) -> Number => $n 1 +\n1"
+            ).successful
+        )
+        old = self.session.analyser, self.session.branch, self.session.vm
+        self.assertFalse(self.session.run("$new = 2\nunknown_name").successful)
+        self.assertEqual(
+            old, (self.session.analyser, self.session.branch, self.session.vm)
+        )
+        self.assertEqual(self.session.runtime_stack, [1])
+        self.assertFalse(self.session.run("$new").successful)
+        self.assertTrue(self.session.run("$x inc").successful)
+        self.assertEqual(self.session.runtime_stack, [1, 42])
+
+    def test_failed_fresh_load_and_codegen_preserve_committed_state(self):
+        from valiance.runtime import CompileError
+
+        self.session.run("7")
+        self.assertFalse(self.session.prepare("unknown_name", fresh=True).successful)
+        with patch(
+            "valiance.sessions.service.compile_program",
+            side_effect=CompileError("failed"),
+        ):
+            self.assertFalse(self.session.prepare("8", fresh=True).successful)
+        self.assertEqual(self.session.runtime_stack, [7])
+        self.assertTrue(self.session.run("1 +").successful)
+        self.assertEqual(self.session.runtime_stack, [8])
+
+    def test_failed_revision_invalidates_earlier_success_and_reset_invalidates_tokens(
+        self,
+    ):
+        first = self.session.prepare("1")
+        self.session.prepare("unknown_name")
+        self.assertRaises(ValueError, self.session.execute, first.prepared)
+        second = self.session.prepare("2")
+        self.session.reset()
+        self.assertRaises(ValueError, self.session.execute, second.prepared)
+
+    def test_whole_document_uses_module_declaration_phases(self):
+        source = "1 inc\ndefine inc(n: Int) -> Int => $n 1 + end"
+        result = self.session.prepare(source, fresh=True)
+        self.assertTrue(result.successful, result.diagnostics)
+        self.assertTrue(self.session.execute(result.prepared).successful)
+        self.assertEqual(self.session.runtime_stack, [2])
+        self.assertTrue(self.session.run("inc").successful)
+        self.assertEqual(self.session.runtime_stack, [3])
+
+    def test_runtime_fault_resets_service_but_preserves_structured_diagnostics(self):
+        from valiance.sessions.events import DiagnosticEvent
+
+        self.session.run("$x = 9\n1")
+        outcome = self.session.run('ValueFault("failure") panic')
+        self.assertFalse(outcome.successful)
+        self.assertTrue(any(isinstance(e, DiagnosticEvent) for e in outcome.events))
+        self.assertEqual(self.session.runtime_stack, [])
+        self.assertFalse(self.session.run("$x").successful)
+
+    def test_streamed_output_and_retained_response_are_bounded(self):
+        from valiance.sessions.events import OutputEvent, ResultEvent
+
+        source = '"' + "x" * 80_000 + '" println'
+        outcome = self.session.run(source)
+        self.assertTrue(outcome.successful)
+        self.assertGreater(
+            sum(len(e.text) for e in self.events if isinstance(e, OutputEvent)), 64_000
+        )
+        retained = [e.text for e in outcome.events if isinstance(e, OutputEvent)]
+        self.assertIn("dropped", retained[0])
+        self.assertLessEqual(sum(map(len, retained)), 64_100)
+        self.assertTrue(any(isinstance(e, ResultEvent) for e in outcome.events))
+
+    def test_branch_changes_invalidate_preparations_and_preserve_parent(self):
+        self.session.run("1")
+        self.session.open_branch()
+        result = self.session.prepare("2 +")
+        self.session.restore_branch()
+        self.assertRaises(ValueError, self.session.execute, result.prepared)
+        self.assertEqual(self.session.runtime_stack, [1])
+
+
 class MainTests(unittest.TestCase):
     def test_format_stack_shows_values_from_top_to_bottom(self):
         self.assertEqual(
@@ -109,7 +218,8 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertIn("unknown element 'right'", error.getvalue())
-        self.assertNotIn("unknown element 'left'", error.getvalue())
+        # Neither failed declaration is committed for a future submission.
+        self.assertIn("unknown element 'left'", error.getvalue())
 
     def test_repl_reset_clears_stack_variables_and_defines(self):
         output = io.StringIO()
@@ -1563,4 +1673,3 @@ class InitTemplateChooserTests(unittest.TestCase):
 
         self.assertEqual(_choose_project_options_tui(), ("empty", False))
         self.assertEqual(session.prompt.call_count, 1)
-

@@ -1,0 +1,41 @@
+$surface: #171a22;
+$ink: #d4daea;
+$divider: #667088;
+Screen { background: $surface; color: $ink; }
+#file-strip { height: 3; padding-top: 1; }
+#file-strip Button { min-width: 0; width: auto; height: 1; border: none; background: transparent; text-style: none; }
+#file-strip Button:hover, #file-strip Button:focus { background: #282d3b; }
+#tabs { width: 1fr; height: 2; }
+Tab { background: #282d3b; }
+Tab.-active { background: #10131a; color: white; }
+#search-bar { height: 3; }
+#search-bar Input { width: 1fr; }
+#search-bar Button { min-width: 5; width: auto; }
+#working-area { height: 1fr; min-height: 4; }
+#documents-view { width: 1fr; }
+DocumentEditor { height: 1fr; border: none; }
+#inspector { height: 1fr; padding: 1; background: #202532; }
+PaneDivider { color: $divider; background: #282d3b; }
+PaneDivider:hover { background: #3a4b65; color: #bfcfe6; }
+PaneDivider:focus { background: #526380; color: white; }
+#state-divider { width: 3; height: 1fr; }
+#repl-divider { height: 1; }
+#repl { min-height: 7; }
+#transcript { height: 1fr; min-height: 3; border: solid $divider; }
+#command { height: 4; border: solid $divider; background: #242e41; }
+#command:focus { border: solid #8bb9df; }
+#status { height: 1; color: $divider; }
+ChoiceDialog, PathDialog { align: center middle; background: #00000088; }
+.dialog { width: 70%; max-width: 100; height: auto; max-height: 90%; padding: 1 2; border: solid $divider; background: #202532; overflow-y: auto; }
+.dialog Label { height: auto; margin-bottom: 1; }
+.dialog Button { width: 100%; height: 3; }
+.path-dialog { height: 80%; }
+#path-tree { height: 1fr; min-height: 3; }
+.path-dialog Horizontal { height: 3; }
+.path-dialog Button { width: 1fr; }
+
+MenuDialog { align: left top; background: transparent; padding: 0; overflow: hidden; }
+.menu-dialog { position: absolute; constrain: inside inside; width: 34; max-width: 100%; max-height: 100%; padding: 0 1; }
+.menu-dialog Label { margin-bottom: 0; }
+.menu-dialog Button { height: 1; min-width: 0; border: none; text-align: left; content-align: left middle; background: transparent; text-style: none; }
+.menu-dialog Button:hover, .menu-dialog Button:focus { background: #3a4b65; }

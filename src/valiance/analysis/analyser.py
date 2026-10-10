@@ -390,7 +390,7 @@ class Analyser:
         """Load project-wide lint policy from the nearest ``valiance.toml``."""
         from valiance.modules_system.packages import find_project_root, load_manifest
 
-        start = self.source_file or Path.cwd()
+        start = self.source_file or self.module_loader.base_directory or Path.cwd()
         root = find_project_root(start)
         if root is None:
             return
@@ -400,6 +400,17 @@ class Analyser:
 
     def analyse(self, program: list[ASTNode]) -> list[TypedNode]:
         """Analyse a top-level sequence into typed nodes."""
+        final = self.analyse_program_branches(program)
+        if len(final) != 1:
+            return [TypedNode(node, None) for node in program]
+        return [*self._prelude.nodes, *next(iter(final)).typed_body]
+
+    def analyse_program_branches(self, program: list[ASTNode]) -> BranchSet:
+        """Analyse a complete module and retain its final semantic environments.
+
+        Session loads use these environments to continue with later commands.
+        Runtime prelude nodes remain available separately through runtime_prelude.
+        """
         self.disabled_lint_codes = (
             set(self.project_disabled_lint_codes)
             if self.project_lints_enabled
@@ -473,9 +484,7 @@ class Analyser:
                         node=directive,
                     )
                 )
-        if len(final) != 1:
-            return [TypedNode(node, None) for node in program]
-        return [*self._prelude.nodes, *next(iter(final)).typed_body]
+        return final
 
 
     def _top_level_analysis_phases(

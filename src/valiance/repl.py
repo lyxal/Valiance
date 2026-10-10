@@ -17,6 +17,8 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol, TextIO
 
+from valiance.sessions.events import CompletionItem
+
 _REPL_MODE_ENV = "VALIANCE_REPL_MODE"
 
 _KEYWORDS = frozenset(
@@ -104,12 +106,8 @@ _NUMBER_RE = re.compile(r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
 _COMPLETION_PREFIX_RE = re.compile(r"(?:\*::|[$#:]|\\)?[A-Za-z_][A-Za-z0-9_:]*$")
 
 
-@dataclass(frozen=True, slots=True)
-class ReplCompletion:
-    """One completion candidate exposed by the current compiler session."""
-
-    text: str
-    meta: str
+# Compatibility name for existing frontend consumers.
+ReplCompletion = CompletionItem
 
 
 class ReplFrontend(Protocol):

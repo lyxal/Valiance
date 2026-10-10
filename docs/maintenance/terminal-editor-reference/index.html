@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Valiance — interactive editor design</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="reference.js" defer></script>
+</head>
+<body>
+  <header class="reference-bar">
+    <strong>Valiance design reference</strong>
+    <span>Editable UI · simulated language results</span>
+    <button id="lab-toggle" aria-expanded="false">Design lab</button>
+  </header>
+  <section id="lab" hidden aria-label="Design lab">
+    <label>Example <select id="scenario">
+      <option value="hero">Hero Example</option><option value="area">Inside a function</option>
+      <option value="perimeter">Inside another function</option><option value="element">Cursor on a specific element</option>
+      <option value="errors">Errors present</option><option value="selected-error">Clicked on an error</option>
+      <option value="editor-only">Just the editor</option><option value="no-repl">No REPL</option>
+      <option value="repl-only">REPL only</option><option value="worlds">Overload worlds</option>
+      <option value="blank">Blank startup</option>
+    </select></label>
+    <button id="restore-example">Restore example</button>
+    <button id="slow">Slow analysis demo</button><button id="long-run">Long run demo</button>
+    <button id="fault">Runtime fault demo</button>
+    <label>Theme <select id="theme"><option value="dark">Reference dark</option><option value="contrast">High contrast</option><option value="ocean">Ocean</option><option value="plum">Plum</option><option value="amber">Amber</option><option value="paper">Paper</option></select></label>
+    <label>Style <select id="style-role"></select><input id="style-color" type="color" aria-label="Style color"></label>
+    <label>Indent <input id="indent-width" type="number" min="1" max="8" value="2" aria-label="Indentation width"></label>
+    <button id="restore-style">Restore defaults</button>
+    <a href="../terminal-editor-design.md">Behavior specification</a>
+    <details><summary>Original screenshots</summary><nav id="screenshots"></nav></details>
+    <p>Click or arrow through source to inspect it. Try changing concat to *, or Circel to Circle. Alt+X loads the edited buffer. REPL demo commands: Circle 20, $.radius, * 2 | dup | * 3, or a number. Other commands are recorded without evaluation. This is not a Valiance compiler.</p>
+  </section>
+  <main id="terminal" data-compact-view="editor">
+    <nav id="tabs" aria-label="File tabs">
+      <details id="file-menu"><summary aria-label="File menu">☰</summary><div class="menu">
+        <button data-file="new">New <kbd>Ctrl+N</kbd></button><button data-file="open">Open <kbd>Ctrl+O</kbd></button>
+        <button data-file="recent">Open Recent</button><button data-file="save">Save <kbd>Ctrl+S</kbd></button>
+        <button data-file="save-as">Save As <kbd>Ctrl+Shift+S</kbd></button><button data-file="rename">Rename</button><button data-file="close">Close tab <kbd>Ctrl+W</kbd></button>
+        <button data-file="quit">Quit <kbd>Ctrl+Q</kbd></button><hr>
+        <button id="toggle-repl">Show / hide REPL</button><button id="toggle-state">Show / hide State</button>
+        <button id="only-repl">REPL only / restore editor</button><button id="wrap">Wrap: on</button>
+        <button id="menu-lock">Toggle Enter lock <kbd>Ctrl / Shift+Enter</kbd></button>
+      </div></details>
+      <div id="file-tabs" role="tablist" aria-label="Open documents"></div>
+      <button id="new-tab" aria-label="New untitled tab">+</button>
+      <button id="load">Load <kbd>Alt+X</kbd></button>
+      <button id="stop" hidden>Stop <kbd>Ctrl+C</kbd></button>
+    </nav>
+    <nav id="compact-views" aria-label="Compact views"><button data-view="editor">Editor</button><button data-view="state">State</button><button data-view="repl">REPL</button></nav>
+    <section id="editor" class="pane" aria-label="Source editor">
+      <div id="search-bar" hidden>
+        <input id="search" placeholder="Find" aria-label="Find text"><input id="replace" hidden placeholder="Replace with" aria-label="Replacement text">
+        <button id="find-next">Next</button><button id="replace-one" hidden>Replace</button><button id="replace-all" hidden>Replace all</button>
+        <span id="search-count"></span><button id="close-search" aria-label="Close search">×</button>
+      </div>
+      <div id="editor-surface">
+        <div id="gutter" aria-hidden="true"></div>
+        <div id="code-surface"><pre id="highlight" aria-hidden="true"></pre><textarea id="source" wrap="soft" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Source editor"></textarea></div>
+      </div>
+      <div id="completion" hidden role="listbox" aria-label="Completion suggestions"></div>
+    </section>
+    <div id="vertical-divider" class="divider" role="separator" aria-label="Resize State pane" aria-orientation="vertical" tabindex="0"></div>
+    <aside id="state" class="pane" aria-label="Cursor inspection" tabindex="0">
+      <nav class="inspector-tabs"><button id="cursor-view" aria-pressed="true">Cursor</button><button id="errors-toggle" aria-pressed="false">Errors <span id="inspector-error-count">0</span></button></nav>
+      <div id="error-pin" hidden><button id="expand-pin"></button><button id="dismiss-pin" aria-label="Dismiss error pin">×</button></div>
+      <nav id="world-nav" hidden aria-label="Overload worlds"><span>Overload</span><button id="previous-world" aria-label="Previous overload">‹</button><div id="world-pages"></div><button id="next-world" aria-label="Next overload">›</button></nav>
+      <div id="inspection" aria-live="polite"></div>
+    </aside>
+    <div id="horizontal-divider" class="divider" role="separator" aria-label="Resize REPL pane" aria-orientation="horizontal" tabindex="0"></div>
+    <section id="repl" class="pane" aria-label="REPL">
+      <header><strong>REPL</strong><span id="loaded-label">No file loaded</span><button id="clear">Clear</button><button id="reset">Reset</button><button id="export">Save transcript</button></header>
+      <div id="load-warning" hidden><button id="load-errors"></button></div>
+      <div id="transcript" role="log" aria-label="REPL transcript"></div>
+      <div class="repl-input"><span>&gt;</span><textarea id="command" rows="1" spellcheck="false" aria-label="REPL command" placeholder="Circle 20"></textarea></div>
+      <div id="repl-completion" hidden role="listbox" aria-label="REPL completion suggestions"></div>
+      <button id="enter-lock" aria-pressed="false">Enter: submit · Ctrl/Shift+Enter toggles</button>
+    </section>
+    <footer id="status"><span id="cursor-status"></span><span id="dirty-status"></span><button id="error-count">0 errors</button><span id="status-loaded">REPL: no loaded file</span><span id="notice">F6 · switch panes</span></footer>
+  </main>
+  <input id="open-file" type="file" accept=".vlnc,.txt" hidden>
+  <dialog id="file-dialog"><form method="dialog"><h2 id="dialog-title"></h2><p id="dialog-message"></p><input id="dialog-name" hidden aria-label="File name"><div id="dialog-buttons"></div></form></dialog>
+</body>
+</html>

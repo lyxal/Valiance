@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import os
 import sys
 from difflib import get_close_matches
 from importlib.metadata import PackageNotFoundError, version
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 import valiance.vtypes as T
-from valiance.analysis import Analyser, AnalysisBranch, BranchSet, InputMode
+from valiance.analysis import Analyser
 from valiance.asts import pretty_ast, typed_source
 from valiance.analysis.diagnostics import from_exception, from_message, render, should_color
 from valiance.modules_system.packages import (
@@ -36,7 +34,7 @@ from valiance.modules_system.packages import (
     upgrade_dependency,
 )
 from valiance.parsing import LexError, ParseError, ParseErrors, Parser, lex, parse
-from valiance.repl import ReplCompletion, create_repl_frontend, highlighted_fragments
+from valiance.repl import create_repl_frontend, highlighted_fragments
 from valiance.elements.reference_docs import (
     DocumentationError,
     collect_language_references,
@@ -47,7 +45,6 @@ from valiance.runtime import (
     BytecodeFormatError,
     CompileError,
     RuntimeError,
-    VirtualMachine,
     compile_program,
     dumps,
     loads,
@@ -55,7 +52,6 @@ from valiance.runtime import (
     build_module,
     dumps_module,
 )
-from valiance.runtime.vm import _check_duplication_allowed, _duplicate_occurrence
 from valiance.runtime.runtime_values import (
     DIAGNOSTIC_LIST_PREVIEW_LIMIT,
     ObjectValue,
@@ -72,6 +68,9 @@ from valiance.source_tools import (
     render_html_reference,
 )
 from valiance.testing.runner import TestCommandError, run_test_command
+
+from valiance.sessions.service import SessionService
+from valiance.sessions.events import DiagnosticEvent, OutputEvent, ResultEvent, SessionEvent
 
 DEFAULT_BYTECODE_FILENAME = "out.vbc"
 DEFAULT_BYTECODE_SUFFIX = ".vbc"
@@ -1139,6 +1138,15 @@ def _run_repl() -> int:
     """Run REPL for CLI and REPL orchestration."""
     color = should_color(sys.stdout)
     session = _ReplSession(color=color)
+    try:
+        return _run_repl_session(session)
+    finally:
+        session.close()
+
+
+def _run_repl_session(session: _ReplSession) -> int:
+    """Present one owned CLI session until the frontend exits."""
+    color = session.color
     frontend = create_repl_frontend(
         prompt=lambda line_number: _repl_prompt(
             line_number, color=color, branch_depth=session.branch_depth
@@ -1341,306 +1349,35 @@ def _parse_repl_branch_command(
     return name, int(parts[1]), None
 
 
-@dataclass
-class _SavedReplFrame:
-    """One suspended parent frame in the REPL branch stack."""
+class _ReplSession(SessionService):
+    """Legacy CLI presentation adapter over the shared session service."""
 
-    analyser: Analyser
-    branch: AnalysisBranch
-    vm: VirtualMachine
-    runtime_stack: list[Any]
-    state_version: int
+    def __init__(self, color: bool = False) -> None:
+        """Retain existing CLI styling and fault behavior during extraction."""
+        self.color = color
+        super().__init__(event_sink=self._present_event, reset_on_fault=False)
 
-
-@dataclass
-class _ReplSession:
-    color: bool = False
-    analyser: Analyser | None = None
-    branch: AnalysisBranch | None = None
-    output: _OutputTracker | None = None
-    vm: VirtualMachine | None = None
-    runtime_stack: list[Any] | None = None
-    _state_version: int = 0
-    _hint_cache: tuple[int, str, str | None] | None = None
-    _frames: list[_SavedReplFrame] | None = None
-
-    def __post_init__(self) -> None:
-        """Validate invariants after constructing this REPL session."""
-        self.reset()
-
-    def reset(self) -> None:
-        """Reset persistent analyser, globals, stack, and output state."""
-        self.analyser = Analyser()
-        self.branch = AnalysisBranch(input_mode=InputMode.TOP_LEVEL)
-        self.output = _OutputTracker()
-        self.vm = VirtualMachine(output=self.output)
-        self.runtime_stack = []
-        self._state_version += 1
-        self._hint_cache = None
-        self._frames = []
-
-    @property
-    def branch_depth(self) -> int:
-        """Return the number of currently open REPL branches."""
-        return len(self._frames or ())
-
-    def _require_parent(self, command: str) -> _SavedReplFrame:
-        """Return the immediate parent frame or reject a branch-only command."""
-        if not self._frames:
-            raise ValueError(f":{command} requires an open REPL branch")
-        return self._frames[-1]
-
-    def open_branch(self) -> None:
-        """Push an isolated copy of the complete live REPL state."""
-        assert self.analyser is not None and self.branch is not None
-        assert self.vm is not None and self.runtime_stack is not None
-        assert self.output is not None
-        parent = _SavedReplFrame(
-            self.analyser, self.branch, self.vm, self.runtime_stack, self._state_version
-        )
-        analyser, branch, vm, stack = copy.deepcopy(
-            (self.analyser, self.branch, self.vm, self.runtime_stack)
-        )
-        vm.output = self.output
-        if self._frames is None:
-            self._frames = []
-        self._frames.append(parent)
-        self.analyser, self.branch, self.vm, self.runtime_stack = (
-            analyser, branch, vm, stack
-        )
-        self._state_version += 1
-        self._hint_cache = None
-
-    def restore_branch(self) -> None:
-        """Discard the current frame and restore its immediate parent."""
-        parent = self._require_parent("restore")
-        assert self._frames is not None
-        self._frames.pop()
-        self.analyser, self.branch, self.vm, self.runtime_stack = (
-            parent.analyser, parent.branch, parent.vm, parent.runtime_stack
-        )
-        self._state_version = parent.state_version + 1
-        self._hint_cache = None
-
-    def continue_branch(self) -> None:
-        """Adopt the current frame wholesale in place of its parent."""
-        self._require_parent("continue")
-        assert self._frames is not None
-        self._frames.pop()
-        self._state_version += 1
-        self._hint_cache = None
-
-    def _checked_transfer(
-        self, count: int
-    ) -> tuple[_SavedReplFrame, tuple[Any, ...], tuple[T.Type, ...]]:
-        """Validate a branch transfer and return its parent, values, and types."""
-        parent = self._require_parent("copy or :escape")
-        assert self.runtime_stack is not None and self.branch is not None
-        if count < 1:
-            raise ValueError("value count must be at least 1")
-        if count > len(self.runtime_stack) or count > len(self.branch.stack):
-            raise ValueError(
-                f"cannot transfer {count} value(s) from a stack of depth "
-                f"{len(self.runtime_stack)}"
-            )
-        return parent, tuple(self.runtime_stack[-count:]), tuple(
-            self.branch.stack.items[-count:]
-        )
-
-    def copy_to_parent(self, count: int = 1) -> None:
-        """Duplicate the top values into the immediate parent frame."""
-        parent, values, types = self._checked_transfer(count)
-        for value in values:
-            _check_duplication_allowed(value)
-        duplicated = tuple(_duplicate_occurrence(value) for value in values)
-        parent.runtime_stack.extend(duplicated)
-        parent.branch = parent.branch.with_stack(parent.branch.stack.push(*types))
-        parent.state_version += 1
-        self._hint_cache = None
-
-    def escape_to_parent(self, count: int = 1) -> None:
-        """Move the top values into the immediate parent frame."""
-        parent, values, types = self._checked_transfer(count)
-        assert self.runtime_stack is not None and self.branch is not None
-        del self.runtime_stack[-count:]
-        self.branch = self.branch.with_stack(self.branch.stack.pop(count))
-        parent.runtime_stack.extend(values)
-        parent.branch = parent.branch.with_stack(parent.branch.stack.push(*types))
-        parent.state_version += 1
-        self._state_version += 1
-        self._hint_cache = None
-
-    def completion_items(self) -> tuple[ReplCompletion, ...]:
-        """Return completion metadata derived from the current REPL session."""
-        if self.analyser is None or self.branch is None:
-            return ()
-        items: dict[str, ReplCompletion] = {}
-        env = self.analyser.env
-        depth = 0
-        while env is not None:
-            scope = "element" if depth == 0 else "built-in element"
-            for name in env.overloads:
-                text = name.text
-                items.setdefault(text, ReplCompletion(text, scope))
-            for collection, meta in (
-                (env.objects, "object"),
-                (env.traits, "trait"),
-                (env.variants, "variant"),
-                (env.enums, "enum"),
-            ):
-                for name in collection:
-                    text = name.text
-                    items.setdefault(text, ReplCompletion(text, meta))
-            for name in env.data_tags:
-                text = f"#{name.text}"
-                items.setdefault(text, ReplCompletion(text, "data tag"))
-            env = env.parent
-            depth += 1
-        for name, typ in self.branch.variables.visible_items():
-            text = f"${name.text}"
-            items[text] = ReplCompletion(text, f"variable: {T.show(typ)}")
-        return tuple(items.values())
-
-    def element_documentation(self, name: str, source: str) -> str | None:
-        """Render every loaded docstring available for a selected element."""
-        normalized = name.strip().removeprefix("\\")
-        sections: list[str] = []
-        for definition in extract_documented_defines(source):
-            if definition.name != normalized:
-                continue
-            doc = definition.docstring
-            lines = [definition.signature, *doc.description]
-            lines.extend(f"Parameter {item.name}: {item.description}" for item in doc.params)
-            if doc.returns is not None: lines.append(f"Returns: {doc.returns}")
-            lines.extend(doc.extra_fields); sections.append("\n".join(lines))
-        visible = {item.text.removeprefix("\\") for item in self.completion_items()}
-        if normalized in visible:
-            for reference in collect_language_references(strict=False):
-                if normalized not in {reference.name, reference.qualified_name, *reference.aliases}:
-                    continue
-                lines = [reference.qualified_name, *reference.overloads, reference.summary, *reference.description]
-                lines.extend(f"Parameter {item.name}: {item.description}" for item in reference.parameters)
-                if reference.returns is not None: lines.append(f"Returns: {reference.returns}")
-                sections.append("\n".join(lines))
-        return ("\n\n" + "-" * 72 + "\n\n").join(dict.fromkeys(sections)) or None
-
-    def type_hint(self, source: str) -> str | None:
-        """Preview the resulting type stack without mutating REPL state."""
-        source = source.strip()
-        if not source:
-            return None
-        cached = self._hint_cache
-        if cached is not None and cached[:2] == (self._state_version, source):
-            return cached[2]
-        result = self._type_hint_uncached(source)
-        self._hint_cache = (self._state_version, source, result)
-        return result
-
-    def _type_hint_uncached(self, source: str) -> str | None:
-        """Compute type hint uncached for CLI and REPL orchestration."""
-        if self.analyser is None or self.branch is None:
-            return None
-        try:
-            program = Parser(lex(source)).parse_program()
-        except LexError as exc:
-            return f"Lex error: {exc}"
-        except ParseError as exc:
-            return f"Parse error: {exc}"
-        analyser = copy.deepcopy(self.analyser)
-        analyser.diagnostics.clear()
-        analyser.warnings.clear()
-        analyser.clear_lints()
-        initial = replace(copy.deepcopy(self.branch), typed_body=())
-        try:
-            final = analyser.analyse_block(BranchSet((initial,)), tuple(program))
-        except (OSError, RuntimeError) as exc:
-            return f"Type error: {exc}"
-        if analyser.diagnostics:
-            diagnostic = from_message("Type error", analyser.diagnostics[0])
-            rendered = f"{diagnostic.stage}: {diagnostic.message}"
-            if diagnostic.help is not None:
-                rendered += f"\nhelp: {diagnostic.help}"
-            return rendered
-        if len(final) != 1:
-            return "Type error: source has no single valid stack effect"
-        next_branch = next(iter(final))
-        if next_branch.errors:
-            return f"Type error: {next_branch.errors[0].message}"
-        return (
-            f"Stack types: {_format_type_stack(next_branch.stack)}"
-        )
+    def _present_event(self, event: SessionEvent) -> None:
+        """Render structured events at the CLI boundary, never in the service."""
+        if isinstance(event, OutputEvent):
+            print(event.text, end="")
+        elif isinstance(event, DiagnosticEvent):
+            diagnostic = event.diagnostic
+            if diagnostic.stage.startswith("Uncaught panic"):
+                print(f"{diagnostic.stage}\n  {diagnostic.message}", file=sys.stderr)
+            else:
+                _print_diagnostic(diagnostic, event.source)
+        elif isinstance(event, ResultEvent) and event.implicit:
+            print(_format_stack(self.runtime_stack, color=self.color))
 
     def run(self, source: str) -> bool:
-        """Compile and execute one source entry in the persistent REPL session."""
-        if (
-            self.analyser is None
-            or self.branch is None
-            or self.output is None
-            or self.vm is None
-            or self.runtime_stack is None
-        ):
-            self.reset()
-        assert self.analyser is not None
-        assert self.branch is not None
-        assert self.output is not None
-        assert self.vm is not None
-        assert self.runtime_stack is not None
-        self.analyser.diagnostics.clear()
-        self.analyser.warnings.clear()
-        self.analyser.clear_lints()
-        self.output.did_print = False
-        try:
-            program = Parser(lex(source)).parse_program()
-            prelude_start = len(self.analyser.runtime_prelude)
-            final = self.analyser.analyse_block(
-                BranchSet((replace(self.branch, typed_body=()),)),
-                tuple(program),
-            )
-            if self.analyser.diagnostics:
-                for diagnostic in self.analyser.diagnostics:
-                    _print_diagnostic(from_message("Type error", diagnostic), source)
-                return False
-            if len(final) != 1:
-                _print_diagnostic(
-                    from_message(
-                        "Type error",
-                        "source has no single valid stack effect",
-                    ),
-                    source,
-                )
-                return False
-            next_branch = next(iter(final))
-            for lint in self.analyser.lints:
-                _print_diagnostic(from_message("Lint warning", lint), source)
-            for warning in self.analyser.warnings:
-                _print_diagnostic(from_message("Type warning", warning), source)
-            new_runtime_prelude = self.analyser.runtime_prelude[prelude_start:]
-            bytecode = compile_program(
-                [*new_runtime_prelude, *next_branch.typed_body]
-            )
-            stack = self.vm.execute(
-                bytecode.main,
-                {},
-                self.vm.globals,
-                initial_stack=list(self.runtime_stack),
-            )
-            self.runtime_stack = stack
-            self.branch = replace(next_branch, typed_body=())
-            self._state_version += 1
-            self._hint_cache = None
-            if not self.output.did_print:
-                print(_format_stack(stack, color=self.color))
-            return True
-        except (
-            BytecodeFormatError,
-            LexError,
-            OSError,
-            ParseError,
-            CompileError,
-            RuntimeError,
-        ) as exc:
-            _print_exception_diagnostic(exc, source=source)
+        """Preserve the existing bool-returning CLI API and display failures."""
+        result = self.prepare(source)
+        if result.prepared is None:
+            for diagnostic in result.diagnostics:
+                self._present_event(DiagnosticEvent(diagnostic, source))
             return False
+        return self.execute(result.prepared).successful
 
 
 def _format_type_stack(stack: T.TypeStack) -> str:

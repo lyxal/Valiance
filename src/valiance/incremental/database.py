@@ -9,6 +9,7 @@ from valiance.asts import ASTNode, TypedNode
 from valiance.modules_system.modules import ModuleLoader
 from valiance.parsing import parse
 from valiance.runtime import Program, compile_program
+from .snapshots import RootSource, WorkspaceSnapshot
 from .store import ArtifactStore
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +64,58 @@ class CompilationDatabase:
         """Return current source and whether it comes from an overlay."""
         path=path.resolve()
         return (self._overlays[path],True) if path in self._overlays else (path.read_text(encoding='utf-8'),False)
+
+    def capture_workspace(self, root: RootSource, *, workspace_revision: int = 0) -> WorkspaceSnapshot:
+        """Capture root and resolved imports without a pretend untitled filename.
+
+        Use the real analyser/module loader to discover the source closure. Parse
+        and analysis failures still yield the captured view; session preparation
+        reports their diagnostics without modifying committed runtime state.
+        """
+        from valiance.incremental.snapshots import CapturedFile, SourceCapture, WorkspaceSnapshot
+        from valiance.parsing import LexError, ParseError
+
+        overlays = tuple(
+            CapturedFile(path, source.encode("utf-8"), True, self._versions[path])
+            for path, source in sorted(self._overlays.items())
+        )
+        if root.path is not None:
+            overlays = tuple(file for file in overlays if file.path != root.path.resolve()) + (
+                CapturedFile(root.path.resolve(), root.source.encode("utf-8"), True, root.revision),
+            )
+        capture = SourceCapture(overlays)
+        capture.capture_configuration(root.base_directory)
+        loader = ModuleLoader(
+            std_root=self.module_loader.std_root,
+            base_directory=root.base_directory,
+            source_provider=capture,
+        )
+        try:
+            Analyser(source_file=root.path, module_loader=loader).analyse(parse(root.source))
+        except (LexError, ParseError, OSError, RuntimeError):
+            pass
+        for file in tuple(capture.files.values()):
+            if file.path.suffix in {".vlnc", ".vbcm"}:
+                capture.capture_configuration(file.path.parent)
+        return WorkspaceSnapshot(
+            root, workspace_revision,
+            tuple(capture.files[path] for path in sorted(capture.files)),
+            tuple(sorted(overlays, key=lambda file: file.path)),
+            loader.std_root,
+        )
+
+    def snapshot_is_current(self, snapshot: WorkspaceSnapshot, root: RootSource) -> bool:
+        """Validate root revision, open overlays and captured disk dependencies."""
+        if snapshot.root != root or not snapshot.disk_is_current():
+            return False
+        current = {
+            path: (source.encode("utf-8"), self._versions[path])
+            for path, source in self._overlays.items()
+        }
+        expected = {file.path: (file.data, file.version) for file in snapshot.overlays}
+        if root.path is not None:
+            current[root.path.resolve()] = (root.source.encode("utf-8"), root.revision)
+        return current == expected
 
     def analyse(self,path:Path)->AnalysisSnapshot:
         """Analyse the current document snapshot, reusing a valid cache entry."""

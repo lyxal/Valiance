@@ -90,6 +90,31 @@ You can still run through uv without installing either way:
 uv run vln
 ```
 
+### Terminal editor preview
+
+The new full-screen editor is available from the checkout while its later stages
+are developed. Bare `vln` and `valiance` still start the REPL described above.
+
+```powershell
+$env:UV_CACHE_DIR="$PWD\.uv-cache"
+uv run python -m valiance.terminal_editor
+```
+
+File/Edit/View menus provide file workflows, editing and pane controls. F5 or
+Alt+X runs the active buffer without saving, using unsaved open-file imports and
+a fresh persistent session. Enter in REPL input submits a command; Shift+Enter
+inserts a newline. F8 stops execution and resets runtime state. The editor keeps
+open documents and its bounded transcript. Drag the dividers to resize panes;
+F3/F4 toggle State/REPL and F6 cycles panes.
+
+Startup opens a blank untitled document. Recent paths, wrapping, indentation
+width and pane sizes are saved on normal quit; documents and runtime state are
+not restored. Live semantic inspection, completion, Enter lock/history controls,
+transcript export and themes remain later-stage work. See the
+[current editor behavior](docs/maintenance/terminal-editor-design.md#current-terminal-implementation)
+and [implementation plan](docs/maintenance/terminal-editor-implementation-plan.md)
+for shortcuts, validation and remaining gates.
+
 Compile project entries to bytecode:
 
 ```powershell
