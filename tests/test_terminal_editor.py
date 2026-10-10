@@ -14,14 +14,270 @@ from valiance.terminal_editor.divider import PaneDivider
 from valiance.terminal_editor.editor import SourceEmphasis
 
 
+class CompilerInspectionTests(unittest.TestCase):
+    """Verify compiler facts, recovery and captured import query semantics."""
+
+    def analyse(self, source, directory=None, path=None, overlays=()):
+        from pathlib import Path
+
+        from valiance.analysis.inspection import analyse_sources
+        from valiance.incremental.snapshots import RootSource
+
+        root = RootSource("root", source, 7, directory or Path.cwd(), path)
+        return analyse_sources((root, *overlays), root, 12)
+
+    def test_chain_gaps_variable_types_function_context_and_empty_stack(self):
+        source = (
+            "object Circle =>\n  $radius: Real\nend\n"
+            "define perimeter(c: Circle) -> Real => $c.radius\n"
+            "$circle = Circle(2.0)\nprintln perimeter $circle\n\n"
+        )
+        product = self.analyse(source)
+        self.assertFalse(product.diagnostics)
+        operand_gap = source.index(" perimeter $circle") + len(" perimeter")
+        gap = product.at(operand_gap)
+        self.assertEqual(gap.stack, ("Circle",))
+        self.assertEqual(gap.last_element, "$circle: Circle")
+        call_gap = source.index("println perimeter") + len("println")
+        gap = product.at(call_gap)
+        self.assertEqual(gap.stack, ("Real",))
+        self.assertIn("perimeter", gap.last_element)
+        token = product.at(call_gap + 1)
+        self.assertIsNone(token.stack)
+        self.assertIn("perimeter", token.element)
+        self.assertFalse(token.function)
+        self.assertEqual(token.target, (None, 3, 7))
+        self.assertEqual(product.at(len(source)).stack, ())
+
+    def test_function_gaps_and_failed_function_do_not_leak_checkpoint_facts(self):
+        source = (
+            "define broken(x: Int) -> String => $x 2 *\n"
+            "define twice(x: Int) -> Int => $x 2 *\n"
+        )
+        product = self.analyse(source)
+        self.assertTrue(product.diagnostics)
+        self.assertIsNone(product.at(source.index("$x") + 2).stack)
+        self.assertFalse(product.at(source.index("$x")).element)
+        offset = source.rindex("$x") + 2
+        facts = product.at(offset)
+        self.assertEqual(facts.stack, ("Int",))
+        self.assertEqual(facts.last_element, "$x: Int")
+        self.assertIn("twice(x: Int) -> Int", facts.function)
+        self.assertEqual(product.at(source.rindex("2") + 1).stack, ("Int", "Int"))
+
+    def test_lexer_parser_recovery_and_comments_preserve_independent_functions(self):
+        source = (
+            "`\n$ =\n"
+            "define valid(x: Int) -> Int => $x 2 *\n"
+            "#? no facts here\n#/ outer #/ inner /# comment /#\n"
+        )
+        product = self.analyse(source)
+        self.assertGreaterEqual(len(product.diagnostics), 2)
+        self.assertIsNone(product.at(0).stack)
+        self.assertEqual(product.at(source.index("$x") + 2).stack, ("Int",))
+        self.assertIsNone(product.at(source.index("no facts")).stack)
+        self.assertIsNone(product.at(source.index("inner")).stack)
+
+    def test_import_diagnostics_are_gathered_even_after_other_imports_fail(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first.vlnc"
+            second = root / "second.vlnc"
+            first.write_text("`\n$ =\n")
+            second.write_text("define bad -> String => 1\n")
+            product = self.analyse("import {first}\nimport {second}\n", root)
+            paths = {diagnostic.source_file for diagnostic in product.diagnostics}
+            self.assertIn(first, paths)
+            self.assertIn(second, paths)
+            self.assertTrue(product.workspace.disk_is_current())
+            second.write_text("public define value -> Int => 2\n")
+            self.assertFalse(product.workspace.disk_is_current())
+
+    def test_unsaved_import_overlay_controls_docs_navigation_and_dependency_types(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from valiance.incremental.snapshots import RootSource
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            dependency = root / "library.vlnc"
+            dependency.write_text('public define value(x: Int) -> String => "disk"\n')
+            overlay = RootSource(
+                "dependency",
+                "#?? Unsaved value docs.\n"
+                "public define value(x: Int) -> Int => $x 2 +\n",
+                3,
+                root,
+                dependency,
+            )
+            source = "import {library.value}\nprintln value 1\n"
+            product = self.analyse(source, root, overlays=(overlay,))
+            self.assertFalse(product.diagnostics)
+            facts = product.at(source.rindex("value"))
+            self.assertIn("Int", facts.element)
+            self.assertIn("Unsaved value docs", facts.documentation)
+            self.assertEqual(facts.target, (dependency, 1, 14))
+            self.assertEqual(product.at(source.rindex("println") + 7).stack, ("Int",))
+
+    def test_inspection_does_not_execute_source_or_alter_ordinary_analysis(self):
+        from unittest.mock import patch
+
+        from valiance.analysis import Analyser
+        from valiance.parsing import parse
+
+        source = "define twice(x: Int) -> Int => $x 2 *\nprintln twice 4\n"
+        with patch(
+            "valiance.runtime.vm.VirtualMachine.execute",
+            side_effect=AssertionError("executed"),
+        ):
+            product = self.analyse(source)
+        self.assertFalse(product.diagnostics)
+        ordinary = Analyser()
+        observed = Analyser(observer=lambda *_: None)
+        program = parse(source)
+        self.assertEqual(ordinary.analyse(program), observed.analyse(program))
+        self.assertEqual(ordinary.diagnostics, observed.diagnostics)
+
+
+class EditorAnalysisWorkerTests(unittest.IsolatedAsyncioTestCase):
+    """Protect coalescing and stale-result gates independently of terminal rendering."""
+
+    async def test_delayed_requests_cannot_restore_root_or_dependency_facts(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from threading import Event
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from valiance.analysis.inspection import analyse_sources
+        from valiance.terminal_editor.analysis import EditorAnalysis
+        from valiance.terminal_editor.models import EditorWorkspace
+
+        with TemporaryDirectory() as directory:
+            workspace = EditorWorkspace(Path(directory))
+            root_id = workspace.active_document
+            workspace.update(root_id, "1")
+            dependency = workspace.new_document("2")
+            workspace.active_document = root_id
+            app = SimpleNamespace(
+                workspace=workspace,
+                editor_screen=SimpleNamespace(query=lambda _: ()),
+                refresh_inspection=lambda: None,
+            )
+            controller = EditorAnalysis(app)
+            started, release = Event(), Event()
+            requests = []
+
+            def delayed(roots, root, revision):
+                requests.append((root.source, revision))
+                if len(requests) == 1:
+                    started.set()
+                    release.wait(3)
+                return analyse_sources(roots, root, revision)
+
+            with patch("valiance.terminal_editor.analysis.analyse_sources", delayed):
+                controller.poll()
+                self.assertTrue(await asyncio.to_thread(started.wait, 2))
+                workspace.update(root_id, "3")
+                controller.poll()
+                workspace.update(dependency.id, "4")
+                controller.poll()
+                self.assertIsNone(controller.snapshot)
+                self.assertEqual(len(requests), 1)
+                controller.started -= 0.6
+                self.assertEqual(controller.label, "Updating…")
+                release.set()
+                await controller.task
+                self.assertIsNone(controller.snapshot)
+                controller.poll()
+                await controller.task
+                self.assertEqual(len(requests), 2)
+                self.assertEqual(controller.snapshot.workspace.root.source, "3")
+                self.assertEqual(
+                    controller.snapshot.workspace.workspace_revision, workspace.revision
+                )
+                workspace.update(dependency.id, "5")
+                controller.poll()
+                self.assertIsNone(controller.snapshot)
+                await controller.task
+                await controller.close()
+
+
+class EditorInspectionApplicationTests(unittest.IsolatedAsyncioTestCase):
+    """Check real cursor rendering and diagnostic keyboard/source navigation."""
+
+    async def settled(self, app, pilot):
+        deadline = time.monotonic() + 5
+        while app.analysis.snapshot is None:
+            if app.analysis.failure:
+                self.fail(app.analysis.failure)
+            if time.monotonic() > deadline:
+                self.fail("analysis did not settle")
+            await pilot.pause(0.02)
+        await pilot.pause()
+
+    async def test_caret_views_errors_and_definition_navigation(self):
+        from textual.widgets import Static
+
+        from valiance.terminal_editor.app import EditorApp
+
+        app = EditorApp(watch_files=False, with_worker=False)
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.source_editor.load_text(
+                "define twice(x: Int) -> Int => $x 2 *\nprintln twice 4\n"
+            )
+            await pilot.pause()
+            await self.settled(app, pilot)
+            app.source_editor.move_cursor((1, 7))
+            await pilot.pause()
+            rendered = str(app.query_one("#inspection-facts", Static).content)
+            self.assertIn("Stack", rendered)
+            self.assertIn("Int", rendered)
+            app.source_editor.move_cursor((1, 8))
+            await pilot.pause()
+            rendered = str(app.query_one("#inspection-facts", Static).content)
+            self.assertIn("Selected element", rendered)
+            self.assertNotIn("Stack", rendered)
+            await pilot.press("f12")
+            self.assertEqual(app.source_editor.cursor_location, (0, 7))
+            app.source_editor.load_text("unknown_name\n")
+            await pilot.pause()
+            await self.settled(app, pilot)
+            self.assertTrue(app.query_one("#show-errors").display)
+            self.assertFalse(app.query_one("#error-list").display)
+            self.assertTrue(app.source_editor._emphasis)
+            await pilot.click(app.source_editor, offset=(6, 0))
+            self.assertIn(
+                "unknown",
+                str(app.query_one("#diagnostic-detail", Static).content),
+            )
+            await pilot.press("f9")
+            self.assertEqual(app.source_editor.cursor_location, (0, 0))
+            self.assertIn(
+                "unknown", str(app.query_one("#diagnostic-detail", Static).content)
+            )
+            await pilot.press("f11")
+            self.assertTrue(app.query_one("#error-list").display)
+            app.source_editor.load_text("1\n")
+            await pilot.pause()
+            await self.settled(app, pilot)
+            self.assertFalse(app.query_one("#show-errors").display)
+            self.assertFalse(app.source_editor._emphasis)
+
+
 class DocumentFileTests(unittest.TestCase):
     """Protect saved bytes, document identities and imported overlays."""
 
     def setUp(self):
         from pathlib import Path
         from tempfile import TemporaryDirectory
-        from valiance.terminal_editor.models import EditorWorkspace
+
         from valiance.terminal_editor.files import DocumentFiles
+        from valiance.terminal_editor.models import EditorWorkspace
 
         self.directory = TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -119,7 +375,7 @@ class DocumentFileTests(unittest.TestCase):
 
     def test_crlf_and_unicode_round_trip_without_initial_dirty_state(self):
         path = self.root / "source.vlnc"
-        data = '"界"\r\n1\r\n'.encode("utf-8")
+        data = '"界"\r\n1\r\n'.encode()
         path.write_bytes(data)
         document = self.files.open(path)
         self.assertFalse(document.dirty)
@@ -133,6 +389,7 @@ class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         from pathlib import Path
         from tempfile import TemporaryDirectory
+
         from valiance.terminal_editor.app import EditorApp
 
         self.directory = TemporaryDirectory()
@@ -170,6 +427,7 @@ class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
         from unittest.mock import patch
 
         from textual.widgets import Button, Tabs
+
         from valiance.terminal_editor.dialogs import MenuDialog
 
         app = self.app
@@ -245,6 +503,7 @@ class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_shortcuts_persistent_repl_and_failed_load(self):
         from textual.widgets import TextArea
+
         from valiance.terminal_editor.runtime import EditorRuntime
 
         app = self.app
@@ -291,6 +550,7 @@ class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stop_keeps_editor_responsive_and_routes_program_input(self):
         from textual.widgets import TextArea
+
         from valiance.terminal_editor.runtime import EditorRuntime
 
         app = self.app
@@ -373,6 +633,7 @@ class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
     async def test_typing_during_slow_save_remains_dirty_and_prevents_close(self):
         import threading
         from unittest.mock import patch
+
         from valiance.terminal_editor.files import atomic_write
 
         app = self.app
@@ -414,8 +675,8 @@ class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(app.screen_stack), 1)
 
     async def test_search_replace_and_block_indentation_are_undoable(self):
-        from textual.widgets import Input
         from textual.document._document import Selection
+        from textual.widgets import Input
 
         app = self.app
         async with app.run_test(size=(120, 40)) as pilot:
@@ -508,8 +769,8 @@ class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
     async def test_native_copy_cut_paste_and_find_match_keep_unicode_source_coordinates(
         self,
     ):
-        from textual.widgets import Input
         from textual.document._document import Selection
+        from textual.widgets import Input
 
         app = self.app
         async with app.run_test(size=(80, 24)) as pilot:
@@ -570,8 +831,9 @@ class EditorModelTests(unittest.TestCase):
     def setUp(self):
         from pathlib import Path
         from tempfile import TemporaryDirectory
-        from valiance.terminal_editor.models import EditorState, EditorWorkspace
+
         from valiance.sessions.service import SessionService
+        from valiance.terminal_editor.models import EditorState, EditorWorkspace
 
         self.directory = TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -637,7 +899,7 @@ class EditorModelTests(unittest.TestCase):
         self.assertEqual(workspace.database.source_for(path), ("2", True))
 
     def test_history_restores_text_caret_selection_and_scroll_and_respects_lock(self):
-        from valiance.terminal_editor.models import InputDraft, InputState, DocumentView
+        from valiance.terminal_editor.models import DocumentView, InputDraft, InputState
 
         state = InputState(history=["1", "2"], limit=2)
         draft = InputDraft("unfinished", DocumentView((0, 3), (0, 1), (0, 4)))
@@ -827,6 +1089,7 @@ class TerminalWorkerTests(unittest.TestCase):
     def test_production_worker_rejects_stale_load_and_preserves_session(self):
         from pathlib import Path
         from tempfile import TemporaryDirectory
+
         from valiance.sessions.worker import SessionWorker
         from valiance.terminal_editor.models import EditorWorkspace
 

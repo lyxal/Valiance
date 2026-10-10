@@ -15,6 +15,11 @@ Tab.-active { background: #10131a; color: white; }
 #documents-view { width: 1fr; }
 DocumentEditor { height: 1fr; border: none; }
 #inspector { height: 1fr; padding: 1; background: #202532; }
+#inspection-facts, #inspection-docs, #diagnostic-detail { height: auto; }
+#show-errors { width: 100%; height: 3; }
+#error-list { height: auto; max-height: 12; }
+#error-list Label { width: 100%; height: auto; }
+#diagnostic-detail { color: #ef8794; margin-top: 1; }
 PaneDivider { color: $divider; background: #282d3b; }
 PaneDivider:hover { background: #3a4b65; color: #bfcfe6; }
 PaneDivider:focus { background: #526380; color: white; }

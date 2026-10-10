@@ -55,8 +55,15 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   is `uv run python -m valiance.terminal_editor`; it starts blank and does not
   change the public CLI entry points. File/Edit/View dropdowns use a common
   inset toolbar row, anchor before their first frame and leave background panes
-  unchanged. Basic execution is wired; live inspection and full REPL input/
-  transcript controls remain later stages.
+  unchanged. Stage 3 adds [recoverable compiler inspection products](../../src/valiance/analysis/inspection.py)
+  and a [coalesced background analysis adapter](../../src/valiance/terminal_editor/analysis.py).
+  [Shared source queries](../../src/valiance/source_queries.py) supply selected
+  overload documentation and definition navigation to both the editor and LSP.
+  Parser source spans/chain gaps are sidecar products, leaving executable AST and
+  bytecode formats unchanged. F9/Shift+F9 navigate errors, F11 opens the error list,
+  and F12 navigates definitions. F10/Shift+F10 remain indentation shortcuts.
+  Single-state inspection is implemented; surviving overload worlds and full REPL
+  input/transcript controls remain later stages.
   Session and snapshot regressions live in [CLI/session tests](../../tests/test_main.py)
   and [compilation database tests](../../tests/test_compilation_database.py).
 - [Understanding the type system](type-system.md) gives a human-first mental

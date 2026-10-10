@@ -231,6 +231,15 @@ CLI routing has not changed. See the [editor design](terminal-editor-design.md)
 and [staged plan](terminal-editor-implementation-plan.md) for implemented and
 pending interactions.
 
+Live editor analysis uses `analysis/inspection.py` against private captured sources,
+with an optional node observer and declaration recovery enabled only by editor
+consumers. `ParseResult` carries source spans and evaluation-order chain boundaries
+as sidecars. The terminal analysis adapter coalesces background work, discards
+obsolete workspace/dependency results, and hands the UI immutable presentation
+facts. Cursor movement queries those indexes. `source_queries.py` owns shared
+selected-overload documentation and navigation for the LSP and terminal editor.
+Multiple branch worlds remain a separate tracing stage.
+
 Structured compiler/session diagnostics are assembled in
 `analysis/diagnostics.py`. Prefer structured diagnostic
 information from the stage that detects the error, then render it at the user

@@ -1,10 +1,11 @@
 # Terminal editor and REPL design
 
-Status: interaction design accepted on 9 October 2026. Stages 0–2 are
+Status: interaction design accepted on 9 October 2026. Stages 0–3 are
 implemented through the internal Python launch route, with basic file execution
 and persistent REPL integration brought forward from Stage 5 during review.
-Stage 3 live diagnostics/inspection is next; bare `vln` still uses the existing
-REPL. Follow the [staged plan](terminal-editor-implementation-plan.md) for
+Live diagnostics and single-state inspection are implemented; surviving
+overload-world inspection is Stage 4. Bare `vln` still uses the existing REPL.
+Follow the [staged plan](terminal-editor-implementation-plan.md) for
 implementation progress and validation evidence.
 
 ## Current terminal implementation
@@ -13,7 +14,8 @@ Run `uv run python -m valiance.terminal_editor` from the checkout. Startup opens
 one blank numbered untitled document; preferences do not reopen files or run
 source. The Python app supports retained tabs, protected file workflows, external
 Reload/Keep prompts, syntax highlighting, wrapping, search/replace, indentation,
-resizable panes, fresh file runs and persistent REPL commands.
+resizable panes, fresh file runs, persistent REPL commands, live compiler
+diagnostics and static cursor inspection.
 
 The toolbar uses compact File, Edit, View, Run and Stop controls. Labels and tabs
 share an inset row; a separate underline marks the active tab. File/Edit/View
@@ -31,6 +33,9 @@ presentation.
 | F6 | Cycle visible panes |
 | Ctrl+F / F7 | Find / Replace |
 | F10 / Shift+F10 | Indent / dedent; avoids terminal aliases for Ctrl+[ |
+| F9 / Shift+F9 | Next / previous recoverable error, including imported files |
+| F11 | Toggle the error list; new errors leave cursor inspection active |
+| F12 | Go to the selected element's definition |
 | F5 / Alt+X / Run button | Run the active buffer, including unsaved text, in a fresh session |
 | F8 / Stop button | Stop and reap the worker; discard runtime state and retain documents/transcript |
 | REPL Enter / Ctrl+Enter | Submit a command, or provide requested program input |
@@ -44,8 +49,14 @@ the status identifies the loaded root revision independently of the active tab.
 Run reveals the REPL in the wide layout; automatic focus transfer/compact-view
 reveal remains Stage 5 work. Program input focuses the command box.
 
-The inspector currently shows “State unavailable”; live error counts, cursor
-checkpoints, diagnostic navigation and completion are not implemented. REPL Enter
+The inspector shows real compiler stack checkpoints in whitespace and selected
+overload documentation on element characters. Stack view includes function
+context and the preceding semantic operation, including variable types. Chain
+gaps follow evaluation order, not the nearest source token. Empty stacks are
+distinct from unavailable states. Syntax and import diagnostics appear in the
+status/error list and as clickable source underlines. Analysis is coalesced off
+the UI loop, cannot execute source, and discards obsolete workspace results.
+Multiple stack states remain unavailable until Stage 4; completion is Stage 6. REPL Enter
 lock, history browsing/persistence, Clear/Reset controls, transcript selection/export
 and result-specific colors also remain later-stage work. The Enter-lock shortcuts
 in the target contract below therefore differ from the current interim input
@@ -603,8 +614,12 @@ execution. It can describe a function that has never run.
 Confirmed: when the caret is on an element, hide stack state and prioritize its
 resolved overload, overload-specific documentation, and other overloads.
 Positions before and after an element show static stack state at that boundary.
-Exact insertion-point rules remain open: a terminal caret occupies a cell and
-token-edge positions must be distinguishable from being on an element.
+Implemented insertion-point rules use half-open source token spans. A token's
+first character selects its element; its end belongs to the following gap or
+adjacent token. End-of-line and trailing blank lines use the completed statement
+exit when it is available. Comments, declaration headers, syntax-error lines and
+unanalysed regions show unavailable state. These rules use source coordinates
+independently of terminal wrapping.
 
 Confirmed hit rules: when the caret occupies an element's characters, show its
 element view. In surrounding whitespace, show stack state at the corresponding
@@ -628,10 +643,11 @@ regions. Unavailable is distinct from an empty stack.
 
 Required specification work:
 
-- Remaining cursor hit rules at token edges, in comments, on declarations,
-  and at beginning/end of a block.
-- Mapping lowered execution order back to source ranges. Analysing a text
-  prefix is insufficient for chains whose source/execution order differs.
+- Stage 3 defines token edges, comments and declaration-header hit rules in the
+  [implementation plan](terminal-editor-implementation-plan.md). Remaining
+  control-flow block edges use unavailable fallbacks until full tracing.
+- Source/evaluation-order mapping is implemented through parser sidecars and
+  compiler checkpoints; prefix analysis is not used for chain inspection.
 - Function scope: parameters, inferred inputs, local variables, return effects,
   generics, nested functions, and branch-specific possibilities.
 - Distinguish empty stack, unavailable analysis, unreachable code, and multiple

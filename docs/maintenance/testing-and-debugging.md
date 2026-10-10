@@ -26,7 +26,10 @@ The repository uses `unittest`. Important suites include:
 - `tests/test_terminal_editor.py`: document/file workflows, Textual Pilot keys,
   mouse dismissal, first-frame dropdown placement, responsive panes and real
   spawned-session execution/Stop/input/output boundaries. Stage 0 probe and
-  production editor behavior are covered separately within this module.
+  production editor behavior are covered separately within this module. Compiler
+  inspection checks cover evaluation-order gaps, variable/function types, source
+  recovery, import overlays/docs/navigation, stale-request coalescing, and clickable
+  diagnostics without execution.
 - `tests/test_compilation_database.py`: overlays, dependency invalidation and
   captured workspace snapshots used by fresh editor loads.
 - `tests/test_source_tools.py`: tidy and documentation generation.

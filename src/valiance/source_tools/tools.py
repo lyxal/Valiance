@@ -121,10 +121,11 @@ def extract_documented_defines(
     source: str,
     *,
     source_path: str = "<source>",
+    program: Sequence[ASTNode] | None = None,
 ) -> tuple[DefinitionReference, ...]:
     """Extract documented definitions from one parsed source file."""
 
-    program = parse(source)
+    program = parse(source) if program is None else program
     lines = source.splitlines()
     definitions: list[DefinitionReference] = []
     for node in _walk_ast(program):

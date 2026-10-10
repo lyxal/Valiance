@@ -317,14 +317,23 @@ class Analyser:
         source_file: Path | None = None,
         lint_registry: LintRegistry | None = None,
         _prelude: _AnalysisPrelude | None = None,
+        observer: Callable[[Analyser, ASTNode, BranchSet, BranchSet], None] | None = None,
+        recover_declarations: bool = False,
     ):
-        """Initialize an analysis session with its environment and module context."""
+        """Initialize an analysis session with its environment and module context.
+
+        Editor consumers may observe complete node transformations and recover
+        independent declarations. Both are opt-in; ordinary compilation retains
+        its existing failure and branch semantics.
+        """
         self.env = env if env is not None else default_environment().child_scope()
         self.module_loader = module_loader or ModuleLoader()
         self.source_file = source_file
         self.lint_registry = lint_registry or DEFAULT_LINT_REGISTRY
         self._prelude = _prelude or _AnalysisPrelude(prelude_seed(source_file))
         self._owns_prelude = _prelude is None
+        self.observer = observer
+        self.recover_declarations = recover_declarations
         self.diagnostics: list[str] = []
         self.warnings: list[str] = []
         self.lints: list[str] = []
@@ -716,9 +725,15 @@ class Analyser:
         current = initial
 
         for node in nodes:
+            previous = current
             current = self.analyse_node(current, node)
 
             if not current:
+                if self.recover_declarations and isinstance(
+                    node, (DefineNode, ImportNode, ObjectNode, LinkNode, TagDeclarationNode)
+                ):
+                    current = previous
+                    continue
                 break
 
         return current
@@ -730,8 +745,23 @@ class Analyser:
             if branch.failed or branch.break_type is not None or branch.terminal:
                 next_branches.append(branch)
                 continue
-            next_branches.extend(self._analyse_node_from_branch(branch, node))
-        return BranchSet.collect(next_branches)
+            try:
+                next_branches.extend(self._analyse_node_from_branch(branch, node))
+            except Exception as error:
+                from valiance.analysis.diagnostics import DiagnosticError
+
+                if not (
+                    self.recover_declarations
+                    and isinstance(node, ImportNode)
+                    and isinstance(error, DiagnosticError)
+                ):
+                    raise
+                self._diagnose(str(error), node)
+                next_branches.append(branch)
+        result = BranchSet.collect(next_branches)
+        if self.observer is not None:
+            self.observer(self, node, branches, result)
+        return result
 
     def analyse_from(
         self,
@@ -781,6 +811,8 @@ class Analyser:
             source_file=self.source_file,
             lint_registry=self.lint_registry,
             _prelude=self._prelude,
+            observer=self.observer,
+            recover_declarations=self.recover_declarations,
         )
         child._friendly_owners = self._friendly_owners
         child._scope_depth = self._scope_depth + 1

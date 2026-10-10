@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from rich.text import Text
 from textual import on
+from textual.message import Message
 from textual.widgets import TextArea
 
 from valiance.parsing.lexer import TokenKind, lex_with_diagnostics
@@ -28,6 +29,24 @@ class SourceEditor(TextArea):
         TokenKind.STRING: "#d5a1c8",
         TokenKind.OP: "#8bb9df",
     }
+
+    class SourceClicked(Message):
+        """Report a source click after TextArea has mapped wrapping and tab cells."""
+
+        def __init__(self, editor, offset: int) -> None:
+            """Carry the editor identity and native source offset to the controller."""
+            super().__init__()
+            self.editor = editor
+            self.offset = offset
+
+    def on_click(self) -> None:
+        """Retain native selection and expose source diagnostic navigation."""
+        row, column = self.cursor_location
+        offset = (
+            sum(len(line) for line in self.text.splitlines(keepends=True)[:row])
+            + column
+        )
+        self.post_message(self.SourceClicked(self, offset))
 
     def __init__(self, text: str = "", **kwargs) -> None:
         """Configure two-space editing without installing a second parser."""

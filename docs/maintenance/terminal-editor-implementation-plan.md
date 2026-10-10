@@ -7,7 +7,8 @@ resize-discoverability adjustment. See the
 remaining validation. Stage 1 service extraction and independent state models
 are implemented. Stage 2's document editor is available through the internal
 launch route, including basic file runs/persistent commands pulled forward from
-Stage 5 during feedback. Stage 3 is next; Stage 5 is not complete. Public CLI
+Stage 5 during feedback. Stage 3 diagnostics/basic inspection are implemented;
+Stage 4 is next, and Stage 5 is not complete. Public CLI
 switching has not started.
 
 The [behavior specification](terminal-editor-design.md) is the product contract;
@@ -352,6 +353,56 @@ stack. Source changes invalidate facts across dependent files; delayed workers
 cannot restore stale facts. Inspector never executes code. Codegen preparation
 errors are included in the load gate, not discovered after session reset.
 
+Stage 3 implementation (10 October 2026):
+
+- `parsing/parser.py` retains operation spans, statement extents and chain-gap
+  ownership in `ParseResult`. These source sidecars do not alter raw AST equality,
+  lowering order, executable AST or serialization. Gap ownership spans reversed
+  chains, literal pushes and forward/pipeline segments without fixed layouts.
+- `analysis/inspection.py` builds immutable cursor indexes and diagnostics against
+  private captured root/open overlays/import bytes. An optional analyser observer
+  records real node transformations, including child function analysis. Independent
+  declaration recovery is editor-only. Invalid functions cannot expose their
+  provisional body facts; executable failure does not fabricate following stacks.
+  Recovering each captured source collects syntax/type diagnostics even when a
+  different import failed. Ordinary compiler/session behavior remains unchanged.
+- `source_queries.py` shares selected-overload docs and declaration lookup with
+  the LSP, using owned loaders and unsaved source overlays. Recoverable documentation
+  extraction reuses parser products. Import query analysis is cached by source text.
+- `terminal_editor/analysis.py` coalesces requests behind one background compiler
+  owner, prioritizes the current root, and rejects obsolete root/workspace/disk
+  products. Open import edits clear facts immediately; unopened saved dependencies
+  are checked off the UI loop. Pending facts are unavailable immediately; “Updating…”
+  appears after 500 ms. Cursor movement queries indexes without executing or
+  reanalysing. Runtime execution continues in its separately owned process.
+- Stack view renders top-first, distinguishes empty/unavailable, and supplies
+  enclosing function context plus the preceding operation/type. Element characters
+  select overload/docs instead of stack; half-open token ends and whitespace use
+  checkpoints, including the required Circle/Real chain example. Declaration
+  headers, comments, syntax-error lines and unanalysed regions are unavailable.
+  Blank lines after a completed top-level statement retain its exit stack.
+- Error counts/underlines and an explicit keyboard/mouse error list are connected.
+  F9/Shift+F9 navigate recoverable diagnostics and open/reuse imported files; F11
+  toggles the list, and F12 follows selected declarations, including untitled local
+  definitions. F10/Shift+F10 retain indentation. New errors do not steal focus.
+  Expanded/pinned error interaction and completion remain Stage 6; multiple states
+  and survivor-world selection remain Stage 4. Existing session preparation tests
+  cover code-generation failure before fresh-session commit.
+
+Stage 3 validation: final full discovery ran 2,176 tests in 262.8 seconds:
+2,165 passed, with only the same 11 native fixture DLL-loading errors carried
+from Stages 0–1. All terminal editor, parser, analyser, LSP, source-tool, session,
+workspace and production-docstring checks passed. The eight new compiler/product,
+coalescing/stale-result and headless cursor/diagnostic/navigation checks are in
+the existing `tests/test_terminal_editor.py`. An independent fundamental-program
+run passed all 46 tests; `test_programs.py` was unchanged. The final LSP/navigation
+run passed 38 tests, including clicking a source underline, and the slow-save/
+shutdown regression plus inspector flow passed two focused checks. Ruff check
+and format pass for the new inspection/adapter/shared-query modules and frontend
+modules. Existing unrelated lint findings in compiler/test files were not
+expanded into this stage. Stage 3's exit gate is satisfied with the existing
+native-validation limitation and physical-terminal review carried forward.
+
 ### Stage 4 — surviving overload-world traces
 
 Add optional analyser trace collection with stable semantic operation/boundary
@@ -475,6 +526,6 @@ to satisfy a new-editor feature, and terminal state is restored on all exits.
 
 These are explicit implementation decisions with owners and gates, not reasons
 to reopen already confirmed interactions. Stage 0 was accepted after user review;
-Stages 1–2 are implemented and Stage 3 live diagnostics/basic inspection is next.
+Stages 1–3 are implemented and Stage 4 surviving overload-world inspection is next.
 The Stage 5 work brought forward does not close its remaining input, presentation
 and native-lifecycle gates.

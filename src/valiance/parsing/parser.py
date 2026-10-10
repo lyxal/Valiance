@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 
+from valiance.analysis.diagnostics import DiagnosticError
 from valiance.asts import (
     AnnotationNode,
     AssertNode,
@@ -23,8 +24,8 @@ from valiance.asts import (
     ElementTagDeclarationNode,
     EnumMemberNode,
     ExpressionPatternNode,
-    ExtractPatternNode,
     ExtensionPatternRule,
+    ExtractPatternNode,
     FieldAccessNode,
     FieldSetNode,
     FileLintSuppressionNode,
@@ -42,23 +43,23 @@ from valiance.asts import (
     IndexSelector,
     IndexSetNode,
     IndexUpdateNode,
-    ListLiteralNode,
-    ListPatternNode,
-    LinkNode,
     LinkedFieldNode,
+    LinkNode,
     LinkTypeNode,
     LintSuppressionNode,
+    ListLiteralNode,
+    ListPatternNode,
     LiteralPatternNode,
     MatchCaseNode,
     MatchNode,
-    MinimumRankNode,
     MatchPatternNode,
+    MinimumRankNode,
     NumberLiteralNode,
     ObjectFieldNode,
     ObjectNode,
+    OrPatternNode,
     OverloadSignature,
     PopNNode,
-    OrPatternNode,
     RecordLiteralNode,
     RestPatternNode,
     ReturnNode,
@@ -83,22 +84,20 @@ from valiance.asts import (
     WhileNode,
     WildcardPatternNode,
 )
-from valiance.analysis.diagnostics import DiagnosticError
 from valiance.parsing.lexer import LexError, Token, TokenKind, lex, lex_with_diagnostics
 from valiance.vtypes import (
+    FFI,
     AnonymousTrait,
     AnonymousTraitRequirement,
-    NoVec,
-    ExactType,
     C,
     CollectionType,
     DataTag,
     ElementTag,
     Exact,
     ExactTags,
-    NoVecType,
+    ExactType,
+    FFINamedType,
     Field,
-    FFI,
     Fn,
     FunctionType,
     I,
@@ -108,8 +107,9 @@ from valiance.vtypes import (
     ListRuggedType,
     N,
     NominalType,
-    FFINamedType,
     NoneType,
+    NoVec,
+    NoVecType,
     Overload,
     RankVariable,
     Row,
@@ -151,11 +151,32 @@ class ParseErrors(ParseError):
 
 
 @dataclass(frozen=True, slots=True)
+class SourceSpan:
+    """Exact source extent of a parsed operation before chain lowering."""
+
+    node: ASTNode
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
+class ChainBoundary:
+    """Whitespace mapped to the operation evaluated before a chain gap."""
+
+    node: ASTNode
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
 class ParseResult:
     """Best-effort syntax result and every diagnostic produced while recovering."""
 
     nodes: tuple[ASTNode, ...]
     diagnostics: tuple[DiagnosticError, ...]
+    spans: tuple[SourceSpan, ...] = ()
+    boundaries: tuple[ChainBoundary, ...] = ()
+    regions: tuple[SourceSpan, ...] = ()
 
 
 _EXPANDED_SKIP = object()
@@ -201,7 +222,13 @@ def parse_with_diagnostics(source: str) -> ParseResult:
             key=lambda item: (item.line or 0, item.column or 0),
         )
     )
-    return ParseResult(tuple(nodes), diagnostics)
+    return ParseResult(
+        tuple(nodes),
+        diagnostics,
+        tuple(parser.spans.values()),
+        tuple(parser.boundaries),
+        tuple(parser.regions),
+    )
 
 
 def parse_type(source: str) -> Type:
@@ -228,6 +255,9 @@ class Parser:
         self.recover = recover
         self.diagnostics: list[ParseError] = []
         self.recovered_nodes: list[ASTNode] = []
+        self.spans: dict[int, SourceSpan] = {}
+        self.boundaries: list[ChainBoundary] = []
+        self.regions: list[SourceSpan] = []
         self._allow_variadic_tuple_type = False
         self._where_clause_depth = 0
 
@@ -241,6 +271,13 @@ class Parser:
                 statement = self._statement()
                 if not statement and self.index == before:
                     self._error("expected a statement or declaration")
+                for node in statement:
+                    self.spans.setdefault(
+                        id(node),
+                        SourceSpan(
+                            node, self.tokens[before].offset, self._current.offset
+                        ),
+                    )
                 nodes.extend(statement)
                 self.recovered_nodes = list(nodes)
                 self._skip_separators()
@@ -261,7 +298,16 @@ class Parser:
                     break
         return nodes
 
-    def _statement(self) -> tuple[ASTNode, ...]:
+    def _statement(self):
+        """Retain complete statement exits independently of reversed operands."""
+        start = self._current.offset
+        nodes = self._parse_statement()
+        if nodes:
+            end = self._token_end(self._previous)
+            self.regions.append(SourceSpan(nodes[-1], start, end))
+        return nodes
+
+    def _parse_statement(self) -> tuple[ASTNode, ...]:
         """Parse statement from the current token stream."""
         lint_directive = self._lint_suppression_directive()
         if lint_directive is not None:
@@ -1370,7 +1416,7 @@ class Parser:
                 break
             if self._match(TokenKind.PIPE):
                 nodes.extend(
-                    _lower_chain_segment(
+                    self._lower_chain_segment(
                         segment,
                         reverse_elements=not bool(self._where_clause_depth),
                     )
@@ -1381,14 +1427,14 @@ class Parser:
             segment.append(piece)
             if piece.breaks_chain:
                 nodes.extend(
-                    _lower_chain_segment(
+                    self._lower_chain_segment(
                         segment,
                         reverse_elements=not bool(self._where_clause_depth),
                     )
                 )
                 segment.clear()
         nodes.extend(
-            _lower_chain_segment(
+            self._lower_chain_segment(
                 segment,
                 reverse_elements=not bool(self._where_clause_depth),
             )
@@ -1611,7 +1657,7 @@ class Parser:
                     break
             if self._match(TokenKind.PIPE):
                 nodes.extend(
-                    _lower_chain_segment(
+                    self._lower_chain_segment(
                         segment,
                         reverse_elements=not bool(self._where_clause_depth),
                     )
@@ -1622,19 +1668,19 @@ class Parser:
             segment.append(piece)
             if piece.breaks_chain:
                 nodes.extend(
-                    _lower_chain_segment(
+                    self._lower_chain_segment(
                         segment,
                         reverse_elements=not bool(self._where_clause_depth),
                     )
                 )
                 segment.clear()
         nodes.extend(
-            _lower_chain_segment(
+            self._lower_chain_segment(
                 segment,
                 reverse_elements=not bool(self._where_clause_depth),
             )
         )
-        return tuple(nodes)
+        return self._record_boundaries(tuple(nodes))
 
     def _chain_segment_until(
         self,
@@ -1649,13 +1695,44 @@ class Parser:
             if piece.breaks_chain:
                 break
         return tuple(
-            _lower_chain_segment(
+            self._lower_chain_segment(
                 segment,
                 reverse_elements=not bool(self._where_clause_depth),
             )
         )
 
+    @staticmethod
+    def _token_end(token):
+        """Return the lexical end without consuming following whitespace."""
+        width = len(token.raw if token.raw is not None else token.value)
+        return token.offset + width + (2 if token.kind is TokenKind.STRING else 0)
+
+    def _lower_chain_segment(self, segment, *, reverse_elements=True):
+        """Retain source gap ownership alongside the normal lowered AST."""
+        lowered = _lower_chain_segment(segment, reverse_elements=reverse_elements)
+        return self._record_boundaries(lowered)
+
+    def _record_boundaries(self, lowered):
+        """Map adjacent evaluated operations, including boundaries between segments."""
+        positioned = [node for node in lowered if id(node) in self.spans]
+        for left, right in zip(positioned, positioned[1:], strict=False):
+            a, b = self.spans[id(left)], self.spans[id(right)]
+            start, end = (b.end, a.start) if a.start > b.start else (a.end, b.start)
+            if start < end:
+                self.boundaries.append(ChainBoundary(left, start, end))
+        return lowered
+
     def _term(self) -> _ChainPiece:
+        """Record complete operand spans, including groups and explicit arguments."""
+        start = self._current.offset
+        piece = self._parse_term()
+        for node in piece.nodes:
+            self.spans[id(node)] = SourceSpan(
+                node, start, self._token_end(self._previous)
+            )
+        return piece
+
+    def _parse_term(self) -> _ChainPiece:
         """Parse term from the current token stream."""
         if self._match(TokenKind.NUMBER):
             token = self._previous
@@ -2040,7 +2117,7 @@ class Parser:
             selector_piece = self._term()
             if not selector_piece.is_element:
                 self._error("extend selector must be an element")
-            selector_body = tuple(_lower_chain_segment((selector_piece,)))
+            selector_body = tuple(self._lower_chain_segment((selector_piece,)))
             return ElementExtension(
                 selector=FunctionNode(body=selector_body, location=_loc(start)),
                 location=_loc(start),

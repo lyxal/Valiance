@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from rich.text import Text
 from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.document._document import Selection
 from textual.geometry import Size
 from textual.message import Message
@@ -16,23 +17,40 @@ from textual.widgets import (
     Button,
     ContentSwitcher,
     Input,
+    Markdown,
+    OptionList,
     RichLog,
     Static,
     Tab,
     Tabs,
     TextArea,
 )
+from textual.widgets.option_list import Option
 
+from .analysis import EditorAnalysis
 from .dialogs import ChoiceDialog, MenuDialog, PathDialog
 from .divider import PaneDivider
 from .editing import DocumentEditor
+from .editor import SourceEditor
 from .files import DiskConflict, DocumentFiles, EditorPreferences, ExternalChange
 from .models import DocumentView, EditorState, EditorWorkspace
 from .runtime import CommandInput, EditorRuntime
 
 
-class InspectorPane(Static, can_focus=True):
-    """Keep the unavailable inspector reachable by keyboard during editor stages."""
+class InspectorPane(VerticalScroll, can_focus=True):
+    """Scroll static compiler facts and expose diagnostics without stealing focus."""
+
+    def compose(self) -> ComposeResult:
+        """Keep stack facts, selected documentation and error navigation independent."""
+        yield Button("Errors (F11)", id="show-errors")
+        yield OptionList(id="error-list")
+        yield Static("State unavailable", id="inspection-facts", markup=False)
+        yield Markdown(id="inspection-docs")
+        yield Static(id="diagnostic-detail", markup=False)
+
+    def on_unmount(self) -> None:
+        """Stop presentation timers as soon as permanent inspector teardown starts."""
+        self.app.analysis.closed = True
 
 
 class EditorApp(App):
@@ -58,6 +76,10 @@ class EditorApp(App):
         Binding("f8", "stop_execution", "Stop", priority=True),
         Binding("f6", "cycle_panes", "Next pane", priority=True),
         Binding("f7", "search(True)", "Replace", priority=True),
+        Binding("f9", "next_diagnostic(1)", "Next error", priority=True),
+        Binding("shift+f9", "next_diagnostic(-1)", "Previous error", priority=True),
+        Binding("f11", "show_errors", "Errors", priority=True),
+        Binding("f12", "definition", "Definition", priority=True),
         Binding("ctrl+c", "copy_selection", "Copy", priority=True),
         Binding("escape", "dismiss_search", "Close search"),
     ]
@@ -96,6 +118,17 @@ class EditorApp(App):
         self._dismissed_changes: dict[str, bytes | None] = {}
         self._search_document: str | None = None
         self._was_compact = False
+        self.analysis = EditorAnalysis(self)
+        self._errors_open = False
+        self._diagnostic_index = -1
+        self._diagnostics_product = None
+        self._inspection_key = None
+        self._inspection_documentation = ""
+
+    @property
+    def editor_screen(self):
+        """Keep background analysis attached to the editor while modal screens open."""
+        return self.screen_stack[0]
 
     @property
     def workspace(self) -> EditorWorkspace:
@@ -105,7 +138,7 @@ class EditorApp(App):
     @property
     def source_editor(self) -> DocumentEditor:
         """Return the active mounted editor without reconstructing its undo history."""
-        return self.query_one(
+        return self.editor_screen.query_one(
             f"#source-{self.workspace.active_document}", DocumentEditor
         )
 
@@ -142,7 +175,7 @@ class EditorApp(App):
             ):
                 yield self._editor(self.workspace.active_document)
             yield PaneDivider(vertical=True, id="state-divider")
-            yield InspectorPane("State unavailable", id="inspector")
+            yield InspectorPane(id="inspector")
         yield PaneDivider(vertical=False, id="repl-divider")
         with Vertical(id="repl"):
             yield RichLog(max_lines=300, wrap=True, markup=False, id="transcript")
@@ -163,6 +196,8 @@ class EditorApp(App):
         self._labels()
         self.source_editor.focus()
         self._status()
+        self.analysis.poll()
+        self.set_interval(0.1, self.analysis.poll)
         if self.runtime:
             self.runtime.start()
             self.set_interval(0.05, self.runtime.poll)
@@ -221,9 +256,9 @@ class EditorApp(App):
         row, column = self.source_editor.cursor_location
         name = str(document.path) if document.path else document.suggested_name
         state = "unsaved" if document.dirty else "saved" if document.path else "new"
-        self.query_one("#status", Static).update(
+        self.editor_screen.query_one("#status", Static).update(
             f"{name} · Ln {row + 1}, Col {column + 1} · {state} · "
-            f"Errors: unavailable · {self._session_label()}"
+            f"Errors: {self.analysis.label} · {self._session_label()}"
         )
 
     def _session_label(self) -> str:
@@ -278,6 +313,7 @@ class EditorApp(App):
         """Reap the session process on every application exit."""
         if self.runtime is not None:
             await self.runtime.close()
+        await self.analysis.close()
 
     @on(TextArea.Changed)
     def source_changed(self, message: TextArea.Changed) -> None:
@@ -287,8 +323,10 @@ class EditorApp(App):
             document_id = editor.id.removeprefix("source-")
             if document_id in self.workspace.documents:
                 self.state.edit_document(document_id, editor.text)
+                self.analysis.poll()
                 self._labels()
                 self._status()
+                self.refresh_inspection()
 
     @on(TextArea.SelectionChanged)
     def selection_changed(self, message: TextArea.SelectionChanged) -> None:
@@ -307,6 +345,7 @@ class EditorApp(App):
                     ),
                 )
                 self._status()
+                self.refresh_inspection()
 
     def _labels(self) -> None:
         """Disambiguate matching basenames and mark dirty tabs."""
@@ -353,7 +392,211 @@ class EditorApp(App):
         self._search_document = None
         self._layout()
         self.source_editor.focus()
+        self.analysis.poll()
         self._status()
+
+    def refresh_inspection(self) -> None:
+        """Render matching compiler indexes; caret movement never reanalyses source."""
+        if not self.is_mounted or not self.editor_screen.query(
+            f"#source-{self.workspace.active_document}"
+        ):
+            return
+        if self.analysis.closed or not all(
+            self.editor_screen.query(selector)
+            for selector in (
+                "#show-errors",
+                "#error-list",
+                "#inspection-facts",
+                "#inspection-docs",
+                "#diagnostic-detail",
+                "#status",
+            )
+        ):
+            return
+        product = self.analysis.snapshot
+        presentation_key = (
+            id(product),
+            self._cursor_offset(),
+            self.analysis.label,
+            self.analysis.failure,
+            self._errors_open,
+            self.workspace.active_document,
+        )
+        if presentation_key == self._inspection_key:
+            return
+        self._inspection_key = presentation_key
+        diagnostics = product.diagnostics if product else ()
+        self.editor_screen.query_one("#show-errors").display = bool(diagnostics)
+        self.editor_screen.query_one("#error-list").display = (
+            bool(diagnostics) and self._errors_open
+        )
+        if product is not self._diagnostics_product:
+            self._diagnostics_product = product
+            self._diagnostic_index = -1
+            self.editor_screen.query_one("#diagnostic-detail", Static).update("")
+            self._populate_errors(diagnostics)
+        facts_widget = self.editor_screen.query_one("#inspection-facts", Static)
+        docs_widget = self.editor_screen.query_one("#inspection-docs", Markdown)
+        if product is None:
+            facts_widget.update(
+                self.analysis.failure
+                or (
+                    "Updating…"
+                    if self.analysis.label == "Updating…"
+                    else "State unavailable"
+                )
+            )
+            docs_widget.display = False
+        else:
+            facts = product.at(self._cursor_offset())
+            if facts.element:
+                facts_widget.update("Selected element\n" + facts.element)
+            else:
+                lines = ["Function\n" + facts.function, ""] if facts.function else []
+                lines.append("Stack")
+                lines.extend(
+                    facts.stack
+                    if facts.stack
+                    else ("Empty stack",)
+                    if facts.stack == ()
+                    else ("State unavailable",)
+                )
+                if facts.last_element and facts.stack is not None:
+                    lines.extend(("", "Last Element", facts.last_element))
+                facts_widget.update("\n".join(lines))
+            docs_widget.display = bool(facts.documentation)
+            if (
+                facts.documentation
+                and facts.documentation != self._inspection_documentation
+            ):
+                docs_widget.update(facts.documentation)
+                self._inspection_documentation = facts.documentation
+        self._status()
+
+    def _populate_errors(self, diagnostics) -> None:
+        """Replace error rows synchronously without cancelling widget removal tasks."""
+        listing = self.editor_screen.query_one("#error-list", OptionList)
+        listing.clear_options()
+        for index, diagnostic in enumerate(diagnostics):
+            location = diagnostic.location
+            name = diagnostic.source_file.name if diagnostic.source_file else "Untitled"
+            coordinate = f":{location.line}:{location.column}" if location else ""
+            listing.add_option(
+                Option(
+                    Text(f"{name}{coordinate} · {diagnostic.message}"),
+                    id=f"diagnostic-{index}",
+                )
+            )
+
+    def _cursor_offset(self) -> int:
+        """Map Unicode source coordinates without involving wrapped terminal cells."""
+        row, column = self.source_editor.cursor_location
+        lines = self.source_editor.text.splitlines(keepends=True)
+        return sum(len(line) for line in lines[:row]) + column
+
+    def action_show_errors(self) -> None:
+        """Toggle explicit error browsing while leaving new errors non-modal."""
+        if self.analysis.snapshot is None or not self.analysis.snapshot.diagnostics:
+            return
+        self._errors_open = not self._errors_open
+        self.inspector_requested = True
+        self.compact_view = "state"
+        self._layout()
+        self.refresh_inspection()
+        if self._errors_open:
+            self.editor_screen.query_one("#error-list").focus()
+
+    @on(Button.Pressed, "#show-errors")
+    def show_errors_pressed(self) -> None:
+        """Expose the same diagnostic list through mouse and keyboard actions."""
+        self.action_show_errors()
+
+    @on(OptionList.OptionSelected, "#error-list")
+    def diagnostic_selected(self, message: OptionList.OptionSelected) -> None:
+        """Navigate only rows belonging to the accepted analysis revision."""
+        self._navigate_diagnostic(int(message.option.id.removeprefix("diagnostic-")))
+
+    def action_next_diagnostic(self, delta: int = 1) -> None:
+        """Cycle all recoverable errors, including imported-file diagnostics."""
+        product = self.analysis.snapshot
+        if product and product.diagnostics:
+            self._navigate_diagnostic(
+                (self._diagnostic_index + delta) % len(product.diagnostics)
+            )
+
+    @work(exclusive=True, group="diagnostic-navigation")
+    async def _navigate_diagnostic(self, index: int) -> None:
+        """Activate the real diagnostic file and select its source coordinate."""
+        product = self.analysis.snapshot
+        if product is None or index >= len(product.diagnostics):
+            return
+        diagnostic = product.diagnostics[index]
+        self._diagnostic_index = index
+        if diagnostic.source_file is not None:
+            try:
+                document = self.files.open(diagnostic.source_file)
+            except (OSError, UnicodeError) as error:
+                self.notify(str(error), severity="error")
+                return
+            await self._mount_document(document.id)
+        else:
+            self._activate(product.workspace.root.document_id)
+        if diagnostic.location:
+            self.source_editor.move_cursor(
+                (diagnostic.location.line - 1, diagnostic.location.column - 1)
+            )
+            self.source_editor.scroll_cursor_visible()
+        detail = diagnostic.message + (
+            "\n\n" + diagnostic.help if diagnostic.help else ""
+        )
+        self.editor_screen.query_one("#diagnostic-detail", Static).update(detail)
+        self.inspector_requested = True
+        self._layout()
+
+    @on(SourceEditor.SourceClicked)
+    def source_diagnostic_clicked(self, message: SourceEditor.SourceClicked) -> None:
+        """Use TextArea's native mouse mapping to select an underlined error."""
+        product = self.analysis.snapshot
+        if product is None:
+            return
+        editor = message.editor
+        document = self.workspace.documents[editor.id.removeprefix("source-")]
+        for index, diagnostic in enumerate(product.diagnostics):
+            if diagnostic.source_file != document.path or diagnostic.location is None:
+                continue
+            lines = editor.text.splitlines(keepends=True)
+            start = (
+                sum(len(line) for line in lines[: diagnostic.location.line - 1])
+                + diagnostic.location.column
+                - 1
+            )
+            spans = [span for span in editor._emphasis if span.start == start]
+            if any(span.start <= message.offset < span.end for span in spans):
+                self._navigate_diagnostic(index)
+                return
+
+    @work(exclusive=True, group="definition-navigation")
+    async def action_definition(self) -> None:
+        """Navigate to the selected declaration through shared queries."""
+        product = self.analysis.snapshot
+        if product is None:
+            return
+        target = product.at(self._cursor_offset()).target
+        if target is None:
+            return
+        path, row, column = target
+        if path is None:
+            self._activate(product.workspace.root.document_id)
+            self.source_editor.move_cursor((row, column))
+            return
+        try:
+            document = self.files.open(path)
+        except (OSError, UnicodeError) as error:
+            self.notify(str(error), severity="error")
+            return
+        await self._mount_document(document.id)
+        self.source_editor.move_cursor((row, column))
+        self.source_editor.scroll_cursor_visible()
 
     @on(Tabs.TabActivated)
     def tab_activated(self, message: Tabs.TabActivated) -> None:
