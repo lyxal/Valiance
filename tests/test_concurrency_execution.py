@@ -442,9 +442,9 @@ class FFIForeignThreadCallbackTests(unittest.TestCase):
                 )
             build_shared_library(source_path, library_path, threads=True)
             source = f'''import {{ffi("{library_path}") as cb}}
-link cb.apply_foreign(:Function[int -> int]) -> &int as applyForeign
-$task = fn -> int =>
-  fn (value: int) -> int => $value end
+link cb.apply_foreign(:Function[&int -> &int]) -> &int as applyForeign
+$task = fn -> &int =>
+  fn (value: &int) -> &int => $value end
   applyForeign
 end | spawn
 $task wait
