@@ -6,6 +6,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 from itertools import count
+from typing import TYPE_CHECKING
 
 import valiance.vtypes as T
 from valiance.asts import (
@@ -16,6 +17,9 @@ from valiance.vtypes.symbols import Symbol
 
 from . import transformations as _ops
 from .variables import BranchVariables
+
+if TYPE_CHECKING:
+    from valiance.analysis.traces import Trace
 
 _branch_ids = count(1)
 
@@ -70,6 +74,7 @@ class AnalysisBranch:
     return_exact: bool = False
     errors: tuple[Diagnostic, ...] = ()
     warnings: tuple[Diagnostic, ...] = ()
+    trace: Trace | None = field(default=None, compare=False, hash=False, repr=False)
     origin: int = field(default_factory=lambda: next(_branch_ids))
 
     @property
@@ -86,6 +91,14 @@ class AnalysisBranch:
     def terminal(self) -> bool:
         """Return whether this path cannot continue because it contains ``Never``."""
         return self.return_stack is not None or any(_ops._is_never(typ) for typ in self.stack)
+
+    def with_traces(self, *branches) -> AnalysisBranch:
+        """Retain provenance when semantic control-flow states converge."""
+        from valiance.analysis.traces import join_traces
+
+        if self.trace is None and not any(branch.trace for branch in branches):
+            return self
+        return replace(self, trace=join_traces(self.trace, *(b.trace for b in branches)))
 
     def with_stack(self, stack: T.TypeStack) -> AnalysisBranch:
         """Return a branch with its type stack replaced."""
@@ -230,6 +243,7 @@ class AnalysisBranch:
             return self
         return replace(
             self,
+            trace=self.trace.refine(old, new) if self.trace is not None else None,
             stack=_ops._refine_stack(self.stack, old, new),
             return_stack=(
                 None
@@ -258,6 +272,9 @@ class AnalysisBranch:
         """Propagate a call constraint into enclosing function input facts."""
         return replace(
             self,
+            trace=self.trace.refine(old, new, method="refine_input_requirement")
+            if self.trace is not None
+            else None,
             inputs=tuple(
                 _ops._refine_input_requirement(item, old, new)
                 for item in self.inputs
@@ -292,6 +309,11 @@ class AnalysisBranch:
         )
         return replace(
             self,
+            trace=self.trace.refine(
+                old, new, method="refine_named_input_requirement", name=name
+            )
+            if self.trace is not None
+            else None,
             inputs=inputs,
             variables=replace(self.variables, parameters=parameters),
             cycle_params=tuple(
@@ -384,13 +406,15 @@ class BranchSet:
     def collect(cls, branches: Iterable[AnalysisBranch]) -> BranchSet:
         """Flatten, diagnose, and deduplicate a collection of analysis branches."""
         unique: list[AnalysisBranch] = []
-        seen: set[AnalysisBranch] = set()
+        seen: dict[AnalysisBranch, int] = {}
 
         for branch in branches:
             if branch in seen:
+                index = seen[branch]
+                unique[index] = unique[index].with_traces(branch)
                 continue
 
-            seen.add(branch)
+            seen[branch] = len(unique)
             unique.append(branch)
 
         return cls(tuple(unique))

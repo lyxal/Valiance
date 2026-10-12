@@ -822,7 +822,7 @@ def _join_try_output(
         ctx,
     )
     return (
-        _calls._refine_branch_like(branch, joined)
+        _calls._refine_branch_like(branch, joined).with_traces(output)
         .with_stack(stack)
         .with_variables(variables)
         .with_element_tags(output.element_tags)
@@ -905,7 +905,7 @@ def _join_match_output(
         else joined
     )
     return replace(
-        base.with_stack(stack)
+        base.with_traces(candidate).with_stack(stack)
         .with_variables(variables)
         .with_element_tags(candidate.element_tags)
         .with_data_element_uses(candidate.data_element_uses),

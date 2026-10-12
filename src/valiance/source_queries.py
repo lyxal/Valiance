@@ -47,6 +47,61 @@ class SourceQueries:
         self.module_loader = module_loader or ModuleLoader()
         self._query_sources = {}
 
+    def _node_view(self, uri, *, typed=False):
+        """Index one installed syntax product once, invalidating on replacement."""
+        products = self.typed_programs if typed else self.programs
+        product = products.get(uri)
+        cache = getattr(self, "_node_views", None)
+        if cache is None:
+            cache = self._node_views = {}
+        key = (uri, typed)
+        cached = cache.get(key)
+        if cached is not None and cached[0] is product:
+            return cached[1]
+        if key not in cache and len(cache) >= 16:
+            del cache[next(iter(cache))]
+        kind = TypedNode if typed else ASTNode
+        view = _NodeIndex(_dataclass_nodes(product, kind), kind)
+        cache[key] = (product, view)
+        return view
+
+    def _documented_overloads(self, source: str, name: str):
+        """Reuse bounded source documentation products across world queries."""
+        cache = getattr(self, "_documentation_cache", None)
+        if cache is None:
+            cache = self._documentation_cache = {}
+        if source not in cache:
+            if len(cache) >= 8:
+                del cache[next(iter(cache))]
+            cache[source] = tuple(
+                (
+                    item.name,
+                    item.signature,
+                    _docstring_markdown(item.docstring),
+                    item.line,
+                )
+                for item in extract_documented_defines(
+                    source, program=parse_with_diagnostics(source).nodes
+                )
+            )
+        return tuple(
+            (signature, doc)
+            for item_name, signature, doc, _ in cache[source]
+            if item_name == name
+        )
+
+    def _declaration_documentation(self, source: str, name: str, line: int) -> str:
+        """Reuse exact declaration docs, including an intentionally absent docstring."""
+        self._documented_overloads(source, name)
+        return next(
+            (
+                doc
+                for item_name, _, doc, row in self._documentation_cache[source]
+                if item_name == name and row == line
+            ),
+            "",
+        )
+
     def _source_text(self, path):
         """Prefer editor overlays and otherwise read through the owned loader."""
         uri = path.as_uri()
@@ -83,7 +138,7 @@ class SourceQueries:
 
         if word.startswith("$"):
             variable_type = _variable_type_at(
-                self.typed_programs.get(uri, []),
+                self._node_view(uri, typed=True),
                 lookup_name,
                 position,
                 source=source,
@@ -101,13 +156,13 @@ class SourceQueries:
             }
 
         declaration = _definition_at_position(
-            source, self.programs.get(uri, []), lookup_name, position
+            source, self._node_view(uri), lookup_name, position
         )
         if declaration is not None:
             overloads = _definition_overloads(
-                self.typed_programs.get(uri, []), declaration
+                self._node_view(uri, typed=True), declaration
             )
-            documentation = _definition_documentation_at_line(
+            documentation = self._declaration_documentation(
                 source, lookup_name, declaration.location.line
             )
             value = _render_overload_hover(display_name, overloads, (documentation,))
@@ -117,7 +172,7 @@ class SourceQueries:
             }
 
         selected = _selected_overload_at(
-            self.typed_programs.get(uri, []), lookup_name, position
+            self._node_view(uri, typed=True), lookup_name, position
         )
         overloads = analyser.env.overloads_for(Symbol(lookup_name))
         if not overloads and selected is None:
@@ -146,15 +201,6 @@ class SourceQueries:
             selected_doc = self._selected_overload_documentation(
                 uri, lookup_name, position, selected
             )
-            if not selected_doc:
-                selected_doc = next(
-                    (
-                        docs[index]
-                        for index, overload in enumerate(overloads)
-                        if index < len(docs) and _same_overload(overload, selected)
-                    ),
-                    "",
-                )
             if not selected_doc and builtin is not None:
                 selected_builtin_documentation = builtin.documentation_for(selected)
                 if selected_builtin_documentation is not None:
@@ -186,7 +232,7 @@ class SourceQueries:
     ) -> tuple[str, ...]:
         """Return documentation aligned with each local or imported overload."""
         source = self.documents.get(uri, "")
-        local = _documented_overloads(source, name)
+        local = self._documented_overloads(source, name)
         if local:
             return _match_overload_docs(overloads, local)
 
@@ -194,7 +240,7 @@ class SourceQueries:
         if target is None:
             return tuple("" for _ in overloads)
         _, target_source, target_name = target
-        documented = _documented_overloads(target_source, target_name)
+        documented = self._documented_overloads(target_source, target_name)
         return _match_overload_docs(overloads, documented)
 
     def _selected_overload_documentation(
@@ -205,28 +251,13 @@ class SourceQueries:
         selected: T.Overload,
     ) -> str:
         """Load the exact docstring belonging to the selected call overload."""
-        # Match source documentation first. This covers nested local defines,
-        # which are intentionally absent from the module-level environment.
-        local_documentation = _match_overload_docs(
-            (selected,), _documented_overloads(self.documents.get(uri, ""), name)
-        )
-        if local_documentation and local_documentation[0]:
-            return local_documentation[0]
-
-        # Prefer signature-matched source documentation for imports. This path
-        # does not depend on the imported module analysing successfully, and it
-        # avoids losing the docstring when definition lookup falls back to a
-        # different same-named declaration.
-        imported_documentation = self._documentation_from_import_sources(
-            uri, name, selected
-        )
-        if imported_documentation:
-            return imported_documentation
+        # Resolve the declaration first: lexical shadowing can give two local
+        # declarations identical signatures but different documentation.
         location = self._definition(
             {"textDocument": {"uri": uri}, "position": position}
         )
         if location is None:
-            return ""
+            return self._documentation_from_import_sources(uri, name, selected)
         source_uri = location["uri"]
         source = self.documents.get(source_uri)
         if source is None:
@@ -237,21 +268,27 @@ class SourceQueries:
                 source = self._source_text(path)
             except OSError:
                 return ""
-        try:
-            program = parse(source)
-        except LexError, ParseError, ParseErrors:
-            return ""
+        if source_uri in self.programs:
+            program = self._node_view(source_uri)
+        else:
+            try:
+                program = parse(source)
+            except LexError, ParseError, ParseErrors:
+                return ""
         declaration = _definition_at_lsp_start(
             source, program, location["range"]["start"]
         )
         if declaration is None or declaration.location is None:
             return self._documentation_from_import_sources(uri, name, selected)
         declared_name = str(declaration.name).removeprefix("\\")
-        documentation = _definition_documentation_at_line(
+        documentation = self._declaration_documentation(
             source, declared_name, declaration.location.line
         )
-        return documentation or self._documentation_from_import_sources(
-            uri, name, selected
+        if source_uri == uri:
+            return documentation
+        return (
+            self._documentation_from_import_sources(uri, name, selected)
+            or documentation
         )
 
     def _documentation_from_import_sources(
@@ -277,7 +314,7 @@ class SourceQueries:
                             source = self._source_text(source_file)
                     except ModuleLoadError, OSError:
                         continue
-                    documented = _documented_overloads(source, imported_name)
+                    documented = self._documented_overloads(source, imported_name)
                     matched = _match_overload_docs((selected,), documented)
                     if matched and matched[0]:
                         return matched[0]
@@ -363,22 +400,23 @@ class SourceQueries:
             return None
         target = word.lstrip("$#\\")
         selected = _selected_overload_at(
-            self.typed_programs.get(uri, []), target, params["position"]
+            self._node_view(uri, typed=True), target, params["position"]
         )
         declaration = _definition_at_position(
-            source, self.programs.get(uri, []), target, params["position"]
+            source, self._node_view(uri), target, params["position"]
         )
         if declaration is not None:
             return _definition_location(uri, source, declaration)
         declared = {
-            id(node)
-            for node in _ast_nodes(self.programs.get(uri, []))
+            (node.name, node.location)
+            for node in _ast_nodes(self._node_view(uri))
             if isinstance(node, DefineNode)
         }
         local_typed = [
             typed
-            for typed in _typed_nodes(self.typed_programs.get(uri, []))
-            if id(typed.node) in declared
+            for typed in _typed_nodes(self._node_view(uri, typed=True))
+            if isinstance(typed.node, DefineNode)
+            and (typed.node.name, typed.node.location) in declared
         ]
         local = _definition_location_for_overload(
             uri, source, local_typed, target, selected
@@ -479,14 +517,25 @@ def _overload_signature(name: str, overload: T.Overload) -> str:
     return f"{name}({', '.join(params)}){tag_clause} -> {returns}".rstrip()
 
 
+class _NodeIndex(list):
+    """A flattened syntax view that shared query helpers can reuse directly."""
+
+    def __init__(self, nodes, kind):
+        """Associate an immutable installed product's view with its node kind."""
+        super().__init__(nodes)
+        self.kind = kind
+
+
 def _dataclass_nodes(value: Any, node_type: type[Any]) -> list[Any]:
-    """Flatten matching nodes from recursively nested dataclass fields."""
+    """Walk syntax products without traversing type metadata or captured branches."""
+    if isinstance(value, _NodeIndex) and value.kind is node_type:
+        return value
     found: list[Any] = []
     seen: set[int] = set()
 
     def visit(item: Any) -> None:
         """Visit dataclasses and collection children exactly once."""
-        if id(item) in seen:
+        if id(item) in seen or node_type is TypedNode and isinstance(item, ASTNode):
             return
         if isinstance(item, node_type):
             seen.add(id(item))
@@ -494,7 +543,7 @@ def _dataclass_nodes(value: Any, node_type: type[Any]) -> list[Any]:
         if isinstance(item, (tuple, list)):
             for child in item:
                 visit(child)
-        elif is_dataclass(item):
+        elif is_dataclass(item) and type(item).__module__.startswith("valiance.asts."):
             seen.add(id(item))
             for field in fields(item):
                 visit(getattr(item, field.name))
@@ -673,6 +722,7 @@ def _definition_location_for_overload(
 ) -> dict[str, Any] | None:
     """Locate the declaration that contributes a selected overload."""
     fallback: DefineNode | None = None
+    matched: DefineNode | None = None
     for typed in typed_program:
         if (
             not isinstance(typed, TypedFunctionNode)
@@ -685,11 +735,19 @@ def _definition_location_for_overload(
             continue
         fallback = fallback or node
         overloads = _definition_overloads(typed_program, node)
-        if selected is not None and any(
-            _same_overload(item, selected) for item in overloads
-        ):
-            return _definition_location(uri, source, node)
-    return _definition_location(uri, source, fallback) if fallback is not None else None
+        if selected is not None:
+            if any(item is selected for item in overloads):
+                return _definition_location(uri, source, node)
+            if matched is None and any(
+                _same_overload(item, selected) for item in overloads
+            ):
+                matched = node
+    declaration = matched or fallback
+    return (
+        _definition_location(uri, source, declaration)
+        if declaration is not None
+        else None
+    )
 
 
 def _same_overload(left: T.Overload, right: T.Overload) -> bool:
@@ -698,17 +756,6 @@ def _same_overload(left: T.Overload, right: T.Overload) -> bool:
         left.params == right.params
         and left.returns == right.returns
         and left.param_names == right.param_names
-    )
-
-
-def _documented_overloads(source: str, name: str) -> tuple[tuple[str, str], ...]:
-    """Return source signatures paired with their individual docstrings."""
-    return tuple(
-        (item.signature, _docstring_markdown(item.docstring))
-        for item in extract_documented_defines(
-            source, program=parse_with_diagnostics(source).nodes
-        )
-        if item.name == name
     )
 
 
@@ -744,20 +791,6 @@ def _match_overload_docs(
                 break
         result.append(matched)
     return tuple(result)
-
-
-def _definition_documentation_at_line(source: str, name: str, line: int) -> str:
-    """Return documentation for one exact same-named declaration line."""
-    return next(
-        (
-            _docstring_markdown(item.docstring)
-            for item in extract_documented_defines(
-                source, program=parse_with_diagnostics(source).nodes
-            )
-            if item.name == name and item.line == line
-        ),
-        "",
-    )
 
 
 def _render_single_overload_hover(

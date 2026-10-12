@@ -62,8 +62,11 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   Parser source spans/chain gaps are sidecar products, leaving executable AST and
   bytecode formats unchanged. F9/Shift+F9 navigate errors, F11 opens the error list,
   and F12 navigates definitions. F10/Shift+F10 remain indentation shortcuts.
-  Single-state inspection is implemented; surviving overload worlds and full REPL
-  input/transcript controls remain later stages.
+  Stage 4's [optional analyser traces](../../src/valiance/analysis/traces.py)
+  retain end-surviving worlds, generic refinements and control-flow ancestry.
+  The State pane synchronizes numbered world selection within a function;
+  Alt+Left/Alt+Right cycle worlds and Alt+Up/Alt+Down cycle local states.
+  Full REPL input/transcript controls remain Stage 5.
   Session and snapshot regressions live in [CLI/session tests](../../tests/test_main.py)
   and [compilation database tests](../../tests/test_compilation_database.py).
 - [Understanding the type system](type-system.md) gives a human-first mental

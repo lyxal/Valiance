@@ -186,7 +186,10 @@ class _MatchAnalysis:
             self._diagnose("match requires at least one case", node)
             return BranchSet()
 
-        if not self._match_value_patterns_are_self_contained(node, branch):
+        pattern_traces = [] if self.trace is not None else None
+        if not self._match_value_patterns_are_self_contained(
+            node, branch, pattern_traces
+        ):
             return BranchSet()
 
         analysed_guards: list[tuple[tuple[ASTNode | TypedNode, ...], ...]] = []
@@ -197,7 +200,9 @@ class _MatchAnalysis:
                 _patterns._match_subject_pattern_type(branch, node, index, self.env)
                 for index in range(len(case.patterns))
             )
-            guard_result = self._analyse_match_guards(case.patterns, subject_hints, node)
+            guard_result = self._analyse_match_guards(
+                case.patterns, subject_hints, node, pattern_traces
+            )
             if guard_result is None:
                 return BranchSet()
             typed_guards, guard_inputs = guard_result
@@ -329,6 +334,7 @@ class _MatchAnalysis:
 
         if joined is None:
             return BranchSet()
+        joined = joined.with_traces(*(pattern_traces or ()))
         return BranchSet((joined.emit(TypedMatchNode(
             node, _calls._returns_result_type(joined.stack.items),
             case_bodies=tuple(typed_case_bodies),
@@ -343,6 +349,7 @@ class _MatchAnalysis:
         self,
         node: MatchNode,
         branch: AnalysisBranch,
+        trace_outputs: list[AnalysisBranch] | None = None,
     ) -> bool:
         """Reject value-pattern expressions that require external stack inputs."""
         for case in node.cases:
@@ -357,6 +364,8 @@ class _MatchAnalysis:
                         BranchSet((expression_input,)),
                         expression_pattern.expression,
                     )
+                    if trace_outputs is not None:
+                        trace_outputs.extend(outputs)
                     if len(self.diagnostics) != diagnostics_before:
                         return False
                     if not outputs:
@@ -500,6 +509,7 @@ class _MatchAnalysis:
         patterns: tuple[MatchPatternNode, ...],
         subject_hints: tuple[T.Type, ...],
         node: MatchNode,
+        trace_outputs: list[AnalysisBranch] | None = None,
     ) -> tuple[
         tuple[tuple[ASTNode | TypedNode, ...], ...],
         tuple[tuple[T.Type, ...], ...],
@@ -516,6 +526,8 @@ class _MatchAnalysis:
                 input_mode=InputMode.INFER_INPUTS,
             )
             outputs = self.analyse_scoped_block(BranchSet((guard_input,)), guard)
+            if trace_outputs is not None:
+                trace_outputs.extend(outputs)
             terminal, outputs = _utils._split_terminal_branches(outputs)
             if not outputs:
                 if terminal:

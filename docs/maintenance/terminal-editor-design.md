@@ -1,10 +1,9 @@
 # Terminal editor and REPL design
 
-Status: interaction design accepted on 9 October 2026. Stages 0–3 are
+Status: interaction design accepted on 9 October 2026. Stages 0–4 are
 implemented through the internal Python launch route, with basic file execution
 and persistent REPL integration brought forward from Stage 5 during review.
-Live diagnostics and single-state inspection are implemented; surviving
-overload-world inspection is Stage 4. Bare `vln` still uses the existing REPL.
+Live diagnostics and surviving overload-world inspection are implemented. Bare `vln` still uses the existing REPL.
 Follow the [staged plan](terminal-editor-implementation-plan.md) for
 implementation progress and validation evidence.
 
@@ -645,7 +644,8 @@ Required specification work:
 
 - Stage 3 defines token edges, comments and declaration-header hit rules in the
   [implementation plan](terminal-editor-implementation-plan.md). Remaining
-  control-flow block edges use unavailable fallbacks until full tracing.
+  control-flow facts now use Stage 4 ancestry traces; unsupported/unvisited
+  regions remain unavailable, and source after terminal checkpoints is unreachable.
 - Source/evaluation-order mapping is implemented through parser sidecars and
   compiler checkpoints; prefix analysis is not used for chain inspection.
 - Function scope: parameters, inferred inputs, local variables, return effects,

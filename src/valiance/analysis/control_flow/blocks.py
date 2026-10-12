@@ -144,7 +144,7 @@ def _if_node(
                     )
                     base = (
                         replace(
-                            _calls._refine_branch_like(branch, left),
+                            _calls._refine_branch_like(branch, left).with_traces(right),
                             inputs=left.inputs,
                             return_stack=None,
                             return_exact=False,
@@ -177,7 +177,7 @@ def _if_node(
                 stack = merge_stacks(left.stack, right.stack, self.env.context)
                 base = (
                     replace(
-                        _calls._refine_branch_like(branch, left),
+                        _calls._refine_branch_like(branch, left).with_traces(right),
                         inputs=left.inputs,
                     )
                     .with_element_tags(right.element_tags)
@@ -260,7 +260,7 @@ def _assert_node(
         condition=typed_condition,
     )
     success = (
-        branch.with_element_tags(condition_tags)
+        branch.with_traces(*condition).with_element_tags(condition_tags)
         .with_data_element_uses(condition_uses)
         .emit(typed_assert)
     )
@@ -284,6 +284,7 @@ def _assert_node(
             success,
             typed_body=(*success.typed_body[:-1], typed_assert),
         )
+        .with_traces(*else_outputs)
         .with_element_tags(
             tag for output in else_outputs for tag in output.element_tags
         )
@@ -424,7 +425,7 @@ def _while_node(
             self.env.context,
         )
         joined = joined.with_stack(stack).with_variables(variables)
-        joined = joined.with_element_tags(output.element_tags)
+        joined = joined.with_traces(output).with_element_tags(output.element_tags)
         joined = joined.with_data_element_uses(output.data_element_uses)
 
     if joined is None:

@@ -236,7 +236,7 @@ def _for_node(
         use for output in body_outputs for use in output.data_element_uses
     )
     completed = (
-        _calls._refine_branch_like(branch, body_branch)
+        _calls._refine_branch_like(branch, body_branch).with_traces(*body_outputs)
         .with_element_tags(body_element_tags)
         .with_data_element_uses(body_data_element_uses)
         .with_stack(body_branch.stack.push(*result_types))

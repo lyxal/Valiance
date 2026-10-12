@@ -918,11 +918,13 @@ def _refine_branch_like(
     if substitution is None:
         return replace(
             branch,
+            trace=refined.trace,
             element_tags=refined.element_tags,
             data_element_uses=refined.data_element_uses,
         )
     return replace(
         _specialize_branch_arguments(branch, substitution),
+        trace=refined.trace,
         element_tags=refined.element_tags,
         data_element_uses=refined.data_element_uses,
     )

@@ -718,6 +718,7 @@ class _CallableValues:
     ) -> dict[T.Overload, tuple[TypedNode, ...]]:
         """Build the signatures for function during static analysis."""
         signatures: dict[T.Overload, tuple[TypedNode, ...]] = {}
+        trace_exits = []
         surviving_element_tags = frozenset(
             (
                 tag
@@ -818,14 +819,25 @@ class _CallableValues:
                 element_tags=final_element_tags,
             )
             signatures.setdefault(signature, branch.typed_body)
+            if self.trace is not None and signatures[signature] == branch.typed_body:
+                trace_exits.append((signature, branch.trace, branch.typed_body))
 
-        if len(signatures) <= 1:
-            return signatures
-        return {
-            signature: body
-            for signature, body in signatures.items()
-            if not _utils._has_never_return(signature)
-        }
+        if len(signatures) > 1:
+            signatures = {
+                signature: body
+                for signature, body in signatures.items()
+                if not _utils._has_never_return(signature)
+            }
+        if self.trace is not None:
+            self.trace.finish_function(
+                node,
+                [
+                    (signature, trace, body)
+                    for signature, trace, body in trace_exits
+                    if signature in signatures
+                ],
+            )
+        return signatures
 
     def _function_returns(
         self,

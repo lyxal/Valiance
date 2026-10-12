@@ -142,6 +142,181 @@ class CompilerInspectionTests(unittest.TestCase):
         self.assertEqual(ordinary.analyse(program), observed.analyse(program))
         self.assertEqual(ordinary.diagnostics, observed.diagnostics)
 
+    def test_worlds_survive_later_calls_and_return_validation(self):
+        prefix = (
+            "define pick(x: Int) -> Int => $x\n"
+            "define pick(x: String) -> String => $x\n"
+            "define only(x: Int) -> Int => $x\n"
+        )
+        source = prefix + "define f =>\n pick\n dup\nend\n"
+        product = self.analyse(source)
+        self.assertFalse(product.diagnostics)
+        scope = product.scope_at(source.rindex("pick"))
+        self.assertEqual(len(scope.worlds), 2)
+        for world in scope.worlds:
+            typ = "String" if "String" in world.signature else "Int"
+            self.assertIn(typ, product.at(source.rindex("pick"), world.identity).element)
+            self.assertEqual(product.at(source.rindex("pick") + 4, world.identity).stack, (typ,))
+        source = prefix + "define f =>\n pick\n only\nend\n"
+        product = self.analyse(source)
+        self.assertFalse(product.diagnostics)
+        scope = product.scope_at(source.rindex("pick"))
+        self.assertEqual(len(scope.worlds), 1)
+        self.assertIn("Int", product.at(source.rindex("pick")).element)
+        source = prefix + "define f -> Int =>\n pick\nend\n"
+        product = self.analyse(source)
+        scope = product.scope_at(source.rindex("pick"))
+        self.assertEqual(len(scope.worlds), 1)
+        self.assertIn("Int", scope.worlds[0].signature)
+        failed = prefix + "define f -> Boolean =>\n pick\nend\n"
+        product = self.analyse(failed)
+        self.assertTrue(product.diagnostics)
+        self.assertIsNone(product.scope_at(failed.rindex("pick")))
+        self.assertFalse(product.at(failed.rindex("pick")).element)
+
+    def test_world_docs_and_identity_survive_whitespace_edits(self):
+        source = (
+            "#?? Integer choice.\ndefine pick(x: Int) -> Int => $x\n"
+            "#?? Text choice.\ndefine pick(x: String) -> String => $x\n"
+            "define f =>\n pick\n dup\nend\n"
+        )
+        first = self.analyse(source)
+        scope = first.scope_at(source.rindex("pick"))
+        self.assertEqual(len(scope.worlds), 2)
+        for world in scope.worlds:
+            docs = first.at(source.rindex("pick"), world.identity).documentation
+            expected = "Text choice" if "String" in world.signature else "Integer choice"
+            self.assertIn(expected, docs)
+            row = 3 if "String" in world.signature else 1
+            self.assertEqual(first.at(source.rindex("pick"), world.identity).target,
+                             (None, row, 7))
+        edited = "\n" + source.replace(" pick\n", "   pick\n")
+        second = self.analyse(edited)
+        updated = second.scope_at(edited.rindex("pick"))
+        self.assertEqual(scope.identity, updated.identity)
+        self.assertEqual([w.identity for w in scope.worlds], [w.identity for w in updated.worlds])
+        self.assertEqual(second.at(edited.rindex("pick"), "removed"), second.at(edited.rindex("pick")))
+
+    def test_selected_local_declaration_shadows_identical_global_signature(self):
+        source = (
+            "#?? Global docs.\ndefine pick(x: Int) -> Int => $x\n"
+            "define f(x: Int) -> Int =>\n"
+            " #?? Local docs.\n define pick(x: Int) -> Int => $x\n"
+            " pick $x\nend\n"
+        )
+        product = self.analyse(source)
+        self.assertFalse(product.diagnostics)
+        facts = product.at(source.rindex("pick"))
+        self.assertIn("Local docs", facts.documentation)
+        self.assertNotIn("Global docs", facts.documentation)
+        self.assertEqual(facts.target, (None, 4, 8))
+        undocumented = source.replace(" #?? Local docs.\n", "\n")
+        facts = self.analyse(undocumented).at(undocumented.rindex("pick"))
+        self.assertNotIn("Global docs", facts.documentation)
+        generic = source.replace("define pick(x: Int) -> Int", "define[T] pick(x: T) -> T")
+        facts = self.analyse(generic).at(generic.rindex("pick"))
+        self.assertIn("Local docs", facts.documentation)
+        self.assertEqual(facts.target, (None, 4, 11))
+
+    def test_nested_anonymous_scopes_and_control_flow_keep_ancestry(self):
+        source = "define outer =>\n define inner => +\n inner\nend\n"
+        product = self.analyse(source)
+        self.assertFalse(product.diagnostics)
+        inner = product.scope_at(source.index("+"))
+        outer = product.scope_at(source.rindex("inner"))
+        self.assertNotEqual(inner.identity, outer.identity)
+        self.assertGreater(len(inner.worlds), 1)
+        anonymous = self.analyse("$f = fn => +\n")
+        self.assertGreater(len(anonymous.scope_at(11).worlds), 1)
+        source = (
+            "define f(x: Int) -> Int =>\n if true =>\n"
+            "  $x 1 +\n else =>\n  $x 2 +\n end\nend\n"
+        )
+        product = self.analyse(source)
+        self.assertFalse(product.diagnostics)
+        self.assertEqual(len(product.scope_at(source.index("$x")).worlds), 1)
+        for operation in ("$x 1", "$x 2"):
+            facts = product.at(source.index(operation) + 2)
+            self.assertEqual(facts.stack, ("Int",))
+            self.assertEqual(facts.locals, (("x", "Int"),))
+
+    def test_generic_calls_locals_and_match_case_checkpoints(self):
+        source = (
+            "define[T] identity(x: T) -> T => $x\n"
+            "define f(x: Int) -> Int =>\n"
+            " $local = identity $x\n $local\nend\n"
+        )
+        product = self.analyse(source)
+        self.assertFalse(product.diagnostics)
+        self.assertIn("identity(x: Int) -> Int", product.at(source.rindex("identity")).element)
+        facts = product.at(source.rindex("$local") + 6)
+        self.assertIn(("local", "Int"), facts.locals)
+        source = (
+            "define f(x: Int) -> Int =>\n $x match =>\n"
+            "  1 => 2\n  _ => 3\n end\nend\n"
+        )
+        product = self.analyse(source)
+        self.assertFalse(product.diagnostics)
+        self.assertEqual(len(product.scope_at(source.index("match")).worlds), 1)
+        for value in ("2", "3"):
+            self.assertEqual(product.at(source.index(value) + 1).stack, ("Int",))
+
+    def test_lowered_modifier_worlds_require_committed_parent_choices(self):
+        source = "define f(xs: Int+) -> Int+ => map($xs): + 1\n"
+        product = self.analyse(source)
+        self.assertFalse(product.diagnostics)
+        parent = product.scope_at(source.index("map"))
+        child = product.scope_at(source.index("+ 1"))
+        self.assertNotEqual(parent.identity, child.identity)
+        self.assertEqual(len(parent.worlds), 1)
+        self.assertEqual(len(child.worlds), 1)
+        self.assertIn("Int+", parent.worlds[0].signature)
+        self.assertIn("Int", product.at(source.index("+ 1")).element)
+        self.assertNotIn("Real", child.worlds[0].signature)
+
+    def test_unreachable_source_has_no_fabricated_checkpoint(self):
+        source = "define f(x: Int) -> Int =>\n return $x\n unknown_name\nend\n"
+        product = self.analyse(source)
+        self.assertFalse(product.diagnostics)
+        facts = product.at(source.index("unknown_name"))
+        self.assertIsNone(facts.stack)
+        self.assertFalse(facts.element)
+        self.assertEqual(facts.unavailable, "Unreachable")
+
+    def test_trace_refinement_merge_budget_and_compilation_parity(self):
+        from dataclasses import replace
+        from pathlib import Path
+
+        import valiance.vtypes as T
+        from valiance.analysis import Analyser
+        from valiance.analysis.inspection import analyse_sources
+        from valiance.analysis.state.branches import AnalysisBranch, BranchSet
+        from valiance.analysis.traces import TraceCollector
+        from valiance.incremental.snapshots import RootSource
+        from valiance.parsing import parse
+
+        source = "define f => +\n"
+        nodes = parse(source)
+        plain, traced = Analyser(), Analyser(trace=TraceCollector())
+        self.assertEqual(plain.analyse(nodes), traced.analyse(nodes))
+        self.assertEqual(plain.diagnostics, traced.diagnostics)
+        trace = TraceCollector()
+        branch = AnalysisBranch(stack=T.TypeStack((T.V("X"),)), trace=trace.add())
+        branch = replace(branch, trace=trace.checkpoint(nodes[0], branch, branch))
+        refined = branch.refine_type(T.V("X"), T.Int)
+        facts = list(trace.checkpoints(refined.trace))
+        self.assertEqual(facts[0][2].stack.items, (T.Int,))
+        other = replace(branch, trace=trace.add())
+        merged = BranchSet.collect((branch, other))
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(len(merged.branches[0].trace.parents), 2)
+        root = RootSource("root", source, 1, Path.cwd())
+        limited = analyse_sources((root,), root, 1, trace_limit=2)
+        self.assertTrue(limited.trace_limited)
+        self.assertFalse(limited.scopes)
+        self.assertFalse(limited.diagnostics)
+        self.assertIsNone(limited.at(source.index("+")).stack)
+
 
 class EditorAnalysisWorkerTests(unittest.IsolatedAsyncioTestCase):
     """Protect coalescing and stale-result gates independently of terminal rendering."""
@@ -219,6 +394,45 @@ class EditorInspectionApplicationTests(unittest.IsolatedAsyncioTestCase):
                 self.fail("analysis did not settle")
             await pilot.pause(0.02)
         await pilot.pause()
+
+    async def test_world_pages_keyboard_sync_and_silent_fallback(self):
+        from textual.widgets import Static
+        from valiance.terminal_editor.app import EditorApp
+
+        source = (
+            "define pick(x: Int) -> Int => $x\n"
+            "define pick(x: String) -> String => $x\n"
+            "define only(x: Int) -> Int => $x\n"
+            "define f =>\n pick\n dup\nend\n"
+        )
+        app = EditorApp(watch_files=False, with_worker=False)
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.source_editor.load_text(source)
+            await pilot.pause()
+            await self.settled(app, pilot)
+            app.source_editor.move_cursor((4, 2))
+            await pilot.pause()
+            self.assertTrue(app.query_one("#world-pages").display)
+            await pilot.press("alt+right")
+            self.assertIn("String", str(app.query_one("#inspection-facts", Static).content))
+            app.source_editor.move_cursor((5, 0))
+            await pilot.pause()
+            self.assertIn("String", str(app.query_one("#inspection-facts", Static).content))
+            self.assertTrue(app.source_editor.has_focus)
+            await pilot.click("#world-pages", offset=(11, 0))
+            self.assertIn("Int", str(app.query_one("#inspection-facts", Static).content))
+            await pilot.press("alt+right")
+            app.source_editor.move_cursor((4, 2))
+            await pilot.pause()
+            await pilot.press("f12")
+            self.assertEqual(app.source_editor.cursor_location, (1, 7))
+            app.source_editor.load_text(source.replace(" dup\n", " only\n"))
+            await pilot.pause()
+            await self.settled(app, pilot)
+            app.source_editor.move_cursor((4, 2))
+            await pilot.pause()
+            self.assertFalse(app.query_one("#world-pages").display)
+            self.assertIn("Int", str(app.query_one("#inspection-facts", Static).content))
 
     async def test_caret_views_errors_and_definition_navigation(self):
         from textual.widgets import Static

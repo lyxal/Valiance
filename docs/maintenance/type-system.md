@@ -1989,3 +1989,18 @@ Valiance functions, so effects, diagnostics, code generation, optimization, and
 runtime execution use the existing function pipeline. A conversion overload is
 not available through an unqualified `to` call because the target is part of the
 call-site contract.
+
+
+## Optional cursor-inspection provenance
+
+`analysis/traces.py` records immutable node checkpoints and ancestry only when a
+caller installs a `TraceCollector` on its `Analyser`. Branch `trace` is excluded
+from semantic equality/hash; branch deduplication and control-flow joins retain
+all relevant parents. Refinements are replayed on earlier checkpoint copies,
+using the same type/input refinement methods as ordinary analysis.
+
+`_function_signatures` publishes accepted exits after return validation and final
+signature filtering. Editor worlds are built from those exits, so a candidate
+rejected later cannot appear at an earlier cursor. Control-flow ancestry is kept
+within a world rather than labelled as an overload. Trace exhaustion makes
+inspection unavailable without changing executable products or diagnostics.

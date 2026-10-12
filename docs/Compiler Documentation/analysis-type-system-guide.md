@@ -152,6 +152,21 @@ Most branch operations now live on `AnalysisBranch` and `Analyser`:
 Prefer adding general `BranchSet` operations only when more than one node kind
 will use them. Node-specific checks belong in the node handler.
 
+## Optional inspection traces
+
+`Analyser(trace=TraceCollector())` enables request-local provenance; the default
+is off. `AnalysisBranch.trace` is a persistent graph excluded from branch
+comparison and hashing. Node checkpoints carry stable source operation IDs and
+immutable before/after facts. Refinement edges preserve later substitutions;
+join edges preserve control-flow histories and equivalent-branch deduplication.
+
+Function signature construction publishes only accepted, filtered exits. The
+inspection product walks those exits to build cursor indexes and world-specific
+call/documentation views, including nested and anonymous scopes. Graph retention
+and traversal are bounded; an exhausted request reports unavailable inspection
+while preserving compiler diagnostics. No trace data enters typed AST equality,
+bytecode, serialization, or VM execution.
+
 ## Current Analyser Structure
 
 The public façade keeps the registry and dispatch loop, while

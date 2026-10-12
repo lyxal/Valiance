@@ -317,6 +317,7 @@ class Analyser:
         source_file: Path | None = None,
         lint_registry: LintRegistry | None = None,
         _prelude: _AnalysisPrelude | None = None,
+        trace=None,
         observer: Callable[[Analyser, ASTNode, BranchSet, BranchSet], None] | None = None,
         recover_declarations: bool = False,
     ):
@@ -332,6 +333,7 @@ class Analyser:
         self.lint_registry = lint_registry or DEFAULT_LINT_REGISTRY
         self._prelude = _prelude or _AnalysisPrelude(prelude_seed(source_file))
         self._owns_prelude = _prelude is None
+        self.trace = trace
         self.observer = observer
         self.recover_declarations = recover_declarations
         self.diagnostics: list[str] = []
@@ -746,7 +748,15 @@ class Analyser:
                 next_branches.append(branch)
                 continue
             try:
-                next_branches.extend(self._analyse_node_from_branch(branch, node))
+                if self.trace is not None and branch.trace is None:
+                    branch = replace(branch, trace=self.trace.add())
+                outputs = self._analyse_node_from_branch(branch, node)
+                if self.trace is not None:
+                    outputs = BranchSet(tuple(
+                        replace(output, trace=self.trace.checkpoint(node, branch, output))
+                        for output in outputs
+                    ))
+                next_branches.extend(outputs)
             except Exception as error:
                 from valiance.analysis.diagnostics import DiagnosticError
 
@@ -811,6 +821,7 @@ class Analyser:
             source_file=self.source_file,
             lint_registry=self.lint_registry,
             _prelude=self._prelude,
+            trace=self.trace,
             observer=self.observer,
             recover_declarations=self.recover_declarations,
         )

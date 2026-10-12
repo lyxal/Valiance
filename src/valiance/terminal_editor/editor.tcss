@@ -44,3 +44,9 @@ MenuDialog { align: left top; background: transparent; padding: 0; overflow: hid
 .menu-dialog Label { margin-bottom: 0; }
 .menu-dialog Button { height: 1; min-width: 0; border: none; text-align: left; content-align: left middle; background: transparent; text-style: none; }
 .menu-dialog Button:hover, .menu-dialog Button:focus { background: #3a4b65; }
+
+#world-pages, #control-state-pages {
+    height: auto;
+    color: $text-muted;
+    margin-bottom: 1;
+}

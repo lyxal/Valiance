@@ -8,7 +8,8 @@ remaining validation. Stage 1 service extraction and independent state models
 are implemented. Stage 2's document editor is available through the internal
 launch route, including basic file runs/persistent commands pulled forward from
 Stage 5 during feedback. Stage 3 diagnostics/basic inspection are implemented;
-Stage 4 is next, and Stage 5 is not complete. Public CLI
+Stage 4 surviving-world inspection is implemented; its validation is recorded
+below. Stage 5 is not complete. Public CLI
 switching has not started.
 
 The [behavior specification](terminal-editor-design.md) is the product contract;
@@ -423,6 +424,45 @@ existing compiler diagnostic. Turning tracing off does not change compilation
 results; benchmark memory/time and bound retained traces without inventing facts.
 This gate must pass before describing the State pane as complete.
 
+Stage 4 implementation (12 October 2026):
+
+- `analysis/traces.py` owns optional immutable ancestry edges, source operation
+  identities, before/after checkpoints and deferred inference refinements.
+  Branch provenance is excluded from semantic equality/hash. Deduplication and
+  control-flow joins retain ancestry; ordinary compilation keeps tracing off.
+  Function exits publish only after return/signature validation and filtering.
+- Inspection indexes expose named, nested and anonymous function scopes with
+  only end-surviving worlds. Earlier stack/locals and resolved calls come from
+  their retained checkpoints, including later generic/input refinements.
+  Element documentation and definition targets use the selected world through
+  shared source queries. Source query indexes exclude captured compiler branches
+  and reuse installed syntax/documentation products to avoid repeated deep walks.
+- The subdued numbered `Overload` control appears only for multiple worlds.
+  Click a number or use Alt+Left/Alt+Right. Selection is synchronized within a
+  lexical function and uses signature/semantic-decision identities, with source
+  scope correspondence across whitespace edits. A removed world silently falls
+  back to the first survivor. Distinct local control-flow alternatives use a
+  separate `Control-flow state` control (Alt+Up/Alt+Down), retaining their labels,
+  stack and locals. Unvisited source after a terminal checkpoint is unreachable.
+- Retention is capped at 20,000 graph nodes and 160,000 ancestry visits per
+  request. Exhaustion exposes unavailable facts with a trace-limit indication;
+  diagnostics and compilation remain intact. It never publishes partial worlds.
+  Cursor movement and page selection use immutable indexes without reanalysis or
+  execution. Tests extend the existing terminal-editor suite.
+- A warmed Windows benchmark of 30 inferred `define fN => +` functions (180
+  surviving worlds) measured median analysis at 765 ms without traces and 925 ms
+  with traces (three interleaved samples). Peak traced allocations were 1,006 KiB
+  and 1,248 KiB respectively; the trace graph retained 241 nodes. Full inspection
+  took 3.88 s with 3.86 MiB peak traced allocations. This intentionally ambiguous
+  workload exceeds the delayed-analysis threshold; the existing worker/progress
+  path keeps editing responsive. Timings are local measurements, not guarantees.
+- Validation: the full local regression suite passed 2,147 tests, excluding 41
+  FFI/native checks reserved for CI. Fundamental programs passed all 46 tests.
+  All 67 final targeted checks passed, covering source queries, documentation,
+  world filtering,
+  keyboard/mouse page selection, synchronized navigation and edit fallback.
+  Physical-terminal key delivery and visual review remain part of Stage 7.
+
 ### Stage 5 — persistent REPL, Alt+X, and execution lifecycle
 
 Basic worker/session integration, fresh loads, persistent commands, program stdin,
@@ -526,6 +566,6 @@ to satisfy a new-editor feature, and terminal state is restored on all exits.
 
 These are explicit implementation decisions with owners and gates, not reasons
 to reopen already confirmed interactions. Stage 0 was accepted after user review;
-Stages 1–3 are implemented and Stage 4 surviving overload-world inspection is next.
+Stages 1–4 are implemented; Stage 5 is next.
 The Stage 5 work brought forward does not close its remaining input, presentation
 and native-lifecycle gates.

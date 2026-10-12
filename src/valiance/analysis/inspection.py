@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from hashlib import sha256
 from pathlib import Path
 
 import valiance.vtypes as T
 from valiance.analysis.analyser import Analyser
 from valiance.analysis.diagnostics import Diagnostic, SourceLocation, from_message
+from valiance.analysis.traces import TraceCollector
 from valiance.asts import (
     DefineNode,
     ElementNode,
+    FunctionNode,
     GetVariableNode,
     TypedElementNode,
     TypedFunctionNode,
@@ -27,6 +30,7 @@ from valiance.source_queries import (
     SourceQueries,
     _ast_nodes,
     _overload_signature,
+    _typed_nodes,
     comment_ranges,
 )
 
@@ -41,6 +45,9 @@ class Inspection:
     element: str = ""
     documentation: str = ""
     target: tuple[Path | None, int, int] | None = None
+    locals: tuple[tuple[str, str], ...] = ()
+    states: tuple[Inspection, ...] = ()
+    unavailable: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +61,25 @@ class CursorRange:
 
 
 @dataclass(frozen=True, slots=True)
+class InspectionWorld:
+    """One validated function world with a structural correspondence identity."""
+
+    identity: str
+    signature: str
+    ranges: tuple[CursorRange, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class InspectionScope:
+    """Function extent and surviving worlds, independent of cursor page ordinals."""
+
+    identity: str
+    start: int
+    end: int
+    worlds: tuple[InspectionWorld, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class InspectionSnapshot:
     """Revision-bound diagnostics and cursor indexes, safe to hand to the UI."""
 
@@ -61,9 +87,25 @@ class InspectionSnapshot:
     diagnostics: tuple[Diagnostic, ...]
     ranges: tuple[CursorRange, ...]
 
-    def at(self, offset: int) -> Inspection:
+    scopes: tuple[InspectionScope, ...] = ()
+    trace_limited: bool = False
+
+    def scope_at(self, offset: int) -> InspectionScope | None:
+        """Choose the innermost lexical function containing a cursor."""
+        scopes = [scope for scope in self.scopes if scope.start <= offset < scope.end]
+        return min(scopes, key=lambda scope: scope.end - scope.start, default=None)
+
+    def at(self, offset: int, world: str | None = None) -> Inspection:
         """Resolve exact token hits before gaps and enclosing statement exits."""
-        matches = [item for item in self.ranges if item.start <= offset < item.end]
+        ranges = self.ranges
+        scope = self.scope_at(offset)
+        if scope and scope.worlds:
+            selected = next(
+                (item for item in scope.worlds if item.identity == world),
+                scope.worlds[0],
+            )
+            ranges = selected.ranges
+        matches = [item for item in ranges if item.start <= offset < item.end]
         if not matches:
             return Inspection()
         return max(
@@ -84,7 +126,11 @@ def _stack(branches) -> tuple[str, ...] | None:
 
 
 def analyse_sources(
-    roots: tuple[RootSource, ...], root: RootSource, revision: int
+    roots: tuple[RootSource, ...],
+    root: RootSource,
+    revision: int,
+    *,
+    trace_limit: int = 20000,
 ) -> InspectionSnapshot:
     """Analyse a private captured workspace, including failed imported sources.
 
@@ -100,19 +146,45 @@ def analyse_sources(
     capture.capture_configuration(root.base_directory)
     loader = ModuleLoader(base_directory=root.base_directory, source_provider=capture)
     parsed = parse_with_diagnostics(root.source)
+    canonical = {
+        (type(span.node), span.node.location.offset): span.node
+        for span in (*parsed.spans, *parsed.regions)
+        if span.node.location
+    }
     observations = []
+    trace = TraceCollector(trace_limit)
 
     def observe(owner, node, before, after):
         """Copy presentation facts while compiler branch ownership stays private."""
+        if trace.truncated:
+            return
         typed = [
-            item for branch in after for item in branch.typed_body if item.node is node
+            item
+            for branch in after
+            for item in branch.typed_body
+            if item.node is node
+            or (
+                node.location is not None
+                and type(item.node) is type(node)
+                and item.node.location == node.location
+            )
         ]
+        if node.location:
+            node = canonical.get((type(node), node.location.offset), node)
+            typed = [replace(item, node=node) for item in typed]
         operation = (
             root.source[node.location.offset :].splitlines()[0] if node.location else ""
         )
         if isinstance(node, ElementNode):
             signatures = {
-                _overload_signature(str(node.name), item.overload.overload)
+                _overload_signature(
+                    str(node.name),
+                    replace(
+                        item.overload.overload,
+                        params=item.overload.params,
+                        returns=item.overload.actual_returns,
+                    ),
+                )
                 for item in typed
                 if isinstance(item, TypedElementNode) and item.overload is not None
             }
@@ -130,13 +202,27 @@ def analyse_sources(
             if len(types) == 1:
                 operation += ": " + next(iter(types))
         observations.append(
-            (node, _stack(before), _stack(after), operation, typed, owner)
+            (
+                node,
+                _stack(before),
+                _stack(after),
+                operation,
+                typed,
+                owner,
+                tuple(
+                    (str(name), T.show(typ))
+                    for name, typ in next(iter(after)).variables.visible_items()
+                )
+                if len(after) == 1
+                else (),
+            )
         )
 
     analyser = Analyser(
         source_file=root.path,
         module_loader=loader,
         observer=observe,
+        trace=trace,
         recover_declarations=True,
     )
     analyser.analyse(list(parsed.nodes))
@@ -216,11 +302,201 @@ def analyse_sources(
     queries.typed_programs[uri] = [
         typed for observation in observations for typed in observation[4]
     ]
-    spans = {id(span.node): span for span in parsed.spans}
-    regions = {id(span.node): span for span in parsed.regions}
-    definitions = [
-        node for node in _ast_nodes(parsed.nodes) if isinstance(node, DefineNode)
+    all_observations = tuple(observations)
+    definitions = _scope_nodes(parsed)
+    # Read committed parent products, excluding provisional child observations.
+    committed = [
+        typed
+        for observation in all_observations
+        if observation[5] is analyser
+        for typed in observation[4]
     ]
+    committed_functions = [
+        typed
+        for typed in _typed_nodes(committed)
+        if isinstance(typed, TypedFunctionNode)
+    ]
+    keys = {_function_key(node) for node in definitions}
+    for typed in committed_functions:
+        if (
+            isinstance(typed.node, FunctionNode)
+            and _function_key(typed.node) not in keys
+        ):
+            definitions.append(typed.node)
+            keys.add(_function_key(typed.node))
+    regions = _scope_regions(parsed, definitions)
+    source_scopes = {_function_key(node): node for node in definitions}
+    accepted = {}
+    for typed in committed_functions:
+        if isinstance(typed, TypedFunctionNode):
+            source = source_scopes.get(_function_key(typed.node))
+            if source is not None:
+                accepted.setdefault(id(source), []).extend(typed.overloads)
+    ranges = _inspection_ranges(
+        root,
+        parsed,
+        analyser,
+        queries,
+        uri,
+        all_observations,
+        all_observations,
+        accepted_scopes=accepted,
+        scope_definitions=definitions,
+    )
+    declaration_products = [
+        replace(
+            typed, overloads=tuple(replace(item, body=()) for item in typed.overloads)
+        )
+        for observation in all_observations
+        for typed in observation[4]
+        if isinstance(typed, TypedFunctionNode) and isinstance(typed.node, DefineNode)
+    ]
+    scopes = []
+    for function, exits in trace.functions if not trace.truncated else ():
+        if not function.location or not exits:
+            continue
+        definition = source_scopes.get(_function_key(function))
+        if definition is None or id(definition) not in accepted:
+            continue
+        region = regions[id(definition)]
+        # A valid inner analysis cannot make a rejected enclosing definition usable.
+        if any(
+            item.priority == 5 and item.start <= region.start and item.end >= region.end
+            for item in ranges
+        ):
+            continue
+        parents = [
+            item
+            for item in definitions
+            if id(item) in regions
+            and regions[id(item)].start <= region.start
+            and regions[id(item)].end >= region.end
+        ]
+        parents.sort(key=lambda item: regions[id(item)].start)
+        scope_identity = "/".join(_scope_name(item) for item in parents)
+        peers = [
+            item
+            for item in definitions
+            if _scope_name(item) == _scope_name(definition)
+            and regions.get(id(item))
+            and regions[id(item)].start < region.start
+        ]
+        scope_identity += ":" + str(len(peers))
+        worlds = []
+        for overload, ancestry, body in exits:
+            if not any(
+                item.overload == overload and item.body == body
+                for item in accepted[id(definition)]
+            ):
+                continue
+            observations.clear()
+            checkpoints = list(trace.checkpoints(ancestry))
+            checkpoints.sort(
+                key=lambda item: item[0].location.offset if item[0].location else -1
+            )
+            for node, before, after in checkpoints:
+                if node.location is None:
+                    continue
+                original = canonical.get((type(node), node.location.offset), node)
+                typed = tuple(replace(item, node=original) for item in after.typed_body)
+                observe(
+                    analyser, original, (before,), (replace(after, typed_body=typed),)
+                )
+            signature = _overload_signature(_scope_name(definition), overload)
+            decisions = tuple(
+                (type(node).__name__, operation)
+                for node, _, _, operation, _, _, _ in observations
+            )
+            identity = sha256(repr((signature, decisions)).encode()).hexdigest()
+            if any(world.identity == identity for world in worlds):
+                continue
+            queries.typed_programs[uri] = declaration_products + [
+                typed for observation in observations for typed in observation[4]
+            ]
+            world_ranges = _inspection_ranges(
+                root,
+                parsed,
+                analyser,
+                queries,
+                uri,
+                tuple(observations),
+                all_observations,
+                definition,
+                signature,
+                tuple(
+                    node.location.offset
+                    for node, _, after in checkpoints
+                    if node.location
+                    and (
+                        after.terminal
+                        or after.return_stack is not None
+                        or after.break_type is not None
+                    )
+                ),
+                accepted_scopes=accepted,
+                scope_definitions=definitions,
+            )
+            worlds.append(InspectionWorld(identity, signature, world_ranges))
+        if worlds:
+            existing = next(
+                (
+                    scope
+                    for scope in scopes
+                    if scope.identity == scope_identity
+                    and scope.start == region.start
+                    and scope.end == region.end
+                ),
+                None,
+            )
+            if existing is not None:
+                scopes.remove(existing)
+                identities = {world.identity for world in existing.worlds}
+                worlds = [
+                    *existing.worlds,
+                    *(world for world in worlds if world.identity not in identities),
+                ]
+            scopes.append(
+                InspectionScope(scope_identity, region.start, region.end, tuple(worlds))
+            )
+    if trace.truncated:
+        scopes.clear()
+        ranges = (CursorRange(0, len(root.source) + 1, Inspection(), 5),)
+    workspace = WorkspaceSnapshot(
+        root,
+        revision,
+        tuple(capture.files[path] for path in sorted(capture.files)),
+        overlays,
+        loader.std_root,
+    )
+    return InspectionSnapshot(
+        workspace,
+        tuple(dict.fromkeys(diagnostics)),
+        tuple(ranges),
+        tuple(scopes),
+        trace.truncated,
+    )
+
+
+def _inspection_ranges(
+    root,
+    parsed,
+    analyser,
+    queries,
+    uri,
+    observations,
+    all_observations,
+    scope_definition=None,
+    signature="",
+    terminal_offsets=(),
+    accepted_scopes=(),
+    scope_definitions=None,
+):
+    """Build source hit indexes from already collected semantic checkpoints."""
+    spans = {id(span.node): span for span in parsed.spans}
+    definitions = (
+        scope_definitions if scope_definitions is not None else _scope_nodes(parsed)
+    )
+    regions = _scope_regions(parsed, definitions)
 
     def context(node):
         """Use the innermost enclosing definition, without leaking its body outward."""
@@ -237,48 +513,97 @@ def analyse_sources(
         definition = min(
             candidates, key=lambda item: regions[id(item)].end - regions[id(item)].start
         )
+        if signature and definition is scope_definition:
+            return signature
+        if isinstance(definition, FunctionNode):
+            return "fn"
         overloads = analyser.env.overloads_for(definition.name)
         if len(overloads) == 1:
             return _overload_signature(str(definition.name), overloads[0])
         return str(definition.name)
 
+    window = regions.get(id(scope_definition))
+    source_regions = tuple(
+        region
+        for region in parsed.regions
+        if window is None or window.start <= region.start < window.end
+    )
+    source_spans = tuple(
+        span
+        for span in parsed.spans
+        if window is None or window.start <= span.start < window.end
+    )
+    boundaries = tuple(
+        boundary
+        for boundary in parsed.boundaries
+        if window is None or window.start <= boundary.start < window.end
+    )
     records = {}
-    for node, before, after, operation, _typed, _owner in observations:
+    states = {}
+    for node, before, after, operation, _typed, _owner, locals_ in observations:
         if node.location is None:
             continue
         key = id(node)
         facts = (before, after, operation, context(node))
+        state = Inspection(after, operation, context(node), locals=locals_)
+        if state not in states.setdefault(key, []):
+            states[key].append(state)
         if key in records and records[key] != facts:
             records[key] = (None, None, "", context(node))
         else:
             records[key] = facts
     ranges = []
-    successful = {
-        id(node)
-        for node, _, after, _, typed, _ in observations
-        if after is not None
-        and any(
-            isinstance(item, TypedFunctionNode) and item.overloads for item in typed
-        )
-    }
+    successful = set(accepted_scopes)
     for definition in definitions:
         region = regions.get(id(definition))
         if region is not None and id(definition) not in successful:
             ranges.append(CursorRange(region.start, region.end, Inspection(), 5))
-    for boundary in parsed.boundaries:
+
+    def checkpoint(key, after, operation, function):
+        """Label divergent control-flow facts without treating them as overloads."""
+        alternatives = states.get(key, [])
+        if len(alternatives) == 1:
+            return alternatives[0]
+        if alternatives:
+            return Inspection(function=function, states=tuple(alternatives))
+        return Inspection(after, operation, function)
+
+    for boundary in boundaries:
         if id(boundary.node) in records:
             _, after, operation, function = records[id(boundary.node)]
             ranges.append(
                 CursorRange(
                     boundary.start,
                     boundary.end,
-                    Inspection(after, operation, function),
+                    checkpoint(id(boundary.node), after, operation, function),
                     3,
                 )
             )
+    for span in source_spans:
+        if id(span.node) not in records:
+            continue
+        _, after, operation, function = records[id(span.node)]
+        line_end = root.source.find("\n", span.end)
+        end = len(root.source) + 1 if line_end < 0 else line_end + 1
+        following = min(
+            (
+                item.start
+                for item in source_spans
+                if item.start >= span.end and item is not span
+            ),
+            default=end,
+        )
+        ranges.append(
+            CursorRange(
+                span.end,
+                min(end, following),
+                checkpoint(id(span.node), after, operation, function),
+                2,
+            )
+        )
     # Statement exits retain their stack through following blank lines. Failed
     # statements explicitly replace it with unavailable rather than an older fact.
-    for region in parsed.regions:
+    for region in source_regions:
         before, after, operation, function = records.get(
             id(region.node), (None, None, "", "")
         )
@@ -293,12 +618,17 @@ def analyse_sources(
         ]
         end = min([following, *enclosing])
         ranges.append(
-            CursorRange(region.end, end, Inspection(after, operation, function), 1)
+            CursorRange(
+                region.end,
+                end,
+                checkpoint(id(region.node), after, operation, function),
+                1,
+            )
         )
         ranges.append(
             CursorRange(region.start, region.end, Inspection(function=function), 0)
         )
-    for node, _before, _after, operation, typed, _owner in observations:
+    for node, _before, _after, operation, typed, _owner, _locals in observations:
         span = spans.get(id(node))
         if (
             span is None
@@ -322,8 +652,8 @@ def analyse_sources(
         width = len(str(node.name)) + int(isinstance(node, GetVariableNode))
         ranges.append(
             CursorRange(
-                span.start,
-                span.start + width,
+                node.location.offset,
+                node.location.offset + width,
                 Inspection(
                     element=operation,
                     documentation=hover["contents"]["value"] if hover else "",
@@ -336,9 +666,18 @@ def analyse_sources(
     for start, end in comment_ranges(root.source):
         ranges.append(CursorRange(start, end, Inspection(), 5))
     visited = {id(node) for node, *_ in observations}
-    for span in parsed.spans:
+    visited.update(
+        id(node)
+        for node, *_ in all_observations
+        if isinstance(node, (DefineNode, FunctionNode))
+    )
+    for span in source_spans:
         if id(span.node) not in visited:
-            ranges.append(CursorRange(span.start, span.end, Inspection(), 5))
+            unreachable = window is not None and any(
+                window.start <= offset < span.start for offset in terminal_offsets
+            )
+            facts = Inspection(unavailable="Unreachable" if unreachable else "")
+            ranges.append(CursorRange(span.start, span.end, facts, 5))
     for error in parsed.diagnostics:
         lines = root.source.splitlines(keepends=True)
         start = sum(len(line) for line in lines[: (error.line or 1) - 1])
@@ -351,13 +690,61 @@ def analyse_sources(
     # Before the first executable statement an empty module stack is known.
     first = min((span.start for span in parsed.regions), default=len(root.source) + 1)
     ranges.append(CursorRange(0, first, Inspection(stack=()), -1))
-    workspace = WorkspaceSnapshot(
-        root,
-        revision,
-        tuple(capture.files[path] for path in sorted(capture.files)),
-        overlays,
-        loader.std_root,
+    return tuple(
+        item
+        for item in ranges
+        if window is None or item.start < window.end and item.end > window.start
     )
-    return InspectionSnapshot(
-        workspace, tuple(dict.fromkeys(diagnostics)), tuple(ranges)
-    )
+
+
+def _scope_nodes(parsed):
+    """Index named definitions and independent anonymous lexical functions."""
+    nodes = tuple(_ast_nodes(parsed.nodes))
+    named = {id(node.function) for node in nodes if isinstance(node, DefineNode)}
+    return [
+        node
+        for node in nodes
+        if isinstance(node, DefineNode)
+        or isinstance(node, FunctionNode)
+        and id(node) not in named
+    ]
+
+
+def _scope_name(node):
+    """Return a source-level scope label without using analyser allocation IDs."""
+    return str(node.name) if isinstance(node, DefineNode) else "fn"
+
+
+def _function_key(node):
+    """Match copied function syntax by its header and first body source operation."""
+    function = node.function if isinstance(node, DefineNode) else node
+    location = function.location
+    first = next((item.location.offset for item in function.body if item.location), -1)
+    return (location.offset if location else -1, first)
+
+
+def _scope_regions(parsed, definitions=None):
+    """Include lowered modifier functions using their retained body source spans."""
+    from valiance.parsing.parser import SourceSpan
+
+    regions = {id(span.node): span for span in (*parsed.spans, *parsed.regions)}
+    for node in definitions if definitions is not None else _scope_nodes(parsed):
+        if id(node) in regions or not isinstance(node, FunctionNode):
+            continue
+        members = {
+            (type(item), item.location.offset)
+            for item in _ast_nodes(node.body)
+            if item.location
+        }
+        spans = [
+            span
+            for span in parsed.spans
+            if span.node.location
+            and (type(span.node), span.node.location.offset) in members
+        ]
+        if spans:
+            start = min(
+                span.node.location.offset for span in spans if span.node.location
+            )
+            regions[id(node)] = SourceSpan(node, start, max(span.end for span in spans))
+    return regions

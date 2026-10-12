@@ -44,6 +44,8 @@ class InspectorPane(VerticalScroll, can_focus=True):
         """Keep stack facts, selected documentation and error navigation independent."""
         yield Button("Errors (F11)", id="show-errors")
         yield OptionList(id="error-list")
+        yield Static(id="world-pages")
+        yield Static(id="control-state-pages")
         yield Static("State unavailable", id="inspection-facts", markup=False)
         yield Markdown(id="inspection-docs")
         yield Static(id="diagnostic-detail", markup=False)
@@ -58,6 +60,10 @@ class EditorApp(App):
 
     CSS_PATH = "editor.tcss"
     BINDINGS = [
+        Binding("alt+up", "cycle_control_state(-1)", "Previous state", priority=True),
+        Binding("alt+down", "cycle_control_state(1)", "Next state", priority=True),
+        Binding("alt+left", "cycle_world(-1)", "Previous world", priority=True),
+        Binding("alt+right", "cycle_world(1)", "Next world", priority=True),
         Binding("ctrl+n", "file_action('new')", "New", priority=True),
         Binding("ctrl+o", "file_action('open')", "Open", priority=True),
         Binding("ctrl+s", "file_action('save')", "Save", priority=True),
@@ -123,6 +129,9 @@ class EditorApp(App):
         self._diagnostic_index = -1
         self._diagnostics_product = None
         self._inspection_key = None
+        self._world_selection = {}
+        self._control_state_key = None
+        self._control_state_index = 0
         self._inspection_documentation = ""
 
     @property
@@ -419,6 +428,8 @@ class EditorApp(App):
             self._cursor_offset(),
             self.analysis.label,
             self.analysis.failure,
+            tuple(self._world_selection.items()),
+            self._control_state_index,
             self._errors_open,
             self.workspace.active_document,
         )
@@ -437,6 +448,10 @@ class EditorApp(App):
             self._populate_errors(diagnostics)
         facts_widget = self.editor_screen.query_one("#inspection-facts", Static)
         docs_widget = self.editor_screen.query_one("#inspection-docs", Markdown)
+        pages = self.editor_screen.query_one("#world-pages", Static)
+        pages.display = False
+        state_pages = self.editor_screen.query_one("#control-state-pages", Static)
+        state_pages.display = False
         if product is None:
             facts_widget.update(
                 self.analysis.failure
@@ -448,21 +463,86 @@ class EditorApp(App):
             )
             docs_widget.display = False
         else:
-            facts = product.at(self._cursor_offset())
+            scope = product.scope_at(self._cursor_offset())
+            world_id = None
+            if scope and scope.worlds:
+                key = (self.workspace.active_document, scope.identity)
+                previous = self._world_selection.get(key)
+                selected = next(
+                    (
+                        i
+                        for i, world in enumerate(scope.worlds)
+                        if world.identity == previous
+                    ),
+                    0,
+                )
+                world_id = scope.worlds[selected].identity
+                self._world_selection[key] = world_id
+                pages.display = len(scope.worlds) > 1
+                label = (
+                    "Overload"
+                    if len({world.signature for world in scope.worlds}) > 1
+                    else "State"
+                )
+                numbers = " ".join(
+                    f'[@click="app.select_world({i})"]'
+                    + (f"[bold]{i + 1}[/bold]" if i == selected else str(i + 1))
+                    + "[/]"
+                    for i in range(len(scope.worlds))
+                )
+                pages.update(
+                    f'{label} [@click="app.cycle_world(-1)"]‹[/] {numbers} '
+                    '[@click="app.cycle_world(1)"]›[/]'
+                )
+                pages.tooltip = (
+                    scope.worlds[selected].signature + " · Alt+Left / Alt+Right"
+                )
+            facts = product.at(self._cursor_offset(), world_id)
+            state_key = (id(product), self._cursor_offset(), world_id)
+            if state_key != self._control_state_key:
+                self._control_state_key = state_key
+                self._control_state_index = 0
+            if facts.states:
+                alternatives = facts.states
+                self._control_state_index %= len(alternatives)
+                state_pages.display = len(alternatives) > 1
+                numbers = " ".join(
+                    f'[@click="app.select_control_state({i})"]'
+                    + (
+                        f"[bold]{i + 1}[/bold]"
+                        if i == self._control_state_index
+                        else str(i + 1)
+                    )
+                    + "[/]"
+                    for i in range(len(alternatives))
+                )
+                state_pages.update("Control-flow state " + numbers)
+                state_pages.tooltip = "Alt+Up / Alt+Down"
+                facts = alternatives[self._control_state_index]
             if facts.element:
                 facts_widget.update("Selected element\n" + facts.element)
             else:
                 lines = ["Function\n" + facts.function, ""] if facts.function else []
                 lines.append("Stack")
+                if product.trace_limited:
+                    lines.append("Inspection trace limit reached")
                 lines.extend(
                     facts.stack
                     if facts.stack
                     else ("Empty stack",)
                     if facts.stack == ()
-                    else ("State unavailable",)
+                    else (facts.unavailable or "State unavailable",)
                 )
                 if facts.last_element and facts.stack is not None:
                     lines.extend(("", "Last Element", facts.last_element))
+                if facts.locals:
+                    lines.extend(
+                        (
+                            "",
+                            "Locals",
+                            *(f"${name}: {typ}" for name, typ in facts.locals),
+                        )
+                    )
                 facts_widget.update("\n".join(lines))
             docs_widget.display = bool(facts.documentation)
             if (
@@ -472,6 +552,54 @@ class EditorApp(App):
                 docs_widget.update(facts.documentation)
                 self._inspection_documentation = facts.documentation
         self._status()
+
+    def action_select_control_state(self, index: int) -> None:
+        """Select a local control-flow alternative within the active world."""
+        self._control_state_index = max(index, 0)
+        self.refresh_inspection()
+
+    def action_cycle_control_state(self, direction: int) -> None:
+        """Cycle local states without changing the selected overload world."""
+        product = self.analysis.snapshot
+        scope = product.scope_at(self._cursor_offset()) if product else None
+        world = (
+            self._world_selection.get((self.workspace.active_document, scope.identity))
+            if scope
+            else None
+        )
+        facts = product.at(self._cursor_offset(), world) if product else None
+        if facts and facts.states:
+            self.action_select_control_state(
+                (self._control_state_index + direction) % len(facts.states)
+            )
+
+    def action_select_world(self, index: int) -> None:
+        """Select a semantic world without changing source focus or analysis."""
+        product = self.analysis.snapshot
+        scope = product.scope_at(self._cursor_offset()) if product else None
+        if scope and 0 <= index < len(scope.worlds):
+            self._world_selection[(self.workspace.active_document, scope.identity)] = (
+                scope.worlds[index].identity
+            )
+            self.refresh_inspection()
+
+    def action_cycle_world(self, direction: int) -> None:
+        """Cycle surviving worlds using the same selection as the page control."""
+        product = self.analysis.snapshot
+        scope = product.scope_at(self._cursor_offset()) if product else None
+        if scope and scope.worlds:
+            selected = self._world_selection.get(
+                (self.workspace.active_document, scope.identity)
+            )
+            index = next(
+                (
+                    i
+                    for i, world in enumerate(scope.worlds)
+                    if world.identity == selected
+                ),
+                0,
+            )
+            self.action_select_world((index + direction) % len(scope.worlds))
 
     def _populate_errors(self, diagnostics) -> None:
         """Replace error rows synchronously without cancelling widget removal tasks."""
@@ -581,7 +709,13 @@ class EditorApp(App):
         product = self.analysis.snapshot
         if product is None:
             return
-        target = product.at(self._cursor_offset()).target
+        scope = product.scope_at(self._cursor_offset())
+        world = (
+            self._world_selection.get((self.workspace.active_document, scope.identity))
+            if scope
+            else None
+        )
+        target = product.at(self._cursor_offset(), world).target
         if target is None:
             return
         path, row, column = target
