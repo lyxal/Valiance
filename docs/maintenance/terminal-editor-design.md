@@ -1,8 +1,8 @@
 # Terminal editor and REPL design
 
-Status: interaction design accepted on 9 October 2026. Stages 0–4 are
-implemented through the internal Python launch route, with basic file execution
-and persistent REPL integration brought forward from Stage 5 during review.
+Status: interaction design accepted on 9 October 2026. Stages 0–5 are
+implemented through the internal Python launch route. Stage 5 native-call
+validation in CI and the physical-terminal acceptance matrix remain pending.
 Live diagnostics and surviving overload-world inspection are implemented. Bare `vln` still uses the existing REPL.
 Follow the [staged plan](terminal-editor-implementation-plan.md) for
 implementation progress and validation evidence.
@@ -37,16 +37,20 @@ presentation.
 | F12 | Go to the selected element's definition |
 | F5 / Alt+X / Run button | Run the active buffer, including unsaved text, in a fresh session |
 | F8 / Stop button | Stop and reap the worker; discard runtime state and retain documents/transcript |
-| REPL Enter / Ctrl+Enter | Submit a command, or provide requested program input |
-| REPL Shift+Enter | Insert a newline |
+| REPL Enter | Submit when unlocked; insert an indented newline when locked; send requested program input |
+| REPL Ctrl+Enter / Shift+Enter | Toggle Enter lock without changing or submitting the draft |
+| REPL Up / Down | Move within the command; unlocked first/last line recalls history |
+| Ctrl+C | Stop active execution; otherwise copy the focused text selection |
 
 File shortcuts below are already implemented. Fresh runs use open-file overlays
 and captured disk imports. Preparation failure or a stale preparation preserves
 the previous committed session. Editing or switching tabs does not change that
 session. Printed output, results and diagnostics appear in the bounded transcript;
 the status identifies the loaded root revision independently of the active tab.
-Run reveals the REPL in the wide layout; automatic focus transfer/compact-view
-reveal remains Stage 5 work. Program input focuses the command box.
+Committed runs reveal and focus REPL input in both wide and compact layouts.
+Compile-blocked runs retain the session and source focus, expose Errors and show
+a file-specific REPL banner. Program stdin uses the input box without entering
+command history; its title temporarily describes Enter's input behavior.
 
 The inspector shows real compiler stack checkpoints in whitespace and selected
 overload documentation on element characters. Stack view includes function
@@ -55,11 +59,17 @@ gaps follow evaluation order, not the nearest source token. Empty stacks are
 distinct from unavailable states. Syntax and import diagnostics appear in the
 status/error list and as clickable source underlines. Analysis is coalesced off
 the UI loop, cannot execute source, and discards obsolete workspace results.
-Multiple stack states remain unavailable until Stage 4; completion is Stage 6. REPL Enter
-lock, history browsing/persistence, Clear/Reset controls, transcript selection/export
-and result-specific colors also remain later-stage work. The Enter-lock shortcuts
-in the target contract below therefore differ from the current interim input
-bindings. Physical terminal key delivery and native cleanup remain validation
+Multiple surviving worlds and local control-flow states are available; completion
+is Stage 6. REPL controls provide Enter lock, Clear, Reset and Save Transcript,
+also available from Edit. History retains the latest 500 nonempty submissions
+in `terminal-editor.json` beside the existing preferences, without replaying them
+or saving the draft/lock/runtime. Recall restores draft text, selection and scroll.
+The read-only transcript supports native selection/copy and retains at most 300
+entries and 64,000 characters; export joins retained chunks exactly, with its
+truncation marker. Only stack results are green. `:type`, `:help` and runtime
+branch commands use shared session services. `:repl`/`:scratch` focus input/source
+without executing; `:clear`, `:reset` and `:quit` use the editor's control workflows.
+Physical terminal key delivery and real native-call cleanup remain validation
 gates; the headless tests are not evidence that every terminal reports the same
 modified keys.
 

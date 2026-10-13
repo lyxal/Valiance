@@ -1,6 +1,7 @@
 """Behavioral tests for the new Textual editor and execution feasibility tools."""
 
 import asyncio
+import os
 import time
 import unittest
 
@@ -12,6 +13,89 @@ from tools.terminal_editor.app import CommandEditor, FeasibilityApp
 from tools.terminal_editor.worker import SessionProbe, wait_for
 from valiance.terminal_editor.divider import PaneDivider
 from valiance.terminal_editor.editor import SourceEmphasis
+
+
+def _scoped_child(connection, gate):
+    """Start an ordinary child only after the parent has attached containment."""
+    import subprocess
+    import sys
+
+    from valiance.sessions.process_scope import enter_process_scope
+
+    enter_process_scope()
+    gate.wait()
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    connection.send(child.pid)
+    connection.recv()
+
+
+def _process_alive(pid):
+    """Inspect a test-owned child without sending a Windows termination signal."""
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = kernel.OpenProcess(0x100000, False, pid)
+        if not handle:
+            return False
+        try:
+            return kernel.WaitForSingleObject(handle, 0) == 258
+        finally:
+            kernel.CloseHandle(handle)
+    from pathlib import Path
+
+    status = Path(f"/proc/{pid}/stat")
+    if status.exists() and status.read_text().split(")", 1)[1].split()[0] == "Z":
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+class ProcessScopeTests(unittest.TestCase):
+    """Exercise ordinary descendant cleanup without a foreign library fixture."""
+
+    def test_process_scope_reaps_worker_owned_children(self):
+        import multiprocessing
+
+        from valiance.sessions.process_scope import ProcessScope
+
+        context = multiprocessing.get_context("spawn")
+        connection, writer = context.Pipe()
+        gate = context.Event()
+        process = context.Process(target=_scoped_child, args=(writer, gate))
+        process.start()
+        scope = None
+        try:
+            scope = ProcessScope(process)
+            gate.set()
+            self.assertTrue(connection.poll(10))
+            pid = connection.recv()
+            self.assertTrue(_process_alive(pid))
+            process.terminate()
+            process.join(1)
+            scope.close()
+            deadline = time.monotonic() + 3
+            while _process_alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertFalse(_process_alive(pid))
+        finally:
+            if process.is_alive():
+                process.terminate()
+                process.join(1)
+            if scope is not None:
+                scope.close()
+            process.close()
+            connection.close()
+            writer.close()
 
 
 class CompilerInspectionTests(unittest.TestCase):
@@ -774,25 +858,254 @@ class EditorApplicationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("f5")
             await self.wait_runtime(pilot, lambda: app.runtime.waiting_input)
             command = app.query_one("#command", TextArea)
+            command.toggle_lock()
+            self.assertTrue(app.state.input.locked)
             command.load_text("hello")
             await pilot.press("enter")
             await self.wait_runtime(pilot, lambda: not app.runtime.worker.busy)
             self.assertEqual(app.state.transcript.entries[-1].text, "'hello'\n")
+            self.assertEqual(app.state.input.history, [])
+            self.assertTrue(app.state.input.locked)
             app.source_editor.load_text("while (true) => end")
             app.source_editor.focus()
             await pilot.press("f5")
             await self.wait_runtime(pilot, lambda: app.runtime.label == "Running file")
+            request = app.runtime.worker.request
+            await pilot.press("f5")
+            self.assertEqual(app.runtime.worker.request, request)
+            app.source_editor.focus()
             await pilot.press("a")
             self.assertTrue(app.source_editor.text.startswith("a"))
-            await pilot.press("f8")
+            await pilot.press("ctrl+c")
             await self.wait_runtime(
                 pilot, lambda: not app.runtime.closing and app.runtime.worker.ready
             )
             self.assertIsNone(app.state.loaded_source)
+            self.assertTrue(app.state.input.locked)
             self.assertTrue(
                 any("Stopped" in entry.text for entry in app.state.transcript.entries)
             )
         self.assertIsNone(app.runtime.worker.process)
+
+    async def test_output_flood_keeps_retention_and_editor_usable(self):
+        from valiance.terminal_editor.runtime import EditorRuntime
+        from valiance.terminal_editor.transcript import TranscriptView
+
+        app = self.app
+        app.runtime = EditorRuntime(app)
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.source_editor.load_text('"' + "α界" * 100_000 + '" println\n7')
+            await pilot.press("f5")
+            await self.wait_runtime(
+                pilot,
+                lambda: app.state.loaded_source is not None and not app.runtime.worker.busy,
+            )
+            self.assertEqual(app.state.transcript.entries[-1].text, "7\n")
+            self.assertLessEqual(app.state.transcript.characters, 64_000)
+            self.assertLessEqual(len(app.state.transcript.entries), 300)
+            view = app.query_one("#transcript", TranscriptView)
+            self.assertEqual(view.text, app.state.transcript.export_text())
+            self.assertIn("dropped", view.text)
+            app.source_editor.focus()
+            await pilot.press("a")
+            self.assertTrue(app.source_editor.text.startswith("a"))
+
+    async def test_repl_lock_history_and_paste_preserve_the_draft(self):
+        from valiance.terminal_editor.models import InputState
+        from valiance.terminal_editor.runtime import CommandInput
+
+        app = self.app
+        app.state.input = InputState(history=["1", "2\n3"])
+        async with app.run_test(size=(120, 40)) as pilot:
+            command = app.query_one("#command", CommandInput)
+            command.focus()
+            command.load_text("unfinished")
+            command.selection = Selection((0, 2), (0, 5))
+            draft = command.draft()
+            await pilot.press("up")
+            self.assertEqual(command.text, "2\n3")
+            await pilot.press("down")
+            self.assertEqual(command.draft(), draft)
+            for key in ("ctrl+enter", "shift+enter"):
+                await pilot.press(key)
+                self.assertEqual(command.draft(), draft)
+            self.assertFalse(app.state.input.locked)
+            await pilot.press("ctrl+enter")
+            self.assertIn("locked", str(command.border_title))
+            command.load_text("if (true) =>")
+            command.move_cursor(command.document.end)
+            await pilot.press("enter")
+            self.assertEqual(command.text, "if (true) =>\n  ")
+            await pilot.press("enter")
+            self.assertEqual(command.text, "if (true) =>\n  \n  ")
+            command.move_cursor((0, 0))
+            await pilot.press("up")
+            self.assertTrue(command.text.startswith("if"))
+            command.post_message(events.Paste("\n4\n5"))
+            await pilot.pause()
+            self.assertIn("\n4\n5", command.text)
+            self.assertEqual(app.state.input.history, ["1", "2\n3"])
+            await pilot.click("#enter-lock")
+            self.assertFalse(app.state.input.locked)
+
+    async def test_retained_transcript_styles_selection_clear_and_export(self):
+        from unittest.mock import patch
+
+        from valiance.terminal_editor.models import Transcript, TranscriptEntry
+        from valiance.terminal_editor.transcript import TranscriptView
+
+        app = self.app
+        app.state.transcript = Transcript(max_entries=3, max_characters=30)
+        async with app.run_test(size=(120, 40)) as pilot:
+            view = app.query_one("#transcript", TranscriptView)
+            for kind, text in (
+                ("command", "> 7\n"),
+                ("output", "printed\n"),
+                ("result", "7\n"),
+            ):
+                app.state.transcript.append(TranscriptEntry(kind, text))
+            view.refresh_transcript(app.state.transcript)
+            await pilot.pause()
+            self.assertEqual(view.text, "> 7\nprinted\n7\n")
+            self.assertIn(
+                view.STYLES["result"],
+                [str(span.style) for span in view.get_line(2).spans],
+            )
+            self.assertNotIn(
+                view.STYLES["result"],
+                [str(span.style) for span in view.get_line(1).spans],
+            )
+            view.selection = Selection((1, 0), (1, 7))
+            view.focus()
+            with patch.object(app, "copy_to_clipboard") as copy:
+                await pilot.press("ctrl+c")
+                copy.assert_called_once_with("printed")
+            app.state.transcript.append(TranscriptEntry("output", "more\n"))
+            view.refresh_transcript(app.state.transcript)
+            await pilot.pause()
+            self.assertIn("dropped", view.text)
+            self.assertEqual(view.selected_text, "printed")
+            path = self.root / "transcript.txt"
+            app.action_save_transcript()
+            await self.choose_path(pilot, path)
+            self.assertEqual(
+                path.read_text(encoding="utf-8"), app.state.transcript.export_text()
+            )
+            app.action_clear_transcript()
+            self.assertEqual(view.text, "")
+            self.assertEqual(app.state.transcript.export_text(), "")
+            app.state.transcript = Transcript(max_entries=1)
+            for kind in ("output", "result", "output"):
+                app.state.transcript.append(TranscriptEntry(kind, "7\n"))
+                view.refresh_transcript(app.state.transcript)
+                await pilot.pause()
+                row = 1 if app.state.transcript.truncated else 0
+                styles = [str(span.style) for span in view.get_line(row).spans]
+                self.assertIn(view.STYLES[kind], styles)
+
+    async def test_compact_load_clear_reset_fault_and_history_persistence(self):
+        from valiance.terminal_editor.app import EditorApp
+        from valiance.terminal_editor.runtime import CommandInput, EditorRuntime
+
+        app = self.app
+        app.config_path = self.root / "preferences.json"
+        app.runtime = EditorRuntime(app)
+        async with app.run_test(size=(80, 24)) as pilot:
+            command = app.query_one("#command", CommandInput)
+            app.source_editor.load_text(
+                "$x = 40\ndefine inc(n: Number) -> Number => $n 1 +\n1"
+            )
+            await pilot.press("f5")
+            await self.wait_runtime(
+                pilot,
+                lambda: (
+                    app.state.loaded_source is not None and not app.runtime.worker.busy
+                ),
+            )
+            self.assertIs(app.focused, command)
+            self.assertTrue(app.query_one("#repl").display)
+            loaded = app.state.loaded_source
+            command.load_text("$x inc")
+            await pilot.press("enter")
+            await self.wait_runtime(pilot, lambda: not app.runtime.worker.busy)
+            self.assertEqual(app.state.transcript.entries[-1].text, "41\n1\n")
+            command.load_text(":scratch")
+            await pilot.press("enter")
+            self.assertIs(app.focused, app.source_editor)
+            self.assertEqual(app.state.loaded_source, loaded)
+            app.action_file_action("new")
+            await pilot.pause()
+            self.assertEqual(app.state.loaded_source, loaded)
+            app.source_editor.load_text("unknown_word")
+            app.reveal_repl()
+            await pilot.pause()
+            await pilot.press("f5")
+            await self.wait_runtime(pilot, lambda: app.runtime.label == "Run failed")
+            self.assertEqual(app.state.loaded_source, loaded)
+            self.assertIs(app.focused, app.source_editor)
+            self.assertTrue(app.query_one("#load-errors").display)
+            self.assertEqual(
+                sum(entry.kind == "load" for entry in app.state.transcript.entries), 1
+            )
+            app.reveal_repl()
+            self.assertTrue(app.query_one("#load-errors").display)
+            command.load_text("define broken(")
+            await pilot.press("enter")
+            await self.wait_runtime(pilot, lambda: app.runtime.label == "Run failed")
+            self.assertEqual(command.text, "define broken(")
+            app.action_clear_transcript()
+            command.load_text("$x")
+            await pilot.press("enter")
+            await self.wait_runtime(pilot, lambda: not app.runtime.worker.busy)
+            self.assertEqual(app.state.transcript.entries[-1].text, "40\n41\n1\n")
+            command.toggle_lock()
+            command.load_text("draft")
+            history = list(app.state.input.history)
+            app.action_reset_session()
+            await self.wait_runtime(
+                pilot,
+                lambda: (
+                    not app.runtime.closing
+                    and app.runtime.worker.ready
+                    and app.state.loaded_source is None
+                ),
+            )
+            self.assertFalse(app.state.transcript.entries)
+            self.assertTrue(app.state.input.locked)
+            self.assertEqual(command.text, "draft")
+            self.assertEqual(app.state.input.history, history)
+            app.source_editor.load_text(
+                '"before fault" println\nValueFault("failure") panic'
+            )
+            await pilot.press("f5")
+            await self.wait_runtime(pilot, lambda: app.runtime.label == "Run failed")
+            self.assertIsNone(app.state.loaded_source)
+            self.assertTrue(app.state.input.locked)
+            exported = app.state.transcript.export_text()
+            self.assertIn("before fault", exported)
+            self.assertIn("Runtime fault; session reset", exported)
+            await self.wait_runtime(
+                pilot, lambda: not app.runtime.closing and app.runtime.worker.ready
+            )
+            command.toggle_lock()
+            command.load_text("$x")
+            command.focus()
+            await pilot.press("enter")
+            await self.wait_runtime(pilot, lambda: not app.runtime.worker.busy)
+            self.assertEqual(app.runtime.label, "Run failed")
+            history = list(app.state.input.history)
+        restored = EditorApp(
+            launch_directory=self.root,
+            config_path=app.config_path,
+            with_worker=False,
+            watch_files=False,
+        )
+        self.assertEqual(restored.state.input.history, history)
+        self.assertFalse(restored.state.input.locked)
+        self.assertIsNone(restored.state.loaded_source)
+        self.assertEqual(
+            restored.workspace.documents[restored.workspace.active_document].source, ""
+        )
 
     async def test_open_save_as_rename_and_same_path_retains_native_undo(self):
         app = self.app
@@ -1344,6 +1657,114 @@ class TerminalWorkerTests(unittest.TestCase):
         self.assertEqual(events[-1].text, "7")
         self.assertTrue(any(e.kind == "output" for e in events))
         self.assertFalse(any(e.kind == "output" for e in self.probe.poll()))
+
+    def test_production_worker_session_queries_and_runtime_branches(self):
+        from valiance.sessions.worker import SessionWorker
+
+        self.probe.close()
+        self.probe = SessionWorker()
+        self.probe.start()
+        wait_for(self.probe, "ready")
+        self.probe.submit("$x = 40\n1")
+        wait_for(self.probe, "finished")
+        self.probe.submit(":type $x 2 +")
+        events = wait_for(self.probe, "finished")
+        self.assertTrue(
+            any("Stack types" in e.text for e in events if e.kind == "notice")
+        )
+        self.probe.submit(":branch")
+        events = wait_for(self.probe, "finished")
+        self.assertTrue(any("depth 1" in e.text for e in events))
+        self.probe.submit("2")
+        wait_for(self.probe, "finished")
+        self.probe.submit(":copy 1")
+        wait_for(self.probe, "finished")
+        self.probe.submit(":restore")
+        wait_for(self.probe, "finished")
+        self.probe.submit("$x")
+        events = wait_for(self.probe, "finished")
+        self.assertEqual(events[-1].text, "40\n2\n1")
+        self.probe.submit(":restore")
+        events = wait_for(self.probe, "failed")
+        self.assertTrue(any("requires an open" in e.text for e in events))
+        self.assertFalse(any(e.kind == "reset" for e in events))
+        self.probe.submit("1 +")
+        events = wait_for(self.probe, "finished")
+        self.assertEqual(events[-1].text, "41\n2\n1")
+
+    @unittest.skipIf(
+        os.name == "nt" and os.environ.get("GITHUB_ACTIONS") != "true",
+        "Windows Valiance FFI fixtures are validated in CI, not locally",
+    )
+    def test_production_worker_native_stop_reaps_foreign_children(self):
+        import sys
+        from contextlib import ExitStack
+        from pathlib import Path
+
+        from tests.ffi_support import (
+            build_shared_library,
+            native_library_directory,
+            shared_library_path,
+        )
+        from valiance.sessions.worker import SessionWorker
+
+        self.probe.close()
+        self.probe = SessionWorker()
+        self.probe.start()
+        wait_for(self.probe, "ready")
+        with native_library_directory() as directory, ExitStack() as cleanup:
+            cleanup.callback(self.probe.close)
+            root = Path(directory)
+            fixture = root / "session.c"
+            library = shared_library_path(directory, "session")
+            marker = root / "entered.txt"
+            fixture.write_text(
+                "#include <stdio.h>\n#include <stdint.h>\n"
+                "#ifdef _WIN32\n#include <windows.h>\n#include <process.h>\n"
+                "#else\n#include <unistd.h>\n#endif\n"
+                "FFI_EXPORT int block(const char *python, const char *marker) {\n"
+                "  long long pid;\n"
+                "#ifdef _WIN32\n"
+                '  intptr_t child = _spawnl(_P_NOWAIT, python, python, "-c", '
+                "\"__import__('time').sleep(60)\", NULL);\n"
+                "  pid = child == -1 ? -1 : (long long)GetProcessId((HANDLE)child);\n"
+                "  if (child != -1) CloseHandle((HANDLE)child);\n"
+                "#else\n"
+                "  pid = fork();\n"
+                '  if (pid == 0) { execl(python, python, "-c", '
+                "\"__import__('time').sleep(60)\", NULL); _exit(1); }\n"
+                "#endif\n"
+                '  FILE *stream = fopen(marker, "w");\n'
+                "  if (!stream) return -1;\n"
+                '  fprintf(stream, "%lld", pid); fclose(stream);\n'
+                "#ifdef _WIN32\n  Sleep(60000);\n"
+                "#else\n  sleep(60);\n#endif\n  return 1;\n}\n",
+                encoding="utf-8",
+            )
+            build_shared_library(str(fixture), library)
+            self.probe.submit(
+                f'import {{ffi("{library}") as native}}\n'
+                "link native.block(&CString, &CString) -> &int as block\n"
+                f'"{Path(sys.executable).as_posix()}" to[&CString] '
+                f'"{marker.as_posix()}" to[&CString] block'
+            )
+            deadline = time.monotonic() + 10
+            observed = []
+            while not marker.exists() and time.monotonic() < deadline:
+                observed.extend(self.probe.poll())
+                time.sleep(0.01)
+            self.assertTrue(marker.exists(), observed)
+            pid = int(marker.read_text())
+            self.assertGreater(pid, 0)
+            self.assertTrue(_process_alive(pid))
+            started = time.monotonic()
+            self.assertEqual(self.probe.close(grace=0.1), "terminated")
+            self.assertLess(time.monotonic() - started, 3)
+            deadline = time.monotonic() + 3
+            while _process_alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertFalse(_process_alive(pid))
+            self.assertIsNone(self.probe.process)
 
     def test_persistent_variables_definitions_and_stack(self):
         self.probe.submit("$x = 41\ndefine inc(n: Number) -> Number => $n 1 +\n1")

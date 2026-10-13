@@ -1330,23 +1330,9 @@ def _parse_repl_branch_command(
     source: str,
 ) -> tuple[str, int | None, str | None] | None:
     """Parse one branching meta-command without consuming language source."""
-    parts = source.split()
-    if not parts or parts[0] not in {
-        ":branch", ":restore", ":continue", ":copy", ":escape"
-    }:
-        return None
-    name = parts[0][1:]
-    if name in {"branch", "restore", "continue"}:
-        if len(parts) != 1:
-            return name, None, f"usage: :{name}"
-        return name, None, None
-    if len(parts) > 2:
-        return name, None, f"usage: :{name} [positive count]"
-    if len(parts) == 1:
-        return name, 1, None
-    if not parts[1].isdigit() or parts[1].startswith("0"):
-        return name, None, f"usage: :{name} [positive count]"
-    return name, int(parts[1]), None
+    from valiance.sessions.commands import parse_branch_command
+
+    return parse_branch_command(source)
 
 
 class _ReplSession(SessionService):

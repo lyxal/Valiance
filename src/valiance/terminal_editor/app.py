@@ -19,7 +19,6 @@ from textual.widgets import (
     Input,
     Markdown,
     OptionList,
-    RichLog,
     Static,
     Tab,
     Tabs,
@@ -35,6 +34,7 @@ from .editor import SourceEditor
 from .files import DiskConflict, DocumentFiles, EditorPreferences, ExternalChange
 from .models import DocumentView, EditorState, EditorWorkspace
 from .runtime import CommandInput, EditorRuntime
+from .transcript import TranscriptView
 
 
 class InspectorPane(VerticalScroll, can_focus=True):
@@ -112,6 +112,8 @@ class EditorApp(App):
         self.files = DocumentFiles(self.state.workspace)
         self.config_path = config_path
         self.preferences = EditorPreferences.load(config_path)
+        self.state.input.history = list(self.preferences.history)
+        self._preferences_lock = asyncio.Lock()
         self.watch_files = watch_files
         self.runtime = EditorRuntime(self) if with_worker else None
         self._watching = False
@@ -187,17 +189,25 @@ class EditorApp(App):
             yield InspectorPane(id="inspector")
         yield PaneDivider(vertical=False, id="repl-divider")
         with Vertical(id="repl"):
-            yield RichLog(max_lines=300, wrap=True, markup=False, id="transcript")
-            yield CommandInput(id="command", soft_wrap=True, tab_behavior="indent")
+            yield Button(
+                "File has compile errors — F11", id="load-errors", compact=True
+            )
+            with Horizontal(id="repl-controls"):
+                yield Button("Enter lock", id="enter-lock", compact=True)
+                yield Button("Clear", id="clear-transcript", compact=True)
+                yield Button("Reset", id="reset-session", compact=True)
+                yield Button("Save Transcript", id="save-transcript", compact=True)
+            yield TranscriptView(id="transcript")
+            yield CommandInput(self.state.input, id="command")
         yield Static(id="status", markup=False)
 
     def on_mount(self) -> None:
         """Set section labels and start a non-executing disk watcher."""
+        self._was_compact = self.size.width < 100 or self.size.height < 30
         self.query_one("#search-bar").display = False
-        self.query_one("#transcript", RichLog).border_title = "REPL output"
-        self.query_one(
-            "#command", TextArea
-        ).border_title = "REPL input · Enter submits · Shift+Enter newline"
+        self.query_one("#transcript", TranscriptView).border_title = "REPL output"
+        self.query_one("#load-errors").display = False
+        self.query_one("#command", CommandInput).update_guidance()
         self.query_one(
             "#command", TextArea
         ).indent_width = self.preferences.indent_width
@@ -225,7 +235,11 @@ class EditorApp(App):
                 not item.display for item in self.focused.ancestors
             ):
                 (
-                    self.query_one("#command") if self.repl_only else self.source_editor
+                    self.query_one("#command")
+                    if self.query_one("#repl").display
+                    else self.source_editor
+                    if self.query_one("#documents-view").display
+                    else self.query_one("#inspector")
                 ).focus()
 
     def _layout(self, size: Size | None = None) -> None:
@@ -297,6 +311,104 @@ class EditorApp(App):
         if self.runtime is not None and len(self.screen_stack) == 1:
             self._run_file()
 
+    def reveal_repl(self) -> None:
+        """Reveal and focus committed execution, including a compact terminal."""
+        self.repl_requested = True
+        self.compact_view = "repl"
+        self._layout()
+        self.editor_screen.query_one("#command").focus()
+        self.call_after_refresh(self.editor_screen.query_one("#command").focus)
+
+    def focus_source(self) -> None:
+        """Focus the active source without executing it or changing the session."""
+        self.repl_only = False
+        self.compact_view = "editor"
+        self._layout()
+        self.source_editor.focus()
+        self.call_after_refresh(self.source_editor.focus)
+
+    def show_blocked_load(self) -> None:
+        """Expose a failed load without changing its session or source focus."""
+        document = self.workspace.documents[self.workspace.active_document]
+        name = document.path.name if document.path else document.suggested_name
+        button = self.editor_screen.query_one("#load-errors", Button)
+        button.label = f"{name} has compile errors — F11"
+        button.display = True
+        self.repl_requested = True
+        self.inspector_requested = True
+        self._errors_open = True
+        self.repl_only = False
+        self.compact_view = "editor"
+        self._layout()
+        self.refresh_inspection()
+        self.source_editor.focus()
+        self.call_after_refresh(self.source_editor.focus)
+        self.notify(f"{name} has compile errors", severity="error")
+
+    def action_clear_transcript(self) -> None:
+        """Clear retained presentation while commands and runtime continue."""
+        self.state.transcript.clear()
+        self.editor_screen.query_one("#transcript", TranscriptView).refresh_transcript(
+            self.state.transcript
+        )
+
+    @work(group="reset-session")
+    async def action_reset_session(self) -> None:
+        """Discard runtime and transcript while retaining draft, history and lock."""
+        if self.runtime is not None:
+            await self.runtime.stop(reset=True)
+        else:
+            self.action_clear_transcript()
+
+    @work(group="transcript-export", exclusive=True)
+    async def action_save_transcript(self) -> None:
+        """Export a captured retained transcript through a protected file dialog."""
+        text = self.state.transcript.export_text()
+        path = await self.push_screen_wait(
+            PathDialog(
+                "Save Transcript", self.workspace.launch_directory, "transcript.txt"
+            )
+        )
+        if path is None:
+            return
+        try:
+            if (
+                path.exists()
+                and await self.push_screen_wait(
+                    ChoiceDialog(
+                        "Replace existing transcript file?",
+                        [("Replace", "replace"), ("Cancel", "cancel")],
+                    )
+                )
+                != "replace"
+            ):
+                return
+            from .files import atomic_write
+
+            await asyncio.to_thread(atomic_write, path, text.encode("utf-8"))
+            self.notify(f"Transcript saved to {path}")
+        except OSError as exc:
+            self.notify(str(exc), title="Transcript save failed", severity="error")
+
+    def persist_history(self) -> None:
+        """Persist recall history without saving draft text or replaying source."""
+        self.preferences.history = list(self.state.input.history)
+        if self.config_path is not None:
+            self._persist_preferences()
+
+    @work(group="preferences")
+    async def _persist_preferences(self) -> None:
+        """Serialize writes so an older history snapshot cannot overwrite newer data."""
+        try:
+            await self._save_preferences()
+        except OSError as exc:
+            self.notify(str(exc), title="History save failed", severity="error")
+
+    async def _save_preferences(self) -> None:
+        """Join all preference writes through one application-owned lock."""
+        async with self._preferences_lock:
+            await asyncio.to_thread(self.preferences.save, self.config_path)
+
     @work(group="execution")
     async def _run_file(self) -> None:
         """Keep import capture and process startup off the UI event loop."""
@@ -306,6 +418,15 @@ class EditorApp(App):
         """Request bounded interruption without blocking the editor."""
         if self.runtime is not None:
             self._stop_execution()
+
+    def action_quit_editor(self) -> None:
+        """Route REPL quit through the existing document protection workflow."""
+        self.action_file_action("quit")
+
+    @work(group="stop-execution")
+    async def recover_runtime_fault(self) -> None:
+        """Reap abandoned native work after a fault before accepting new commands."""
+        await self.runtime.stop(fault=True)
 
     @work(group="stop-execution")
     async def _stop_execution(self) -> None:
@@ -323,6 +444,10 @@ class EditorApp(App):
         if self.runtime is not None:
             await self.runtime.close()
         await self.analysis.close()
+        try:
+            await self._save_preferences()
+        except OSError:
+            pass
 
     @on(TextArea.Changed)
     def source_changed(self, message: TextArea.Changed) -> None:
@@ -336,6 +461,7 @@ class EditorApp(App):
                 self._labels()
                 self._status()
                 self.refresh_inspection()
+                self.editor_screen.query_one("#load-errors").display = False
 
     @on(TextArea.SelectionChanged)
     def selection_changed(self, message: TextArea.SelectionChanged) -> None:
@@ -858,7 +984,7 @@ class EditorApp(App):
             for identity in tuple(self.workspace.documents):
                 if not await self._protect(identity):
                     return
-            await asyncio.to_thread(self.preferences.save, self.config_path)
+            await self._save_preferences()
             self.exit()
         elif action in {"view", "edit"}:
             choice = await self.push_screen_wait(
@@ -886,6 +1012,10 @@ class EditorApp(App):
                         ("Select all", "select-all"),
                         ("Undo", "undo"),
                         ("Redo", "redo"),
+                        ("Toggle REPL Enter lock", "enter-lock"),
+                        ("Clear transcript", "clear-transcript"),
+                        ("Reset session", "reset-session"),
+                        ("Save Transcript", "save-transcript"),
                     ],
                     anchor=self.query_one(
                         "#view-menu" if action == "view" else "#edit-menu", Button
@@ -1094,6 +1224,16 @@ class EditorApp(App):
             self.action_run_file()
         elif identity == "stop-execution":
             self.action_stop_execution()
+        elif identity == "enter-lock":
+            self.query_one("#command", CommandInput).toggle_lock()
+        elif identity == "clear-transcript":
+            self.action_clear_transcript()
+        elif identity == "reset-session":
+            self.action_reset_session()
+        elif identity == "save-transcript":
+            self.action_save_transcript()
+        elif identity == "load-errors":
+            self.action_show_errors()
         elif identity == "search-close":
             self.action_dismiss_search()
         elif identity == "find-next":
@@ -1105,6 +1245,10 @@ class EditorApp(App):
         """Apply menu choices through the same native editing and layout actions."""
         if action == "repl":
             self.action_toggle_repl()
+        elif action == "enter-lock":
+            self.query_one("#command", CommandInput).toggle_lock()
+        elif action in {"clear-transcript", "reset-session", "save-transcript"}:
+            getattr(self, f"action_{action.replace('-', '_')}")()
         elif action == "state":
             self.action_toggle_inspector()
         elif action == "repl-only":
@@ -1211,7 +1355,11 @@ class EditorApp(App):
 
     def action_copy_selection(self) -> None:
         """Copy selected editor/input text through TextArea's terminal clipboard API."""
-        if isinstance(self.focused, (TextArea, Input)):
+        if self.runtime is not None and (
+            self.runtime.worker.busy or self.runtime.preparing
+        ):
+            self.action_stop_execution()
+        elif isinstance(self.focused, (TextArea, Input)):
             self.focused.action_copy()
 
     def action_search(self, replace: bool = False) -> None:

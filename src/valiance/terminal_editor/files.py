@@ -225,6 +225,7 @@ class EditorPreferences:
     repl_height: int = 12
     indent_width: int = 2
     soft_wrap: bool = True
+    history: list[str] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: Path | None) -> EditorPreferences:
@@ -251,6 +252,13 @@ class EditorPreferences:
                     setattr(preferences, name, value)
             if type(data.get("soft_wrap")) is bool:
                 preferences.soft_wrap = data["soft_wrap"]
+            history = data.get("history", [])
+            if isinstance(history, list):
+                preferences.history = [
+                    value
+                    for value in history
+                    if isinstance(value, str) and value.strip()
+                ][-500:]
         except OSError, ValueError:
             pass
         return preferences

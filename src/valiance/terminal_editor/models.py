@@ -205,17 +205,21 @@ class Transcript:
         self.entries: deque[TranscriptEntry] = deque()
         self.characters = 0
         self.truncated = False
+        self.discarded_characters = 0
 
     def append(self, entry: TranscriptEntry) -> None:
         """Retain newest entries and record both item and character truncation."""
         if len(entry.text) > self.max_characters:
+            self.discarded_characters += len(entry.text) - self.max_characters
             entry = replace(entry, text=entry.text[-self.max_characters :])
             self.truncated = True
         while self.entries and (
             len(self.entries) >= self.max_entries
             or self.characters + len(entry.text) > self.max_characters
         ):
-            self.characters -= len(self.entries.popleft().text)
+            removed = len(self.entries.popleft().text)
+            self.characters -= removed
+            self.discarded_characters += removed
             self.truncated = True
         self.entries.append(entry)
         self.characters += len(entry.text)
@@ -225,11 +229,12 @@ class Transcript:
         self.entries.clear()
         self.characters = 0
         self.truncated = False
+        self.discarded_characters = 0
 
     def export_text(self) -> str:
         """Export only retained text with an explicit truncation marker."""
         marker = "[Earlier transcript output dropped]\n" if self.truncated else ""
-        return marker + "\n".join(entry.text for entry in self.entries)
+        return marker + "".join(entry.text for entry in self.entries)
 
 
 @dataclass(frozen=True, slots=True)
@@ -367,17 +372,20 @@ class EditorState:
                         event.document_id, event.revision, snapshot.root.path
                     )
                     self.transcript.append(
-                        TranscriptEntry("separator", "── New session ──")
+                        TranscriptEntry("separator", "── New session ──\n")
                     )
                 elif isinstance(event, OutputEvent):
                     self.transcript.append(TranscriptEntry("output", event.text))
                 elif isinstance(event, ResultEvent):
                     self.transcript.append(
-                        TranscriptEntry("result", "\n".join(event.values))
+                        TranscriptEntry(
+                            "result",
+                            "\n".join(event.values) + ("\n" if event.values else ""),
+                        )
                     )
                 elif isinstance(event, DiagnosticEvent):
                     self.transcript.append(
-                        TranscriptEntry("diagnostic", event.diagnostic.message)
+                        TranscriptEntry("diagnostic", event.diagnostic.message + "\n")
                     )
             if session.loaded_source is None:
                 self.loaded_source = None

@@ -20,6 +20,7 @@ from valiance.sessions.events import (
     SessionRequest,
     SessionStarted,
 )
+from valiance.sessions.process_scope import ProcessScope, enter_process_scope
 
 
 @dataclass(frozen=True)
@@ -72,7 +73,9 @@ class _Input(io.TextIOBase):
 
 def _serve(commands, inputs, output, events, stop, dropped) -> None:
     """Own shared session mechanics and adapt immutable events to terminal display."""
+    enter_process_scope()
     from valiance.analysis.diagnostics import render
+    from valiance.sessions.commands import session_command
     from valiance.sessions.service import SessionService
 
     request = 0
@@ -118,6 +121,7 @@ def _serve(commands, inputs, output, events, stop, dropped) -> None:
                 raise ValueError("invalid session request")
             result = ""
             written[0] = 0
+            executed = False
             if operation == "shutdown":
                 break
             events.send(WorkerEvent("started", operation, request))
@@ -136,6 +140,7 @@ def _serve(commands, inputs, output, events, stop, dropped) -> None:
                         preparation = session.prepare(snapshot=message.snapshot)
                         succeeded = preparation.successful
                         if preparation.prepared is None:
+                            events.send(WorkerEvent("blocked", request=request))
                             for diagnostic in preparation.diagnostics:
                                 present(
                                     DiagnosticEvent(
@@ -155,6 +160,7 @@ def _serve(commands, inputs, output, events, stop, dropped) -> None:
                                 )
                                 continue
                             try:
+                                executed = True
                                 succeeded = session.execute(
                                     preparation.prepared,
                                     workspace_revision=message.snapshot.workspace_revision,
@@ -163,8 +169,31 @@ def _serve(commands, inputs, output, events, stop, dropped) -> None:
                                 events.send(WorkerEvent("cancelled", str(exc), request))
                                 continue
                     else:
-                        succeeded = session.run(source).successful
-                    if not succeeded and session.loaded_source is None:
+                        reply = session_command(session, source)
+                        if reply is not None:
+                            succeeded = reply.successful
+                            if succeeded:
+                                events.send(WorkerEvent("accepted", request=request))
+                            _Output(
+                                output,
+                                dropped,
+                                request,
+                                "notice" if succeeded else "diagnostic",
+                                written,
+                            ).write(reply.text + "\n")
+                        else:
+                            preparation = session.prepare(source)
+                            succeeded = preparation.successful
+                            if preparation.prepared is None:
+                                for diagnostic in preparation.diagnostics:
+                                    present(DiagnosticEvent(diagnostic, source))
+                            else:
+                                events.send(WorkerEvent("accepted", request=request))
+                                executed = True
+                                succeeded = session.execute(
+                                    preparation.prepared
+                                ).successful
+                    if not succeeded and executed and session.loaded_source is None:
                         events.send(WorkerEvent("reset", request=request))
                 events.send(
                     WorkerEvent(
@@ -200,6 +229,7 @@ class SessionWorker:
         self._received: dict[int, int] = {}
         self._completions: list[WorkerEvent] = []
         self._close_lock = threading.Lock()
+        self.final_output: list[WorkerEvent] = []
 
     def start(self) -> None:
         """Spawn explicitly so import and packaging behavior matches Windows."""
@@ -225,6 +255,18 @@ class SessionWorker:
         )
         self.process.start()
         writer.close()
+        try:
+            self.scope = ProcessScope(self.process)
+        except BaseException:
+            self.process.terminate()
+            self.process.join(1)
+            self.process.close()
+            self.process = None
+            self.events.close()
+            for channel in (self.commands, self.inputs, self.output):
+                channel.cancel_join_thread()
+                channel.close()
+            raise
 
     def submit(self, source: str = "", *, snapshot=None) -> int:
         """Prepare a fresh captured document or run a persistent REPL command."""
@@ -330,6 +372,17 @@ class SessionWorker:
             process.join(1)
         if process.is_alive():
             raise RuntimeError("session worker process did not exit")
+        self.scope.close()
+        # Retain already-delivered output even when Stop discards the session.
+        while True:
+            batch = self.poll()
+            self.final_output.extend(
+                event
+                for event in batch
+                if event.kind in {"output", "diagnostic", "truncated", "notice"}
+            )
+            if not batch:
+                break
         self.events.close()
         for channel in (self.commands, self.inputs, self.output):
             channel.cancel_join_thread()

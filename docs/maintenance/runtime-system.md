@@ -1968,6 +1968,17 @@ use an explicit VM suspension mechanism, or be rejected.
 
 ## Task-aware concurrency diagnostics
 
+The terminal editor's whole-session Stop is a separate process-level operation
+from task cancellation. `sessions/worker.py` first requests a Python interrupt,
+then bounds exit with termination/join. `sessions/process_scope.py` owns a Windows
+kill-on-close Job Object or Unix session/process group to terminate ordinary
+descendants at teardown. Reset and runtime fault recovery replace the worker,
+preventing abandoned native executor threads from sharing a subsequent session.
+OS resources are reclaimed on forced exit, but Valiance destructors and foreign
+cleanup are not guaranteed and external effects cannot be undone. Unix children
+that deliberately create a new process group/session are outside this scope.
+The real Windows Valiance FFI cancellation test runs in CI, not locally.
+
 Concurrency bytecode carries stable source sites for scope entry, spawn, wait,
 and channel operations. A failed task stores its task id, terminal state, spawn
 site, owning-scope site, and underlying fault. Waiting does not replace that

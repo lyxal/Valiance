@@ -314,13 +314,21 @@ JSON without adding documentation payloads to bytecode.
   roots/imports from `incremental/snapshots.py`, including open-buffer overlays;
   the UI approves current preparations without inspecting VM objects.
 - Stop/exit joins happen off the UI loop and can force termination. The
-  replacement session starts fresh; native cleanup is not established by the
-  process escape mechanism. Later-stage lifecycle gates remain open.
+  replacement session starts fresh. Windows Job Objects and Unix process groups
+  contain ordinary worker descendants; forced termination reclaims OS resources
+  but cannot promise language destructors, foreign cleanup or reversed external
+  effects. Reset and runtime faults also replace the process. Native-call CI
+  and physical-terminal lifecycle validation remain acceptance gates.
+- `sessions/commands.py` shares runtime branch-command validation with the CLI
+  and serves editor type/help queries. `terminal_editor/transcript.py` renders
+  bounded semantic entries with native selection/copy; export uses the retained
+  model rather than terminal cells. Enter lock and persisted history belong to
+  input state, independent of runtime replacement.
 - The internal route is `python -m valiance.terminal_editor`. Public REPL routing
   and explicit CLI commands are unchanged. See the
   [implementation plan](../maintenance/terminal-editor-implementation-plan.md)
-  for current status; live cursor inspection and complete REPL input/presentation
-  behavior remain later-stage work.
+  for current status; diagnostic completion and public-default acceptance remain
+  later-stage work.
 
 ## Core Invariants
 

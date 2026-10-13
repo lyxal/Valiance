@@ -25,7 +25,11 @@ PaneDivider:hover { background: #3a4b65; color: #bfcfe6; }
 PaneDivider:focus { background: #526380; color: white; }
 #state-divider { width: 3; height: 1fr; }
 #repl-divider { height: 1; }
-#repl { min-height: 7; }
+#repl { min-height: 8; }
+#repl-controls { height: 1; }
+#repl-controls Button, #load-errors { height: 1; min-width: 0; width: auto; border: none; background: #282d3b; margin-right: 1; text-style: none; }
+#repl-controls Button:hover, #repl-controls Button:focus { background: #3a4b65; }
+#load-errors { color: #ef8794; width: 100%; }
 #transcript { height: 1fr; min-height: 3; border: solid $divider; }
 #command { height: 4; border: solid $divider; background: #242e41; }
 #command:focus { border: solid #8bb9df; }

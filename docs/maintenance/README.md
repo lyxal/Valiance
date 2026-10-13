@@ -66,7 +66,14 @@ behaviour becomes harder to reason about and static guarantees become weaker.
   retain end-surviving worlds, generic refinements and control-flow ancestry.
   The State pane synchronizes numbered world selection within a function;
   Alt+Left/Alt+Right cycle worlds and Alt+Up/Alt+Down cycle local states.
-  Full REPL input/transcript controls remain Stage 5.
+  Stage 5 adds [selectable semantic transcript rendering](../../src/valiance/terminal_editor/transcript.py),
+  Enter lock, persisted command recall, Clear/Reset/Save Transcript controls and
+  automatic focus/reveal after a committed load. The
+  [session command adapter](../../src/valiance/sessions/commands.py) retains runtime
+  branch commands and type queries without borrowing the legacy frontend.
+  [Process containment](../../src/valiance/sessions/process_scope.py) reclaims
+  ordinary worker descendants on Stop, Reset, fault and exit. Real Windows
+  Valiance FFI cancellation is validated in CI, not on the local machine.
   Session and snapshot regressions live in [CLI/session tests](../../tests/test_main.py)
   and [compilation database tests](../../tests/test_compilation_database.py).
 - [Understanding the type system](type-system.md) gives a human-first mental

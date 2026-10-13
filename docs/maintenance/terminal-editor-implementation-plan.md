@@ -9,7 +9,8 @@ are implemented. Stage 2's document editor is available through the internal
 launch route, including basic file runs/persistent commands pulled forward from
 Stage 5 during feedback. Stage 3 diagnostics/basic inspection are implemented;
 Stage 4 surviving-world inspection is implemented; its validation is recorded
-below. Stage 5 is not complete. Public CLI
+below. Stage 5 input/presentation and lifecycle implementation is available;
+real native-call CI validation and physical-terminal acceptance remain pending. Public CLI
 switching has not started.
 
 The [behavior specification](terminal-editor-design.md) is the product contract;
@@ -484,6 +485,52 @@ native-call cancellation meet the Stage 0 lifecycle contract while the editor
 remains usable. Clear, Reset, Stop, successful load, and fault retain/clear the
 correct independent states. Result green never colors printed program output.
 
+Stage 5 implementation (13 October 2026):
+
+- `CommandInput` shares syntax-aware indentation and token styling with source
+  editing. Both modified Enter shortcuts toggle lock without submission; the
+  title shows the live behavior. Unlocked boundary arrows recall history and
+  restore the complete draft. Blank input and pasted newlines never execute.
+  Rejected commands retain their editable draft. Program stdin is routed through
+  the existing input channel and excluded from command history.
+- The latest 500 submissions persist atomically with preferences. Startup still
+  opens blank, with fresh runtime and lock disabled. History writes are serialized
+  and flushed on exit; no source or runtime is replayed.
+- Committed loads focus/reveal REPL even at 80x24. Failed loads retain the session,
+  source focus and historical transcript, with a file-specific error banner.
+  Clear changes presentation only; Reset discards runtime and transcript;
+  Stop/fault preserve output and mark interruption while retaining history/lock.
+  Ctrl+C stops active execution and copies the focused selection while idle.
+- `transcript.py` renders semantic ranges in a read-only TextArea, reusing native
+  Unicode selection, copy, wrapping and scrollback. The single retention model
+  bounds entries/characters and supplies both the displayed truncation marker
+  and exact UTF-8 export. Output batches redraw once; only results use green.
+- `sessions/commands.py` provides shared branch-command parsing, branch operations,
+  help and non-executing type queries. CLI parsing uses the same validation.
+  Editor `:clear`/`:reset`/`:quit` invoke the protected control workflows;
+  `:repl`/`:scratch` focus input/source without an implicit run.
+- `sessions/process_scope.py` attaches a Windows kill-on-close Job Object before
+  any submission, or establishes a Unix session/process group before readiness.
+  Stop, Reset, fault recovery and exit reap the worker and ordinary descendants.
+  Fault recovery replaces the process as well as the VM, so abandoned native
+  executor threads cannot survive into the next session. Forced exit forfeits
+  Valiance destructors/foreign cleanup; OS resource reclamation cannot undo
+  external effects. Unix children deliberately leaving the process group are
+  outside containment. Startup fails explicitly if containment cannot attach.
+- Existing terminal-editor tests cover the new controls, compact layouts,
+  persisted history, semantic colors, selection/export, queries/branches and
+  ordinary child cleanup. The real Valiance FFI/native-child test is skipped on
+  local Windows and included in the Windows FFI workflow. Its CI result and the
+  physical-terminal matrix remain unverified until those environments run it.
+
+Stage 5 validation: the editor, CLI/session, fundamental-program and docstring
+regression run completed 207 tests successfully with one expected local Windows
+FFI skip. After the final focus/retention fixes, the affected application, model
+and worker suites completed 32 tests successfully with the same skip. The last
+compact-view navigation/banner check also passed. Production session/editor Ruff
+lint and format checks pass. The fundamental-program test file was not modified;
+the complete repository suite and real native-call CI were not run locally.
+
 ### Stage 6 — complete diagnostic interactions and completion
 
 Finish error-list visibility only when errors exist, grouped import diagnostics,
@@ -566,6 +613,5 @@ to satisfy a new-editor feature, and terminal state is restored on all exits.
 
 These are explicit implementation decisions with owners and gates, not reasons
 to reopen already confirmed interactions. Stage 0 was accepted after user review;
-Stages 1–4 are implemented; Stage 5 is next.
-The Stage 5 work brought forward does not close its remaining input, presentation
-and native-lifecycle gates.
+Stages 1–5 have implementation coverage. Stage 5's real native-call CI and
+physical-terminal validation gates remain open before public-default acceptance.
